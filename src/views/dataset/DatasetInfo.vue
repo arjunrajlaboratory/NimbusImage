@@ -44,6 +44,8 @@
                   <v-tooltip top max-width="50vh">
                     <template v-slot:activator="{ on, attrs }">
                       <v-btn
+                        id="view-dataset-button-tourstep"
+                        v-tour-trigger="'view-dataset-button-tourtrigger'"
                         v-on="on"
                         v-bind="attrs"
                         class="ma-1"

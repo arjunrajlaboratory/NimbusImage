@@ -6,6 +6,7 @@ import vue from "@vitejs/plugin-vue2";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import { visualizer } from "rollup-plugin-visualizer";
 import path from "node:path";
+import yaml from "@rollup/plugin-yaml";
 
 // Shouldn't be needed after moving to Vue 3
 import { VuetifyResolver } from "unplugin-vue-components/resolvers";
@@ -38,8 +39,12 @@ const overriddenComponentsToNodeModules = Object.fromEntries(
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  define: {
+    "process.env": {},
+  },
   plugins: [
     vue(),
+    yaml(),
     visualizer(),
     Components({
       resolvers: [VuetifyResolver()],
