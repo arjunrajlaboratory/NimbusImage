@@ -11,6 +11,10 @@ import {
   IExtendedShepherdStep,
 } from "@/store/model";
 
+interface ShepherdShowEvent {
+  step: IExtendedShepherdStep;
+}
+
 export class TourManager {
   private shepherd!: Shepherd.Tour;
   private currentStepIndex = 0;
@@ -163,7 +167,7 @@ export class TourManager {
     });
 
     // Add a show event handler
-    this.shepherd.on("show", (event) => {
+    this.shepherd.on("show", (event: ShepherdShowEvent) => {
       const step = event.step;
       const overlay = document.querySelector(
         ".shepherd-modal-overlay-container",
