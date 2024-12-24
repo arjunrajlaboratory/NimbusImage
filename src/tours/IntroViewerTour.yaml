@@ -1,0 +1,87 @@
+name: "Introduction to NimbusImage Viewer"
+entryPoint: datasetview
+popular: true
+category: Introduction
+steps:
+  - id: welcome-tourstep
+    route: datasetview
+    title: "Welcome to the NimbusImage Viewer"
+    text: "This is the NimbusImage Viewer. It allows you to navigate through and view your datasets."
+    position: "bottom"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: true
+
+  - id: navigation-toolbar-tourstep
+    route: datasetview
+    element: "#viewer-toolbar-tourstep"
+    title: "Multi-dimensional navigation"
+    text: "Here you can navigate through your dataset using the sliders. Use hotkeys (w/r for XY, d/e for Z, s/f for Time) for quick navigation."
+    position: "right"
+    waitForElement: 1000
+
+  - id: layer-controls-tourstep
+    route: datasetview
+    element: "#layer-controls-tourstep"
+    title: "Layer Controls"
+    text: "You can toggle layers on and off using the checkboxes here. Quick tip: Use number keys 1-9 to quickly toggle individual layers!"
+    position: "right"
+    modalOverlay: false
+    waitForElement: 1000
+
+  - id: pan-instruction-tourstep
+    route: datasetview
+    title: "Panning the Image"
+    text: "Click and drag anywhere on the image to pan around."
+    position: "left"
+    modalOverlay: false
+    waitForElement: 1000
+
+  - id: zoom-instruction-tourstep
+    route: datasetview
+    title: "Zooming"
+    text: "Use your mouse wheel or trackpad to zoom in and out of the image."
+    position: "left"
+    modalOverlay: false
+
+  - id: rotation-instruction-tourstep
+    route: datasetview
+    title: "Rotation"
+    text: "Use a two-finger pinch gesture on your trackpad to rotate the image."
+    position: "left"
+    modalOverlay: false
+
+  - id: reset-rotation-tourstep
+    route: datasetview
+    element: "#reset-rotation-tourstep"
+    title: "Reset Rotation"
+    text: "Click here to reset the image rotation back to 0 degrees."
+    position: "top"
+    waitForElement: 5000
+    modalOverlay: false
+
+  - id: lock-view-tourstep
+    route: datasetview
+    element: "#lock-view-tourstep"
+    title: "Lock View"
+    text: "Click here to lock/unlock the view. When locked, you cannot pan, zoom, or rotate."
+    position: "top"
+    modalOverlay: false
+    waitForElement: 1000
+
+  - id: contrast-palette-tourstep
+    route: datasetview
+    element: "#layer-info-tourstep"
+    title: "Layer Controls"
+    text: "Click here to adjust contrast settings for each layer."
+    position: "left"
+    modalOverlay: false
+    waitForElement: 1000
+
+  - id: tour-complete-tourstep
+    route: datasetview
+    title: "Tour Complete!"
+    text: "You now know the basics of navigation! Try the advanced navigation tour to learn more features."
+    position: "bottom"
+    modalOverlay: true
+    showNextButton: true

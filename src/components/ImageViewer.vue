@@ -114,6 +114,7 @@
     <v-menu offset-y top :close-on-content-click="false">
       <template #activator="{ on }">
         <v-btn
+          id="layer-info-tourstep"
           icon
           v-on="on"
           class="layer-info-btn"
@@ -126,6 +127,7 @@
       <layer-info-grid :layers="store.layers" />
     </v-menu>
     <v-btn
+      id="lock-view-tourstep"
       icon
       class="lock-view-btn"
       :color="isViewLocked ? 'error' : 'primary'"
@@ -141,6 +143,7 @@
       }}</v-icon>
     </v-btn>
     <v-btn
+      id="reset-rotation-tourstep"
       icon
       class="reset-rotation-btn"
       color="primary"

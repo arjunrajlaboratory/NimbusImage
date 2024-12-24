@@ -5,7 +5,7 @@ category: Analysis
 steps:
   - id: timelapse-mode
     route: datasetview
-    element: "#timelapse-mode"
+    element: "#timelapse-mode-tourstep"
     title: "Click for Timelapse Mode"
     text: "Enable timelapse mode to allow timelapse analysis. This mode allows you to edit tracks over time."
     position: "bottom"
@@ -17,7 +17,7 @@ steps:
     onTriggerEvent: "timelapse-mode-tourtrigger"
   - id: timelapse-labels
     route: datasetview
-    element: "#timelapse-labels"
+    element: "#timelapse-labels-tourstep"
     title: "Timelapse Labels"
     text: "Enable labels for the timelapse"
     position: "right"
@@ -27,7 +27,7 @@ steps:
     onNext: "return console.log('Next is timelapse window')"
   - id: timelapse-tags
     route: datasetview
-    element: "#timelapse-tags"
+    element: "#timelapse-tags-tourstep"
     title: "Timelapse Tags"
     text: "Select the tags to include in the timelapse"
     position: "top"
