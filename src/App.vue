@@ -232,6 +232,7 @@ import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
 import { IGirderFolder } from "@/girder";
+import { ITourMetadata } from "./store/model";
 
 @Component({
   components: {
@@ -260,7 +261,7 @@ export default class App extends Vue {
   };
 
   tourSearch = "";
-  availableTours: Record<string, any> = {};
+  availableTours: Record<string, ITourMetadata> = {};
 
   snapshotPanel = false;
   snapshotPanelFull = false;
@@ -388,9 +389,9 @@ export default class App extends Vue {
     }
   }
 
-  get filteredToursByCategory() {
+  get filteredToursByCategory(): Record<string, Record<string, ITourMetadata>> {
     const tours = this.availableTours;
-    const filtered = Object.entries(tours).filter(([_, tour]) => {
+    const filtered = Object.entries(tours).filter(([, tour]) => {
       // First filter by search term
       const matchesSearch = tour.name
         .toLowerCase()
@@ -408,14 +409,17 @@ export default class App extends Vue {
     });
 
     // Group by category
-    const grouped = filtered.reduce((acc, [id, tour]) => {
-      const category = tour.category || "General";
-      if (!acc[category]) {
-        acc[category] = {};
-      }
-      acc[category][id] = tour;
-      return acc;
-    }, {});
+    const grouped = filtered.reduce(
+      (acc: Record<string, Record<string, ITourMetadata>>, [id, tour]) => {
+        const category = tour.category || "General";
+        if (!acc[category]) {
+          acc[category] = {};
+        }
+        acc[category][id] = tour;
+        return acc;
+      },
+      {},
+    );
 
     return grouped;
   }
