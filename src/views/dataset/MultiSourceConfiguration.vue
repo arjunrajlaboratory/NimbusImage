@@ -6,6 +6,14 @@
       >
       <v-divider class="my-2" />
       <v-data-table :headers="headers" :items="items" item-key="key" />
+      <v-checkbox
+        v-if="isRGBFile && rgbBandCount > 1"
+        v-model="splitRGBBands"
+        label="Split RGB files into separate channels (otherwise, only the red channel will be used)"
+        class="mt-4"
+        hide-details
+        dense
+      />
     </v-card>
     <v-card v-if="initializing" class="my-4">
       <v-card-title>
@@ -78,6 +86,12 @@
       </v-container>
     </v-card>
     <v-row>
+      <v-col class="d-flex">
+        <v-alert v-if="submitError" type="error" text dense class="mr-4">
+          {{ submitError }}
+        </v-alert>
+        <v-spacer />
+      </v-col>
       <v-col class="d-flex justify-end">
         <v-checkbox
           id="transcode-checkbox-tourstep"
@@ -92,7 +106,7 @@
           v-tour-trigger="'submit-button-tourtrigger'"
           @click="submit"
           color="green"
-          :disabled="!submitEnabled() || isUploading"
+          :disabled="!submitEnabled() || !isRGBAssignmentValid || isUploading"
         >
           <v-progress-circular size="16" v-if="isUploading" indeterminate />
           Submit
@@ -233,6 +247,8 @@ export default class MultiSourceConfiguration extends Vue {
 
   isRGBFile: boolean = false;
   rgbBandCount: number = 0;
+
+  splitRGBBands: boolean = true;
 
   get hasRGBBands() {
     return this.rgbBandCount > 1;
@@ -723,7 +739,7 @@ export default class MultiSourceConfiguration extends Vue {
     }
 
     // Handle RGB expansion
-    if (this.isRGBFile && this.rgbBandCount > 1) {
+    if (this.isRGBFile && this.rgbBandCount > 1 && this.splitRGBBands) {
       // Assuming 3 bands (R,G,B), adjust as needed if dynamic
       const bandSuffixes = [" - Red", " - Green", " - Blue"];
       const expandedChannels: string[] = [];
@@ -752,7 +768,7 @@ export default class MultiSourceConfiguration extends Vue {
         const item = this.girderItems[itemIdx];
         const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
         for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-          if (this.isRGBFile && this.rgbBandCount > 1) {
+          if (this.isRGBFile && this.rgbBandCount > 1 && this.splitRGBBands) {
             // For RGB files, create separate sources for each band
             for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
               compositingSources.push({
@@ -910,7 +926,7 @@ export default class MultiSourceConfiguration extends Vue {
         }
         const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
         for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-          if (this.isRGBFile && this.rgbBandCount > 1) {
+          if (this.isRGBFile && this.rgbBandCount > 1 && this.splitRGBBands) {
             // For RGB files, create separate sources for each band
             for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
               basicSources.push({
@@ -974,6 +990,24 @@ export default class MultiSourceConfiguration extends Vue {
       logError((error as Error).message);
       return null;
     }
+  }
+
+  get submitError(): string | null {
+    if (!this.submitEnabled()) {
+      return "Not all variables are assigned";
+    }
+
+    if (!this.isRGBAssignmentValid) {
+      return "If splitting RGB file into channels, then filenames must be assigned to another variable";
+    }
+    return null;
+  }
+
+  get isRGBAssignmentValid(): boolean {
+    if (this.isRGBFile && this.rgbBandCount > 1 && this.splitRGBBands) {
+      return this.assignments.C === null;
+    }
+    return true;
   }
 }
 </script>
