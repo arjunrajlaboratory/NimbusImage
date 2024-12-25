@@ -149,7 +149,7 @@ import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
-import { logError } from "@/utils/logging";
+import { logError } from "@/utils/log";
 
 @Component({
   components: {
