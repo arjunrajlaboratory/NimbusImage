@@ -149,6 +149,7 @@ import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
+import { logError } from "@/utils/logging";
 
 @Component({
   components: {
@@ -259,7 +260,7 @@ export default class Home extends Vue {
     try {
       await this.store.fetchRecentDatasetViews();
     } catch (error) {
-      console.warn("Failed to initialize recent views:", error);
+      logError("Failed to initialize recent views:", error);
     }
   }
 
