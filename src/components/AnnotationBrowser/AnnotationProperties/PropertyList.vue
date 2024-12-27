@@ -1,46 +1,59 @@
 <template>
-  <v-card>
-    <v-card-title> Object Properties </v-card-title>
-    <v-card-text>
-      <v-btn
-        outlined
-        class="ma-2"
-        @click="computeUncomputedProperties"
-        :disabled="uncomputedRunning > 0 || uncomputedProperties.length <= 0"
-      >
-        {{ uncomputedRunning > 0 ? "Computing all" : "Compute all" }}
-        <template v-if="uncomputedRunning > 0">
-          <v-progress-circular indeterminate />
+  <v-card class="d-flex flex-column property-list">
+    <div class="property-header">
+      <div class="d-flex align-center px-4 py-2">
+        <span class="text-subtitle-1">Object Properties</span>
+        <v-spacer></v-spacer>
+        <template v-if="uncomputedProperties.length <= 0">
+          <span class="text-none px-2 success--text">
+            Computations done
+            <v-icon small color="success">mdi-check</v-icon>
+          </span>
         </template>
-        <template v-else>
-          <v-icon right color="primary"> mdi-play </v-icon>
-        </template>
-      </v-btn>
-      <v-container class="pa-0">
-        <v-expansion-panels>
-          <!-- Header for property -->
-          <v-expansion-panel readonly v-if="properties.length > 0">
-            <v-expansion-panel-header>
-              <template v-slot:actions>
-                <v-icon color="transparent">$expand</v-icon>
-              </template>
-            </v-expansion-panel-header>
-          </v-expansion-panel>
-          <!-- List of all the properties -->
-          <v-expansion-panel
-            v-for="(property, index) in properties"
-            :key="`${property.id} ${index}`"
-          >
-            <v-expansion-panel-header>
-              <annotation-property :property="property" />
-            </v-expansion-panel-header>
-            <v-expansion-panel-content>
-              <annotation-property-body :property="property" />
-            </v-expansion-panel-content>
-          </v-expansion-panel>
-        </v-expansion-panels>
-      </v-container>
-    </v-card-text>
+        <v-btn
+          v-else
+          text
+          small
+          color="primary"
+          class="text-none px-2"
+          @click="computeUncomputedProperties"
+          :disabled="uncomputedRunning > 0"
+        >
+          {{
+            uncomputedRunning > 0
+              ? "Running uncomputed properties"
+              : "Compute all"
+          }}
+          <template v-if="uncomputedRunning > 0">
+            <v-progress-circular
+              indeterminate
+              size="16"
+              width="2"
+              class="ml-1"
+            />
+          </template>
+          <template v-else>
+            <v-icon small right>mdi-play</v-icon>
+          </template>
+        </v-btn>
+      </div>
+      <v-divider></v-divider>
+    </div>
+    <div class="property-content">
+      <v-expansion-panels>
+        <v-expansion-panel
+          v-for="(property, index) in properties"
+          :key="`${property.id} ${index}`"
+        >
+          <v-expansion-panel-header>
+            <annotation-property :property="property" />
+          </v-expansion-panel-header>
+          <v-expansion-panel-content>
+            <annotation-property-body :property="property" />
+          </v-expansion-panel-content>
+        </v-expansion-panel>
+      </v-expansion-panels>
+    </div>
   </v-card>
 </template>
 
@@ -53,6 +66,7 @@ import filterStore from "@/store/filters";
 import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
 import AnnotationProperty from "@/components/AnnotationBrowser/AnnotationProperties/Property.vue";
 import AnnotationPropertyBody from "@/components/AnnotationBrowser/AnnotationProperties/PropertyBody.vue";
+import { IAnnotationProperty } from "@/store/model";
 
 @Component({
   components: {
@@ -71,7 +85,7 @@ export default class PropertyList extends Vue {
   }
 
   get uncomputedProperties() {
-    const res = [];
+    const res: IAnnotationProperty[] = [];
     for (const property of this.propertyStore.properties) {
       if (
         this.propertyStore.uncomputedAnnotationsPerProperty[property.id]
@@ -100,3 +114,18 @@ export default class PropertyList extends Vue {
   }
 }
 </script>
+
+<style scoped>
+.property-list {
+  height: 100%;
+}
+
+.property-header {
+  flex: 0 0 auto;
+}
+
+.property-content {
+  flex: 1 1 auto;
+  overflow-y: scroll;
+}
+</style>

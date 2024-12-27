@@ -30,30 +30,11 @@
       <template v-if="store.dataset && routeName === 'datasetview'">
         <span
           v-tooltip="
-            'Measure properties of your objects, like \'area\' or \'number of spots\''
-          "
-        >
-          <v-btn class="ml-4" @click.stop="toggleRightPanel('analyzePanel')">
-            <v-badge dot color="red" :value="hasUncomputedProperties">
-              Measure objects
-            </v-badge>
-          </v-btn>
-        </span>
-        <span
-          v-tooltip="
             'List of all objects in the dataset, including their properties, and various actions on them'
           "
         >
-          <v-btn
-            class="ml-4"
-            @click.stop="
-              toggleRightPanel('annotationPanel');
-              annotationPanelBadge = false;
-            "
-          >
-            <v-badge dot color="green" :value="annotationPanelBadge">
-              Object list
-            </v-badge>
+          <v-btn class="ml-4" @click.stop="toggleRightPanel('annotationPanel')">
+            Object list
           </v-btn>
         </span>
         <v-divider class="ml-4" vertical />
@@ -265,14 +246,6 @@ export default class App extends Vue {
   @Watch("annotationPanel")
   annotationPanelChanged() {
     this.store.setIsAnnotationPanelOpen(this.annotationPanel);
-  }
-
-  get annotationPanelBadge() {
-    return this.store.annotationPanelBadge;
-  }
-
-  set annotationPanelBadge(value) {
-    this.store.setAnnotationPanelBadge(value);
   }
 
   get routeName() {

@@ -5,7 +5,9 @@
       <v-expansion-panels hover multiple v-model="expanded">
         <annotation-filters></annotation-filters>
         <annotation-actions></annotation-actions>
-        <annotation-properties></annotation-properties>
+        <annotation-properties
+          @expand="expandProperties"
+        ></annotation-properties>
         <annotation-list @clickedTag="clickedTag"></annotation-list>
       </v-expansion-panels>
     </v-card-text>
@@ -35,6 +37,12 @@ export default class AnnotationBrowser extends Vue {
 
   clickedTag(tag: string) {
     this.filterStore.addTagToTagFilter(tag);
+  }
+
+  expandProperties() {
+    if (!this.expanded.includes(1)) {
+      this.expanded.push(1);
+    }
   }
 }
 </script>

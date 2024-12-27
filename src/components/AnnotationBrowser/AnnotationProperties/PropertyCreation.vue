@@ -1,13 +1,16 @@
 <template>
   <v-card>
+    <div class="d-flex align-center px-4 py-2">
+      <span class="text-subtitle-1">Create new property</span>
+    </div>
     <v-card-text>
-      <v-container>
-        <v-row align="center" class="mb-4" dense>
+      <v-container class="pa-2">
+        <v-row align="center" class="mb-1" dense>
           <v-col cols="3">
-            <v-subheader>Measure by tag:</v-subheader>
+            <v-subheader dense>Measure by tag:</v-subheader>
           </v-col>
           <v-col cols="6">
-            <tag-picker v-model="filteringTags" />
+            <tag-picker v-model="filteringTags" dense />
           </v-col>
           <v-col cols="3">
             <v-checkbox
@@ -20,7 +23,7 @@
         </v-row>
         <v-row align="center" dense>
           <v-col cols="3">
-            <v-subheader>{{ shapeSelectionString }}</v-subheader>
+            <v-subheader dense>{{ shapeSelectionString }}</v-subheader>
           </v-col>
           <v-col cols="9">
             <v-select
@@ -28,14 +31,15 @@
               :items="availableShapes"
               label="Shape"
               hide-details
+              dense
               :disabled="filteringTags.length > 0"
             ></v-select>
           </v-col>
         </v-row>
       </v-container>
-      <v-container class="elevation-3 mt-4" v-if="filteringShape !== null">
-        <div class="pb-4 subtitle-1">Measure this property:</div>
-        <v-row>
+      <v-container class="elevation-3 mt-2 pa-2" v-if="filteringShape !== null">
+        <div class="subtitle-1" mb-3>Measure this property:</div>
+        <v-row dense>
           <v-col>
             <docker-image-select
               dense
@@ -45,20 +49,23 @@
           </v-col>
         </v-row>
         <template v-if="dockerImage !== null">
-          <v-row>
+          <v-row dense>
             <v-col>
               <property-worker-menu
                 v-model="interfaceValues"
                 :image="dockerImage"
+                dense
               />
             </v-col>
           </v-row>
-          <v-row>
+          <v-row dense>
             <v-col>
               <v-textarea
                 v-model="originalName"
                 label="Property name"
                 rows="1"
+                dense
+                hide-details
                 :append-icon="isNameGenerated ? '' : 'mdi-refresh'"
                 @click:append="isNameGenerated = true"
                 @input="isNameGenerated = false"
@@ -70,14 +77,16 @@
       <v-checkbox
         v-model="computeUponCreation"
         label="Compute upon creation"
-        class="mt-4"
+        class="mt-2"
+        dense
+        hide-details
       />
-      <div class="button-bar">
+      <div class="button-bar mt-2">
         <v-spacer></v-spacer>
-        <v-btn class="mr-4" color="primary" @click="createProperty">
+        <v-btn class="mr-2" color="primary" small @click="createProperty">
           Create Property
         </v-btn>
-        <v-btn class="mr-4" color="warning" @click="reset">Cancel</v-btn>
+        <v-btn class="mr-2" color="warning" small @click="reset">Reset</v-btn>
       </div>
     </v-card-text>
   </v-card>

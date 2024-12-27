@@ -1,6 +1,37 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header>Properties</v-expansion-panel-header>
+    <v-expansion-panel-header>
+      Properties
+      <v-spacer />
+      <v-btn
+        color="primary"
+        dark
+        small
+        dense
+        @click.stop="showAnalyzeDialog = true"
+      >
+        Measure objects
+      </v-btn>
+    </v-expansion-panel-header>
+
+    <v-dialog
+      v-model="showAnalyzeDialog"
+      min-width="900px"
+      max-width="1000px"
+      @input="onDialogClose"
+    >
+      <v-card>
+        <v-card-title>Measure objects</v-card-title>
+        <v-card-text>
+          <analyze-panel />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="onDialogClose(false)">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-expansion-panel-content>
       <v-text-field
         v-model="propFilter"
@@ -53,6 +84,7 @@ import { Vue, Component } from "vue-property-decorator";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { findIndexOfPath } from "@/utils/paths";
+import AnalyzePanel from "@/components/AnalyzePanel.vue";
 
 interface PropertyItem {
   name: string;
@@ -74,7 +106,11 @@ const tabs = [
 
 type TTabKey = (typeof tabs)[number]["key"];
 
-@Component
+@Component({
+  components: {
+    AnalyzePanel,
+  },
+})
 export default class AnnotationProperties extends Vue {
   readonly propertyStore = propertyStore;
   readonly filterStore = filterStore;
@@ -84,6 +120,7 @@ export default class AnnotationProperties extends Vue {
   propFilter: string | null = null;
   selectedPath: string[] = [];
   activeTabKey: TTabKey = "display";
+  showAnalyzeDialog = false;
 
   get activeTabIndex(): number {
     return tabs.findIndex(({ key }) => this.activeTabKey === key);
@@ -192,6 +229,13 @@ export default class AnnotationProperties extends Vue {
 
   toggleFilter(propertyPath: string[]) {
     this.filterStore.togglePropertyPathFiltering(propertyPath);
+  }
+
+  onDialogClose(value: boolean) {
+    if (!value) {
+      this.showAnalyzeDialog = false;
+      this.$emit("expand");
+    }
   }
 }
 </script>
