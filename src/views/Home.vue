@@ -149,6 +149,7 @@ import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
+import { logError } from "@/utils/log";
 
 @Component({
   components: {
@@ -251,8 +252,23 @@ export default class Home extends Vue {
   }
 
   mounted() {
-    this.store.fetchRecentDatasetViews();
-    this.fetchDatasetsAndConfigurations();
+    this.initializeRecentViews();
+    this.refreshRecentDatasetDetails();
+  }
+
+  private async initializeRecentViews() {
+    try {
+      await this.store.fetchRecentDatasetViews();
+    } catch (error) {
+      logError("Failed to initialize recent views:", error);
+    }
+  }
+
+  refreshRecentDatasetDetails() {
+    for (const d of this.datasetViews) {
+      this.girderResources.getFolder(d.datasetId);
+      this.girderResources.getItem(d.configurationId);
+    }
   }
 
   onLocationUpdate(selectable: IGirderSelectAble) {
