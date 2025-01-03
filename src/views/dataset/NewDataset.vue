@@ -170,6 +170,12 @@ function findCommonPrefix(strings: string[]): string {
     return strings[0];
   }
 
+  // For filenames that are purely numeric at the start, use first filename + "_multi"
+  if (strings.every((s) => /^\d+/.test(s))) {
+    return basename(strings[0]) + "_multi";
+  }
+
+  // For non-numeric prefixes:
   // Extract the non-metadata prefix of each filename. Note that because of the
   // way the regex is constructed, the first match group will never be `null`.
   const triggerAndDigit = allTriggers.map(
