@@ -17,16 +17,29 @@
     </v-list-item>
     <v-dialog v-model="deleteDialog">
       <v-card>
-        <v-card-title> Delete items </v-card-title>
+        <v-card-title>Delete items</v-card-title>
         <v-card-text>
-          You are about to delete these items:<br />
-          {{ items.map(({ name }) => name).join(", ") }}
+          <p>You are about to delete these items:</p>
+          <v-simple-table dense>
+            <tbody>
+              <tr v-for="item in items" :key="item._id">
+                <td>{{ item.name }}</td>
+              </tr>
+            </tbody>
+          </v-simple-table>
         </v-card-text>
         <v-card-actions class="d-flex">
           <v-spacer />
           <v-progress-circular v-if="isLoading" indeterminate />
           <v-btn color="red" @click="deleteItems" :disabled="disableOptions">
-            Delete
+            <template v-if="isLoading">
+              Deleting {{ items.length }} item{{
+                items.length === 1 ? "" : "s"
+              }}...
+            </template>
+            <template v-else>
+              Delete {{ items.length }} item{{ items.length === 1 ? "" : "s" }}
+            </template>
           </v-btn>
           <v-btn
             color="primary"
