@@ -1,5 +1,6 @@
 import { IGirderItem } from "@/girder";
 import { ITileHistogram } from "./images";
+import Shepherd from "shepherd.js";
 
 interface IObject<Values = any> {
   [key: string]: Values;
@@ -1361,6 +1362,55 @@ export interface IDatasetLocation {
   xy: number;
   z: number;
   time: number;
+}
+
+// Tour System Types
+export interface ITourStep {
+  id: string;
+  route: string;
+  element?: string;
+  title: string;
+  text: string;
+  position?: "top" | "bottom" | "left" | "right";
+  waitForElement?: number;
+  modalOverlay?: boolean;
+  beforeShow?: string;
+  onNext?: string;
+  showNextButton?: boolean;
+  onTriggerEvent?: string;
+}
+
+export interface IExtendedShepherdStep extends Shepherd.Step {
+  options: Shepherd.Step.StepOptions & {
+    route?: string;
+    beforeShow?: () => void;
+    onNext?: () => void;
+    hasModalOverlay?: boolean;
+    waitForElement?: number;
+    onTriggerEvent?: string;
+  };
+}
+
+export interface ITourMetadata {
+  name: string;
+  entryPoint: string;
+  popular?: boolean;
+  category?: string;
+}
+
+export interface ITourConfig extends ITourMetadata {
+  steps: ITourStep[];
+  options?: {
+    modalOverlay?: boolean;
+  };
+}
+
+declare module "vue/types/vue" {
+  interface Vue {
+    $startTour: (tourName: string) => Promise<void>;
+    $nextStep: (targetElementId?: string) => Promise<void>;
+    $loadAllTours: () => Promise<Record<string, ITourMetadata>>;
+  }
 }
 
 // https://opengeoscience.github.io/geojs/apidocs/geo.util.html#.pixelCoordinateParams

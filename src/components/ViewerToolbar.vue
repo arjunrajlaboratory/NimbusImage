@@ -1,6 +1,6 @@
 <template>
   <div style="overflow-y: auto; scrollbar-width: none">
-    <div v-mousetrap="mousetrapSliders">
+    <div v-mousetrap="mousetrapSliders" id="viewer-toolbar-tourstep">
       <v-layout>
         <value-slider
           v-model="xy"
@@ -51,11 +51,14 @@
       </v-layout>
       <v-layout v-if="maxTime > 0 && !unrollT">
         <v-checkbox
+          id="timelapse-mode-tourstep"
+          v-tour-trigger="'timelapse-mode-tourtrigger'"
           class="ml-3 my-checkbox"
           v-model="timelapseMode"
           label="Time lapse mode"
         />
         <value-slider
+          id="timelapse-window"
           v-if="timelapseMode"
           v-model="timelapseModeWindow"
           label="Track window"
@@ -66,6 +69,7 @@
       </v-layout>
       <v-layout v-if="timelapseMode">
         <tag-picker
+          id="timelapse-tags-tourstep"
           class="ml-3"
           v-model="timelapseTags"
           style="max-width: 300px"
@@ -73,6 +77,7 @@
       </v-layout>
       <v-layout v-if="timelapseMode">
         <v-checkbox
+          id="timelapse-labels-tourstep"
           class="ml-3 my-checkbox"
           v-model="showTimelapseLabels"
           label="Show labels"

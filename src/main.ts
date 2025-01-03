@@ -25,6 +25,8 @@ import vDescription from "@/utils/v-description";
 import chat from "./store/chat";
 import VueTooltipDirective from "vue-tooltip-directive";
 import NimbusTooltip from "@/components/NimbusTooltip.vue";
+import { installTour } from "./plugins/tour";
+import "./plugins/tour-trigger.directive";
 
 Vue.config.productionTip = false;
 
@@ -37,13 +39,18 @@ main.initialize();
 main.setupWatchers();
 chat.initializeChatDatabase();
 
+const router = new VueRouter({
+  routes,
+});
+
+// Install tour plugin before creating Vue instance
+export const tourManager = installTour(router);
+
 const app = new Vue({
   provide: {
     girderRest: main.girderRestProxy,
   },
-  router: new VueRouter({
-    routes,
-  }),
+  router,
   store,
   vuetify,
   render: (h: any) => h(App),

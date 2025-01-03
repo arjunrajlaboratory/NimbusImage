@@ -1,7 +1,9 @@
 <template>
   <v-container>
     <v-card class="pa-4 my-4">
-      <v-subheader class="headline">Variables</v-subheader>
+      <v-subheader id="variables-tourstep" class="headline"
+        >Variables</v-subheader
+      >
       <v-divider class="my-2" />
       <v-data-table :headers="headers" :items="items" item-key="key" />
     </v-card>
@@ -13,7 +15,9 @@
     </v-card>
     <v-card class="pa-4 my-4" v-else>
       <div class="d-flex">
-        <v-subheader class="headline">Assignments</v-subheader>
+        <v-subheader id="assignments-tourstep" class="headline"
+          >Assignments</v-subheader
+        >
         <v-spacer />
         <v-btn
           @click="resetDimensionsToDefault"
@@ -76,6 +80,7 @@
     <v-row>
       <v-col class="d-flex justify-end">
         <v-checkbox
+          id="transcode-checkbox-tourstep"
           dense
           hide-details
           class="mr-8"
@@ -83,6 +88,8 @@
           label="Transcode into optimized TIFF file"
         />
         <v-btn
+          id="submit-button-tourstep"
+          v-tour-trigger="'submit-button-tourtrigger'"
           @click="submit"
           color="green"
           :disabled="!submitEnabled() || isUploading"

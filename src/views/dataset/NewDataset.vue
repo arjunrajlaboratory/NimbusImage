@@ -51,6 +51,7 @@
       </file-dropzone>
 
       <v-text-field
+        id="dataset-name-input-tourstep"
         v-model="name"
         label="Name"
         required
@@ -59,6 +60,7 @@
       />
 
       <v-textarea
+        id="dataset-description-input-tourstep"
         v-model="description"
         label="Description"
         :readonly="pageTwo"
@@ -83,6 +85,8 @@
 
       <div class="button-bar" v-if="!quickupload || pipelineError">
         <v-btn
+          id="upload-button-tourstep"
+          v-tour-trigger="'upload-button-tourtrigger'"
           :disabled="!valid || !filesSelected || uploading || fileSizeExceeded"
           color="success"
           class="mr-4"

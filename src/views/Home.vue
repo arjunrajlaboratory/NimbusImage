@@ -10,6 +10,7 @@
               <v-card>
                 <v-tabs v-model="uploadTab">
                   <span
+                    id="quick-upload-tab-tourstep"
                     v-tooltip="
                       'Directly upload a file using all default options and then go straight to the image viewer'
                     "
@@ -18,12 +19,15 @@
                     <v-tab> Quick upload/view </v-tab>
                   </span>
                   <span
+                    id="advanced-upload-tab-tourstep"
                     v-tooltip="
                       'Upload a dataset with the option to assign variables to files, composite tiles, and more'
                     "
                     style="display: flex"
                   >
-                    <v-tab> Advanced upload </v-tab>
+                    <v-tab v-tour-trigger="'advanced-upload-tab-tourtrigger'">
+                      Advanced upload
+                    </v-tab>
                   </span>
                 </v-tabs>
               </v-card>

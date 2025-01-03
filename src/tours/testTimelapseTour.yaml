@@ -1,0 +1,37 @@
+name: Time lapse analysis
+entryPoint: datasetview
+popular: true
+category: Analysis
+steps:
+  - id: timelapse-mode
+    route: datasetview
+    element: "#timelapse-mode-tourstep"
+    title: "Click for Timelapse Mode"
+    text: "Enable timelapse mode to allow timelapse analysis. This mode allows you to edit tracks over time."
+    position: "bottom"
+    waitForElement: 1000
+    modalOverlay: true
+    beforeShow: "return console.log('About to show timelapse mode step')"
+    onNext: "return console.log('Next is timelapse window')"
+    showNextButton: false
+    onTriggerEvent: "timelapse-mode-tourtrigger"
+  - id: timelapse-labels
+    route: datasetview
+    element: "#timelapse-labels-tourstep"
+    title: "Timelapse Labels"
+    text: "Enable labels for the timelapse"
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: false
+    beforeShow: "return console.log('About to show timelapse labels step')"
+    onNext: "return console.log('Next is timelapse window')"
+  - id: timelapse-tags
+    route: datasetview
+    element: "#timelapse-tags-tourstep"
+    title: "Timelapse Tags"
+    text: "Select the tags to include in the timelapse"
+    position: "top"
+    waitForElement: 1000
+    modalOverlay: true
+    beforeShow: "return console.log('About to show timelapse tags step')"
+    onNext: "return console.log('Completed tour')"

@@ -1,5 +1,6 @@
 <template>
   <v-expansion-panels
+    id="layer-controls-tourstep"
     class="d-block mt-2"
     multiple
     accordion
