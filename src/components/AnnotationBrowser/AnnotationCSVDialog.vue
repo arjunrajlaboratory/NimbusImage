@@ -27,6 +27,12 @@
           ></v-radio>
         </v-radio-group>
 
+        <v-radio-group v-model="undefinedHandling" class="mb-4">
+          <v-radio label="Empty string" value="empty"></v-radio>
+          <v-radio label="NA" value="na"></v-radio>
+          <v-radio label="NaN" value="nan"></v-radio>
+        </v-radio-group>
+
         <template v-if="propertyExportMode === 'selected'">
           <v-text-field
             v-model="propertyFilter"
@@ -165,6 +171,14 @@ export default class AnnotationCsvDialog extends Vue {
   propertyFilter: string = "";
   selectedPropertyPaths: PropertyPathItem[] = [];
 
+  undefinedHandling: "empty" | "na" | "nan" = "empty";
+
+  private static readonly UNDEFINED_VALUE_MAP = {
+    na: "NA",
+    nan: "NaN",
+    empty: "",
+  } as const;
+
   get filteredPropertyItems() {
     return (
       this.propertyFilter
@@ -230,7 +244,9 @@ export default class AnnotationCsvDialog extends Vue {
         switch (typeof value) {
           case "object":
           case "undefined":
-            row.push("-");
+            row.push(
+              AnnotationCsvDialog.UNDEFINED_VALUE_MAP[this.undefinedHandling],
+            );
             break;
           default:
             row.push(value);
@@ -246,6 +262,7 @@ export default class AnnotationCsvDialog extends Vue {
 
   @Watch("propertyExportMode")
   @Watch("selectedPropertyPaths")
+  @Watch("undefinedHandling")
   @Watch("dialog")
   updateText() {
     if (this.dialog) {
