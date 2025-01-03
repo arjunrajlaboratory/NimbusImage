@@ -173,6 +173,12 @@ export default class AnnotationCsvDialog extends Vue {
 
   undefinedHandling: "empty" | "na" | "nan" = "empty";
 
+  private static readonly UNDEFINED_VALUE_MAP = {
+    na: "NA",
+    nan: "NaN",
+    empty: "",
+  } as const;
+
   get filteredPropertyItems() {
     return (
       this.propertyFilter
@@ -238,17 +244,9 @@ export default class AnnotationCsvDialog extends Vue {
         switch (typeof value) {
           case "object":
           case "undefined":
-            switch (this.undefinedHandling) {
-              case "na":
-                row.push("NA");
-                break;
-              case "nan":
-                row.push("NaN");
-                break;
-              default: // 'empty'
-                row.push("");
-                break;
-            }
+            row.push(
+              AnnotationCsvDialog.UNDEFINED_VALUE_MAP[this.undefinedHandling],
+            );
             break;
           default:
             row.push(value);
