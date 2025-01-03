@@ -25,11 +25,14 @@ import {
   IAnnotationComputeJob,
   IProgressInfo,
   IErrorInfoList,
+  ProgressType,
+  IJobEventData,
 } from "./model";
 
 import Vue, { markRaw } from "vue";
 import { simpleCentroid } from "@/utils/annotation";
 import { logError } from "@/utils/log";
+import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
 @Module({ dynamic: true, store, name: "annotation" })
@@ -925,7 +928,7 @@ export class Annotations extends VuexModule {
   public async computeAnnotationsWithWorker({
     tool,
     workerInterface,
-    progress,
+    progress: progressInfo,
     error,
     callback,
   }: {
@@ -942,6 +945,12 @@ export class Annotations extends VuexModule {
 
     // Clear errors while maintaining reactivity
     Vue.set(error, "errors", []);
+
+    // Create a progress entry using the new progress store
+    const progressId = await progress.create({
+      type: ProgressType.ANNOTATION_COMPUTE,
+      title: `Computing annotations with ${tool.name}`,
+    });
 
     const { location, channel } =
       await this.getAnnotationLocationFromTool(tool);
@@ -962,20 +971,35 @@ export class Annotations extends VuexModule {
     // Keep track of running jobs
     const jobId = response.data[0]?._id;
     if (!jobId) {
+      progress.complete(progressId);
       return null;
     }
+
     const computeJob: IAnnotationComputeJob = {
       toolId: tool.id,
       jobId,
       datasetId,
-      eventCallback: createProgressEventCallback(progress),
+      eventCallback: (jobData: IJobEventData) => {
+        // Handle old progress system
+        createProgressEventCallback(progressInfo)(jobData);
+
+        // Handle new progress system
+        progress.handleJobProgress({
+          jobData,
+          progressId,
+          defaultTitle: `Computing annotations with ${tool.name}`,
+        });
+      },
       errorCallback: createErrorEventCallback(error),
     };
+
     jobs.addJob(computeJob).then((success: boolean) => {
       this.fetchAnnotations();
       // TODO: We may also want to fetch connections and properties here, depending on flags set in the worker image
+      progress.complete(progressId);
       callback(success);
     });
+
     return computeJob;
   }
 

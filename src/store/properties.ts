@@ -19,6 +19,8 @@ import {
   IPropertyComputeJob,
   IProgressInfo,
   TPropertyValue,
+  ProgressType,
+  IJobEventData,
 } from "./model";
 
 import Vue from "vue";
@@ -31,6 +33,7 @@ import annotations from "./annotation";
 import jobs, { createProgressEventCallback } from "./jobs";
 import { findIndexOfPath } from "@/utils/paths";
 import { arePathEquals } from "@/utils/paths";
+import progress from "./progress";
 
 type TNestedObject = { [pathName: string]: TNestedObject };
 
@@ -323,6 +326,13 @@ export class Properties extends VuexModule {
     const datasetId = main.dataset.id;
     const scales = main.scales;
 
+    // Create a progress entry using the new progress store
+    const progressId = await progress.create({
+      type: ProgressType.PROPERTY_COMPUTE,
+      title: `Computing ${property.name}`,
+    });
+
+    // Set up the old progress tracking
     if (!this.propertyStatuses[propertyId]) {
       Vue.set(this.propertyStatuses, propertyId, defaultStatus());
     }
@@ -340,21 +350,37 @@ export class Properties extends VuexModule {
     // Keep track of running jobs
     const jobId = response.data[0]?._id;
     if (!jobId) {
+      progress.complete(progressId); // Clean up progress if job creation fails
       return null;
     }
+
     const computeJob: IPropertyComputeJob = {
       propertyId,
       jobId,
       datasetId,
-      eventCallback: createProgressEventCallback(status.progressInfo),
+      eventCallback: (jobData: IJobEventData) => {
+        // Handle old progress system
+        createProgressEventCallback(status.progressInfo)(jobData);
+
+        // Handle new progress system
+        progress.handleJobProgress({
+          jobData,
+          progressId,
+          defaultTitle: `Computing ${property.name}`,
+        });
+      },
     };
+
     jobs.addJob(computeJob).then(async (success: boolean) => {
       await this.fetchPropertyValues();
       await filters.updateHistograms();
+      // Update both progress systems
+      progress.complete(progressId);
       Vue.set(status, "running", false);
       Vue.set(status, "previousRun", success);
       Vue.set(status, "progressInfo", {});
     });
+
     return computeJob;
   }
 

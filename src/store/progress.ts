@@ -8,7 +8,12 @@ import {
 import store from "./root";
 import main from "./index";
 import jobs from "./jobs";
-import { ProgressType, PROGRESS_TYPE_ORDER, IProgress } from "./model";
+import {
+  ProgressType,
+  PROGRESS_TYPE_ORDER,
+  IProgress,
+  IJobEventData,
+} from "./model";
 import { jobStates } from "./jobs";
 import { v4 as uuidv4 } from "uuid";
 
@@ -331,6 +336,44 @@ class Progress extends VuexModule {
 
   get hasActiveProgresses() {
     return this.items.length > 0;
+  }
+
+  @Action
+  handleJobProgress(params: {
+    jobData: IJobEventData;
+    progressId: string;
+    defaultTitle: string;
+  }) {
+    const { jobData, progressId, defaultTitle } = params;
+    const text = jobData.text;
+
+    if (!text || typeof text !== "string") {
+      return;
+    }
+
+    // Check for job completion
+    if ([jobStates.success, jobStates.error].includes(jobData.status || 0)) {
+      this.complete(progressId);
+      return;
+    }
+
+    // Parse progress updates
+    for (const line of text.split("\n")) {
+      if (!line) continue;
+      try {
+        const data = JSON.parse(line);
+        if (data.error) continue;
+
+        if (typeof data.progress === "number") {
+          this.update({
+            id: progressId,
+            progress: Math.round(data.progress * 100),
+            total: data.total || 100,
+            title: data.title || defaultTitle,
+          });
+        }
+      } catch {}
+    }
   }
 }
 
