@@ -34,7 +34,6 @@ import jobs, { createProgressEventCallback } from "./jobs";
 import { findIndexOfPath } from "@/utils/paths";
 import { arePathEquals } from "@/utils/paths";
 import progress from "./progress";
-import { jobStates } from "./jobs";
 
 type TNestedObject = { [pathName: string]: TNestedObject };
 

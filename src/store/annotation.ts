@@ -12,7 +12,6 @@ import sync from "./sync";
 import jobs, {
   createProgressEventCallback,
   createErrorEventCallback,
-  jobStates,
 } from "./jobs";
 
 import {
