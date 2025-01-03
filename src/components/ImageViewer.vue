@@ -157,7 +157,7 @@
 <script lang="ts">
 // in cosole debugging, you can access the map via
 //  $('.geojs-map').data('data-geojs-map')
-import { Vue, Component, Watch } from "vue-property-decorator";
+import { Vue, Component, Watch, Prop } from "vue-property-decorator";
 import annotationStore from "@/store/annotation";
 import progressStore from "@/store/progress";
 import store from "@/store";
@@ -260,6 +260,19 @@ function isMouseStartEvent(evt: MouseEvent): boolean {
   },
 })
 export default class ImageViewer extends Vue {
+  // TODO: I'm not sure if we really need this watcher, because I'm not sure this is how to redraw
+  // the images after a large image change.
+  @Prop({ type: Boolean, default: false }) readonly shouldResetMaps!: boolean;
+
+  @Watch("shouldResetMaps")
+  onShouldResetMapsChange(newValue: boolean) {
+    if (newValue) {
+      this.resetMapsOnDraw = true;
+      this.draw();
+      this.$emit("reset-complete");
+    }
+  }
+
   readonly store = store;
   readonly annotationStore = annotationStore;
   readonly girderResources = girderResources;
@@ -531,9 +544,9 @@ export default class ImageViewer extends Vue {
   }
 
   // TODO: This currently does nothing. However, this used to be where the
-  // histogram cachine was reloaded based on the running jobs. We could implement
-  // something like that again if we want to show the progress bars for the
-  // various caching processes (histograms, annotations, quad frames, etc.).
+  // histogram cache progress was reloaded based on the running jobs. We could
+  // implement something like that again if we want to show the progress bars for
+  // the various caching processes (histograms, annotations, quad frames, etc.).
   async datasetReset() {
     const datasetId = this.dataset?.id;
     if (!datasetId) {

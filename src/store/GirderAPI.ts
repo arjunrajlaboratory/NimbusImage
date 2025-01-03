@@ -6,6 +6,7 @@ import {
   IGirderUser,
   IGirderFile,
   IGirderAssetstore,
+  IGirderLargeImage,
 } from "@/girder";
 import {
   configurationBaseKeys,
@@ -418,6 +419,7 @@ export default class GirderAPI {
       "metadata",
       JSON.stringify({
         subtype: "contrastDataset",
+        selectedLargeImageId: null,
       }),
     );
     return this.client.post("folder", data).then((r) => asDataset(r.data));
@@ -429,6 +431,28 @@ export default class GirderAPI {
         subtype: "contrastDataset",
       })
       .then((r) => asDataset(r.data));
+  }
+
+  async updateDatasetMetadata(
+    datasetId: string,
+    metadata: Record<string, any>,
+  ) {
+    // First get existing metadata
+    const response = await this.client.get(`folder/${datasetId}`);
+    const existingMetadata = response.data.meta || {};
+
+    // Merge existing metadata with new metadata
+    const updatedMetadata = {
+      ...existingMetadata,
+      ...metadata,
+    };
+
+    const data = new FormData();
+    data.set("id", datasetId);
+    data.set("metadata", JSON.stringify(updatedMetadata));
+
+    // Update the dataset metadata
+    return this.client.put(`folder/${datasetId}/metadata`, data);
   }
 
   deleteDataset(dataset: IDataset): Promise<IDataset> {

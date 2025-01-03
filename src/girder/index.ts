@@ -42,6 +42,16 @@ export interface IGirderFile extends IGirderBase {
   _modelType: "file";
 }
 
+// TODO: Update this type as we decide what the largeImage object should look like
+export interface IGirderLargeImage extends IGirderItem {
+  largeImage: {
+    sourceName: string;
+    sourceKey: string;
+    fileId: string;
+    [key: string]: any;
+  };
+}
+
 export type IGirderLocation =
   | IGirderUser
   | IGirderFolder

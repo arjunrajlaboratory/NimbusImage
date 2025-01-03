@@ -7,10 +7,19 @@ import {
 } from "vuex-module-decorators";
 import store from "./root";
 import main from "./index";
-import { IGirderFolder, IGirderItem, IGirderSelectAble } from "@/girder";
+import {
+  IGirderFolder,
+  IGirderItem,
+  IGirderLargeImage,
+  IGirderSelectAble,
+} from "@/girder";
 import Vue from "vue";
 import { IDataset, IDatasetConfiguration } from "./model";
-import { asConfigurationItem, asDataset, parseTiles } from "./GirderAPI";
+import GirderAPI, {
+  asConfigurationItem,
+  asDataset,
+  parseTiles,
+} from "./GirderAPI";
 
 /**
  * Store to cache requests to resources, mostly items and folder
@@ -163,8 +172,18 @@ export class GirderResources extends VuexModule {
       return null;
     }
     const baseDataset = asDataset(folder);
-    // Just use the first image if it exists
-    const imageItem = items!.find((d) => d.largeImage);
+
+    // For a contrast dataset, the selectedLargeImageId is the id of the
+    // large image that is currently selected. It may or may not exist.
+    // If not, then default to the first large image (previous behavior).
+    let imageItem: IGirderItem | undefined = undefined;
+    if (folder.meta.selectedLargeImageId) {
+      imageItem =
+        (await this.getItem(folder.meta.selectedLargeImageId)) || undefined;
+    } else {
+      imageItem = items!.find((d) => d.largeImage);
+    }
+
     if (imageItem === undefined) {
       return baseDataset;
     }
@@ -173,6 +192,65 @@ export class GirderResources extends VuexModule {
       ...baseDataset,
       ...parseTiles(imageItem, tiles, unrollXY, unrollZ, unrollT),
     };
+  }
+
+  @Action
+  public async getAllLargeImages(
+    id: string,
+  ): Promise<IGirderLargeImage[] | undefined> {
+    const [folder, items] = await Promise.all([
+      this.getFolder(id),
+      main.api.getItems(id),
+    ]);
+    if (!folder) {
+      return [];
+    }
+
+    const allItems = items!.filter((d) => d.largeImage);
+    return allItems as IGirderLargeImage[];
+  }
+
+  @Action
+  public async getCurrentLargeImage(
+    datasetId: string,
+  ): Promise<IGirderLargeImage | null> {
+    const resource = await this.getFolder(datasetId);
+    if (!resource) {
+      return null;
+    }
+
+    if (resource.meta.subtype !== "contrastDataset") {
+      return null;
+    }
+
+    // For a contrast dataset, the selectedLargeImageId is the id of the large image that is currently selected
+    // It may or may not exist. If not, then default to the first large image
+    if (resource.meta.selectedLargeImageId) {
+      const item = await this.getItem(resource.meta.selectedLargeImageId);
+      if (item) {
+        return item as IGirderLargeImage;
+      } // If there is no item with that id, then just keep going to look for first large image
+    }
+
+    // If there is no selectedLargeImageId, then return the first large image
+    const items = await main.api.getItems(datasetId);
+    const imageItem = items!.find((d) => d.largeImage);
+    return imageItem as IGirderLargeImage | null;
+  }
+
+  @Action
+  public async setCurrentLargeImage({
+    datasetId,
+    largeImage,
+  }: {
+    datasetId: string;
+    largeImage: IGirderLargeImage;
+  }): Promise<IGirderLargeImage | null> {
+    await main.api.updateDatasetMetadata(datasetId, {
+      selectedLargeImageId: largeImage._id,
+    });
+
+    return largeImage;
   }
 }
 

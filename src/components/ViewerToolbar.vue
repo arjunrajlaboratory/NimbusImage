@@ -1,5 +1,5 @@
 <template>
-  <div style="overflow-y: auto; scrollbar-width: none">
+  <div style="display: inline-block">
     <div v-mousetrap="mousetrapSliders" id="viewer-toolbar-tourstep">
       <v-layout>
         <value-slider
@@ -67,6 +67,17 @@
           :title="'Track window size'"
         />
       </v-layout>
+      <!-- TODO: Only display if there is more than one large image -->
+      <v-select
+        v-model="currentLargeImage"
+        :items="largeImages"
+        item-text="name"
+        item-value="_id"
+        label="Select Image"
+        dense
+        style="width: auto; padding: 4px 0"
+        hide-details
+      />
       <v-layout v-if="timelapseMode">
         <tag-picker
           id="timelapse-tags-tourstep"
@@ -144,8 +155,10 @@ import Toolset from "@/tools/toolsets/Toolset.vue";
 import store from "@/store";
 import filterStore from "@/store/filters";
 import annotationStore from "@/store/annotation";
+import girderResources from "@/store/girderResources";
 import { ITagAnnotationFilter, TLayerMode } from "@/store/model";
 import { IHotkey } from "@/utils/v-mousetrap";
+import { IGirderLargeImage } from "@/girder";
 
 @Component({
   components: {
@@ -158,6 +171,54 @@ export default class ViewerToolbar extends Vue {
   readonly store = store;
   readonly filterStore = filterStore;
   readonly annotationStore = annotationStore;
+  readonly girderResources = girderResources;
+
+  largeImages: IGirderLargeImage[] = [];
+  currentLargeImage: IGirderLargeImage | null = null;
+
+  async mounted() {
+    await this.loadLargeImages();
+  }
+
+  async loadLargeImages() {
+    if (this.store.dataset?.id) {
+      const images = await this.girderResources.getAllLargeImages(
+        this.store.dataset.id,
+      );
+      if (images) {
+        this.largeImages = images;
+        if (this.largeImages.length > 0 && !this.currentLargeImage) {
+          const largeImage = await this.girderResources.getCurrentLargeImage(
+            this.store.dataset.id,
+          );
+          if (largeImage) {
+            this.currentLargeImage = largeImage;
+          }
+        }
+      }
+    }
+  }
+
+  @Watch("currentLargeImage")
+  handleImageChange(largeImageId: string) {
+    if (!largeImageId || !this.store.dataset?.id) return;
+    const largeImage = this.largeImages.find((d) => d._id === largeImageId);
+    if (!largeImage) return;
+
+    this.girderResources.setCurrentLargeImage({
+      datasetId: this.store.dataset.id,
+      largeImage,
+    });
+
+    this.store.api.flushCaches();
+    this.store.refreshDataset();
+
+    // Emit event to trigger map redraw
+    // TODO: I'm not sure if this is necessary, because I'm not sure this is how to redraw
+    // the images after a large image change. Passes event up to Viewer.vue, which send a prop
+    // to ImageViewer.vue, which triggers a redraw.
+    this.$emit("image-changed");
+  }
 
   get xy() {
     return this.store.xy;
