@@ -225,8 +225,8 @@ importers:
         specifier: ^9.19.2
         version: 9.20.1(eslint@8.56.0)
       geojs:
-        specifier: ^1.12.10
-        version: 1.12.10(@babel/preset-env@7.23.8(@babel/core@7.23.7))(autoprefixer@10.4.16(postcss@8.4.33))(webpack@5.89.0)(wslink@1.12.4)
+        specifier: ^1.13.1
+        version: 1.13.1(@babel/preset-env@7.23.8(@babel/core@7.23.7))(autoprefixer@10.4.16(postcss@8.4.33))(webpack@5.89.0)(wslink@1.12.4)
       jsdom:
         specifier: ^24.0.0
         version: 24.0.0(canvas@2.11.2)
@@ -2450,8 +2450,8 @@ packages:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
 
-  geojs@1.12.10:
-    resolution: {integrity: sha512-yHs5czBniMqKvCoiT1F/pLsDV6MakmZg3Jp1pVYRD45ep/fyzVftkhjFIpMwtR1zfyGY1bAsf7/HbMFFdNm3Ag==}
+  geojs@1.13.1:
+    resolution: {integrity: sha512-VD3XBpZpQhJ8vbItyoT+9Q9w1WALLoGz3eHNqReexO6DWLpeOv9QNSmjcERWoxvmjlSyLPi/B/0f1i9+B3noXQ==}
 
   get-caller-file@2.0.5:
     resolution: {integrity: sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==}
@@ -6739,7 +6739,7 @@ snapshots:
   gensync@1.0.0-beta.2:
     optional: true
 
-  geojs@1.12.10(@babel/preset-env@7.23.8(@babel/core@7.23.7))(autoprefixer@10.4.16(postcss@8.4.33))(webpack@5.89.0)(wslink@1.12.4):
+  geojs@1.13.1(@babel/preset-env@7.23.8(@babel/core@7.23.7))(autoprefixer@10.4.16(postcss@8.4.33))(webpack@5.89.0)(wslink@1.12.4):
     dependencies:
       canvas: 2.11.2
       color-name: 2.0.0

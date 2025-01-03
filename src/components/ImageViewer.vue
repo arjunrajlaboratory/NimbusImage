@@ -1021,7 +1021,10 @@ export default class ImageViewer extends Vue {
         return result;
       });
       layer._tileBounds = (tile: IGeoJSTile) => {
-        const s = Math.pow(2, someImage.levels - 1 - (tile.index.level || 0));
+        const s = Math.pow(
+          2,
+          someImage.levels - 1 - Math.max(tile.index.level || 0, 0),
+        );
         const w = Math.ceil(someImage.sizeX / s),
           h = Math.ceil(someImage.sizeY / s);
         const txy = {
