@@ -128,6 +128,17 @@ export class Jobs extends VuexModule {
     return jobsPerToolId;
   }
 
+  @Action
+  async getJobStatus(jobId: string): Promise<number> {
+    try {
+      const response = await main.girderRest.get(`job/${jobId}`);
+      return response.data.status;
+    } catch (error) {
+      logError(`Failed to get status for job ${jobId}`);
+      return jobStates.error;
+    }
+  }
+
   @Mutation
   rawAddJob(job: IComputeJob) {
     let jobData: IJobInfo | undefined = this.jobInfoMap[job.jobId];

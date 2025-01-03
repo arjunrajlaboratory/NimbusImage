@@ -242,6 +242,13 @@ class Progress extends VuexModule {
         }
       },
     });
+
+    // Sometimes the job completes before the callback even fires (for small images)
+    // So we check the status here to make sure we don't leave a progress item hanging
+    const status = await jobs.getJobStatus(jobId);
+    if ([jobStates.success, jobStates.error].includes(status)) {
+      this.complete(progressId);
+    }
   }
 
   @Action
