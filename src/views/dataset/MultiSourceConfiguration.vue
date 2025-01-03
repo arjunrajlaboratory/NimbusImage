@@ -7,7 +7,7 @@
       <v-divider class="my-2" />
       <v-data-table :headers="headers" :items="items" item-key="key" />
       <v-checkbox
-        v-if="isRGBFile && rgbBandCount > 1"
+        v-if="isMultiBandRGBFile"
         v-model="splitRGBBands"
         label="Split RGB files into separate channels (otherwise, only the red channel will be used)"
         class="mt-4"
@@ -250,8 +250,8 @@ export default class MultiSourceConfiguration extends Vue {
 
   splitRGBBands: boolean = true;
 
-  get hasRGBBands() {
-    return this.rgbBandCount > 1;
+  get isMultiBandRGBFile(): boolean {
+    return this.isRGBFile && this.rgbBandCount > 1;
   }
 
   // Call join on the array, cutting out elements or the first word if too long and adding hyphens
@@ -739,7 +739,7 @@ export default class MultiSourceConfiguration extends Vue {
     }
 
     // Handle RGB expansion
-    if (this.isRGBFile && this.rgbBandCount > 1 && this.splitRGBBands) {
+    if (this.isMultiBandRGBFile && this.splitRGBBands) {
       // Assuming 3 bands (R,G,B), adjust as needed if dynamic
       const bandSuffixes = [" - Red", " - Green", " - Blue"];
       const expandedChannels: string[] = [];
@@ -768,7 +768,7 @@ export default class MultiSourceConfiguration extends Vue {
         const item = this.girderItems[itemIdx];
         const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
         for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-          if (this.isRGBFile && this.rgbBandCount > 1 && this.splitRGBBands) {
+          if (this.isMultiBandRGBFile && this.splitRGBBands) {
             // For RGB files, create separate sources for each band
             for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
               compositingSources.push({
@@ -926,7 +926,7 @@ export default class MultiSourceConfiguration extends Vue {
         }
         const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
         for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-          if (this.isRGBFile && this.rgbBandCount > 1 && this.splitRGBBands) {
+          if (this.isMultiBandRGBFile && this.splitRGBBands) {
             // For RGB files, create separate sources for each band
             for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
               basicSources.push({
@@ -972,7 +972,7 @@ export default class MultiSourceConfiguration extends Vue {
           channels,
           sources,
           uniformSources: true,
-          singleBand: this.isRGBFile && this.rgbBandCount > 1,
+          singleBand: this.isMultiBandRGBFile,
         }),
         transcode: this.transcode,
         eventCallback,
@@ -1004,7 +1004,7 @@ export default class MultiSourceConfiguration extends Vue {
   }
 
   get isRGBAssignmentValid(): boolean {
-    if (this.isRGBFile && this.rgbBandCount > 1 && this.splitRGBBands) {
+    if (this.isMultiBandRGBFile && this.splitRGBBands) {
       return this.assignments.C === null;
     }
     return true;
