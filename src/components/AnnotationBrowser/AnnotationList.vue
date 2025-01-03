@@ -6,26 +6,41 @@
       <v-container style="width: auto">
         <v-row>
           <v-col class="pa-0 mx-1">
-            <v-btn block small @click.stop="deleteSelected">
+            <v-btn color="error" small outlined @click.stop="deleteSelected">
               Delete Selected
             </v-btn>
           </v-col>
           <v-col class="pa-0 mx-1">
-            <v-btn block small @click.stop="deleteUnselected">
-              Delete Unselected
-            </v-btn>
-          </v-col>
-        </v-row>
-        <v-row>
-          <v-col class="pa-0 mx-1">
-            <v-btn block small @click.stop="showTagDialog = true">
-              Tag Selected
-            </v-btn>
-          </v-col>
-          <v-col class="pa-0 mx-1">
-            <v-btn block small @click.stop="showColorDialog = true">
-              Color Selected
-            </v-btn>
+            <v-menu offset-y>
+              <template v-slot:activator="{ on, attrs }">
+                <v-btn small v-bind="attrs" v-on="on">
+                  More Actions
+                  <v-icon small right>mdi-chevron-down</v-icon>
+                </v-btn>
+              </template>
+              <v-list>
+                <v-list-item @click="deleteUnselected">
+                  <v-list-item-icon>
+                    <v-icon>mdi-delete-outline</v-icon>
+                  </v-list-item-icon>
+                  <v-list-item-title>Delete Unselected</v-list-item-title>
+                </v-list-item>
+
+                <v-list-item @click="showTagDialog = true">
+                  <v-list-item-icon>
+                    <v-icon>mdi-tag</v-icon>
+                  </v-list-item-icon>
+                  <v-list-item-title>Tag Selected</v-list-item-title>
+                </v-list-item>
+
+                <v-list-item @click="showColorDialog = true">
+                  <v-list-item-icon>
+                    <v-icon>mdi-palette</v-icon>
+                  </v-list-item-icon>
+                  <v-list-item-title>Color Selected</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
           </v-col>
         </v-row>
       </v-container>
