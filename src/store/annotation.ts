@@ -985,36 +985,11 @@ export class Annotations extends VuexModule {
         createProgressEventCallback(progressInfo)(jobData);
 
         // Handle new progress system
-        const text = jobData.text;
-        if (!text || typeof text !== "string") {
-          return;
-        }
-
-        // Check for job completion
-        if (
-          [jobStates.success, jobStates.error].includes(jobData.status || 0)
-        ) {
-          progress.complete(progressId);
-          return;
-        }
-
-        // Parse progress updates
-        for (const line of text.split("\n")) {
-          if (!line) continue;
-          try {
-            const data = JSON.parse(line);
-            if (data.error) continue;
-
-            if (typeof data.progress === "number") {
-              progress.update({
-                id: progressId,
-                progress: Math.round(data.progress * 100),
-                total: data.total || 100,
-                title: data.title || `Computing annotations with ${tool.name}`,
-              });
-            }
-          } catch {}
-        }
+        progress.handleJobProgress({
+          jobData,
+          progressId,
+          defaultTitle: `Computing annotations with ${tool.name}`,
+        });
       },
       errorCallback: createErrorEventCallback(error),
     };

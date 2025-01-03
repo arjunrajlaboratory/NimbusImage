@@ -360,39 +360,15 @@ export class Properties extends VuexModule {
       jobId,
       datasetId,
       eventCallback: (jobData: IJobEventData) => {
-        const text = jobData.text;
-        if (!text || typeof text !== "string") {
-          return;
-        }
-
-        // Check for job completion
-        if (
-          [jobStates.success, jobStates.error].includes(jobData.status || 0)
-        ) {
-          progress.complete(progressId);
-          return;
-        }
-
         // Handle old progress system
         createProgressEventCallback(status.progressInfo)(jobData);
 
         // Handle new progress system
-        for (const line of text.split("\n")) {
-          if (!line) continue;
-          try {
-            const data = JSON.parse(line);
-            if (data.error) continue;
-
-            if (typeof data.progress === "number") {
-              progress.update({
-                id: progressId,
-                progress: Math.round(data.progress * 100),
-                total: data.total || 100,
-                title: data.title || `Computing ${property.name}`,
-              });
-            }
-          } catch {}
-        }
+        progress.handleJobProgress({
+          jobData,
+          progressId,
+          defaultTitle: `Computing ${property.name}`,
+        });
       },
     };
 
