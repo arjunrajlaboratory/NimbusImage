@@ -119,7 +119,7 @@
           v-on="on"
           class="layer-info-btn"
           color="primary"
-          v-if="store.layers.length > 0"
+          :disabled="store.layers.length === 0"
         >
           <v-icon size="38">mdi-palette</v-icon>
         </v-btn>
