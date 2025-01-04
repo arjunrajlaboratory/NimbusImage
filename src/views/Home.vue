@@ -475,8 +475,6 @@ export default class Home extends Vue {
     background-color: rgba(var(--v-primary-base), 0.1);
   }
 }
-
-// Remove any existing hover states that might interfere
 </style>
 
 <style lang="scss">
