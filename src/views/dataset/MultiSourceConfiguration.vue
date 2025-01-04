@@ -254,6 +254,35 @@ export default class MultiSourceConfiguration extends Vue {
     return this.isRGBFile && this.rgbBandCount > 1;
   }
 
+  detectColorVsChannels(tileMeta: ITileMeta) {
+    const bandCount = tileMeta.bandCount || 1;
+    let isColor = false;
+
+    // 1) Check photometricInterpretation first, if present
+    const photo = tileMeta.metadata?.photometricInterpretation;
+    if (photo === 2 || photo === "RGB") {
+      isColor = true;
+    }
+
+    // 2) If we have an explicit channel dimension > 1,
+    //    that means multi-channel, not a single-plane color.
+    //    In that case, override isColor = false
+    if (tileMeta.IndexRange?.IndexC > 1) {
+      isColor = false;
+    }
+
+    // 3) If we still don't know, fallback to:
+    //    - bandCount = 3 (or 4) => color
+    //    - otherwise => multi-channel
+    if (typeof photo === "undefined") {
+      if (bandCount === 3 || bandCount === 4) {
+        isColor = true;
+      }
+    }
+
+    return isColor;
+  }
+
   // Call join on the array, cutting out elements or the first word if too long and adding hyphens
   // Output is always shorter than maxChars
   // For example: ["foo", "bar", "foobar", "barfoo"] => "foo, bar, foobar..."
@@ -558,7 +587,7 @@ export default class MultiSourceConfiguration extends Vue {
     // Check for RGB bands
     const firstItem = this.tilesMetadata[0];
     this.rgbBandCount = firstItem?.bandCount || 0;
-    this.isRGBFile = this.rgbBandCount > 1;
+    this.isRGBFile = this.detectColorVsChannels(firstItem);
 
     let maxFramesPerItem = 0;
     let hasFileVariable = false;
@@ -679,6 +708,31 @@ export default class MultiSourceConfiguration extends Vue {
     }
   }
 
+  getCompositingValueFromAssignments(
+    dim: TDimensions,
+    itemIdx: number,
+    frameIdx: number,
+  ): number {
+    const assignmentValue = this.assignments[dim]?.value;
+    if (!assignmentValue) {
+      return 0;
+    }
+    switch (assignmentValue.source) {
+      case Sources.File:
+        const fileData = assignmentValue.data as IFileSourceData;
+        return fileData[itemIdx]
+          ? Math.floor(frameIdx / fileData[itemIdx].stride) %
+              fileData[itemIdx].range
+          : 0;
+      case Sources.Filename:
+        const filenameData = assignmentValue.data as IFilenameSourceData;
+        const filename = this.girderItems[itemIdx].name;
+        return filenameData.valueIdxPerFilename[filename];
+      case Sources.Images:
+        return frameIdx;
+    }
+  }
+
   async submit() {
     const jsonId = await this.generateJson();
 
@@ -767,9 +821,10 @@ export default class MultiSourceConfiguration extends Vue {
       for (let itemIdx = 0; itemIdx < this.girderItems.length; ++itemIdx) {
         const item = this.girderItems[itemIdx];
         const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
-        for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-          if (this.isMultiBandRGBFile && this.splitRGBBands) {
-            // For RGB files, create separate sources for each band
+
+        if (this.isMultiBandRGBFile && this.splitRGBBands) {
+          // For RGB files, create separate sources for each band
+          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
             for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
               compositingSources.push({
                 path: item.name,
@@ -783,13 +838,31 @@ export default class MultiSourceConfiguration extends Vue {
                 },
               });
             }
-          } else {
+          }
+        } else {
+          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
             compositingSources.push({
               path: item.name,
-              xySet: this.getValueFromAssignments("XY", itemIdx, frameIdx),
-              zSet: this.getValueFromAssignments("Z", itemIdx, frameIdx),
-              tSet: this.getValueFromAssignments("T", itemIdx, frameIdx),
-              cSet: this.getValueFromAssignments("C", itemIdx, frameIdx),
+              xySet: this.getCompositingValueFromAssignments(
+                "XY",
+                itemIdx,
+                frameIdx,
+              ),
+              zSet: this.getCompositingValueFromAssignments(
+                "Z",
+                itemIdx,
+                frameIdx,
+              ),
+              tSet: this.getCompositingValueFromAssignments(
+                "T",
+                itemIdx,
+                frameIdx,
+              ),
+              cSet: this.getCompositingValueFromAssignments(
+                "C",
+                itemIdx,
+                frameIdx,
+              ),
               frames: [frameIdx],
             });
           }
@@ -924,9 +997,10 @@ export default class MultiSourceConfiguration extends Vue {
         if (!this.tilesMetadata || !this.tilesInternalMetadata) {
           continue;
         }
-        const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
-        for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-          if (this.isMultiBandRGBFile && this.splitRGBBands) {
+
+        if (this.isMultiBandRGBFile && this.splitRGBBands) {
+          const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
+          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
             // For RGB files, create separate sources for each band
             for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
               basicSources.push({
@@ -942,15 +1016,46 @@ export default class MultiSourceConfiguration extends Vue {
                 ],
               });
             }
-          } else {
-            basicSources.push({
-              path: item.name,
-              tValues: [this.getValueFromAssignments("T", itemIdx, frameIdx)],
-              zValues: [this.getValueFromAssignments("Z", itemIdx, frameIdx)],
-              xyValues: [this.getValueFromAssignments("XY", itemIdx, frameIdx)],
-              cValues: [this.getValueFromAssignments("C", itemIdx, frameIdx)],
-            });
           }
+        } else {
+          const framesAsAxes: TFramesAsAxes = {};
+          const dimValues: { [dim in TLowDim]?: number } = {};
+
+          for (const dim in this.assignments) {
+            const upDim = dim as TUpDim;
+            const lowDim = dim.toLowerCase() as TLowDim;
+            const assignment = this.assignments[upDim];
+            // Add file strides
+            if (!assignment) {
+              continue;
+            }
+            let dimValue = 0;
+            switch (assignment.value.source) {
+              case Sources.File:
+                const fileSource = assignment.value.data;
+                framesAsAxes[lowDim] = fileSource[itemIdx].stride;
+                break;
+
+              case Sources.Filename:
+                const filenameSource = assignment.value.data;
+                dimValue = filenameSource.valueIdxPerFilename[item.name];
+                break;
+
+              case Sources.Images:
+                framesAsAxes[lowDim] = 1;
+                break;
+            }
+            dimValues[lowDim] = dimValue;
+          }
+          const newSource: IBasicSource = {
+            path: item.name,
+            framesAsAxes,
+          };
+          for (const dim in dimValues) {
+            const lowDim = dim as TLowDim;
+            newSource[`${lowDim}Values`] = [dimValues[lowDim]!];
+          }
+          basicSources.push(newSource);
         }
       }
     }
