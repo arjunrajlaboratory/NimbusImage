@@ -19,6 +19,24 @@
               >
                 {{ debouncedChipsPerItemId[item._id]?.chips?.[0].text }}
               </v-chip>
+              <v-chip
+                v-else-if="computedChipsIds.has(item._id)"
+                x-small
+                class="ma-1 type-indicator"
+                color="grey darken-1"
+              >
+                Loading info...
+              </v-chip>
+              <span class="text-caption grey--text mx-2">
+                <v-tooltip right>
+                  <template v-slot:activator="{ on, attrs }">
+                    <span v-bind="attrs" v-on="on">
+                      Modified: {{ formatDate(item.updated) }}
+                    </span>
+                  </template>
+                  Created: {{ formatDate(item.created) }}
+                </v-tooltip>
+              </span>
               <v-spacer />
               <span
                 v-if="
@@ -104,6 +122,24 @@
         >
           {{ debouncedChipsPerItemId[props.item._id]?.chips?.[0].text }}
         </v-chip>
+        <v-chip
+          v-else-if="computedChipsIds.has(props.item._id)"
+          x-small
+          class="ma-1 type-indicator"
+          color="grey darken-1"
+        >
+          Loading info...
+        </v-chip>
+        <span class="text-caption grey--text mx-2">
+          <v-tooltip right>
+            <template v-slot:activator="{ on, attrs }">
+              <span v-bind="attrs" v-on="on">
+                Modified: {{ formatDate(props.item.updated) }}
+              </span>
+            </template>
+            Created: {{ formatDate(props.item.created) }}
+          </v-tooltip>
+        </span>
         <v-spacer />
         <span
           v-if="
@@ -170,6 +206,7 @@ import {
 import { RawLocation } from "vue-router";
 import FileManagerOptions from "./FileManagerOptions.vue";
 import { Search as GirderSearch } from "@/girder/components";
+import { format } from "date-fns";
 import { vuetifyConfig } from "@/girder";
 import { logError } from "@/utils/log";
 import AlertDialog from "@/components/AlertDialog.vue";
@@ -288,6 +325,17 @@ export default class CustomFileManager extends Vue {
   emitSelected() {
     if (this.selectable) {
       this.$emit("selected", this.selected);
+    }
+  }
+
+  formatDate(dateString: string) {
+    if (!dateString) return "";
+    try {
+      const date = new Date(dateString);
+      return format(date, "MMM d, yyyy h:mm a");
+      // This would output something like: "Dec 31, 2024 1:07 PM"
+    } catch (e) {
+      return dateString;
     }
   }
 
