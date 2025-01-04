@@ -22,11 +22,10 @@ steps:
     route: root
     element: "#advanced-upload-tab-tourstep"
     title: "Advanced Upload"
-    text: "Use advanced upload to assign variables to files, composite tiles, and configure additional options. Click the 'Advanced Upload' tab and then drag and drop a file into the dropzone. I'll meet you on the other side."
+    text: "Use advanced upload to assign variables to files, composite tiles, and configure additional options. Either drag and drop some files into the 'Advanced Upload' box or click the box to bring up the file browser. I'll meet you on the other side."
     position: "bottom"
+    modalOverlay: true
     waitForElement: 1000
-    showNextButton: false
-    onTriggerEvent: "advanced-upload-tab-tourtrigger"
   - id: dataset-name
     route: newdataset
     element: "#dataset-name-input-tourstep"

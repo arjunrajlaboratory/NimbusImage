@@ -6,19 +6,49 @@
         <girder-search @select="searchInput" hide-search-icon>
           <template #searchresult="item">
             {{ renderItem(item) }}
-            <v-icon class="mr-2">{{ iconToMdi(iconFromItem(item)) }}</v-icon>
-            {{ item.name }}
-            <div class="d-flex flex-wrap">
+            <div class="d-flex align-center" style="width: 100%">
+              <v-icon class="mr-2">{{ iconToMdi(iconFromItem(item)) }}</v-icon>
+              <span>{{ item.name }}</span>
+              <!-- First chip only -->
               <v-chip
-                small
-                v-for="(chipItem, i) in debouncedChipsPerItemId[item._id]"
-                :key="'chip ' + i + ' item ' + item._id"
-                class="ma-1"
-                v-bind="chipItem"
+                v-if="debouncedChipsPerItemId[item._id]?.chips?.[0]"
+                x-small
+                class="ma-1 type-indicator"
+                v-bind="debouncedChipsPerItemId[item._id]?.chips?.[0]"
                 @click.stop
               >
-                {{ chipItem.text }}
+                {{ debouncedChipsPerItemId[item._id]?.chips?.[0].text }}
               </v-chip>
+              <v-spacer />
+              <span
+                v-if="
+                  debouncedChipsPerItemId[item._id]?.type === 'configuration'
+                "
+                class="chip-label"
+                >Datasets in collection:</span
+              >
+              <span
+                v-else-if="
+                  debouncedChipsPerItemId[item._id]?.type === 'dataset'
+                "
+                class="chip-label"
+                >In collections:</span
+              >
+              <div class="d-flex flex-wrap">
+                <!-- Rest of the chips -->
+                <v-chip
+                  x-small
+                  v-for="(chipItem, i) in debouncedChipsPerItemId[
+                    item._id
+                  ]?.chips?.slice(1)"
+                  :key="'chip ' + i + ' item ' + item._id"
+                  class="ma-1"
+                  v-bind="chipItem"
+                  @click.stop
+                >
+                  {{ chipItem.text }}
+                </v-chip>
+              </div>
             </div>
           </template>
         </girder-search>
@@ -63,11 +93,39 @@
         </v-btn>
       </template>
       <template #row-widget="props">
-        {{ renderItem(props.item) }}
+        <span>{{ renderItem(props.item) }}</span>
+        <!-- First chip only -->
+        <v-chip
+          v-if="debouncedChipsPerItemId[props.item._id]?.chips?.[0]"
+          x-small
+          class="ma-1 type-indicator"
+          v-bind="debouncedChipsPerItemId[props.item._id]?.chips?.[0]"
+          @click.stop
+        >
+          {{ debouncedChipsPerItemId[props.item._id]?.chips?.[0].text }}
+        </v-chip>
+        <v-spacer />
+        <span
+          v-if="
+            debouncedChipsPerItemId[props.item._id]?.type === 'configuration'
+          "
+          class="chip-label"
+          >Datasets in collection:</span
+        >
+        <span
+          v-else-if="
+            debouncedChipsPerItemId[props.item._id]?.type === 'dataset'
+          "
+          class="chip-label"
+          >In collections:</span
+        >
         <div class="d-flex flex-wrap">
+          <!-- Rest of the chips -->
           <v-chip
-            small
-            v-for="(chipItem, i) in debouncedChipsPerItemId[props.item._id]"
+            x-small
+            v-for="(chipItem, i) in debouncedChipsPerItemId[
+              props.item._id
+            ]?.chips?.slice(1)"
             :key="'chip ' + i + ' item ' + props.item._id"
             class="ma-1"
             v-bind="chipItem"
@@ -76,7 +134,6 @@
             {{ chipItem.text }}
           </v-chip>
         </div>
-        <v-spacer />
         <v-menu v-model="rowOptionsMenu[props.item._id]" v-if="menuEnabled">
           <template v-slot:activator="{ on, attrs }">
             <v-btn icon v-bind="attrs" v-on="on">
@@ -121,6 +178,11 @@ interface IChipAttrs {
   text: string;
   color: string;
   to?: RawLocation;
+}
+
+interface IChipsPerItemId {
+  chips: IChipAttrs[];
+  type: string;
 }
 
 @Component({
@@ -168,8 +230,8 @@ export default class CustomFileManager extends Vue {
 
   overridingLocation: IGirderLocation | null = null;
   defaultLocation: IGirderLocation | null = null;
-  chipsPerItemId: { [itemId: string]: IChipAttrs[] } = {};
-  debouncedChipsPerItemId: { [itemId: string]: IChipAttrs[] } = {};
+  chipsPerItemId: { [itemId: string]: IChipsPerItemId } = {};
+  debouncedChipsPerItemId: { [itemId: string]: IChipsPerItemId } = {};
   pendingChips: number = 0;
   lastPendingChip: Promise<any> = Promise.resolve();
   computedChipsIds: Set<string> = new Set();
@@ -243,10 +305,10 @@ export default class CustomFileManager extends Vue {
 
   iconFromItem(selectable: IGirderSelectAble) {
     if (isDatasetFolder(selectable)) {
-      return "fileMultiple";
+      return "box_com";
     }
     if (isConfigurationItem(selectable)) {
-      return "settings";
+      return "collection";
     }
     switch (selectable._modelType) {
       case "file":
@@ -256,6 +318,8 @@ export default class CustomFileManager extends Vue {
         return "folder";
       case "user":
         return "user";
+      default:
+        return "file";
     }
   }
 
@@ -290,12 +354,17 @@ export default class CustomFileManager extends Vue {
     const baseChip = {
       color: "blue",
     };
+
+    // Store the type with the chips
+    let itemType = null;
+
     // Add chips if item is a dataset
     if (isDatasetFolder(selectable)) {
+      itemType = "dataset";
       // Dataset chip
       const firstChip: IChipAttrs = {
         text: "Dataset",
-        color: "green",
+        color: "grey darken-1",
       };
       if (this.clickableChips) {
         firstChip.to = {
@@ -320,6 +389,7 @@ export default class CustomFileManager extends Vue {
                 const newChip: IChipAttrs = {
                   ...baseChip,
                   text: configInfo.name,
+                  color: "#4baeff",
                 };
                 if (this.clickableChips) {
                   newChip.to = {
@@ -335,12 +405,14 @@ export default class CustomFileManager extends Vue {
         );
       }
     }
+
     // Add chips if item is a configuration
     if (isConfigurationItem(selectable)) {
-      // Configuration chip
+      itemType = "configuration";
+      // Collection chip
       const firstChip: IChipAttrs = {
-        text: "Configuration",
-        color: "green",
+        text: "Collection",
+        color: "grey darken-1",
       };
       if (this.clickableChips) {
         firstChip.to = {
@@ -365,10 +437,11 @@ export default class CustomFileManager extends Vue {
                 const newChip: IChipAttrs = {
                   ...baseChip,
                   text: datasetInfo.name,
+                  color: "#e57373",
                 };
                 if (this.clickableChips) {
                   newChip.to = {
-                    name: "dataset",
+                    name: "dataset", // TODO: change to datasetview. I tried, but I don't think I am passing the right IDs. We need the right datasetViewId.
                     params: {
                       datasetId: view.datasetId,
                     },
@@ -380,7 +453,11 @@ export default class CustomFileManager extends Vue {
         );
       }
     }
-    return ret;
+
+    return {
+      chips: ret,
+      type: itemType,
+    };
   }
 
   async handleFileUpload(event: Event) {
@@ -441,5 +518,36 @@ export default class CustomFileManager extends Vue {
   > .girder-file-browser
   > .v-data-table__wrapper {
   overflow-y: auto;
+}
+
+.v-icon[class*="mdi-package"] {
+  // targets box_com icon (datasets)
+  color: #e57373;
+}
+.v-icon[class*="mdi-file-tree"] {
+  // targets collection icon (configurations)
+  color: #4baeff !important; // I'm not sure why this one in particular needs to be flagged !important, but it does
+}
+.v-icon[class*="mdi-file"] {
+  // targets regular files
+  color: #ee8bff;
+}
+.v-icon[class*="mdi-folder"] {
+  // targets folders
+  color: #b0a69a;
+}
+
+.type-indicator {
+  border-radius: 4px !important; // More rectangular
+  font-family: "Roboto Mono", monospace !important; // Monospace font
+  font-size: 9px !important;
+  letter-spacing: 0.5px !important;
+  height: 16px !important;
+  padding: 0 4px !important;
+  font-weight: 500 !important;
+}
+
+.chip-label {
+  font-size: 0.9em;
 }
 </style>
