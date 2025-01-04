@@ -131,7 +131,7 @@ export class TourManager {
       useModalOverlay: true,
       defaultStepOptions: {
         classes: "shepherd-theme-custom",
-        scrollTo: true,
+        scrollTo: false,
         cancelIcon: {
           enabled: true,
         },

@@ -29,6 +29,13 @@ steps:
     modalOverlay: false
     waitForElement: 1000
 
+  - id: zoom-instruction-tourstep
+    route: datasetview
+    title: "Zooming"
+    text: "Use your mouse wheel or trackpad to zoom in and out of the image."
+    position: "left"
+    modalOverlay: false
+    
   - id: pan-instruction-tourstep
     route: datasetview
     title: "Panning the Image"
@@ -36,13 +43,6 @@ steps:
     position: "left"
     modalOverlay: false
     waitForElement: 1000
-
-  - id: zoom-instruction-tourstep
-    route: datasetview
-    title: "Zooming"
-    text: "Use your mouse wheel or trackpad to zoom in and out of the image."
-    position: "left"
-    modalOverlay: false
 
   - id: rotation-instruction-tourstep
     route: datasetview
@@ -57,7 +57,7 @@ steps:
     title: "Reset Rotation"
     text: "Click here to reset the image rotation back to 0 degrees."
     position: "top"
-    waitForElement: 5000
+    waitForElement: 1000
     modalOverlay: false
 
   - id: lock-view-tourstep
