@@ -237,6 +237,13 @@ export class TourManager {
                   offset: [0, 15],
                 },
               },
+              {
+                name: "preventOverflow",
+                options: {
+                  boundary: "viewport",
+                  padding: 10,
+                },
+              },
             ],
           },
           title: step.title,
