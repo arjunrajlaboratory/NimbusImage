@@ -31,10 +31,10 @@
                 <v-tooltip right>
                   <template v-slot:activator="{ on, attrs }">
                     <span v-bind="attrs" v-on="on">
-                      Modified: {{ formatDate(item.updated) }}
+                      Modified: {{ formatDateString(item.updated) }}
                     </span>
                   </template>
-                  Created: {{ formatDate(item.created) }}
+                  Created: {{ formatDateString(item.created) }}
                 </v-tooltip>
               </span>
               <v-spacer />
@@ -134,10 +134,10 @@
           <v-tooltip right>
             <template v-slot:activator="{ on, attrs }">
               <span v-bind="attrs" v-on="on">
-                Modified: {{ formatDate(props.item.updated) }}
+                Modified: {{ formatDateString(props.item.updated) }}
               </span>
             </template>
-            Created: {{ formatDate(props.item.created) }}
+            Created: {{ formatDateString(props.item.created) }}
           </v-tooltip>
         </span>
         <v-spacer />
@@ -206,7 +206,7 @@ import {
 import { RawLocation } from "vue-router";
 import FileManagerOptions from "./FileManagerOptions.vue";
 import { Search as GirderSearch } from "@/girder/components";
-import { format } from "date-fns";
+import { formatDateString } from "@/utils/date";
 import { vuetifyConfig } from "@/girder";
 import { logError } from "@/utils/log";
 import AlertDialog from "@/components/AlertDialog.vue";
@@ -277,6 +277,8 @@ export default class CustomFileManager extends Vue {
   selectedItemsOptionsMenu: boolean = false;
   rowOptionsMenu: { [itemId: string]: boolean } = {};
 
+  formatDateString = formatDateString; // Import function from utils/date.ts for use in template
+
   $refs!: {
     fileInput: HTMLInputElement;
     alert: AlertDialog;
@@ -325,17 +327,6 @@ export default class CustomFileManager extends Vue {
   emitSelected() {
     if (this.selectable) {
       this.$emit("selected", this.selected);
-    }
-  }
-
-  formatDate(dateString: string) {
-    if (!dateString) return "";
-    try {
-      const date = new Date(dateString);
-      return format(date, "MMM d, yyyy h:mm a");
-      // This would output something like: "Dec 31, 2024 1:07 PM"
-    } catch (e) {
-      return dateString;
     }
   }
 

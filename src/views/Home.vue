@@ -128,6 +128,16 @@
                             }}
                           </v-list-item-subtitle>
                         </v-list-item-content>
+                        <v-list-item-action
+                          class="my-0 d-flex flex-column justify-center"
+                        >
+                          <div class="text-caption grey--text text-left">
+                            <div>Last accessed:</div>
+                            <div style="line-height: 1.1">
+                              {{ formatDateNumber(d.datasetView.lastViewed) }}
+                            </div>
+                          </div>
+                        </v-list-item-action>
                       </v-list-item>
                     </template>
                     <div v-if="d.datasetInfo.description">
@@ -202,6 +212,7 @@ import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
+import { formatDateNumber } from "@/utils/date";
 import { logError } from "@/utils/log";
 
 @Component({
@@ -216,6 +227,8 @@ export default class Home extends Vue {
   readonly store = store;
   readonly girderResources = girderResources;
   readonly isDatasetFolder = isDatasetFolder;
+
+  formatDateNumber = formatDateNumber; // Import function from utils/date.ts for use in template
 
   get location() {
     return this.store.folderLocation;
