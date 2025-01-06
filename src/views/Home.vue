@@ -6,7 +6,9 @@
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4">Upload dataset</v-subheader>
+              <v-subheader class="headline mb-4 section-title text-h5"
+                >Upload dataset</v-subheader
+              >
               <v-row class="flex-column">
                 <!-- Quick Upload -->
                 <v-card
@@ -55,7 +57,7 @@
                 <v-card
                   id="advanced-upload-tab-tourstep"
                   class="upload-card"
-                  height="120"
+                  height="140"
                   :class="{ 'drag-active': isDraggingAdvanced }"
                   @click="openFileSelector('advanced')"
                   @dragenter.prevent="isDraggingAdvanced = true"
@@ -92,7 +94,9 @@
           </v-col>
           <v-col class="fill-height recent-dataset">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4">Recent datasets</v-subheader>
+              <v-subheader class="headline mb-4 section-title text-h5"
+                >Recent datasets</v-subheader
+              >
               <v-list two-line class="scrollable py-0">
                 <div v-for="d in datasetViewItems" :key="d.datasetView.id">
                   <v-tooltip
@@ -156,7 +160,9 @@
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4">Browse</v-subheader>
+              <v-subheader class="headline mb-4 section-title text-h5"
+                >Browse</v-subheader
+              >
               <div class="scrollable">
                 <custom-file-manager
                   :location="location"
@@ -487,6 +493,12 @@ export default class Home extends Vue {
     border: 2px dashed var(--v-primary-base);
     background-color: rgba(var(--v-primary-base), 0.1);
   }
+}
+
+.section-title {
+  padding: 0;
+  height: auto;
+  display: block;
 }
 </style>
 

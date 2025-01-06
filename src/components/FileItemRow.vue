@@ -21,11 +21,11 @@
     <span
       class="text-caption grey--text mx-2"
       v-tooltip="{
-        content: `Created: ${formatDateString(item.created)}`,
+        content: `Created: ${item.created ? formatDateString(item.created) : 'Unknown'}`,
         position: 'right',
       }"
     >
-      Modified: {{ formatDateString(item.updated) }}
+      Modified: {{ item.updated ? formatDateString(item.updated) : "Unknown" }}
     </span>
     <v-spacer />
     <span

@@ -13,8 +13,8 @@ export interface IGirderAssetstore {
 interface IGirderBase {
   _id: string;
   name: string;
-  created: string;
-  updated: string;
+  created?: string;
+  updated?: string;
   icon?: string;
 }
 
