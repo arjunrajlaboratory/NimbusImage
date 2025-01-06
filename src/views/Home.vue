@@ -185,7 +185,7 @@
       </v-container>
     </template>
 
-    <!-- Add a hidden file input -->
+    <!-- Hidden file input that enables native file selection when clicking upload cards -->
     <input
       type="file"
       ref="fileInput"

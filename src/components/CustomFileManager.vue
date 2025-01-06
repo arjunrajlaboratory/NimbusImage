@@ -5,69 +5,13 @@
       <div class="flex-grow-1">
         <girder-search @select="searchInput" hide-search-icon>
           <template #searchresult="item">
-            {{ renderItem(item) }}
-            <div class="d-flex align-center" style="width: 100%">
-              <v-icon class="mr-2">{{ iconToMdi(iconFromItem(item)) }}</v-icon>
-              <span>{{ item.name }}</span>
-              <!-- First chip only -->
-              <v-chip
-                v-if="debouncedChipsPerItemId[item._id]?.chips?.[0]"
-                x-small
-                class="ma-1 type-indicator"
-                v-bind="debouncedChipsPerItemId[item._id]?.chips?.[0]"
-                @click.stop
-              >
-                {{ debouncedChipsPerItemId[item._id]?.chips?.[0].text }}
-              </v-chip>
-              <v-chip
-                v-else-if="computedChipsIds.has(item._id)"
-                x-small
-                class="ma-1 type-indicator"
-                color="grey darken-1"
-              >
-                Loading info...
-              </v-chip>
-              <span class="text-caption grey--text mx-2">
-                <v-tooltip right>
-                  <template v-slot:activator="{ on, attrs }">
-                    <span v-bind="attrs" v-on="on">
-                      Modified: {{ formatDateString(item.updated) }}
-                    </span>
-                  </template>
-                  Created: {{ formatDateString(item.created) }}
-                </v-tooltip>
-              </span>
-              <v-spacer />
-              <span
-                v-if="
-                  debouncedChipsPerItemId[item._id]?.type === 'configuration'
-                "
-                class="chip-label"
-                >Datasets in collection:</span
-              >
-              <span
-                v-else-if="
-                  debouncedChipsPerItemId[item._id]?.type === 'dataset'
-                "
-                class="chip-label"
-                >In collections:</span
-              >
-              <div class="d-flex flex-wrap">
-                <!-- Rest of the chips -->
-                <v-chip
-                  x-small
-                  v-for="(chipItem, i) in debouncedChipsPerItemId[
-                    item._id
-                  ]?.chips?.slice(1)"
-                  :key="'chip ' + i + ' item ' + item._id"
-                  class="ma-1"
-                  v-bind="chipItem"
-                  @click.stop
-                >
-                  {{ chipItem.text }}
-                </v-chip>
-              </div>
-            </div>
+            <v-icon class="mr-2">{{ iconToMdi(iconFromItem(item)) }}</v-icon>
+            <span>{{ item.name }}</span>
+            <file-item-row
+              :item="item"
+              :debouncedChipsPerItemId="debouncedChipsPerItemId"
+              :computedChipsIds="computedChipsIds"
+            />
           </template>
         </girder-search>
       </div>
@@ -112,80 +56,30 @@
       </template>
       <template #row-widget="props">
         <span>{{ renderItem(props.item) }}</span>
-        <!-- First chip only -->
-        <v-chip
-          v-if="debouncedChipsPerItemId[props.item._id]?.chips?.[0]"
-          x-small
-          class="ma-1 type-indicator"
-          v-bind="debouncedChipsPerItemId[props.item._id]?.chips?.[0]"
-          @click.stop
+        <file-item-row
+          :item="props.item"
+          :debouncedChipsPerItemId="debouncedChipsPerItemId"
+          :computedChipsIds="computedChipsIds"
         >
-          {{ debouncedChipsPerItemId[props.item._id]?.chips?.[0].text }}
-        </v-chip>
-        <v-chip
-          v-else-if="computedChipsIds.has(props.item._id)"
-          x-small
-          class="ma-1 type-indicator"
-          color="grey darken-1"
-        >
-          Loading info...
-        </v-chip>
-        <span class="text-caption grey--text mx-2">
-          <v-tooltip right>
-            <template v-slot:activator="{ on, attrs }">
-              <span v-bind="attrs" v-on="on">
-                Modified: {{ formatDateString(props.item.updated) }}
-              </span>
-            </template>
-            Created: {{ formatDateString(props.item.created) }}
-          </v-tooltip>
-        </span>
-        <v-spacer />
-        <span
-          v-if="
-            debouncedChipsPerItemId[props.item._id]?.type === 'configuration'
-          "
-          class="chip-label"
-          >Datasets in collection:</span
-        >
-        <span
-          v-else-if="
-            debouncedChipsPerItemId[props.item._id]?.type === 'dataset'
-          "
-          class="chip-label"
-          >In collections:</span
-        >
-        <div class="d-flex flex-wrap">
-          <!-- Rest of the chips -->
-          <v-chip
-            x-small
-            v-for="(chipItem, i) in debouncedChipsPerItemId[
-              props.item._id
-            ]?.chips?.slice(1)"
-            :key="'chip ' + i + ' item ' + props.item._id"
-            class="ma-1"
-            v-bind="chipItem"
-            @click.stop
-          >
-            {{ chipItem.text }}
-          </v-chip>
-        </div>
-        <v-menu v-model="rowOptionsMenu[props.item._id]" v-if="menuEnabled">
-          <template v-slot:activator="{ on, attrs }">
-            <v-btn icon v-bind="attrs" v-on="on">
-              <v-icon>mdi-dots-vertical</v-icon>
-            </v-btn>
+          <template #actions>
+            <v-menu v-model="rowOptionsMenu[props.item._id]" v-if="menuEnabled">
+              <template v-slot:activator="{ on, attrs }">
+                <v-btn icon v-bind="attrs" v-on="on">
+                  <v-icon>mdi-dots-vertical</v-icon>
+                </v-btn>
+              </template>
+              <file-manager-options
+                @itemsChanged="reloadItems"
+                :items="[props.item]"
+                @closeMenu="rowOptionsMenu[props.item._id] = false"
+              >
+                <template #default="optionsSlotAttributes">
+                  <slot name="options" v-bind="optionsSlotAttributes"></slot>
+                </template>
+              </file-manager-options>
+            </v-menu>
           </template>
-          <file-manager-options
-            @itemsChanged="reloadItems"
-            :items="[props.item]"
-            @closeMenu="rowOptionsMenu[props.item._id] = false"
-          >
-            <template #default="optionsSlotAttributes">
-              <slot name="options" v-bind="optionsSlotAttributes"></slot>
-            </template>
-          </file-manager-options>
-        </v-menu>
+        </file-item-row>
       </template>
     </girder-file-manager>
     <alert-dialog ref="alert"></alert-dialog>
@@ -205,6 +99,7 @@ import {
 } from "@/utils/girderSelectable";
 import { RawLocation } from "vue-router";
 import FileManagerOptions from "./FileManagerOptions.vue";
+import FileItemRow from "./FileItemRow.vue";
 import { Search as GirderSearch } from "@/girder/components";
 import { formatDateString } from "@/utils/date";
 import { vuetifyConfig } from "@/girder";
@@ -227,6 +122,7 @@ interface IChipsPerItemId {
     FileManagerOptions,
     GirderSearch,
     AlertDialog,
+    FileItemRow,
     GirderFileManager: () =>
       import("@/girder/components").then((mod) => mod.FileManager),
   },

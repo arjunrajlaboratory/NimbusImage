@@ -36,6 +36,6 @@ export default Vue.extend({
 
 <style>
 .nimbus-tooltip-overlay {
-  z-index: 1000 !important;
+  z-index: 10001 !important;
 }
 </style>
