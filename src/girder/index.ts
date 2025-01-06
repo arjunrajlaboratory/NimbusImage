@@ -10,50 +10,42 @@ export interface IGirderAssetstore {
   name: string;
 }
 
-export interface IGirderUser {
-  name: string; // TODO check
-  _modelType: "user";
+interface IGirderBase {
   _id: string;
+  name: string;
+  created?: string;
+  updated?: string;
   icon?: string;
+}
 
+export interface IGirderUser extends IGirderBase {
+  _modelType: "user";
   login: string;
+}
+
+export interface IGirderItem extends IGirderBase {
+  _modelType: "item";
+  description: string;
+  folderId: string;
+  meta: any;
+  largeImage?: any;
+}
+
+export interface IGirderFolder extends IGirderBase {
+  _modelType: "folder";
+  description: string;
+  meta: any;
+  parentId?: string;
+}
+
+export interface IGirderFile extends IGirderBase {
+  _modelType: "file";
 }
 
 export type IGirderLocation =
   | IGirderUser
   | IGirderFolder
   | { type: "collections" | "root" | "users" };
-
-export interface IGirderItem {
-  _modelType: "item";
-  _id: string;
-
-  name: string;
-  description: string;
-  folderId: string;
-  meta: any;
-  icon?: string;
-  largeImage?: any;
-}
-
-export interface IGirderFolder {
-  _modelType: "folder";
-  _id: string;
-
-  name: string;
-  description: string;
-  meta: any;
-  icon?: string;
-  parentId?: string;
-}
-
-export interface IGirderFile {
-  _modelType: "file";
-  _id: string;
-
-  name: string;
-  icon?: string;
-}
 
 export type IGirderSelectAble =
   | IGirderItem

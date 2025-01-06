@@ -6,55 +6,97 @@
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4">Upload dataset</v-subheader>
-              <v-card>
-                <v-tabs v-model="uploadTab">
-                  <span
-                    id="quick-upload-tab-tourstep"
-                    v-tooltip="
-                      'Directly upload a file using all default options and then go straight to the image viewer'
-                    "
-                    style="display: flex"
+              <v-subheader class="headline mb-4 section-title text-h5"
+                >Upload dataset</v-subheader
+              >
+              <v-row class="flex-column">
+                <!-- Quick Upload -->
+                <v-card
+                  id="quick-upload-tab-tourstep"
+                  class="mb-4 upload-card"
+                  height="140"
+                  :class="{ 'drag-active': isDraggingQuick }"
+                  @click="openFileSelector('quick')"
+                  @dragenter.prevent="isDraggingQuick = true"
+                  @dragleave.prevent="onDragLeave('quick', $event)"
+                  @dragover.prevent
+                  @drop.prevent="handleQuickDrop"
+                >
+                  <v-overlay
+                    :value="isDraggingQuick"
+                    absolute
+                    opacity="0.8"
+                    class="d-flex align-center justify-center"
                   >
-                    <v-tab> Quick upload/view </v-tab>
-                  </span>
-                  <span
-                    id="advanced-upload-tab-tourstep"
-                    v-tooltip="
-                      'Upload a dataset with the option to assign variables to files, composite tiles, and more'
-                    "
-                    style="display: flex"
+                    <div class="text-h6 white--text text-center">
+                      Drop files here for quick upload
+                    </div>
+                  </v-overlay>
+
+                  <v-card-text class="d-flex align-center fill-height">
+                    <v-icon size="48" color="primary" class="mr-4"
+                      >mdi-upload</v-icon
+                    >
+                    <div class="flex-grow-1">
+                      <div class="text-h6 mb-1">Quick Upload</div>
+                      <div class="text-body-2">
+                        Click or drag here to directly upload files using
+                        default options and go straight to the image viewer.
+                      </div>
+                      <div class="text-caption mt-2">
+                        Dataset will be uploaded to folder:
+                        <strong>{{ locationName }}</strong>
+                        <br />
+                        Collection will be created in same folder as dataset
+                      </div>
+                    </div>
+                  </v-card-text>
+                </v-card>
+
+                <!-- Advanced Upload -->
+                <v-card
+                  id="advanced-upload-tab-tourstep"
+                  class="upload-card"
+                  height="140"
+                  :class="{ 'drag-active': isDraggingAdvanced }"
+                  @click="openFileSelector('advanced')"
+                  @dragenter.prevent="isDraggingAdvanced = true"
+                  @dragleave.prevent="onDragLeave('advanced', $event)"
+                  @dragover.prevent
+                  @drop.prevent="handleAdvancedDrop"
+                >
+                  <v-overlay
+                    :value="isDraggingAdvanced"
+                    absolute
+                    opacity="0.8"
+                    class="d-flex align-center justify-center"
                   >
-                    <v-tab v-tour-trigger="'advanced-upload-tab-tourtrigger'">
-                      Advanced upload
-                    </v-tab>
-                  </span>
-                </v-tabs>
-              </v-card>
-              <v-tabs-items v-model="uploadTab" class="flex-window-items">
-                <v-tab-item>
-                  <file-dropzone @input="quickUpload">
-                    <template #afterMessage>
-                      <span class="caption d-flex">
-                        <div>
-                          Dataset will be uploaded to:
-                          <strong>{{ locationName }}</strong>
-                          <br />
-                          Collection will be created in same folder as dataset
-                        </div>
-                      </span>
-                    </template>
-                  </file-dropzone>
-                </v-tab-item>
-                <v-tab-item>
-                  <file-dropzone @input="comprehensiveUpload" />
-                </v-tab-item>
-              </v-tabs-items>
+                    <div class="text-h6 white--text text-center">
+                      Drop files here for advanced upload
+                    </div>
+                  </v-overlay>
+
+                  <v-card-text class="d-flex align-center fill-height">
+                    <v-icon size="48" color="primary" class="mr-4"
+                      >mdi-cog</v-icon
+                    >
+                    <div class="flex-grow-1">
+                      <div class="text-h6 mb-1">Advanced Upload</div>
+                      <div class="text-body-2">
+                        Click or drag here to upload with custom options for
+                        assigning variables, compositing tiles, and more.
+                      </div>
+                    </div>
+                  </v-card-text>
+                </v-card>
+              </v-row>
             </section>
           </v-col>
           <v-col class="fill-height recent-dataset">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4">Recent datasets</v-subheader>
+              <v-subheader class="headline mb-4 section-title text-h5"
+                >Recent datasets</v-subheader
+              >
               <v-list two-line class="scrollable py-0">
                 <div v-for="d in datasetViewItems" :key="d.datasetView.id">
                   <v-tooltip
@@ -90,6 +132,16 @@
                             }}
                           </v-list-item-subtitle>
                         </v-list-item-content>
+                        <v-list-item-action
+                          class="my-0 d-flex flex-column justify-center"
+                        >
+                          <div class="text-caption grey--text text-left">
+                            <div>Last accessed:</div>
+                            <div style="line-height: 1.1">
+                              {{ formatDateNumber(d.datasetView.lastViewed) }}
+                            </div>
+                          </div>
+                        </v-list-item-action>
                       </v-list-item>
                     </template>
                     <div v-if="d.datasetInfo.description">
@@ -108,32 +160,45 @@
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4">Browse</v-subheader>
-              <custom-file-manager
-                :location="location"
-                @update:location="onLocationUpdate"
-                :initial-items-per-page="100"
-                :items-per-page-options="[10, 20, 50, 100, -1]"
+              <v-subheader class="headline mb-4 section-title text-h5"
+                >Browse</v-subheader
               >
-                <template #options="{ items }">
-                  <!--
-                    Add an option to open the dataset folder in the file browser.
-                    When clicking the dataset, the user is taken to the dataset route.
-                  -->
-                  <template
-                    v-if="items.length === 1 && isDatasetFolder(items[0])"
-                  >
-                    <v-list-item @click="location = items[0]">
-                      <v-list-item-title> Browse </v-list-item-title>
-                    </v-list-item>
+              <div class="scrollable">
+                <custom-file-manager
+                  :location="location"
+                  @update:location="onLocationUpdate"
+                  :initial-items-per-page="100"
+                  :items-per-page-options="[10, 20, 50, 100, -1]"
+                >
+                  <template #options="{ items }">
+                    <!--
+                      Add an option to open the dataset folder in the file browser.
+                      When clicking the dataset, the user is taken to the dataset route.
+                    -->
+                    <template
+                      v-if="items.length === 1 && isDatasetFolder(items[0])"
+                    >
+                      <v-list-item @click="location = items[0]">
+                        <v-list-item-title> Browse </v-list-item-title>
+                      </v-list-item>
+                    </template>
                   </template>
-                </template>
-              </custom-file-manager>
+                </custom-file-manager>
+              </div>
             </section>
           </v-col>
         </v-row>
       </v-container>
     </template>
+
+    <!-- Hidden file input that enables native file selection when clicking upload cards -->
+    <input
+      type="file"
+      ref="fileInput"
+      multiple
+      style="display: none"
+      @change="handleFileSelect"
+    />
   </div>
 </template>
 
@@ -153,6 +218,7 @@ import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
+import { formatDateNumber } from "@/utils/date";
 import { logError } from "@/utils/log";
 
 @Component({
@@ -168,6 +234,8 @@ export default class Home extends Vue {
   readonly girderResources = girderResources;
   readonly isDatasetFolder = isDatasetFolder;
 
+  formatDateNumber = formatDateNumber; // Import function from utils/date.ts for use in template
+
   get location() {
     return this.store.folderLocation;
   }
@@ -176,7 +244,10 @@ export default class Home extends Vue {
     this.store.setFolderLocation(location);
   }
 
-  uploadTab: number = 0;
+  isDraggingQuick: boolean = false;
+  isDraggingAdvanced: boolean = false;
+
+  private activeUploadType: "quick" | "advanced" | null = null;
 
   get locationName() {
     // @ts-ignore: name or login may be undefined, but this case is checked
@@ -196,7 +267,7 @@ export default class Home extends Vue {
   get datasetViews() {
     const result: IDatasetView[] = [];
     const used: Set<string> = new Set();
-    this.store.recentDatasetViews.forEach((datasetView) => {
+    this.store.recentDatasetViews.forEach((datasetView: IDatasetView) => {
       if (!used.has(datasetView.id)) {
         used.add(datasetView.id);
         result.push(datasetView);
@@ -318,10 +389,70 @@ export default class Home extends Vue {
       } as any,
     });
   }
+
+  handleQuickDrop(event: DragEvent) {
+    this.isDraggingQuick = false;
+    const files = Array.from(event.dataTransfer?.files || []);
+    this.quickUpload(files);
+  }
+
+  handleAdvancedDrop(event: DragEvent) {
+    this.isDraggingAdvanced = false;
+    const files = Array.from(event.dataTransfer?.files || []);
+    this.comprehensiveUpload(files);
+  }
+
+  openFileSelector(type: "quick" | "advanced") {
+    this.activeUploadType = type;
+    const input = this.$refs.fileInput as HTMLInputElement;
+    input.click();
+  }
+
+  handleFileSelect(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files || []);
+
+    if (this.activeUploadType === "quick") {
+      this.quickUpload(files);
+    } else {
+      this.comprehensiveUpload(files);
+    }
+
+    // Reset the input
+    input.value = "";
+    this.activeUploadType = null;
+  }
+
+  onDragLeave(type: "quick" | "advanced", event: DragEvent) {
+    // Check if we're leaving the card and not entering a child element
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = event.clientX;
+    const y = event.clientY;
+
+    // Check if the mouse has actually left the card boundaries
+    if (
+      x <= rect.left ||
+      x >= rect.right ||
+      y <= rect.top ||
+      y >= rect.bottom
+    ) {
+      if (type === "quick") {
+        this.isDraggingQuick = false;
+      } else {
+        this.isDraggingAdvanced = false;
+      }
+    }
+  }
 }
 </script>
 
 <style lang="scss" scoped>
+.home-container {
+  height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+}
+
 .home-row {
   flex-wrap: nowrap;
 }
@@ -338,22 +469,36 @@ export default class Home extends Vue {
   max-width: 60%;
 }
 
-.home-container {
-  height: calc(100vh - 64px);
-  display: flex;
-  flex-direction: column;
-}
-
 .home-section {
+  height: 100%;
   display: flex;
   flex-direction: column;
-  height: inherit;
 }
 
 .scrollable {
   overflow-y: auto;
+  flex-grow: 1;
   min-height: 0;
-  height: inherit;
+}
+
+.drag-active {
+  border: 2px dashed white;
+}
+
+.upload-card {
+  cursor: pointer;
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+
+  &.drag-active {
+    border: 2px dashed var(--v-primary-base);
+    background-color: rgba(var(--v-primary-base), 0.1);
+  }
+}
+
+.section-title {
+  padding: 0;
+  height: auto;
+  display: block;
 }
 </style>
 
