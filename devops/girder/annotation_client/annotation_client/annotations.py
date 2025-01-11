@@ -350,10 +350,11 @@ class UPennContrastAnnotationClient:
 
     def addMultipleAnnotationPropertyValues(self, entries):
         """
-        Save one or multiple computed property values for the specified annotations in batches
-        to avoid MongoDB's 16MB document size limit.
+        Save one or multiple computed property values for the specified
+        annotations in batches to avoid MongoDB's 16MB document size limit.
 
-        :param list entries: A list of property values for annotations. Each entry is of type 
+        :param list entries: A list of property values for annotations. Each
+        entry is of type
             { "datasetId": string, "annotationId": string,
             "values": { [propertyId: string]: recursive_dict_of_numbers } }
         """
