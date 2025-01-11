@@ -46,7 +46,7 @@ class ClaudeChatResource(Resource):
         messages = data.get('messages', [])
         logger.debug(f"Processing {len(messages)} messages")
         try:
-            response = self.client.beta.prompt_caching.messages.create(
+            response = self.client.messages.create(
                 model="claude-3-5-sonnet-20241022",
                 max_tokens=1000,
                 temperature=0,
