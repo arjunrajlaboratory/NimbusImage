@@ -200,24 +200,25 @@ export default class ViewerToolbar extends Vue {
   }
 
   @Watch("currentLargeImage")
-  handleImageChange(largeImageId: string) {
+  async handleImageChange(largeImageId: string) {
     if (!largeImageId || !this.store.dataset?.id) return;
     const largeImage = this.largeImages.find((d) => d._id === largeImageId);
     if (!largeImage) return;
 
-    this.girderResources.setCurrentLargeImage({
+    await this.girderResources.setCurrentLargeImage({
       datasetId: this.store.dataset.id,
       largeImage,
     });
 
-    this.store.api.flushCaches();
-    this.store.refreshDataset();
+    await this.girderResources.forceFetchResource({
+      id: this.store.dataset.id,
+      type: "folder",
+    });
 
-    // Emit event to trigger map redraw
-    // TODO: I'm not sure if this is necessary, because I'm not sure this is how to redraw
-    // the images after a large image change. Passes event up to Viewer.vue, which send a prop
-    // to ImageViewer.vue, which triggers a redraw.
-    this.$emit("image-changed");
+    // TODO: Perhaps we need to flush caches here? Otherwise, we might not update the histograms and so on appropriately.
+    // It doesn't seem to be a problem, but probably requires more testing.
+    // this.store.api.flushCaches();
+    await this.store.refreshDataset();
   }
 
   get xy() {
