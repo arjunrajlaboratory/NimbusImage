@@ -131,7 +131,7 @@ export class TourManager {
       useModalOverlay: true,
       defaultStepOptions: {
         classes: "shepherd-theme-custom",
-        scrollTo: true,
+        scrollTo: false,
         cancelIcon: {
           enabled: true,
         },
@@ -235,6 +235,13 @@ export class TourManager {
                 name: "offset",
                 options: {
                   offset: [0, 15],
+                },
+              },
+              {
+                name: "preventOverflow",
+                options: {
+                  boundary: "viewport",
+                  padding: 10,
                 },
               },
             ],
