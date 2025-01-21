@@ -6,7 +6,6 @@ import {
   IGirderUser,
   IGirderFile,
   IGirderAssetstore,
-  IGirderLargeImage,
 } from "@/girder";
 import {
   configurationBaseKeys,

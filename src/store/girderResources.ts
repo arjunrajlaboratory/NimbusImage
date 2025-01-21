@@ -15,14 +15,10 @@ import {
 } from "@/girder";
 import Vue from "vue";
 import { IDataset, IDatasetConfiguration } from "./model";
-import GirderAPI, {
-  asConfigurationItem,
-  asDataset,
-  parseTiles,
-} from "./GirderAPI";
+import { asConfigurationItem, asDataset, parseTiles } from "./GirderAPI";
 
 /**
- * Store to cache requests to resources, mostly items and folder
+ * Store to cache requests to resources, mostly items and folders
  */
 @Module({ dynamic: true, store, name: "girderResources" })
 export class GirderResources extends VuexModule {
@@ -229,7 +225,7 @@ export class GirderResources extends VuexModule {
       const item = await this.getItem(resource.meta.selectedLargeImageId);
       if (item) {
         return item as IGirderLargeImage;
-      } // If there is no item with that id, then just keep going to look for first large image
+      }
     }
 
     // If there is no selectedLargeImageId, then return the first large image

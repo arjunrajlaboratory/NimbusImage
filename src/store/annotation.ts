@@ -995,6 +995,7 @@ export class Annotations extends VuexModule {
 
     jobs.addJob(computeJob).then((success: boolean) => {
       this.fetchAnnotations();
+      main.loadLargeImages(); // I'm pretty sure this function won't reload the large image if it's already loaded
       // TODO: We may also want to fetch connections and properties here, depending on flags set in the worker image
       progress.complete(progressId);
       callback(success);

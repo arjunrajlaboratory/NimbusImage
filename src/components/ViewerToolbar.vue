@@ -68,16 +68,7 @@
         />
       </v-layout>
       <!-- TODO: Only display if there is more than one large image -->
-      <v-select
-        v-model="currentLargeImage"
-        :items="largeImages"
-        item-text="name"
-        item-value="_id"
-        label="Select Image"
-        dense
-        style="width: auto; padding: 4px 0"
-        hide-details
-      />
+      <large-image-dropdown />
       <v-layout v-if="timelapseMode">
         <tag-picker
           id="timelapse-tags-tourstep"
@@ -152,74 +143,25 @@ import { Vue, Component, Watch } from "vue-property-decorator";
 import ValueSlider from "./ValueSlider.vue";
 import SwitchToggle from "./SwitchToggle.vue";
 import Toolset from "@/tools/toolsets/Toolset.vue";
+import LargeImageDropdown from "./LargeImageDropdown.vue";
 import store from "@/store";
 import filterStore from "@/store/filters";
 import annotationStore from "@/store/annotation";
-import girderResources from "@/store/girderResources";
 import { ITagAnnotationFilter, TLayerMode } from "@/store/model";
 import { IHotkey } from "@/utils/v-mousetrap";
-import { IGirderLargeImage } from "@/girder";
 
 @Component({
   components: {
     ValueSlider,
     SwitchToggle,
     Toolset,
+    LargeImageDropdown,
   },
 })
 export default class ViewerToolbar extends Vue {
   readonly store = store;
   readonly filterStore = filterStore;
   readonly annotationStore = annotationStore;
-  readonly girderResources = girderResources;
-
-  largeImages: IGirderLargeImage[] = [];
-  currentLargeImage: IGirderLargeImage | null = null;
-
-  async mounted() {
-    await this.loadLargeImages();
-  }
-
-  async loadLargeImages() {
-    if (this.store.dataset?.id) {
-      const images = await this.girderResources.getAllLargeImages(
-        this.store.dataset.id,
-      );
-      if (images) {
-        this.largeImages = images;
-        if (this.largeImages.length > 0 && !this.currentLargeImage) {
-          const largeImage = await this.girderResources.getCurrentLargeImage(
-            this.store.dataset.id,
-          );
-          if (largeImage) {
-            this.currentLargeImage = largeImage;
-          }
-        }
-      }
-    }
-  }
-
-  @Watch("currentLargeImage")
-  async handleImageChange(largeImageId: string) {
-    if (!largeImageId || !this.store.dataset?.id) return;
-    const largeImage = this.largeImages.find((d) => d._id === largeImageId);
-    if (!largeImage) return;
-
-    await this.girderResources.setCurrentLargeImage({
-      datasetId: this.store.dataset.id,
-      largeImage,
-    });
-
-    await this.girderResources.forceFetchResource({
-      id: this.store.dataset.id,
-      type: "folder",
-    });
-
-    // TODO: Perhaps we need to flush caches here? Otherwise, we might not update the histograms and so on appropriately.
-    // It doesn't seem to be a problem, but probably requires more testing.
-    // this.store.api.flushCaches();
-    await this.store.refreshDataset();
-  }
 
   get xy() {
     return this.store.xy;
