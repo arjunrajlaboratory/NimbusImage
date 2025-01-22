@@ -6,6 +6,7 @@ import {
   IGirderUser,
   IGirderFile,
   IGirderAssetstore,
+  IGirderLargeImage,
 } from "@/girder";
 import {
   configurationBaseKeys,
@@ -328,6 +329,10 @@ export default class GirderAPI {
     return this.getItems(folderId).then((items) =>
       items.filter((d) => d.largeImage),
     );
+  }
+
+  deleteLargeImage(largeImage: IGirderLargeImage) {
+    return this.client.delete(`/item/${largeImage._id}`);
   }
 
   createDatasetView(datasetViewBase: IDatasetViewBase) {

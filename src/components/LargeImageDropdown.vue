@@ -19,6 +19,17 @@
           >{{ formatMeta(item.meta) }}</v-list-item-subtitle
         >
       </v-list-item-content>
+      <v-btn
+        v-if="item.name !== 'multi-source2.json'"
+        icon
+        small
+        color="error"
+        class="ml-2"
+        :loading="deletingImageId === item._id"
+        @click.stop="deleteImage(item)"
+      >
+        <v-icon small>mdi-delete</v-icon>
+      </v-btn>
     </template>
     <template v-slot:selection="{ item }">
       <v-list-item-content style="max-width: none; white-space: normal">
@@ -42,6 +53,7 @@ import { IGirderLargeImage } from "@/girder";
 @Component
 export default class LargeImageDropdown extends Vue {
   readonly store = store;
+  deletingImageId: string | null = null;
 
   get largeImages() {
     return this.store.allLargeImages;
@@ -80,6 +92,15 @@ export default class LargeImageDropdown extends Vue {
       });
 
     return pairs.join("; ");
+  }
+
+  async deleteImage(image: IGirderLargeImage) {
+    this.deletingImageId = image._id;
+    try {
+      await this.store.deleteLargeImage(image);
+    } finally {
+      this.deletingImageId = null;
+    }
   }
 
   get currentLargeImage() {

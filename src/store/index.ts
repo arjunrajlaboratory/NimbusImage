@@ -594,6 +594,27 @@ export class Main extends VuexModule {
     await this.refreshDataset();
   }
 
+  @Action
+  async deleteLargeImage(largeImage: IGirderLargeImage) {
+    if (!this.dataset?.id || !largeImage._id) return;
+
+    if (largeImage.name === "multi-source2.json") {
+      return;
+    }
+
+    if (largeImage._id === this.currentLargeImage?._id) {
+      const originalLargeImage = this.allLargeImages.find(
+        (img) => img.name === "multi-source2.json",
+      );
+      if (originalLargeImage) {
+        this.updateCurrentLargeImage(originalLargeImage);
+      }
+    }
+
+    await this.api.deleteLargeImage(largeImage);
+    await this.loadLargeImages();
+  }
+
   @Mutation
   setAllLargeImages(images: IGirderLargeImage[]) {
     this.allLargeImages = images;
