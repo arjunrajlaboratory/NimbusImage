@@ -621,19 +621,34 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async loadLargeImages() {
+  async loadLargeImages(switchToNewLargeImage: boolean = false) {
     if (!this.dataset?.id) return;
 
-    const images = await this.girderResources.getAllLargeImages(
+    const oldAllLargeImages = this.allLargeImages;
+
+    const newAllLargeImages = await this.girderResources.getAllLargeImages(
       this.dataset.id,
     );
-    if (images) {
-      this.setAllLargeImages(images);
-      if (images.length > 0 && !this.currentLargeImage) {
-        const currentLargeImage =
-          await this.girderResources.getCurrentLargeImage(this.dataset.id);
-        if (currentLargeImage) {
-          this.setCurrentLargeImage(currentLargeImage);
+
+    if (newAllLargeImages) {
+      // Find all large_image items that are in newAllLargeImages but not in oldAllLargeImages
+      // and take the first one
+      const newLargeImage = newAllLargeImages.find(
+        (img) => !oldAllLargeImages.some((oldImg) => oldImg._id === img._id),
+      );
+      this.setAllLargeImages(newAllLargeImages);
+      if (newAllLargeImages.length > 0 && switchToNewLargeImage) {
+        // If we are switching to a new large image, we need to update the current large image
+        if (newLargeImage) {
+          this.updateCurrentLargeImage(newLargeImage);
+        }
+      } else {
+        if (newAllLargeImages.length > 0 && !this.currentLargeImage) {
+          const currentLargeImage =
+            await this.girderResources.getCurrentLargeImage(this.dataset.id);
+          if (currentLargeImage) {
+            this.setCurrentLargeImage(currentLargeImage);
+          }
         }
       }
     }
