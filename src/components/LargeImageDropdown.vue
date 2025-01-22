@@ -1,5 +1,6 @@
 <template>
   <v-select
+    v-if="shouldShow"
     v-model="currentLargeImage"
     :items="formattedLargeImages"
     item-text="displayName"
@@ -117,6 +118,10 @@ export default class LargeImageDropdown extends Vue {
         this.store.updateCurrentLargeImage(image);
       }
     }
+  }
+
+  get shouldShow(): boolean {
+    return this.largeImages.length > 1;
   }
 }
 </script>
