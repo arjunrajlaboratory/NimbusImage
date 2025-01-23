@@ -1,55 +1,67 @@
 <template>
-  <v-select
-    v-if="shouldShow"
-    v-model="currentLargeImage"
-    :items="formattedLargeImages"
-    item-text="displayName"
-    item-value="_id"
-    label="Select Image"
-    dense
-    style="width: auto; padding: 4px 0"
-    hide-details
-  >
-    <template v-slot:item="{ item }">
-      <v-list-item-content style="flex: 1 1 auto; min-width: 0">
-        <v-list-item-title>{{ item.displayName }}</v-list-item-title>
-        <v-list-item-subtitle
-          v-if="item.meta"
-          class="text--secondary"
-          style="font-size: 0.875rem; opacity: 0.7"
-          >{{ formatMeta(item.meta) }}</v-list-item-subtitle
+  <div style="position: relative">
+    <v-select
+      v-if="shouldShow"
+      v-model="currentLargeImage"
+      :items="formattedLargeImages"
+      item-text="displayName"
+      item-value="_id"
+      label="Select Image"
+      dense
+      style="width: auto; padding: 4px 0"
+      hide-details
+    >
+      <template v-slot:item="{ item }">
+        <v-list-item-content style="flex: 1 1 auto; min-width: 0">
+          <v-list-item-title>{{ item.displayName }}</v-list-item-title>
+          <v-list-item-subtitle
+            v-if="item.meta"
+            class="text--secondary"
+            style="font-size: 0.875rem; opacity: 0.7"
+            >{{ formatMeta(item.meta) }}</v-list-item-subtitle
+          >
+        </v-list-item-content>
+        <v-btn
+          v-if="item.name !== 'multi-source2.json'"
+          icon
+          small
+          color="error"
+          class="ml-2"
+          :loading="deletingImageId === item._id"
+          @click.stop="deleteImage(item)"
         >
-      </v-list-item-content>
-      <v-btn
-        v-if="item.name !== 'multi-source2.json'"
-        icon
-        small
-        color="error"
-        class="ml-2"
-        :loading="deletingImageId === item._id"
-        @click.stop="deleteImage(item)"
-      >
-        <v-icon small>mdi-delete</v-icon>
-      </v-btn>
-    </template>
-    <template v-slot:selection="{ item }">
-      <v-list-item-content
-        style="flex: 1 1 auto; min-width: 0; white-space: normal"
-      >
-        <v-list-item-title>{{ item.displayName }}</v-list-item-title>
-        <v-list-item-subtitle
-          v-if="item.meta"
-          class="text--secondary"
-          style="white-space: normal; font-size: 0.875rem; opacity: 0.7"
-          >{{ formatMeta(item.meta) }}</v-list-item-subtitle
+          <v-icon small>mdi-delete</v-icon>
+        </v-btn>
+      </template>
+      <template v-slot:selection="{ item }">
+        <v-list-item-content
+          style="flex: 1 1 auto; min-width: 0; white-space: normal"
         >
-      </v-list-item-content>
-    </template>
-  </v-select>
+          <v-list-item-title>{{ item.displayName }}</v-list-item-title>
+          <v-list-item-subtitle
+            v-if="item.meta"
+            class="text--secondary"
+            style="white-space: normal; font-size: 0.875rem; opacity: 0.7"
+            >{{ formatMeta(item.meta) }}</v-list-item-subtitle
+          >
+        </v-list-item-content>
+      </template>
+    </v-select>
+
+    <v-fade-transition>
+      <v-overlay
+        v-if="showNewImageIndicator"
+        absolute
+        opacity="0.2"
+        color="success"
+      >
+      </v-overlay>
+    </v-fade-transition>
+  </div>
 </template>
 
 <script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import { IGirderLargeImage } from "@/girder";
 
@@ -58,8 +70,34 @@ export default class LargeImageDropdown extends Vue {
   readonly store = store;
   deletingImageId: string | null = null;
 
+  previousNumberOfImages = 0;
+  showNewImageIndicator = false;
+
+  mounted() {
+    this.previousNumberOfImages = this.numberOfLargeImages;
+    console.log("mounted", this.previousNumberOfImages);
+  }
+
   get largeImages() {
     return this.store.allLargeImages;
+  }
+
+  get numberOfLargeImages() {
+    return this.largeImages.length;
+  }
+
+  @Watch("numberOfLargeImages")
+  onNumberOfLargeImagesChange(newValue: number) {
+    if (
+      newValue > this.previousNumberOfImages &&
+      this.previousNumberOfImages > 0
+    ) {
+      this.showNewImageIndicator = true;
+      setTimeout(() => {
+        this.showNewImageIndicator = false;
+      }, 1500); // Hide after 1.5 seconds
+    }
+    this.previousNumberOfImages = newValue;
   }
 
   get formattedLargeImages() {
