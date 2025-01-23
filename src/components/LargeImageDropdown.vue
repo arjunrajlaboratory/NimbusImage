@@ -75,7 +75,6 @@ export default class LargeImageDropdown extends Vue {
 
   mounted() {
     this.previousNumberOfImages = this.numberOfLargeImages;
-    console.log("mounted", this.previousNumberOfImages);
   }
 
   get largeImages() {
