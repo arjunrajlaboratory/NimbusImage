@@ -11,7 +11,7 @@
     hide-details
   >
     <template v-slot:item="{ item }">
-      <v-list-item-content>
+      <v-list-item-content style="flex: 1 1 auto; min-width: 0">
         <v-list-item-title>{{ item.displayName }}</v-list-item-title>
         <v-list-item-subtitle
           v-if="item.meta"
@@ -33,7 +33,9 @@
       </v-btn>
     </template>
     <template v-slot:selection="{ item }">
-      <v-list-item-content style="max-width: none; white-space: normal">
+      <v-list-item-content
+        style="flex: 1 1 auto; min-width: 0; white-space: normal"
+      >
         <v-list-item-title>{{ item.displayName }}</v-list-item-title>
         <v-list-item-subtitle
           v-if="item.meta"
