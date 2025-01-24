@@ -1,12 +1,16 @@
 <template>
   <div class="viewer">
     <aside class="side">
-      <viewer-toolbar class="toolbar">
+      <viewer-toolbar class="toolbar" @image-changed="handleImageChanged">
         <!-- <contrast-panels /> -->
         <display-layers />
       </viewer-toolbar>
     </aside>
-    <image-viewer class="main" />
+    <image-viewer
+      class="main"
+      :should-reset-maps="shouldResetMaps"
+      @reset-complete="handleResetComplete"
+    />
   </div>
 </template>
 <script lang="ts">
@@ -32,6 +36,8 @@ export default class Viewer extends Vue {
   readonly store = store;
   readonly annotationStore = annotationStore;
   readonly propertyStore = propertiesStore;
+
+  shouldResetMaps = false;
 
   mounted() {
     this.datasetChanged();
@@ -61,6 +67,14 @@ export default class Viewer extends Vue {
   @Watch("configuration")
   configurationChanged() {
     this.propertyStore.fetchProperties();
+  }
+
+  handleImageChanged() {
+    this.shouldResetMaps = true;
+  }
+
+  handleResetComplete() {
+    this.shouldResetMaps = false;
   }
 }
 </script>

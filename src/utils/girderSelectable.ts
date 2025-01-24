@@ -20,6 +20,7 @@ export function isDatasetFolder(selectable: IGirderSelectAble): boolean {
     selectable.meta.subtype === "contrastDataset"
   );
 }
+
 export function toDatasetFolder(
   selectable: IGirderSelectAble,
 ): IGirderFolder | null {

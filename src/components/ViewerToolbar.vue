@@ -1,5 +1,5 @@
 <template>
-  <div style="overflow-y: auto; scrollbar-width: none">
+  <div style="display: inline-block">
     <div v-mousetrap="mousetrapSliders" id="viewer-toolbar-tourstep">
       <v-layout>
         <value-slider
@@ -67,6 +67,8 @@
           :title="'Track window size'"
         />
       </v-layout>
+      <!-- TODO: Only display if there is more than one large image -->
+      <large-image-dropdown />
       <v-layout v-if="timelapseMode">
         <tag-picker
           id="timelapse-tags-tourstep"
@@ -141,6 +143,7 @@ import { Vue, Component, Watch } from "vue-property-decorator";
 import ValueSlider from "./ValueSlider.vue";
 import SwitchToggle from "./SwitchToggle.vue";
 import Toolset from "@/tools/toolsets/Toolset.vue";
+import LargeImageDropdown from "./LargeImageDropdown.vue";
 import store from "@/store";
 import filterStore from "@/store/filters";
 import annotationStore from "@/store/annotation";
@@ -152,6 +155,7 @@ import { IHotkey } from "@/utils/v-mousetrap";
     ValueSlider,
     SwitchToggle,
     Toolset,
+    LargeImageDropdown,
   },
 })
 export default class ViewerToolbar extends Vue {

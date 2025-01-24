@@ -6,6 +6,8 @@ import {
   IGirderAssetstore,
   IGirderSelectAble,
   IGirderUser,
+  IGirderLargeImage,
+  DEFAULT_LARGE_IMAGE_SOURCE,
 } from "@/girder";
 import type { AxiosError } from "axios";
 import {
@@ -20,6 +22,7 @@ import AnnotationsAPI from "./AnnotationsAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ChatAPI from "./ChatAPI";
 import GirderAPI from "./GirderAPI";
+import girderResources from "./girderResources";
 
 import { getLayerImages, getLayerSliceIndexes } from "./images";
 import jobs from "./jobs";
@@ -108,6 +111,8 @@ export class Main extends VuexModule {
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   chatAPI = new ChatAPI(this.girderRestProxy);
 
+  readonly girderResources = girderResources;
+
   girderUser: IGirderUser | null = this.girderRest.user;
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
@@ -120,6 +125,9 @@ export class Main extends VuexModule {
   selectedConfigurationId: string | null = null;
   configuration: IDatasetConfiguration | null = null;
   recentDatasetViews: IDatasetView[] = [];
+
+  currentLargeImage: IGirderLargeImage | null = null;
+  allLargeImages: IGirderLargeImage[] = [];
 
   datasetView: IDatasetView | null = null;
 
@@ -555,6 +563,108 @@ export class Main extends VuexModule {
     this.dataset = data;
   }
 
+  @Mutation
+  setCurrentLargeImage(image: IGirderLargeImage | null) {
+    this.currentLargeImage = image;
+  }
+
+  @Action
+  async updateCurrentLargeImage(image: IGirderLargeImage) {
+    if (!this.dataset?.id) return;
+
+    // Update backend
+    await this.girderResources.setCurrentLargeImage({
+      datasetId: this.dataset.id,
+      largeImage: image,
+    });
+
+    // Forces an updated fetch of the dataset, clearing caches
+    await this.girderResources.forceFetchResource({
+      id: this.dataset.id,
+      type: "folder",
+    });
+
+    // TODO: Perhaps we need to flush caches here? Otherwise, we might not update the histograms and so on appropriately.
+    // It doesn't seem to be a problem, but probably requires more testing.
+    // this.store.api.flushCaches();
+
+    // Update local state
+    this.setCurrentLargeImage(image);
+
+    // Refresh related data
+    await this.refreshDataset();
+  }
+
+  @Action
+  async deleteLargeImage(largeImage: IGirderLargeImage) {
+    if (!this.dataset?.id || !largeImage._id) return;
+
+    // Do not delete the default large image (original data)
+    if (largeImage.name === DEFAULT_LARGE_IMAGE_SOURCE) {
+      return;
+    }
+
+    if (largeImage._id === this.currentLargeImage?._id) {
+      const originalLargeImage = this.allLargeImages.find(
+        (img) => img.name === DEFAULT_LARGE_IMAGE_SOURCE,
+      );
+      if (originalLargeImage) {
+        this.updateCurrentLargeImage(originalLargeImage);
+      }
+    }
+
+    await this.api.deleteLargeImage(largeImage);
+    await this.loadLargeImages();
+  }
+
+  @Mutation
+  setAllLargeImages(images: IGirderLargeImage[]) {
+    this.allLargeImages = images;
+  }
+
+  @Action
+  async loadLargeImages(
+    switchToNewLargeImage: boolean = false,
+  ): Promise<IGirderLargeImage | null> {
+    if (!this.dataset?.id) return null;
+
+    const oldAllLargeImages = this.allLargeImages;
+
+    const newAllLargeImages = await this.girderResources.getAllLargeImages(
+      this.dataset.id,
+    );
+
+    if (newAllLargeImages) {
+      // Find all large_image items that are in newAllLargeImages but not in oldAllLargeImages
+      // and take the first one
+      const newLargeImage = newAllLargeImages.find(
+        (img) => !oldAllLargeImages.some((oldImg) => oldImg._id === img._id),
+      );
+      this.setAllLargeImages(newAllLargeImages);
+      if (newAllLargeImages.length > 0 && switchToNewLargeImage) {
+        // If we are switching to a new large image, we need to update the current large image
+        if (newLargeImage) {
+          this.updateCurrentLargeImage(newLargeImage);
+          return newLargeImage;
+        } else {
+          return null;
+        }
+      } else {
+        if (newAllLargeImages.length > 0 && !this.currentLargeImage) {
+          const currentLargeImage =
+            await this.girderResources.getCurrentLargeImage(this.dataset.id);
+          if (currentLargeImage) {
+            this.setCurrentLargeImage(currentLargeImage);
+            return currentLargeImage;
+          }
+        }
+      }
+    }
+
+    logError("Store", "No large images found");
+    return null;
+  }
+
   @Action
   protected setConfiguration({
     id,
@@ -844,6 +954,7 @@ export class Main extends VuexModule {
         unrollT: this.unrollT,
       });
       this.setDataset({ id, data: r });
+      await this.loadLargeImages();
       sync.setLoading(false);
     } catch (error) {
       sync.setLoading(error as Error);
@@ -1013,7 +1124,7 @@ export class Main extends VuexModule {
       sync.setSaving(true);
       const newFile = (
         await this.api.uploadJSONFile(
-          "multi-source2.json",
+          DEFAULT_LARGE_IMAGE_SOURCE,
           metadata,
           parentId,
           "folder",

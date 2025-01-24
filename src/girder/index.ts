@@ -42,6 +42,21 @@ export interface IGirderFile extends IGirderBase {
   _modelType: "file";
 }
 
+// TODO: This type is essentially a wrapper around the IGirderItem type for now.
+// It is defined in case we want to add more properties to the largeImage object in the future.
+export interface IGirderLargeImage extends IGirderItem {
+  largeImage: {
+    fileId: string;
+    [key: string]: any;
+  };
+}
+
+// For whatever reason, the default large image source was named "multi-source2.json"
+// This constant is used to identify the default large image source throughout the interface.
+// See, for instance, the LargeImageDropdown.vue component, in which it is used to determine
+// which large image is the "original" large image.
+export const DEFAULT_LARGE_IMAGE_SOURCE = "multi-source2.json";
+
 export type IGirderLocation =
   | IGirderUser
   | IGirderFolder
