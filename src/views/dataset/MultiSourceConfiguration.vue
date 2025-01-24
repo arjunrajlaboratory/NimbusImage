@@ -6,6 +6,14 @@
       >
       <v-divider class="my-2" />
       <v-data-table :headers="headers" :items="items" item-key="key" />
+      <v-checkbox
+        v-if="isMultiBandRGBFile"
+        v-model="splitRGBBands"
+        label="Split RGB files into separate channels (otherwise, only the red channel will be used)"
+        class="mt-4"
+        hide-details
+        dense
+      />
     </v-card>
     <v-card v-if="initializing" class="my-4">
       <v-card-title>
@@ -78,6 +86,12 @@
       </v-container>
     </v-card>
     <v-row>
+      <v-col class="d-flex">
+        <v-alert v-if="submitError" type="error" text dense class="mr-4">
+          {{ submitError }}
+        </v-alert>
+        <v-spacer />
+      </v-col>
       <v-col class="d-flex justify-end">
         <v-checkbox
           id="transcode-checkbox-tourstep"
@@ -92,7 +106,7 @@
           v-tour-trigger="'submit-button-tourtrigger'"
           @click="submit"
           color="green"
-          :disabled="!submitEnabled() || isUploading"
+          :disabled="!submitEnabled() || !isRGBAssignmentValid || isUploading"
         >
           <v-progress-circular size="16" v-if="isUploading" indeterminate />
           Submit
@@ -182,7 +196,11 @@ interface IBasicSource {
   zValues?: number[];
   tValues?: number[];
   cValues?: number[];
-  framesAsAxes: TFramesAsAxes;
+  framesAsAxes?: TFramesAsAxes;
+  style?: {
+    bands: { band: number }[];
+  };
+  c?: number;
 }
 
 interface ICompositingSource {
@@ -199,6 +217,9 @@ interface ICompositingSource {
     s12?: number;
     s21?: number;
     s22?: number;
+  };
+  style?: {
+    bands: { band: number }[];
   };
 }
 
@@ -223,6 +244,44 @@ export default class MultiSourceConfiguration extends Vue {
 
   isUploading: boolean = false;
   logs: string = "";
+
+  isRGBFile: boolean = false;
+  rgbBandCount: number = 0;
+
+  splitRGBBands: boolean = true;
+
+  get isMultiBandRGBFile(): boolean {
+    return this.isRGBFile && this.rgbBandCount > 1;
+  }
+
+  detectColorVsChannels(tileMeta: ITileMeta) {
+    const bandCount = tileMeta.bandCount || 1;
+    let isColor = false;
+
+    // 1) Check photometricInterpretation first, if present
+    const photo = tileMeta.metadata?.photometricInterpretation;
+    if (photo === 2 || photo === "RGB") {
+      isColor = true;
+    }
+
+    // 2) If we have an explicit channel dimension > 1,
+    //    that means multi-channel, not a single-plane color.
+    //    In that case, override isColor = false
+    if (tileMeta.IndexRange?.IndexC > 1) {
+      isColor = false;
+    }
+
+    // 3) If we still don't know, fallback to:
+    //    - bandCount = 3 (or 4) => color
+    //    - otherwise => multi-channel
+    if (typeof photo === "undefined") {
+      if (bandCount === 3 || bandCount === 4) {
+        isColor = true;
+      }
+    }
+
+    return isColor;
+  }
 
   // Call join on the array, cutting out elements or the first word if too long and adding hyphens
   // Output is always shorter than maxChars
@@ -525,6 +584,11 @@ export default class MultiSourceConfiguration extends Vue {
       items.map((item) => this.store.api.getTilesInternalMetadata(item)),
     );
 
+    // Check for RGB bands
+    const firstItem = this.tilesMetadata[0];
+    this.rgbBandCount = firstItem?.bandCount || 0;
+    this.isRGBFile = this.detectColorVsChannels(firstItem);
+
     let maxFramesPerItem = 0;
     let hasFileVariable = false;
     this.tilesMetadata.forEach((tile, tileIdx) => {
@@ -619,6 +683,31 @@ export default class MultiSourceConfiguration extends Vue {
     );
   }
 
+  getValueFromAssignments(
+    dim: TDimensions,
+    itemIdx: number,
+    frameIdx: number,
+  ): number {
+    const assignmentValue = this.assignments[dim]?.value;
+    if (!assignmentValue) {
+      return 0;
+    }
+    switch (assignmentValue.source) {
+      case Sources.File:
+        const fileData = assignmentValue.data as IFileSourceData;
+        return fileData[itemIdx]
+          ? Math.floor(frameIdx / fileData[itemIdx].stride) %
+              fileData[itemIdx].range
+          : 0;
+      case Sources.Filename:
+        const filenameData = assignmentValue.data as IFilenameSourceData;
+        const filename = this.girderItems[itemIdx].name;
+        return filenameData.valueIdxPerFilename[filename];
+      case Sources.Images:
+        return frameIdx;
+    }
+  }
+
   getCompositingValueFromAssignments(
     dim: TDimensions,
     itemIdx: number,
@@ -703,6 +792,19 @@ export default class MultiSourceConfiguration extends Vue {
       channels = ["Default"];
     }
 
+    // Handle RGB expansion
+    if (this.isMultiBandRGBFile && this.splitRGBBands) {
+      // Assuming 3 bands (R,G,B), adjust as needed if dynamic
+      const bandSuffixes = [" - Red", " - Green", " - Blue"];
+      const expandedChannels: string[] = [];
+      for (const ch of channels) {
+        for (let b = 0; b < this.rgbBandCount; b++) {
+          expandedChannels.push(`${ch}${bandSuffixes[b] || `_band${b}`}`);
+        }
+      }
+      channels = expandedChannels;
+    }
+
     // See specifications of multi source here:
     // https://girder.github.io/large_image/multi_source_specification.html
     // The sources have two possible interfaces depending on compositing
@@ -718,32 +820,52 @@ export default class MultiSourceConfiguration extends Vue {
       // For each frame, find (XY, Z, T, C)
       for (let itemIdx = 0; itemIdx < this.girderItems.length; ++itemIdx) {
         const item = this.girderItems[itemIdx];
-        const nFrames = this.tilesMetadata[itemIdx].frames.length;
-        for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-          compositingSources.push({
-            path: item.name,
-            xySet: this.getCompositingValueFromAssignments(
-              "XY",
-              itemIdx,
-              frameIdx,
-            ),
-            zSet: this.getCompositingValueFromAssignments(
-              "Z",
-              itemIdx,
-              frameIdx,
-            ),
-            tSet: this.getCompositingValueFromAssignments(
-              "T",
-              itemIdx,
-              frameIdx,
-            ),
-            cSet: this.getCompositingValueFromAssignments(
-              "C",
-              itemIdx,
-              frameIdx,
-            ),
-            frames: [frameIdx],
-          });
+        const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
+
+        if (this.isMultiBandRGBFile && this.splitRGBBands) {
+          // For RGB files, create separate sources for each band
+          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
+            for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
+              compositingSources.push({
+                path: item.name,
+                xySet: this.getValueFromAssignments("XY", itemIdx, frameIdx),
+                zSet: this.getValueFromAssignments("Z", itemIdx, frameIdx),
+                tSet: this.getValueFromAssignments("T", itemIdx, frameIdx),
+                cSet: bandIdx, // Map each band to its corresponding channel
+                frames: [frameIdx],
+                style: {
+                  bands: [{ band: bandIdx + 1 }],
+                },
+              });
+            }
+          }
+        } else {
+          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
+            compositingSources.push({
+              path: item.name,
+              xySet: this.getCompositingValueFromAssignments(
+                "XY",
+                itemIdx,
+                frameIdx,
+              ),
+              zSet: this.getCompositingValueFromAssignments(
+                "Z",
+                itemIdx,
+                frameIdx,
+              ),
+              tSet: this.getCompositingValueFromAssignments(
+                "T",
+                itemIdx,
+                frameIdx,
+              ),
+              cSet: this.getCompositingValueFromAssignments(
+                "C",
+                itemIdx,
+                frameIdx,
+              ),
+              frames: [frameIdx],
+            });
+          }
         }
       }
       const { mm_x, mm_y } = this.tilesMetadata![0];
@@ -872,44 +994,69 @@ export default class MultiSourceConfiguration extends Vue {
       const basicSources: IBasicSource[] = sources as IBasicSource[];
       for (let itemIdx = 0; itemIdx < this.girderItems.length; ++itemIdx) {
         const item = this.girderItems[itemIdx];
-        const framesAsAxes: TFramesAsAxes = {};
-        const dimValues: { [dim in TLowDim]?: number } = {};
-
-        for (const dim in this.assignments) {
-          const upDim = dim as TUpDim;
-          const lowDim = dim.toLowerCase() as TLowDim;
-          const assignment = this.assignments[upDim];
-          // Add file strides
-          if (!assignment) {
-            continue;
-          }
-          let dimValue = 0;
-          switch (assignment.value.source) {
-            case Sources.File:
-              const fileSource = assignment.value.data;
-              framesAsAxes[lowDim] = fileSource[itemIdx].stride;
-              break;
-
-            case Sources.Filename:
-              const filenameSource = assignment.value.data;
-              dimValue = filenameSource.valueIdxPerFilename[item.name];
-              break;
-
-            case Sources.Images:
-              framesAsAxes[lowDim] = 1;
-              break;
-          }
-          dimValues[lowDim] = dimValue;
+        if (!this.tilesMetadata || !this.tilesInternalMetadata) {
+          continue;
         }
-        const newSource: IBasicSource = {
-          path: item.name,
-          framesAsAxes,
-        };
-        for (const dim in dimValues) {
-          const lowDim = dim as TLowDim;
-          newSource[`${lowDim}Values`] = [dimValues[lowDim]!];
+
+        if (this.isMultiBandRGBFile && this.splitRGBBands) {
+          const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
+          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
+            // For RGB files, create separate sources for each band
+            for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
+              basicSources.push({
+                path: item.name,
+                style: {
+                  bands: [{ band: bandIdx + 1 }],
+                },
+                c: bandIdx,
+                tValues: [this.getValueFromAssignments("T", itemIdx, frameIdx)],
+                zValues: [this.getValueFromAssignments("Z", itemIdx, frameIdx)],
+                xyValues: [
+                  this.getValueFromAssignments("XY", itemIdx, frameIdx),
+                ],
+              });
+            }
+          }
+        } else {
+          const framesAsAxes: TFramesAsAxes = {};
+          const dimValues: { [dim in TLowDim]?: number } = {};
+
+          for (const dim in this.assignments) {
+            const upDim = dim as TUpDim;
+            const lowDim = dim.toLowerCase() as TLowDim;
+            const assignment = this.assignments[upDim];
+            // Add file strides
+            if (!assignment) {
+              continue;
+            }
+            let dimValue = 0;
+            switch (assignment.value.source) {
+              case Sources.File:
+                const fileSource = assignment.value.data;
+                framesAsAxes[lowDim] = fileSource[itemIdx].stride;
+                break;
+
+              case Sources.Filename:
+                const filenameSource = assignment.value.data;
+                dimValue = filenameSource.valueIdxPerFilename[item.name];
+                break;
+
+              case Sources.Images:
+                framesAsAxes[lowDim] = 1;
+                break;
+            }
+            dimValues[lowDim] = dimValue;
+          }
+          const newSource: IBasicSource = {
+            path: item.name,
+            framesAsAxes,
+          };
+          for (const dim in dimValues) {
+            const lowDim = dim as TLowDim;
+            newSource[`${lowDim}Values`] = [dimValues[lowDim]!];
+          }
+          basicSources.push(newSource);
         }
-        basicSources.push(newSource);
       }
     }
 
@@ -926,7 +1073,12 @@ export default class MultiSourceConfiguration extends Vue {
     try {
       const itemId = await this.store.addMultiSourceMetadata({
         parentId: datasetId,
-        metadata: JSON.stringify({ channels, sources, uniformSources: true }),
+        metadata: JSON.stringify({
+          channels,
+          sources,
+          uniformSources: true,
+          singleBand: this.isMultiBandRGBFile,
+        }),
         transcode: this.transcode,
         eventCallback,
       });
@@ -943,6 +1095,24 @@ export default class MultiSourceConfiguration extends Vue {
       logError((error as Error).message);
       return null;
     }
+  }
+
+  get submitError(): string | null {
+    if (!this.submitEnabled()) {
+      return "Not all variables are assigned";
+    }
+
+    if (!this.isRGBAssignmentValid) {
+      return "If splitting RGB file into channels, then filenames must be assigned to another variable";
+    }
+    return null;
+  }
+
+  get isRGBAssignmentValid(): boolean {
+    if (this.isMultiBandRGBFile && this.splitRGBBands) {
+      return this.assignments.C === null;
+    }
+    return true;
   }
 }
 </script>
