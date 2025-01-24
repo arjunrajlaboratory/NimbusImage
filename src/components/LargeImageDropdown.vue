@@ -65,6 +65,7 @@ import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import { IGirderLargeImage } from "@/girder";
 import { DEFAULT_LARGE_IMAGE_SOURCE } from "@/girder/index";
+import { logError } from "@/utils/log";
 
 @Component
 export default class LargeImageDropdown extends Vue {
@@ -157,6 +158,8 @@ export default class LargeImageDropdown extends Vue {
       );
       if (image) {
         this.store.updateCurrentLargeImage(image);
+      } else {
+        logError("LargeImageDropdown", "Current large image not found");
       }
     }
   }
