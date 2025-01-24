@@ -265,7 +265,7 @@ export default class ImageViewer extends Vue {
   @Prop({ type: Boolean, default: false }) readonly shouldResetMaps!: boolean;
 
   @Watch("shouldResetMaps")
-  onShouldResetMapsChange(newValue: boolean) {
+  onShouldResetMaps(newValue: boolean) {
     if (newValue) {
       this.resetMapsOnDraw = true;
       this.draw();

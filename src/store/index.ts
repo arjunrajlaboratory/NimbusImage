@@ -7,6 +7,7 @@ import {
   IGirderSelectAble,
   IGirderUser,
   IGirderLargeImage,
+  DEFAULT_LARGE_IMAGE_SOURCE,
 } from "@/girder";
 import type { AxiosError } from "axios";
 import {
@@ -598,13 +599,14 @@ export class Main extends VuexModule {
   async deleteLargeImage(largeImage: IGirderLargeImage) {
     if (!this.dataset?.id || !largeImage._id) return;
 
-    if (largeImage.name === "multi-source2.json") {
+    // Do not delete the default large image (original data)
+    if (largeImage.name === DEFAULT_LARGE_IMAGE_SOURCE) {
       return;
     }
 
     if (largeImage._id === this.currentLargeImage?._id) {
       const originalLargeImage = this.allLargeImages.find(
-        (img) => img.name === "multi-source2.json",
+        (img) => img.name === DEFAULT_LARGE_IMAGE_SOURCE,
       );
       if (originalLargeImage) {
         this.updateCurrentLargeImage(originalLargeImage);
@@ -657,8 +659,10 @@ export class Main extends VuexModule {
           }
         }
       }
+    } else {
+      logError("Store", "No large images found");
+      return null;
     }
-    return null;
   }
 
   @Action
@@ -1120,7 +1124,7 @@ export class Main extends VuexModule {
       sync.setSaving(true);
       const newFile = (
         await this.api.uploadJSONFile(
-          "multi-source2.json",
+          DEFAULT_LARGE_IMAGE_SOURCE,
           metadata,
           parentId,
           "folder",

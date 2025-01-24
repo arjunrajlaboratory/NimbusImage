@@ -211,11 +211,7 @@ export class GirderResources extends VuexModule {
     datasetId: string,
   ): Promise<IGirderLargeImage | null> {
     const resource = await this.getFolder(datasetId);
-    if (!resource) {
-      return null;
-    }
-
-    if (resource.meta.subtype !== "contrastDataset") {
+    if (!resource || resource.meta.subtype !== "contrastDataset") {
       return null;
     }
 

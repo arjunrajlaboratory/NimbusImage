@@ -22,7 +22,7 @@
           >
         </v-list-item-content>
         <v-btn
-          v-if="item.name !== 'multi-source2.json'"
+          v-if="item.name !== DEFAULT_LARGE_IMAGE_SOURCE"
           icon
           small
           color="error"
@@ -64,10 +64,12 @@
 import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import { IGirderLargeImage } from "@/girder";
+import { DEFAULT_LARGE_IMAGE_SOURCE } from "@/girder/index";
 
 @Component
 export default class LargeImageDropdown extends Vue {
   readonly store = store;
+  readonly DEFAULT_LARGE_IMAGE_SOURCE = DEFAULT_LARGE_IMAGE_SOURCE;
   deletingImageId: string | null = null;
 
   previousNumberOfImages = 0;
@@ -107,7 +109,7 @@ export default class LargeImageDropdown extends Vue {
   }
 
   formatName(name: string): string {
-    if (name === "multi-source2.json") {
+    if (name === DEFAULT_LARGE_IMAGE_SOURCE) {
       return "Original image";
     }
     // Handle cases like "output.tiff (1)" -> "output (1)"
