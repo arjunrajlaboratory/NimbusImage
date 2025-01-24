@@ -659,10 +659,10 @@ export class Main extends VuexModule {
           }
         }
       }
-    } else {
-      logError("Store", "No large images found");
-      return null;
     }
+
+    logError("Store", "No large images found");
+    return null;
   }
 
   @Action
