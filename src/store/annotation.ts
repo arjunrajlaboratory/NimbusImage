@@ -993,14 +993,17 @@ export class Annotations extends VuexModule {
       errorCallback: createErrorEventCallback(error),
     };
 
-    jobs.addJob(computeJob).then((success: boolean) => {
+    jobs.addJob(computeJob).then(async (success: boolean) => {
       this.fetchAnnotations();
       // If this was a worker that makes a new large_image, this line will load it
       // I'm pretty sure this function won't reload the large image if it's already loaded
-      main.loadLargeImages(true); // true means switch to the new large image
-      main.scheduleTileFramesComputation(datasetId);
-      main.scheduleMaxMergeCache(datasetId);
-      main.scheduleHistogramCache(datasetId);
+      const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image
+      if (newLargeImage) {
+        // If the computation resulted in at least one new large image, we need to compute the tile frames, max merge cache, and histogram cache
+        main.scheduleTileFramesComputation(datasetId);
+        main.scheduleMaxMergeCache(datasetId);
+        main.scheduleHistogramCache(datasetId);
+      }
       // TODO: We may also want to fetch connections and properties here, depending on flags set in the worker image
       progress.complete(progressId);
       callback(success);

@@ -621,8 +621,10 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async loadLargeImages(switchToNewLargeImage: boolean = false) {
-    if (!this.dataset?.id) return;
+  async loadLargeImages(
+    switchToNewLargeImage: boolean = false,
+  ): Promise<IGirderLargeImage | null> {
+    if (!this.dataset?.id) return null;
 
     const oldAllLargeImages = this.allLargeImages;
 
@@ -641,6 +643,9 @@ export class Main extends VuexModule {
         // If we are switching to a new large image, we need to update the current large image
         if (newLargeImage) {
           this.updateCurrentLargeImage(newLargeImage);
+          return newLargeImage;
+        } else {
+          return null;
         }
       } else {
         if (newAllLargeImages.length > 0 && !this.currentLargeImage) {
@@ -648,10 +653,12 @@ export class Main extends VuexModule {
             await this.girderResources.getCurrentLargeImage(this.dataset.id);
           if (currentLargeImage) {
             this.setCurrentLargeImage(currentLargeImage);
+            return currentLargeImage;
           }
         }
       }
     }
+    return null;
   }
 
   @Action
