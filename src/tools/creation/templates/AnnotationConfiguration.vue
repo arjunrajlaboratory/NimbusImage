@@ -24,13 +24,18 @@
         <!-- layer location -->
         <v-row class="my-0" v-if="!hideLayer">
           <v-col class="py-0">
-            <layer-select v-model="layer" label="Layer" />
+            <layer-select
+              id="tool-creation-layer-select-tourstep"
+              v-model="layer"
+              label="Layer"
+            />
           </v-col>
         </v-row>
         <!-- tags -->
         <v-row class="my-0">
           <v-col class="py-0">
             <tag-picker
+              id="tool-creation-tag-picker-tourstep"
               v-model="tags"
               @input="useAutoTags = false"
             ></tag-picker>

@@ -27,6 +27,7 @@
                 @click:append="userToolName = false"
                 @input="userToolName = true"
                 dense
+                id="tool-name-tourstep"
               />
             </v-col>
           </v-row>
@@ -52,6 +53,8 @@
             color="primary"
             @click="createTool"
             :disabled="!selectedTemplate"
+            id="tool-creation-add-tool-button-tourstep"
+            v-tour-trigger="`tool-creation-add-tool-button-tourtrigger`"
           >
             ADD TOOL TO TOOLSET
           </v-btn>
