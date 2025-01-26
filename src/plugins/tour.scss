@@ -7,6 +7,7 @@
   max-width: 320px;
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
   overflow: visible;
+  z-index: 100000 !important; // Add this to ensure tour is above other UI
 
   // Clean header without separate background
   .shepherd-header {
@@ -79,6 +80,7 @@
 
 // Darker overlay
 .shepherd-modal-overlay-container {
+  z-index: 99999 !important; // Just below the tour elements
   background: rgba(255, 255, 255, 0.15); /* a pale overlay that dims but doesn't black out the UI */
 }
 
@@ -86,5 +88,5 @@
   /* Example highlight ring */
   box-shadow: 0 0 0 2px #fff;
   border-radius: 3px;
-  z-index: 999999;
+  z-index: 99998 !important; // Below overlay but above other UI
 }

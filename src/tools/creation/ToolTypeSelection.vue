@@ -2,11 +2,17 @@
   <v-container>
     <v-menu offset-x right>
       <template v-slot:activator="{ on, attrs }">
-        <v-btn v-bind="attrs" v-on="on" class="big-subheaders">
+        <v-btn
+          v-bind="attrs"
+          v-on="on"
+          class="big-subheaders"
+          id="select-tool-type-tourstep"
+          v-tour-trigger="'select-tool-type-tourtrigger'"
+        >
           {{ selectedItem ? selectedItem.text : "Select Tool Type" }}
         </v-btn>
       </template>
-      <v-list class="floating-list">
+      <v-list class="floating-list" id="select-tool-list-tourstep">
         <template v-for="(item, itemIndex) in submenuItems">
           <v-subheader
             v-if="'header' in item"
@@ -22,6 +28,8 @@
           <v-list-item
             v-else-if="'key' in item"
             :key="item.key"
+            :id="getTourStepId(item.text)"
+            v-tour-trigger="getTourTriggerId(item.text)"
             @click="selectedItem = item"
             dense
           >
@@ -44,6 +52,7 @@ import store from "@/store";
 import ToolConfiguration from "@/tools/creation/ToolConfiguration.vue";
 import { AnnotationShape, IToolTemplate } from "@/store/model";
 import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
+import { toKebabCase } from "@/utils/strings";
 
 interface Item {
   text: string;
@@ -86,6 +95,14 @@ export default class ToolTypeSelection extends Vue {
 
   @Prop()
   private value: any;
+
+  getTourStepId(id: string): string {
+    return `${toKebabCase(id)}-tourstep`;
+  }
+
+  getTourTriggerId(id: string): string {
+    return `${toKebabCase(id)}-tourtrigger`;
+  }
 
   computedTemplate: IToolTemplate | null = null;
   defaultToolValues: any = {};
@@ -262,8 +279,8 @@ export default class ToolTypeSelection extends Vue {
 .floating-list {
   display: flex;
   flex-direction: column;
-  max-height: 90vh; /* Adjust as necessary for your desired height */
-  overflow-y: auto; /* Ensure list is scrollable */
+  max-height: 90vh;
+  overflow-y: auto;
   padding: 0;
   margin: 0;
 }

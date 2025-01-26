@@ -1,0 +1,42 @@
+name: "Add first object creation tool"
+entryPoint: datasetview
+popular: true
+category: Tools
+steps:
+  - id: add-tool-tourstep
+    route: datasetview
+    element: "#add-tool-tourstep"
+    title: "Add Tool"
+    text: "Click here to add a tool to the toolset."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: true
+
+  - id: gaussian-blur
+    route: datasetview
+    element: "#gaussian-blur-tourstep"
+    title: "Click here to activate tool"
+    text: "This tool will perform a Gaussian blur on the image."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: true
+
+  - id: sigma-tourstep
+    route: datasetview
+    element: "#sigma-tourstep"
+    title: "Sigma"
+    text: "Sigma is a parameter for how much to blur the image."
+    position: "bottom"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: true
+
+  - id: parent-tourstep
+    route: datasetview
+    element: "#parent-tag-tourstep"
+    title: "Parent tag"
+    text: "Parent tag let's you set which annotations are the parents of other annotations."
+    position: "bottom"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: true
