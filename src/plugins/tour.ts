@@ -166,6 +166,18 @@ export class TourManager {
       },
     });
 
+    // Immediately hide the overlay if needed for the first step
+    requestAnimationFrame(() => {
+      const overlay = document.querySelector(
+        ".shepherd-modal-overlay-container",
+      );
+      if (overlay && this.shepherd.steps[0]) {
+        const firstStep = this.shepherd.steps[0] as IExtendedShepherdStep;
+        (overlay as HTMLElement).style.display =
+          firstStep.options.hasModalOverlay === false ? "none" : "block";
+      }
+    });
+
     // Add a show event handler
     this.shepherd.on("show", (event: ShepherdShowEvent) => {
       const step = event.step;

@@ -3,6 +3,8 @@
     dense
     :value="tool.id"
     :style="{ 'max-height': '32px' }"
+    :id="getTourStepId(tool.name)"
+    v-tour-trigger="getTourTriggerId(tool.name)"
     v-mousetrap="
       tool.hotkey
         ? {
@@ -58,6 +60,7 @@ import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
+import { toKebabCase } from "@/utils/strings";
 
 @Component({
   components: { ToolIcon, ToolEdition },
@@ -67,9 +70,17 @@ export default class Toolset extends Vue {
   @Prop()
   tool!: IToolConfiguration;
 
+  getTourTriggerId(id: string): string {
+    return `${toKebabCase(id)}-tourtrigger`;
+  }
+
   isHovering = false;
   editDialog = false;
   statusIcon: null | string = null;
+
+  getTourStepId(id: string): string {
+    return `${toKebabCase(id)}-tourstep`;
+  }
 
   toggleTool() {
     if (this.isToolSelected) {
