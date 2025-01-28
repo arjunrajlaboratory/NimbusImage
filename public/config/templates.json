@@ -361,6 +361,35 @@
     ]
   },
   {
+    "name": "Annotation Edits",
+    "type": "edit",
+    "shortName": "Edit",
+    "interface": [
+      {
+        "name": "Action",
+        "type": "select",
+        "id": "action",
+        "isSubmenu": true,
+        "meta": {
+          "items": [
+            {
+              "text": "Blob edit",
+              "value": "blob_edit"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Annotations to edit",
+        "id": "annotation",
+        "type": "restrictTagsAndLayer",
+        "meta": {
+          "inclusiveToggle": true
+        }
+      }
+    ]
+  },
+  {
     "name": "Tagging tools",
     "type": "tagging",
     "shortName": "Tag",

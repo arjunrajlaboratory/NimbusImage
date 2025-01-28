@@ -70,6 +70,8 @@ export interface TReturnType {
   selectedItem: AugmentedItem | null;
 }
 
+// This functionality is here to keep some tool types hidden from the user,
+// but available for later implementation.
 const hiddenToolTexts = new Set<string>([
   '"Snap to" manual annotation tools',
   "Annotation edit tools",
