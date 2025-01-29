@@ -1,5 +1,5 @@
 <template>
-  <div style="display: inline-block">
+  <div style="overflow-y: auto; scrollbar-width: none">
     <div v-mousetrap="mousetrapSliders" id="viewer-toolbar-tourstep">
       <v-layout>
         <value-slider
