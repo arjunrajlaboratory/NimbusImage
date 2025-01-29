@@ -8,6 +8,7 @@ PATHS = {
     "region": "/item/{itemId}/tiles/region",
     "tiles": "/item/{datasetId}/tiles",
     "tilesInternal": "/item/{datasetId}/tiles/internal_metadata",
+    "dataset": "/folder/{datasetId}",
 }
 
 
@@ -29,6 +30,8 @@ class UPennContrastDataset:
         :param str datasetId: The id of the dataset from which images are
             downloaded
         """
+        # TODO: The naming conventions in this class are confusing.
+        # For instance, self.datasetId is the largeImageId, not the datasetId
         self.client = girder_client.GirderClient(apiUrl=apiUrl)
         self.client.setToken(token)
 
@@ -77,8 +80,20 @@ class UPennContrastDataset:
         :return: The dataset item
         :rtype: dict
         """
+        datasetInfo = self.client.get(
+            PATHS["dataset"].format(datasetId=datasetId))
+
         items = self.client.get(PATHS["item"].format(datasetId=datasetId))
-        dataset = next(filter(lambda item: "largeImage" in item, items))
+
+        # Check if the key "selectedLargeImageId" exists in datasetInfo["meta"]
+        if "selectedLargeImageId" in datasetInfo["meta"]:
+            dataset = next(filter(
+                lambda item: item["_id"] ==
+                datasetInfo["meta"]["selectedLargeImageId"], items))
+        else:
+            # If there is no selected large image id, then choose the first
+            # large image in the dataset folder.
+            dataset = next(filter(lambda item: "largeImage" in item, items))
         return dataset
 
     def getTilesForDataset(self, datasetId):
@@ -134,7 +149,7 @@ class UPennContrastDataset:
         )
         return response.content
 
-    def getRegion(self, datasetId=None, **kwargs):
+    def getRegion(self, datasetId=None, refreshImage=False, **kwargs):
         """
         Get a region of the dataset as a numpy array.
 
@@ -151,6 +166,8 @@ class UPennContrastDataset:
 
         :param str datasetId: The dataset id.  None to use the value used when
             instantiating the class.
+        :param bool refreshImage: Whether to refresh the largeImageId from the
+            server or use the cached version.
         :return: The tiles metadata
         :rtype: dict
         """
@@ -158,6 +175,7 @@ class UPennContrastDataset:
             datasetId is None
             or datasetId == self.datasetId
             or datasetId == self.dataset["folderId"]
+            or refreshImage is False
         ):
             itemId = self.datasetId
         else:
