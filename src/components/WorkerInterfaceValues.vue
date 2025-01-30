@@ -76,6 +76,11 @@
                 v-bind="item.vueAttrs"
                 v-model="interfaceValues[id]"
               ></channel-select>
+              <channel-checkbox-group
+                v-if="item.type === 'channelCheckboxes'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+              ></channel-checkbox-group>
               <v-checkbox
                 v-if="item.type === 'checkbox'"
                 v-bind="item.vueAttrs"
@@ -99,9 +104,17 @@ import {
 } from "@/store/model";
 import LayerSelect from "@/components/LayerSelect.vue";
 import ChannelSelect from "@/components/ChannelSelect.vue";
+import ChannelCheckboxGroup from "@/components/ChannelCheckboxGroup.vue";
 import TagPicker from "@/components/TagPicker.vue";
 // Popup for new tool configuration
-@Component({ components: { LayerSelect, ChannelSelect, TagPicker } })
+@Component({
+  components: {
+    LayerSelect,
+    ChannelSelect,
+    ChannelCheckboxGroup,
+    TagPicker,
+  },
+})
 export default class WorkerInterfaceValues extends Vue {
   @Prop()
   readonly workerInterface!: IWorkerInterface;
@@ -135,6 +148,9 @@ export default class WorkerInterfaceValues extends Vue {
 
       case "channel":
         return 0;
+
+      case "channelCheckboxes":
+        return {};
 
       case "checkbox":
         return false;

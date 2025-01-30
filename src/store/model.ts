@@ -1093,6 +1093,13 @@ export interface IChannelWorkerInterfaceElement
   required?: boolean;
 }
 
+export interface IChannelCheckboxesWorkerInterfaceElement
+  extends ICommonWorkerInterfaceElement {
+  type: "channelCheckboxes";
+  default?: { [channel: number]: boolean };
+  required?: boolean;
+}
+
 export interface ICheckboxWorkerInterfaceElement
   extends ICommonWorkerInterfaceElement {
   type: "checkbox";
@@ -1107,6 +1114,7 @@ export type TWorkerInterfaceElement =
   | ILayerWorkerInterfaceElement
   | ISelectWorkerInterfaceElement
   | IChannelWorkerInterfaceElement
+  | IChannelCheckboxesWorkerInterfaceElement
   | ICheckboxWorkerInterfaceElement;
 
 export type TWorkerInterfaceType = TWorkerInterfaceElement["type"];
