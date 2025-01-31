@@ -91,16 +91,18 @@ interface AugmentedItem extends Item {
   submenu: Submenu;
 }
 
-const hiddenToolTexts = new Set<string>([
-  '"Snap to" manual annotation tools',
-  "Annotation edit tools",
-]);
-
 export interface TReturnType {
   template: IToolTemplate | null;
   defaultValues: any;
   selectedItem: AugmentedItem | null;
 }
+
+// This functionality is here to keep some tool types hidden from the user,
+// but available for later implementation.
+const hiddenToolTexts = new Set<string>([
+  '"Snap to" manual annotation tools',
+  "Annotation edit tools",
+]);
 
 @Component
 export default class ToolTypeSelection extends Vue {

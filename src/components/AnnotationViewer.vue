@@ -97,6 +97,8 @@ import AnnotationActionPanel from "@/components/AnnotationActionPanel.vue";
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
+import { editPolygonAnnotation } from "@/utils/polygonSlice";
+
 function filterAnnotations(
   annotations: IAnnotation[],
   { tags, tagsInclusive, layerId }: IRestrictTagsAndLayer,
@@ -2159,6 +2161,75 @@ export default class AnnotationViewer extends Vue {
     );
   }
 
+  async handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
+    // Get the selected annotations that intersect with the lasso
+    const selectedAnnotations =
+      this.getSelectedAnnotationsFromAnnotation(selectAnnotation);
+
+    if (selectedAnnotations.length === 0) {
+      this.interactionLayer.removeAnnotation(selectAnnotation);
+      return;
+    }
+
+    // Filter out annotations that are not polygons
+    const polygonAnnotations = selectedAnnotations.filter(
+      (annotation) => annotation.shape === AnnotationShape.Polygon,
+    );
+
+    if (polygonAnnotations.length === 0) {
+      this.interactionLayer.removeAnnotation(selectAnnotation);
+      return;
+    }
+
+    // Filter out annotations that do not match the tool configuration
+    const annotationTemplate = this.selectedToolConfiguration?.values
+      ?.annotation as IRestrictTagsAndLayer;
+    let filteredAnnotations: IAnnotation[] = [];
+    if (annotationTemplate) {
+      filteredAnnotations = filterAnnotations(
+        selectedAnnotations,
+        annotationTemplate,
+      );
+    } else {
+      filteredAnnotations = polygonAnnotations;
+    }
+
+    if (filteredAnnotations.length === 0) {
+      this.interactionLayer.removeAnnotation(selectAnnotation);
+      return;
+    }
+
+    // Edit the first annotation in the list.
+    // TODO: This logic could be improved by using some more intelligent logic
+    // to determine which annotation to edit.
+    const annotationToEdit = filteredAnnotations[0];
+
+    await this.annotationStore.updateAnnotationsPerId({
+      annotationIds: [annotationToEdit.id],
+      editFunction: (annotation: IAnnotation) => {
+        const newAnnotation = this.editPolygonAnnotation(
+          annotation,
+          selectAnnotation.coordinates(),
+        );
+        annotation.coordinates = newAnnotation.coordinates;
+      },
+    });
+
+    // Remove the temporary selection annotation
+    this.interactionLayer.removeAnnotation(selectAnnotation);
+  }
+
+  // This function edits the polygon annotation by "carving" with a line.
+  editPolygonAnnotation(
+    annotation: IAnnotation,
+    newLine: IGeoJSPosition[],
+  ): IAnnotation {
+    return {
+      ...annotation,
+      coordinates: editPolygonAnnotation(annotation, newLine),
+    };
+  }
+
   handleNewROIFilter(geojsAnnotation: IGeoJSAnnotation) {
     if (!this.roiFilter) {
       return;
@@ -2320,6 +2391,9 @@ export default class AnnotationViewer extends Vue {
             : "polygon";
         this.interactionLayer.mode(selectionType);
         break;
+      case "edit":
+        this.interactionLayer.mode("line");
+        break;
       case "samAnnotation":
       case null:
       case undefined:
@@ -2413,6 +2487,9 @@ export default class AnnotationViewer extends Vue {
             break;
           case "connection":
             this.handleAnnotationConnections(evt.annotation);
+            break;
+          case "edit":
+            this.handleAnnotationEdits(evt.annotation);
             break;
         }
       } else {
