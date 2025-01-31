@@ -71,6 +71,7 @@ import store from "@/store";
 import { AnnotationShape, IToolTemplate } from "@/store/model";
 import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
+import ToolConfiguration from "./ToolConfiguration.vue";
 
 interface Item {
   text: string;
@@ -90,11 +91,6 @@ interface Submenu {
 interface AugmentedItem extends Item {
   submenu: Submenu;
 }
-
-const hiddenToolTexts = new Set<string>([
-  '"Snap to" manual annotation tools',
-  "Annotation edit tools",
-]);
 
 export interface TReturnType {
   template: IToolTemplate | null;
