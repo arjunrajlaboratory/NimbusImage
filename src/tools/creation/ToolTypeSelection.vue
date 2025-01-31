@@ -71,7 +71,6 @@ import store from "@/store";
 import { AnnotationShape, IToolTemplate } from "@/store/model";
 import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
-import ToolConfiguration from "./ToolConfiguration.vue";
 
 interface Item {
   text: string;
@@ -105,11 +104,7 @@ const hiddenToolTexts = new Set<string>([
   "Annotation edit tools",
 ]);
 
-@Component({
-  components: {
-    ToolConfiguration,
-  },
-})
+@Component
 export default class ToolTypeSelection extends Vue {
   readonly propertyStore = propertiesStore;
   readonly store = store;
