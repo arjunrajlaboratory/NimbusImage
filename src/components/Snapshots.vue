@@ -293,6 +293,15 @@
             Download images for all Snapshots
           </v-btn>
         </div>
+        <div class="mb-2">
+          <v-btn
+            color="primary"
+            @click="movieDialog = true"
+            :disabled="unroll || downloading"
+          >
+            Download Movie for Current Location
+          </v-btn>
+        </div>
       </v-card-actions>
 
       <v-divider />
@@ -326,16 +335,25 @@
         </div>
       </v-alert>
     </v-dialog>
+    <movie-dialog
+      v-model="movieDialog"
+      :current-time="store.time"
+      :dataset="store.dataset"
+      @download="handleMovieDownload"
+    />
   </div>
 </template>
 
 <script lang="ts">
 import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import TagPicker from "@/components/TagPicker.vue";
+import MovieDialog from "@/components/MovieDialog.vue";
 import store from "@/store";
+import progress from "@/store/progress";
 import geojs from "geojs";
 import { formatDate } from "@/utils/date";
 import { downloadToClient } from "@/utils/download";
+import GIF from "gif.js";
 import {
   IDatasetLocation,
   IDisplayLayer,
@@ -345,6 +363,7 @@ import {
   IGeoJSMap,
   ISnapshot,
   copyLayerWithoutPrivateAttributes,
+  ProgressType,
 } from "@/store/model";
 import { DeflateOptions, Zip, ZipDeflate } from "fflate";
 import girderResources from "@/store/girderResources";
@@ -354,6 +373,7 @@ import {
   getLayersDownloadUrls,
   getBaseURLFromDownloadParameters,
 } from "@/utils/screenshot";
+import { logError } from "@/utils/log";
 
 interface ISnapshotItem {
   name: string;
@@ -368,9 +388,23 @@ function intFromString(value: string) {
   return Number.isNaN(parsedValue) ? 0 : parsedValue;
 }
 
-@Component({ components: { TagPicker } })
+interface IGifOptions extends GIF.Options {
+  workerOptions?: {
+    willReadFrequently: boolean;
+  };
+}
+
+export enum MovieFormat {
+  ZIP = "zip",
+  GIF = "gif",
+  WEBM = "webm",
+}
+
+@Component({ components: { TagPicker, MovieDialog } })
 export default class Snapshots extends Vue {
   readonly store = store;
+  readonly progress = progress;
+  movieDialog: boolean = false;
 
   @Prop()
   snapshotVisible!: boolean;
@@ -1221,6 +1255,395 @@ export default class Snapshots extends Vue {
         .filter((s) => s.name === this.newName)[0];
     }
     return;
+  }
+
+  async getUrlsForMovie(
+    timePoints: number[],
+    datasetId: string,
+    boundingBox: IGeoJSBounds,
+    layers: IDisplayLayer[],
+    location: IDatasetLocation,
+  ): Promise<URL[]> {
+    // Get dataset
+    const dataset =
+      store.dataset?.id === datasetId
+        ? store.dataset
+        : await girderResources.getDataset({ id: datasetId });
+    if (!dataset) {
+      throw new Error("Dataset not found");
+    }
+
+    // Get the id of the image for this dataset
+    const anyImage = dataset.anyImage();
+    if (!anyImage) {
+      throw new Error("No image found in dataset");
+    }
+    const itemId = anyImage.item._id;
+
+    const params = getDownloadParameters(
+      boundingBox,
+      "png", // Using PNG for best quality
+      this.maxPixels,
+      95, // jpegQuality (unused for PNG)
+      "layers",
+    );
+
+    if (params === null) {
+      throw new Error("Image size exceeds maximum allowed pixels");
+    }
+
+    const apiRoot = store.girderRest.apiRoot;
+    const baseUrl = getBaseURLFromDownloadParameters(params, itemId, apiRoot);
+
+    // Get URLs for all time points
+    const urls: URL[] = [];
+    for (const time of timePoints) {
+      const currentLocation = { ...location, time };
+      const layerUrls = await getLayersDownloadUrls(
+        baseUrl,
+        "composite",
+        layers,
+        dataset,
+        currentLocation,
+      );
+
+      if (layerUrls.length === 0) {
+        throw new Error("No layers available for download");
+      }
+
+      urls.push(layerUrls[0].url);
+    }
+
+    return urls;
+  }
+
+  async handleMovieDownload(params: {
+    startTime: number;
+    endTime: number;
+    fps: number;
+    format: MovieFormat;
+  }) {
+    const dataset = this.store.dataset;
+    if (!dataset) return;
+
+    try {
+      this.downloading = true;
+      const timePoints = Array.from(
+        { length: params.endTime - params.startTime + 1 },
+        (_, i) => params.startTime + i,
+      );
+
+      const urls = await this.getUrlsForMovie(
+        timePoints,
+        dataset.id,
+        {
+          left: this.bboxLeft,
+          top: this.bboxTop,
+          right: this.bboxRight,
+          bottom: this.bboxBottom,
+        },
+        this.store.layers,
+        this.store.currentLocation,
+      );
+
+      switch (params.format) {
+        case MovieFormat.ZIP:
+          await this.downloadMovieAsZippedImageSequence(params, urls);
+          break;
+        case MovieFormat.GIF:
+          await this.downloadMovieAsGif(params, urls);
+          break;
+        case MovieFormat.WEBM:
+          await this.downloadMovieAsWebm(params, urls);
+          break;
+        default:
+          logError("Unknown format:", params.format);
+      }
+    } finally {
+      this.downloading = false;
+    }
+  }
+
+  async downloadMovieAsZippedImageSequence(
+    params: {
+      startTime: number;
+      endTime: number;
+      fps: number;
+    },
+    urls: URL[],
+  ) {
+    const progressId = await this.progress.create({
+      type: ProgressType.MOVIE_GENERATION,
+      title: "Generating ZIP sequence",
+    });
+
+    try {
+      // Create and setup a zip object
+      const zip = new Zip();
+      const zipChunks: Uint8Array[] = [];
+      const zipDone: Promise<Blob> = new Promise((resolve, reject) => {
+        zip.ondata = (err, data, final) => {
+          if (!err) {
+            zipChunks.push(data);
+            if (final) {
+              resolve(new Blob(zipChunks));
+            }
+          } else {
+            reject(err);
+          }
+        };
+      });
+
+      const deflateOptions: DeflateOptions = {
+        level: 0, // Don't compress PNGs since they're already compressed
+      };
+
+      // Download each image and add to zip
+      for (let i = 0; i < urls.length; i++) {
+        const { data } = await this.store.girderRest.get(urls[i].href, {
+          responseType: "arraybuffer",
+        });
+
+        const fileName = `frame${(i + 1).toString().padStart(3, "0")}.png`;
+        const zipFile = new ZipDeflate(fileName, deflateOptions);
+        zip.add(zipFile);
+        zipFile.push(new Uint8Array(data), true);
+
+        this.progress.update({
+          id: progressId,
+          progress: i + 1,
+          total: urls.length,
+          title: "Processing frame",
+        });
+      }
+
+      // End the zip and wait for it to complete
+      zip.end();
+      const blob = await zipDone;
+
+      const url = URL.createObjectURL(blob);
+      downloadToClient({
+        href: url,
+        download: `timelapse_${params.startTime}_${params.endTime}.zip`,
+      });
+      URL.revokeObjectURL(url);
+    } finally {
+      this.progress.complete(progressId);
+    }
+  }
+
+  async downloadMovieAsGif(
+    params: {
+      startTime: number;
+      endTime: number;
+      fps: number;
+    },
+    urls: URL[],
+  ) {
+    const progressId = await this.progress.create({
+      type: ProgressType.MOVIE_GENERATION,
+      title: "Generating GIF",
+    });
+
+    try {
+      // Create a GIF encoder
+      const gifOptions: IGifOptions = {
+        workers: 4,
+        quality: 10,
+        workerScript: "/gif.worker.js",
+        width: null, // Will be set automatically
+        height: null, // Will be set automatically
+        workerOptions: {
+          willReadFrequently: true,
+        },
+      };
+      const gif = new GIF(gifOptions);
+
+      // Load all images and add them to the GIF sequentially
+      const totalFrames = urls.length;
+
+      // Process frames one at a time to maintain order
+      for (let i = 0; i < urls.length; i++) {
+        // Download the image data
+        const { data } = await this.store.girderRest.get(urls[i].href, {
+          responseType: "arraybuffer",
+        });
+
+        // Convert array buffer to blob
+        const blob = new Blob([data], { type: "image/png" });
+        const imageUrl = URL.createObjectURL(blob);
+
+        // Create an image element and wait for it to load
+        const img = new Image();
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => {
+            gif.addFrame(img, { delay: 1000 / params.fps }); // delay in ms
+            this.progress.update({
+              id: progressId,
+              progress: i + 1,
+              total: totalFrames * 2, // Account for both loading and rendering phases
+              title: "Loading frame",
+            });
+            URL.revokeObjectURL(imageUrl); // Clean up the object URL
+            resolve();
+          };
+          img.onerror = reject;
+          img.src = imageUrl;
+        });
+      }
+
+      // Render the GIF
+      const gifBlob = await new Promise<Blob>((resolve) => {
+        gif.on("progress", (progressValue: number) => {
+          // Update progress for rendering phase
+          this.progress.update({
+            id: progressId,
+            progress: totalFrames + Math.floor(progressValue * totalFrames),
+            total: totalFrames * 2,
+            title: `Rendering GIF: ${Math.round(progressValue * 100)}%`,
+          });
+        });
+
+        gif.on("finished", (blob: Blob) => {
+          resolve(blob);
+        });
+
+        gif.render();
+      });
+
+      // Download the GIF
+      const url = URL.createObjectURL(gifBlob);
+      downloadToClient({
+        href: url,
+        download: `timelapse_${params.startTime}_${params.endTime}.gif`,
+      });
+      URL.revokeObjectURL(url);
+    } finally {
+      this.progress.complete(progressId);
+    }
+  }
+
+  async downloadMovieAsWebm(
+    params: {
+      startTime: number;
+      endTime: number;
+      fps: number;
+    },
+    urls: URL[],
+  ) {
+    const progressId = await this.progress.create({
+      type: ProgressType.MOVIE_GENERATION,
+      title: "Generating WebM video",
+    });
+
+    try {
+      // First pass: get dimensions from first frame
+      const firstFrameResponse = await this.store.girderRest.get(urls[0].href, {
+        responseType: "arraybuffer",
+      });
+      const firstFrameBlob = new Blob([firstFrameResponse.data], {
+        type: "image/png",
+      });
+      const firstFrameUrl = URL.createObjectURL(firstFrameBlob);
+      const firstImage = await new Promise<HTMLImageElement>(
+        (resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = firstFrameUrl;
+        },
+      );
+      URL.revokeObjectURL(firstFrameUrl);
+
+      // Setup canvas and media recorder
+      const canvas = document.createElement("canvas");
+      canvas.width = firstImage.width;
+      canvas.height = firstImage.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Failed to get canvas context");
+
+      const stream = canvas.captureStream(params.fps);
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: "video/webm",
+        videoBitsPerSecond: 8000000, // 8Mbps
+      });
+
+      const chunks: Blob[] = [];
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      // Start recording
+      mediaRecorder.start();
+
+      // Process all frames
+      let currentFrame = 0;
+      const frameDuration = 1000 / params.fps;
+
+      const processNextFrame = async () => {
+        if (currentFrame >= urls.length) {
+          mediaRecorder.stop();
+          return;
+        }
+
+        // Download and process frame
+        const { data } = await this.store.girderRest.get(
+          urls[currentFrame].href,
+          {
+            responseType: "arraybuffer",
+          },
+        );
+        const blob = new Blob([data], { type: "image/png" });
+        const imageUrl = URL.createObjectURL(blob);
+
+        // Draw frame
+        await new Promise<void>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(imageUrl);
+            resolve();
+          };
+          img.onerror = reject;
+          img.src = imageUrl;
+        });
+
+        this.progress.update({
+          id: progressId,
+          progress: currentFrame + 1,
+          total: urls.length,
+          title: "Processing frame",
+        });
+
+        currentFrame++;
+        setTimeout(processNextFrame, frameDuration);
+      };
+
+      // Wait for recording to complete
+      const videoBlob = await new Promise<Blob>((resolve) => {
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(chunks, { type: "video/webm" });
+          resolve(blob);
+        };
+        processNextFrame();
+      });
+
+      // Cleanup
+      stream.getTracks().forEach((track) => track.stop());
+
+      // Download the video
+      const url = URL.createObjectURL(videoBlob);
+      downloadToClient({
+        href: url,
+        download: `timelapse_${params.startTime}_${params.endTime}.webm`,
+      });
+      URL.revokeObjectURL(url);
+    } finally {
+      this.progress.complete(progressId);
+    }
   }
 }
 </script>
