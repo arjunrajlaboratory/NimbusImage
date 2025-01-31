@@ -12,6 +12,8 @@
                   class="rounded-pill"
                   icon
                   v-on="{ ...dialog, ...tooltip }"
+                  id="add-tool-tourstep"
+                  v-tour-trigger="'add-tool-tourtrigger'"
                 >
                   <v-icon>
                     {{ "mdi-plus" }}
