@@ -16,7 +16,7 @@
         >
           <v-row class="pa-0 ma-0">
             <v-col class="pa-0 ma-0" cols="4">
-              <v-subheader class="font-weight-bold">
+              <v-subheader class="font-weight-bold" :id="getTourStepId(id)">
                 {{ id }}
               </v-subheader>
             </v-col>
@@ -100,6 +100,7 @@ import {
 import LayerSelect from "@/components/LayerSelect.vue";
 import ChannelSelect from "@/components/ChannelSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
+import { getTourStepId } from "@/utils/strings";
 // Popup for new tool configuration
 @Component({ components: { LayerSelect, ChannelSelect, TagPicker } })
 export default class WorkerInterfaceValues extends Vue {
@@ -109,6 +110,8 @@ export default class WorkerInterfaceValues extends Vue {
   @VModel({ type: Object }) interfaceValues!: IWorkerInterfaceValues;
   @Prop({ default: "right", type: String })
   readonly tooltipPosition!: "left" | "right";
+
+  getTourStepId = getTourStepId;
 
   getDefault(type: TWorkerInterfaceType, defaultValue?: TWorkerInterfaceValue) {
     if (defaultValue) {

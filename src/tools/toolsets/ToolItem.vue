@@ -3,6 +3,8 @@
     dense
     :value="tool.id"
     :style="{ 'max-height': '32px' }"
+    :id="getTourStepId(tool.name)"
+    v-tour-trigger="getTourTriggerId(tool.name)"
     v-mousetrap="
       tool.hotkey
         ? {
@@ -58,6 +60,7 @@ import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
+import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 
 @Component({
   components: { ToolIcon, ToolEdition },
@@ -66,6 +69,9 @@ export default class Toolset extends Vue {
   readonly store = store;
   @Prop()
   tool!: IToolConfiguration;
+
+  getTourStepId = getTourStepId;
+  getTourTriggerId = getTourTriggerId;
 
   isHovering = false;
   editDialog = false;
