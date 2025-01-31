@@ -1,58 +1,76 @@
 <template>
-  <v-container>
-    <v-menu offset-x right>
-      <template v-slot:activator="{ on, attrs }">
-        <v-btn
-          v-bind="attrs"
-          v-on="on"
-          class="big-subheaders"
-          id="select-tool-type-tourstep"
-          v-tour-trigger="'select-tool-type-tourtrigger'"
-        >
-          {{ selectedItem ? selectedItem.text : "Select Tool Type" }}
-        </v-btn>
-      </template>
-      <v-list class="floating-list" id="select-tool-list-tourstep">
-        <template v-for="(item, itemIndex) in submenuItems">
-          <v-subheader
-            v-if="'header' in item"
-            :key="item.header"
-            class="custom-subheader"
-          >
-            {{ item.header }}
-          </v-subheader>
-          <v-divider
-            v-else-if="'divider' in item"
-            :key="`divider-${itemIndex}`"
-          />
-          <v-list-item
-            v-else-if="'key' in item"
-            :key="item.key"
-            :id="getTourStepId(item.text)"
-            v-tour-trigger="getTourTriggerId(item.text)"
-            @click="selectedItem = item"
-            dense
-          >
-            <v-list-item-content>
-              <v-list-item-title>{{ item.text }}</v-list-item-title>
-              <v-list-item-subtitle v-if="item.description">
-                {{ item.description }}
-              </v-list-item-subtitle>
-            </v-list-item-content>
-          </v-list-item>
-        </template>
-      </v-list>
-    </v-menu>
+  <v-container class="pa-2">
+    <v-card class="tool-type-menu">
+      <v-card-title class="text-h6 py-2"> Select Tool Type </v-card-title>
+
+      <v-card-text class="pa-2">
+        <v-row dense>
+          <template v-for="(item, itemIndex) in submenuItems">
+            <!-- Headers become section titles -->
+            <v-col
+              v-if="'header' in item"
+              :key="item.header"
+              cols="12"
+              class="pt-2 pb-1"
+            >
+              <div class="text-subtitle-1 font-weight-medium">
+                {{ item.header }}
+              </div>
+            </v-col>
+
+            <!-- Dividers span full width -->
+            <v-col
+              v-else-if="'divider' in item"
+              :key="`divider-${itemIndex}`"
+              cols="12"
+              class="py-0"
+            >
+              <v-divider />
+            </v-col>
+
+            <!-- Tool type options become cards -->
+            <v-col
+              v-else-if="'key' in item"
+              :key="item.key"
+              cols="6"
+              sm="4"
+              md="3"
+              lg="2"
+              class="pa-1"
+            >
+              <v-card
+                outlined
+                :id="getTourStepId(item.text)"
+                v-tour-trigger="getTourTriggerId(item.text)"
+                @click="selectItem(item)"
+                class="tool-type-card"
+                hover
+              >
+                <v-card-title class="text-body-2 pa-2">
+                  {{ item.text }}
+                </v-card-title>
+                <v-card-text
+                  v-if="item.description"
+                  class="text-caption pa-2 pt-0 description"
+                >
+                  {{ item.description }}
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </template>
+        </v-row>
+      </v-card-text>
+    </v-card>
   </v-container>
 </template>
+
 <script lang="ts">
-import { Vue, Component, Watch, Prop } from "vue-property-decorator";
+import { Vue, Component } from "vue-property-decorator";
 import propertiesStore from "@/store/properties";
 import store from "@/store";
-import ToolConfiguration from "@/tools/creation/ToolConfiguration.vue";
 import { AnnotationShape, IToolTemplate } from "@/store/model";
+import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
-import { toKebabCase } from "@/utils/strings";
 
 interface Item {
   text: string;
@@ -73,41 +91,28 @@ interface AugmentedItem extends Item {
   submenu: Submenu;
 }
 
+const hiddenToolTexts = new Set<string>([
+  '"Snap to" manual annotation tools',
+  "Annotation edit tools",
+]);
+
 export interface TReturnType {
   template: IToolTemplate | null;
   defaultValues: any;
   selectedItem: AugmentedItem | null;
 }
 
-const hiddenToolTexts = new Set<string>([
-  '"Snap to" manual annotation tools',
-  "Annotation edit tools",
-]);
-
-@Component({
-  components: {
-    ToolConfiguration,
-  },
-})
+@Component
 export default class ToolTypeSelection extends Vue {
   readonly propertyStore = propertiesStore;
   readonly store = store;
 
-  @Prop()
-  private value: any;
-
-  getTourStepId(id: string): string {
-    return `${toKebabCase(id)}-tourstep`;
-  }
-
-  getTourTriggerId(id: string): string {
-    return `${toKebabCase(id)}-tourtrigger`;
-  }
-
+  selectedItem: AugmentedItem | null = null;
   computedTemplate: IToolTemplate | null = null;
   defaultToolValues: any = {};
 
-  selectedItem: AugmentedItem | null = null;
+  getTourStepId = getTourStepId;
+  getTourTriggerId = getTourTriggerId;
 
   get submenuItems() {
     return this.submenus.reduce(
@@ -186,14 +191,9 @@ export default class ToolTypeSelection extends Vue {
       });
   }
 
-  @Watch("selectedItem")
-  selectSubmenuItem() {
-    if (!this.selectedItem) {
-      this.reset();
-      return;
-    }
-    const submenu = this.selectedItem.submenu;
-    const item = this.selectedItem;
+  selectItem(item: AugmentedItem) {
+    this.selectedItem = item;
+    const submenu = item.submenu;
     const { template, submenuInterface, submenuInterfaceIdx } = submenu;
 
     let computedTemplate = template;
@@ -230,70 +230,72 @@ export default class ToolTypeSelection extends Vue {
       default:
         break;
     }
+
     this.computedTemplate = computedTemplate;
     this.defaultToolValues = defaultToolValues;
-  }
 
-  refreshWorkers() {
-    this.propertyStore.fetchWorkerImageList();
-  }
-
-  @Watch("computedTemplate")
-  @Watch("defaultToolValues")
-  handleChange() {
-    const input: TReturnType = {
+    const returnValue: TReturnType = {
       template: this.computedTemplate,
       defaultValues: this.defaultToolValues,
-      selectedItem: this.selectedItem,
+      selectedItem: item,
     };
-    this.$emit("input", input);
-  }
 
-  mounted() {
-    this.initialize();
+    this.$emit("selected", returnValue);
   }
 
   get templates() {
     return this.store.toolTemplateList;
   }
 
-  @Watch("templates")
-  @Watch("value")
-  initialize() {
-    if (!this.value && this.templates.length) {
-      this.reset();
-    }
+  mounted() {
+    this.refreshWorkers();
+  }
+
+  refreshWorkers() {
+    this.propertyStore.fetchWorkerImageList();
   }
 
   reset() {
     this.selectedItem = null;
     this.computedTemplate = null;
     this.defaultToolValues = {};
-    this.handleChange();
     this.refreshWorkers();
   }
 }
 </script>
 
 <style lang="scss" scoped>
-.floating-list {
-  display: flex;
-  flex-direction: column;
+.tool-type-menu {
   max-height: 90vh;
   overflow-y: auto;
-  padding: 0;
-  margin: 0;
 }
 
-.custom-subheader {
-  font-size: large;
-  text-align: left;
-  padding: 8px 16px;
+.tool-type-card {
+  height: 100%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 0;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  .v-card__title {
+    word-break: break-word;
+    line-height: 1.2;
+    min-height: 0;
+  }
+
+  .description {
+    color: rgba(255, 255, 255, 0.7);
+    line-height: 1.2;
+  }
 }
 </style>
 
 <style lang="scss">
 .v-list .v-subheader {
-  font-size: large;
+  font-size: medium;
 }
 </style>

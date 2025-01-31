@@ -3,8 +3,6 @@
     <v-card class="pa-1">
       <v-card-title> Add a new tool </v-card-title>
       <v-card-text>
-        <!-- Pick which template should be used for the tool configuration -->
-        <tool-type-selection v-model="selectedTool" />
         <!-- Form elements generated from the template -->
         <tool-configuration
           :template="selectedTemplate"
@@ -109,6 +107,16 @@ export default class ToolCreation extends Vue {
   @Prop({ default: false })
   readonly open!: boolean;
 
+  @Prop({ default: null })
+  readonly initialSelectedTool!: TToolTypeSelectionValue | null;
+
+  private _selectedTool: TToolTypeSelectionValue | null = null;
+
+  @Watch("initialSelectedTool", { immediate: true })
+  onInitialSelectedToolChange(newVal: TToolTypeSelectionValue | null) {
+    this.selectedTool = newVal;
+  }
+
   createTool() {
     if (this.selectedTemplate === null) {
       return;
@@ -128,8 +136,6 @@ export default class ToolCreation extends Vue {
 
     this.close();
   }
-
-  private _selectedTool: TToolTypeSelectionValue | null = null;
 
   set selectedTool(value) {
     this._selectedTool = value;
@@ -202,6 +208,13 @@ export default class ToolCreation extends Vue {
   }
 
   @Watch("open")
+  onOpenChange(newValue: boolean) {
+    if (!newValue) {
+      // Only reset when closing
+      this.reset();
+    }
+  }
+
   reset() {
     this.userToolName = false;
     this.toolName = "New Tool";

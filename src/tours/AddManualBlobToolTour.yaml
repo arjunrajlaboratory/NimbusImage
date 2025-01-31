@@ -14,17 +14,6 @@ steps:
     showNextButton: false
     onTriggerEvent: "add-tool-tourtrigger"
 
-  - id: select-tool-type-tourstep
-    route: datasetview
-    element: "#select-tool-type-tourstep"
-    title: "Select Tool Type"
-    text: "Select the type of tool you want to add."
-    position: "right"
-    waitForElement: 1000
-    modalOverlay: true
-    showNextButton: false
-    onTriggerEvent: "select-tool-type-tourtrigger"
-
   - id: blob-tool-tourstep
     route: datasetview
     element: "#blob-tourstep"
@@ -33,6 +22,7 @@ steps:
     position: "right"
     waitForElement: 1000
     onTriggerEvent: "blob-tourtrigger"
+    showNextButton: false
     modalOverlay: true
 
   - id: layer-select-tourstep

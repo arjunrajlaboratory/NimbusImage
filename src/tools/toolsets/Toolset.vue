@@ -3,29 +3,36 @@
     <v-expansion-panel expand v-model="panels">
       <v-expansion-panel-header class="pa-2">
         <v-toolbar-title> Toolset </v-toolbar-title>
-        <!-- Tool creation -->
-        <v-dialog v-model="toolCreationDialogOpen" width="60%">
+        <!-- Tool Type Selection -->
+        <v-dialog v-model="toolTypeDialogOpen" width="90%">
           <template v-slot:activator="{ on: dialog }">
             <v-tooltip top>
               <template v-slot:activator="{ on: tooltip }">
                 <v-btn
-                  class="rounded-pill"
-                  icon
+                  class="ml-2"
+                  color="primary"
                   v-on="{ ...dialog, ...tooltip }"
                   id="add-tool-tourstep"
                   v-tour-trigger="'add-tool-tourtrigger'"
                 >
-                  <v-icon>
-                    {{ "mdi-plus" }}
-                  </v-icon>
+                  Add new tool
                 </v-btn>
               </template>
-              <span>Create new tool</span>
+              <span>Browse tool types</span>
             </v-tooltip>
           </template>
+          <tool-type-selection @selected="handleToolTypeSelected" />
+        </v-dialog>
+        <!-- Tool creation -->
+        <v-dialog
+          v-model="toolCreationDialogOpen"
+          width="60%"
+          @input="onToolCreationDialogInput"
+        >
           <tool-creation
-            @done="toolCreationDialogOpen = false"
+            @done="onToolCreationDone"
             :open="toolCreationDialogOpen"
+            :initial-selected-tool="selectedToolType"
           />
         </v-dialog>
       </v-expansion-panel-header>
@@ -121,12 +128,14 @@ import AnnotationWorkerMenu from "@/components/AnnotationWorkerMenu.vue";
 import SamToolMenu from "@/components/SamToolMenu.vue";
 import CircleToDotMenu from "@/components/CircleToDotMenu.vue";
 import ToolCreation from "@/tools/creation/ToolCreation.vue";
+import ToolTypeSelection from "@/tools/creation/ToolTypeSelection.vue";
 import ToolItem from "./ToolItem.vue";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
 @Component({
   components: {
     ToolCreation,
+    ToolTypeSelection,
     ToolItem,
     AnnotationWorkerMenu,
     SamToolMenu,
@@ -164,7 +173,28 @@ export default class Toolset extends Vue {
   }
 
   toolCreationDialogOpen: boolean = false;
-  toolPickerDialogOpen: boolean = false;
+  toolTypeDialogOpen: boolean = false;
+  selectedToolType: any = null;
+
+  onToolCreationDone() {
+    // The child emitted "done" meaning the dialog is closing/cancelled/finished
+    this.toolCreationDialogOpen = false;
+    this.selectedToolType = null; // Now is the right time to clear it
+  }
+
+  onToolCreationDialogInput(newVal: boolean) {
+    this.toolCreationDialogOpen = newVal;
+    if (!newVal) {
+      // The dialog was just closed by clicking outside or ESC
+      this.selectedToolType = null;
+    }
+  }
+
+  handleToolTypeSelected(toolType: any) {
+    this.selectedToolType = toolType;
+    this.toolTypeDialogOpen = false;
+    this.toolCreationDialogOpen = true;
+  }
 
   getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
     const propDesc: string[][] = [["Name", tool.name]];

@@ -60,7 +60,7 @@ import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
-import { toKebabCase } from "@/utils/strings";
+import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 
 @Component({
   components: { ToolIcon, ToolEdition },
@@ -70,17 +70,12 @@ export default class Toolset extends Vue {
   @Prop()
   tool!: IToolConfiguration;
 
-  getTourTriggerId(id: string): string {
-    return `${toKebabCase(id)}-tourtrigger`;
-  }
+  getTourStepId = getTourStepId;
+  getTourTriggerId = getTourTriggerId;
 
   isHovering = false;
   editDialog = false;
   statusIcon: null | string = null;
-
-  getTourStepId(id: string): string {
-    return `${toKebabCase(id)}-tourstep`;
-  }
 
   toggleTool() {
     if (this.isToolSelected) {
