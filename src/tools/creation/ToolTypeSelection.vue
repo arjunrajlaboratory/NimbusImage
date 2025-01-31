@@ -69,7 +69,8 @@ import { Vue, Component } from "vue-property-decorator";
 import propertiesStore from "@/store/properties";
 import store from "@/store";
 import { AnnotationShape, IToolTemplate } from "@/store/model";
-import { toKebabCase } from "@/utils/strings";
+import { getTourStepId, getTourTriggerId } from "@/utils/strings";
+import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
 
 interface Item {
   text: string;
@@ -110,13 +111,8 @@ export default class ToolTypeSelection extends Vue {
   computedTemplate: IToolTemplate | null = null;
   defaultToolValues: any = {};
 
-  getTourStepId(id: string): string {
-    return `${toKebabCase(id)}-tourstep`;
-  }
-
-  getTourTriggerId(id: string): string {
-    return `${toKebabCase(id)}-tourtrigger`;
-  }
+  getTourStepId = getTourStepId;
+  getTourTriggerId = getTourTriggerId;
 
   get submenuItems() {
     return this.submenus.reduce(
@@ -156,7 +152,7 @@ export default class ToolTypeSelection extends Vue {
                 const annotationInterface = template.interface.find(
                   (elem: any) => elem.type === "annotation",
                 );
-                const annotationSetupDefault: any = {
+                const annotationSetupDefault: Partial<IAnnotationSetup> = {
                   shape: labels.annotationShape ?? AnnotationShape.Point,
                 };
                 items.push({

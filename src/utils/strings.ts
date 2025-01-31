@@ -4,3 +4,11 @@ export function toKebabCase(str: string): string {
     .replace(/[\s_]+/g, "-") // convert spaces and underscores to hyphens
     .toLowerCase();
 }
+
+export function getTourStepId(id: string): string {
+  return `${toKebabCase(id)}-tourstep`;
+}
+
+export function getTourTriggerId(id: string): string {
+  return `${toKebabCase(id)}-tourtrigger`;
+}
