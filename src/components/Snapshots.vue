@@ -1451,7 +1451,7 @@ export default class Snapshots extends Vue {
           zip.add(zipFile);
           zipFile.push(new Uint8Array(arrayBuffer), true);
         } else {
-          const fileName = `frame${(i + 1).toString().padStart(3, "0")}.png`;
+          const fileName = `frame${(i + 1).toString().padStart(4, "0")}.png`;
           const zipFile = new ZipDeflate(fileName, deflateOptions);
           zip.add(zipFile);
           zipFile.push(new Uint8Array(data), true);
