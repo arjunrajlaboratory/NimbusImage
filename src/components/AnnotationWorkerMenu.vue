@@ -203,8 +203,36 @@ export default class AnnotationWorkerMenu extends Vue {
 
 <style lang="scss" scoped>
 .menu {
-  border: solid 5px rgba($color: #888, $alpha: 0.5);
-  min-height: 900px; // Start with a reasonable height for the menu so the card doesn't resize to be off screen
+  border: solid 1px rgba(255, 255, 255, 0.8);
+  box-shadow:
+    0 12px 24px rgba(0, 0, 0, 0.8),
+    0 4px 8px rgba(0, 0, 0, 0.6);
+  min-height: 600px;
+
+  :deep(.v-card__text) {
+    max-height: 600px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.2);
+
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background-color: rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.4);
+      }
+    }
+  }
 }
 // Set min-height to 0 when loaded
 .loaded {
