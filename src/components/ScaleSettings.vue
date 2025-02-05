@@ -57,6 +57,13 @@
         <pixel-scale-bar-setting class="mx-2" />
       </v-list-item-content>
     </v-list-item>
+    <span class="d-flex align-center">
+      <color-picker-menu
+        v-model="scalebarColor"
+        class="mx-2"
+        style="min-width: 200px"
+      />
+    </span>
   </v-list>
 </template>
 
@@ -125,6 +132,14 @@ export default class ScaleSettings extends Vue {
       unit: "time",
     });
     return items;
+  }
+
+  get scalebarColor() {
+    return this.store.scalebarColor;
+  }
+
+  set scalebarColor(color: string) {
+    this.store.setScalebarColor(color);
   }
 
   defaultSaveScale(

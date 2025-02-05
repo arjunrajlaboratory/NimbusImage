@@ -164,6 +164,7 @@ export class Main extends VuexModule {
 
   showScalebar: boolean = true;
   showPixelScalebar: boolean = true;
+  scalebarColor: string = "#ffffff";
 
   scaleAnnotationsWithZoom: boolean = true;
   annotationsRadius: number = 10;
@@ -357,6 +358,18 @@ export class Main extends VuexModule {
   @Mutation
   public setShowPixelScalebar(value: boolean) {
     this.showPixelScalebar = value;
+  }
+
+  // Note that we are just updating a CSS variable here
+  // In principle, we could just have updated the CSS variable
+  // directly in the ScaleSettings.vue component because the CSS
+  // variable would persist accordingly. But if in future we want to save
+  // the interface state in some way, this will make it easier.
+  // Also enables multiple color pickers across the interface to synchronize.
+  @Mutation
+  public setScalebarColor(color: string) {
+    this.scalebarColor = color;
+    document.documentElement.style.setProperty("--scale-bar-color", color);
   }
 
   @Mutation

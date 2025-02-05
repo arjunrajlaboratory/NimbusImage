@@ -1341,16 +1341,20 @@ export default class ImageViewer extends Vue {
 </script>
 
 <style lang="scss">
+:root {
+  --scale-bar-color: #ffffff; /* Default white color */
+}
+
 .progress .v-progress-linear__content {
   position: relative;
 }
 
 .geojs-scale-widget-bar {
-  stroke: white !important;
+  stroke: var(--scale-bar-color) !important;
 }
 
 .geojs-scale-widget-text {
-  fill: white;
+  fill: var(--scale-bar-color);
 }
 
 .scale-widget {
