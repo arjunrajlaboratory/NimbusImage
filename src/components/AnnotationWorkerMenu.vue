@@ -3,7 +3,16 @@
     <v-card-title class="subtitle-1">
       Worker menu
       <v-spacer />
-      <v-icon @click="updateInterface(true)">mdi-refresh</v-icon>
+      <v-btn small text class="mr-2" @click="resetInterfaceValues()">
+        <v-icon small left>mdi-refresh</v-icon>
+        Reset
+      </v-btn>
+      <v-icon
+        @click="updateInterface(true)"
+        v-tooltip="'Refresh worker interface from the server'"
+      >
+        mdi-sync
+      </v-icon>
     </v-card-title>
     <v-card-text>
       <v-container v-if="fetchingWorkerInterface">
@@ -48,6 +57,7 @@
           <worker-interface-values
             v-if="workerInterface"
             :workerInterface="workerInterface"
+            :tool="tool"
             v-model="interfaceValues"
             tooltipPosition="right"
           />
@@ -89,6 +99,8 @@ import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue"
 import LayerSelect from "@/components/LayerSelect.vue";
 import propertiesStore from "@/store/properties";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
+import { getDefault } from "@/utils/workerInterface";
+import { debounce } from "lodash";
 // Popup for new tool configuration
 @Component({
   components: {
@@ -102,12 +114,22 @@ export default class AnnotationWorkerMenu extends Vue {
   readonly annotationsStore = annotationsStore;
   readonly propertyStore = propertiesStore;
 
+  // Create a debounced version of editToolInConfiguration
+  debouncedEditTool = debounce((tool: IToolConfiguration) => {
+    this.store.editToolInConfiguration(tool);
+  }, 300);
+
   fetchingWorkerInterface: boolean = false;
   running: boolean = false;
   previousRunStatus: boolean | null = null;
   progressInfo: IProgressInfo = {};
   errorInfo: IErrorInfoList = { errors: [] };
   interfaceValues: IWorkerInterfaceValues = {};
+
+  beforeDestroy() {
+    // Cancel any pending debounced calls
+    this.debouncedEditTool.cancel();
+  }
 
   @Prop()
   readonly tool!: IToolConfiguration;
@@ -135,6 +157,13 @@ export default class AnnotationWorkerMenu extends Vue {
 
   set displayWorkerPreview(value: boolean) {
     this.propertyStore.setDisplayWorkerPreview(value);
+  }
+
+  @Watch("interfaceValues", { deep: true })
+  onInterfaceValuesChanged() {
+    let tool = this.tool; // Copy the tool object because it's a readonly prop
+    tool.values.workerInterfaceValues = this.interfaceValues;
+    this.debouncedEditTool(tool);
   }
 
   compute() {
@@ -165,7 +194,24 @@ export default class AnnotationWorkerMenu extends Vue {
   }
 
   mounted() {
+    if (this.tool.values.workerInterfaceValues) {
+      this.interfaceValues = this.tool.values.workerInterfaceValues;
+    }
     this.updateInterface();
+  }
+
+  resetInterfaceValues() {
+    const interfaceValues: IWorkerInterfaceValues = {};
+    if (this.workerInterface) {
+      for (const id in this.workerInterface) {
+        const interfaceTemplate = this.workerInterface[id];
+        interfaceValues[id] = getDefault(
+          interfaceTemplate.type,
+          interfaceTemplate.default,
+        );
+      }
+    }
+    this.interfaceValues = interfaceValues;
   }
 
   @Watch("tool")

@@ -97,16 +97,17 @@
 <script lang="ts">
 import { Vue, Component, Prop, Watch, VModel } from "vue-property-decorator";
 import {
+  IToolConfiguration,
   IWorkerInterface,
   IWorkerInterfaceValues,
-  TWorkerInterfaceType,
-  TWorkerInterfaceValue,
 } from "@/store/model";
 import LayerSelect from "@/components/LayerSelect.vue";
 import ChannelSelect from "@/components/ChannelSelect.vue";
 import ChannelCheckboxGroup from "@/components/ChannelCheckboxGroup.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import { getTourStepId } from "@/utils/strings";
+import { getDefault } from "@/utils/workerInterface";
+
 // Popup for new tool configuration
 @Component({
   components: {
@@ -120,45 +121,15 @@ export default class WorkerInterfaceValues extends Vue {
   @Prop()
   readonly workerInterface!: IWorkerInterface;
 
+  @Prop()
+  readonly tool!: IToolConfiguration;
+
   @VModel({ type: Object }) interfaceValues!: IWorkerInterfaceValues;
   @Prop({ default: "right", type: String })
   readonly tooltipPosition!: "left" | "right";
 
   getTourStepId = getTourStepId;
 
-  getDefault(type: TWorkerInterfaceType, defaultValue?: TWorkerInterfaceValue) {
-    if (defaultValue) {
-      return defaultValue;
-    }
-    switch (type) {
-      case "number":
-        return 0.0;
-
-      case "notes":
-        return "";
-
-      case "text":
-        return "";
-
-      case "tags":
-        return [];
-
-      case "layer":
-        return null;
-
-      case "select":
-        return "";
-
-      case "channel":
-        return 0;
-
-      case "channelCheckboxes":
-        return {};
-
-      case "checkbox":
-        return false;
-    }
-  }
   // Computed properties to determine tooltip alignment
   get isLeft() {
     return this.tooltipPosition === "left";
@@ -183,18 +154,22 @@ export default class WorkerInterfaceValues extends Vue {
   }
 
   mounted() {
-    this.resetValues();
+    this.populateValues();
   }
 
   @Watch("workerInterface")
-  resetValues() {
+  populateValues() {
     const interfaceValues: IWorkerInterfaceValues = {};
     for (const id in this.workerInterface) {
-      const interfaceTemplate = this.workerInterface[id];
-      interfaceValues[id] = this.getDefault(
-        interfaceTemplate.type,
-        interfaceTemplate.default,
-      );
+      if (id in this.tool.values.workerInterfaceValues) {
+        interfaceValues[id] = this.tool.values.workerInterfaceValues[id];
+      } else {
+        const interfaceTemplate = this.workerInterface[id];
+        interfaceValues[id] = getDefault(
+          interfaceTemplate.type,
+          interfaceTemplate.default,
+        );
+      }
     }
     this.interfaceValues = interfaceValues;
   }
