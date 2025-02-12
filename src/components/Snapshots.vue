@@ -766,7 +766,7 @@ export default class Snapshots extends Vue {
     const zip: Zip = new Zip();
     const zipChunks: Uint8Array[] = [];
     const zipDone: Promise<Blob> = new Promise((resolve, reject) => {
-      zip.ondata = (err, data, final) => {
+      zip.ondata = (err: Error | null, data: Uint8Array, final: boolean) => {
         if (!err) {
           zipChunks.push(data);
           if (final) {
@@ -1252,7 +1252,7 @@ export default class Snapshots extends Vue {
     if (store.configuration && store.configuration.snapshots) {
       return store.configuration.snapshots
         .slice()
-        .filter((s) => s.name === this.newName)[0];
+        .filter((s: ISnapshot) => s.name === this.newName)[0];
     }
     return;
   }
@@ -1322,6 +1322,10 @@ export default class Snapshots extends Vue {
     endTime: number;
     fps: number;
     format: MovieFormat;
+    shouldAddTimeStamp: boolean;
+    initialTimeStampTime: number;
+    timeStampStep: number;
+    timeStampUnits: string;
   }) {
     const dataset = this.store.dataset;
     if (!dataset) return;
@@ -1369,6 +1373,10 @@ export default class Snapshots extends Vue {
       startTime: number;
       endTime: number;
       fps: number;
+      shouldAddTimeStamp: boolean;
+      initialTimeStampTime: number;
+      timeStampStep: number;
+      timeStampUnits: string;
     },
     urls: URL[],
   ) {
@@ -1382,7 +1390,7 @@ export default class Snapshots extends Vue {
       const zip = new Zip();
       const zipChunks: Uint8Array[] = [];
       const zipDone: Promise<Blob> = new Promise((resolve, reject) => {
-        zip.ondata = (err, data, final) => {
+        zip.ondata = (err: Error | null, data: Uint8Array, final: boolean) => {
           if (!err) {
             zipChunks.push(data);
             if (final) {
@@ -1404,10 +1412,50 @@ export default class Snapshots extends Vue {
           responseType: "arraybuffer",
         });
 
-        const fileName = `frame${(i + 1).toString().padStart(3, "0")}.png`;
-        const zipFile = new ZipDeflate(fileName, deflateOptions);
-        zip.add(zipFile);
-        zipFile.push(new Uint8Array(data), true);
+        if (params.shouldAddTimeStamp) {
+          // Create a blob from the image data
+          const blob = new Blob([data], { type: "image/png" });
+          const imageUrl = URL.createObjectURL(blob);
+
+          // Create an image element and wait for it to load
+          const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = imageUrl;
+          });
+
+          // Create a canvas to draw the frame with annotations
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Failed to get canvas context");
+
+          // Draw the original image
+          ctx.drawImage(img, 0, 0);
+
+          this.addTimeStampToCanvas(canvas, params, i);
+
+          // Convert canvas to blob
+          const annotatedBlob = await new Promise<Blob>((resolve) => {
+            canvas.toBlob((blob) => resolve(blob!), "image/png");
+          });
+
+          // Convert blob to array buffer
+          const arrayBuffer = await annotatedBlob.arrayBuffer();
+
+          // Add to zip
+          const fileName = `frame${(i + 1).toString().padStart(4, "0")}.png`;
+          const zipFile = new ZipDeflate(fileName, deflateOptions);
+          zip.add(zipFile);
+          zipFile.push(new Uint8Array(arrayBuffer), true);
+        } else {
+          const fileName = `frame${(i + 1).toString().padStart(4, "0")}.png`;
+          const zipFile = new ZipDeflate(fileName, deflateOptions);
+          zip.add(zipFile);
+          zipFile.push(new Uint8Array(data), true);
+        }
 
         this.progress.update({
           id: progressId,
@@ -1437,6 +1485,10 @@ export default class Snapshots extends Vue {
       startTime: number;
       endTime: number;
       fps: number;
+      shouldAddTimeStamp: boolean;
+      initialTimeStampTime: number;
+      timeStampStep: number;
+      timeStampUnits: string;
     },
     urls: URL[],
   ) {
@@ -1477,7 +1529,25 @@ export default class Snapshots extends Vue {
         const img = new Image();
         await new Promise<void>((resolve, reject) => {
           img.onload = () => {
-            gif.addFrame(img, { delay: 1000 / params.fps }); // delay in ms
+            if (params.shouldAddTimeStamp) {
+              // Create a temporary canvas to draw the frame with annotations
+              const canvas = document.createElement("canvas");
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) throw new Error("Failed to get canvas context");
+
+              // Draw the original image
+              ctx.drawImage(img, 0, 0);
+
+              this.addTimeStampToCanvas(canvas, params, i);
+
+              // Add the annotated canvas frame to the GIF instead of the original image
+              gif.addFrame(canvas, { delay: 1000 / params.fps });
+            } else {
+              gif.addFrame(img, { delay: 1000 / params.fps }); // delay in ms
+            }
+
             this.progress.update({
               id: progressId,
               progress: i + 1,
@@ -1528,6 +1598,10 @@ export default class Snapshots extends Vue {
       startTime: number;
       endTime: number;
       fps: number;
+      shouldAddTimeStamp: boolean;
+      initialTimeStampTime: number;
+      timeStampStep: number;
+      timeStampUnits: string;
     },
     urls: URL[],
   ) {
@@ -1611,6 +1685,10 @@ export default class Snapshots extends Vue {
           img.src = imageUrl;
         });
 
+        if (params.shouldAddTimeStamp) {
+          this.addTimeStampToCanvas(canvas, params, currentFrame);
+        }
+
         this.progress.update({
           id: progressId,
           progress: currentFrame + 1,
@@ -1644,6 +1722,32 @@ export default class Snapshots extends Vue {
     } finally {
       this.progress.complete(progressId);
     }
+  }
+
+  addTimeStampToCanvas(
+    canvas: HTMLCanvasElement,
+    params: {
+      initialTimeStampTime: number;
+      timeStampStep: number;
+      timeStampUnits: string;
+    },
+    frameIndex: number,
+  ): void {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to get canvas context");
+
+    // Add timestamp overlay
+    ctx.fillStyle = "white"; // Text color
+    ctx.strokeStyle = "black"; // Text outline color
+    ctx.lineWidth = 3; // Text outline width
+    ctx.font = "24px Arial"; // Text font and size
+    ctx.textBaseline = "bottom";
+
+    const timeText = `T=${params.initialTimeStampTime + frameIndex * params.timeStampStep} ${params.timeStampUnits}`;
+    // Draw text outline
+    ctx.strokeText(timeText, 10, canvas.height - 10);
+    // Draw text fill
+    ctx.fillText(timeText, 10, canvas.height - 10);
   }
 }
 </script>

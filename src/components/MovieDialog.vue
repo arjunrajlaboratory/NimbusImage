@@ -63,6 +63,52 @@
             </v-col>
           </v-row>
 
+          <v-row class="mt-4">
+            <v-col cols="12">
+              <v-checkbox
+                v-model="shouldAddTimeStamp"
+                label="Insert time stamp"
+                dense
+                hide-details
+              />
+            </v-col>
+          </v-row>
+
+          <template v-if="shouldAddTimeStamp">
+            <v-row class="mt-4">
+              <v-col cols="6">
+                <v-text-field
+                  label="Initial time"
+                  v-model.number="initialTimeStampTime"
+                  type="number"
+                  dense
+                  hide-details
+                />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field
+                  label="Time step"
+                  v-model.number="timeStampStep"
+                  type="number"
+                  dense
+                  hide-details
+                />
+              </v-col>
+            </v-row>
+
+            <v-row class="mt-4">
+              <v-col cols="12">
+                <v-select
+                  label="Units"
+                  v-model="timeStampUnits"
+                  :items="timeUnits"
+                  dense
+                  hide-details
+                />
+              </v-col>
+            </v-row>
+          </template>
+
           <v-row v-if="warningText" class="mt-4">
             <v-col cols="12">
               <v-alert type="warning" dense text class="mb-0">
@@ -110,6 +156,20 @@ export default class MovieDialog extends Vue {
   endTime: number = 0;
   fps: number = 10;
   downloadFormat: MovieFormat = MovieFormat.ZIP;
+  shouldAddTimeStamp: boolean = false;
+  initialTimeStampTime: number = 0.0;
+  timeStampStep: number = 1.0;
+  timeStampUnits: string = "hours";
+  timeUnits: string[] = [
+    "months",
+    "weeks",
+    "days",
+    "hours",
+    "minutes",
+    "seconds",
+    "milliseconds",
+    "microseconds",
+  ];
 
   @Watch("value")
   onDialogOpen(newValue: boolean) {
@@ -183,6 +243,10 @@ export default class MovieDialog extends Vue {
       endTime: this.endTime,
       fps: this.fps,
       format: this.downloadFormat,
+      shouldAddTimeStamp: this.shouldAddTimeStamp,
+      initialTimeStampTime: this.initialTimeStampTime,
+      timeStampStep: this.timeStampStep,
+      timeStampUnits: this.timeStampUnits,
     });
     this.dialog = false;
   }
