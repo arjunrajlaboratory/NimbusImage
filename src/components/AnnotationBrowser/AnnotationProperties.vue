@@ -1,6 +1,9 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header>
+    <v-expansion-panel-header
+      id="properties-header-tourstep"
+      v-tour-trigger="'properties-header-tourtrigger'"
+    >
       Properties
       <v-spacer />
       <v-btn
@@ -9,6 +12,8 @@
         small
         dense
         @click.stop="showAnalyzeDialog = true"
+        id="measure-objects-button-tourstep"
+        v-tour-trigger="'measure-objects-button-tourtrigger'"
       >
         Measure objects
       </v-btn>
@@ -18,6 +23,7 @@
       v-model="showAnalyzeDialog"
       min-width="900px"
       max-width="1000px"
+      width="80%"
       @input="onDialogClose"
     >
       <v-card>
@@ -27,12 +33,18 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn @click="onDialogClose(false)">Close</v-btn>
+          <v-btn
+            @click="onDialogClose(false)"
+            id="measure-objects-close-button-tourstep"
+            v-tour-trigger="'measure-objects-close-button-tourtrigger'"
+          >
+            Close
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-expansion-panel-content>
+    <v-expansion-panel-content id="properties-content-tourstep">
       <v-text-field
         v-model="propFilter"
         label="Search properties"

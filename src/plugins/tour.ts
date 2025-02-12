@@ -242,6 +242,10 @@ export class TourManager {
               }
             : undefined,
           popperOptions: {
+            // NOTE: LLMs often suggest that I use "fixed" strategy, but it
+            // has not seemed to solve any problems. Still, leaving here in case
+            // anyone wants to try it in the future.
+            // strategy: "fixed",
             modifiers: [
               {
                 name: "offset",
@@ -256,6 +260,11 @@ export class TourManager {
                   padding: 10,
                 },
               },
+              // NOTE: Although not needed now, this option was helpful when
+              // a tour step was clipped by some other element, thus hiding it.
+              // May be useful for future debugging purposes in case some tour
+              // step is hidden unexpectedly.
+              // { name: "hide", enabled: false },
             ],
           },
           title: step.title,

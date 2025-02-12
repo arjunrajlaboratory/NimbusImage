@@ -33,7 +33,12 @@
             'List of all objects in the dataset, including their properties, and various actions on them'
           "
         >
-          <v-btn class="ml-4" @click.stop="toggleRightPanel('annotationPanel')">
+          <v-btn
+            class="ml-4"
+            @click.stop="toggleRightPanel('annotationPanel')"
+            id="object-list-button-tourstep"
+            v-tour-trigger="'object-list-button-tourtrigger'"
+          >
             Object list
           </v-btn>
         </span>
@@ -43,12 +48,22 @@
             'Snapshots for bookmarking and downloading cropped regions in your dataset'
           "
         >
-          <v-btn class="ml-4" @click.stop="toggleRightPanel('snapshotPanel')">
+          <v-btn
+            class="ml-4"
+            @click.stop="toggleRightPanel('snapshotPanel')"
+            id="snapshots-button-tourstep"
+            v-tour-trigger="'snapshots-button-tourtrigger'"
+          >
             Snapshots
           </v-btn>
         </span>
         <span v-tooltip="'Image and object display settings'">
-          <v-btn class="ml-4" @click.stop="toggleRightPanel('settingsPanel')">
+          <v-btn
+            class="ml-4"
+            @click.stop="toggleRightPanel('settingsPanel')"
+            id="settings-button-tourstep"
+            v-tour-trigger="'settings-button-tourtrigger'"
+          >
             Settings
           </v-btn>
         </span>

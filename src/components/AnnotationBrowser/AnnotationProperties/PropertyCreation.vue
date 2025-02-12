@@ -1,6 +1,9 @@
 <template>
-  <v-card>
-    <div class="d-flex align-center px-4 py-2">
+  <v-card class="property-creation-card">
+    <div
+      class="d-flex align-center px-4 py-2"
+      id="create-property-header-tourstep"
+    >
       <span class="text-subtitle-1">Create new property</span>
     </div>
     <v-card-text>
@@ -10,7 +13,12 @@
             <v-subheader dense>Measure by tag:</v-subheader>
           </v-col>
           <v-col cols="6">
-            <tag-picker v-model="filteringTags" dense />
+            <tag-picker
+              v-model="filteringTags"
+              dense
+              id="property-tag-picker-tourstep"
+              v-tour-trigger="'property-tag-picker-tourtrigger'"
+            />
           </v-col>
           <v-col cols="3">
             <v-checkbox
@@ -23,7 +31,9 @@
         </v-row>
         <v-row align="center" dense>
           <v-col cols="3">
-            <v-subheader dense>{{ shapeSelectionString }}</v-subheader>
+            <v-subheader dense id="shape-selection-tourstep">{{
+              shapeSelectionString
+            }}</v-subheader>
           </v-col>
           <v-col cols="9">
             <v-select
@@ -45,6 +55,8 @@
               dense
               v-model="dockerImage"
               :imageFilter="propertyImageFilter"
+              id="property-algorithm-select-tourstep"
+              v-tour-trigger="'property-algorithm-select-tourtrigger'"
             />
           </v-col>
         </v-row>
@@ -83,7 +95,14 @@
       />
       <div class="button-bar mt-2">
         <v-spacer></v-spacer>
-        <v-btn class="mr-2" color="primary" small @click="createProperty">
+        <v-btn
+          class="mr-2"
+          color="primary"
+          small
+          @click="createProperty"
+          id="create-property-button-tourstep"
+          v-tour-trigger="'create-property-button-tourtrigger'"
+        >
           Create Property
         </v-btn>
         <v-btn class="mr-2" color="warning" small @click="reset">Reset</v-btn>
@@ -302,3 +321,10 @@ export default class PropertyCreation extends Vue {
   }
 }
 </script>
+<style lang="scss" scoped>
+.property-creation-card {
+  position: relative; // Ensure proper stacking context
+  z-index: 100; // Ensure card stays above other content
+  overflow: visible !important;
+}
+</style>
