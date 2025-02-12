@@ -141,8 +141,8 @@ export default class ProgressBarGroup extends Vue {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 250px;
-  max-width: 250px;
+  min-width: 400px;
+  max-width: 400px;
 }
 
 .progress-group {
