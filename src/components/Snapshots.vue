@@ -537,6 +537,16 @@ export enum MovieFormat {
   WEBM = "webm",
 }
 
+export enum PixelSizeMode {
+  DATASET = "dataset",
+  MANUAL = "manual",
+}
+
+export enum ScalebarMode {
+  AUTOMATIC = "automatic",
+  MANUAL = "manual",
+}
+
 @Component({
   components: { TagPicker, MovieDialog },
 })
@@ -625,8 +635,8 @@ export default class Snapshots extends Vue {
   manualScalebarSettings: IScalebarSettings | null = null;
   manualPixelSize: IScalebarSettings | null = null;
 
-  pixelSizeMode: "dataset" | "manual" = "dataset";
-  scalebarMode: "automatic" | "manual" = "automatic";
+  pixelSizeMode: PixelSizeMode = PixelSizeMode.DATASET;
+  scalebarMode: ScalebarMode = ScalebarMode.AUTOMATIC;
 
   get formatList() {
     if (this.downloadMode === "layers") {
@@ -726,10 +736,7 @@ export default class Snapshots extends Vue {
   }
 
   get manualScalebarSettingsLength(): number {
-    if (this.manualScalebarSettings) {
-      return this.manualScalebarSettings.length;
-    }
-    return 1.0;
+    return this.manualScalebarSettings?.length || 1.0;
   }
 
   set manualScalebarSettingsLength(value: number) {
@@ -739,10 +746,7 @@ export default class Snapshots extends Vue {
   }
 
   get manualScalebarSettingsUnit(): TScalebarUnit {
-    if (this.manualScalebarSettings) {
-      return this.manualScalebarSettings.unit;
-    }
-    return TScalebarUnit.PX;
+    return this.manualScalebarSettings?.unit || TScalebarUnit.PX;
   }
 
   set manualScalebarSettingsUnit(value: TScalebarUnit) {
@@ -752,10 +756,7 @@ export default class Snapshots extends Vue {
   }
 
   get manualPixelSizeLength(): number {
-    if (this.manualPixelSize) {
-      return this.manualPixelSize.length;
-    }
-    return 1.0;
+    return this.manualPixelSize?.length || 1.0;
   }
 
   set manualPixelSizeLength(value: number) {
@@ -765,10 +766,7 @@ export default class Snapshots extends Vue {
   }
 
   get manualPixelSizeUnit(): TScalebarUnit {
-    if (this.manualPixelSize) {
-      return this.manualPixelSize.unit;
-    }
-    return TScalebarUnit.PX;
+    return this.manualPixelSize?.unit || TScalebarUnit.PX;
   }
 
   set manualPixelSizeUnit(value: TScalebarUnit) {
