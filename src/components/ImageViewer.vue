@@ -506,6 +506,10 @@ export default class ImageViewer extends Vue {
     return this.store.showPixelScalebar;
   }
 
+  get scalebarColor() {
+    return this.store.scalebarColor;
+  }
+
   mounted() {
     this.refsMounted = true;
     this.datasetReset();
@@ -954,6 +958,14 @@ export default class ImageViewer extends Vue {
         this.scaleDialog = true;
       };
     }
+  }
+
+  @Watch("scalebarColor")
+  updateScalebarColor() {
+    document.documentElement.style.setProperty(
+      "--scale-bar-color",
+      this.scalebarColor,
+    );
   }
 
   /**
