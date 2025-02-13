@@ -274,7 +274,128 @@
         </v-row>
       </v-card-text>
       <v-card-actions class="d-block">
+        <v-row>
+          <v-col>
+            <div class="d-flex align-center">
+              <v-checkbox
+                v-model="addScalebar"
+                label="Add scalebar"
+                class="mt-0 shrink"
+                hide-details
+              />
+              <span class="ml-2 text-no-wrap">{{
+                prettyScalebarSettings(scalebarSettings)
+              }}</span>
+              <v-icon
+                small
+                class="ml-2"
+                @click.stop="scalebarSettingsDialog = true"
+                >mdi-cog</v-icon
+              >
+            </div>
+          </v-col>
+        </v-row>
+        <!-- Scalebar settings dialog -->
+        <v-dialog v-model="scalebarSettingsDialog" max-width="600px">
+          <v-card>
+            <v-card-title>Snapshot Scalebar Settings</v-card-title>
+            <v-card-text>
+              <v-container>
+                <v-row>
+                  <v-col cols="6">
+                    <div class="subtitle-1 mb-2">Pixel size</div>
+                    <v-radio-group
+                      v-model="pixelSizeMode"
+                      @change="handlePixelSizeModeChange"
+                    >
+                      <v-radio
+                        value="dataset"
+                        :label="`Pixel size from dataset: ${formattedConfigurationPixelSize}`"
+                      />
+                      <v-radio
+                        value="manual"
+                        label="Manually select pixel size"
+                      />
+                    </v-radio-group>
+                    <div class="mt-2">
+                      <v-text-field
+                        v-model.number="manualPixelSizeLength"
+                        type="number"
+                        step="0.1"
+                        label="Pixel size"
+                        dense
+                        hide-details
+                        class="mb-4"
+                        :disabled="pixelSizeMode === 'dataset'"
+                      />
+                      <v-select
+                        v-model="manualPixelSizeUnit"
+                        :items="pixelSizeUnitItems"
+                        label="Unit"
+                        dense
+                        hide-details
+                        :disabled="pixelSizeMode === 'dataset'"
+                      />
+                    </div>
+                  </v-col>
+                  <v-col cols="6">
+                    <div class="subtitle-1 mb-2">Scalebar length</div>
+                    <v-radio-group
+                      v-model="scalebarMode"
+                      @change="handleScalebarModeChange"
+                    >
+                      <v-radio
+                        value="automatic"
+                        :label="`Automatic scalebar length: ${formattedScalebarSettings}`"
+                      />
+                      <v-radio
+                        value="manual"
+                        label="Manually select scalebar length"
+                      />
+                    </v-radio-group>
+                    <div class="mt-2">
+                      <v-text-field
+                        v-model.number="manualScalebarSettingsLength"
+                        type="number"
+                        step="0.1"
+                        label="Scalebar length"
+                        dense
+                        hide-details
+                        class="mb-4"
+                        :disabled="scalebarMode === 'automatic'"
+                      />
+                      <v-select
+                        v-model="manualScalebarSettingsUnit"
+                        :items="scalebarSettingsUnitItems"
+                        label="Unit"
+                        dense
+                        hide-details
+                        :disabled="
+                          scalebarMode === 'automatic' ||
+                          pixelSize.unit === 'px'
+                        "
+                      />
+                    </div>
+                  </v-col>
+                </v-row>
+              </v-container>
+              <span class="d-flex align-center">
+                <color-picker-menu
+                  v-model="snapshotScalebarColor"
+                  class="mx-2"
+                  style="min-width: 200px"
+                />
+              </span>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer></v-spacer>
+              <v-btn text @click="scalebarSettingsDialog = false">Close</v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
         <v-progress-circular v-if="downloading" indeterminate />
+
         <div class="mb-2">
           <v-btn
             color="primary"
@@ -364,6 +485,7 @@ import {
   ISnapshot,
   copyLayerWithoutPrivateAttributes,
   ProgressType,
+  TUnitLength,
 } from "@/store/model";
 import { DeflateOptions, Zip, ZipDeflate } from "fflate";
 import girderResources from "@/store/girderResources";
@@ -394,13 +516,40 @@ interface IGifOptions extends GIF.Options {
   };
 }
 
+// This interface is similar to IScaleInformation<TUnitLength>,
+// but it allows for "px" as a unit.
+interface IScalebarSettings {
+  length: number;
+  unit: TScalebarUnit;
+}
+
+export enum TScalebarUnit {
+  NM = "nm",
+  UM = "µm",
+  MM = "mm",
+  M = "m",
+  PX = "px",
+}
+
 export enum MovieFormat {
   ZIP = "zip",
   GIF = "gif",
   WEBM = "webm",
 }
 
-@Component({ components: { TagPicker, MovieDialog } })
+export enum PixelSizeMode {
+  DATASET = "dataset",
+  MANUAL = "manual",
+}
+
+export enum ScalebarMode {
+  AUTOMATIC = "automatic",
+  MANUAL = "manual",
+}
+
+@Component({
+  components: { TagPicker, MovieDialog },
+})
 export default class Snapshots extends Vue {
   readonly store = store;
   readonly progress = progress;
@@ -470,6 +619,7 @@ export default class Snapshots extends Vue {
   bboxBottom: number = 0;
   bboxLayer: IGeoJSAnnotationLayer | null = null;
   bboxAnnotation: IGeoJSAnnotation | null = null;
+  scalebarAnnotation: IGeoJSAnnotation | null = null;
   downloadMode: "layers" | "channels" = "layers";
   exportLayer: "all" | "composite" | string = "composite";
   exportChannel: "all" | number = "all";
@@ -477,6 +627,16 @@ export default class Snapshots extends Vue {
 
   layersOverwritePanel: boolean = false;
   overwrittingSnaphot: ISnapshot | null = null;
+
+  addScalebar: boolean = true;
+  addScalebarText: boolean = true;
+  scalebarSettingsDialog: boolean = false;
+  snapshotScalebarColor: string = "#ffffff";
+  manualScalebarSettings: IScalebarSettings | null = null;
+  manualPixelSize: IScalebarSettings | null = null;
+
+  pixelSizeMode: PixelSizeMode = PixelSizeMode.DATASET;
+  scalebarMode: ScalebarMode = ScalebarMode.AUTOMATIC;
 
   get formatList() {
     if (this.downloadMode === "layers") {
@@ -575,6 +735,284 @@ export default class Snapshots extends Vue {
     return results;
   }
 
+  get manualScalebarSettingsLength(): number {
+    return this.manualScalebarSettings?.length || 1.0;
+  }
+
+  set manualScalebarSettingsLength(value: number) {
+    if (this.manualScalebarSettings) {
+      this.manualScalebarSettings.length = value;
+    }
+  }
+
+  get manualScalebarSettingsUnit(): TScalebarUnit {
+    return this.manualScalebarSettings?.unit || TScalebarUnit.PX;
+  }
+
+  set manualScalebarSettingsUnit(value: TScalebarUnit) {
+    if (this.manualScalebarSettings) {
+      this.manualScalebarSettings.unit = value;
+    }
+  }
+
+  get manualPixelSizeLength(): number {
+    return this.manualPixelSize?.length || 1.0;
+  }
+
+  set manualPixelSizeLength(value: number) {
+    if (this.manualPixelSize) {
+      this.manualPixelSize.length = value;
+    }
+  }
+
+  get manualPixelSizeUnit(): TScalebarUnit {
+    return this.manualPixelSize?.unit || TScalebarUnit.PX;
+  }
+
+  set manualPixelSizeUnit(value: TScalebarUnit) {
+    if (this.manualPixelSize) {
+      this.manualPixelSize.unit = value;
+    }
+  }
+
+  get configurationPixelSize(): IScalebarSettings {
+    const scale = store.configuration?.scales.pixelSize;
+    if (!scale) {
+      return { length: 1.0, unit: TScalebarUnit.PX };
+    }
+    // Sometimes, if there is no metadata, the pixel size is 0.
+    if (scale.value === 0) {
+      return { length: 1.0, unit: TScalebarUnit.PX };
+    }
+    return { length: scale.value, unit: scale.unit as TScalebarUnit };
+  }
+
+  get formattedConfigurationPixelSize(): string {
+    const settings = this.configurationPixelSize;
+    return this.prettyScalebarSettings(settings);
+  }
+
+  get formattedScalebarSettings(): string {
+    const settings = this.scalebarSettings;
+    return this.prettyScalebarSettings(settings);
+  }
+
+  prettyScalebarSettings(settings: IScalebarSettings): string {
+    if (settings.unit === TScalebarUnit.PX) {
+      return `${settings.length} px`;
+    }
+    const length = this.convertLengthToMeters(settings.length, settings.unit);
+    const printSettings = this.convertMetersToLength(length);
+    return `${printSettings.length.toFixed(1)} ${printSettings.unit}`;
+  }
+
+  get pixelSize(): IScalebarSettings {
+    // If there is a manual pixel size, use that.
+    if (this.pixelSizeMode === "manual" && this.manualPixelSize) {
+      return this.manualPixelSize;
+    }
+    // Otherwise, use the configuration pixel size.
+    return this.configurationPixelSize;
+  }
+
+  get scalebarSettings(): IScalebarSettings {
+    // If there is a manual scalebar settings, use that.
+    if (this.scalebarMode === "manual" && this.manualScalebarSettings) {
+      return this.manualScalebarSettings;
+    }
+    // Otherwise, compute the ideal scalebar length.
+    const idealScalebar = this.idealScalebarLength;
+    if (!idealScalebar) {
+      return { length: 1.0, unit: TScalebarUnit.PX };
+    } else {
+      if (this.pixelSize.unit === TScalebarUnit.PX) {
+        // If the unit is pixels, then we need to explicitly set the unit to pixels.
+        return { length: idealScalebar, unit: TScalebarUnit.PX };
+      }
+      return this.convertMetersToLength(idealScalebar);
+    }
+  }
+
+  get scalebarLengthInPixels(): number {
+    // If the unit is pixels, return the length as is
+    if (this.scalebarSettings.unit === TScalebarUnit.PX) {
+      return this.scalebarSettings.length;
+    }
+    // If the unit is physical distance, then we need to convert to pixels.
+    // First, let's convert the length per pixel into meters.
+    // This is somewhat irritating because scales.pixelSize.unit can be:
+    // any of: export type TUnitLength = "nm" | "µm" | "mm" | "m";
+    // and we want to convert to meters.
+
+    const pixelSize = this.pixelSize;
+    if (pixelSize.unit === TScalebarUnit.PX) {
+      // This should be captured above, but an extra guard just in case.
+      return this.scalebarSettings.length;
+    }
+
+    const pixelLengthInMeters = this.convertLengthToMeters(
+      pixelSize.length,
+      pixelSize.unit,
+    );
+    // Then, convert the scalebar length to meters
+    const scalebarLengthInMeters = this.convertLengthToMeters(
+      this.scalebarSettings.length,
+      this.scalebarSettings.unit,
+    );
+    return scalebarLengthInMeters / pixelLengthInMeters;
+  }
+
+  // Convert a unit of length to a unit of scalebar length
+  // Required because the length unit does not include pixels
+  // TODO: Remove? Now it literally does nothing at all.
+  unitLengthToScalebarUnit(unit: TUnitLength): TUnitLength {
+    switch (unit) {
+      case "nm":
+        return TScalebarUnit.NM;
+      case "µm":
+        return TScalebarUnit.UM;
+      case "mm":
+        return TScalebarUnit.MM;
+      case "m":
+        return TScalebarUnit.M;
+    }
+  }
+
+  convertLengthToMeters(length: number, unit: TUnitLength): number {
+    switch (unit) {
+      case TScalebarUnit.NM:
+        return length * 1e-9;
+      case TScalebarUnit.UM:
+        return length * 1e-6;
+      case TScalebarUnit.MM:
+        return length * 1e-3;
+      case TScalebarUnit.M:
+        return length;
+      default:
+        return length;
+    }
+  }
+
+  convertMetersToLength(length: number): IScalebarSettings {
+    // Implement logic to assign a IScalebarUnit based on the meters
+    if (length < 1e-6) {
+      return { length: length * 1e9, unit: TScalebarUnit.NM };
+    }
+    if (length < 1e-3) {
+      return { length: length * 1e6, unit: TScalebarUnit.UM };
+    }
+    if (length < 1) {
+      return { length: length * 1e3, unit: TScalebarUnit.MM };
+    }
+    return { length: length, unit: TScalebarUnit.M };
+  }
+
+  guessIdealScalebar(
+    imageWidthPixels: number,
+    distancePerPixel: number,
+  ): number | null {
+    if (imageWidthPixels <= 0 || distancePerPixel <= 0) {
+      return null;
+    }
+    // Helper function to round to significant digits
+    const roundToSignificant = (
+      num: number,
+      sigDigits: number = 10,
+    ): number => {
+      if (num === 0) return 0;
+      const magnitude = Math.floor(Math.log10(Math.abs(num)));
+      const scale = Math.pow(10, sigDigits - magnitude - 1);
+      return Math.round(num * scale) / scale;
+    };
+
+    // distancePerPixel is in meters; if you want to use pixels, just send 1
+    // Define our units in ascending order (all converted to meters)
+    const units = [
+      { unit: TScalebarUnit.NM, scale: 1e-9 }, // nanometers
+      { unit: TScalebarUnit.UM, scale: 1e-6 }, // micrometers
+      { unit: TScalebarUnit.MM, scale: 1e-3 }, // millimeters
+      { unit: TScalebarUnit.M, scale: 1 }, // meters
+    ];
+
+    // Preferred round numbers for scale bars
+    const preferredMultiples = [1, 2, 5, 10];
+
+    // Calculate the target range for scale bar in pixels (5% to 25% of image width)
+    const minPixels = imageWidthPixels * 0.05;
+    const maxPixels = imageWidthPixels * 0.25;
+    const targetPixels = (minPixels + maxPixels) / 2;
+
+    // Calculate what this range represents in meters
+    const targetDistance = targetPixels * distancePerPixel;
+
+    // Find appropriate unit based on target distance
+    let selectedUnit = units[0];
+    for (const unit of units) {
+      if (targetDistance >= unit.scale / 10) {
+        // Allow unit to be used if target is 1/10th of its scale
+        selectedUnit = unit;
+      } else {
+        break;
+      }
+    }
+
+    // Convert target distance to selected unit
+    const targetInUnits = targetDistance / selectedUnit.scale;
+
+    // Find appropriate power of 10
+    const power = Math.floor(Math.log10(targetInUnits));
+
+    // Try different round numbers
+    let bestValue = null;
+    let bestDiff = Infinity;
+
+    // Try powers from power-1 to power+1
+    for (let p = power - 1; p <= power + 1; p++) {
+      for (const multiple of preferredMultiples) {
+        const value = multiple * Math.pow(10, p);
+        const physicalDistance = value * selectedUnit.scale;
+        const pixels = physicalDistance / distancePerPixel;
+
+        // Check if this value gives us a reasonable scale bar length
+        if (pixels >= minPixels * 0.8 && pixels <= maxPixels * 1.2) {
+          const diff = Math.abs(pixels - targetPixels);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestValue = physicalDistance;
+          }
+        }
+      }
+    }
+
+    // If we didn't find a good value, create one from the target
+    if (!bestValue) {
+      const value = Math.pow(10, Math.floor(Math.log10(targetInUnits)));
+      bestValue = value * selectedUnit.scale;
+    }
+
+    // Round the final value before returning
+    return roundToSignificant(bestValue);
+  }
+
+  get idealScalebarLength() {
+    const pixelSize = this.pixelSize;
+    if (pixelSize.unit === TScalebarUnit.PX) {
+      return this.guessIdealScalebar(
+        this.bboxRight - this.bboxLeft,
+        pixelSize.length, // This value should be 1 (passes 1 meter)
+      );
+    }
+    // If the pixel size is not pixels, then we need to convert to meters
+    const pixelLengthInMeters = this.convertLengthToMeters(
+      pixelSize.length,
+      pixelSize.unit,
+    );
+    return this.guessIdealScalebar(
+      this.bboxRight - this.bboxLeft,
+      pixelLengthInMeters,
+    );
+  }
+
   async screenshotViewport() {
     const map = this.firstMap;
     if (!map) {
@@ -629,7 +1067,7 @@ export default class Snapshots extends Vue {
       if (!urls) {
         return;
       }
-      await this.downloadUrls(urls);
+      await this.downloadUrls(urls, this.addScalebar);
     } finally {
       this.downloading = false;
     }
@@ -660,7 +1098,7 @@ export default class Snapshots extends Vue {
           allUrls.push(...currentUrls);
         }
       }
-      await this.downloadUrls(allUrls);
+      await this.downloadUrls(allUrls, this.addScalebar);
     } finally {
       this.downloading = false;
     }
@@ -752,13 +1190,86 @@ export default class Snapshots extends Vue {
     return urls;
   }
 
-  async downloadUrls(urls: URL[]) {
+  async addScalebarToImageBuffer(data: ArrayBuffer): Promise<ArrayBuffer> {
+    // Create a blob from the image data
+    const blob = new Blob([data], { type: "image/png" });
+    const imageUrl = URL.createObjectURL(blob);
+
+    // Create an image element and wait for it to load
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = imageUrl;
+    });
+
+    // Create a canvas to draw the frame with annotations
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to get canvas context");
+
+    // Draw the original image
+    ctx.drawImage(img, 0, 0);
+
+    // Draw a line of the length of the scalebar (pixels)
+    const scalebarLength = this.scalebarLengthInPixels;
+    ctx.strokeStyle = this.snapshotScalebarColor;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(canvas.width - 10, canvas.height - 10);
+    ctx.lineTo(canvas.width - 10 - scalebarLength, canvas.height - 10);
+    ctx.stroke();
+
+    if (this.addScalebarText) {
+      ctx.fillStyle = this.snapshotScalebarColor;
+      ctx.font = "12px Arial";
+      ctx.textBaseline = "bottom";
+      ctx.textAlign = "right";
+      ctx.fillText(
+        `${this.scalebarSettings.length}${this.scalebarSettings.unit}`,
+        canvas.width - 10,
+        canvas.height - 14,
+      );
+    }
+
+    // Clean up
+    URL.revokeObjectURL(imageUrl);
+
+    // Convert canvas to blob and then to array buffer
+    const annotatedBlob = await new Promise<Blob>((resolve) => {
+      canvas.toBlob((blob) => resolve(blob!), "image/png");
+    });
+    return await annotatedBlob.arrayBuffer();
+  }
+
+  async downloadUrls(urls: URL[], addScalebar: boolean = false) {
     if (urls.length <= 0) {
       return;
     }
 
     if (urls.length === 1) {
-      downloadToClient({ href: urls[0].href });
+      if (addScalebar) {
+        // For single file with scalebar
+        const { data } = await store.girderRest.get(urls[0].href, {
+          responseType: "arraybuffer",
+        });
+        const processedData = await this.addScalebarToImageBuffer(data);
+        const blob = new Blob([processedData], { type: "image/png" });
+        const url = URL.createObjectURL(blob);
+        const filename =
+          urls[0].searchParams.get("contentDispositionFilename") ||
+          "snapshot.png";
+        downloadToClient({
+          href: url,
+          download: filename,
+        });
+        URL.revokeObjectURL(url);
+      } else {
+        // Original single file behavior
+        downloadToClient({ href: urls[0].href });
+      }
       return;
     }
 
@@ -789,6 +1300,12 @@ export default class Snapshots extends Vue {
       const { data } = await store.girderRest.get(url.href, {
         responseType: "arraybuffer",
       });
+
+      // Process data if scalebar is requested
+      const finalData = addScalebar
+        ? await this.addScalebarToImageBuffer(data)
+        : data;
+
       // Create a unique file name
       const baseFullFilename =
         url.searchParams.get("contentDispositionFilename") || "snapshot";
@@ -803,7 +1320,7 @@ export default class Snapshots extends Vue {
       // Add file to zip and set its data
       const zipFile = new ZipDeflate(fileName, deflateOptions);
       zip.add(zipFile);
-      zipFile.push(new Uint8Array(data), true);
+      zipFile.push(new Uint8Array(finalData), true);
     });
 
     // Wait for all files to be pushed to end the zip
@@ -852,42 +1369,50 @@ export default class Snapshots extends Vue {
     if (!map) {
       return;
     }
+    // TODO: I'm not sure this first section is needed.
+    // As far as I can tell, this is called upon a change to first map,
+    // called with show = false, and then called again with show = true.
+    // But it seems as through the bbox is set in the next conditional.
     if (this.bboxHeight <= 0 && this.bboxWidth <= 0) {
-      const inset = 20; // in pixels
-      const topLeft = map.displayToGcs({ x: inset, y: inset });
+      const topLeft = map.displayToGcs({ x: 0, y: 0 });
       const bottomRight = map.displayToGcs({
-        x: map.size().width - inset,
-        y: map.size().height - inset,
+        x: map.size().width,
+        y: map.size().height,
       });
-      this.bboxLeft = topLeft.x;
-      this.bboxTop = topLeft.y;
-      this.bboxRight = bottomRight.x;
-      this.bboxBottom = bottomRight.y;
+      // Set bounding box to the middle third of the map
+      const insetX = (bottomRight.x - topLeft.x) / 3;
+      const insetY = (bottomRight.y - topLeft.y) / 3;
+      this.bboxLeft = topLeft.x + insetX;
+      this.bboxTop = topLeft.y + insetY;
+      this.bboxRight = bottomRight.x - insetX;
+      this.bboxBottom = bottomRight.y - insetY;
     }
     if (show && map) {
       const bounds = map.bounds();
-      if (this.bboxLeft === null) {
-        const screenBounds = map.gcsToDisplay([
-          { x: bounds.left, y: bounds.top },
-          { x: bounds.right, y: bounds.bottom },
-        ]);
-        const shrinkIn = 20;
-        const innerBounds = map.displayToGcs([
-          { x: screenBounds[0].x + shrinkIn, y: screenBounds[0].y + shrinkIn },
-          { x: screenBounds[1].x - shrinkIn, y: screenBounds[1].y - shrinkIn },
-        ]);
-        this.setBoundingBox(
-          innerBounds[0].x,
-          innerBounds[0].y,
-          innerBounds[1].x,
-          innerBounds[1].y,
-        );
-      }
+      const screenBounds = map.gcsToDisplay([
+        { x: bounds.left, y: bounds.top },
+        { x: bounds.right, y: bounds.bottom },
+      ]);
+      const insetX = (screenBounds[1].x - screenBounds[0].x) / 3;
+      const insetY = (screenBounds[1].y - screenBounds[0].y) / 3;
+      const innerBounds = map.displayToGcs([
+        { x: screenBounds[0].x + insetX, y: screenBounds[0].y + insetY },
+        { x: screenBounds[1].x - insetX, y: screenBounds[1].y - insetY },
+      ]);
+      this.setBoundingBox(
+        innerBounds[0].x,
+        innerBounds[0].y,
+        innerBounds[1].x,
+        innerBounds[1].y,
+      );
+
       if (!this.bboxLayer) {
         this.bboxLayer = map.createLayer("annotation", {
           autoshareRenderer: false,
           showLabels: false,
         });
+
+        // Create bbox annotation as before
         this.bboxAnnotation = geojs.annotation.rectangleAnnotation({
           layer: this.bboxLayer,
           corners: [
@@ -911,7 +1436,20 @@ export default class Snapshots extends Vue {
             strokeWidth: 2,
           },
         }) as IGeoJSAnnotation;
+
+        // Create scalebar annotation
+        this.scalebarAnnotation = geojs.annotation.lineAnnotation({
+          vertices: this.scalebarVertices(this.bboxRight, this.bboxBottom),
+          layer: this.bboxLayer,
+          style: {
+            strokeColor: this.snapshotScalebarColor,
+            strokeWidth: 3,
+            strokeOpacity: 1,
+          },
+        });
+
         this.bboxLayer.addAnnotation(this.bboxAnnotation);
+        this.bboxLayer.addAnnotation(this.scalebarAnnotation);
         map.draw();
       }
     } else {
@@ -920,6 +1458,7 @@ export default class Snapshots extends Vue {
         map.deleteLayer(this.bboxLayer);
         this.bboxLayer = null;
         this.bboxAnnotation = null;
+        this.scalebarAnnotation = null;
         map.draw();
       }
     }
@@ -946,7 +1485,13 @@ export default class Snapshots extends Vue {
       { x: this.bboxLeft, y: this.bboxBottom },
     ];
     const map = this.firstMap;
-    if (this.bboxLayer && this.bboxAnnotation && map) {
+    if (
+      this.bboxLayer &&
+      this.bboxAnnotation &&
+      this.scalebarAnnotation &&
+      map
+    ) {
+      // Update bbox as before
       this.bboxLayer.visible(true);
       coordinates = geojs.transform.transformCoordinates(
         map.ingcs(),
@@ -957,9 +1502,33 @@ export default class Snapshots extends Vue {
       if (this.bboxLayer.currentAnnotation) {
         this.bboxLayer.currentAnnotation.options("corners", coordinates);
       }
+
+      this.scalebarAnnotation.options({
+        vertices: this.scalebarVertices(coordinates[2].x, coordinates[2].y),
+      });
+
       this.bboxLayer.draw();
     }
     return w * h;
+  }
+
+  @Watch("snapshotScalebarColor")
+  updateScalebarColor() {
+    if (this.scalebarAnnotation) {
+      this.scalebarAnnotation.style({
+        strokeColor: this.snapshotScalebarColor,
+        strokeWidth: 3,
+        strokeOpacity: 1,
+      });
+      this.bboxLayer?.draw();
+    }
+  }
+
+  scalebarVertices(rightEdge: number, bottomEdge: number) {
+    return [
+      { x: rightEdge - 10, y: bottomEdge + 10 },
+      { x: rightEdge - 10 - this.scalebarLengthInPixels, y: bottomEdge + 10 },
+    ];
   }
 
   setArea(mode: string) {
@@ -1748,6 +2317,42 @@ export default class Snapshots extends Vue {
     ctx.strokeText(timeText, 10, canvas.height - 10);
     // Draw text fill
     ctx.fillText(timeText, 10, canvas.height - 10);
+  }
+
+  handlePixelSizeModeChange() {
+    if (this.pixelSizeMode === "manual") {
+      this.manualPixelSize = this.configurationPixelSize;
+    }
+  }
+
+  handleScalebarModeChange() {
+    if (this.scalebarMode === "manual") {
+      this.manualScalebarSettings = this.scalebarSettings;
+    }
+  }
+
+  get pixelSizeUnitItems() {
+    // pixelSize can always be any unit.
+    return [
+      { text: "Nanometers (nm)", value: TScalebarUnit.NM },
+      { text: "Micrometers (µm)", value: TScalebarUnit.UM },
+      { text: "Millimeters (mm)", value: TScalebarUnit.MM },
+      { text: "Meters (m)", value: TScalebarUnit.M },
+      { text: "Pixels (px)", value: TScalebarUnit.PX },
+    ];
+  }
+
+  get scalebarSettingsUnitItems() {
+    if (this.pixelSize.unit === "px") {
+      return [{ text: "Pixels (px)", value: TScalebarUnit.PX }];
+    }
+    return [
+      { text: "Nanometers (nm)", value: TScalebarUnit.NM },
+      { text: "Micrometers (µm)", value: TScalebarUnit.UM },
+      { text: "Millimeters (mm)", value: TScalebarUnit.MM },
+      { text: "Meters (m)", value: TScalebarUnit.M },
+      { text: "Pixels (px)", value: TScalebarUnit.PX },
+    ];
   }
 }
 </script>
