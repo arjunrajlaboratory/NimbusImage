@@ -1,5 +1,9 @@
 <template>
-  <div class="image" v-mousetrap="mousetrapAnnotations">
+  <div
+    class="image"
+    v-mousetrap="mousetrapAnnotations"
+    :style="{ '--scale-bar-color': scalebarColor }"
+  >
     <progress-bar-group />
     <v-dialog v-model="scaleDialog">
       <v-card>
@@ -960,14 +964,6 @@ export default class ImageViewer extends Vue {
     }
   }
 
-  @Watch("scalebarColor")
-  updateScalebarColor() {
-    document.documentElement.style.setProperty(
-      "--scale-bar-color",
-      this.scalebarColor,
-    );
-  }
-
   /**
    * Make sure a map has the appropriate tile layers.
    */
@@ -1353,10 +1349,6 @@ export default class ImageViewer extends Vue {
 </script>
 
 <style lang="scss">
-:root {
-  --scale-bar-color: #ffffff; /* Default white color */
-}
-
 .progress .v-progress-linear__content {
   position: relative;
 }
