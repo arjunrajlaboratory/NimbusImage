@@ -1,5 +1,9 @@
 <template>
-  <div class="image" v-mousetrap="mousetrapAnnotations">
+  <div
+    class="image"
+    v-mousetrap="mousetrapAnnotations"
+    :style="{ '--scale-bar-color': scalebarColor }"
+  >
     <progress-bar-group />
     <v-dialog v-model="scaleDialog">
       <v-card>
@@ -504,6 +508,10 @@ export default class ImageViewer extends Vue {
 
   get showPixelScalebar() {
     return this.store.showPixelScalebar;
+  }
+
+  get scalebarColor() {
+    return this.store.scalebarColor;
   }
 
   mounted() {
@@ -1346,11 +1354,11 @@ export default class ImageViewer extends Vue {
 }
 
 .geojs-scale-widget-bar {
-  stroke: white !important;
+  stroke: var(--scale-bar-color) !important;
 }
 
 .geojs-scale-widget-text {
-  fill: white;
+  fill: var(--scale-bar-color);
 }
 
 .scale-widget {

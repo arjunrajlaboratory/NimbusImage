@@ -164,6 +164,7 @@ export class Main extends VuexModule {
 
   showScalebar: boolean = true;
   showPixelScalebar: boolean = true;
+  scalebarColor: string = "#ffffff";
 
   scaleAnnotationsWithZoom: boolean = true;
   annotationsRadius: number = 10;
@@ -357,6 +358,13 @@ export class Main extends VuexModule {
   @Mutation
   public setShowPixelScalebar(value: boolean) {
     this.showPixelScalebar = value;
+  }
+
+  // This variable is watched in ImageViewer.vue to update the scale bar color
+  // directly in the CSS variable.
+  @Mutation
+  public setScalebarColor(color: string) {
+    this.scalebarColor = color;
   }
 
   @Mutation

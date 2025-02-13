@@ -32,7 +32,7 @@
           dense
           v-model="showScalebar"
           label="Show scalebar"
-          title="Show the scalebarwidget on top of the image"
+          title="Show the scalebar on top of the image"
           v-description="{
             section: 'Viewer settings',
             title: 'Show scalebar',
@@ -41,6 +41,14 @@
           }"
         />
         <pixel-scale-bar-setting />
+        <span class="d-flex align-center">
+          Scale bar style:
+          <color-picker-menu
+            v-model="scalebarColor"
+            class="mx-2 scale-bar-color-picker"
+            style="min-width: 200px"
+          />
+        </span>
         <v-switch
           hide-details
           dense
@@ -144,6 +152,14 @@ export default class ViewerSettings extends Vue {
 
   set showScalebar(value) {
     this.store.setShowScalebar(value);
+  }
+
+  get scalebarColor() {
+    return this.store.scalebarColor;
+  }
+
+  set scalebarColor(color: string) {
+    this.store.setScalebarColor(color);
   }
 
   get scaleAnnotationsWithZoom() {
