@@ -1,6 +1,12 @@
 <template>
   <!-- image -->
-  <v-select :items="items" dense v-model="image" label="Algorithm">
+  <v-select
+    :items="items"
+    dense
+    v-model="image"
+    label="Algorithm"
+    :menu-props="{ maxHeight: 500 }"
+  >
     <template v-slot:item="item">
       <div>
         <div>{{ item.item.text }}</div>

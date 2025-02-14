@@ -56,7 +56,7 @@
       @submit="handleColorSubmit"
     />
 
-    <v-expansion-panel-content>
+    <v-expansion-panel-content id="annotation-list-content-tourstep">
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>

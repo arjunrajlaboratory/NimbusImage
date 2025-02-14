@@ -1,0 +1,119 @@
+name: "Calculate Blob Metrics"
+entryPoint: datasetview
+popular: true
+category: Measurements
+steps:
+  - id: welcome-tourstep
+    route: datasetview
+    title: "Calculate Blob Metrics"
+    text: "This tour will guide you through the process of calculating blob metrics, like area, perimeter, and eccentricity."
+    modalOverlay: true
+    showNextButton: true
+
+  - id: object-list-button-tourstep
+    route: datasetview
+    element: "#object-list-button-tourstep"
+    title: "Object List"
+    text: "Click here to open the object list."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "object-list-button-tourtrigger"
+
+  - id: properties-header-tourstep
+    route: datasetview
+    element: "#properties-header-tourstep"
+    title: "Properties"
+    text: "Properties are what we call various measurements of the objects in the image. For instance, the area of a blob is a property. After you compute properties, they will appear here."
+    position: "left"
+    waitForElement: 1000
+    showNextButton: true
+
+  - id: measure-objects-button-tourstep
+    route: datasetview
+    element: "#measure-objects-button-tourstep"
+    title: "Measure Objects"
+    text: "Click here to open the measure objects panel. That's where we will define the properties we want to calculate."
+    position: "left"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "measure-objects-button-tourtrigger"
+
+  - id: property-tag-picker-tourstep
+    route: datasetview
+    # NOTE (AR): I commented out the element selector because for whatever reason,
+    # some of these elements do not have the right coordinates and so the tour
+    # step is not positioned correctly. Despite many attempts at portals and so on,
+    # I was not able to get it to work, but I'm leaving it here because it is the
+    # desired functionality.
+    # element: "#property-tag-picker-tourstep"
+    title: "Choose objects to measure"
+    text: "Pick the tag selecting the objects you want to calculate the property for. For now, choose something that is a 'blob'."
+    # position: "right"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: property-shape-select-tourstep
+    route: datasetview
+    # element: "#property-shape-select-tourstep"
+    title: "Shape of the objects"
+    text: "Just an FYI: Nimbus will automatically detect the shape you want to measure. But if you don't select a tag, it will process all objects of this shape."
+    # position: "right"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: property-algorithm-select-tourstep
+    route: datasetview
+    element: "#property-algorithm-select-tourstep"
+    title: "What you want to measure"
+    text: "Pick the algorithm you want to use to calculate the property. Let's try 'Blob metrics' for now."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: create-property-button-tourstep
+    route: datasetview
+    # element: "#create-property-button-tourstep"
+    title: "Click on 'Create Property' to create the property"
+    text: "By default, the computation will start automatically."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: false
+    onTriggerEvent: "create-property-button-tourtrigger"
+
+  - id: measure-objects-close-button-tourstep
+    route: datasetview
+    element: "#measure-objects-close-button-tourstep"
+    title: "All done!"
+    text: "Click here to close the measure objects panel. You can close it even while it's still calculating."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "measure-objects-close-button-tourtrigger"
+
+  - id: properties-content-tourstep
+    route: datasetview
+    element: "#properties-content-tourstep"
+    title: "List of computed properties"
+    text: "The property you just created will appear here once it's done computing. Click and find the blob metrics and then you will see properties like area, perimeter, and eccentricity. Select the ones you want to see, then click next."
+    position: "left"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: annotation-list-content-tourstep
+    route: datasetview
+    element: "#annotation-list-content-tourstep"
+    title: "List of values"
+    text: "The values you computed are now visible in this list. You can sort and filter by these values or visualize them in the image by hitting 't'."
+    position: "left"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
