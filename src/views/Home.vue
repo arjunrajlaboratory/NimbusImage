@@ -130,6 +130,15 @@
                                 ? d.configInfo.name
                                 : "Unnamed configuration"
                             }}
+                            <template v-if="d.datasetInfo.creatorId">
+                              <br />
+                              <span class="text-caption">
+                                Owner:
+                                {{
+                                  getUserDisplayName(d.datasetInfo.creatorId)
+                                }}
+                              </span>
+                            </template>
                           </v-list-item-subtitle>
                         </v-list-item-content>
                         <v-list-item-action
@@ -249,6 +258,8 @@ export default class Home extends Vue {
 
   private activeUploadType: "quick" | "advanced" | null = null;
 
+  userDisplayNames: { [key: string]: string } = {};
+
   get locationName() {
     // @ts-ignore: name or login may be undefined, but this case is checked
     const name: string = this.location.name || this.location.login;
@@ -311,6 +322,31 @@ export default class Home extends Vue {
       items.push({ datasetView, configInfo, datasetInfo });
     }
     return items;
+  }
+
+  async getUsernameFromId(
+    creatorId: string,
+  ): Promise<{ fullname: string; username: string }> {
+    const user = await this.girderResources.getUser(creatorId);
+    if (!user) {
+      return { fullname: "Unknown User", username: "unknown" };
+    }
+    const fullname = `${user.firstName} ${user.lastName}`.trim();
+    return {
+      fullname: fullname || user.login, // fallback to login if no name set
+      username: user.login,
+    };
+  }
+
+  getUserDisplayName(creatorId: string): string {
+    if (!this.userDisplayNames[creatorId]) {
+      this.userDisplayNames[creatorId] = "Loading...";
+      this.getUsernameFromId(creatorId).then((user) => {
+        this.userDisplayNames[creatorId] =
+          `${user.fullname} (${user.username})`;
+      });
+    }
+    return this.userDisplayNames[creatorId];
   }
 
   @Watch("datasetViews")

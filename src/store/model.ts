@@ -263,6 +263,7 @@ export interface IDataset {
 
   name: string;
   description: string;
+  creatorId: string;
 
   xy: number[];
   z: number[];
