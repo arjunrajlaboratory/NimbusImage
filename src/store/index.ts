@@ -113,7 +113,7 @@ export class Main extends VuexModule {
 
   readonly girderResources = girderResources;
 
-  girderUser: IGirderUser | null = this.girderRest.user;
+  girderUser: IGirderUser | null = this.girderRest.user as IGirderUser | null;
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
 
@@ -545,7 +545,7 @@ export class Main extends VuexModule {
   @Mutation
   protected setGirderRest(girderRest: RestClientInstance) {
     this.girderRest = girderRest;
-    this.girderUser = girderRest.user;
+    this.girderUser = girderRest.user as IGirderUser | null;
     const girderUrl = girderUrlFromApiRoot(girderRest.apiRoot);
     persister.set("girderUrl", girderUrl);
   }
