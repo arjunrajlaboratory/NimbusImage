@@ -77,7 +77,6 @@ import {
   IAnnotationConnection,
   IAnnotationProperty,
   IAnnotationPropertyValues,
-  ISerializedData,
 } from "@/store/model";
 import { downloadToClient } from "@/utils/download";
 
