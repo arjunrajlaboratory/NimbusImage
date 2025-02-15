@@ -17,7 +17,18 @@
     </template>
     <v-card>
       <v-card-title> Current Annotation List as CSV </v-card-title>
+      <v-card-subtitle>
+        Export your measurements to a CSV spreadsheet
+      </v-card-subtitle>
+
       <v-card-text>
+        <v-alert type="info" text class="mb-4">
+          Choose how you want to export your values and how to handle undefined
+          values. The resulting CSV file can be opened in spreadsheet
+          applications like Excel or Google Sheets.
+        </v-alert>
+
+        <v-subheader>Property Export Options</v-subheader>
         <v-radio-group v-model="propertyExportMode" class="mb-4">
           <v-radio label="Export all properties" value="all"></v-radio>
           <v-radio label="Export listed properties" value="listed"></v-radio>
@@ -27,6 +38,7 @@
           ></v-radio>
         </v-radio-group>
 
+        <v-subheader>Undefined Value Handling</v-subheader>
         <v-radio-group v-model="undefinedHandling" class="mb-4">
           <v-radio label="Empty string" value="empty"></v-radio>
           <v-radio label="NA" value="na"></v-radio>
