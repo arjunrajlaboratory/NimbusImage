@@ -91,66 +91,84 @@ export default class AnnotationImport extends Vue {
     this.filename = (this.dataset?.name ?? "unknown") + ".json";
   }
 
-  submit() {
-    let annotationPromise: Promise<IAnnotation[]> = Promise.resolve([]);
+  /**
+   * Serializes an array into JSON chunks to prevent memory issues
+   */
+  serializeArrayChunks(arr: any[], chunkSize = 10000): string[] {
+    const chunks: string[] = [];
+    chunks.push("[");
+    const total = arr.length;
+    let firstChunk = true;
+
+    for (let i = 0; i < total; i += chunkSize) {
+      const chunk = arr.slice(i, i + chunkSize);
+      let chunkStr = JSON.stringify(chunk);
+      chunkStr = chunkStr.substring(1, chunkStr.length - 1);
+
+      if (!firstChunk && chunkStr.length > 0) {
+        chunks.push(",");
+      }
+      chunks.push(chunkStr);
+      firstChunk = false;
+    }
+
+    chunks.push("]");
+    return chunks;
+  }
+
+  async submit() {
+    let annotations: IAnnotation[] = [];
     if (this.exportAnnotations) {
-      annotationPromise = this.store.annotationsAPI.getAnnotationsForDatasetId(
+      annotations = await this.store.annotationsAPI.getAnnotationsForDatasetId(
         this.dataset!.id,
       );
     }
 
-    let connectionsPromise: Promise<IAnnotationConnection[]> = Promise.resolve(
-      [],
-    );
+    let annotationConnections: IAnnotationConnection[] = [];
     if (this.exportConnections && this.exportAnnotations) {
-      connectionsPromise = this.store.annotationsAPI.getConnectionsForDatasetId(
-        this.dataset!.id,
-      );
+      annotationConnections =
+        await this.store.annotationsAPI.getConnectionsForDatasetId(
+          this.dataset!.id,
+        );
     }
 
-    let propertiesPromise: Promise<IAnnotationProperty[]> = Promise.resolve([]);
+    let annotationProperties: IAnnotationProperty[] = [];
     if (this.exportProperties) {
-      propertiesPromise = this.propertyStore
-        .fetchProperties()
-        .then(() => this.propertyStore.properties);
+      await this.propertyStore.fetchProperties();
+      annotationProperties = this.propertyStore.properties;
     }
 
-    let valuesPromise: Promise<IAnnotationPropertyValues> = Promise.resolve({});
+    let annotationPropertyValues: IAnnotationPropertyValues = {};
     if (this.exportValues) {
-      valuesPromise = this.store.propertiesAPI.getPropertyValues(
-        this.dataset!.id,
-      );
+      annotationPropertyValues =
+        await this.store.propertiesAPI.getPropertyValues(this.dataset!.id);
     }
 
-    Promise.all([
-      annotationPromise,
-      connectionsPromise,
-      propertiesPromise,
-      valuesPromise,
-    ]).then(
-      ([
-        annotations,
-        annotationConnections,
-        annotationProperties,
-        annotationPropertyValues,
-      ]) => {
-        const serializable: ISerializedData = {
-          annotations,
-          annotationConnections,
-          annotationProperties,
-          annotationPropertyValues,
-        };
-        const href =
-          "data:text/plain;charset=utf-8," +
-          encodeURIComponent(JSON.stringify(serializable));
+    const parts: string[] = [];
+    parts.push("{");
+    parts.push('"annotations":');
+    parts.push(...this.serializeArrayChunks(annotations));
+    parts.push(',"annotationConnections":');
+    parts.push(...this.serializeArrayChunks(annotationConnections));
+    parts.push(',"annotationProperties":');
+    parts.push(...this.serializeArrayChunks(annotationProperties));
+    parts.push(',"annotationPropertyValues":');
+    parts.push(JSON.stringify(annotationPropertyValues));
+    parts.push("}");
 
-        downloadToClient({
-          href,
-          download: this.filename || "upennExport.json",
-        });
-        this.dialog = false;
-      },
-    );
+    const blob = new Blob(parts, { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    try {
+      downloadToClient({
+        href: url,
+        download: this.filename || "upennExport.json",
+      });
+      this.dialog = false;
+    } finally {
+      // Clean up the created URL to prevent memory leaks
+      URL.revokeObjectURL(url);
+    }
   }
 }
 </script>
