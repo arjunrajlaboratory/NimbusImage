@@ -1,5 +1,6 @@
 import sys
 import json
+import time
 
 
 def sendProgress(progress, title, info):
@@ -46,3 +47,24 @@ def sendError(error_message, title="Error", info=None):
         "type": "error"
     }))
     sys.stdout.flush()
+
+
+def sendHeartbeat():
+    """Sends a heartbeat message to keep the connection alive."""
+    print(json.dumps({"type": "heartbeat"}))
+    sys.stdout.flush()
+
+
+def heartbeatLoop(interval=30):
+    """
+    Loops a heartbeat message to keep the connection alive.
+
+    :param int interval: The interval in seconds between heartbeats
+
+    Usage from within a worker:
+    heartbeat_thread = threading.Thread(target=heartbeatLoop, daemon=True)
+    heartbeat_thread.start()
+    """
+    while True:
+        time.sleep(interval)
+        sendHeartbeat()
