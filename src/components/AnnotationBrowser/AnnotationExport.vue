@@ -16,8 +16,21 @@
       </v-btn>
     </template>
     <v-card class="pa-2" :disabled="!canExport">
-      <v-card-title> Export </v-card-title>
-      <v-card-text class="pt-5 pb-0">
+      <v-card-title>Export</v-card-title>
+      <v-card-subtitle>
+        Export your annotations and related data as a JSON file
+      </v-card-subtitle>
+
+      <v-card-text class="pt-2 pb-0">
+        <v-alert type="info" text class="mb-4">
+          An exported JSON file contains a complete specification of your
+          annotation data. That include coordinates of points and polygons,
+          color, property values, connections between annotations, and more. The
+          exported JSON file can be used for backup purposes or to transfer
+          annotations between datasets. You can also parse the JSON file for
+          sophisticated analyses using other tools.
+        </v-alert>
+
         <v-checkbox v-model="exportAnnotations" label="Export annotations" />
         <v-checkbox
           v-model="exportConnections"
