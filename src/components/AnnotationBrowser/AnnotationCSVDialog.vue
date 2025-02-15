@@ -59,8 +59,8 @@
         </template>
 
         <template v-if="text && text.length">
-          <v-textarea ref="fieldToCopy" v-model="text" readonly>
-            {{ text }}
+          <v-textarea ref="fieldToCopy" v-model="displayText" readonly>
+            {{ displayText }}
             <template v-slot:append>
               <v-btn
                 icon
@@ -81,8 +81,17 @@
           />
         </template>
         <template v-else>
-          <p>LOADING</p>
-          <v-progress-circular indeterminate />
+          <div class="d-flex flex-column align-center">
+            <p>Generating CSV...</p>
+            <v-progress-circular
+              :value="processingProgress * 100"
+              :indeterminate="processingProgress === 0"
+              class="mb-2"
+            />
+            <span v-if="processingProgress > 0">
+              {{ Math.round(processingProgress * 100) }}%
+            </span>
+          </div>
         </template>
       </v-card-text>
       <v-card-actions>
@@ -160,6 +169,8 @@ export default class AnnotationCsvDialog extends Vue {
 
   dialog: boolean = false;
   text = "";
+  displayText = "";
+  readonly DISPLAY_CHAR_LIMIT = 10000;
 
   @Prop()
   readonly annotations!: IAnnotation[];
@@ -196,68 +207,96 @@ export default class AnnotationCsvDialog extends Vue {
     }));
   }
 
-  async generateCSVStringForAnnotations() {
-    // Fields
-    const fields = [
-      "Id",
-      "Channel",
-      "XY",
-      "Z",
-      "Time",
-      "Tags",
-      "Shape",
-      "Name",
-    ];
-    const quotes = [true, false, false, false, false, true, true, true];
-    const usedPaths: string[][] = [];
+  processingProgress: number = 0;
+  isProcessing: boolean = false;
 
-    for (const path of this.propertyPaths) {
-      const pathName = this.propertyStore.getFullNameFromPath(path);
-      if (pathName && this.shouldIncludePropertyPath(path)) {
-        fields.push(pathName);
+  async generateCSVStringForAnnotations() {
+    this.isProcessing = true;
+    this.processingProgress = 0;
+
+    try {
+      // Fields
+      const fields = [
+        "Id",
+        "Channel",
+        "XY",
+        "Z",
+        "Time",
+        "Tags",
+        "Shape",
+        "Name",
+      ];
+      const quotes = [true, false, false, false, false, true, true, true];
+      const usedPaths: string[][] = [];
+
+      // Pre-compute included paths to avoid repeated checks
+      const includedPaths = this.propertyPaths.filter((path) => {
+        const pathName = this.propertyStore.getFullNameFromPath(path);
+        return pathName && this.shouldIncludePropertyPath(path);
+      });
+
+      includedPaths.forEach((path) => {
+        fields.push(this.propertyStore.getFullNameFromPath(path)!);
         quotes.push(false);
         usedPaths.push(path);
-      }
-    }
+      });
 
-    // Data
-    const data: (string | number)[][] = [];
-    const propValues = this.propertyStore.propertyValues;
-    const annotations = this.annotations;
-    const nAnnotations = annotations.length;
-    for (let iAnnotation = 0; iAnnotation < nAnnotations; ++iAnnotation) {
-      const annotation = annotations[iAnnotation];
-      const row: (string | number)[] = [];
-      row.push(annotation.id);
-      row.push(annotation.channel);
-      row.push(annotation.location.XY + 1);
-      row.push(annotation.location.Z + 1);
-      row.push(annotation.location.Time + 1);
-      row.push(annotation.tags.join(", "));
-      row.push(annotation.shape);
-      row.push(annotation.name ?? "");
-      for (let iProp = 0; iProp < usedPaths.length; ++iProp) {
-        const value = getValueFromObjectAndPath(
-          propValues[annotation.id],
-          usedPaths[iProp],
+      // Process annotations in chunks
+      const CHUNK_SIZE = 100;
+      const data: (string | number)[][] = [];
+      const propValues = this.propertyStore.propertyValues;
+      const annotations = this.annotations;
+      const nAnnotations = annotations.length;
+
+      for (let i = 0; i < nAnnotations; i += CHUNK_SIZE) {
+        const chunk = annotations.slice(i, i + CHUNK_SIZE);
+
+        // Process chunk
+        const chunkData = await new Promise<(string | number)[][]>(
+          (resolve) => {
+            setTimeout(() => {
+              const rows = chunk.map((annotation) => {
+                const row: (string | number)[] = [
+                  annotation.id,
+                  annotation.channel,
+                  annotation.location.XY + 1,
+                  annotation.location.Z + 1,
+                  annotation.location.Time + 1,
+                  annotation.tags.join(", "),
+                  annotation.shape,
+                  annotation.name ?? "",
+                ];
+
+                for (const path of usedPaths) {
+                  const value = getValueFromObjectAndPath(
+                    propValues[annotation.id],
+                    path,
+                  );
+                  row.push(
+                    typeof value === "object" || typeof value === "undefined"
+                      ? AnnotationCsvDialog.UNDEFINED_VALUE_MAP[
+                          this.undefinedHandling
+                        ]
+                      : value,
+                  );
+                }
+                return row;
+              });
+              resolve(rows);
+            }, 0);
+          },
         );
-        switch (typeof value) {
-          case "object":
-          case "undefined":
-            row.push(
-              AnnotationCsvDialog.UNDEFINED_VALUE_MAP[this.undefinedHandling],
-            );
-            break;
-          default:
-            row.push(value);
-            break;
-        }
-      }
-      data.push(row);
-    }
 
-    // Generate csv
-    return Papa.unparse({ fields, data }, { quotes });
+        data.push(...chunkData);
+        this.processingProgress = (i + CHUNK_SIZE) / nAnnotations;
+      }
+
+      // Generate csv
+      return Papa.unparse({ fields, data }, { quotes });
+    } finally {
+      this.isProcessing = false;
+      this.processingProgress = 1;
+    }
   }
 
   @Watch("propertyExportMode")
@@ -268,9 +307,14 @@ export default class AnnotationCsvDialog extends Vue {
     if (this.dialog) {
       this.generateCSVStringForAnnotations().then((text: string) => {
         this.text = text;
+        this.displayText =
+          text.length > this.DISPLAY_CHAR_LIMIT
+            ? `${text.slice(0, this.DISPLAY_CHAR_LIMIT)}... (truncated, ${text.length} total characters)`
+            : text;
       });
     } else {
       this.text = "";
+      this.displayText = "";
     }
   }
 
