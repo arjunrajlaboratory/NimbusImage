@@ -7,7 +7,8 @@
         v-description="{
           section: 'Object list actions',
           title: 'Export to JSON',
-          description: 'Export annotations and connections to a JSON file',
+          description:
+            'Export annotations, connections, properties, and property values to a JSON file',
         }"
       >
         <v-icon>mdi-export</v-icon>
@@ -37,10 +38,30 @@
           no-resize
           hide-details
         />
+
+        <!-- Add progress indicator -->
+        <div v-if="isExporting" class="mt-4">
+          <v-progress-linear
+            :value="exportProgress"
+            color="primary"
+            height="25"
+          >
+            <template v-slot:default>
+              <span class="white--text">{{ exportStatus }}</span>
+            </template>
+          </v-progress-linear>
+        </div>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn @click="submit" color="primary"> Export selection </v-btn>
+        <v-btn
+          @click="submit"
+          color="primary"
+          :loading="isExporting"
+          :disabled="isExporting"
+        >
+          Export selected items
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -73,6 +94,10 @@ export default class AnnotationImport extends Vue {
   exportValues = true;
 
   filename: string = "";
+
+  isExporting = false;
+  exportStatus = "";
+  exportProgress = 0;
 
   get dataset() {
     return this.store.dataset;
@@ -117,57 +142,78 @@ export default class AnnotationImport extends Vue {
   }
 
   async submit() {
-    let annotations: IAnnotation[] = [];
-    if (this.exportAnnotations) {
-      annotations = await this.store.annotationsAPI.getAnnotationsForDatasetId(
-        this.dataset!.id,
-      );
-    }
-
-    let annotationConnections: IAnnotationConnection[] = [];
-    if (this.exportConnections && this.exportAnnotations) {
-      annotationConnections =
-        await this.store.annotationsAPI.getConnectionsForDatasetId(
-          this.dataset!.id,
-        );
-    }
-
-    let annotationProperties: IAnnotationProperty[] = [];
-    if (this.exportProperties) {
-      await this.propertyStore.fetchProperties();
-      annotationProperties = this.propertyStore.properties;
-    }
-
-    let annotationPropertyValues: IAnnotationPropertyValues = {};
-    if (this.exportValues) {
-      annotationPropertyValues =
-        await this.store.propertiesAPI.getPropertyValues(this.dataset!.id);
-    }
-
-    const parts: string[] = [];
-    parts.push("{");
-    parts.push('"annotations":');
-    parts.push(...this.serializeArrayChunks(annotations));
-    parts.push(',"annotationConnections":');
-    parts.push(...this.serializeArrayChunks(annotationConnections));
-    parts.push(',"annotationProperties":');
-    parts.push(...this.serializeArrayChunks(annotationProperties));
-    parts.push(',"annotationPropertyValues":');
-    parts.push(JSON.stringify(annotationPropertyValues));
-    parts.push("}");
-
-    const blob = new Blob(parts, { type: "application/json" });
-    const url = URL.createObjectURL(blob);
+    this.isExporting = true;
+    this.exportProgress = 0;
 
     try {
-      downloadToClient({
-        href: url,
-        download: this.filename || "upennExport.json",
-      });
-      this.dialog = false;
+      let annotations: IAnnotation[] = [];
+      if (this.exportAnnotations) {
+        this.exportStatus = "Fetching annotations...";
+        annotations =
+          await this.store.annotationsAPI.getAnnotationsForDatasetId(
+            this.dataset!.id,
+          );
+        this.exportProgress = 20;
+      }
+
+      let annotationConnections: IAnnotationConnection[] = [];
+      if (this.exportConnections && this.exportAnnotations) {
+        this.exportStatus = "Fetching connections...";
+        annotationConnections =
+          await this.store.annotationsAPI.getConnectionsForDatasetId(
+            this.dataset!.id,
+          );
+        this.exportProgress = 40;
+      }
+
+      let annotationProperties: IAnnotationProperty[] = [];
+      if (this.exportProperties) {
+        this.exportStatus = "Fetching properties...";
+        await this.propertyStore.fetchProperties();
+        annotationProperties = this.propertyStore.properties;
+        this.exportProgress = 60;
+      }
+
+      let annotationPropertyValues: IAnnotationPropertyValues = {};
+      if (this.exportValues) {
+        this.exportStatus = "Fetching property values...";
+        annotationPropertyValues =
+          await this.store.propertiesAPI.getPropertyValues(this.dataset!.id);
+        this.exportProgress = 80;
+      }
+
+      this.exportStatus = "Assembling export file...";
+      const parts: string[] = [];
+      parts.push("{");
+      parts.push('"annotations":');
+      parts.push(...this.serializeArrayChunks(annotations));
+      parts.push(',"annotationConnections":');
+      parts.push(...this.serializeArrayChunks(annotationConnections));
+      parts.push(',"annotationProperties":');
+      parts.push(...this.serializeArrayChunks(annotationProperties));
+      parts.push(',"annotationPropertyValues":');
+      parts.push(JSON.stringify(annotationPropertyValues));
+      parts.push("}");
+
+      this.exportProgress = 90;
+      this.exportStatus = "Creating download...";
+
+      const blob = new Blob(parts, { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+
+      try {
+        downloadToClient({
+          href: url,
+          download: this.filename || "upennExport.json",
+        });
+        this.dialog = false;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
     } finally {
-      // Clean up the created URL to prevent memory leaks
-      URL.revokeObjectURL(url);
+      this.isExporting = false;
+      this.exportStatus = "";
+      this.exportProgress = 0;
     }
   }
 }
