@@ -121,8 +121,11 @@ export default class WorkerInterfaceValues extends Vue {
   @Prop()
   readonly workerInterface!: IWorkerInterface;
 
-  @Prop()
-  readonly tool!: IToolConfiguration;
+  // The tool is not always available, e.g. when this component is being
+  // called from the PropertyWorkerMenu. In that case, set to null so that
+  // we don't try to access the tool.values.workerInterfaceValues property.
+  @Prop({ default: null })
+  readonly tool!: IToolConfiguration | null;
 
   @VModel({ type: Object }) interfaceValues!: IWorkerInterfaceValues;
   @Prop({ default: "right", type: String })
@@ -161,8 +164,10 @@ export default class WorkerInterfaceValues extends Vue {
   populateValues() {
     const interfaceValues: IWorkerInterfaceValues = {};
     for (const id in this.workerInterface) {
-      if (id in this.tool.values.workerInterfaceValues) {
-        interfaceValues[id] = this.tool.values.workerInterfaceValues[id];
+      if (this.tool?.values?.workerInterfaceValues) {
+        if (id in this.tool.values.workerInterfaceValues) {
+          interfaceValues[id] = this.tool.values.workerInterfaceValues[id];
+        }
       } else {
         const interfaceTemplate = this.workerInterface[id];
         interfaceValues[id] = getDefault(
