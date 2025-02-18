@@ -266,7 +266,7 @@ export class Jobs extends VuexModule {
   async initializeNotificationSubscription() {
     await this.closeNotificationSubscription();
     const notificationSource = new EventSource(
-      `${main.girderRest.apiRoot}/notification/stream?token=${main.girderRest.token}`,
+      `${main.girderRest.apiRoot}/notification/stream?token=${main.girderRest.token}&timeout=45`,
     );
     notificationSource.onmessage = this.handleJobEvent;
     notificationSource.onerror = this.handleError;
