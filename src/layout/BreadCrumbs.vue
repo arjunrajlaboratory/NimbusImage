@@ -236,8 +236,12 @@ export default class BreadCrumbs extends Vue {
 
     const newItems: IBreadCrumbItem[] = [];
     const params: { [key: string]: string } = {};
-    if (datasetId) params.datasetId = datasetId;
-    if (configurationId) params.configurationId = configurationId;
+    if (datasetId) {
+      params.datasetId = datasetId;
+    }
+    if (configurationId) {
+      params.configurationId = configurationId;
+    }
 
     // Create dataset item
     let datasetItem: IBreadCrumbItem | undefined;
