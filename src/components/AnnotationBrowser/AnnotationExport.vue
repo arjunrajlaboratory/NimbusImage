@@ -7,7 +7,8 @@
         v-description="{
           section: 'Object list actions',
           title: 'Export to JSON',
-          description: 'Export annotations and connections to a JSON file',
+          description:
+            'Export annotations, connections, properties, and property values to a JSON file',
         }"
       >
         <v-icon>mdi-export</v-icon>
@@ -15,8 +16,21 @@
       </v-btn>
     </template>
     <v-card class="pa-2" :disabled="!canExport">
-      <v-card-title> Export </v-card-title>
-      <v-card-text class="pt-5 pb-0">
+      <v-card-title>Export</v-card-title>
+      <v-card-subtitle>
+        Export your annotations and related data as a JSON file
+      </v-card-subtitle>
+
+      <v-card-text class="pt-2 pb-0">
+        <v-alert type="info" text class="mb-4">
+          An exported JSON file contains a complete specification of your
+          annotation data. That include coordinates of points and polygons,
+          color, property values, connections between annotations, and more. The
+          exported JSON file can be used for backup purposes or to transfer
+          annotations between datasets. You can also parse the JSON file for
+          sophisticated analyses using other tools.
+        </v-alert>
+
         <v-checkbox v-model="exportAnnotations" label="Export annotations" />
         <v-checkbox
           v-model="exportConnections"
@@ -37,10 +51,30 @@
           no-resize
           hide-details
         />
+
+        <!-- Add progress indicator -->
+        <div v-if="isExporting" class="mt-4">
+          <v-progress-linear
+            :value="exportProgress"
+            color="primary"
+            height="25"
+          >
+            <template v-slot:default>
+              <span class="white--text">{{ exportStatus }}</span>
+            </template>
+          </v-progress-linear>
+        </div>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn @click="submit" color="primary"> Export selection </v-btn>
+        <v-btn
+          @click="submit"
+          color="primary"
+          :loading="isExporting"
+          :disabled="isExporting"
+        >
+          Export selected items
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -56,7 +90,6 @@ import {
   IAnnotationConnection,
   IAnnotationProperty,
   IAnnotationPropertyValues,
-  ISerializedData,
 } from "@/store/model";
 import { downloadToClient } from "@/utils/download";
 
@@ -73,6 +106,10 @@ export default class AnnotationImport extends Vue {
   exportValues = true;
 
   filename: string = "";
+
+  isExporting = false;
+  exportStatus = "";
+  exportProgress = 0;
 
   get dataset() {
     return this.store.dataset;
@@ -91,66 +128,105 @@ export default class AnnotationImport extends Vue {
     this.filename = (this.dataset?.name ?? "unknown") + ".json";
   }
 
-  submit() {
-    let annotationPromise: Promise<IAnnotation[]> = Promise.resolve([]);
-    if (this.exportAnnotations) {
-      annotationPromise = this.store.annotationsAPI.getAnnotationsForDatasetId(
-        this.dataset!.id,
-      );
+  /**
+   * Serializes an array into JSON chunks to prevent memory issues
+   */
+  serializeArrayChunks(arr: any[], chunkSize = 10000): string[] {
+    const chunks: string[] = [];
+    chunks.push("[");
+    const total = arr.length;
+    let firstChunk = true;
+
+    for (let i = 0; i < total; i += chunkSize) {
+      const chunk = arr.slice(i, i + chunkSize);
+      let chunkStr = JSON.stringify(chunk);
+      chunkStr = chunkStr.substring(1, chunkStr.length - 1);
+
+      if (!firstChunk && chunkStr.length > 0) {
+        chunks.push(",");
+      }
+      chunks.push(chunkStr);
+      firstChunk = false;
     }
 
-    let connectionsPromise: Promise<IAnnotationConnection[]> = Promise.resolve(
-      [],
-    );
-    if (this.exportConnections && this.exportAnnotations) {
-      connectionsPromise = this.store.annotationsAPI.getConnectionsForDatasetId(
-        this.dataset!.id,
-      );
-    }
+    chunks.push("]");
+    return chunks;
+  }
 
-    let propertiesPromise: Promise<IAnnotationProperty[]> = Promise.resolve([]);
-    if (this.exportProperties) {
-      propertiesPromise = this.propertyStore
-        .fetchProperties()
-        .then(() => this.propertyStore.properties);
-    }
+  async submit() {
+    this.isExporting = true;
+    this.exportProgress = 0;
 
-    let valuesPromise: Promise<IAnnotationPropertyValues> = Promise.resolve({});
-    if (this.exportValues) {
-      valuesPromise = this.store.propertiesAPI.getPropertyValues(
-        this.dataset!.id,
-      );
-    }
+    try {
+      let annotations: IAnnotation[] = [];
+      if (this.exportAnnotations) {
+        this.exportStatus = "Fetching annotations...";
+        annotations =
+          await this.store.annotationsAPI.getAnnotationsForDatasetId(
+            this.dataset!.id,
+          );
+        this.exportProgress = 20;
+      }
 
-    Promise.all([
-      annotationPromise,
-      connectionsPromise,
-      propertiesPromise,
-      valuesPromise,
-    ]).then(
-      ([
-        annotations,
-        annotationConnections,
-        annotationProperties,
-        annotationPropertyValues,
-      ]) => {
-        const serializable: ISerializedData = {
-          annotations,
-          annotationConnections,
-          annotationProperties,
-          annotationPropertyValues,
-        };
-        const href =
-          "data:text/plain;charset=utf-8," +
-          encodeURIComponent(JSON.stringify(serializable));
+      let annotationConnections: IAnnotationConnection[] = [];
+      if (this.exportConnections && this.exportAnnotations) {
+        this.exportStatus = "Fetching connections...";
+        annotationConnections =
+          await this.store.annotationsAPI.getConnectionsForDatasetId(
+            this.dataset!.id,
+          );
+        this.exportProgress = 40;
+      }
 
+      let annotationProperties: IAnnotationProperty[] = [];
+      if (this.exportProperties) {
+        this.exportStatus = "Fetching properties...";
+        await this.propertyStore.fetchProperties();
+        annotationProperties = this.propertyStore.properties;
+        this.exportProgress = 60;
+      }
+
+      let annotationPropertyValues: IAnnotationPropertyValues = {};
+      if (this.exportValues) {
+        this.exportStatus = "Fetching property values...";
+        annotationPropertyValues =
+          await this.store.propertiesAPI.getPropertyValues(this.dataset!.id);
+        this.exportProgress = 80;
+      }
+
+      this.exportStatus = "Assembling export file...";
+      const parts: string[] = [];
+      parts.push("{");
+      parts.push('"annotations":');
+      parts.push(...this.serializeArrayChunks(annotations));
+      parts.push(',"annotationConnections":');
+      parts.push(...this.serializeArrayChunks(annotationConnections));
+      parts.push(',"annotationProperties":');
+      parts.push(...this.serializeArrayChunks(annotationProperties));
+      parts.push(',"annotationPropertyValues":');
+      parts.push(JSON.stringify(annotationPropertyValues));
+      parts.push("}");
+
+      this.exportProgress = 90;
+      this.exportStatus = "Creating download...";
+
+      const blob = new Blob(parts, { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+
+      try {
         downloadToClient({
-          href,
+          href: url,
           download: this.filename || "upennExport.json",
         });
         this.dialog = false;
-      },
-    );
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } finally {
+      this.isExporting = false;
+      this.exportStatus = "";
+      this.exportProgress = 0;
+    }
   }
 }
 </script>
