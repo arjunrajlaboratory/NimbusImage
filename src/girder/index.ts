@@ -20,12 +20,16 @@ interface IGirderBase {
 
 export interface IGirderUser extends IGirderBase {
   _modelType: "user";
+  _id: string;
   login: string;
+  firstName: string;
+  lastName: string;
 }
 
 export interface IGirderItem extends IGirderBase {
   _modelType: "item";
   description: string;
+  creatorId: string;
   folderId: string;
   meta: any;
   largeImage?: any;
@@ -34,6 +38,7 @@ export interface IGirderItem extends IGirderBase {
 export interface IGirderFolder extends IGirderBase {
   _modelType: "folder";
   description: string;
+  creatorId: string;
   meta: any;
   parentId?: string;
 }

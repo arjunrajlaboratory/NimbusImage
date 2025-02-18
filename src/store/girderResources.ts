@@ -12,6 +12,7 @@ import {
   IGirderItem,
   IGirderLargeImage,
   IGirderSelectAble,
+  IGirderUser,
 } from "@/girder";
 import Vue from "vue";
 import { IDataset, IDatasetConfiguration } from "./model";
@@ -95,6 +96,12 @@ export class GirderResources extends VuexModule {
     return resource as IGirderItem | null;
   }
 
+  @Action
+  public async getUser(id: string): Promise<IGirderUser | null> {
+    const resource = await this.getResource({ id, type: "user" });
+    return resource as IGirderUser | null;
+  }
+
   get watchResource() {
     return (id: string, type: IGirderSelectAble["_modelType"]) => {
       if (!(id in this.resources)) {
@@ -113,6 +120,11 @@ export class GirderResources extends VuexModule {
   get watchItem() {
     return (id: string) =>
       this.watchResource(id, "item") as IGirderItem | null | undefined;
+  }
+
+  get watchUser() {
+    return (id: string) =>
+      this.watchResource(id, "user") as IGirderUser | null | undefined;
   }
 
   @Mutation

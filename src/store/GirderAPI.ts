@@ -702,6 +702,7 @@ export function asDataset(folder: IGirderFolder): IDataset {
     id: folder._id,
     name: folder.name,
     description: folder.description,
+    creatorId: folder.creatorId,
     xy: [],
     z: [],
     width: 1,

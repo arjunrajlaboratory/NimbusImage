@@ -43,11 +43,14 @@
           </template>
           <!-- Otherwise, simply make the item clickable -->
           <template v-else>
-            <router-link :to="item.to">
-              <span class="px-2">
+            <span class="px-2" v-if="item.to?.name">
+              <router-link :to="item.to">
                 {{ item.text }}
-              </span>
-            </router-link>
+              </router-link>
+            </span>
+            <span class="px-2" v-else>
+              {{ item.text }}
+            </span>
           </template>
         </v-breadcrumbs-item>
       </template>
@@ -173,11 +176,22 @@ export default class BreadCrumbs extends Vue {
   async setItemTextWithResourceName(
     item: { text: string },
     id: string,
-    type: "item" | "folder",
+    type: "item" | "folder" | "user",
   ) {
-    const resource = await this.girderResources.getResource({ id, type });
-    if (resource) {
-      Vue.set(item, "text", resource.name);
+    if (type === "user") {
+      const user = await this.girderResources.getUser(id);
+      if (user) {
+        Vue.set(
+          item,
+          "text",
+          `${user.firstName} ${user.lastName} (${user.login})`,
+        );
+      }
+    } else {
+      const resource = await this.girderResources.getResource({ id, type });
+      if (resource) {
+        Vue.set(item, "text", resource.name);
+      }
     }
   }
 
@@ -220,10 +234,7 @@ export default class BreadCrumbs extends Vue {
     this.previousRefreshInfo.configurationId = configurationId;
     this.previousRefreshInfo.routeName = this.$route.name;
 
-    this.items = [];
-
-    // Dataset Item
-    let datasetItem: IBreadCrumbItem | undefined;
+    const newItems: IBreadCrumbItem[] = [];
     const params: { [key: string]: string } = {};
     if (datasetId) {
       params.datasetId = datasetId;
@@ -231,58 +242,92 @@ export default class BreadCrumbs extends Vue {
     if (configurationId) {
       params.configurationId = configurationId;
     }
+
+    // Create dataset item
+    let datasetItem: IBreadCrumbItem | undefined;
     if (datasetId) {
       datasetItem = {
         title: "Dataset:",
-        to: {
-          name: "dataset",
-          params,
-        },
+        to: { name: "dataset", params },
         text: "Unknown dataset",
       };
-      this.items.push(datasetItem);
-      // Get name asynchronously
-      this.setItemTextWithResourceName(datasetItem, datasetId, "folder");
+      newItems.push(datasetItem);
     }
 
-    // Configuration Item
-    let configurationItem: IBreadCrumbItem | undefined;
+    // Await folder information
+    let folder;
+    if (datasetId) {
+      folder = await this.girderResources.getFolder(datasetId);
+    }
+
+    // Add owner item if available
+    if (folder?.creatorId) {
+      const ownerItem: IBreadCrumbItem = {
+        title: "Owner:",
+        to: {} as Location,
+        text: "Unknown owner",
+      };
+      newItems.push(ownerItem);
+    }
+
+    // Create configuration item
     if (configurationId) {
-      configurationItem = {
+      const configurationItem: IBreadCrumbItem = {
         title: "Collection:",
-        to: {
-          name: "configuration",
-          params,
-        },
+        to: { name: "configuration", params },
         text: "Unknown configuration",
       };
-      this.items.push(configurationItem);
-      // Get name asynchronously
-      this.setItemTextWithResourceName(
-        configurationItem,
-        configurationId,
-        "item",
-      );
+      newItems.push(configurationItem);
     }
 
-    // Drop-down if datasetItem and configurationId
+    // Update the reactive property just once
+    this.items = newItems;
+
+    // Fire off asynchronous text updates without modifying the array structure
+    if (datasetItem && datasetId) {
+      this.setItemTextWithResourceName(datasetItem, datasetId, "folder");
+    }
+    if (folder?.creatorId) {
+      const ownerItem = newItems.find((item) => item.title === "Owner:");
+      if (ownerItem) {
+        this.setItemTextWithResourceName(ownerItem, folder.creatorId, "user");
+      }
+    }
+    if (configurationId) {
+      const configurationItem = newItems.find(
+        (item) => item.title === "Collection:",
+      );
+      if (configurationItem) {
+        this.setItemTextWithResourceName(
+          configurationItem,
+          configurationId,
+          "item",
+        );
+      }
+    }
+
+    // Handle dataset view dropdown (moved after items are set)
     if (datasetItem && configurationId && this.$route.name === "datasetview") {
-      const capturedDatasetItem = datasetItem;
-      this.store.api.findDatasetViews({ configurationId }).then((views) => {
-        if (!views.length) {
-          return;
-        }
-        const datasetItems: IBreadCrumbItem["subItems"] = views.map((view) => {
-          const viewItem = {
-            text: "Unknown dataset",
-            value: view.id,
-          };
-          // Get name asynchronously
-          this.setItemTextWithResourceName(viewItem, view.datasetId, "folder");
-          return viewItem;
+      const views = await this.store.api.findDatasetViews({ configurationId });
+      if (views.length) {
+        const datasetItems = views.map((view: IDatasetView) => ({
+          text: "Unknown dataset",
+          value: view.id,
+        }));
+        Vue.set(datasetItem, "subItems", datasetItems);
+
+        // Update names asynchronously
+        datasetItems.forEach((viewItem: { text: string; value: string }) => {
+          const view = views.find((v: IDatasetView) => v.id === viewItem.value);
+          if (view) {
+            this.setItemTextWithResourceName(
+              viewItem,
+              view.datasetId,
+              "folder",
+            );
+          }
         });
-        Vue.set(capturedDatasetItem, "subItems", datasetItems);
-      });
+      }
     }
   }
 
