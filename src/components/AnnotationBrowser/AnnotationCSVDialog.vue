@@ -264,42 +264,35 @@ export default class AnnotationCsvDialog extends Vue {
         const chunk = annotations.slice(i, i + CHUNK_SIZE);
 
         // Process chunk
-        const chunkData = await new Promise<(string | number)[][]>(
-          (resolve) => {
-            setTimeout(() => {
-              const rows = chunk.map((annotation) => {
-                const row: (string | number)[] = [
-                  annotation.id,
-                  annotation.channel,
-                  annotation.location.XY + 1,
-                  annotation.location.Z + 1,
-                  annotation.location.Time + 1,
-                  annotation.tags.join(", "),
-                  annotation.shape,
-                  annotation.name ?? "",
-                ];
+        const rows = chunk.map((annotation) => {
+          const row: (string | number)[] = [
+            annotation.id,
+            annotation.channel,
+            annotation.location.XY + 1,
+            annotation.location.Z + 1,
+            annotation.location.Time + 1,
+            annotation.tags.join(", "),
+            annotation.shape,
+            annotation.name ?? "",
+          ];
 
-                for (const path of usedPaths) {
-                  const value = getValueFromObjectAndPath(
-                    propValues[annotation.id],
-                    path,
-                  );
-                  row.push(
-                    typeof value === "object" || typeof value === "undefined"
-                      ? AnnotationCsvDialog.UNDEFINED_VALUE_MAP[
-                          this.undefinedHandling
-                        ]
-                      : value,
-                  );
-                }
-                return row;
-              });
-              resolve(rows);
-            }, 0);
-          },
-        );
+          for (const path of usedPaths) {
+            const value = getValueFromObjectAndPath(
+              propValues[annotation.id],
+              path,
+            );
+            row.push(
+              typeof value === "object" || typeof value === "undefined"
+                ? AnnotationCsvDialog.UNDEFINED_VALUE_MAP[
+                    this.undefinedHandling
+                  ]
+                : value,
+            );
+          }
+          return row;
+        });
 
-        data.push(...chunkData);
+        data.push(...rows);
         this.processingProgress = (i + CHUNK_SIZE) / nAnnotations;
       }
 
