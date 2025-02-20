@@ -160,6 +160,13 @@ export default class AnnotationViewer extends Vue {
   readonly propertyStore = propertiesStore;
   readonly filterStore = filterStore;
 
+  // Drag state
+  private isDragging = false;
+  private dragStartPosition: IGeoJSPosition | null = null;
+  private draggedAnnotation: IAnnotation | null = null;
+  private dragGhostAnnotation: IGeoJSAnnotation | null = null;
+  private dragOriginalCoordinates: IGeoJSPosition[] | null = null;
+
   // Compute the centroid of each annotation, taking unrolling into account
   get unrolledCentroidCoordinates() {
     const centroidMap: { [annotationId: string]: IGeoJSPosition } = {};
@@ -2656,6 +2663,28 @@ export default class AnnotationViewer extends Vue {
         }
       },
     );
+
+    // Configure the map interactor to prevent panning during Alt-drag
+    // TODO: Unclear if I should be setting this here or in ImageViewer.vue
+    const map = this.annotationLayer.map();
+    const interactorOpts = map.interactor().options();
+    const actions = interactorOpts.actions || [];
+
+    // Find and modify the pan action to not trigger when Alt is pressed
+    const panAction = actions.find(
+      (action: any) => action.name === "button pan",
+    );
+    if (panAction) {
+      panAction.modifiers = { shift: false, ctrl: false, alt: false };
+    }
+
+    map.interactor().options({ ...interactorOpts, actions });
+
+    // Handle drag events
+    this.annotationLayer.geoOn(geojs.event.mousedown, this.handleDragStart);
+    this.annotationLayer.geoOn(geojs.event.mousemove, this.handleDragMove);
+    this.annotationLayer.geoOn(geojs.event.mouseup, this.handleDragEnd);
+
     this.drawAnnotationsAndTooltips();
   }
 
@@ -2764,6 +2793,15 @@ export default class AnnotationViewer extends Vue {
     this.filterStore.updateHistograms();
 
     this.addHoverCallback();
+  }
+
+  beforeDestroy() {
+    // Clean up drag event listeners
+    if (this.annotationLayer) {
+      this.annotationLayer.geoOff(geojs.event.mousedown, this.handleDragStart);
+      this.annotationLayer.geoOff(geojs.event.mousemove, this.handleDragMove);
+      this.annotationLayer.geoOff(geojs.event.mouseup, this.handleDragEnd);
+    }
   }
 
   @Watch("annotationLayer")
@@ -2957,6 +2995,129 @@ export default class AnnotationViewer extends Vue {
   }) {
     const newColor = useColorFromLayer ? null : color;
     this.annotationStore.colorSelectedAnnotations(newColor);
+  }
+
+  // Drag handlers
+  private handleDragStart(evt: IGeoJSMouseState) {
+    if (!evt?.geo || !evt.modifiers?.alt) {
+      return;
+    }
+
+    // Find which annotation was clicked
+    const geoAnnotations: IGeoJSAnnotation[] =
+      this.annotationLayer.annotations();
+    for (const geoAnnotation of geoAnnotations) {
+      const id = geoAnnotation.options("girderId");
+      if (!id) {
+        continue;
+      }
+      const annotation = this.getAnnotationFromId(id);
+      if (!annotation) {
+        continue;
+      }
+      const unitsPerPixel = this.getMapUnitsPerPixel();
+      const shouldSelect = this.shouldSelectAnnotation(
+        AnnotationShape.Point,
+        [evt.geo],
+        annotation,
+        geoAnnotation.style(),
+        unitsPerPixel,
+      );
+      if (shouldSelect) {
+        // Start dragging
+        this.isDragging = true;
+        this.dragStartPosition = evt.geo;
+        this.draggedAnnotation = annotation;
+        this.dragOriginalCoordinates = [...annotation.coordinates];
+
+        // Create ghost annotation
+        const style = {
+          fillOpacity: 0.25,
+          strokeOpacity: 0.5,
+          fillColor: "red",
+          strokeColor: "red",
+          strokeWidth: 2,
+        };
+
+        // Create directly with GeoJS instead of using createGeoJSAnnotation
+        this.dragGhostAnnotation = geojsAnnotationFactory(
+          annotation.shape,
+          [...annotation.coordinates],
+          { style },
+        );
+
+        if (this.dragGhostAnnotation) {
+          this.dragGhostAnnotation.options("specialAnnotation", true);
+          this.interactionLayer.addAnnotation(this.dragGhostAnnotation);
+        }
+        break;
+      }
+    }
+  }
+
+  private handleDragMove(evt: IGeoJSMouseState) {
+    if (
+      !this.isDragging ||
+      !this.dragStartPosition ||
+      !this.draggedAnnotation ||
+      !this.dragGhostAnnotation ||
+      !evt?.geo
+    ) {
+      return;
+    }
+
+    // Calculate offset
+    const dx = evt.geo.x - this.dragStartPosition.x;
+    const dy = evt.geo.y - this.dragStartPosition.y;
+
+    // Create new coordinates
+    const newCoordinates = this.dragOriginalCoordinates!.map((coord) => {
+      return {
+        x: coord.x + dx,
+        y: -(coord.y + dy), // TODO: I feel like there is some sort of
+        // automatic transformation that should be applied here, but I
+        // don't know what it is.
+      };
+    });
+
+    this.dragGhostAnnotation._coordinates(newCoordinates);
+    this.dragGhostAnnotation.draw();
+  }
+
+  private async handleDragEnd(evt: IGeoJSMouseState) {
+    if (
+      !this.isDragging ||
+      !this.dragStartPosition ||
+      !this.draggedAnnotation ||
+      !this.dragGhostAnnotation ||
+      !evt?.geo
+    ) {
+      return;
+    }
+
+    // Calculate final offset
+    const dx = evt.geo.x - this.dragStartPosition.x;
+    const dy = evt.geo.y - this.dragStartPosition.y;
+
+    // Update the actual annotation
+    await this.annotationStore.updateAnnotationsPerId({
+      annotationIds: [this.draggedAnnotation.id],
+      editFunction: (annotation: IAnnotation) => {
+        annotation.coordinates = this.dragOriginalCoordinates!.map((coord) => ({
+          x: coord.x + dx,
+          y: coord.y + dy,
+          z: coord.z,
+        }));
+      },
+    });
+
+    // Clean up
+    this.interactionLayer.removeAnnotation(this.dragGhostAnnotation);
+    this.isDragging = false;
+    this.dragStartPosition = null;
+    this.draggedAnnotation = null;
+    this.dragGhostAnnotation = null;
+    this.dragOriginalCoordinates = null;
   }
 }
 </script>
