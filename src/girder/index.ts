@@ -22,6 +22,7 @@ export interface IGirderUser extends IGirderBase {
   _modelType: "user";
   _id: string;
   login: string;
+  email: string;
   firstName: string;
   lastName: string;
 }
