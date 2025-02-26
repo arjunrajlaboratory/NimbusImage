@@ -26,3 +26,11 @@ export function toDatasetFolder(
 ): IGirderFolder | null {
   return isDatasetFolder(selectable) ? (selectable as IGirderFolder) : null;
 }
+
+export const unselectableLocations = [
+  "collections",
+  "collection",
+  "root",
+  "users",
+  "user",
+];
