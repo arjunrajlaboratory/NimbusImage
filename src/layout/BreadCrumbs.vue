@@ -184,7 +184,7 @@ export default class BreadCrumbs extends Vue {
         Vue.set(
           item,
           "text",
-          `${user.firstName} ${user.lastName} (${user.login})`,
+          `${user.firstName} ${user.lastName} (${user.email})`,
         );
       }
     } else {

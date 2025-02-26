@@ -333,8 +333,8 @@ export default class Home extends Vue {
     }
     const fullname = `${user.firstName} ${user.lastName}`.trim();
     return {
-      fullname: fullname || user.login, // fallback to login if no name set
-      username: user.login,
+      fullname: fullname || user.email, // fallback to email if no name set
+      username: user.email,
     };
   }
 
