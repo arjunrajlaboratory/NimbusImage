@@ -32,7 +32,11 @@
         <v-btn @click.prevent="dialogInternal = false" color="warning">
           Cancel
         </v-btn>
-        <v-btn @click.prevent="select" :disabled="!selected" color="primary">
+        <v-btn
+          @click.prevent="select"
+          :disabled="!selected || selected._modelType !== 'folder'"
+          color="primary"
+        >
           Select
         </v-btn>
       </v-card-actions>

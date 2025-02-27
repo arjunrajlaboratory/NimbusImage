@@ -83,11 +83,31 @@
         </v-card-text>
       </v-card>
 
+      <v-alert v-if="failedDataset" text type="error">
+        Could not create dataset <strong>{{ failedDataset }}</strong
+        >. This might happen, for instance, if a dataset by that name already
+        exists. Please update the dataset name field and try again.
+      </v-alert>
+      <v-alert v-if="fileSizeExceeded" text type="error">
+        Total file size ({{ totalSizeMB }} MB) exceeds the maximum allowed size
+        of {{ maxTotalFileSize }} MB
+      </v-alert>
+      <v-alert v-if="invalidLocation" text type="error">
+        Cannot create datasets in this location. Please select a subfolder
+        within your user directory or group folder.
+      </v-alert>
+
       <div class="button-bar" v-if="!quickupload || pipelineError">
         <v-btn
           id="upload-button-tourstep"
           v-tour-trigger="'upload-button-tourtrigger'"
-          :disabled="!valid || !filesSelected || uploading || fileSizeExceeded"
+          :disabled="
+            !valid ||
+            !filesSelected ||
+            uploading ||
+            fileSizeExceeded ||
+            invalidLocation
+          "
           color="success"
           class="mr-4"
           @click="submit"
@@ -97,15 +117,6 @@
       </div>
     </v-form>
 
-    <v-alert v-if="failedDataset" text type="error">
-      Could not create dataset <strong>{{ failedDataset }}</strong
-      >. This might happen, for instance, if a dataset by that name already
-      exists. Please update the dataset name field and try again.
-    </v-alert>
-    <v-alert v-if="fileSizeExceeded" text type="error">
-      Total file size ({{ totalSizeMB }} MB) exceeds the maximum allowed size of
-      {{ maxTotalFileSize }} MB
-    </v-alert>
     <template v-if="quickupload">
       <template v-if="configuring">
         <multi-source-configuration
@@ -146,6 +157,7 @@ import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
 import { logError } from "@/utils/log";
+import { unselectableLocations } from "@/utils/girderSelectable";
 
 const allTriggers = Object.values(triggersPerCategory).flat();
 
@@ -270,6 +282,15 @@ export default class NewDataset extends Vue {
 
   allFiles: File[] = [];
 
+  get invalidLocation() {
+    if (!this.path) return false;
+    return (
+      ("_modelType" in this.path &&
+        unselectableLocations.includes(this.path._modelType)) ||
+      ("type" in this.path && unselectableLocations.includes(this.path.type))
+    );
+  }
+
   get datasetId() {
     return this.dataset?.id || null;
   }
@@ -381,6 +402,14 @@ export default class NewDataset extends Vue {
       this.name = formatDate(new Date()) + " - " + this.recommendedName;
       await Vue.nextTick(); // "name" prop is set in the form
       await Vue.nextTick(); // this.valid is updated
+
+      // Check for invalid location before proceeding with quickupload
+      if (this.invalidLocation) {
+        this.pipelineError = true;
+        logError("Invalid location for dataset creation during quickupload");
+        return;
+      }
+
       this.submit();
     }
   }
@@ -392,6 +421,12 @@ export default class NewDataset extends Vue {
 
     if (this.fileSizeExceeded) {
       logError("Maximum total file size exceeded");
+      this.pipelineError = true;
+      return;
+    }
+
+    if (this.invalidLocation) {
+      logError("Invalid location for dataset creation");
       this.pipelineError = true;
       return;
     }

@@ -48,7 +48,7 @@
         <v-btn
           class="mx-2"
           @click="$refs.fileInput.click()"
-          :disabled="!currentLocation"
+          :disabled="shouldDisableSingleFileUpload"
         >
           <v-icon left>mdi-upload</v-icon>
           Upload Individual File
@@ -105,6 +105,7 @@ import { formatDateString } from "@/utils/date";
 import { vuetifyConfig } from "@/girder";
 import { logError } from "@/utils/log";
 import AlertDialog from "@/components/AlertDialog.vue";
+import { unselectableLocations } from "@/utils/girderSelectable";
 
 interface IChipAttrs {
   text: string;
@@ -187,6 +188,16 @@ export default class CustomFileManager extends Vue {
     } finally {
       this.overridingLocation = null;
     }
+  }
+
+  get shouldDisableSingleFileUpload() {
+    return (
+      !this.currentLocation ||
+      ("_modelType" in this.currentLocation &&
+        unselectableLocations.includes(this.currentLocation._modelType)) ||
+      ("type" in this.currentLocation &&
+        unselectableLocations.includes(this.currentLocation.type))
+    );
   }
 
   get currentLocation() {
