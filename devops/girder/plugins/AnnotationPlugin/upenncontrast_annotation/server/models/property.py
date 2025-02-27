@@ -57,9 +57,6 @@ class AnnotationProperty(ProxiedAccessControlledModel):
     def delete(self, property):
         self.remove(property)
 
-    def update(self, property):
-        return self.save(property)
-
     def getPropertyById(self, id, user=None):
         return self.load(id, user=user)
 

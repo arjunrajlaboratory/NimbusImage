@@ -108,7 +108,7 @@ class AnnotationProperty(Resource):
     )
     def update(self, property, params):
         property.update(self.getBodyJson())
-        self._propertyModel.update(property)
+        self._propertyModel.save(property)
 
     @access.user
     @describeRoute(

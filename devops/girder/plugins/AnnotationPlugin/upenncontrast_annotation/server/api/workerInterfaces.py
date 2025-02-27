@@ -32,7 +32,7 @@ class WorkerInterfaces(Resource):
         if "image" not in params:
             raise RestException(code=400, message="Missing 'image' parameter")
         image = params.get("image")
-        return self._interfaceModel.update(
+        return self._interfaceModel.updateWorkerInterface(
             self.getCurrentUser(), image, self.getBodyJson()
         )
 

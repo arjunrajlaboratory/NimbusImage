@@ -82,7 +82,7 @@ class DatasetView(ProxiedAccessControlledModel):
     def delete(self, dataset_view):
         self.remove(dataset_view)
 
-    def update(self, dataset_view, new_dataset_view):
+    def updateDatasetView(self, dataset_view, new_dataset_view):
         id = dataset_view["_id"]
         dataset_view.update(new_dataset_view)
         dataset_view["_id"] = id

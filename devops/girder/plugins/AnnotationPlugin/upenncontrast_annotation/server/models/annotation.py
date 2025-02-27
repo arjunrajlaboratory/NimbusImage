@@ -211,9 +211,6 @@ class Annotation(ProxiedAccessControlledModel):
     def getAnnotationById(self, id, user=None):
         return self.load(id, user=user, level=AccessType.READ)
 
-    def update(self, annotation):
-        return self.save(annotation)
-
     def updateMultiple(self, annotationUpdates, user):
         annotationIdToUpdate = dict((ObjectId(update["id"]), update)
                                     for update in annotationUpdates)
