@@ -450,7 +450,15 @@ export class Properties extends VuexModule {
   @Action
   async fetchWorkerImageList() {
     const list = await this.propertiesAPI.getWorkerImages();
-    this.setWorkerImageList(list);
+    // Filter out test images (those with ":test" in their name)
+    const filteredList: IWorkerImageList = {};
+    for (const [imageName, imageData] of Object.entries(list)) {
+      if (!imageName.includes(":test")) {
+        // images with ":test" are used for unit tests and so should not be shown
+        filteredList[imageName] = imageData;
+      }
+    }
+    this.setWorkerImageList(filteredList);
   }
 
   @Action
