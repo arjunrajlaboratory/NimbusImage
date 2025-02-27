@@ -94,7 +94,7 @@
       </v-alert>
       <v-alert v-if="invalidLocation" text type="error">
         Cannot create datasets in this location. Please select a subfolder
-        within your user directory.
+        within your user directory or group folder.
       </v-alert>
 
       <div class="button-bar" v-if="!quickupload || pipelineError">
