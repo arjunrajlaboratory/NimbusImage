@@ -92,7 +92,8 @@ class DatasetView(Resource):
         level=AccessType.WRITE,
     )
     def update(self, dataset_view, params):
-        self._datasetViewModel.update(dataset_view, self.getBodyJson())
+        self._datasetViewModel.updateDatasetView(
+            dataset_view, self.getBodyJson())
 
     @access.user
     @describeRoute(

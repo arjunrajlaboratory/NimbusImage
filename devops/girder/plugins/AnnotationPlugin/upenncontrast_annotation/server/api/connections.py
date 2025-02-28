@@ -176,7 +176,7 @@ class AnnotationConnection(Resource):
     def update(self, connection, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         connection.update(bodyJson)
-        self._connectionModel.update(connection)
+        self._connectionModel.save(connection)
 
     @access.user
     @autoDescribeRoute(

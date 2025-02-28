@@ -138,9 +138,6 @@ class AnnotationConnection(ProxiedAccessControlledModel):
         }
         return self.removeWithQuery(query)
 
-    def update(self, connection):
-        return self.save(connection)
-
     def getClosestAnnotation(self, annotationRef, annotations):
         """Get the closest annotation based on its distance to a reference
         annotation.

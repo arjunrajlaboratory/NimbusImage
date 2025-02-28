@@ -158,7 +158,7 @@ class Annotation(Resource):
     def update(self, upenn_annotation, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         upenn_annotation.update(bodyJson)
-        self._annotationModel.update(upenn_annotation)
+        self._annotationModel.save(upenn_annotation)
 
     @describeRoute(
         Description("Update multiple existing annotation")

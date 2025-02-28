@@ -56,7 +56,7 @@ class WorkerPreviewModel(ProxiedAccessControlledModel):
     def delete(self, image):
         self.remove(self.getImagePreview(image))
 
-    def update(self, creator, image, preview):
+    def updateWorkerPreview(self, creator, image, preview):
         existing = self.getImagePreview(image)
         if existing is None:
             return self.create(creator, image, preview)

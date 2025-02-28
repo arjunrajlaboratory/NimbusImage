@@ -56,7 +56,7 @@ class WorkerInterfaceModel(ProxiedAccessControlledModel):
     def delete(self, interface):
         self.remove(self.find(interface))
 
-    def update(self, creator, image, interface):
+    def updateWorkerInterface(self, creator, image, interface):
         existing = self.findOne({"image": image})
         if existing is None:
             return self.create(creator, image, interface)
