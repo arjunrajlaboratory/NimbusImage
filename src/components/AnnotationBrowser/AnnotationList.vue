@@ -6,7 +6,14 @@
       <v-container style="width: auto">
         <v-row>
           <v-col class="pa-0 mx-1">
-            <v-btn color="error" small outlined @click.stop="deleteSelected">
+            <v-btn
+              color="error"
+              small
+              outlined
+              :loading="isDeletingAnnotations"
+              :disabled="isDeletingAnnotations"
+              @click.stop="deleteSelected"
+            >
               Delete Selected
             </v-btn>
           </v-col>
@@ -19,7 +26,10 @@
                 </v-btn>
               </template>
               <v-list>
-                <v-list-item @click="deleteUnselected">
+                <v-list-item
+                  @click="deleteUnselected"
+                  :disabled="isDeletingAnnotations"
+                >
                   <v-list-item-icon>
                     <v-icon>mdi-delete-outline</v-icon>
                   </v-list-item-icon>
@@ -286,6 +296,10 @@ export default class AnnotationList extends Vue {
   readonly propertyStore = propertyStore;
   readonly filterStore = filterStore;
   readonly getStringFromPropertiesAndPath = getStringFromPropertiesAndPath;
+
+  get isDeletingAnnotations() {
+    return this.annotationStore.isDeleting;
+  }
 
   readonly columnOptions = allHeaders;
 

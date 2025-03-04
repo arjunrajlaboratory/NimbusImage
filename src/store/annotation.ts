@@ -54,6 +54,8 @@ export class Annotations extends VuexModule {
   submitPendingAnnotationTimeout: number = 1;
   submitPendingAnnotation: ((submit: boolean) => void) | null = null;
 
+  isDeletingAnnotations: boolean = false;
+
   get selectedAnnotationIds() {
     return this.selectedAnnotations.map(
       (annotation: IAnnotation) => annotation.id,
@@ -67,6 +69,10 @@ export class Annotations extends VuexModule {
   get isAnnotationSelected() {
     const annotationIdsSet = new Set(this.selectedAnnotationIds);
     return (annotationId: string) => annotationIdsSet.has(annotationId);
+  }
+
+  get isDeleting() {
+    return this.isDeletingAnnotations;
   }
 
   get inactiveAnnotationIds() {
@@ -699,15 +705,28 @@ export class Annotations extends VuexModule {
       return;
     }
 
+    this.setDeletingState(true);
     sync.setSaving(true);
-    await this.annotationsAPI.deleteMultipleAnnotations(ids);
-    sync.setSaving(false);
 
-    this.setAnnotations(
-      this.annotations.filter(
-        (annotation: IAnnotation) => !ids.includes(annotation.id),
-      ),
-    );
+    const progressId = await progress.create({
+      type: ProgressType.ANNOTATION_DELETE,
+      title: "Deleting annotations",
+    });
+
+    try {
+      await this.annotationsAPI.deleteMultipleAnnotations(ids);
+
+      this.setAnnotations(
+        this.annotations.filter(
+          (annotation: IAnnotation) => !ids.includes(annotation.id),
+        ),
+      );
+    } finally {
+      // Always set the state back to false, even if there's an error
+      sync.setSaving(false);
+      this.setDeletingState(false);
+      progress.complete(progressId);
+    }
   }
 
   @Action
@@ -718,16 +737,12 @@ export class Annotations extends VuexModule {
 
   @Action
   public async deleteUnselectedAnnotations() {
+    const selectedIds = new Set(this.selectedAnnotationIds);
     const unselectedIds = this.annotations
-      .filter(
-        (annotation) =>
-          !this.selectedAnnotations.some(
-            (selected) => selected.id === annotation.id,
-          ),
-      )
+      .filter((annotation) => !selectedIds.has(annotation.id))
       .map((annotation) => annotation.id);
 
-    this.deleteAnnotations(unselectedIds);
+    await this.deleteAnnotations(unselectedIds);
   }
 
   @Action
@@ -1046,6 +1061,11 @@ export class Annotations extends VuexModule {
   @Action
   public clearSelectedAnnotations() {
     this.setSelected([]);
+  }
+
+  @Mutation
+  private setDeletingState(isDeleting: boolean) {
+    this.isDeletingAnnotations = isDeleting;
   }
 }
 
