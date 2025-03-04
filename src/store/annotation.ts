@@ -712,10 +712,10 @@ export class Annotations extends VuexModule {
       type: ProgressType.ANNOTATION_DELETE,
       title: "Deleting annotations",
     });
-    
+
     try {
       await this.annotationsAPI.deleteMultipleAnnotations(ids);
-      
+
       this.setAnnotations(
         this.annotations.filter(
           (annotation: IAnnotation) => !ids.includes(annotation.id),
@@ -741,7 +741,7 @@ export class Annotations extends VuexModule {
     const unselectedIds = this.annotations
       .filter((annotation) => !selectedIds.has(annotation.id))
       .map((annotation) => annotation.id);
-    
+
     await this.deleteAnnotations(unselectedIds);
   }
 
