@@ -149,7 +149,7 @@ class UPennContrastDataset:
         )
         return response.content
 
-    def getRegion(self, datasetId=None, refreshImage=False, **kwargs):
+    def getRegion(self, datasetId=None, refreshImage=False, protocol=pickle.HIGHEST_PROTOCOL, **kwargs):
         """
         Get a region of the dataset as a numpy array.
 
@@ -181,7 +181,7 @@ class UPennContrastDataset:
         else:
             itemId = self.getDataset(datasetId)["_id"]
         params = kwargs.copy()
-        params["encoding"] = "pickle:" + str(pickle.HIGHEST_PROTOCOL)
+        params["encoding"] = "pickle:" + str(protocol)
         params.pop("format", None)
         return pickle.loads(
             self.client.get(
