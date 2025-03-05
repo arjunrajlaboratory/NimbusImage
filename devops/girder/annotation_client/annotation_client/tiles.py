@@ -149,7 +149,13 @@ class UPennContrastDataset:
         )
         return response.content
 
-    def getRegion(self, datasetId=None, refreshImage=False, protocol=pickle.HIGHEST_PROTOCOL, **kwargs):
+    def getRegion(
+        self,
+        datasetId=None,
+        refreshImage=False,
+        protocol=pickle.HIGHEST_PROTOCOL,
+        **kwargs
+    ):
         """
         Get a region of the dataset as a numpy array.
 
