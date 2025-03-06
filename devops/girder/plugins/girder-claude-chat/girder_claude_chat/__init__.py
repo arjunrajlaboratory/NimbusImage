@@ -20,7 +20,7 @@ class ClaudeChatResource(Resource):
 
         # Load system prompt
         try:
-            with open("/src/girder-claude-chat/system_prompt_1.txt", "r") as f:
+            with open("/src/girder-claude-chat/system_prompt_2.txt", "r") as f:
                 self.system_prompt = f.read().strip()
             logger.info("Successfully loaded system prompt")
         except IOError:
@@ -47,7 +47,7 @@ class ClaudeChatResource(Resource):
         logger.debug(f"Processing {len(messages)} messages")
         try:
             response = self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-3-7-sonnet-20250219",
                 max_tokens=1000,
                 temperature=0,
                 system=[
