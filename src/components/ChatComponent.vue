@@ -275,7 +275,7 @@ export default class ChatComponent extends Vue {
   }
 
   filterVisibleMessages(messages: IChatMessage[]) {
-    return messages.filter((message) => message.visible !== false).toReversed();
+    return messages.filter((message) => message.visible !== false).reverse();
   }
 
   get visibleMessages() {
@@ -290,12 +290,14 @@ export default class ChatComponent extends Vue {
   bottom: 20px;
   right: 20px;
   width: 600px;
-  height: 600px;
-  max-height: 600px;
+  height: 700px;
+  max-height: 700px;
   z-index: 1000;
-  background-color: rgba(0, 0, 0, 0.202) !important;
+  background-color: rgba(0, 0, 0, 0.8) !important;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .v-card__text {
@@ -327,7 +329,7 @@ export default class ChatComponent extends Vue {
 
 .assistant {
   align-self: flex-start;
-  color: #4caf50;
+  color: #ffffff;
   background-color: rgba(0, 0, 0, 0.5);
   padding: 3px 10px;
   margin: 2px 20px 2px 0px;
