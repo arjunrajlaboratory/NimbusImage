@@ -93,10 +93,7 @@
               <v-divider></v-divider>
 
               <!-- Documentation Link -->
-              <v-list-item
-                href="https://support.nimbusimage.com"
-                target="_blank"
-              >
+              <v-list-item href="https://docs.nimbusimage.com" target="_blank">
                 <v-list-item-icon>
                   <v-icon>mdi-book-open-variant</v-icon>
                 </v-list-item-icon>
