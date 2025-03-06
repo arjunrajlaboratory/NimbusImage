@@ -136,7 +136,55 @@ Essential controls for viewing your images:
 - **Layer Grouping**: Combine channels into custom groups
 - **Annotations**: Toggle visibility with the `a` key
 
-# 4. Objects & Annotation Tools
+# 4. Managing Files
+
+## File Management System
+NimbusImage provides a robust file management system to organize datasets, collections, and other files. The interface includes:
+- **Upload dataset** area for adding new data
+- **Recent datasets** section showing recently accessed datasets
+- **File navigator** for browsing folders and files
+- **Action buttons** to create folders, upload files, and perform other operations
+
+## Upload Options
+NimbusImage offers two approaches for uploading image data:
+
+**Quick Upload**:
+- Simply drag and drop files directly
+- Uses default options for processing
+- Goes straight to the image viewer
+- Automatically creates a collection with the same name
+
+**Advanced Upload**:
+- Provides control over variable assignments
+- Allows configuration of tiling and compositing options
+- Enables specific collection placement
+- Offers adjustable transcoding settings
+
+## Storage Organization
+NimbusImage provides specific locations for storing datasets and files:
+- **Private folder**: Only accessible to you
+- **Public folder**: Accessible to everyone using the system
+- **Team folder**: (NimbusImage.com specific) Shared only with team members
+
+New folders can be created within these storage locations to organize datasets.
+
+## File Operations
+Several operations can be performed on files and datasets:
+- **Move**: Relocate files to different folders
+- **Delete**: Remove files or datasets
+- **Rename**: Change the name of files or datasets
+- **Browse**: For datasets, view internal files (use with caution)
+
+Multiple files can be managed at once by selecting checkboxes and using the "SELECTED ITEMS ACTIONS" menu.
+
+## Best Practices
+- Use meaningful names for datasets and collections
+- Create folders to organize related datasets
+- Keep the file structure simple for easier navigation
+- Use private folders for work in progress
+- Move to team folders when ready to collaborate
+
+# 5. Objects & Annotation Tools
 
 ## Manual Tools
 Create objects by hand with simple drawing tools:
@@ -232,7 +280,53 @@ Create custom tools tailored to your workflow:
 - Reorder tools by dragging
 - Delete tools no longer needed
 
-# 5. Image Processing Tools
+# 6. Interacting with Objects
+
+## Selection and Manipulation
+NimbusImage enables direct interaction with objects in your analysis:
+- **Shift-drag** across objects to select multiple objects at once
+- Once selected, a popup menu appears with options:
+  - **Delete selected** to remove selected objects
+  - **Delete unselected** to keep only selected objects
+  - **Tag selected** to add or change tags
+  - **Color selected** to apply custom colors
+  - **Copy selected IDs** to reference object identifiers
+
+This selection tool is particularly useful for cleaning up results from automated segmentation by quickly removing false positives or applying consistent tags to object groups.
+
+## Object Browser and Filtering
+The Object Browser provides tools for managing object visibility:
+- **Tag filtering** to filter objects by their tags
+- **Tag match options** to show objects matching "Any" or "All" selected tags
+- **Current frame only** option to display objects in the current time frame
+- **Show annotations from hidden layers** toggle to control annotation visibility
+
+## Advanced Filtering
+Three powerful filtering mechanisms are available:
+1. **Property value filter** for filtering based on measurements (area, intensity, etc.)
+2. **Annotation ID filter** to find specific objects by unique IDs
+3. **Region filter** to show only objects within a drawn region of interest
+
+These filters can be combined to precisely target objects meeting multiple criteria.
+
+## Annotation List
+The Annotation List provides a detailed tabular view of all objects:
+- **Customizable columns** for displaying object information
+- **Sorting** by clicking any column header
+- **Navigation** to objects by clicking rows
+- **Bulk actions** for selected objects
+- **Pagination** for datasets with many objects
+
+## Working with Properties
+Properties allow measurement of object features:
+- **View available properties** for each object type
+- **Show in list** to display properties in the Annotation List
+- **Use as filter** to filter objects based on property values
+- **Measure objects** to create new properties
+
+Pressing "t" while viewing an image displays property values directly on the objects, providing in-context visualization of measurements.
+
+# 7. Image Processing Tools
 
 ## Overview
 NimbusImage offers several image processing tools to enhance and prepare your data for analysis:
@@ -313,7 +407,7 @@ Strategic applications:
 
 Image processing is typically used as a preparatory step before object detection and analysis, ensuring optimal data quality for downstream quantification.
 
-# 6. Connections & Relationships
+# 8. Connections & Relationships
 
 ## Manual Connection Tools
 Create connections between objects directly with intuitive tools:
@@ -395,7 +489,7 @@ Tools and techniques for maintaining connection accuracy:
 
 Connections transform isolated objects into meaningful relationships, enabling analyses like cell lineage tracking, spatial association, and structural hierarchy.
 
-# 7. Analysis & Measurement
+# 9. Analysis & Measurement
 
 ## Property Workers
 Property workers compute quantitative measurements for your objects:
@@ -522,7 +616,7 @@ Access and interact with your measurements:
 
 The analysis system's flexibility comes from combining these measurement types with the tagging and connection system, allowing for complex, multi-step analyses of your image data.
 
-# 8. Common Workflows
+# 9. Common Workflows
 
 ## Cell Segmentation & Analysis
 
@@ -657,7 +751,7 @@ The analysis system's flexibility comes from combining these measurement types w
 
 These workflows can be combined and customized to address the specific needs of your experiment, with NimbusImage's flexible tagging and connection system allowing for complex analysis pipelines.
 
-# 9. Visualization & Export
+# 10. Visualization
 
 ## Contrast Adjustment
 Control how your image data is displayed:
@@ -729,23 +823,6 @@ Create, manage, and export visual bookmarks:
 - Options for automatic or manual sizing
 - Appears in exported images
 
-## Exporting Data (CSV, JSON)
-Extract quantitative results for further analysis:
-
-**CSV Export** (tabular data):
-1. Go to Object list → Actions → Export CSV
-2. Contains all selected properties
-3. Includes object IDs, tags, and metadata
-4. Ready for import into Excel, R, or Python
-5. Ideal for statistical analysis and plotting
-
-**JSON Export** (complete data):
-1. Go to Object list → Actions → Export to JSON
-2. Contains all annotations, connections, and properties
-3. Includes full coordinate information
-4. Comprehensive record of entire analysis
-5. Can be reimported to NimbusImage
-
 ## Exporting Images
 Share visual results for presentations and publications:
 
@@ -777,7 +854,69 @@ Share visual results for presentations and publications:
 
 The combination of visualization tools and export options ensures both effective data exploration and straightforward sharing of results for collaboration and publication.
 
-# 10. Advanced Features
+# 11. Importing and Exporting Data
+
+## Export Options
+NimbusImage provides flexible data export capabilities for external analysis, backup, or transferring annotations:
+
+1. **CSV Format** for spreadsheet analysis in Excel, R, or Python
+2. **JSON Format** for complete data backup or transfer between datasets
+
+## Exporting as CSV
+To export data in CSV format for statistical analysis:
+1. Open the Annotation List
+2. Click "ACTIONS" 
+3. Select "Export CSV"
+4. Configure options:
+   - **Property Export Options**: All properties, listed properties, or specific properties
+   - **Undefined Value Handling**: Empty string, NA, or NaN
+5. Review column preview
+6. Enter filename and click "DOWNLOAD"
+
+The CSV file contains object identifiers, metadata, tags, attributes, and all selected property values.
+
+## Exporting as JSON
+For comprehensive data records, export in JSON format:
+1. Open the Annotation List
+2. Click "ACTIONS"
+3. Select "Export JSON"
+4. Choose inclusions:
+   - Export annotations (objects)
+   - Export annotation connections
+   - Export properties
+   - Export property values
+5. Enter filename and click "EXPORT SELECTED ITEMS"
+
+The JSON file contains complete geometric data, connection information, property definitions, and dataset metadata.
+
+## Importing Annotations
+JSON files can be imported to:
+- Restore annotations from backups
+- Transfer annotations between compatible datasets
+- Share analysis with collaborators
+
+To import:
+1. Navigate to the target dataset
+2. Click "ACTIONS" in the Annotation List
+3. Select "Import JSON"
+4. Select the JSON file
+5. Review import options
+6. Click "IMPORT"
+
+Compatible dataset structures are essential for successful imports. Importing will not overwrite existing annotations unless explicitly configured.
+
+## Data Ownership and Integration
+NimbusImage's export capabilities ensure:
+- Complete ownership of analysis data
+- Advanced analysis in preferred external tools
+- Comprehensive work backups
+- Transparent sharing with collaborators
+- Integration with broader workflows
+- Creation of reproducible analysis pipelines
+
+This combination of interactive analysis and flexible data export provides a powerful workflow that maintains scientific integrity and ease of use.
+
+# 12. Advanced Features
 
 ## Batch Processing
 Process multiple images efficiently:
@@ -878,7 +1017,7 @@ Connect NimbusImage with external analysis tools:
 
 These advanced features allow experienced users to extend NimbusImage's capabilities, customize analysis for specific research needs, and integrate with broader computational workflows while maintaining the platform's interactive advantage.
 
-# 11. Troubleshooting
+# 13. Troubleshooting
 
 ## Performance Issues
 Solutions for slow or unresponsive behavior:
