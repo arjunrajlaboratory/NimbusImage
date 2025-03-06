@@ -226,6 +226,9 @@ export default class AnnotationWorkerMenu extends Vue {
         .fetchWorkerInterface({ image: this.image, force })
         .finally();
       this.fetchingWorkerInterface = false;
+      // This "loaded" event is used to trigger the updateDimensions method on the menu
+      // That way, the menu will rescale appropriately once the elements are loaded
+      this.$emit("loaded");
     }
   }
 

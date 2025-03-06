@@ -53,6 +53,7 @@
                     <!-- If type === segmentation, add an annotation worker menu -->
                     <template v-if="tool.type === 'segmentation'">
                       <v-menu
+                        ref="annotationMenu"
                         offset-x
                         :closeOnClick="false"
                         :closeOnContentClick="false"
@@ -62,7 +63,10 @@
                         <template #activator="{}">
                           <tool-item :tool="tool" v-bind="attrs" v-on="on" />
                         </template>
-                        <annotation-worker-menu :tool="tool" />
+                        <annotation-worker-menu
+                          :tool="tool"
+                          @loaded="onWorkerMenuLoaded"
+                        />
                       </v-menu>
                     </template>
                     <!-- When the tool is a SAM tool, show options in an expansion panel -->
@@ -234,6 +238,33 @@ export default class Toolset extends Vue {
     }
 
     return propDesc;
+  }
+
+  onWorkerMenuLoaded() {
+    this.$nextTick(() => {
+      // Access the menu component with the ref and cast it to any
+      const menuRef = this.$refs.annotationMenu as any;
+
+      // Handle case where ref is an array (multiple components with same ref)
+      // Note: in my own testing, I found that there were two components, and
+      // the first one was the one that needed to be updated.
+      if (Array.isArray(menuRef)) {
+        menuRef.forEach((menuItem) => {
+          if (menuItem) {
+            if (typeof menuItem.updateDimensions === "function") {
+              menuItem.updateDimensions();
+            }
+          }
+        });
+      }
+      // Handle case where ref is a single component
+      else if (menuRef) {
+        // Try updateDimensions first
+        if (typeof menuRef.updateDimensions === "function") {
+          menuRef.updateDimensions();
+        }
+      }
+    });
   }
 }
 </script>
