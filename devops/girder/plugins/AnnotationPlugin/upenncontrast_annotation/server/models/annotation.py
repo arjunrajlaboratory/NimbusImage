@@ -82,7 +82,10 @@ class Annotation(ProxiedAccessControlledModel):
 
     # TODO: write lock
     # TODO: save creatorId, creation and update dates
-    # TODO(performance): indexing
+
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["name", "datasetId", "channel", "location"])
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)

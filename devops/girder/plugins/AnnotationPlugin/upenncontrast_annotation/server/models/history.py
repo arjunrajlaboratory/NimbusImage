@@ -48,6 +48,10 @@ class History(CustomAccessControlledModel):
     This class itself doesn't inherit the ProxiedAccessControlledModel
     """
 
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["name", "datasetId", "userId"])
+
     jsonValidate = staticmethod(
         customJsonSchemaCompile(HistorySchema.historySchema)
     )
