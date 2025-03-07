@@ -32,6 +32,10 @@ class PreviewSchema:
 
 class WorkerPreviewModel(ProxiedAccessControlledModel):
 
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["name", "image"])
+
     jsonValidate = staticmethod(
         customJsonSchemaCompile(PreviewSchema.previewSchema)
     )

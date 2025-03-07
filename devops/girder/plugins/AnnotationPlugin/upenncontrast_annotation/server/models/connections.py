@@ -37,7 +37,10 @@ class ConnectionSchema:
 
 class AnnotationConnection(ProxiedAccessControlledModel):
     # TODO: write lock
-    # TODO(performance): indexing
+
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["parentId", "childId", "datasetId"])
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(ConnectionSchema.connectionSchema)

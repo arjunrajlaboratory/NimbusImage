@@ -33,6 +33,10 @@ class AnnotationProperty(ProxiedAccessControlledModel):
     # TODO: delete hooks: remove all computed values if the property is
     #   deleted ? (big operation)
 
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["name", "image", "datasetId"])
+
     jsonValidate = staticmethod(
         customJsonSchemaCompile(PropertySchema.propertySchema)
     )

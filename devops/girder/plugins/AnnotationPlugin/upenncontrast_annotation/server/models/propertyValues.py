@@ -43,6 +43,10 @@ class PropertySchema:
 
 class AnnotationPropertyValues(ProxiedAccessControlledModel):
 
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["annotationId", "datasetId"])
+
     jsonValidate = staticmethod(
         customJsonSchemaCompile(PropertySchema.annotationPropertySchema)
     )

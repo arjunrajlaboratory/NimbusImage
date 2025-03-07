@@ -58,6 +58,10 @@ class DatasetViewSchema:
 
 class DatasetView(ProxiedAccessControlledModel):
 
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["datasetId", "configurationId"])
+
     jsonValidate = staticmethod(
         customJsonSchemaCompile(DatasetViewSchema.datasetViewSchema)
     )
