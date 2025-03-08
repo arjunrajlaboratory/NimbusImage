@@ -2,22 +2,8 @@
   <v-container flex>
     <v-row>
       <v-col cols="6">
-      <v-col cols="6">
         <v-card class="my-3">
           <v-toolbar>
-            <v-toolbar-title> Dataset </v-toolbar-title>
-            <v-spacer></v-spacer>
-            <v-btn
-              color="green"
-              @click="goToDefaultView"
-              :disabled="!dataset"
-              class="pulse-btn"
-              id="view-dataset-button-tourstep"
-              v-tour-trigger="'view-dataset-button-tourtrigger'"
-            >
-              <v-icon left>mdi-eye</v-icon>
-              View
-            </v-btn>
             <v-toolbar-title> Dataset </v-toolbar-title>
             <v-spacer></v-spacer>
             <v-btn
@@ -86,7 +72,8 @@
             >
               <v-card>
                 <v-card-title>
-                  Are you sure to remove the view for collection "{{
+                  Are you sure you want to remove the dataset from the
+                  collection "{{
                     configInfo[viewToRemove.configurationId]
                       ? configInfo[viewToRemove.configurationId].name
                       : "Unnamed configuration"
@@ -114,7 +101,6 @@
                 <div v-if="dataset && datasetViewItems.length <= 0">
                   <v-text-field
                     v-tooltip
-                    v-tooltip
                     v-model="defaultConfigurationName"
                     label="New collection name"
                     dense
@@ -123,7 +109,6 @@
                   />
                   <v-divider class="my-4" />
                 </div>
-
 
                 <!-- <div>
                   <v-tooltip top max-width="50vh">
@@ -149,64 +134,6 @@
               </v-card-text>
             </v-card>
             <v-list two-line>
-              <v-radio-group v-model="selectedDatasetViewId">
-                <v-list-item
-                  v-for="d in datasetViewItems"
-                  :key="d.datasetView.id"
-                  @click.stop="selectedDatasetViewId = d.datasetView.id"
-                  class="selectable-list-item"
-                >
-                  <v-list-item-action class="mr-2">
-                    <v-radio
-                      :value="d.datasetView.id"
-                      color="primary"
-                    ></v-radio>
-                  </v-list-item-action>
-                  <v-list-item-content>
-                    <v-list-item-title>
-                      {{
-                        d.configInfo
-                          ? d.configInfo.name
-                          : "Unnamed configuration"
-                      }}
-                    </v-list-item-title>
-                    <v-list-item-subtitle>
-                      {{
-                        d.configInfo
-                          ? d.configInfo.description
-                          : "No description"
-                      }}
-                    </v-list-item-subtitle>
-                  </v-list-item-content>
-                  <v-list-item-action @click.stop>
-                    <span class="button-bar">
-                      <girder-location-chooser
-                        @input="duplicateView(d.datasetView, $event)"
-                        title="Select a folder for duplicated configuration"
-                      >
-                        <template v-slot:activator="{ on }">
-                          <v-icon
-                            class="action-icon mr-2"
-                            color="primary"
-                            v-on="on"
-                          >
-                            mdi-content-duplicate
-                          </v-icon>
-                        </template>
-                      </girder-location-chooser>
-                      <v-icon
-                        class="action-icon"
-                        color="warning"
-                        v-on:click.stop="
-                          openRemoveConfigurationDialog(d.datasetView)
-                        "
-                      >
-                        mdi-close
-                      </v-icon>
-                    </span>
-                  </v-list-item-action>
-                </v-list-item>
-              </v-radio-group>
               <v-radio-group v-model="selectedDatasetViewId">
                 <v-list-item
                   v-for="d in datasetViewItems"
@@ -329,69 +256,6 @@
 
             <!-- New Collection Location Dialog -->
             <v-dialog v-model="showNewCollectionDialog" max-width="500px">
-            <div>
-              <v-tooltip top max-width="50vh">
-                <template v-slot:activator="{ on, attrs }">
-                  <v-btn
-                    v-on="on"
-                    v-bind="attrs"
-                    class="ma-1"
-                    small
-                    color="primary"
-                    :to="{
-                      name: 'importconfiguration',
-                      query: { datasetId },
-                    }"
-                  >
-                    Add an existing collection…
-                  </v-btn>
-                </template>
-                Add this dataset to an existing collection. Shows a list of all
-                collections that are compatible with the current dataset.
-              </v-tooltip>
-            </div>
-            <div>
-              <v-tooltip top max-width="50vh">
-                <template v-slot:activator="{ on, attrs }">
-                  <v-btn
-                    v-on="on"
-                    v-bind="attrs"
-                    class="ma-1"
-                    small
-                    color="primary"
-                    :to="{
-                      name: 'duplicateimportconfiguration',
-                      query: { datasetId },
-                    }"
-                  >
-                    Copy existing collection…
-                  </v-btn>
-                </template>
-                Make a copy of an existing collection and apply it to the
-                current dataset, leaving the original collection unchanged.
-              </v-tooltip>
-            </div>
-            <div v-if="dataset && datasetViewItems.length > 0">
-              <v-tooltip top max-width="50vh">
-                <template v-slot:activator="{ on, attrs }">
-                  <v-btn
-                    v-on="on"
-                    v-bind="attrs"
-                    class="ma-1"
-                    small
-                    color="primary"
-                    @click="showNewCollectionDialog = true"
-                  >
-                    Add a new collection…
-                  </v-btn>
-                </template>
-                Create a new collection with a custom name and location for this
-                dataset.
-              </v-tooltip>
-            </div>
-
-            <!-- New Collection Location Dialog -->
-            <v-dialog v-model="showNewCollectionDialog" max-width="500px">
               <v-card>
                 <v-card-title>Select Location for New Collection</v-card-title>
                 <v-card-text>
@@ -405,44 +269,6 @@
                   <v-spacer></v-spacer>
                   <v-btn text @click="showNewCollectionDialog = false"
                     >Cancel</v-btn
-                  >
-                <v-card-title>Select Location for New Collection</v-card-title>
-                <v-card-text>
-                  <p>Choose where to store the new collection:</p>
-                  <girder-location-chooser
-                    @input="handleLocationSelected"
-                    title="Select a folder for the new collection"
-                  />
-                </v-card-text>
-                <v-card-actions>
-                  <v-spacer></v-spacer>
-                  <v-btn text @click="showNewCollectionDialog = false"
-                    >Cancel</v-btn
-                  >
-                </v-card-actions>
-              </v-card>
-            </v-dialog>
-
-            <!-- New Collection Name Dialog -->
-            <v-dialog v-model="showNewCollectionNameDialog" max-width="500px">
-              <v-card>
-                <v-card-title>Name Your New Collection</v-card-title>
-                <v-card-text>
-                  <v-text-field
-                    v-model="newCollectionName"
-                    label="Collection Name"
-                    dense
-                    autofocus
-                    :rules="nameRules"
-                  />
-                </v-card-text>
-                <v-card-actions>
-                  <v-spacer></v-spacer>
-                  <v-btn text @click="showNewCollectionNameDialog = false"
-                    >Cancel</v-btn
-                  >
-                  <v-btn color="success" @click="createNewCollection"
-                    >Create</v-btn
                   >
                 </v-card-actions>
               </v-card>
@@ -485,7 +311,6 @@ import girderResources from "@/store/girderResources";
 import { IDatasetView } from "@/store/model";
 import { IGirderItem, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
-import { logError } from "@/utils/log";
 
 @Component({
   components: {
@@ -505,14 +330,8 @@ export default class DatasetInfo extends Vue {
   datasetViews: IDatasetView[] = [];
   configInfo: { [configurationId: string]: IGirderItem } = {};
   selectedDatasetViewId: string | null = null;
-  selectedDatasetViewId: string | null = null;
 
   defaultConfigurationName: string = "";
-
-  showNewCollectionDialog = false;
-  showNewCollectionNameDialog = false;
-  newCollectionName: string = "";
-  selectedFolderId: string | null = null;
 
   showNewCollectionDialog = false;
   showNewCollectionNameDialog = false;
@@ -552,22 +371,6 @@ export default class DatasetInfo extends Vue {
             Vue.set(this.configInfo, datasetView.configurationId, item),
           );
       }
-    }
-
-    // Check if the selected view still exists in the dataset views
-    if (this.selectedDatasetViewId) {
-      const selectedViewExists = this.datasetViews.some(
-        (view) => view.id === this.selectedDatasetViewId,
-      );
-
-      // If the selected view no longer exists but there are other views, select the first one
-      if (!selectedViewExists && this.datasetViews.length > 0) {
-        this.selectedDatasetViewId = this.datasetViews[0].id;
-      }
-    }
-    // Set the first dataset view as selected if none is selected yet
-    else if (this.datasetViews.length > 0 && !this.selectedDatasetViewId) {
-      this.selectedDatasetViewId = this.datasetViews[0].id;
     }
 
     // Check if the selected view still exists in the dataset views
@@ -687,24 +490,9 @@ export default class DatasetInfo extends Vue {
       const isRemovingSelected =
         this.viewToRemove.id === this.selectedDatasetViewId;
 
-      // Store whether we're removing the currently selected view
-      const isRemovingSelected =
-        this.viewToRemove.id === this.selectedDatasetViewId;
-
       this.store.deleteDatasetView(this.viewToRemove).then(() => {
         this.removeDatasetViewConfirm = false;
         this.viewToRemove = null;
-
-        // Update the dataset views
-        this.updateDatasetViews().then(() => {
-          // If we removed the selected view and there are still views left, select the first one
-          if (isRemovingSelected && this.datasetViews.length > 0) {
-            this.selectedDatasetViewId = this.datasetViews[0].id;
-          } else if (this.datasetViews.length === 0) {
-            // If no views left, clear the selection
-            this.selectedDatasetViewId = null;
-          }
-        });
 
         // Update the dataset views
         this.updateDatasetViews().then(() => {
@@ -749,19 +537,6 @@ export default class DatasetInfo extends Vue {
   }
 
   async goToDefaultView() {
-    // If we already have dataset views, use the selected one
-    if (this.datasetViews.length > 0) {
-      const selectedView = this.selectedDatasetViewId
-        ? this.datasetViews.find((v) => v.id === this.selectedDatasetViewId)
-        : this.datasetViews[0];
-
-      if (selectedView) {
-        this.$router.push(this.toRoute(selectedView));
-        return;
-      }
-    }
-
-    // Otherwise create a new view
     // If we already have dataset views, use the selected one
     if (this.datasetViews.length > 0) {
       const selectedView = this.selectedDatasetViewId
@@ -854,57 +629,6 @@ export default class DatasetInfo extends Vue {
   get nameRules() {
     return [(v: string) => !!v || "Name is required"];
   }
-
-  handleLocationSelected(location: IGirderSelectAble | null) {
-    this.showNewCollectionDialog = false;
-
-    if (location && location._modelType === "folder") {
-      this.selectedFolderId = location._id;
-      this.newCollectionName = this.defaultConfigurationName;
-      this.showNewCollectionNameDialog = true;
-    }
-  }
-
-  async createNewCollection() {
-    if (!this.newCollectionName || !this.selectedFolderId || !this.dataset) {
-      return;
-    }
-
-    try {
-      // Create the configuration
-      const config = await this.store.createConfiguration({
-        name: this.newCollectionName,
-        description: "",
-        folderId: this.selectedFolderId,
-      });
-
-      if (config) {
-        // Create the dataset view
-        const view = await this.store.createDatasetView({
-          configurationId: config.id,
-          datasetId: this.dataset.id,
-        });
-
-        // Update the dataset views
-        await this.updateDatasetViews();
-
-        // Select the new view
-        if (view) {
-          this.selectedDatasetViewId = view.id;
-        }
-      }
-    } catch (error) {
-      logError("Error creating new collection:", error);
-    } finally {
-      // Reset the dialog state
-      this.showNewCollectionNameDialog = false;
-      this.selectedFolderId = null;
-    }
-  }
-
-  get nameRules() {
-    return [(v: string) => !!v || "Name is required"];
-  }
 }
 </script>
 
@@ -912,76 +636,6 @@ export default class DatasetInfo extends Vue {
 .important-field ::v-deep .v-label {
   font-size: 22px;
   font-weight: bold;
-}
-
-.button-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.action-icon {
-  cursor: pointer;
-  font-size: 20px;
-  padding: 4px;
-  border-radius: 50%;
-  transition: all 0.2s ease;
-
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.05);
-    transform: scale(1.1);
-  }
-}
-
-.pulse-btn {
-  animation: subtle-pulse 3s infinite ease-in-out;
-  transition: all 0.3s ease;
-  position: relative; /* Needed for the pseudo-element */
-}
-
-/* Use a pseudo-element for the pulsing effect to avoid affecting the button content */
-.pulse-btn::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  border-radius: inherit;
-  box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-  animation: subtle-pulse-shadow 3s infinite ease-in-out;
-}
-
-@keyframes subtle-pulse {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.03);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes subtle-pulse-shadow {
-  0% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
-  }
-}
-
-.selectable-list-item {
-  cursor: pointer;
-
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.05);
-  }
 }
 
 .button-bar {
