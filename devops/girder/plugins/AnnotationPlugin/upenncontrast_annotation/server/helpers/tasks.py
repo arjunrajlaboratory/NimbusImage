@@ -48,6 +48,9 @@ def runJobRequest(image, datasetId, params, request):
                 ),
                 # 'girder_result_hooks': [testHook]
             },
+            # Limit tasks execution to 24h to avoid blocking tasks that
+            # monopolize a worker
+            time_limit=24 * 60 * 60
         ).job,
     )
     return job
