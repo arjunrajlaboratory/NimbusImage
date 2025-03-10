@@ -43,6 +43,10 @@ class DocumentChange(CustomAccessControlledModel):
     This class itself doesn't inherit the ProxiedAccessControlledModel
     """
 
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["historyId", "documentId"])
+
     jsonValidate = staticmethod(
         customJsonSchemaCompile(DocumentChangeSchema.documentChangeSchema)
     )

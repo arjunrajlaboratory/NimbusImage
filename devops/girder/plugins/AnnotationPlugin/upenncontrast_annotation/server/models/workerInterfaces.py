@@ -32,6 +32,10 @@ class InterfaceSchema:
 
 class WorkerInterfaceModel(ProxiedAccessControlledModel):
 
+    def __init__(self):
+        super().__init__()
+        self.ensureIndices(["name", "image"])
+
     jsonValidate = staticmethod(
         customJsonSchemaCompile(InterfaceSchema.interfaceSchema)
     )
