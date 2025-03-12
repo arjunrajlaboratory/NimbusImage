@@ -64,7 +64,7 @@
 <script lang="ts">
 import { Vue, Component, Watch } from "vue-property-decorator";
 import store, { girderUrlFromApiRoot } from "@/store";
-import UserProfileSettings from "@/components/UserProfileSettings.vue";
+import UserProfileSettings from "@/layout/UserProfileSettings.vue";
 import UserMenuLoginForm from "@/layout/UserMenuLoginForm.vue";
 
 @Component({

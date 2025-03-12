@@ -106,13 +106,8 @@
 <script lang="ts">
 import { Vue, Component, Prop } from "vue-property-decorator";
 import store from "@/store";
-import UserProfileSettings from "@/components/UserProfileSettings.vue";
 
-@Component({
-  components: {
-    UserProfileSettings,
-  },
-})
+@Component
 export default class UserMenuLoginForm extends Vue {
   readonly store = store;
 
