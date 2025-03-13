@@ -194,8 +194,8 @@ class UPennContrastDataset:
         params = kwargs.copy()
 
         if use_tiff:
-            # Request TILED format (TIFF)
-            params["encoding"] = "TILED"
+            # Request TIFF format
+            params["encoding"] = "TIFF"
             params.pop("format", None)
 
             # Get the TIFF image data
