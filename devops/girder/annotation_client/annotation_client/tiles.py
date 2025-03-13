@@ -154,6 +154,7 @@ class UPennContrastDataset:
         datasetId=None,
         refreshImage=False,
         protocol=pickle.HIGHEST_PROTOCOL,
+        use_tiff=False,
         **kwargs
     ):
         """
@@ -161,21 +162,22 @@ class UPennContrastDataset:
 
         The kwargs can be any value that the large_image item/{id}/tiles/region
         endpoint supports:
-          Frame number (this gets a specific c/z/xy/t):
+        Frame number (this gets a specific c/z/xy/t):
             frame
-          Area in the image:
+        Area in the image:
             left top right bottom width height units unitsWH
-          Output array size:
+        Output array size:
             regionWidth regionHeight magnification mm_x mm_y exact resample
-          Options that you probably don't want in this context:
+        Options that you probably don't want in this context:
             fill style
 
         :param str datasetId: The dataset id.  None to use the value used when
             instantiating the class.
         :param bool refreshImage: Whether to refresh the largeImageId from the
             server or use the cached version.
-        :return: The tiles metadata
-        :rtype: dict
+        :param bool use_tiff: Whether to request TIFF format instead of pickle
+        :return: The tiles metadata as a numpy array
+        :rtype: numpy.ndarray
         """
         if (
             datasetId is None
@@ -186,13 +188,35 @@ class UPennContrastDataset:
             itemId = self.datasetId
         else:
             itemId = self.getDataset(datasetId)["_id"]
+
         params = kwargs.copy()
-        params["encoding"] = "pickle:" + str(protocol)
-        params.pop("format", None)
-        return pickle.loads(
-            self.client.get(
+
+        if use_tiff:
+            import io
+            import tifffile
+            import numpy as np
+
+            # Request TILED format (which is the TIFF option from your dropdown)
+            params["encoding"] = "TILED"
+            params.pop("format", None)
+
+            # Get the TIFF image data
+            response = self.client.get(
                 PATHS["region"].format(itemId=itemId),
                 parameters=params,
                 jsonResp=False,
-            ).content
-        )
+            )
+
+            # Convert TIFF to numpy array using tifffile
+            return tifffile.imread(io.BytesIO(response.content))
+        else:
+            # Use pickle protocol
+            params["encoding"] = "pickle:" + str(protocol)
+            params.pop("format", None)
+            return pickle.loads(
+                self.client.get(
+                    PATHS["region"].format(itemId=itemId),
+                    parameters=params,
+                    jsonResp=False,
+                ).content
+            )
