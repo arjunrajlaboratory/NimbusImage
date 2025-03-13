@@ -1,6 +1,8 @@
+import io
 import pickle
 
 import girder_client
+import tifffile
 
 PATHS = {
     "image": "/item/{datasetId}/tiles/fzxy/{frameIndex}/0/0/0",
@@ -192,11 +194,7 @@ class UPennContrastDataset:
         params = kwargs.copy()
 
         if use_tiff:
-            import io
-            import tifffile
-            import numpy as np
-
-            # Request TILED format (which is the TIFF option from your dropdown)
+            # Request TILED format (TIFF)
             params["encoding"] = "TILED"
             params.pop("format", None)
 
