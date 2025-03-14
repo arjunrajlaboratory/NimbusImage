@@ -129,6 +129,20 @@ export class Jobs extends VuexModule {
     return jobsPerToolId;
   }
 
+  get jobIdForPropertyId() {
+    const jobsPerPropertyId: { [propertyId: string]: string } = {};
+    for (const jobId in this.jobInfoMap) {
+      const listeners = this.jobInfoMap[jobId].listeners;
+      for (const listener of listeners) {
+        if ("propertyId" in listener) {
+          jobsPerPropertyId[listener.propertyId] = jobId;
+          continue;
+        }
+      }
+    }
+    return jobsPerPropertyId;
+  }
+
   get getJobLog() {
     return (jobId: string) => this.jobInfoMap[jobId]?.log || "";
   }
