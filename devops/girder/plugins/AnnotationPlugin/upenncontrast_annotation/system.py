@@ -96,6 +96,10 @@ def getFoldersByQuery(self, query, limit, offset, sort):
 )
 @boundHandler()
 def cacheMaxMerge(self, item):
+    if len(item["largeImage"].get("merge_substitutes", {})):
+        # we already have some computed, so we probably don't need to do it
+        # again
+        return
     user = self.getCurrentUser()
     ts = ImageItem._loadTileSource(
         item, format=large_image.constants.TILE_FORMAT_NUMPY
