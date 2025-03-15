@@ -152,6 +152,7 @@ import store from "@/store/index";
 import main from "@/store/index";
 import { formatDateString, formatDuration } from "@/utils/date";
 import { IJob } from "@/store/model";
+import { logError } from "@/utils/log";
 
 @Component
 export default class JobsLogs extends Vue {
@@ -187,7 +188,7 @@ export default class JobsLogs extends Vue {
     try {
       this.jobs = await main.api.getUserJobs(20);
     } catch (error) {
-      console.error("Failed to fetch jobs:", error);
+      logError("Failed to fetch jobs:", error);
     } finally {
       this.loading = false;
     }
@@ -325,7 +326,7 @@ export default class JobsLogs extends Vue {
       this.currentJobLog =
         logHeader + (jobWithLog.log || "No log content available.");
     } catch (error) {
-      console.error("Error fetching job log:", error);
+      logError("Error fetching job log:", error);
       this.currentJobLog = "Error fetching job log. Please try again.";
     }
   }
@@ -360,7 +361,7 @@ export default class JobsLogs extends Vue {
       document.execCommand("copy");
       this.showCopySnackbar = true;
     } catch (err) {
-      console.error("Failed to copy text: ", err);
+      logError("Failed to copy text: ", err);
     }
 
     document.body.removeChild(tempTextArea);

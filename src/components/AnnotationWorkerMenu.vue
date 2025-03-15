@@ -152,6 +152,7 @@ import jobsStore from "@/store/jobs";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
 import { getDefault } from "@/utils/workerInterface";
 import { debounce } from "lodash";
+import { logError } from "@/utils/log";
 // Popup for new tool configuration
 @Component({
   components: {
@@ -358,7 +359,7 @@ export default class AnnotationWorkerMenu extends Vue {
       document.execCommand("copy");
       this.showCopySnackbar = true;
     } catch (err) {
-      console.error("Failed to copy text: ", err);
+      logError("Failed to copy text: ", err);
     }
 
     document.body.removeChild(tempTextArea);

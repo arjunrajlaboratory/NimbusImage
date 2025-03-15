@@ -127,6 +127,7 @@ import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
 import { IAnnotationProperty, AnnotationNames } from "@/store/model";
 import { Vue, Component, Prop } from "vue-property-decorator";
+import { logError } from "@/utils/log";
 
 @Component({})
 export default class AnnotationPropertyBody extends Vue {
@@ -207,7 +208,7 @@ export default class AnnotationPropertyBody extends Vue {
       document.execCommand("copy");
       this.showCopySnackbar = true;
     } catch (err) {
-      console.error("Failed to copy text: ", err);
+      logError("Failed to copy text: ", err);
     }
 
     document.body.removeChild(tempTextArea);
