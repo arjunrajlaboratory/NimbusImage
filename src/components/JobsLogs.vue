@@ -154,6 +154,44 @@ import { formatDateString, formatDuration } from "@/utils/date";
 import { IJob } from "@/store/model";
 import { logError } from "@/utils/log";
 
+// Define interface for job status properties
+interface JobLogProperty {
+  color: string;
+  statusText: string;
+  stateText: string;
+}
+
+// Define job status mapping object
+const jobLogStatus: { [key: number]: JobLogProperty } = {
+  0: { color: "grey", statusText: "Inactive", stateText: "Job is inactive." },
+  1: { color: "blue", statusText: "Queued", stateText: "Job is queued." },
+  2: {
+    color: "orange",
+    statusText: "Running",
+    stateText: "Job is still running...",
+  },
+  3: {
+    color: "green",
+    statusText: "Success",
+    stateText: "Job completed successfully.",
+  },
+  4: {
+    color: "red",
+    statusText: "Error",
+    stateText: "Job failed with errors.",
+  },
+  5: {
+    color: "purple",
+    statusText: "Cancelled",
+    stateText: "Job was cancelled.",
+  },
+  824: {
+    color: "yellow",
+    statusText: "Cancelling",
+    stateText: "Job is being cancelled...",
+  },
+};
+
 @Component
 export default class JobsLogs extends Vue {
   readonly store = store;
@@ -195,45 +233,24 @@ export default class JobsLogs extends Vue {
   }
 
   getStatusColor(status: number): string {
-    switch (status) {
-      case 0:
-        return "grey"; // inactive
-      case 1:
-        return "blue"; // queued
-      case 2:
-        return "orange"; // running
-      case 3:
-        return "green"; // success
-      case 4:
-        return "red"; // error
-      case 5:
-        return "purple"; // cancelled
-      case 824:
-        return "yellow"; // cancelling
-      default:
-        return "grey";
+    if (status in jobLogStatus) {
+      return jobLogStatus[status].color;
     }
+    return "grey";
   }
 
   getStatusText(status: number): string {
-    switch (status) {
-      case 0:
-        return "Inactive";
-      case 1:
-        return "Queued";
-      case 2:
-        return "Running";
-      case 3:
-        return "Success";
-      case 4:
-        return "Error";
-      case 5:
-        return "Cancelled";
-      case 824:
-        return "Cancelling";
-      default:
-        return "Unknown";
+    if (status in jobLogStatus) {
+      return jobLogStatus[status].statusText;
     }
+    return "Unknown";
+  }
+
+  getJobState(status: number): string {
+    if (status in jobLogStatus) {
+      return jobLogStatus[status].stateText;
+    }
+    return "Job status: " + this.getStatusText(status);
   }
 
   formatDateString(dateString: string): string {
@@ -312,15 +329,7 @@ export default class JobsLogs extends Vue {
         `Status: ${this.getStatusText(jobWithLog.status)}\n` +
         `Type: ${jobWithLog.type}\n\n` +
         `Arguments:\n${jobWithLog.args.join("\n")}\n\n` +
-        `${
-          jobWithLog.status === 3
-            ? "Job completed successfully."
-            : jobWithLog.status === 4
-              ? "Job failed with errors."
-              : jobWithLog.status === 2
-                ? "Job is still running..."
-                : "Job status: " + this.getStatusText(jobWithLog.status)
-        }\n\n`;
+        `${this.getJobState(jobWithLog.status)}\n\n`;
 
       // Combine header with actual log content
       this.currentJobLog =
