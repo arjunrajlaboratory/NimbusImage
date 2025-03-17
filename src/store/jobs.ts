@@ -99,6 +99,7 @@ interface IJobInfo {
   listeners: IComputeJob[];
   successPromise: Promise<boolean>;
   successResolve: (success: boolean) => void;
+  log: string;
 }
 
 @Module({ dynamic: true, store, name: "jobs" })
@@ -128,6 +129,24 @@ export class Jobs extends VuexModule {
     return jobsPerToolId;
   }
 
+  get jobIdForPropertyId() {
+    const jobsPerPropertyId: { [propertyId: string]: string } = {};
+    for (const jobId in this.jobInfoMap) {
+      const listeners = this.jobInfoMap[jobId].listeners;
+      for (const listener of listeners) {
+        if ("propertyId" in listener) {
+          jobsPerPropertyId[listener.propertyId] = jobId;
+          continue;
+        }
+      }
+    }
+    return jobsPerPropertyId;
+  }
+
+  get getJobLog() {
+    return (jobId: string) => this.jobInfoMap[jobId]?.log || "";
+  }
+
   @Action
   async getJobStatus(jobId: string): Promise<number> {
     try {
@@ -152,6 +171,7 @@ export class Jobs extends VuexModule {
         listeners: [],
         successPromise,
         successResolve,
+        log: "",
       };
       Vue.set(this.jobInfoMap, job.jobId, jobData);
     }
@@ -220,6 +240,12 @@ export class Jobs extends VuexModule {
     if (!jobInfo) {
       return;
     }
+
+    // Append to the log if there's text
+    if (jobEvent.text && typeof jobEvent.text === "string") {
+      Vue.set(jobInfo, "log", jobInfo.log + jobEvent.text);
+    }
+
     for (const listener of jobInfo.listeners) {
       listener.eventCallback?.(jobEvent);
       listener.errorCallback?.(jobEvent);

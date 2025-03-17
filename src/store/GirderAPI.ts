@@ -27,6 +27,7 @@ import {
   newLayer,
   TJobType,
   IDatasetConfigurationCompatibility,
+  IJob,
 } from "@/store/model";
 import {
   toStyle,
@@ -39,6 +40,7 @@ import { Promise as BluebirdPromise } from "bluebird";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
 import { fetchAllPages } from "@/utils/fetch";
 import { stringify } from "qs";
+import { logError } from "@/utils/log";
 
 // Modern browsers limit concurrency to a single domain at 6 requests (though
 // using HTML 2 might improve that slightly).  For a single layer, if we set
@@ -204,6 +206,33 @@ export default class GirderAPI {
     return this.client.post(`item/${itemId}/tiles`, undefined, {
       params: { force, localJob },
     });
+  }
+
+  async getUserJobs(limit: number = 10): Promise<IJob[]> {
+    try {
+      const response = await this.client.get("job", {
+        params: {
+          limit,
+          offset: 0,
+          sort: "created",
+          sortdir: -1,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      logError("Failed to fetch user jobs");
+      return [];
+    }
+  }
+
+  async getJobInfo(jobId: string): Promise<IJob | null> {
+    try {
+      const response = await this.client.get(`job/${jobId}`);
+      return response.data;
+    } catch (error) {
+      logError(`Failed to fetch job info for job ${jobId}`);
+      return null;
+    }
   }
 
   removeLargeImageForItem(itemId: string) {

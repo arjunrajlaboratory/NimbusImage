@@ -1354,6 +1354,29 @@ export type IComputeJob =
   | IPropertyComputeJob
   | IComputeJobBase;
 
+export interface IJobTimestamp {
+  status: number;
+  time: string;
+}
+
+export interface IJob {
+  _id: string;
+  _modelType: string;
+  args: string[];
+  created: string;
+  status: number;
+  timestamps: IJobTimestamp[];
+  title: string;
+  type: string;
+  updated: string;
+  meta?: Record<string, any>;
+  progress?: any;
+  handler?: string;
+  kwargs?: Record<string, any>;
+  log?: string;
+  endTime?: string;
+}
+
 export interface IContrast {
   mode: "percentile" | "absolute";
   blackPoint: number;
