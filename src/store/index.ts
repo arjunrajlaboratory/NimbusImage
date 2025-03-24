@@ -954,7 +954,8 @@ export class Main extends VuexModule {
       return;
     }
     try {
-      sync.setLoading(true);
+      sync.setLoading(true); // For the Girder activity indicator
+      sync.setDatasetLoading(true); // For the dataset loading overlay
       const r = await this.context.dispatch("getDataset", {
         id,
         unrollXY: this.unrollXY,
@@ -964,8 +965,10 @@ export class Main extends VuexModule {
       this.setDataset({ id, data: r });
       await this.loadLargeImages();
       sync.setLoading(false);
+      sync.setDatasetLoading(false);
     } catch (error) {
       sync.setLoading(error as Error);
+      sync.setDatasetLoading(false);
     }
   }
 

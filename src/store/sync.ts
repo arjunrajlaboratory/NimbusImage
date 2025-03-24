@@ -10,6 +10,7 @@ import store from "./root";
 export class ServerSync extends VuexModule {
   loading = false;
   saving = false;
+  datasetLoading = false;
   lastError: Error | null = null;
 
   @Mutation
@@ -26,6 +27,11 @@ export class ServerSync extends VuexModule {
     if (typeof status !== "boolean") {
       this.lastError = status;
     }
+  }
+
+  @Mutation
+  setDatasetLoading(status: boolean) {
+    this.datasetLoading = status;
   }
 }
 
