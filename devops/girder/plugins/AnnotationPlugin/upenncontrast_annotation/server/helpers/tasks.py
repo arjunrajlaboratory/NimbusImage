@@ -46,6 +46,7 @@ def runJobRequest(image, datasetId, params, request):
                 "name": "{}_{}_{}".format(
                     name, datasetId, datetime.datetime.now().timestamp()
                 ),
+                "girder_job_title": name,
                 # 'girder_result_hooks': [testHook]
             },
             # Limit tasks execution to 24h to avoid blocking tasks that
