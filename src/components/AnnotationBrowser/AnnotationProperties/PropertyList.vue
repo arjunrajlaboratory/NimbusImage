@@ -109,7 +109,10 @@ export default class PropertyList extends Vue {
 
   computeUncomputedProperties() {
     for (const property of this.uncomputedProperties) {
-      this.propertyStore.computeProperty(property);
+      this.propertyStore.computeProperty({
+        property,
+        errorInfo: { errors: [] },
+      });
     }
   }
 }
