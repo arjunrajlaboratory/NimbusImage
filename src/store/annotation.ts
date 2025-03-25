@@ -964,7 +964,7 @@ export class Annotations extends VuexModule {
     // Create a progress entry using the new progress store
     const progressId = await progress.create({
       type: ProgressType.ANNOTATION_COMPUTE,
-      title: `Computing annotations with ${tool.name}`,
+      title: `Computing with ${tool.name}`,
     });
 
     const { location, channel } =

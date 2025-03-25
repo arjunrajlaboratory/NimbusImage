@@ -21,6 +21,7 @@ import {
   TPropertyValue,
   ProgressType,
   IJobEventData,
+  IErrorInfoList,
 } from "./model";
 
 import Vue from "vue";
@@ -30,7 +31,10 @@ import main from "./index";
 import { canComputeAnnotationProperty } from "@/utils/annotation";
 import filters from "./filters";
 import annotations from "./annotation";
-import jobs, { createProgressEventCallback } from "./jobs";
+import jobs, {
+  createProgressEventCallback,
+  createErrorEventCallback,
+} from "./jobs";
 import { findIndexOfPath } from "@/utils/paths";
 import { arePathEquals } from "@/utils/paths";
 import progress from "./progress";
@@ -41,12 +45,14 @@ export interface IPropertyStatus {
   running: boolean;
   previousRun: boolean | null;
   progressInfo: IProgressInfo;
+  errorInfo?: IErrorInfoList;
 }
 
 const defaultStatus: () => IPropertyStatus = () => ({
   running: false,
   previousRun: null,
   progressInfo: {},
+  errorInfo: { errors: [] },
 });
 
 @Module({ dynamic: true, store, name: "properties" })
@@ -318,7 +324,13 @@ export class Properties extends VuexModule {
   }
 
   @Action
-  async computeProperty(property: IAnnotationProperty) {
+  async computeProperty({
+    property,
+    errorInfo,
+  }: {
+    property: IAnnotationProperty;
+    errorInfo?: IErrorInfoList;
+  }) {
     if (!main.dataset) {
       return null;
     }
@@ -339,6 +351,11 @@ export class Properties extends VuexModule {
     const status = this.propertyStatuses[propertyId];
     Vue.set(status, "running", true);
     Vue.set(status, "previousRun", null);
+
+    // Clear errors while maintaining reactivity if errorInfo is provided
+    if (errorInfo) {
+      Vue.set(errorInfo, "errors", []);
+    }
 
     const response = await this.propertiesAPI.computeProperty(
       propertyId,
@@ -369,6 +386,9 @@ export class Properties extends VuexModule {
           defaultTitle: `Computing ${property.name}`,
         });
       },
+      errorCallback: errorInfo
+        ? createErrorEventCallback(errorInfo)
+        : undefined,
     };
 
     jobs.addJob(computeJob).then(async (success: boolean) => {
@@ -379,6 +399,9 @@ export class Properties extends VuexModule {
       Vue.set(status, "running", false);
       Vue.set(status, "previousRun", success);
       Vue.set(status, "progressInfo", {});
+      if (errorInfo) {
+        Vue.set(status, "errorInfo", errorInfo);
+      }
     });
 
     return computeJob;

@@ -301,7 +301,10 @@ export default class PropertyCreation extends Vue {
       .then((property) => {
         this.propertyStore.togglePropertyPathVisibility([property.id]);
         if (this.computeUponCreation) {
-          this.propertyStore.computeProperty(property);
+          this.propertyStore.computeProperty({
+            property,
+            errorInfo: { errors: [] },
+          });
         }
       });
     this.reset();
