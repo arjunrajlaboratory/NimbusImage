@@ -37,6 +37,21 @@
         {{ status.progressInfo.info }}
       </v-progress-linear>
     </v-row>
+    <v-row
+      v-for="(warning, index) in filteredWarnings"
+      :key="'warning-' + index"
+    >
+      <v-alert type="warning" dense class="mb-2">
+        <div class="error-main">{{ warning.title }}: {{ warning.warning }}</div>
+        <div v-if="warning.info" class="error-info">{{ warning.info }}</div>
+      </v-alert>
+    </v-row>
+    <v-row v-for="(error, index) in filteredErrors" :key="'error-' + index">
+      <v-alert type="error" dense class="mb-2">
+        <div class="error-main">{{ error.title }}: {{ error.error }}</div>
+        <div v-if="error.info" class="error-info">{{ error.info }}</div>
+      </v-alert>
+    </v-row>
   </v-container>
 </template>
 
@@ -48,7 +63,11 @@ import { Vue, Component, Prop } from "vue-property-decorator";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore, { IPropertyStatus } from "@/store/properties";
-import { IAnnotationProperty } from "@/store/model";
+import {
+  IAnnotationProperty,
+  IErrorInfoList,
+  MessageType,
+} from "@/store/model";
 
 @Component({
   components: {
@@ -71,11 +90,50 @@ export default class AnnotationProperty extends Vue {
     return this.propertyStore.uncomputedAnnotationsPerProperty;
   }
 
+  get filteredErrors() {
+    return (
+      this.status.errorInfo?.errors.filter(
+        (error) => error.error && error.type === MessageType.ERROR,
+      ) || []
+    );
+  }
+
+  get filteredWarnings() {
+    return (
+      this.status.errorInfo?.errors.filter(
+        (error) => error.warning && error.type === MessageType.WARNING,
+      ) || []
+    );
+  }
+
   compute() {
     if (this.status.running) {
       return;
     }
-    this.propertyStore.computeProperty(this.property);
+    // Create a new error info object for this computation
+    const errorInfo: IErrorInfoList = { errors: [] };
+
+    // Ensure the property status exists
+    if (!this.propertyStore.propertyStatuses[this.property.id]) {
+      Vue.set(this.propertyStore.propertyStatuses, this.property.id, {
+        running: false,
+        previousRun: null,
+        progressInfo: {},
+        errorInfo: { errors: [] },
+      });
+    }
+
+    // Update the status with the new error info
+    Vue.set(
+      this.propertyStore.propertyStatuses[this.property.id],
+      "errorInfo",
+      errorInfo,
+    );
+
+    this.propertyStore.computeProperty({
+      property: this.property,
+      errorInfo,
+    });
   }
 }
 </script>
@@ -102,5 +160,18 @@ export default class AnnotationProperty extends Vue {
 .text-progress .v-progress-linear__determinate {
   height: 100%;
   top: 0;
+}
+
+.error-main {
+  font-weight: 500;
+  max-width: 300px;
+}
+
+.error-info {
+  font-size: 0.875em;
+  margin-top: 4px;
+  max-width: 300px;
+  word-wrap: break-word; /* Ensures long words don't overflow */
+  opacity: 0.9;
 }
 </style>
