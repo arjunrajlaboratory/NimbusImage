@@ -466,19 +466,19 @@ export default class CustomFileManager extends Vue {
   overflow-y: auto;
 }
 
-.v-icon[class*="mdi-package"] {
+.itemRow > td > span > .v-icon[class*="mdi-package"] {
   // targets box_com icon (datasets)
   color: #e57373;
 }
-.v-icon[class*="mdi-file-tree"] {
+.itemRow > td > span > .v-icon[class*="mdi-file-tree"] {
   // targets collection icon (configurations)
-  color: #4baeff !important; // I'm not sure why this one in particular needs to be flagged !important, but it does
+  color: #4baeff;
 }
-.v-icon[class*="mdi-file"] {
+.itemRow > td > span > .v-icon[class*="mdi-file"] {
   // targets regular files
   color: #ee8bff;
 }
-.v-icon[class*="mdi-folder"] {
+.itemRow > td > span > .v-icon[class*="mdi-folder"] {
   // targets folders
   color: #b0a69a;
 }
