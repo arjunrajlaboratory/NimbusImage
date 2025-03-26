@@ -13,6 +13,8 @@ import {
   PROGRESS_TYPE_ORDER,
   IProgress,
   IJobEventData,
+  NotificationType,
+  INotification,
 } from "./model";
 import { jobStates } from "./jobs";
 import { v4 as uuidv4 } from "uuid";
@@ -109,6 +111,7 @@ function determineTypeAndTitle(payload: {
 @Module({ dynamic: true, store, name: "progress" })
 class Progress extends VuexModule {
   items: IProgress[] = [];
+  notifications: INotification[] = [];
 
   @Mutation
   private ADD_PROGRESS(progress: IProgress) {
@@ -377,6 +380,67 @@ class Progress extends VuexModule {
         }
       } catch {}
     }
+  }
+
+  // Notification mutations
+  @Mutation
+  private ADD_NOTIFICATION(notification: INotification) {
+    this.notifications.push(notification);
+  }
+
+  @Mutation
+  private REMOVE_NOTIFICATION(id: string) {
+    this.notifications = this.notifications.filter((n) => n.id !== id);
+  }
+
+  // Notification actions
+  @Action
+  createNotification(payload: {
+    type: NotificationType;
+    title: string;
+    message: string;
+    info?: string;
+    timeout?: number; // in seconds, 0 means no auto-dismiss (default)
+  }) {
+    const id = uuidv4();
+    const timeout = payload.timeout ?? 0;
+    const notification: INotification = {
+      id,
+      type: payload.type,
+      title: payload.title,
+      message: payload.message,
+      info: payload.info,
+      timeout,
+      timestamp: Date.now(),
+    };
+
+    this.ADD_NOTIFICATION(notification);
+
+    // Set up auto-dismiss if timeout > 0
+    if (timeout > 0) {
+      setTimeout(() => {
+        this.dismissNotification(id);
+      }, timeout * 1000);
+    }
+
+    return id;
+  }
+
+  @Action
+  dismissNotification(id: string) {
+    this.REMOVE_NOTIFICATION(id);
+  }
+
+  @Action
+  dismissAllNotifications() {
+    this.notifications.forEach((notification) => {
+      this.REMOVE_NOTIFICATION(notification.id);
+    });
+  }
+
+  // Getter for notifications
+  get activeNotifications() {
+    return [...this.notifications].sort((a, b) => b.timestamp - a.timestamp);
   }
 }
 

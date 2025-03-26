@@ -15,11 +15,13 @@ import {
   IJobEventData,
   IProgressInfo,
   MessageType,
+  NotificationType,
 } from "./model";
 
 import main from "./index";
 
 import { logError } from "@/utils/log";
+import progress from "./progress";
 
 export const jobStates = {
   inactive: 0,
@@ -89,6 +91,21 @@ export function createErrorEventCallback(errorObject: IErrorInfoList) {
           };
           // Add to errors array while maintaining reactivity
           Vue.set(errorObject.errors, errorObject.errors.length, newError);
+          progress.createNotification({
+            type:
+              newError.type === MessageType.ERROR
+                ? NotificationType.ERROR
+                : NotificationType.WARNING,
+            title:
+              newError.title ||
+              (newError.type === MessageType.ERROR ? "Error" : "Warning"),
+            message:
+              newError.error ||
+              newError.warning ||
+              "An issue occurred during job execution",
+            info: newError.info,
+            timeout: 0, // Requires manual dismissal for errors/warnings
+          });
         }
       } catch {}
     }
@@ -266,6 +283,15 @@ export class Jobs extends VuexModule {
           status === jobStates.cancelled ? "cancelled" : "failed"
         }`,
       );
+    } else {
+      // Create success notification
+      const jobTitle = jobEvent.title || "Job";
+      progress.createNotification({
+        type: NotificationType.INFO,
+        title: "Job Completed Successfully",
+        message: `${jobTitle} has completed successfully.`,
+        timeout: 5, // Auto-dismiss after 5 seconds
+      });
     }
     this.removeJob(jobId);
     jobInfo.successResolve(success);

@@ -210,6 +210,22 @@ export enum ProgressType {
   GENERIC = "GENERIC",
 }
 
+export enum NotificationType {
+  INFO = "info",
+  WARNING = "warning",
+  ERROR = "error",
+}
+
+export interface INotification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  info?: string;
+  timeout: number; // Time in seconds before auto-dismiss (0 means no auto-dismiss)
+  timestamp: number; // Creation timestamp
+}
+
 export const PROGRESS_TYPE_ORDER = new Map<ProgressType, number>([
   [ProgressType.ANNOTATION_FETCH, 0],
   [ProgressType.ANNOTATION_SAVE, 1],
