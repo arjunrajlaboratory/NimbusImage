@@ -136,6 +136,9 @@ export class Main extends VuexModule {
   time: number = 0;
   layerMode: TLayerMode = "multiple";
 
+  previousMultipleLayerVisibility: string[] = []; // Store IDs of visible layers from multiple/unroll mode
+  previousSingleLayerVisibility: string | null = null; // Store ID of the visible layer from single mode
+
   cameraInfo: ICameraInfo = {
     center: { x: 0, y: 0 },
     zoom: 1,
@@ -1370,6 +1373,35 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  private storeLayerVisibility(mode: TLayerMode) {
+    if (!this.configuration) {
+      return;
+    }
+
+    // Store current layer visibility before switching mode
+    if (
+      mode === "single" &&
+      (this.layerMode === "multiple" || this.layerMode === "unroll")
+    ) {
+      // Going from multiple/unroll to single, store visible layers
+      this.previousMultipleLayerVisibility = this.configuration.layers
+        .filter((layer) => layer.visible)
+        .map((layer) => layer.id);
+    } else if (
+      (mode === "multiple" || mode === "unroll") &&
+      this.layerMode === "single"
+    ) {
+      // Going from single to multiple/unroll, store the visible layer
+      const visibleLayer = this.configuration.layers.find(
+        (layer) => layer.visible,
+      );
+      this.previousSingleLayerVisibility = visibleLayer
+        ? visibleLayer.id
+        : null;
+    }
+  }
+
+  @Mutation
   private verifySingleLayerMode() {
     if (!this.configuration) {
       return;
@@ -1388,14 +1420,79 @@ export class Main extends VuexModule {
     }
   }
 
+  @Mutation
+  private restoreLayerVisibility(mode: TLayerMode) {
+    if (!this.configuration) {
+      return;
+    }
+
+    // Restore previous layer visibility when switching mode
+    if (mode === "multiple" || mode === "unroll") {
+      // Coming from single mode, restore multiple mode visibility
+      if (this.previousMultipleLayerVisibility.length > 0) {
+        // First, set all layers to invisible
+        this.configuration.layers.forEach((layer) => {
+          layer.visible = false;
+        });
+
+        // Then restore visibility for layers that existed in the previous state
+        this.configuration.layers.forEach((layer) => {
+          if (this.previousMultipleLayerVisibility.includes(layer.id)) {
+            layer.visible = true;
+          }
+        });
+      }
+    } else if (mode === "single") {
+      // First, set all layers to invisible
+      this.configuration.layers.forEach((l) => {
+        l.visible = false;
+      });
+
+      // Coming from multiple mode, try to restore single mode visibility
+      if (this.previousSingleLayerVisibility) {
+        const layer = this.configuration.layers.find(
+          (l) => l.id === this.previousSingleLayerVisibility,
+        );
+        if (layer) {
+          // Make the previously visible single layer visible again
+          layer.visible = true;
+          return; // Don't need verifySingleLayerMode since we've set a layer visible
+        }
+      }
+
+      // If we reach here, we need to select a layer to make visible
+      // For the first switch to single mode, try to use a currently visible layer
+      const visibleLayer = this.configuration.layers.find((l) => l.visible);
+      if (visibleLayer) {
+        // Keep only this one visible, set others to invisible
+        this.configuration.layers.forEach((l) => {
+          l.visible = l.id === visibleLayer.id;
+        });
+      } else if (this.configuration.layers.length > 0) {
+        // If no layer is visible, make the first layer visible
+        this.configuration.layers[0].visible = true;
+      }
+    }
+  }
+
   @Action
   async setLayerMode(mode: TLayerMode) {
+    // Store current visibility state before changing mode
+    this.storeLayerVisibility(mode);
+
+    // Update the layer mode
     this.setLayerModeImpl(mode);
 
+    // Restore previous visibility or enforce single layer constraint
+    this.restoreLayerVisibility(mode);
+
+    // For safety, ensure single mode constraints are enforced
     if (mode === "single") {
       this.verifySingleLayerMode();
-      await this.syncConfiguration("layers");
     }
+
+    // Sync the configuration with the backend
+    await this.syncConfiguration("layers");
   }
 
   @Action
