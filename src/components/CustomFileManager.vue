@@ -466,19 +466,19 @@ export default class CustomFileManager extends Vue {
   overflow-y: auto;
 }
 
-.itemRow > td > span > .v-icon[class*="mdi-package"] {
+.itemRow .v-icon.mdi-package {
   // targets box_com icon (datasets)
   color: #e57373;
 }
-.itemRow > td > span > .v-icon[class*="mdi-file-tree"] {
+.itemRow .v-icon.mdi-file-tree {
   // targets collection icon (configurations)
   color: #4baeff;
 }
-.itemRow > td > span > .v-icon[class*="mdi-file"] {
+.itemRow .v-icon.mdi-file {
   // targets regular files
   color: #ee8bff;
 }
-.itemRow > td > span > .v-icon[class*="mdi-folder"] {
+.itemRow .v-icon.mdi-folder {
   // targets folders
   color: #b0a69a;
 }
