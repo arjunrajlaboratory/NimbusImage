@@ -239,6 +239,14 @@ export default class GirderAPI {
     return this.client.delete(`item/${itemId}/tiles`);
   }
 
+  async createLargeImage(item: IGirderItem): Promise<any> {
+    const url = `item/${item._id}/tiles`;
+    return this.client.post(url, {
+      fileId: item.largeImage?.fileId || undefined,
+      notify: true,
+    });
+  }
+
   uploadJSONFile(
     name: string,
     content: string,
