@@ -1,7 +1,7 @@
 <template>
   <v-card :class="{ menu: true, loaded: !fetchingWorkerInterface }" v-if="tool">
     <v-card-title class="subtitle-1">
-      Worker menu
+      {{ tool.name || "Worker menu" }}
       <v-spacer />
       <v-btn small text class="mr-2" @click="resetInterfaceValues()">
         <v-icon small left>mdi-refresh</v-icon>
@@ -14,6 +14,9 @@
         mdi-sync
       </v-icon>
     </v-card-title>
+    <v-card-subtitle v-if="tool.values.image.image" class="pt-0 pb-2">
+      <small>Image: {{ tool.values.image.image }}</small>
+    </v-card-subtitle>
     <v-card-text>
       <v-container v-if="fetchingWorkerInterface">
         <v-progress-circular indeterminate />
@@ -47,11 +50,6 @@
             <div class="error-main">{{ error.title }}: {{ error.error }}</div>
             <div v-if="error.info" class="error-info">{{ error.info }}</div>
           </v-alert>
-        </v-row>
-        <v-row>
-          <v-col>
-            <v-subheader>Image: {{ tool.values.image.image }}</v-subheader>
-          </v-col>
         </v-row>
         <v-row>
           <worker-interface-values

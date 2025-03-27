@@ -43,9 +43,11 @@
                   ></v-text-field>
                 </template>
               </v-slider>
-              <div v-if="item.type === 'notes'" class="py-2 notes-container">
-                {{ item.value }}
-              </div>
+              <div
+                v-if="item.type === 'notes'"
+                class="py-2 notes-container"
+                v-html="item.value"
+              ></div>
               <v-text-field
                 v-if="item.type === 'text'"
                 v-bind="item.vueAttrs"
