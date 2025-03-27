@@ -1,12 +1,14 @@
 <template>
   <v-container class="pa-0 ma-0">
+    <div
+      v-if="image"
+      class="text-caption ml-1 mb-0 mt-0 py-0"
+      style="font-size: 8px; letter-spacing: 1px; opacity: 0.7; line-height: 1"
+    >
+      Image: {{ image }}
+    </div>
     <v-row class="pa-0 ma-0">
-      <v-col class="pa-0 ma-0">
-        <v-subheader>Image: {{ image }}</v-subheader>
-      </v-col>
-    </v-row>
-    <v-row class="pa-0 ma-0">
-      <v-col cols="12">
+      <v-col cols="12" class="pa-0 ma-0">
         <v-progress-circular
           v-if="workerInterface === undefined"
           indeterminate
