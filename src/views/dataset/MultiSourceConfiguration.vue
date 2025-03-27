@@ -569,8 +569,7 @@ export default class MultiSourceConfiguration extends Vue {
     if (hasOibFiles) {
       try {
         // Process each OIB file to ensure it has a large image
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
+        for (const item of items) {
           if (item.name.toLowerCase().endsWith(".oib")) {
             try {
               await this.store.api.createLargeImage(item);
