@@ -538,8 +538,10 @@ export default class MultiSourceConfiguration extends Vue {
     //  Get info from filename
     const names = items.map((item) => item.name);
 
-    // Enbale transcoding by default except for ND2 files
-    this.transcode = !names.every((name) => name.toLowerCase().endsWith("nd2"));
+    // Enable transcoding by default except for ND2 files
+    this.transcode = !names.every((name: string) =>
+      name.toLowerCase().endsWith("nd2"),
+    );
 
     // Add variables from filenames if there is more than one file
     if (names.length > 1) {
@@ -555,19 +557,69 @@ export default class MultiSourceConfiguration extends Vue {
       );
     }
 
+    // Check for OIB files; for whatever reason, these need to be
+    // explicitly turned into large images before we can get information from it
+    const fileExtensions = names.map((name: string) => {
+      const parts = name.split(".");
+      return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
+    });
+    const hasOibFiles = fileExtensions.includes("oib");
+
+    // For OIB files, explicitly try to create a large image first
+    if (hasOibFiles) {
+      try {
+        // Process each OIB file to ensure it has a large image
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.name.toLowerCase().endsWith(".oib")) {
+            try {
+              await this.store.api.createLargeImage(item);
+              // Wait longer for OIB processing
+              await new Promise((r) => setTimeout(r, 5000));
+            } catch (createError) {
+              logError(
+                `Error creating large image for ${item.name}:`,
+                createError,
+              );
+              // Continue anyway - the item might already have a large image
+            }
+          }
+        }
+      } catch (error) {
+        logError("Error in OIB pre-processing:", error);
+      }
+    }
+
     let retries = 0;
+    const maxRetries = hasOibFiles ? 15 : 10; // More retries for OIB files
 
     // Get info from file
     // The getTiles API from large_image expects the field large_image to be set when recovering the tiles,
     // but due to the S3 assetstore, that field can take a bit of time to be set.
-    // Retry that function a few times (10) if it fails to wait for that field to be set.
-    while (retries < 10) {
+    // Retry that function a few times if it fails to wait for that field to be set.
+    while (retries < maxRetries) {
       try {
         this.tilesMetadata = await Promise.all(
-          items.map((item) => this.store.api.getTiles(item)),
+          items.map(async (item) => {
+            return this.store.api.getTiles(item);
+          }),
         );
+
         break;
       } catch (error: any) {
+        logError(
+          `Error retrieving tiles (attempt ${retries + 1}):`,
+          error?.response?.data?.message || error.message,
+        );
+
+        // Handle OIB files specially
+        if (hasOibFiles) {
+          await new Promise((r) => setTimeout(r, 3000)); // 3-second delay for OIB files
+          retries++;
+          continue;
+        }
+
+        // Standard error handling
         if (
           error?.response?.data?.message != "No large image file in this item."
         ) {
@@ -577,9 +629,13 @@ export default class MultiSourceConfiguration extends Vue {
         retries++;
       }
     }
+
+    // If we still couldn't get tiles metadata after all retries
     if (!this.tilesMetadata) {
-      throw "Could not retrieve tiles from Girder ";
+      logError("Failed to retrieve tiles metadata after maximum retries");
+      throw "Could not retrieve tiles from Girder";
     }
+
     this.tilesInternalMetadata = await Promise.all(
       items.map((item) => this.store.api.getTilesInternalMetadata(item)),
     );
