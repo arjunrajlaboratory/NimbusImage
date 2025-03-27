@@ -1,5 +1,30 @@
 <template>
-  <div class="progress-container" v-if="hasActiveProgresses">
+  <div
+    class="progress-container"
+    v-if="hasActiveProgresses || hasNotifications"
+  >
+    <!-- Notifications section -->
+    <div v-if="hasNotifications" class="notifications-group">
+      <v-alert
+        v-for="notification in activeNotifications"
+        :key="notification.id"
+        :type="notification.type"
+        dense
+        dismissible
+        class="mb-2 notification"
+        @click:close="dismissNotification(notification.id)"
+      >
+        <div class="notification-content">
+          <div class="notification-title">{{ notification.title }}</div>
+          <div class="notification-message">{{ notification.message }}</div>
+          <div v-if="notification.info" class="notification-info">
+            {{ notification.info }}
+          </div>
+        </div>
+      </v-alert>
+    </div>
+
+    <!-- Progress bars section -->
     <div
       v-for="group in progressGroups"
       :key="group.type"
@@ -65,8 +90,20 @@ export default class ProgressBarGroup extends Vue {
     return this.progressStore.activeProgresses;
   }
 
+  get activeNotifications() {
+    return this.progressStore.activeNotifications;
+  }
+
   get hasActiveProgresses() {
     return this.progressStore.hasActiveProgresses;
+  }
+
+  get hasNotifications() {
+    return this.activeNotifications.length > 0;
+  }
+
+  dismissNotification(id: string) {
+    this.progressStore.dismissNotification(id);
   }
 
   get progressGroups(): IProgressGroup[] {
@@ -150,6 +187,39 @@ export default class ProgressBarGroup extends Vue {
   padding: 4px;
   border-radius: 4px;
   color: white;
+}
+
+.notifications-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notification {
+  margin-bottom: 0 !important;
+
+  :deep(.v-alert__content) {
+    display: flex;
+    flex: 1;
+  }
+}
+
+.notification-content {
+  width: 100%;
+}
+
+.notification-title {
+  font-weight: bold;
+}
+
+.notification-message {
+  margin-top: 2px;
+}
+
+.notification-info {
+  font-size: 0.85rem;
+  margin-top: 2px;
+  opacity: 0.85;
 }
 
 .stacked-progress {
