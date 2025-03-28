@@ -419,9 +419,6 @@ export default class NewDataset extends Vue {
   async mounted() {
     this.path = this.initialUploadLocation;
     this.maxApiKeyFileSize = await this.getMaxUploadSize();
-    console.log(this.maxApiKeyFileSize);
-    // const apiKeys = await this.store.api.getUserApiKeys();
-    // console.log(apiKeys);
   }
 
   async getMaxUploadSize() {
