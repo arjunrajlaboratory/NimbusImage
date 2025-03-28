@@ -9,6 +9,7 @@ __version__ = "0.0.0"
 
 from girder.plugin import GirderPlugin
 
+from girder.constants import TokenScope
 from girder.utility.model_importer import ModelImporter
 
 from . import system
@@ -31,6 +32,59 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
     DISPLAY_NAME = "UPennContrast Annotation Plugin"
 
     def load(self, info):
+
+        # Define custom upload limit scopes
+        TokenScope.UPLOAD_500MB = "nimbus.upload.limit.500mb"
+        TokenScope.UPLOAD_1GB = "nimbus.upload.limit.1gb"
+        TokenScope.UPLOAD_2GB = "nimbus.upload.limit.2gb"
+        TokenScope.UPLOAD_5GB = "nimbus.upload.limit.5gb"
+        TokenScope.UPLOAD_10GB = "nimbus.upload.limit.10gb"
+        TokenScope.UPLOAD_20GB = "nimbus.upload.limit.20gb"
+        TokenScope.UPLOAD_50GB = "nimbus.upload.limit.50gb"
+        TokenScope.UPLOAD_100GB = "nimbus.upload.limit.100gb"
+        TokenScope.UPLOAD_200GB = "nimbus.upload.limit.200gb"
+        TokenScope.UPLOAD_500GB = "nimbus.upload.limit.500gb"
+        TokenScope.UPLOAD_1TB = "nimbus.upload.limit.1tb"
+        TokenScope.UPLOAD_2TB = "nimbus.upload.limit.2tb"
+
+        # Register the custom scopes with the system
+        TokenScope.describeScope(TokenScope.UPLOAD_500MB,
+                                 name="Upload 500MB",
+                                 description="Allows uploads up to 500MB")
+        TokenScope.describeScope(TokenScope.UPLOAD_1GB,
+                                 name="Upload 1GB",
+                                 description="Allows uploads up to 1GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_2GB,
+                                 name="Upload 2GB",
+                                 description="Allows uploads up to 2GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_5GB,
+                                 name="Upload 5GB",
+                                 description="Allows uploads up to 5GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_10GB,
+                                 name="Upload 10GB",
+                                 description="Allows uploads up to 10GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_20GB,
+                                 name="Upload 20GB",
+                                 description="Allows uploads up to 20GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_50GB,
+                                 name="Upload 50GB",
+                                 description="Allows uploads up to 50GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_100GB,
+                                 name="Upload 100GB",
+                                 description="Allows uploads up to 100GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_200GB,
+                                 name="Upload 200GB",
+                                 description="Allows uploads up to 200GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_500GB,
+                                 name="Upload 500GB",
+                                 description="Allows uploads up to 500GB")
+        TokenScope.describeScope(TokenScope.UPLOAD_1TB,
+                                 name="Upload 1TB",
+                                 description="Allows uploads up to 1TB")
+        TokenScope.describeScope(TokenScope.UPLOAD_2TB,
+                                 name="Upload 2TB",
+                                 description="Allows uploads up to 2TB")
+
         # Laziliy do these imports as they can connect to the database
         from .server.api.annotation import Annotation
         from .server.api.connections import AnnotationConnection

@@ -73,3 +73,17 @@ export type IGirderSelectAble =
   | IGirderUser
   | IGirderFolder
   | IGirderFile;
+
+export interface IGirderApiKey {
+  _accessLevel: number;
+  _id: string;
+  _modelType: "api_key";
+  active: boolean;
+  created: string;
+  key: string;
+  lastUse: string | null;
+  name: string;
+  scope: string[] | null;
+  tokenDuration: number;
+  userId: string;
+}

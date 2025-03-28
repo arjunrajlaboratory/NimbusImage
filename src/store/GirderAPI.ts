@@ -7,6 +7,7 @@ import {
   IGirderFile,
   IGirderAssetstore,
   IGirderLargeImage,
+  IGirderApiKey,
 } from "@/girder";
 import {
   configurationBaseKeys,
@@ -731,6 +732,23 @@ export default class GirderAPI {
         },
       },
     );
+  }
+
+  async getUserApiKeys(): Promise<IGirderApiKey[]> {
+    try {
+      const response = await this.client.get("api_key", {
+        params: {
+          limit: 50,
+          offset: 0,
+          sort: "name",
+          sortdir: 1,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      logError("Failed to fetch user API keys");
+      return [];
+    }
   }
 }
 
