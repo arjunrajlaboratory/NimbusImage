@@ -9,6 +9,7 @@ __version__ = "0.0.0"
 
 from girder.plugin import GirderPlugin
 
+from girder.constants import TokenScope
 from girder.utility.model_importer import ModelImporter
 
 from . import system
