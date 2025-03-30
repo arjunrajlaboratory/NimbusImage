@@ -173,6 +173,8 @@ import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
 import { logError } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
+import datasetMetadataImport from "@/store/datasetMetadataImport";
+import { importAnnotationsFromData } from "@/utils/annotationImport";
 
 const allTriggers = Object.values(triggersPerCategory).flat();
 
@@ -262,6 +264,12 @@ export default class NewDataset extends Vue {
 
   @Prop()
   readonly initialUploadLocation!: IGirderLocation;
+
+  @Prop()
+  readonly initialName?: string;
+
+  @Prop()
+  readonly initialDescription?: string;
 
   uploadedFiles: File[] | null = null;
 
@@ -419,6 +427,16 @@ export default class NewDataset extends Vue {
   async mounted() {
     this.path = this.initialUploadLocation;
     this.maxApiKeyFileSize = await this.getMaxUploadSize();
+
+    // Use initial name and description from props if provided
+    // Currently used for Zenodo imports
+    if (this.initialName) {
+      this.name = this.initialName;
+    }
+
+    if (this.initialDescription) {
+      this.description = this.initialDescription;
+    }
   }
 
   async getMaxUploadSize() {
@@ -471,7 +489,11 @@ export default class NewDataset extends Vue {
   async uploadMounted() {
     this.$refs.uploader?.inputFilesChanged(this.files);
     if (this.quickupload) {
-      this.name = formatDate(new Date()) + " - " + this.recommendedName;
+      if (this.initialName) {
+        this.name = this.initialName + " - " + formatDate(new Date());
+      } else {
+        this.name = this.recommendedName + " - " + formatDate(new Date());
+      }
       await Vue.nextTick(); // "name" prop is set in the form
       await Vue.nextTick(); // this.valid is updated
 
@@ -623,6 +645,22 @@ export default class NewDataset extends Vue {
     // Set the dataset now that multi-source is available
     await this.store.setSelectedDataset(this.dataset!.id);
     this.configuring = false;
+
+    // Check if we have annotation data to import
+    if (
+      datasetMetadataImport.hasAnnotationData &&
+      datasetMetadataImport.annotationData
+    ) {
+      try {
+        // Import annotations using the default import options
+        await importAnnotationsFromData(datasetMetadataImport.annotationData);
+        // Clear the annotation data after successful import
+        datasetMetadataImport.clearAnnotationFile();
+      } catch (error) {
+        logError("Failed to import annotations:", error);
+        // Continue with view creation even if annotation import fails
+      }
+    }
 
     // Create a default dataset view for this dataset
     this.creatingView = true;
