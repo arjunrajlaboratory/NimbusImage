@@ -90,30 +90,45 @@
       </v-alert>
       <v-alert v-if="fileSizeExceeded" text type="error">
         Total file size ({{ totalSizeMB }} MB) exceeds the maximum allowed size
-        of {{ maxTotalFileSize }} MB
+        of
+        {{
+          maxTotalFileSize === Infinity
+            ? "No file size limit"
+            : `${maxTotalFileSize} MB`
+        }}
       </v-alert>
       <v-alert v-if="invalidLocation" text type="error">
         Cannot create datasets in this location. Please select a subfolder
         within your user directory or group folder.
       </v-alert>
 
-      <div class="button-bar" v-if="!quickupload || pipelineError">
-        <v-btn
-          id="upload-button-tourstep"
-          v-tour-trigger="'upload-button-tourtrigger'"
-          :disabled="
-            !valid ||
-            !filesSelected ||
-            uploading ||
-            fileSizeExceeded ||
-            invalidLocation
-          "
-          color="success"
-          class="mr-4"
-          @click="submit"
-        >
-          Upload
-        </v-btn>
+      <div
+        class="button-bar d-flex justify-space-between align-center"
+        v-if="!quickupload || pipelineError"
+      >
+        <div>
+          <span class="mr-2">File size limit: {{ maxTotalFileSize }} MB</span>
+          <span v-if="maxApiKeyFileSize" class="mr-2">
+            (using special permission code)</span
+          >
+        </div>
+        <div>
+          <v-btn
+            id="upload-button-tourstep"
+            v-tour-trigger="'upload-button-tourtrigger'"
+            :disabled="
+              !valid ||
+              !filesSelected ||
+              uploading ||
+              fileSizeExceeded ||
+              invalidLocation
+            "
+            color="success"
+            @click="submit"
+          >
+            Upload
+          </v-btn>
+        </div>
       </div>
     </v-form>
 
@@ -148,7 +163,7 @@
 import { Vue, Component, Prop } from "vue-property-decorator";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IGirderLocation } from "@/girder";
+import { IGirderApiKey, IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import { IDataset } from "@/store/model";
@@ -275,12 +290,21 @@ export default class NewDataset extends Vue {
 
   pipelineError = false;
 
-  maxTotalFileSize =
-    Number(import.meta.env.VITE_MAX_TOTAL_FILE_SIZE) || Infinity;
   fileSizeExceeded = false;
   fileSizeExceededMessage = "";
 
+  maxApiKeyFileSize: number | null = null;
+
   allFiles: File[] = [];
+
+  get maxTotalFileSize() {
+    // If the maxApiKeyFileSize is set, use that
+    if (this.maxApiKeyFileSize) {
+      return this.maxApiKeyFileSize;
+    }
+    // Otherwise, use the default max total file size
+    return Number(import.meta.env.VITE_MAX_TOTAL_FILE_SIZE) || Infinity;
+  }
 
   get invalidLocation() {
     if (!this.path) return false;
@@ -394,6 +418,54 @@ export default class NewDataset extends Vue {
 
   async mounted() {
     this.path = this.initialUploadLocation;
+    this.maxApiKeyFileSize = await this.getMaxUploadSize();
+  }
+
+  async getMaxUploadSize() {
+    const apiKeys = await this.store.api.getUserApiKeys();
+    // First filter by all active keys, then find the maximum upload size
+    // Else, return none
+    const activeKeys = apiKeys.filter((key: IGirderApiKey) => key.active);
+    const maxUploadSize = activeKeys.reduce(
+      (max: number | null, key: IGirderApiKey) => {
+        const size = this.convertScopeToBytes(key.scope);
+        return size ? Math.max(max || 0, size) : max;
+      },
+      null,
+    );
+    return maxUploadSize;
+  }
+
+  convertScopeToBytes(scope: string[] | null): number | null {
+    if (!scope) {
+      return null;
+    }
+
+    // Note that the maxTotalFileSize is expected to be in MB,
+    // so we need to convert the scope to MB
+    const sizeMap: Record<string, number> = {
+      "nimbus.upload.limit.500mb": 500,
+      "nimbus.upload.limit.1gb": 1 * 1024,
+      "nimbus.upload.limit.2gb": 2 * 1024,
+      "nimbus.upload.limit.5gb": 5 * 1024,
+      "nimbus.upload.limit.10gb": 10 * 1024,
+      "nimbus.upload.limit.20gb": 20 * 1024,
+      "nimbus.upload.limit.50gb": 50 * 1024,
+      "nimbus.upload.limit.100gb": 100 * 1024,
+      "nimbus.upload.limit.200gb": 200 * 1024,
+      "nimbus.upload.limit.500gb": 500 * 1024,
+      "nimbus.upload.limit.1tb": 1 * 1024 * 1024,
+      "nimbus.upload.limit.2tb": 2 * 1024 * 1024,
+    };
+
+    // Find the first matching scope and return its byte value
+    for (const key of scope) {
+      if (key in sizeMap) {
+        return sizeMap[key];
+      }
+    }
+
+    return null;
   }
 
   async uploadMounted() {
