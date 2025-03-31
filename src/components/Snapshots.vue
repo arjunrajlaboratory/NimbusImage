@@ -417,11 +417,27 @@
         <div class="mb-2">
           <v-btn
             color="primary"
+            @click="snapshotWithAnnotations()"
+            :disabled="unroll || downloading"
+          >
+            Download image with annotations
+          </v-btn>
+        </div>
+        <div class="mb-2">
+          <v-btn
+            color="primary"
             @click="movieDialog = true"
             :disabled="unroll || downloading"
           >
-            Download Movie for Current Location
+            Download movie for current location
           </v-btn>
+        </div>
+        <div class="mb-2">
+          <v-checkbox
+            v-model="addAnnotationsToMovie"
+            label="Include annotations in movie"
+            class="ma-0 pa-0"
+          ></v-checkbox>
         </div>
       </v-card-actions>
 
@@ -634,6 +650,8 @@ export default class Snapshots extends Vue {
   snapshotScalebarColor: string = "#ffffff";
   manualScalebarSettings: IScalebarSettings | null = null;
   manualPixelSize: IScalebarSettings | null = null;
+
+  addAnnotationsToMovie: boolean = false;
 
   pixelSizeMode: PixelSizeMode = PixelSizeMode.DATASET;
   scalebarMode: ScalebarMode = ScalebarMode.AUTOMATIC;
@@ -1032,6 +1050,104 @@ export default class Snapshots extends Vue {
       };
       downloadToClient(params);
     });
+  }
+
+  async snapshotWithAnnotations() {
+    const map = this.firstMap;
+    if (!map) {
+      return;
+    }
+
+    // Get all visible layers except the bounding box layer
+    const layers = map
+      .layers()
+      .filter(
+        (layer) =>
+          layer !== this.bboxLayer &&
+          layer.node().css("visibility") !== "hidden",
+      );
+
+    // Capture the full screenshot
+    const fullScreenshot = await map.screenshot(layers);
+
+    // Create a new canvas for cropping
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+
+    // Create an image element to load the screenshot
+    const img = new Image();
+
+    // Wait for the image to load
+    await new Promise((resolve) => {
+      img.onload = resolve;
+      img.src = fullScreenshot;
+    });
+
+    // Convert bounding box GCS coordinates to display coordinates
+    const topLeft = map.gcsToDisplay({ x: this.bboxLeft, y: this.bboxTop });
+    const bottomRight = map.gcsToDisplay({
+      x: this.bboxRight,
+      y: this.bboxBottom,
+    });
+
+    // Calculate width and height in display pixels
+    const width = bottomRight.x - topLeft.x;
+    const height = bottomRight.y - topLeft.y;
+
+    // Set canvas dimensions to match the bounding box
+    canvas.width = width;
+    canvas.height = height;
+
+    // Draw only the portion of the image that falls within the bounding box
+    ctx.drawImage(
+      img,
+      topLeft.x,
+      topLeft.y,
+      width,
+      height, // Source rectangle
+      0,
+      0,
+      width,
+      height, // Destination rectangle
+    );
+
+    // Add scalebar if requested
+    if (this.addScalebar) {
+      // Draw a line of the length of the scalebar (pixels)
+      const scalebarLength = this.scalebarLengthInPixels;
+      ctx.strokeStyle = this.snapshotScalebarColor;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(width - 10, height - 10);
+      ctx.lineTo(width - 10 - scalebarLength, height - 10);
+      ctx.stroke();
+
+      // Add text for the scalebar if enabled
+      if (this.addScalebarText) {
+        ctx.fillStyle = this.snapshotScalebarColor;
+        ctx.font = "12px Arial";
+        ctx.textBaseline = "bottom";
+        ctx.textAlign = "right";
+        ctx.fillText(
+          `${this.scalebarSettings.length}${this.scalebarSettings.unit}`,
+          width - 10,
+          height - 14,
+        );
+      }
+    }
+
+    // Convert the canvas to a data URL
+    const croppedScreenshot = canvas.toDataURL("image/png");
+
+    // Download the cropped screenshot
+    const params = {
+      href: croppedScreenshot,
+      download: "viewport_screenshot.png",
+    };
+    downloadToClient(params);
   }
 
   async downloadImagesForCurrentState() {
@@ -1607,9 +1723,10 @@ export default class Snapshots extends Vue {
     if (this.store.configuration && this.store.configuration.snapshots) {
       const snapshots = this.store.configuration.snapshots.slice();
       snapshots.sort(
-        (a, b) => (b.modified || b.created) - (a.modified || a.created),
+        (a: ISnapshot, b: ISnapshot) =>
+          (b.modified || b.created) - (a.modified || a.created),
       );
-      snapshots.forEach((s) => {
+      snapshots.forEach((s: ISnapshot) => {
         if (
           sre.exec(s.name) ||
           sre.exec(s.description) ||
@@ -1886,6 +2003,184 @@ export default class Snapshots extends Vue {
     return urls;
   }
 
+  async waitForRenderingComplete() {
+    // Wait for the map to finish rendering
+    // This function is a bit of a hack
+    // In principle, we should be fine after drawEnd, but it doesn't seem to be enough
+    // So we wait a bit longer
+    // I found a wait time of 2000ms to be enough in some very limited testing,
+    // but this would require broader testing
+    // TODO: Find a more robust solution
+    const map = this.firstMap;
+    if (!map) {
+      return;
+    }
+
+    // Promise that resolves when the map's drawing is complete
+    const waitForMapDraw = new Promise<void>((resolve) => {
+      const onDrawEnd = () => {
+        map.geoOff(geojs.event.drawEnd, onDrawEnd);
+        resolve();
+      };
+
+      // Listen for the drawEnd event
+      map.geoOn(geojs.event.drawEnd, onDrawEnd);
+
+      // Fallback timeout in case event doesn't fire
+      setTimeout(resolve, 5000);
+    });
+
+    // Wait for map drawing to complete
+    await waitForMapDraw;
+
+    // Wait to ensure UI updates are complete
+    // Use two animation frames to ensure a complete render cycle
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+
+    // Additional 2000ms delay to fully let it finish
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  async getUrlsForMovieWithAnnotations(
+    timePoints: number[],
+    datasetId: string,
+  ): Promise<string[]> {
+    // Get dataset
+    const dataset =
+      store.dataset?.id === datasetId
+        ? store.dataset
+        : await girderResources.getDataset({ id: datasetId });
+    if (!dataset) {
+      throw new Error("Dataset not found");
+    }
+
+    const map = this.firstMap;
+    if (!map) {
+      throw new Error("Map not available");
+    }
+
+    // Array to store data URLs for screenshots
+    const dataUrls: string[] = [];
+
+    // Progress tracking
+    const progressId = await this.progress.create({
+      type: ProgressType.MOVIE_GENERATION,
+      title: "Capturing frames with annotations",
+    });
+
+    try {
+      // For each time point
+      for (let i = 0; i < timePoints.length; i++) {
+        const timePoint = timePoints[i];
+
+        // Set the time in the store to update the view
+        this.store.setTime(timePoint);
+
+        // Wait for rendering to complete
+        await this.waitForRenderingComplete();
+
+        // Get visible layers except bounding box
+        const visibleLayers = map
+          .layers()
+          .filter(
+            (layer) =>
+              layer !== this.bboxLayer &&
+              layer.node().css("visibility") !== "hidden",
+          );
+
+        // Capture the full screenshot
+        const fullScreenshot = await map.screenshot(visibleLayers);
+
+        // Process the screenshot to crop to bounding box
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          throw new Error("Failed to get canvas context");
+        }
+
+        // Create an image element to load the screenshot
+        const img = new Image();
+
+        // Wait for the image to load
+        await new Promise((resolve) => {
+          img.onload = resolve;
+          img.src = fullScreenshot;
+        });
+
+        // Convert bounding box GCS coordinates to display coordinates
+        const topLeft = map.gcsToDisplay({ x: this.bboxLeft, y: this.bboxTop });
+        const bottomRight = map.gcsToDisplay({
+          x: this.bboxRight,
+          y: this.bboxBottom,
+        });
+
+        // Calculate width and height in display pixels
+        const width = bottomRight.x - topLeft.x;
+        const height = bottomRight.y - topLeft.y;
+
+        // Set canvas dimensions to match the bounding box
+        canvas.width = width;
+        canvas.height = height;
+
+        // Draw the cropped image
+        ctx.drawImage(
+          img,
+          topLeft.x,
+          topLeft.y,
+          width,
+          height, // Source rectangle
+          0,
+          0,
+          width,
+          height, // Destination rectangle
+        );
+
+        // Add scalebar if requested
+        if (this.addScalebar) {
+          // Draw scalebar
+          const scalebarLength = this.scalebarLengthInPixels;
+          ctx.strokeStyle = this.snapshotScalebarColor;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(width - 10, height - 10);
+          ctx.lineTo(width - 10 - scalebarLength, height - 10);
+          ctx.stroke();
+
+          // Add text for the scalebar if enabled
+          if (this.addScalebarText) {
+            ctx.fillStyle = this.snapshotScalebarColor;
+            ctx.font = "12px Arial";
+            ctx.textBaseline = "bottom";
+            ctx.textAlign = "right";
+            ctx.fillText(
+              `${this.scalebarSettings.length}${this.scalebarSettings.unit}`,
+              width - 10,
+              height - 14,
+            );
+          }
+        }
+
+        // Convert the canvas to a data URL and store it
+        const dataUrl = canvas.toDataURL("image/png");
+        dataUrls.push(dataUrl);
+
+        // Update progress
+        this.progress.update({
+          id: progressId,
+          progress: i + 1,
+          total: timePoints.length,
+          title: `Capturing frame ${i + 1} of ${timePoints.length}`,
+        });
+      }
+    } finally {
+      this.progress.complete(progressId);
+    }
+
+    return dataUrls;
+  }
+
   async handleMovieDownload(params: {
     startTime: number;
     endTime: number;
@@ -1906,18 +2201,26 @@ export default class Snapshots extends Vue {
         (_, i) => params.startTime + i,
       );
 
-      const urls = await this.getUrlsForMovie(
-        timePoints,
-        dataset.id,
-        {
-          left: this.bboxLeft,
-          top: this.bboxTop,
-          right: this.bboxRight,
-          bottom: this.bboxBottom,
-        },
-        this.store.layers,
-        this.store.currentLocation,
-      );
+      let urls: URL[] | string[] = [];
+      if (this.addAnnotationsToMovie) {
+        urls = await this.getUrlsForMovieWithAnnotations(
+          timePoints,
+          dataset.id,
+        );
+      } else {
+        urls = await this.getUrlsForMovie(
+          timePoints,
+          dataset.id,
+          {
+            left: this.bboxLeft,
+            top: this.bboxTop,
+            right: this.bboxRight,
+            bottom: this.bboxBottom,
+          },
+          this.store.layers,
+          this.store.currentLocation,
+        );
+      }
 
       switch (params.format) {
         case MovieFormat.ZIP:
@@ -1947,7 +2250,7 @@ export default class Snapshots extends Vue {
       timeStampStep: number;
       timeStampUnits: string;
     },
-    urls: URL[],
+    urls: URL[] | string[],
   ) {
     const progressId = await this.progress.create({
       type: ProgressType.MOVIE_GENERATION,
@@ -1977,15 +2280,36 @@ export default class Snapshots extends Vue {
 
       // Download each image and add to zip
       for (let i = 0; i < urls.length; i++) {
-        const { data } = await this.store.girderRest.get(urls[i].href, {
-          responseType: "arraybuffer",
-        });
+        let imageData: ArrayBuffer;
+        let imageUrl: string;
+
+        if (typeof urls[i] === "string") {
+          // It's a data URL string
+          // Convert data URL to Blob and then to ArrayBuffer
+          const dataUrl = urls[i] as string;
+          const base64Data = dataUrl.split(",")[1];
+          const binaryData = atob(base64Data);
+          const byteArray = new Uint8Array(binaryData.length);
+          for (let j = 0; j < binaryData.length; j++) {
+            byteArray[j] = binaryData.charCodeAt(j);
+          }
+          imageData = byteArray.buffer;
+          imageUrl = dataUrl;
+        } else {
+          // It's a URL object, download the data
+          const response = await this.store.girderRest.get(
+            (urls[i] as URL).href,
+            {
+              responseType: "arraybuffer",
+            },
+          );
+          imageData = response.data;
+          // Create a blob from the image data
+          const blob = new Blob([imageData], { type: "image/png" });
+          imageUrl = URL.createObjectURL(blob);
+        }
 
         if (params.shouldAddTimeStamp) {
-          // Create a blob from the image data
-          const blob = new Blob([data], { type: "image/png" });
-          const imageUrl = URL.createObjectURL(blob);
-
           // Create an image element and wait for it to load
           const img = await new Promise<HTMLImageElement>((resolve, reject) => {
             const img = new Image();
@@ -2004,6 +2328,11 @@ export default class Snapshots extends Vue {
           // Draw the original image
           ctx.drawImage(img, 0, 0);
 
+          // Only revoke object URL if we created it
+          if (typeof urls[i] !== "string") {
+            URL.revokeObjectURL(imageUrl);
+          }
+
           this.addTimeStampToCanvas(canvas, params, i);
 
           // Convert canvas to blob
@@ -2020,10 +2349,16 @@ export default class Snapshots extends Vue {
           zip.add(zipFile);
           zipFile.push(new Uint8Array(arrayBuffer), true);
         } else {
+          // Add to zip without timestamp
           const fileName = `frame${(i + 1).toString().padStart(4, "0")}.png`;
           const zipFile = new ZipDeflate(fileName, deflateOptions);
           zip.add(zipFile);
-          zipFile.push(new Uint8Array(data), true);
+          zipFile.push(new Uint8Array(imageData), true);
+
+          // Only revoke object URL if we created it and used it
+          if (typeof urls[i] !== "string") {
+            URL.revokeObjectURL(imageUrl);
+          }
         }
 
         this.progress.update({
@@ -2059,7 +2394,7 @@ export default class Snapshots extends Vue {
       timeStampStep: number;
       timeStampUnits: string;
     },
-    urls: URL[],
+    urls: URL[] | string[],
   ) {
     const progressId = await this.progress.create({
       type: ProgressType.MOVIE_GENERATION,
@@ -2085,14 +2420,23 @@ export default class Snapshots extends Vue {
 
       // Process frames one at a time to maintain order
       for (let i = 0; i < urls.length; i++) {
-        // Download the image data
-        const { data } = await this.store.girderRest.get(urls[i].href, {
-          responseType: "arraybuffer",
-        });
-
-        // Convert array buffer to blob
-        const blob = new Blob([data], { type: "image/png" });
-        const imageUrl = URL.createObjectURL(blob);
+        // Check if we're dealing with a URL or a data URL string
+        let imageUrl: string;
+        if (typeof urls[i] === "string") {
+          // It's already a data URL string from screenshots with annotations
+          imageUrl = urls[i] as string;
+        } else {
+          // It's a URL object, download the image data
+          const { data } = await this.store.girderRest.get(
+            (urls[i] as URL).href,
+            {
+              responseType: "arraybuffer",
+            },
+          );
+          // Convert array buffer to blob
+          const blob = new Blob([data], { type: "image/png" });
+          imageUrl = URL.createObjectURL(blob);
+        }
 
         // Create an image element and wait for it to load
         const img = new Image();
@@ -2123,7 +2467,12 @@ export default class Snapshots extends Vue {
               total: totalFrames * 2, // Account for both loading and rendering phases
               title: "Loading frame",
             });
-            URL.revokeObjectURL(imageUrl); // Clean up the object URL
+
+            // Only revoke object URL if we created it (for URL objects)
+            if (typeof urls[i] !== "string") {
+              URL.revokeObjectURL(imageUrl);
+            }
+
             resolve();
           };
           img.onerror = reject;
@@ -2131,7 +2480,7 @@ export default class Snapshots extends Vue {
         });
       }
 
-      // Render the GIF
+      // The rest of the function is unchanged
       const gifBlob = await new Promise<Blob>((resolve) => {
         gif.on("progress", (progressValue: number) => {
           // Update progress for rendering phase
@@ -2172,7 +2521,7 @@ export default class Snapshots extends Vue {
       timeStampStep: number;
       timeStampUnits: string;
     },
-    urls: URL[],
+    urls: URL[] | string[],
   ) {
     const progressId = await this.progress.create({
       type: ProgressType.MOVIE_GENERATION,
@@ -2181,13 +2530,24 @@ export default class Snapshots extends Vue {
 
     try {
       // First pass: get dimensions from first frame
-      const firstFrameResponse = await this.store.girderRest.get(urls[0].href, {
-        responseType: "arraybuffer",
-      });
-      const firstFrameBlob = new Blob([firstFrameResponse.data], {
-        type: "image/png",
-      });
-      const firstFrameUrl = URL.createObjectURL(firstFrameBlob);
+      let firstFrameUrl: string;
+      if (typeof urls[0] === "string") {
+        // It's already a data URL string
+        firstFrameUrl = urls[0] as string;
+      } else {
+        // It's a URL object, download the data
+        const firstFrameResponse = await this.store.girderRest.get(
+          (urls[0] as URL).href,
+          {
+            responseType: "arraybuffer",
+          },
+        );
+        const firstFrameBlob = new Blob([firstFrameResponse.data], {
+          type: "image/png",
+        });
+        firstFrameUrl = URL.createObjectURL(firstFrameBlob);
+      }
+
       const firstImage = await new Promise<HTMLImageElement>(
         (resolve, reject) => {
           const img = new Image();
@@ -2196,7 +2556,11 @@ export default class Snapshots extends Vue {
           img.src = firstFrameUrl;
         },
       );
-      URL.revokeObjectURL(firstFrameUrl);
+
+      // Only revoke object URL if we created it
+      if (typeof urls[0] !== "string") {
+        URL.revokeObjectURL(firstFrameUrl);
+      }
 
       // Setup canvas and media recorder
       const canvas = document.createElement("canvas");
@@ -2231,15 +2595,22 @@ export default class Snapshots extends Vue {
           return;
         }
 
-        // Download and process frame
-        const { data } = await this.store.girderRest.get(
-          urls[currentFrame].href,
-          {
-            responseType: "arraybuffer",
-          },
-        );
-        const blob = new Blob([data], { type: "image/png" });
-        const imageUrl = URL.createObjectURL(blob);
+        // Get frame data - either from data URL or by downloading
+        let imageUrl: string;
+        if (typeof urls[currentFrame] === "string") {
+          // It's a data URL string
+          imageUrl = urls[currentFrame] as string;
+        } else {
+          // It's a URL object, download the data
+          const { data } = await this.store.girderRest.get(
+            (urls[currentFrame] as URL).href,
+            {
+              responseType: "arraybuffer",
+            },
+          );
+          const blob = new Blob([data], { type: "image/png" });
+          imageUrl = URL.createObjectURL(blob);
+        }
 
         // Draw frame
         await new Promise<void>((resolve, reject) => {
@@ -2247,7 +2618,12 @@ export default class Snapshots extends Vue {
           img.onload = () => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            URL.revokeObjectURL(imageUrl);
+
+            // Only revoke object URL if we created it
+            if (typeof urls[currentFrame] !== "string") {
+              URL.revokeObjectURL(imageUrl);
+            }
+
             resolve();
           };
           img.onerror = reject;
