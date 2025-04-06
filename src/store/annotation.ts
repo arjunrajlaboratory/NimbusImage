@@ -115,12 +115,23 @@ export class Annotations extends VuexModule {
     }
     try {
       sync.setSaving(true);
+      // Add progress bar
+      let progressId: string | null = null;
       if (undo) {
+        progressId = await progress.create({
+          type: ProgressType.ANNOTATION_UNDO,
+          title: "Undoing",
+        });
         await this.annotationsAPI.undo(datasetId);
       } else {
+        progressId = await progress.create({
+          type: ProgressType.ANNOTATION_REDO,
+          title: "Redoing",
+        });
         await this.annotationsAPI.redo(datasetId);
       }
       this.context.dispatch("fetchAnnotations");
+      progress.complete(progressId);
       sync.setSaving(false);
     } catch (error) {
       sync.setSaving(error as Error);

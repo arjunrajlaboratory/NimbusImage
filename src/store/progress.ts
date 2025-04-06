@@ -95,6 +95,12 @@ function determineTypeAndTitle(payload: {
       case ProgressType.MAXMERGE_CACHE:
         title = "Caching max-merge";
         break;
+      case ProgressType.ANNOTATION_UNDO:
+        title = "Undoing";
+        break;
+      case ProgressType.ANNOTATION_REDO:
+        title = "Redoing";
+        break;
       default:
         title = "Operation in progress";
     }
