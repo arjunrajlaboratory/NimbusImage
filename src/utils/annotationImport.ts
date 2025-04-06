@@ -11,6 +11,7 @@ import {
   ISerializedData,
   TPropertyValue,
 } from "@/store/model";
+import { logError } from "@/utils/log";
 
 export interface ImportOptions {
   importAnnotations: boolean;
@@ -283,7 +284,7 @@ export async function importAnnotationsFromFile(
     const serializedData = JSON.parse(jsonText) as ISerializedData;
     return importAnnotationsFromData(serializedData, options);
   } catch (error) {
-    console.error("Error importing annotations from file:", error);
+    logError("Error importing annotations from file:", error);
     throw error;
   }
 }
