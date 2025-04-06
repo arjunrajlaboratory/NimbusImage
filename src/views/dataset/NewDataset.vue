@@ -89,12 +89,12 @@
         exists. Please update the dataset name field and try again.
       </v-alert>
       <v-alert v-if="fileSizeExceeded" text type="error">
-        Total file size ({{ totalSizeMB }} MB) exceeds the maximum allowed size
+        Total file size ({{ totalSizeString }}) exceeds the maximum allowed size
         of
         {{
           maxTotalFileSize === Infinity
             ? "No file size limit"
-            : `${maxTotalFileSize / 1024 / 1024} MB`
+            : maxTotalFileSizeString
         }}
       </v-alert>
       <v-alert v-if="invalidLocation" text type="error">
@@ -108,7 +108,7 @@
       >
         <div>
           <span class="mr-2"
-            >File size limit: {{ maxTotalFileSize / 1024 / 1024 }} MB</span
+            >File size limit: {{ maxTotalFileSizeString }}</span
           >
           <span v-if="maxApiKeyFileSize" class="mr-2">
             (using special permission code)</span
@@ -175,6 +175,7 @@ import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
 import { logError } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
+import { formatSize } from "@/utils/conversion";
 
 const allTriggers = Object.values(triggersPerCategory).flat();
 
@@ -409,13 +410,17 @@ export default class NewDataset extends Vue {
     }
   }
 
-  get totalSizeMB() {
+  get totalSizeString() {
     if (!this.uploadedFiles) return 0;
     const totalBytes = this.uploadedFiles.reduce(
       (sum, file) => sum + file.size,
       0,
     );
-    return (totalBytes / 1024 / 1024).toFixed(1);
+    return formatSize(totalBytes);
+  }
+
+  get maxTotalFileSizeString() {
+    return formatSize(this.maxTotalFileSize);
   }
 
   async mounted() {
