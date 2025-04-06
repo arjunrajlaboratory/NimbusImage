@@ -494,6 +494,11 @@ export default class NewDataset extends Vue {
       } else {
         this.name = this.recommendedName + " - " + formatDate(new Date());
       }
+
+      if (this.initialDescription) {
+        this.description = this.initialDescription;
+      }
+
       await Vue.nextTick(); // "name" prop is set in the form
       await Vue.nextTick(); // this.valid is updated
 
