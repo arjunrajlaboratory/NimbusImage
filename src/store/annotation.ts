@@ -50,6 +50,9 @@ export class Annotations extends VuexModule {
   selectedAnnotations: IAnnotation[] = [];
   activeAnnotationIds: string[] = [];
 
+  // Store copied annotations for paste operation
+  copiedAnnotations: IAnnotation[] = [];
+
   pendingAnnotation: IAnnotation | null = null;
   submitPendingAnnotationTimeout: number = 1;
   submitPendingAnnotation: ((submit: boolean) => void) | null = null;
@@ -99,6 +102,78 @@ export class Annotations extends VuexModule {
   }
 
   hoveredAnnotationId: string | null = null;
+
+  @Mutation
+  setCopiedAnnotations(annotations: IAnnotation[]) {
+    this.copiedAnnotations = annotations;
+  }
+
+  @Action
+  copySelectedAnnotations() {
+    this.setCopiedAnnotations([...this.selectedAnnotations]);
+  }
+
+  @Action
+  async createMultipleAnnotations(
+    annotationBases: IAnnotationBase[],
+  ): Promise<IAnnotation[]> {
+    if (annotationBases.length === 0) {
+      return [];
+    }
+
+    sync.setSaving(true);
+    try {
+      const newAnnotations =
+        await this.annotationsAPI.createMultipleAnnotations(annotationBases);
+
+      // Add the new annotations to the store
+      if (newAnnotations && newAnnotations.length > 0) {
+        newAnnotations.forEach((annotation) => {
+          this.addAnnotationImpl(annotation);
+        });
+      }
+
+      return newAnnotations || [];
+    } catch (error) {
+      logError((error as Error).message);
+      return [];
+    } finally {
+      sync.setSaving(false);
+    }
+  }
+
+  @Action
+  async pasteAnnotations() {
+    if (!this.copiedAnnotations.length || !main.dataset) {
+      return;
+    }
+
+    // Get current location
+    const currentLocation = {
+      XY: main.xy,
+      Z: main.z,
+      Time: main.time,
+    };
+
+    // Create new annotation bases from copied annotations with updated location
+    const annotationBases: IAnnotationBase[] = this.copiedAnnotations.map(
+      (annotation) => {
+        // Create a deep clone of the annotation to avoid mutating the original
+        return {
+          tags: [...annotation.tags],
+          shape: annotation.shape,
+          location: { ...currentLocation },
+          channel: annotation.channel,
+          coordinates: [...annotation.coordinates],
+          datasetId: main.dataset!.id,
+          color: annotation.color,
+        };
+      },
+    );
+
+    // Create the new annotations
+    await this.createMultipleAnnotations(annotationBases);
+  }
 
   @Action
   async undoOrRedo(undo: boolean) {
@@ -245,7 +320,7 @@ export class Annotations extends VuexModule {
   }
 
   @Action
-  private getAnnotationSubmition(annotationBase: IAnnotationBase) {
+  private getAnnotationSubmission(annotationBase: IAnnotationBase) {
     // If there is a pending annotation, submit it
     this.submitPendingAnnotation?.(true);
 
@@ -280,8 +355,8 @@ export class Annotations extends VuexModule {
   public async createAnnotation(
     annotationBase: IAnnotationBase,
   ): Promise<IAnnotation | null> {
-    const submited = await this.getAnnotationSubmition(annotationBase);
-    if (!submited) {
+    const submitted = await this.getAnnotationSubmission(annotationBase);
+    if (!submitted) {
       return null;
     }
 

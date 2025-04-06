@@ -348,6 +348,43 @@ export default class ImageViewer extends Vue {
         description: "Lock/unlock view pan and zoom",
       },
     },
+    {
+      bind: "mod+c",
+      handler: () => {
+        // Check if text is selected - if so, let default behavior happen
+        if (window.getSelection()?.toString()) {
+          return; // Return false to allow the default browser behavior
+        }
+        // Otherwise, copy selected annotations
+        this.annotationStore.copySelectedAnnotations();
+      },
+      data: {
+        section: "Objects",
+        description: "Copy selected objects",
+      },
+    },
+    {
+      bind: "mod+v",
+      handler: () => {
+        // Check if we're in an input or text area
+        const activeElement = document.activeElement;
+        const isEditableElement =
+          activeElement instanceof HTMLInputElement ||
+          activeElement instanceof HTMLTextAreaElement ||
+          activeElement?.hasAttribute("contenteditable");
+
+        if (isEditableElement) {
+          return; // Allow default paste behavior
+        }
+
+        // Otherwise paste annotations
+        this.annotationStore.pasteAnnotations();
+      },
+      data: {
+        section: "Objects",
+        description: "Paste objects",
+      },
+    },
   ];
 
   private refsMounted = false;
