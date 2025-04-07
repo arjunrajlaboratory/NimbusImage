@@ -1,10 +1,11 @@
-from ..helpers.proxiedModel import ProxiedAccessControlledModel
-from girder.constants import AccessType
-from girder.exceptions import ValidationException
+import fastjsonschema
+
 from girder import events
+from girder.constants import AccessType, SortDir
+from girder.exceptions import ValidationException
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
-import fastjsonschema
+from ..helpers.proxiedModel import ProxiedAccessControlledModel
 
 
 class PropertySchema:
@@ -45,7 +46,12 @@ class AnnotationPropertyValues(ProxiedAccessControlledModel):
 
     def __init__(self):
         super().__init__()
-        self.ensureIndices(["annotationId", "datasetId"])
+        compoundSearchIndex = (
+            ('_id', SortDir.ASCENDING),
+            ('datasetId', SortDir.ASCENDING)
+        )
+        self.ensureIndices([(compoundSearchIndex, {}),
+                            "annotationId", "datasetId"])
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(PropertySchema.annotationPropertySchema)
