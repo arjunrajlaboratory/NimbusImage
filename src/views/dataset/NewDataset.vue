@@ -89,12 +89,12 @@
         exists. Please update the dataset name field and try again.
       </v-alert>
       <v-alert v-if="fileSizeExceeded" text type="error">
-        Total file size ({{ totalSizeMB }} MB) exceeds the maximum allowed size
+        Total file size ({{ totalSizeString }}) exceeds the maximum allowed size
         of
         {{
           maxTotalFileSize === Infinity
             ? "No file size limit"
-            : `${maxTotalFileSize} MB`
+            : maxTotalFileSizeString
         }}
       </v-alert>
       <v-alert v-if="invalidLocation" text type="error">
@@ -107,7 +107,9 @@
         v-if="!quickupload || pipelineError"
       >
         <div>
-          <span class="mr-2">File size limit: {{ maxTotalFileSize }} MB</span>
+          <span class="mr-2"
+            >File size limit: {{ maxTotalFileSizeString }}</span
+          >
           <span v-if="maxApiKeyFileSize" class="mr-2">
             (using special permission code)</span
           >
@@ -175,6 +177,7 @@ import { logError } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
 import { importAnnotationsFromData } from "@/utils/annotationImport";
+import { formatSize } from "@/utils/conversion";
 
 const allTriggers = Object.values(triggersPerCategory).flat();
 
@@ -415,13 +418,17 @@ export default class NewDataset extends Vue {
     }
   }
 
-  get totalSizeMB() {
+  get totalSizeString() {
     if (!this.uploadedFiles) return 0;
     const totalBytes = this.uploadedFiles.reduce(
       (sum, file) => sum + file.size,
       0,
     );
-    return (totalBytes / 1024 / 1024).toFixed(1);
+    return formatSize(totalBytes);
+  }
+
+  get maxTotalFileSizeString() {
+    return formatSize(this.maxTotalFileSize);
   }
 
   async mounted() {
@@ -459,21 +466,21 @@ export default class NewDataset extends Vue {
       return null;
     }
 
-    // Note that the maxTotalFileSize is expected to be in MB,
-    // so we need to convert the scope to MB
+    // Note that the maxTotalFileSize is expected to be in bytes,
+    // so we need to convert the scope to bytes
     const sizeMap: Record<string, number> = {
-      "nimbus.upload.limit.500mb": 500,
-      "nimbus.upload.limit.1gb": 1 * 1024,
-      "nimbus.upload.limit.2gb": 2 * 1024,
-      "nimbus.upload.limit.5gb": 5 * 1024,
-      "nimbus.upload.limit.10gb": 10 * 1024,
-      "nimbus.upload.limit.20gb": 20 * 1024,
-      "nimbus.upload.limit.50gb": 50 * 1024,
-      "nimbus.upload.limit.100gb": 100 * 1024,
-      "nimbus.upload.limit.200gb": 200 * 1024,
-      "nimbus.upload.limit.500gb": 500 * 1024,
-      "nimbus.upload.limit.1tb": 1 * 1024 * 1024,
-      "nimbus.upload.limit.2tb": 2 * 1024 * 1024,
+      "nimbus.upload.limit.500mb": 500 * 1024 * 1024,
+      "nimbus.upload.limit.1gb": 1 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.2gb": 2 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.5gb": 5 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.10gb": 10 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.20gb": 20 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.50gb": 50 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.100gb": 100 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.200gb": 200 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.500gb": 500 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.1tb": 1 * 1024 * 1024 * 1024 * 1024,
+      "nimbus.upload.limit.2tb": 2 * 1024 * 1024 * 1024 * 1024,
     };
 
     // Find the first matching scope and return its byte value
@@ -561,7 +568,7 @@ export default class NewDataset extends Vue {
       : [];
 
     const totalSize = fileUploads.reduce((sum, { file }) => sum + file.size, 0);
-    const maxSizeBytes = this.maxTotalFileSize * 1024 * 1024;
+    const maxSizeBytes = this.maxTotalFileSize;
 
     if (totalSize > maxSizeBytes) {
       this.fileSizeExceeded = true;
