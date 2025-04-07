@@ -24,16 +24,16 @@
             <p v-html="selectedDataset.metadata.description"></p>
 
             <v-subheader
-              >Files ({{ filteredFiles.length }} image files out of
-              {{ selectedDataset.files.length }} total)</v-subheader
-            >
+              >{{ filteredFiles.length }} image files out of
+              {{ selectedDataset.files.length }} total dataset files
+            </v-subheader>
             <v-list dense>
               <v-list-item v-for="file in filteredFiles" :key="file.id">
                 <v-list-item-content>
                   <v-list-item-title>{{ file.key }}</v-list-item-title>
-                  <v-list-item-subtitle>{{
-                    formatSize(file.size)
-                  }}</v-list-item-subtitle>
+                  <v-list-item-subtitle
+                    >{{ formatSize(file.size) }}
+                  </v-list-item-subtitle>
                 </v-list-item-content>
               </v-list-item>
             </v-list>
@@ -188,60 +188,22 @@ export default class ZenodoImporter extends Vue {
       // Download each file from Zenodo
       for (let i = 0; i < imageFiles.length; i++) {
         const file = imageFiles[i];
-        this.currentFile = `Downloading ${file.key}...`;
-
-        // Set initial progress for this file
-        this.importProgress = (i / imageFiles.length) * 100;
-
-        const fileIndex = i; // Capture the current index in a closure
-
-        // Download the file with progress updates
-        const blob = await this.zenodoApi.downloadFile(
-          file.links.self,
-          (loaded, total) => {
-            // Calculate overall progress:
-            // - Completed files: (fileIndex / totalFiles) * 100
-            // - Current file: (loaded / total) / totalFiles * 100
-            const completedProgress = (fileIndex / imageFiles.length) * 100;
-            const currentFileProgress =
-              (loaded / total / imageFiles.length) * 100;
-            this.importProgress = completedProgress + currentFileProgress;
-
-            // Update status message
-            this.currentFile = `Downloading ${file.key}... (${Math.round(loaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB)`;
-          },
+        const downloadedImageFile = await this.downloadFile(
+          file,
+          i,
+          imageFiles.length,
         );
-
-        const downloadedImageFile = new File([blob], file.key);
         downloadedImageFiles.push(downloadedImageFile);
       }
 
       // Download non-image files
       for (let i = 0; i < nonImageFiles.length; i++) {
         const file = nonImageFiles[i];
-        this.currentFile = `Downloading ${file.key}...`;
-
-        this.importProgress = (i / nonImageFiles.length) * 100;
-
-        const fileIndex = i; // Capture the current index in a closure
-
-        const blob = await this.zenodoApi.downloadFile(
-          file.links.self,
-          (loaded, total) => {
-            // Calculate overall progress:
-            // - Completed files: (fileIndex / totalFiles) * 100
-            // - Current file: (loaded / total) / totalFiles * 100
-            const completedProgress = (fileIndex / nonImageFiles.length) * 100;
-            const currentFileProgress =
-              (loaded / total / nonImageFiles.length) * 100;
-            this.importProgress = completedProgress + currentFileProgress;
-
-            // Update status message
-            this.currentFile = `Downloading ${file.key}... (${Math.round(loaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB)`;
-          },
+        const downloadedNonImageFile = await this.downloadFile(
+          file,
+          i,
+          nonImageFiles.length,
         );
-
-        const downloadedNonImageFile = new File([blob], file.key);
         downloadedNonImageFiles.push(downloadedNonImageFile);
 
         if (file.key.endsWith("annotations.json")) {
@@ -287,6 +249,41 @@ export default class ZenodoImporter extends Vue {
     if (bytes < 1024 * 1024 * 1024)
       return (bytes / (1024 * 1024)).toFixed(2) + " MB";
     return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+  }
+
+  /**
+   * Downloads a file from Zenodo with progress tracking
+   * @param file The Zenodo file to download
+   * @param fileIndex Current index of the file in the download sequence
+   * @param totalFiles Total number of files to download
+   * @returns A Promise that resolves to the downloaded file as a File object
+   */
+  private async downloadFile(
+    file: IZenodoFile,
+    fileIndex: number,
+    totalFiles: number,
+  ): Promise<File> {
+    this.currentFile = `Downloading ${file.key}...`;
+
+    // Set initial progress for this file
+    this.importProgress = (fileIndex / totalFiles) * 100;
+
+    const blob = await this.zenodoApi.downloadFile(
+      file.links.self,
+      (loaded, total) => {
+        // Calculate overall progress:
+        // - Completed files: (fileIndex / totalFiles) * 100
+        // - Current file: (loaded / total) / totalFiles * 100
+        const completedProgress = (fileIndex / totalFiles) * 100;
+        const currentFileProgress = (loaded / total / totalFiles) * 100;
+        this.importProgress = completedProgress + currentFileProgress;
+
+        // Update status message
+        this.currentFile = `Downloading ${file.key}... (${Math.round(loaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB)`;
+      },
+    );
+
+    return new File([blob], file.key);
   }
 }
 </script>
