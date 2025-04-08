@@ -2,6 +2,23 @@
   <div>
     <v-alert :value="!store.isLoggedIn" color="info">Login to start</v-alert>
     <template v-if="store.isLoggedIn">
+      <v-overlay
+        :value="isNavigating"
+        absolute
+        color="white"
+        opacity="0.8"
+        z-index="9999"
+      >
+        <div class="loading-container">
+          <v-progress-circular
+            indeterminate
+            size="128"
+            color="primary"
+            class="mb-4"
+          ></v-progress-circular>
+          <div class="loading-text">Loading dataset information...</div>
+        </div>
+      </v-overlay>
       <v-container class="home-container">
         <v-row class="home-row">
           <v-col class="fill-height">
@@ -107,14 +124,7 @@
                   >
                     <template v-slot:activator="{ on, attrs }">
                       <v-list-item
-                        @click="
-                          $router.push({
-                            name: 'datasetview',
-                            params: {
-                              datasetViewId: d.datasetView.id,
-                            },
-                          })
-                        "
+                        @click="navigateToDatasetView(d.datasetView.id)"
                       >
                         <v-list-item-content v-bind="attrs" v-on="on">
                           <v-list-item-title>
@@ -245,6 +255,8 @@ export default class Home extends Vue {
 
   formatDateNumber = formatDateNumber; // Import function from utils/date.ts for use in template
 
+  isNavigating: boolean = false;
+
   get location() {
     return this.store.folderLocation;
   }
@@ -365,6 +377,13 @@ export default class Home extends Vue {
   mounted() {
     this.initializeRecentViews();
     this.refreshRecentDatasetDetails();
+    this.isNavigating = false; // Reset navigation state on mount
+  }
+
+  // Add a navigation guard for route changes
+  @Watch("$route")
+  onRouteChange() {
+    this.isNavigating = false;
   }
 
   private async initializeRecentViews() {
@@ -479,6 +498,16 @@ export default class Home extends Vue {
       }
     }
   }
+
+  navigateToDatasetView(datasetViewId: string) {
+    this.isNavigating = true;
+    this.$router.push({
+      name: "datasetview",
+      params: {
+        datasetViewId: datasetViewId,
+      },
+    });
+  }
 }
 </script>
 
@@ -535,6 +564,21 @@ export default class Home extends Vue {
   padding: 0;
   height: auto;
   display: block;
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-text {
+  color: #424242; /* Dark gray text for contrast on white background */
+  font-size: 1.5rem; /* Medium weight for better visibility */
+  font-weight: 500; /* Medium weight for better visibility */
+  margin-top: 16px; /* Space between spinner and text */
+  text-align: center;
 }
 </style>
 
