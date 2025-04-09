@@ -132,6 +132,7 @@
           </v-btn>
         </div>
         <v-progress-linear
+          v-if="transcodeProgress !== undefined"
           :value="transcodeProgress"
           height="20"
           striped
@@ -317,7 +318,7 @@ export default class MultiSourceConfiguration extends Vue {
   showCopySnackbar: boolean = false;
 
   // For progress tracking of the transcoding
-  transcodeProgress: number = 0;
+  transcodeProgress: number | undefined = undefined;
   progressStatusText: string = "";
   totalFrames: number = 0;
   currentFrame: number = 0;
@@ -1194,8 +1195,12 @@ export default class MultiSourceConfiguration extends Vue {
 
     this.logs = "";
     this.isUploading = true;
-    this.transcodeProgress = 0;
-    this.progressStatusText = "Preparing transcoding";
+    this.transcodeProgress = undefined;
+    if (this.transcode) {
+      this.progressStatusText = "Preparing transcoding";
+    } else {
+      this.progressStatusText = "Preparing dataset";
+    }
 
     const eventCallback = (jobData: IJobEventData) => {
       if (jobData.text) {

@@ -165,6 +165,7 @@
               </v-btn>
             </div>
             <v-progress-linear
+              v-if="transcodeProgress !== undefined"
               :value="transcodeProgress"
               height="20"
               striped
