@@ -1,17 +1,18 @@
-from ..helpers.proxiedModel import ProxiedAccessControlledModel
-from girder.exceptions import ValidationException
-from girder.constants import AccessType
-from girder import events
+import fastjsonschema
+import numpy as np
 
 from bson.objectid import ObjectId
+
+from girder import events
+from girder.constants import AccessType, SortDir
+from girder.exceptions import ValidationException
 from girder.models.folder import Folder
 
 from .annotation import Annotation
-from ..helpers.connections import annotationToAnnotationDistance
 
+from ..helpers.connections import annotationToAnnotationDistance
 from ..helpers.fastjsonschema import customJsonSchemaCompile
-import fastjsonschema
-import numpy as np
+from ..helpers.proxiedModel import ProxiedAccessControlledModel
 
 
 class ConnectionSchema:
@@ -40,7 +41,12 @@ class AnnotationConnection(ProxiedAccessControlledModel):
 
     def __init__(self):
         super().__init__()
-        self.ensureIndices(["parentId", "childId", "datasetId"])
+        compoundSearchIndex = (
+            ('_id', SortDir.ASCENDING),
+            ('datasetId', SortDir.ASCENDING)
+        )
+        self.ensureIndices([(compoundSearchIndex, {}),
+                            "parentId", "childId", "datasetId"])
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(ConnectionSchema.connectionSchema)

@@ -1,16 +1,17 @@
-from ..helpers.tasks import runJobRequest
-from ..helpers.proxiedModel import ProxiedAccessControlledModel
-from girder.exceptions import ValidationException, RestException
-from girder.constants import AccessType
-from .propertyValues import AnnotationPropertyValues as PropertiesModel
-from girder import events
+import fastjsonschema
 
 from bson.objectid import ObjectId
 
+from girder import events
+from girder.constants import AccessType, SortDir
+from girder.exceptions import ValidationException, RestException
 from girder.models.folder import Folder
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
-import fastjsonschema
+from ..helpers.proxiedModel import ProxiedAccessControlledModel
+from ..helpers.tasks import runJobRequest
+
+from .propertyValues import AnnotationPropertyValues as PropertiesModel
 
 
 class AnnotationSchema:
@@ -85,7 +86,12 @@ class Annotation(ProxiedAccessControlledModel):
 
     def __init__(self):
         super().__init__()
-        self.ensureIndices(["name", "datasetId", "channel", "location"])
+        compoundSearchIndex = (
+            ('_id', SortDir.ASCENDING),
+            ('datasetId', SortDir.ASCENDING)
+        )
+        self.ensureIndices([(compoundSearchIndex, {}),
+                            "name", "datasetId", "channel", "location"])
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
