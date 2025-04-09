@@ -563,7 +563,6 @@ export default class Home extends Vue {
       },
     });
   }
-
 }
 </script>
 
@@ -663,6 +662,7 @@ export default class Home extends Vue {
   100% {
     box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
   }
+}
 
 .loading-container {
   display: flex;
