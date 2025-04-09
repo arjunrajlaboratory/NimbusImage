@@ -132,6 +132,7 @@
           </v-btn>
         </div>
         <v-progress-linear
+          v-if="transcodeProgress !== undefined"
           :value="transcodeProgress"
           height="20"
           striped
@@ -198,6 +199,7 @@ import { IGirderItem } from "@/girder";
 import { ITileMeta } from "@/store/GirderAPI";
 import { IGeoJSPositionWithTransform, IJobEventData } from "@/store/model";
 import { logError } from "@/utils/log";
+import { parseTranscodeOutput } from "@/utils/strings";
 
 // Possible sources for variables
 enum Sources {
@@ -316,7 +318,7 @@ export default class MultiSourceConfiguration extends Vue {
   showCopySnackbar: boolean = false;
 
   // For progress tracking of the transcoding
-  transcodeProgress: number = 0;
+  transcodeProgress: number | undefined = undefined;
   progressStatusText: string = "";
   totalFrames: number = 0;
   currentFrame: number = 0;
@@ -1193,14 +1195,25 @@ export default class MultiSourceConfiguration extends Vue {
 
     this.logs = "";
     this.isUploading = true;
-    this.transcodeProgress = 0;
-    this.progressStatusText = "Preparing transcoding";
+    this.transcodeProgress = undefined;
+    if (this.transcode) {
+      this.progressStatusText = "Preparing transcoding";
+    } else {
+      this.progressStatusText = "Preparing dataset";
+    }
 
     const eventCallback = (jobData: IJobEventData) => {
       if (jobData.text) {
         this.logs += jobData.text;
         this.$emit("log", this.logs);
-        this.parseTranscodeOutput(jobData.text);
+        const progress = parseTranscodeOutput(jobData.text);
+        this.progressStatusText = progress.progressStatusText;
+        if (progress.transcodeProgress !== undefined)
+          this.transcodeProgress = progress.transcodeProgress;
+        if (progress.currentFrame !== undefined)
+          this.currentFrame = progress.currentFrame;
+        if (progress.totalFrames !== undefined)
+          this.totalFrames = progress.totalFrames;
       }
     };
 
@@ -1256,61 +1269,6 @@ export default class MultiSourceConfiguration extends Vue {
       navigator.clipboard.writeText(this.logs);
       this.showCopySnackbar = true;
     }
-  }
-
-  // Parse transcoding output to update progress bar
-  parseTranscodeOutput(text: string) {
-    // Look for "Processing frame x/y" pattern
-    const frameRegex = /Processing frame (\d+)\/(\d+)/;
-    const fileCreatedRegex = /Created a file of size (\d+)/;
-    const startingRegex = /Started large image conversion/;
-
-    // Check for "Started large image conversion"
-    if (startingRegex.test(text)) {
-      this.progressStatusText = "Starting transcoding";
-      this.transcodeProgress = 5; // Small initial progress
-      return;
-    }
-
-    // Check for frame processing
-    const frameMatch = text.match(frameRegex);
-    if (frameMatch) {
-      const currentFrame = parseInt(frameMatch[1], 10);
-      const totalFrames = parseInt(frameMatch[2], 10);
-
-      this.currentFrame = currentFrame;
-      this.totalFrames = totalFrames;
-      this.transcodeProgress = (currentFrame / totalFrames) * 90; // Use 90% of progress bar for processing
-      this.progressStatusText = `Processing frame ${currentFrame}/${totalFrames}`;
-      return;
-    }
-
-    // Check for file creation
-    const fileCreatedMatch = text.match(fileCreatedRegex);
-    if (fileCreatedMatch) {
-      const fileSize = parseInt(fileCreatedMatch[1], 10);
-      const formattedSize = this.formatFileSize(fileSize);
-      this.transcodeProgress = 99; // Almost complete
-      this.progressStatusText = `Uploading file of size ${formattedSize}`;
-      return;
-    }
-
-    // Check for "Storing result"
-    if (text.includes("Storing result")) {
-      this.transcodeProgress = 100; // Complete
-      this.progressStatusText = "Completing transcoding";
-    }
-  }
-
-  // Format file size in a human-readable way
-  formatFileSize(bytes: number): string {
-    if (bytes === 0) return "0 Bytes";
-
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   }
 }
 </script>

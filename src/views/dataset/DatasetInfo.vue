@@ -311,6 +311,7 @@ import girderResources from "@/store/girderResources";
 import { IDatasetView } from "@/store/model";
 import { IGirderItem, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
+import datasetMetadataImport from "@/store/datasetMetadataImport";
 
 @Component({
   components: {
@@ -560,22 +561,57 @@ export default class DatasetInfo extends Vue {
     if (!this.dataset) {
       return;
     }
+
     const datasetFolder = await this.girderResources.getFolder(this.dataset.id);
     if (!datasetFolder?.parentId) {
       return;
     }
+
+    // Check if we have collection data to use
+    if (
+      datasetMetadataImport.hasCollectionData &&
+      datasetMetadataImport.collectionData
+    ) {
+      try {
+        // Use the collection data as the configuration base
+        const config = await this.store.api.createConfigurationFromBase(
+          this.defaultConfigurationName,
+          "",
+          datasetFolder.parentId,
+          datasetMetadataImport.collectionData,
+        );
+
+        // Clear the collection data after using it
+        datasetMetadataImport.clearCollectionFile();
+
+        const view = await this.store.createDatasetView({
+          configurationId: config.id,
+          datasetId: this.dataset.id,
+        });
+
+        return view;
+      } catch (error) {
+        logError("Failed to use downloadedcollection data:", error);
+        // Fall back to default configuration if collection data fails
+      }
+    }
+
+    // Default configuration creation (existing code)
     const config = await this.store.createConfiguration({
       name: this.defaultConfigurationName,
       description: "",
       folderId: datasetFolder.parentId,
     });
+
     if (!config) {
       return;
     }
+
     const view = await this.store.createDatasetView({
       configurationId: config.id,
       datasetId: this.dataset.id,
     });
+
     return view;
   }
 

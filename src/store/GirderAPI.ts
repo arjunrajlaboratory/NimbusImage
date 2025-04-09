@@ -467,6 +467,32 @@ export default class GirderAPI {
     return this.client.post("folder", data).then((r) => asDataset(r.data));
   }
 
+  createFolder(
+    name: string,
+    parentFolder: IGirderSelectAble,
+    metadata: any = {},
+  ): Promise<IGirderFolder> {
+    const data = new FormData();
+    data.set("parentType", parentFolder._modelType);
+    data.set("parentId", parentFolder._id);
+    data.set("name", name);
+    data.set("reuseExisting", "false");
+
+    // First create the folder
+    return this.client.post("folder", data).then((response) => {
+      const folder = response.data;
+
+      // Then set metadata if provided
+      if (Object.keys(metadata).length > 0) {
+        return this.client
+          .put(`folder/${folder._id}/metadata`, metadata)
+          .then(() => folder);
+      }
+
+      return folder;
+    });
+  }
+
   importDataset(path: IGirderSelectAble): Promise<IDataset> {
     return this.client
       .put(`/folder/${path._id}/metadata`, {

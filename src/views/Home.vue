@@ -23,9 +23,18 @@
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4 section-title text-h5"
-                >Upload dataset</v-subheader
-              >
+              <div class="d-flex justify-space-between align-center mb-4">
+                <div class="text-h5">Upload dataset</div>
+                <v-btn
+                  v-if="Boolean(zenodoCommunityId)"
+                  color="success"
+                  class="py-2 pulse-btn"
+                  @click="showCommunityDisplay = true"
+                >
+                  <v-icon left size="20">mdi-database-import</v-icon>
+                  Try a Sample Dataset
+                </v-btn>
+              </div>
               <v-row class="flex-column">
                 <!-- Quick Upload -->
                 <v-card
@@ -183,6 +192,16 @@
                 >Browse</v-subheader
               >
               <div class="scrollable">
+                <v-dialog
+                  v-model="showZenodoImporter"
+                  max-width="1000px"
+                  scrollable
+                >
+                  <zenodo-importer
+                    :dataset="selectedZenodoDataset"
+                    @close="showZenodoImporter = false"
+                  />
+                </v-dialog>
                 <custom-file-manager
                   :location="location"
                   @update:location="onLocationUpdate"
@@ -218,6 +237,14 @@
       style="display: none"
       @change="handleFileSelect"
     />
+
+    <v-dialog v-model="showCommunityDisplay" max-width="1000px" scrollable>
+      <zenodo-community-display
+        :communityId="zenodoCommunityId"
+        @close="showCommunityDisplay = false"
+        @dataset-selected="handleSampleDatasetSelected"
+      />
+    </v-dialog>
   </div>
 </template>
 
@@ -236,6 +263,8 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
+import ZenodoImporter from "@/components/ZenodoImporter.vue";
+import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
 import { formatDateNumber } from "@/utils/date";
 import { logError } from "@/utils/log";
@@ -246,12 +275,17 @@ import { logError } from "@/utils/log";
     FileDropzone,
     GirderLocationChooser,
     CustomFileManager,
+    ZenodoImporter,
+    ZenodoCommunityDisplay,
   },
 })
 export default class Home extends Vue {
   readonly store = store;
   readonly girderResources = girderResources;
   readonly isDatasetFolder = isDatasetFolder;
+  // Normally, this environment variable would be set:
+  // export VITE_ZENODO_SAMPLES="nimbusimagesampledatasets"
+  readonly zenodoCommunityId = import.meta.env.VITE_ZENODO_SAMPLES;
 
   formatDateNumber = formatDateNumber; // Import function from utils/date.ts for use in template
 
@@ -267,6 +301,8 @@ export default class Home extends Vue {
 
   isDraggingQuick: boolean = false;
   isDraggingAdvanced: boolean = false;
+  showZenodoImporter: boolean = false;
+  showCommunityDisplay: boolean = false;
 
   private activeUploadType: "quick" | "advanced" | null = null;
 
@@ -499,6 +535,25 @@ export default class Home extends Vue {
     }
   }
 
+  toggleZenodoImporter(): void {
+    this.showZenodoImporter = true;
+    // Scroll to the Browse section where the ZenodoImporter is displayed
+    this.$nextTick(() => {
+      const browseSection = document.querySelector(".home-row:nth-of-type(2)");
+      if (browseSection) {
+        browseSection.scrollIntoView({ behavior: "smooth" });
+      }
+    });
+  }
+
+  handleSampleDatasetSelected(dataset: any) {
+    this.selectedZenodoDataset = dataset;
+    this.showCommunityDisplay = false;
+    this.showZenodoImporter = true;
+  }
+
+  selectedZenodoDataset: any = null;
+
   navigateToDatasetView(datasetViewId: string) {
     this.isNavigating = true;
     this.$router.push({
@@ -564,6 +619,49 @@ export default class Home extends Vue {
   padding: 0;
   height: auto;
   display: block;
+}
+
+.pulse-btn {
+  animation: subtle-pulse 0.75s 1 ease-in-out;
+  transition: all 0.3s ease;
+  position: relative; /* Needed for the pseudo-element */
+}
+
+/* Use a pseudo-element for the pulsing effect to avoid affecting the button content */
+.pulse-btn::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
+  animation: subtle-pulse-shadow 9s 3 ease-in-out;
+}
+
+@keyframes subtle-pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes subtle-pulse-shadow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+  }
 }
 
 .loading-container {

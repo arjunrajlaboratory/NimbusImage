@@ -146,9 +146,39 @@
         />
         <div class="title mb-2">Configuring the dataset</div>
         <v-progress-circular indeterminate />
-        <div class="code-container" v-if="configurationLogs">
-          <code class="code-block">{{ configurationLogs }}</code>
-        </div>
+
+        <!-- Transcoding progress bar and status for the quickupload path -->
+        <v-card class="mt-4" v-if="configurationLogs && !pipelineError">
+          <v-card-text>
+            <div class="d-flex align-center mb-2">
+              <div class="text-subtitle-1 mr-3">{{ progressStatusText }}</div>
+              <v-spacer></v-spacer>
+              <v-btn
+                small
+                text
+                color="info"
+                @click="showLogDialog = true"
+                class="ml-2"
+              >
+                <v-icon small left>mdi-text-box-outline</v-icon>
+                View Log
+              </v-btn>
+            </div>
+            <v-progress-linear
+              v-if="transcodeProgress !== undefined"
+              :value="transcodeProgress"
+              height="20"
+              striped
+              color="primary"
+            >
+              <template v-slot:default>
+                <span class="white--text"
+                  >{{ Math.ceil(transcodeProgress) }}%</span
+                >
+              </template>
+            </v-progress-linear>
+          </v-card-text>
+        </v-card>
       </template>
       <template v-if="creatingView">
         <div class="title mb-2">Configuring the dataset</div>
@@ -159,10 +189,45 @@
         />
       </template>
     </template>
+
+    <!-- Log Dialog -->
+    <v-dialog v-model="showLogDialog" max-width="800px">
+      <v-card>
+        <v-card-title class="headline">
+          Transcoding Log
+          <v-spacer></v-spacer>
+          <v-tooltip bottom>
+            <template v-slot:activator="{ on, attrs }">
+              <v-btn icon v-bind="attrs" v-on="on" @click="copyLogToClipboard">
+                <v-icon>mdi-content-copy</v-icon>
+              </v-btn>
+            </template>
+            <span>Copy to clipboard</span>
+          </v-tooltip>
+          <v-btn icon @click="showLogDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-card-text>
+          <pre class="job-log">{{ configurationLogs }}</pre>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="primary" text @click="showLogDialog = false"
+            >Close</v-btn
+          >
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Snackbar for copy notification -->
+    <v-snackbar v-model="showCopySnackbar" :timeout="2000" color="success" top>
+      Log copied to clipboard
+    </v-snackbar>
   </v-container>
 </template>
 <script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IGirderApiKey, IGirderLocation } from "@/girder";
@@ -175,7 +240,10 @@ import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
 import { logError } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
+import datasetMetadataImport from "@/store/datasetMetadataImport";
+import { importAnnotationsFromData } from "@/utils/annotationImport";
 import { formatSize } from "@/utils/conversion";
+import { parseTranscodeOutput } from "@/utils/strings";
 
 const allTriggers = Object.values(triggersPerCategory).flat();
 
@@ -266,6 +334,12 @@ export default class NewDataset extends Vue {
   @Prop()
   readonly initialUploadLocation!: IGirderLocation;
 
+  @Prop()
+  readonly initialName?: string;
+
+  @Prop()
+  readonly initialDescription?: string;
+
   uploadedFiles: File[] | null = null;
 
   configuring = false;
@@ -290,6 +364,16 @@ export default class NewDataset extends Vue {
   };
 
   configurationLogs = "";
+
+  // For progress tracking of the transcoding
+  transcodeProgress: number | undefined = undefined;
+  progressStatusText: string = "";
+  totalFrames: number = 0;
+  currentFrame: number = 0;
+
+  // For the transcoding log dialog
+  showLogDialog: boolean = false;
+  showCopySnackbar: boolean = false;
 
   pipelineError = false;
 
@@ -426,6 +510,16 @@ export default class NewDataset extends Vue {
   async mounted() {
     this.path = this.initialUploadLocation;
     this.maxApiKeyFileSize = await this.getMaxUploadSize();
+
+    // Use initial name and description from props if provided
+    // Currently used for Zenodo imports
+    if (this.initialName) {
+      this.name = this.initialName;
+    }
+
+    if (this.initialDescription) {
+      this.description = this.initialDescription;
+    }
   }
 
   async getMaxUploadSize() {
@@ -478,7 +572,16 @@ export default class NewDataset extends Vue {
   async uploadMounted() {
     this.$refs.uploader?.inputFilesChanged(this.files);
     if (this.quickupload) {
-      this.name = formatDate(new Date()) + " - " + this.recommendedName;
+      if (this.initialName) {
+        this.name = this.initialName + " - " + formatDate(new Date());
+      } else {
+        this.name = this.recommendedName + " - " + formatDate(new Date());
+      }
+
+      if (this.initialDescription) {
+        this.description = this.initialDescription;
+      }
+
       await Vue.nextTick(); // "name" prop is set in the form
       await Vue.nextTick(); // this.valid is updated
 
@@ -631,6 +734,22 @@ export default class NewDataset extends Vue {
     await this.store.setSelectedDataset(this.dataset!.id);
     this.configuring = false;
 
+    // Check if we have annotation data to import
+    if (
+      datasetMetadataImport.hasAnnotationData &&
+      datasetMetadataImport.annotationData
+    ) {
+      try {
+        // Import annotations using the default import options
+        await importAnnotationsFromData(datasetMetadataImport.annotationData);
+        // Clear the annotation data after successful import
+        datasetMetadataImport.clearAnnotationFile();
+      } catch (error) {
+        logError("Failed to import annotations:", error);
+        // Continue with view creation even if annotation import fails
+      }
+    }
+
     // Create a default dataset view for this dataset
     this.creatingView = true;
     await Vue.nextTick();
@@ -653,11 +772,48 @@ export default class NewDataset extends Vue {
     // Go to the viewer
     this.$router.push(route);
   }
+
+  // Watch for changes in the logs and parse them to update progress
+  @Watch("configurationLogs")
+  onConfigurationLogsChange() {
+    if (this.configuring && this.configurationLogs) {
+      const progress = parseTranscodeOutput(this.configurationLogs);
+      this.progressStatusText = progress.progressStatusText;
+      if (progress.transcodeProgress !== undefined)
+        this.transcodeProgress = progress.transcodeProgress;
+      if (progress.currentFrame !== undefined)
+        this.currentFrame = progress.currentFrame;
+      if (progress.totalFrames !== undefined)
+        this.totalFrames = progress.totalFrames;
+    }
+  }
+
+  // Copy log to clipboard
+  copyLogToClipboard() {
+    if (navigator.clipboard && this.configurationLogs) {
+      navigator.clipboard.writeText(this.configurationLogs);
+      this.showCopySnackbar = true;
+    }
+  }
 }
 </script>
 
 <style lang="scss">
 .new-dataset-upload .files-list {
   max-height: 260px;
+}
+
+.job-log {
+  max-height: 400px;
+  min-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-family: monospace;
+  font-size: 12px;
+  background-color: rgba(0, 0, 0, 0.05);
+  padding: 12px;
+  border-radius: 4px;
+  width: 100%;
+  color: rgba(255, 255, 255, 0.85);
 }
 </style>
