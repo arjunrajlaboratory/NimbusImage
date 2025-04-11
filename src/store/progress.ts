@@ -236,11 +236,15 @@ class Progress extends VuexModule {
       datasetId,
       eventCallback: (jobInfo) => {
         // Check for completion first
-        if (
-          [jobStates.success, jobStates.error].includes(jobInfo.status || 0)
-        ) {
-          this.complete(progressId);
-          return;
+        if (jobInfo.status !== undefined) {
+          if (
+            [jobStates.success, jobStates.error, jobStates.inactive].includes(
+              jobInfo.status,
+            )
+          ) {
+            this.complete(progressId);
+            return;
+          }
         }
 
         // If we have text with a frame number, treat it as progress
@@ -263,7 +267,11 @@ class Progress extends VuexModule {
     // Sometimes the job completes before the callback even fires (for small images)
     // So we check the status here to make sure we don't leave a progress item hanging
     const status = await jobs.getJobStatus(jobId);
-    if ([jobStates.success, jobStates.error].includes(status)) {
+    if (status === undefined) {
+      this.complete(progressId);
+    } else if (
+      [jobStates.success, jobStates.error, jobStates.inactive].includes(status)
+    ) {
       this.complete(progressId);
     }
   }
