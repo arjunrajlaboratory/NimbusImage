@@ -27,6 +27,9 @@ def provision(opts):
         # tiled frames
         Setting().set("large_image.max_thumbnail_files", 400)
 
+        # Automatically try to use all files as large images.
+        Setting().set("large_image.auto_set", "all")
+
         # This is how the worker addresses the server.  If the worker is on a
         # separate machine, this would need to change
         Setting().set("worker.api_url", "http://girder:8080/api/v1")
