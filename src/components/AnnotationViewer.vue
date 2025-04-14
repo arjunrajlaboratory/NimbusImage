@@ -2989,12 +2989,17 @@ export default class AnnotationViewer extends Vue {
   handleColorSubmit({
     useColorFromLayer,
     color,
+    randomize,
   }: {
     useColorFromLayer: boolean;
     color: string;
+    randomize?: boolean;
   }) {
     const newColor = useColorFromLayer ? null : color;
-    this.annotationStore.colorSelectedAnnotations(newColor);
+    this.annotationStore.colorSelectedAnnotations({
+      color: newColor,
+      randomize,
+    });
   }
 
   // Drag handlers

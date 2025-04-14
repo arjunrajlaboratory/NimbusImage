@@ -54,6 +54,10 @@
               <div>
                 <div class="text-subtitle-2 mb-2">Set Color for Tag</div>
                 <v-radio-group v-model="colorOption" class="mt-0">
+                  <v-radio
+                    value="layer"
+                    label="Default to color of layer"
+                  ></v-radio>
                   <v-radio value="defined" label="Defined color"></v-radio>
                   <v-radio value="random" label="Random color"></v-radio>
                 </v-radio-group>
@@ -171,10 +175,14 @@ export default class TagCloudPicker extends Vue {
     );
     const annotationIds = annotationsWithTag.map((a: IAnnotation) => a.id);
 
+    // Determine the color based on the selected option
+    const isRandomColor = this.colorOption === "random";
+    const color = this.colorOption === "layer" ? null : this.tagColor;
+
     await this.annotationStore.colorAnnotationIds({
       annotationIds,
-      color: this.tagColor,
-      randomize: this.colorOption === "random",
+      color,
+      randomize: isRandomColor,
     });
   }
 }

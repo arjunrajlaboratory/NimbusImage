@@ -980,7 +980,13 @@ export class Annotations extends VuexModule {
   }
 
   @Action
-  public colorSelectedAnnotations(color: string | null, randomize?: boolean) {
+  public colorSelectedAnnotations({
+    color,
+    randomize = false,
+  }: {
+    color: string | null;
+    randomize?: boolean;
+  }) {
     this.colorAnnotationIds({
       annotationIds: this.selectedAnnotationIds,
       color,
