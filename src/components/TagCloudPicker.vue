@@ -53,7 +53,18 @@
               <v-divider class="my-3"></v-divider>
               <div>
                 <div class="text-subtitle-2 mb-2">Set Color for Tag</div>
-                <color-picker-menu v-model="tagColor" />
+                <v-radio-group v-model="colorOption" class="mt-0">
+                  <v-radio
+                    value="layer"
+                    label="Default to color of layer"
+                  ></v-radio>
+                  <v-radio value="defined" label="Defined color"></v-radio>
+                  <v-radio value="random" label="Random color"></v-radio>
+                </v-radio-group>
+                <color-picker-menu
+                  v-model="tagColor"
+                  v-if="colorOption === 'defined'"
+                />
               </div>
             </v-card-text>
             <v-card-actions>
@@ -96,6 +107,7 @@ export default class TagCloudPicker extends Vue {
   allSelectedInternal = false;
   tagSearchFilter: string = "";
   tagColor = "#FFFFFF";
+  colorOption = "defined";
 
   @Watch("allSelectedInternal")
   emiAllSelected() {
@@ -161,11 +173,16 @@ export default class TagCloudPicker extends Vue {
     const annotationsWithTag = this.annotationStore.annotations.filter(
       (annotation: IAnnotation) => annotation.tags.includes(tag),
     );
-    const annotationIds = annotationsWithTag.map((a) => a.id);
+    const annotationIds = annotationsWithTag.map((a: IAnnotation) => a.id);
+
+    // Determine the color based on the selected option
+    const isRandomColor = this.colorOption === "random";
+    const color = this.colorOption === "layer" ? null : this.tagColor;
 
     await this.annotationStore.colorAnnotationIds({
       annotationIds,
-      color: this.tagColor,
+      color,
+      randomize: isRandomColor,
     });
   }
 }

@@ -4,13 +4,17 @@
       <v-card-title class="text-subtitle-1">Edit Annotation</v-card-title>
       <v-card-text>
         <div class="mb-4">
-          <div class="text-subtitle-2 mb-2">Change Colors</div>
-          <v-checkbox
-            v-model="useLayerColor"
-            label="Default to color of layer"
-            class="mb-2"
+          <div class="text-subtitle-2 mb-2">Color Options</div>
+          <v-radio-group v-model="colorOption" class="mt-0">
+            <v-radio value="layer" label="Default to color of layer"></v-radio>
+            <v-radio value="random" label="Random color"></v-radio>
+            <v-radio value="defined" label="Defined color"></v-radio>
+          </v-radio-group>
+          <color-picker-menu
+            v-model="selectedColor"
+            v-if="colorOption === 'defined'"
+            class="mt-2"
           />
-          <color-picker-menu v-model="selectedColor" v-if="!useLayerColor" />
         </div>
         <v-divider class="my-3"></v-divider>
         <div>
@@ -79,7 +83,7 @@ export default class AnnotationContextMenu extends Vue {
 
   selectedColor = "#FFFFFF";
   selectedTags: string[] = [];
-  useLayerColor = false;
+  colorOption = "layer";
   applyToSameTags = false;
   copySuccess = false;
 
@@ -96,7 +100,7 @@ export default class AnnotationContextMenu extends Vue {
   @Watch("annotation", { immediate: true })
   onAnnotationChange() {
     if (this.annotation) {
-      this.useLayerColor = this.annotation.color === null;
+      this.colorOption = this.annotation.color === null ? "layer" : "defined";
       this.selectedColor = this.annotation.color || "#FFFFFF";
       this.selectedTags = [...this.annotation.tags];
       this.applyToSameTags = false;
@@ -112,7 +116,9 @@ export default class AnnotationContextMenu extends Vue {
       return;
     }
 
-    const newColor = this.useLayerColor ? null : this.selectedColor;
+    // Determine color based on selected option
+    const isRandomColor = this.colorOption === "random";
+    const newColor = this.colorOption === "layer" ? null : this.selectedColor;
     const tagsChanged = !this.areTagsEqual(
       this.annotation.tags,
       this.selectedTags,
@@ -131,10 +137,11 @@ export default class AnnotationContextMenu extends Vue {
       );
 
       // Update colors if changed
-      if (this.annotation.color !== newColor) {
+      if (this.annotation.color !== newColor || isRandomColor) {
         this.annotationStore.colorAnnotationIds({
           annotationIds,
           color: newColor,
+          randomize: isRandomColor,
         });
       }
 
@@ -147,10 +154,11 @@ export default class AnnotationContextMenu extends Vue {
       }
     } else {
       // Single annotation updates
-      if (this.annotation.color !== newColor) {
-        this.$emit("save", {
-          annotationId: this.annotation.id,
+      if (this.annotation.color !== newColor || isRandomColor) {
+        this.annotationStore.colorAnnotationIds({
+          annotationIds: [this.annotation.id],
           color: newColor,
+          randomize: isRandomColor,
         });
       }
 

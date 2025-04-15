@@ -3,12 +3,13 @@
     <v-card>
       <v-card-title> Color selected annotations </v-card-title>
       <v-card-text>
-        <v-checkbox
-          v-model="localUseColorFromLayer"
-          label="Use color from layer"
-        />
+        <v-radio-group v-model="colorOption" class="mt-0">
+          <v-radio value="layer" label="Use color from layer"></v-radio>
+          <v-radio value="defined" label="Defined color"></v-radio>
+          <v-radio value="random" label="Random color"></v-radio>
+        </v-radio-group>
         <color-picker-menu
-          v-if="!localUseColorFromLayer"
+          v-if="colorOption === 'defined'"
           v-model="localCustomColor"
         />
       </v-card-text>
@@ -32,7 +33,7 @@ export default class ColorSelectionDialog extends Vue {
   @Prop({ type: Boolean, required: true })
   show!: boolean;
 
-  localUseColorFromLayer: boolean = true;
+  colorOption: string = "layer";
   localCustomColor: string = "#FFFFFF";
 
   get showDialog() {
@@ -45,10 +46,11 @@ export default class ColorSelectionDialog extends Vue {
 
   submit() {
     this.$emit("submit", {
-      useColorFromLayer: this.localUseColorFromLayer,
+      useColorFromLayer: this.colorOption === "layer",
       color: this.localCustomColor,
+      randomize: this.colorOption === "random",
     });
-    this.localUseColorFromLayer = true;
+    this.colorOption = "layer";
     this.localCustomColor = "#FFFFFF";
     this.showDialog = false;
   }

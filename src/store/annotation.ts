@@ -960,21 +960,37 @@ export class Annotations extends VuexModule {
   public colorAnnotationIds({
     color,
     annotationIds,
+    randomize = false,
   }: {
     color: string | null;
     annotationIds: string[];
+    randomize?: boolean;
   }) {
     const editFunction = (annotation: IAnnotation): void => {
-      annotation.color = color;
+      if (randomize) {
+        // Generate a random color if randomize is true
+        const randomColor =
+          "#" + Math.floor(Math.random() * 16777215).toString(16);
+        annotation.color = randomColor;
+      } else {
+        annotation.color = color;
+      }
     };
     this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
-  public colorSelectedAnnotations(color: string | null) {
+  public colorSelectedAnnotations({
+    color,
+    randomize = false,
+  }: {
+    color: string | null;
+    randomize?: boolean;
+  }) {
     this.colorAnnotationIds({
       annotationIds: this.selectedAnnotationIds,
       color,
+      randomize,
     });
   }
 
