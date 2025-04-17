@@ -1,0 +1,230 @@
+name: Welcome to NimbusImage!
+entryPoint: root
+popular: true
+category: Upload
+options:
+  modalOverlay: true
+steps:
+  - id: Welcome
+    route: root
+    title: "Welcome to NimbusImage"
+    text: "Let's get you going with a sample dataset!"
+    position: "bottom"
+    waitForElement: 1000  # 1 second timeout
+
+  - id: try-sample-dataset
+    route: root
+    element: "#try-sample-dataset-tourstep"
+    title: "Try a Sample Dataset"
+    text: "Let's use a sample dataset. Click here to pull up some samples."
+    position: "bottom"
+    onTriggerEvent: "try-sample-dataset-tourtrigger"
+    waitForElement: 1000
+    showNextButton: false
+
+  - id: my-first-dataset
+    route: root
+    element: "#my-first-nimbus-dataset-tourstep"
+    title: "Import sample dataset"
+    text: "This is a sample dataset that you can use to get started."
+    position: "bottom"
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "my-first-nimbus-dataset-tourtrigger"
+    waitForElement: 1000
+
+  - id: zenodo-importer-import-dataset
+    route: root
+    element: "#zenodo-importer-import-dataset-tourstep"
+    title: "Start the import"
+    text: "Click the 'Import Dataset' button to start the import. Then hold tight while the dataset is imported and set up for you."
+    position: "top"
+    waitForElement: 1000
+    showNextButton: false
+    onTriggerEvent: "zenodo-importer-import-dataset-tourtrigger"
+
+  - id: welcome-tourstep
+    route: datasetview
+    title: "Welcome to your new dataset!"
+    text: "This is the NimbusImage Viewer. You can view and analyze your datasets here."
+    position: "bottom"
+    waitForElement: 5000
+    modalOverlay: true
+    showNextButton: true
+  
+  - id: zoom-instruction-tourstep
+    route: datasetview
+    title: "Zooming"
+    text: "Use your mouse wheel or trackpad to zoom in and out of the image."
+    position: "left"
+    modalOverlay: false
+    
+  - id: pan-instruction-tourstep
+    route: datasetview
+    title: "Panning the Image"
+    text: "Click and drag anywhere on the image to pan around."
+    position: "left"
+    modalOverlay: false
+    waitForElement: 1000
+
+  - id: contrast-palette-tourstep
+    route: datasetview
+    element: "#layer-info-tourstep"
+    title: "Contrast settings"
+    text: "Click here to adjust contrast settings for each layer."
+    position: "left"
+    modalOverlay: false
+    waitForElement: 1000
+
+  - id: help-button-tourstep
+    route: datasetview
+    element: "#help-button-tourstep"
+    title: "Help"
+    text: "Click here for documentation and tours."
+    position: "bottom"
+    modalOverlay: true
+    waitForElement: 1000
+
+  - id: chat-button-tourstep
+    route: datasetview
+    element: "#chat-button-tourstep"
+    title: "Chatbot"
+    text: "Click here for the NimbusImage chatbot. It uses AI to 'see' the image and help guide you through the analysis."
+    position: "bottom"
+    modalOverlay: true
+    waitForElement: 1000  
+
+  - id: analysis-tourstep
+    route: datasetview
+    title: "Analysis"
+    text: "Let's try analyzing the image. Analysis begins by finding objects in the image."
+    position: "bottom"
+    waitForElement: 5000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: nucleus
+    route: datasetview
+    element: "#nucleus-tourstep"
+    title: "Click here to activate the nucleus tool"
+    text: "Using this tool, you can manually draw nuclei on the image for further analysis. There are many other automated tools available for making objects as well."
+    position: "right"
+    waitForElement: 5000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "nucleus-tourtrigger"
+
+  - id: draw-nuclei-tourstep
+    route: datasetview
+    title: "Draw a few nuclei"
+    text: "Click and drag to draw a few nuclei on the image."
+    position: "bottom"
+    waitForElement: 5000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: object-list-button-tourstep
+    route: datasetview
+    element: "#object-list-button-tourstep"
+    title: "Object List"
+    text: "Click here to open the object list."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "object-list-button-tourtrigger"
+
+  - id: properties-header-tourstep
+    route: datasetview
+    element: "#properties-header-tourstep"
+    title: "Properties"
+    text: "Properties are what we call various measurements of the objects in the image. For instance, the area of a blob is a property. After you compute properties, they will appear here."
+    position: "left"
+    waitForElement: 1000
+    showNextButton: true
+
+  - id: measure-objects-button-tourstep
+    route: datasetview
+    element: "#measure-objects-button-tourstep"
+    title: "Measure Objects"
+    text: "Click here to open the measure objects panel. That's where we will define the properties we want to calculate."
+    position: "left"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "measure-objects-button-tourtrigger"
+
+  - id: property-tag-picker-tourstep
+    route: datasetview
+    # NOTE (AR): I commented out the element selector because for whatever reason,
+    # some of these elements do not have the right coordinates and so the tour
+    # step is not positioned correctly. Despite many attempts at portals and so on,
+    # I was not able to get it to work, but I'm leaving it here because it is the
+    # desired functionality.
+    # element: "#property-tag-picker-tourstep"
+    title: "Choose objects to measure"
+    text: "Pick the tag selecting the objects you want to calculate the property for. For now, choose 'nucleus'."
+    # position: "right"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: property-algorithm-select-tourstep
+    route: datasetview
+    element: "#property-algorithm-select-tourstep"
+    title: "What you want to measure"
+    text: "Let's measure the 'Blob metrics' for now—things like area and perimeter."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: create-property-button-tourstep
+    route: datasetview
+    # element: "#create-property-button-tourstep"
+    title: "Click on 'Create Property' to create the property"
+    text: "By default, the computation will start automatically."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: false
+    onTriggerEvent: "create-property-button-tourtrigger"
+
+  - id: measure-objects-close-button-tourstep
+    route: datasetview
+    element: "#measure-objects-close-button-tourstep"
+    title: "All done!"
+    text: "Click here to close the measure objects panel. You can close it even while it's still calculating."
+    position: "right"
+    waitForElement: 1000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "measure-objects-close-button-tourtrigger"
+
+  - id: properties-content-tourstep
+    route: datasetview
+    element: "#properties-content-tourstep"
+    title: "List of computed properties"
+    text: "The property you just created will appear here once it's done computing. Click and find the blob metrics and then you will see properties like area, perimeter, and eccentricity. Select the ones you want to see, then click next."
+    position: "left"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: annotation-list-content-tourstep
+    route: datasetview
+    element: "#annotation-list-content-tourstep"
+    title: "List of values"
+    text: "The values you computed are now visible in this list. You can sort and filter by these values or visualize them in the image by hitting 't'."
+    position: "left"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: end-tour-tourstep
+    route: datasetview
+    title: "Made it!"
+    text: "Thanks for taking the tour! Enjoy using NimbusImage!"
+    position: "bottom"
+    waitForElement: 2000
+    showNextButton: true

@@ -1464,6 +1464,24 @@ declare module "vue/types/vue" {
   }
 }
 
+export enum WelcomeTourTypes {
+  HOME = "WelcomeTourType.home",
+  VIEWER = "WelcomeTourType.viewer",
+  ADVANCED_UPLOAD = "WelcomeTourType.advancedUpload",
+}
+
+export enum WelcomeTourStatus {
+  NOT_YET_RUN = "notYetRun", // This value is not strictly required because we can just check whether the key exists.
+  // But if we want to capture more states at some point in the future, it is helpful to keep the option, I suppose.
+  ALREADY_RUN = "alreadyRun",
+}
+
+export const WelcomeTourNames = {
+  [WelcomeTourTypes.HOME]: "WelcomeTourHome",
+  [WelcomeTourTypes.VIEWER]: "WelcomeTourViewer",
+  [WelcomeTourTypes.ADVANCED_UPLOAD]: "WelcomeTourAdvancedUpload",
+};
+
 // https://opengeoscience.github.io/geojs/apidocs/geo.util.html#.pixelCoordinateParams
 export interface IGeoJSPixelCoordinateParams {
   map: IGeoJSMapSpec;

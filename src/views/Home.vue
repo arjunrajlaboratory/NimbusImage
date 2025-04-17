@@ -26,10 +26,12 @@
               <div class="d-flex justify-space-between align-center mb-4">
                 <div class="text-h5">Upload dataset</div>
                 <v-btn
+                  id="try-sample-dataset-tourstep"
                   v-if="Boolean(zenodoCommunityId)"
                   color="success"
                   class="py-2 pulse-btn"
                   @click="showCommunityDisplay = true"
+                  v-tour-trigger="'try-sample-dataset-tourtrigger'"
                 >
                   <v-icon left size="20">mdi-database-import</v-icon>
                   Try a Sample Dataset
@@ -258,7 +260,12 @@ import {
   IGirderSelectAble,
 } from "@/girder";
 import girderResources from "@/store/girderResources";
-import { IDatasetView } from "@/store/model";
+import {
+  IDatasetView,
+  WelcomeTourNames,
+  WelcomeTourTypes,
+  WelcomeTourStatus,
+} from "@/store/model";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
@@ -268,6 +275,7 @@ import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
 import { formatDateNumber } from "@/utils/date";
 import { logError } from "@/utils/log";
+import Persister from "@/store/Persister";
 
 @Component({
   components: {
@@ -413,7 +421,24 @@ export default class Home extends Vue {
   mounted() {
     this.initializeRecentViews();
     this.refreshRecentDatasetDetails();
+    this.initializeWelcomeTour();
     this.isNavigating = false; // Reset navigation state on mount
+  }
+
+  async initializeWelcomeTour() {
+    // Check if tour status exists, returns default of "notYetRun" if not
+    // Note that currently, the value will never actually be NOT_YET_RUN, but
+    // if we want to capture multiple statuses in the future, it might be useful.
+    const tourStatus = Persister.get(
+      WelcomeTourTypes.HOME,
+      WelcomeTourStatus.NOT_YET_RUN,
+    );
+
+    // If it was the default value of NOT_YET_RUN, then update the status and start tour
+    if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
+      Persister.set(WelcomeTourTypes.HOME, WelcomeTourStatus.ALREADY_RUN);
+      this.$startTour(WelcomeTourNames[WelcomeTourTypes.HOME]);
+    }
   }
 
   // Add a navigation guard for route changes

@@ -1,7 +1,10 @@
 <template>
   <v-container>
     <v-card>
-      <v-card-title class="d-flex justify-space-between align-center">
+      <v-card-title
+        class="d-flex justify-space-between align-center"
+        id="zenodo-community-display-tourstep"
+      >
         Sample Datasets
         <v-btn icon @click="$emit('close')">
           <v-icon>mdi-close</v-icon>
@@ -44,6 +47,8 @@
               hover
               class="h-100 sample-dataset-card"
               @click="selectDataset(dataset)"
+              :id="getTourStepId(dataset.title)"
+              v-tour-trigger="getTourTriggerId(dataset.title)"
             >
               <v-card-title>{{ dataset.title }}</v-card-title>
               <v-card-subtitle>
@@ -100,6 +105,7 @@ import ZenodoAPI, {
   IZenodoCommunity,
 } from "@/store/ZenodoAPI";
 import { logError } from "@/utils/log";
+import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 
 @Component
 export default class ZenodoCommunityDisplay extends Vue {
@@ -110,6 +116,9 @@ export default class ZenodoCommunityDisplay extends Vue {
   readonly pageSize!: number;
 
   private zenodoApi = new ZenodoAPI(store.girderRestProxy);
+
+  getTourStepId = getTourStepId;
+  getTourTriggerId = getTourTriggerId;
 
   community: IZenodoCommunity | null = null;
   datasets: IZenodoRecord[] = [];
