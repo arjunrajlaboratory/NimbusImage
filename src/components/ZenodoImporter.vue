@@ -81,6 +81,8 @@
           color="primary"
           :disabled="!canImport || importing"
           @click="importSelectedDataset"
+          id="zenodo-importer-import-dataset-tourstep"
+          v-tour-trigger="'zenodo-importer-import-dataset-tourtrigger'"
         >
           Import Dataset
         </v-btn>

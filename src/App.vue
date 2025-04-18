@@ -71,7 +71,13 @@
       <div class="mx-4 d-flex align-center">
         <v-menu offset-y>
           <template v-slot:activator="{ on, attrs }">
-            <v-btn icon v-bind="attrs" v-on="on">
+            <v-btn
+              icon
+              v-bind="attrs"
+              v-on="on"
+              id="help-button-tourstep"
+              v-tour-trigger="'help-button-tourtrigger'"
+            >
               <v-icon>mdi-help-circle-outline</v-icon>
             </v-btn>
           </template>
@@ -144,7 +150,12 @@
             'Open NimbusImage chat for help with solving your particular image analysis problems'
           "
         >
-          <v-btn icon @click="chatbotOpen = !chatbotOpen">
+          <v-btn
+            icon
+            @click="chatbotOpen = !chatbotOpen"
+            id="chat-button-tourstep"
+            v-tour-trigger="'chat-button-tourtrigger'"
+          >
             <v-icon>mdi-chat</v-icon>
           </v-btn>
         </span>
