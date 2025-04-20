@@ -88,6 +88,7 @@ import { IGirderSelectAble } from "@/girder";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { logError } from "@/utils/log";
+import { IDatasetView } from "@/store/GirderAPI";
 
 interface CollectionInfo {
   id: string;
@@ -110,6 +111,7 @@ export default class ShareDataset extends Vue {
   isSharing: boolean = false;
   showUserError: boolean = false;
   accessLevel: string = "private";
+  associatedViews: IDatasetView[] = [];
 
   @Watch("value")
   onValueChanged(val: boolean) {
@@ -124,6 +126,7 @@ export default class ShareDataset extends Vue {
       this.showUserError = false;
       this.isSharing = false;
       this.accessLevel = "private";
+      this.associatedViews = [];
     }
   }
 
@@ -136,8 +139,10 @@ export default class ShareDataset extends Vue {
     this.loading = true;
     this.associatedCollections = [];
     this.selectedCollections = [];
+    this.associatedViews = [];
     try {
       const views = await this.store.api.findDatasetViews({ datasetId });
+      this.associatedViews = views;
       const collectionPromises = views.map(async (view) => {
         try {
           const configInfo = await this.girderResources.getItem(
@@ -195,7 +200,10 @@ export default class ShareDataset extends Vue {
 
     // Placeholder for actual share logic
     console.log(
-      `Sharing dataset ${this.dataset?.name} (ID: ${this.dataset?._id}) with collections: ${this.selectedCollections.join(", ")} to user ${this.usernameOrEmail} with ${this.accessLevel} access`,
+      `Sharing dataset ${this.dataset?.name} (ID: ${this.dataset?._id}) ` +
+        `with collections: ${this.selectedCollections.join(", ")} ` +
+        `(Dataset View IDs: ${this.associatedViews.map((v) => v.id).join(", ")}) ` +
+        `to user ${this.usernameOrEmail} with ${this.accessLevel} access`,
     );
     this.close(); // Close dialog on successful share
   }
