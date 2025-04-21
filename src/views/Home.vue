@@ -425,7 +425,20 @@ export default class Home extends Vue {
     this.isNavigating = false; // Reset navigation state on mount
   }
 
+  @Watch("store.isLoggedIn")
+  onLoginStatusChange(isLoggedIn: boolean) {
+    if (isLoggedIn) {
+      // User has just logged in, try initializing the tour
+      this.initializeWelcomeTour();
+    }
+  }
+
   async initializeWelcomeTour() {
+    // Only proceed if the user is logged in
+    if (!this.store.isLoggedIn) {
+      return;
+    }
+
     // Check if tour status exists, returns default of "notYetRun" if not
     // Note that currently, the value will never actually be NOT_YET_RUN, but
     // if we want to capture multiple statuses in the future, it might be useful.
