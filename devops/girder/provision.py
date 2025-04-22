@@ -1,6 +1,5 @@
 import argparse
 import sys
-import large_image
 
 from girder.models.assetstore import Assetstore
 from girder.models.setting import Setting
