@@ -4,7 +4,7 @@
 
 ## Documentation
 
-See this [gitbook](https://arjun-raj-lab.gitbook.io/nimbusimage) for documentation.
+See this [gitbook](https://docs.nimbusimage.com) for documentation.
 
 ## System requirements
 
@@ -38,7 +38,7 @@ npm i -g pnpm
 Clone the repo and install node modules:
 
 ```sh
-git clone https://github.com/Kitware/UPennContrast.git
+git clone https://github.com/arjunrajlaboratory/NimbusImage.git
 cd UPennContrast
 pnpm install
 ```
@@ -98,9 +98,9 @@ Go to a new directory (NOT the `UPennContrast` directory) and run
 ```sh
 git clone https://github.com/arjunrajlab/ImageAnalysisProject
 chmod +x build_machine_learning_workers.sh
-chmod +x build_all_property_and_annotation_workers.sh
+chmod +x build_workers.sh
 ./build_machine_learning_workers.sh
-./build_all_property_and_annotation_workers.sh
+./build_workers.sh
 ```
 
 That will install all the workers. The machine learning workers will run on CPU on Linux if a GPU is not available, although will run much more slowly.
@@ -111,8 +111,8 @@ IMPORTANT: by default, a admin user will be created with the name `admin` and th
 
 ## Demo and test data
 
-[Quick start](https://arjun-raj-lab.gitbook.io/nimbusimage/quick-start)
-[Vignettes](https://arjun-raj-lab.gitbook.io/nimbusimage/vignettes)
+[Quick start](https://docs.nimbusimage.com/quick-start)
+[Vignettes](https://docs.nimbusimage.com/vignettes)
 
 [Test dataset with RNA FISH images](https://www.dropbox.com/scl/fi/hyg3bou153fnq6lye3zlb/DDX58_AXL_EGFR_well2.nd2?rlkey=lf00zmmkqv4hc7c6fy9qgqvfp&dl=0)
 [Test N-dimensional dataset with GFP labeled nuclei](https://www.dropbox.com/scl/fi/rakjixk7ei3b31h41nso5/normmedia_8well_col2_livecellgfp.nd2?rlkey=vjqiftvcqlihl692b8xsr79rd&dl=0)
@@ -126,11 +126,12 @@ To change the default settings of the landing pange for unauthenticated users, c
 VITE_GIRDER_URL=http://localhost:8080
 VITE_DEFAULT_USER=User
 VITE_DEFAULT_PASSWORD=Password
+VITE_ZENODO_SAMPLES="nimbusimagesampledatasets"
 ```
 
 The users that already opened the app once will have the field "Girder Domain" filled with the last domain they used. Otherwise, the `VITE_GIRDER_URL` variable will be used. If the default user and password are set, the app will try to log in with these credentials.
 
-### Compiles and minifies for production
+### Compile and minify for production
 
 To compile for production, run this command:
 
@@ -169,8 +170,8 @@ pnpm tsc
 
 See [Configuration Reference](https://cli.vuejs.org/config/).
 
-[github-actions-image]: https://github.com/Kitware/UPennContrast/workflows/node/badge.svg
-[github-actions-url]: https://github.com/Kitware/UPennContrast/actions
+[github-actions-image]: https://github.com/arjunrajlaboratory/NimbusImage/workflows/node/badge.svg
+[github-actions-url]: https://github.com/arjunrajlaboratory/NimbusImage/actions
 
 ## Credits
 
