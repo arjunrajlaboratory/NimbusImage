@@ -39,7 +39,7 @@ Clone the repo and install node modules:
 
 ```sh
 git clone https://github.com/arjunrajlaboratory/NimbusImage.git
-cd UPennContrast
+cd NimbusImage
 pnpm install
 ```
 
