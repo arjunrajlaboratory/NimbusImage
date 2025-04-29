@@ -88,7 +88,7 @@ export function editPolygonAnnotation(
     return annotation.coordinates;
   }
 
-  const polygon = annotation.coordinates;
+  let polygon = annotation.coordinates;
 
   // Find all intersections
   const intersections = findAllIntersections(polygon, newLine);
@@ -131,36 +131,95 @@ export function editPolygonAnnotation(
     return polygon;
   }
 
+  // If the first intersection is after the last intersection, we need to rotate the polygon
+  // to avoid the "seam" of the polygon.
+  if (firstIntersection.index > lastIntersection.index) {
+    console.log("rotating polygon");
+    // Rotate the polygon to have the first intersection before the last intersection
+    polygon = polygon
+      .slice(lastIntersection.index)
+      .concat(polygon.slice(0, lastIntersection.index));
+
+    firstIntersection.index = firstIntersection.index - lastIntersection.index;
+    lastIntersection.index = 0; // Leave the last intersection index as 0 so that
+    // the conditional reversal of the line based on the intersection order is
+    // not affected by the rotation
+  }
+
   // Determine if we need to reverse the line points based on intersection order
   const shouldReverseLine = firstIntersection.index > lastIntersection.index;
 
-  // Get the relevant line points
-  let linePoints: IGeoJSPosition[];
-  if (shouldReverseLine) {
-    linePoints = newLine
-      .slice(
-        firstIntersection.lineSegmentIndex + 1,
-        lastIntersection.lineSegmentIndex + 1,
-      )
-      .reverse();
-  } else {
-    linePoints = newLine.slice(
+  // Get the centroid of the original polygon. Ultimately, we will choose the "direction"
+  // of editing that results in the smallest change to the centroid.
+  const centroid = getCentroid(polygon);
+
+  const linePoints = [
+    firstIntersection.point,
+    ...newLine.slice(
       firstIntersection.lineSegmentIndex + 1,
       lastIntersection.lineSegmentIndex + 1,
-    );
-  }
+    ),
+    lastIntersection.point,
+  ];
 
   // Create new coordinates array
-  const newCoordinates: IGeoJSPosition[] = [
+  // This is what the edit would look like if we do not go over the seam
+  let newCoordinates: IGeoJSPosition[] = [
     ...polygon.slice(
       0,
       Math.min(firstIntersection.index, lastIntersection.index),
     ),
-    shouldReverseLine ? lastIntersection.point : firstIntersection.point,
-    ...linePoints,
-    shouldReverseLine ? firstIntersection.point : lastIntersection.point,
+    ...(shouldReverseLine ? [...linePoints].reverse() : linePoints),
     ...polygon.slice(Math.max(firstIntersection.index, lastIntersection.index)),
   ];
+
+  // This is what the edit would look like if we go around the seam in the "forward" direction
+  const newCoordinatesSeamForward = [
+    ...polygon.slice(firstIntersection.index, lastIntersection.index),
+    ...[...linePoints].reverse(),
+  ];
+
+  // This is what the edit would look like if we go around the seam in the "reverse" direction
+  const newCoordinatesSeamReverse = [
+    ...polygon.slice(
+      0,
+      Math.max(firstIntersection.index, lastIntersection.index),
+    ),
+    ...linePoints,
+  ];
+
+  const centroid0 = getCentroid(newCoordinates);
+  const centroidSeamForward = getCentroid(newCoordinatesSeamForward);
+  const centroidSeamReverse = getCentroid(newCoordinatesSeamReverse);
+
+  // Distance between centroid0 and centroid
+  const distance0 = Math.sqrt(
+    (centroid0.x - centroid.x) ** 2 + (centroid0.y - centroid.y) ** 2,
+  );
+
+  // Distance between centroidSeamForward and centroid
+  const distanceSeamForward = Math.sqrt(
+    (centroidSeamForward.x - centroid.x) ** 2 +
+      (centroidSeamForward.y - centroid.y) ** 2,
+  );
+
+  // Distance between centroidSeamReverse and centroid
+  const distanceSeamReverse = Math.sqrt(
+    (centroidSeamReverse.x - centroid.x) ** 2 +
+      (centroidSeamReverse.y - centroid.y) ** 2,
+  );
+
+  // Logic here is: check if the order of the intersections is backwards or forwards
+  // and then choose the edit that results in the smallest change to the centroid
+  if (firstIntersection.index > lastIntersection.index) {
+    if (distance0 > distanceSeamReverse) {
+      newCoordinates = newCoordinatesSeamReverse;
+    }
+  } else {
+    if (distance0 > distanceSeamForward) {
+      newCoordinates = newCoordinatesSeamForward;
+    }
+  }
 
   // Ensure the polygon is closed
   if (
@@ -170,4 +229,14 @@ export function editPolygonAnnotation(
   }
 
   return newCoordinates;
+}
+
+export function getCentroid(points: IGeoJSPosition[]) {
+  let sumX = 0;
+  let sumY = 0;
+  for (const p of points) {
+    sumX += p.x;
+    sumY += p.y;
+  }
+  return { x: sumX / points.length, y: sumY / points.length };
 }
