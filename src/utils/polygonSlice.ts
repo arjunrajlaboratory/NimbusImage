@@ -134,7 +134,6 @@ export function editPolygonAnnotation(
   // If the first intersection is after the last intersection, we need to rotate the polygon
   // to avoid the "seam" of the polygon.
   if (firstIntersection.index > lastIntersection.index) {
-    console.log("rotating polygon");
     // Rotate the polygon to have the first intersection before the last intersection
     polygon = polygon
       .slice(lastIntersection.index)
