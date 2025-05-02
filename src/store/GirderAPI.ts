@@ -38,7 +38,7 @@ import {
 } from "@/store/images";
 import progressStore from "@/store/progress";
 import { Promise as BluebirdPromise } from "bluebird";
-import { AxiosRequestConfig, AxiosResponse } from "axios";
+import { AxiosRequestConfig, AxiosResponse, isAxiosError } from "axios";
 import { fetchAllPages } from "@/utils/fetch";
 import { stringify } from "qs";
 import { logError } from "@/utils/log";
@@ -423,6 +423,27 @@ export default class GirderAPI {
     };
     const response = await this.client.get("dataset_view", formData);
     return (response.data as any[]).map(asDatasetView);
+  }
+
+  async shareDatasetView(
+    datasetViews: IDatasetView[],
+    userMailOrUsername: string,
+    accessType: number,
+  ) {
+    const datasetViewIds = datasetViews.map((datasetView) => datasetView.id);
+    try {
+      const response = await this.client.post("dataset_view/share", {
+        datasetViewIds,
+        userMailOrUsername,
+        accessType,
+      });
+      return response.data as boolean;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.data?.message) {
+        return error.response.data.message;
+      }
+      throw error;
+    }
   }
 
   async getCompatibleConfigurations(dataset: IDataset) {

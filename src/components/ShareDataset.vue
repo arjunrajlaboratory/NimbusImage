@@ -10,7 +10,7 @@
           dismissible
           class="mb-4"
         >
-          Unknown user
+          {{ userErrorString }}
         </v-alert>
         <v-container>
           <v-row>
@@ -21,17 +21,17 @@
             <v-col cols="8">
               <div v-if="loading">Loading collections...</div>
               <div v-else>
-                <div v-if="associatedCollections.length === 0">
+                <div v-if="associatedViews.length === 0">
                   No associated collections found.
                 </div>
                 <div v-else>
                   <p>Select collections to share with:</p>
                   <v-checkbox
-                    v-for="collection in associatedCollections"
-                    :key="collection.id"
-                    v-model="selectedCollections"
-                    :label="collection.name"
-                    :value="collection.id"
+                    v-for="view in associatedViews"
+                    :key="view.id"
+                    v-model="selectedDatasetViews"
+                    :label="view.configurationName"
+                    :value="view.id"
                     :hide-details="true"
                     :dense="true"
                   ></v-checkbox>
@@ -55,9 +55,9 @@
                 class="mt-2"
                 hide-details
               >
-                <v-radio label="Private" value="private"></v-radio>
-                <v-radio label="View access" value="view"></v-radio>
-                <v-radio label="Write access" value="write"></v-radio>
+                <v-radio label="Private" :value="-1"></v-radio>
+                <v-radio label="View access" :value="0"></v-radio>
+                <v-radio label="Write access" :value="1"></v-radio>
               </v-radio-group>
             </v-col>
           </v-row>
@@ -72,7 +72,7 @@
           @click="share"
           :loading="isSharing"
           :disabled="
-            selectedCollections.length === 0 || !usernameOrEmail || isSharing
+            selectedDatasetViews.length === 0 || !usernameOrEmail || isSharing
           "
         >
           Share
@@ -88,11 +88,10 @@ import { IGirderSelectAble } from "@/girder";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { logError } from "@/utils/log";
-import { IDatasetView } from "@/store/GirderAPI";
+import { IDatasetView } from "@/store/model";
 
-interface CollectionInfo {
-  id: string;
-  name: string;
+interface DatasetViewAndConfigurationName extends IDatasetView {
+  configurationName: string;
 }
 
 @Component
@@ -105,27 +104,27 @@ export default class ShareDataset extends Vue {
 
   dialog = false;
   loading = false;
-  associatedCollections: CollectionInfo[] = [];
-  selectedCollections: string[] = [];
+  selectedDatasetViews: string[] = [];
   usernameOrEmail: string = "";
   isSharing: boolean = false;
+  userErrorString: string = "";
   showUserError: boolean = false;
-  accessLevel: string = "private";
-  associatedViews: IDatasetView[] = [];
+  accessLevel: number = -1;
+  associatedViews: DatasetViewAndConfigurationName[] = [];
 
   @Watch("value")
   onValueChanged(val: boolean) {
     this.dialog = val;
     if (val && this.dataset) {
-      this.fetchAssociatedCollections(this.dataset._id);
+      this.fetchCollectionInfos(this.dataset._id);
     } else {
       // Reset when dialog closes
-      this.associatedCollections = [];
-      this.selectedCollections = [];
+      this.selectedDatasetViews = [];
       this.usernameOrEmail = "";
+      this.userErrorString = "";
       this.showUserError = false;
       this.isSharing = false;
-      this.accessLevel = "private";
+      this.accessLevel = -1;
       this.associatedViews = [];
     }
   }
@@ -135,21 +134,24 @@ export default class ShareDataset extends Vue {
     this.$emit("input", val);
   }
 
-  async fetchAssociatedCollections(datasetId: string) {
+  async fetchCollectionInfos(datasetId: string) {
     this.loading = true;
-    this.associatedCollections = [];
-    this.selectedCollections = [];
+    this.selectedDatasetViews = [];
     this.associatedViews = [];
     try {
       const views = await this.store.api.findDatasetViews({ datasetId });
-      this.associatedViews = views;
-      const collectionPromises = views.map(async (view) => {
+      views.map(async (view) => {
         try {
           const configInfo = await this.girderResources.getItem(
             view.configurationId,
           );
           if (configInfo) {
-            return { id: configInfo._id, name: configInfo.name };
+            this.associatedViews.push(
+              Object.assign(view, {
+                configurationName: configInfo.name,
+              }),
+            );
+            this.selectedDatasetViews.push(view.id);
           }
         } catch (error) {
           logError(
@@ -159,12 +161,6 @@ export default class ShareDataset extends Vue {
         }
         return null;
       });
-      const collections = (await Promise.all(collectionPromises)).filter(
-        (c) => c !== null,
-      ) as CollectionInfo[];
-      this.associatedCollections = collections;
-      // Select all collections by default
-      this.selectedCollections = collections.map((c) => c.id);
     } catch (error) {
       logError(
         `Failed to fetch associated collections for dataset ${datasetId}`,
@@ -181,31 +177,29 @@ export default class ShareDataset extends Vue {
   }
 
   async share() {
-    this.showUserError = false; // Reset error on new attempt
+    this.isSharing = true;
+    this.showUserError = false;
+    this.userErrorString = "";
 
-    // Custom validation: fail if username is 'fail'
-    const isValidUser = this.usernameOrEmail.toLowerCase() !== "fail";
+    const response = await this.store.api.shareDatasetView(
+      this.associatedViews.filter((datasetView) =>
+        this.selectedDatasetViews.includes(datasetView.id),
+      ),
+      this.usernameOrEmail,
+      this.accessLevel,
+    );
 
-    if (!isValidUser) {
+    if (typeof response === "string") {
+      this.userErrorString =
+        response === "badEmailOrUsername"
+          ? "Unknown user"
+          : "An unknown error occurred";
       this.showUserError = true;
-      return;
+    } else {
+      this.close();
     }
 
-    this.isSharing = true;
-
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
     this.isSharing = false;
-
-    // Placeholder for actual share logic
-    console.log(
-      `Sharing dataset ${this.dataset?.name} (ID: ${this.dataset?._id}) ` +
-        `with collections: ${this.selectedCollections.join(", ")} ` +
-        `(Dataset View IDs: ${this.associatedViews.map((v) => v.id).join(", ")}) ` +
-        `to user ${this.usernameOrEmail} with ${this.accessLevel} access`,
-    );
-    this.close(); // Close dialog on successful share
   }
 }
 </script>
