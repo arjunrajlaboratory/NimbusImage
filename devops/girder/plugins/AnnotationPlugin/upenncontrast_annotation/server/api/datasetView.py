@@ -1,9 +1,16 @@
+from girder import logprint
 from girder.api import access
-from girder.api.describe import Description, describeRoute
+from girder.api.describe import autoDescribeRoute, Description, describeRoute
 from girder.api.rest import Resource, loadmodel
 from girder.constants import AccessType
 from girder.exceptions import AccessException
-from ..models.datasetView import DatasetView as DatasetViewModel
+from girder.exceptions import RestException
+from girder.models.folder import Folder
+from girder.models.item import Item
+from girder.models.user import User
+
+from upenncontrast_annotation.server.models.datasetView import \
+    DatasetView as DatasetViewModel
 
 
 class DatasetView(Resource):
@@ -18,6 +25,7 @@ class DatasetView(Resource):
         self.route("DELETE", (":id",), self.delete)
         self.route("PUT", (":id",), self.update)
         self.route("GET", (), self.find)
+        self.route("POST", ("share",), self.share)
 
     @access.user
     @describeRoute(
@@ -126,3 +134,80 @@ class DatasetView(Resource):
             limit=limit,
             offset=offset,
         )
+
+    @access.user
+    @autoDescribeRoute(
+        Description("Share a DatasetView to another user")
+        .jsonParam(
+            "body",
+            description="Should match schema",
+            paramType="body",
+            schema={
+                "$schema": "http://json-schema.org/draft-04/schema",
+                "id": "datasetView_share",
+                "type": "object",
+                "properties": {
+                    "datasetViewIds": {"type": "array"},
+                    "userMailOrUsername": {"type": "string"},
+                    "accessType": {"type": "number"},
+                },
+                "required": [
+                    "datasetViewIds", "userMailOrUsername", "accessType"],
+            }
+        )
+    )
+    def share(self, body):
+        user = self.getCurrentUser()
+
+        def loadDocument(model, documentId):
+            return model.load(documentId, AccessType.WRITE, user, exc=True)
+
+        targetUser = User().findOne(
+            {"$or": [{"login": body["userMailOrUsername"]},
+                     {"email": body["userMailOrUsername"]}]})
+        if not targetUser:
+            logprint.error(f"Cannot find user {body['userMailOrUsername']}")
+            raise RestException("badEmailOrUsername")
+        targetUserPrivateFolder = Folder().findOne(
+            {"baseParentId": targetUser['_id'], "name": "Private"})
+        # Will raise if accessType is a bad value
+        accessType = AccessType().validate(body["accessType"])
+
+        # Will raise if user has not WRITE permissions on a datasetView
+        datasetViews = [
+            loadDocument(DatasetViewModel(), datasetViewId)
+            for datasetViewId in body["datasetViewIds"]]
+
+        # Will raise if user has not WRITE permissions on the dataset
+        dataset = loadDocument(Folder(), datasetViews[0]["datasetId"])
+
+        # Will raise if user has not WRITE permissions on a configuration
+        for datasetView in datasetViews:
+            datasetView['configuration'] = loadDocument(
+                Item(), datasetView['configurationId'])
+
+        # Iterating twice so we first make sure all elements are accessible
+        # before modifying anything
+        for datasetView in datasetViews:
+            # Duplicate configuration in the target user Private folder as a
+            # way for them to access the dataset. This also circumvents an
+            # issue with Items not having their own set of permissions.
+            newConfiguration = Item().createItem(
+                name=datasetView['configuration']['name'],
+                creator=targetUser,
+                folder=targetUserPrivateFolder
+            )
+            newConfiguration['meta'] = datasetView[
+                'configuration']['meta'].copy()
+            Item().save(newConfiguration)
+            # Create a new datasetView to match the new configuration
+            newDatasetView = {
+                key: datasetView[key] for key in datasetView if key not in [
+                    "_id", "id", "access", "configurationId", "lastViewed"]}
+            newDatasetView["configurationId"] = str(newConfiguration['_id'])
+            DatasetViewModel().create(targetUser, newDatasetView)
+
+        Folder().setUserAccess(
+            dataset, targetUser, accessType, save=True)
+
+        return True
