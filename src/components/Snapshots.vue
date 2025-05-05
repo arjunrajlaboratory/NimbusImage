@@ -1116,27 +1116,7 @@ export default class Snapshots extends Vue {
 
     // Add scalebar if requested
     if (this.addScalebar) {
-      // Draw a line of the length of the scalebar (pixels)
-      const scalebarLength = this.scalebarLengthInPixels;
-      ctx.strokeStyle = this.snapshotScalebarColor;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(width - 10, height - 10);
-      ctx.lineTo(width - 10 - scalebarLength, height - 10);
-      ctx.stroke();
-
-      // Add text for the scalebar if enabled
-      if (this.addScalebarText) {
-        ctx.fillStyle = this.snapshotScalebarColor;
-        ctx.font = "12px Arial";
-        ctx.textBaseline = "bottom";
-        ctx.textAlign = "right";
-        ctx.fillText(
-          `${this.scalebarSettings.length}${this.scalebarSettings.unit}`,
-          width - 10,
-          height - 14,
-        );
-      }
+      this.drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
     }
 
     // Convert the canvas to a data URL
@@ -1329,26 +1309,8 @@ export default class Snapshots extends Vue {
     // Draw the original image
     ctx.drawImage(img, 0, 0);
 
-    // Draw a line of the length of the scalebar (pixels)
-    const scalebarLength = this.scalebarLengthInPixels;
-    ctx.strokeStyle = this.snapshotScalebarColor;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(canvas.width - 10, canvas.height - 10);
-    ctx.lineTo(canvas.width - 10 - scalebarLength, canvas.height - 10);
-    ctx.stroke();
-
-    if (this.addScalebarText) {
-      ctx.fillStyle = this.snapshotScalebarColor;
-      ctx.font = "12px Arial";
-      ctx.textBaseline = "bottom";
-      ctx.textAlign = "right";
-      ctx.fillText(
-        `${this.scalebarSettings.length}${this.scalebarSettings.unit}`,
-        canvas.width - 10,
-        canvas.height - 14,
-      );
-    }
+    // Draw the scalebar using the helper method
+    this.drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
 
     // Clean up
     URL.revokeObjectURL(imageUrl);
@@ -2139,27 +2101,7 @@ export default class Snapshots extends Vue {
 
         // Add scalebar if requested
         if (this.addScalebar) {
-          // Draw scalebar
-          const scalebarLength = this.scalebarLengthInPixels;
-          ctx.strokeStyle = this.snapshotScalebarColor;
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(width - 10, height - 10);
-          ctx.lineTo(width - 10 - scalebarLength, height - 10);
-          ctx.stroke();
-
-          // Add text for the scalebar if enabled
-          if (this.addScalebarText) {
-            ctx.fillStyle = this.snapshotScalebarColor;
-            ctx.font = "12px Arial";
-            ctx.textBaseline = "bottom";
-            ctx.textAlign = "right";
-            ctx.fillText(
-              `${this.scalebarSettings.length}${this.scalebarSettings.unit}`,
-              width - 10,
-              height - 14,
-            );
-          }
+          this.drawScalebarOnCanvas(ctx, width, height);
         }
 
         // Convert the canvas to a data URL and store it
@@ -2328,10 +2270,11 @@ export default class Snapshots extends Vue {
           // Draw the original image
           ctx.drawImage(img, 0, 0);
 
-          // Only revoke object URL if we created it
-          if (typeof urls[i] !== "string") {
-            URL.revokeObjectURL(imageUrl);
-          }
+          // Draw the scalebar using the helper method
+          this.drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+
+          // Clean up
+          URL.revokeObjectURL(imageUrl);
 
           this.addTimeStampToCanvas(canvas, params, i);
 
@@ -2452,6 +2395,9 @@ export default class Snapshots extends Vue {
 
               // Draw the original image
               ctx.drawImage(img, 0, 0);
+
+              // Draw the scalebar using the helper method
+              this.drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
 
               this.addTimeStampToCanvas(canvas, params, i);
 
@@ -2687,6 +2633,7 @@ export default class Snapshots extends Vue {
     ctx.lineWidth = 3; // Text outline width
     ctx.font = "24px Arial"; // Text font and size
     ctx.textBaseline = "bottom";
+    ctx.textAlign = "left";
 
     const timeText = `T=${params.initialTimeStampTime + frameIndex * params.timeStampStep} ${params.timeStampUnits}`;
     // Draw text outline
@@ -2729,6 +2676,49 @@ export default class Snapshots extends Vue {
       { text: "Meters (m)", value: TScalebarUnit.M },
       { text: "Pixels (px)", value: TScalebarUnit.PX },
     ];
+  }
+
+  // Private helper to draw the scalebar onto a canvas
+  private drawScalebarOnCanvas(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+  ) {
+    // Calculate scalebar length in pixels
+    const scalebarLength = this.scalebarLengthInPixels;
+    const maxDim = Math.max(width, height);
+
+    // Scale padding linearly (2% of max dimension), clamped [10, 40]
+    const padding = Math.max(10, Math.min(40, 0.02 * maxDim));
+    // Scale line width linearly (0.5% of max dimension), clamped [2, 8]
+    const lineWidth = Math.max(3, Math.min(12, 0.008 * maxDim));
+    // Scale font size linearly (1.5% of max dimension), clamped [12, 24]
+    const fontSize = Math.max(12, Math.min(24, 0.02 * maxDim));
+
+    // Set styles
+    ctx.strokeStyle = this.snapshotScalebarColor;
+    ctx.fillStyle = this.snapshotScalebarColor;
+    ctx.lineWidth = lineWidth;
+
+    // Draw the scalebar line
+    ctx.beginPath();
+    // Position from bottom-right corner with padding
+    ctx.moveTo(width - padding, height - padding);
+    ctx.lineTo(width - padding - scalebarLength, height - padding);
+    ctx.stroke();
+
+    // Add text for the scalebar if enabled
+    if (this.addScalebarText) {
+      ctx.font = `${fontSize}px Arial`;
+      ctx.textBaseline = "bottom";
+      ctx.textAlign = "right";
+      // Position text above the line, considering padding and font size
+      ctx.fillText(
+        `${this.scalebarSettings.length}${this.scalebarSettings.unit}`,
+        width - padding,
+        height - padding - lineWidth, // Place text just above the line
+      );
+    }
   }
 }
 </script>
