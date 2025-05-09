@@ -238,7 +238,10 @@ export default class CustomFileManager extends Vue {
   }
 
   searchInput(value: IGirderSelectAble) {
-    if (value._modelType === "item" || value._modelType === "file") {
+    if (
+      value._modelType === "upenn_collection" ||
+      value._modelType === "file"
+    ) {
       return;
     }
     this.currentLocation = value;
@@ -258,7 +261,7 @@ export default class CustomFileManager extends Vue {
     }
     switch (selectable._modelType) {
       case "file":
-      case "item":
+      case "upenn_collection":
         return "file";
       case "folder":
         return "folder";

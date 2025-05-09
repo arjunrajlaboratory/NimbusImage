@@ -1,3 +1,5 @@
+from bson import ObjectId
+
 from girder import logprint
 from girder.api import access
 from girder.api.describe import autoDescribeRoute, Description, describeRoute
@@ -6,11 +8,12 @@ from girder.constants import AccessType
 from girder.exceptions import AccessException
 from girder.exceptions import RestException
 from girder.models.folder import Folder
-from girder.models.item import Item
 from girder.models.user import User
 
 from upenncontrast_annotation.server.models.datasetView import \
     DatasetView as DatasetViewModel
+from upenncontrast_annotation.server.models.collection import \
+    Collection as CollectionModel
 
 
 class DatasetView(Resource):
@@ -48,7 +51,8 @@ class DatasetView(Resource):
         )
     )
     def create(self, params):
-        new_document = self.getBodyJson()
+        new_document = self._datasetViewModel.convertIdsToObjectIds(
+            self.getBodyJson())
         currentUser = self.getCurrentUser()
         if not currentUser:
             raise AccessException("User not found", "currentUser")
@@ -100,8 +104,10 @@ class DatasetView(Resource):
         level=AccessType.WRITE,
     )
     def update(self, dataset_view, params):
+        new_dataset_view = self._datasetViewModel.convertIdsToObjectIds(
+            self.getBodyJson())
         self._datasetViewModel.updateDatasetView(
-            dataset_view, self.getBodyJson())
+            dataset_view, new_dataset_view)
 
     @access.user
     @describeRoute(
@@ -125,7 +131,7 @@ class DatasetView(Resource):
         query = {}
         for key in ["datasetId", "configurationId"]:
             if key in params:
-                query[key] = params[key]
+                query[key] = ObjectId(params[key])
         return self._datasetViewModel.findWithPermissions(
             query,
             sort=sort,
@@ -168,8 +174,6 @@ class DatasetView(Resource):
         if not targetUser:
             logprint.error(f"Cannot find user {body['userMailOrUsername']}")
             raise RestException("badEmailOrUsername")
-        targetUserPrivateFolder = Folder().findOne(
-            {"baseParentId": targetUser['_id'], "name": "Private"})
         # Will raise if accessType is a bad value
         accessType = AccessType().validate(body["accessType"])
 
@@ -184,28 +188,18 @@ class DatasetView(Resource):
         # Will raise if user has not WRITE permissions on a configuration
         for datasetView in datasetViews:
             datasetView['configuration'] = loadDocument(
-                Item(), datasetView['configurationId'])
+                CollectionModel(), datasetView['configurationId'])
 
         # Iterating twice so we first make sure all elements are accessible
         # before modifying anything
         for datasetView in datasetViews:
-            # Duplicate configuration in the target user Private folder as a
-            # way for them to access the dataset. This also circumvents an
-            # issue with Items not having their own set of permissions.
-            newConfiguration = Item().createItem(
-                name=datasetView['configuration']['name'],
-                creator=targetUser,
-                folder=targetUserPrivateFolder
-            )
-            newConfiguration['meta'] = datasetView[
-                'configuration']['meta'].copy()
-            Item().save(newConfiguration)
-            # Create a new datasetView to match the new configuration
-            newDatasetView = {
-                key: datasetView[key] for key in datasetView if key not in [
-                    "_id", "id", "access", "configurationId", "lastViewed"]}
-            newDatasetView["configurationId"] = str(newConfiguration['_id'])
-            DatasetViewModel().create(targetUser, newDatasetView)
+            CollectionModel().setUserAccess(
+                datasetView['configuration'], targetUser, accessType,
+                save=True)
+            datasetView.pop('configuration')
+            DatasetViewModel().setUserAccess(
+                datasetView, targetUser, accessType,
+                save=True)
 
         Folder().setUserAccess(
             dataset, targetUser, accessType, save=True)
