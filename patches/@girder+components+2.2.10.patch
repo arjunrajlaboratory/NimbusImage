@@ -1,0 +1,22 @@
+diff --git a/node_modules/@girder/components/src/components/DataBrowser.vue b/node_modules/@girder/components/src/components/DataBrowser.vue
+index a0723c7..73fb018 100644
+--- a/node_modules/@girder/components/src/components/DataBrowser.vue
++++ b/node_modules/@girder/components/src/components/DataBrowser.vue
+@@ -9,7 +9,7 @@ import {
+ } from '../utils';
+ 
+ const GIRDER_FOLDER_ENDPOINT = 'folder';
+-const GIRDER_ITEM_ENDPOINT = 'item';
++const GIRDER_ITEM_ENDPOINT = 'upenn_collection';
+ 
+ export default {
+   components: {
+@@ -118,7 +118,7 @@ export default {
+             ...counts,
+             ...{
+               nFolders: data.nFolders || 0,
+-              nItems: data.nItems || 0,
++              nItems: data.nItems || 1,
+             },
+           };
+         } if (type === 'users' || type === 'collections') {
