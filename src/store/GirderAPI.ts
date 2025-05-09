@@ -70,7 +70,7 @@ function itemsToResourceObject(items: IGirderSelectAble[]) {
 }
 
 export default class GirderAPI {
-  private readonly client: RestClientInstance;
+  client: RestClientInstance;
 
   private readonly imageCache = new Map<string, HTMLImageElement>();
   private readonly histogramCache = new Map<string, Promise<ITileHistogram>>();

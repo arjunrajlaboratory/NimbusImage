@@ -101,8 +101,12 @@ export class Main extends VuexModule {
     get(obj: Main, prop: keyof RestClientInstance) {
       return obj.girderRest[prop];
     },
-    set() {
-      throw new Error("The rest client proxy is read-only.");
+    set(target: Main, p: keyof RestClientInstance, newValue: any) {
+      if (p != "token") {
+        throw "Can only set token to RestClient";
+      }
+      target.girderRest[p] = newValue;
+      return true;
     },
   }) as unknown as RestClientInstance;
 
@@ -891,6 +895,10 @@ export class Main extends VuexModule {
         return message || "Unauthorized.";
       }
     }
+
+    // Insert new token in client so components using it (Like Girder Web
+    // Components & BreadCrumbs can start using Girder API).
+    this.api.client.token = restClient.token;
 
     await this.loggedIn(restClient);
     await this.initFromUrl();
