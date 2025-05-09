@@ -1,7 +1,7 @@
 from girder import events
 from girder.api import rest
 from girder.exceptions import AccessException
-from .customModel import CustomAccessControlledModel
+from .customModel import CustomNimbusImageModel
 
 from ..models.history import History as HistoryModel
 
@@ -95,16 +95,16 @@ class ModelRecord:
         )
         if doc_with_id is None:
             return
-        string_id = str(doc_with_id["_id"])
-        old_change = self.changes.get(string_id, None)
+        doc_id = doc_with_id["_id"]
+        old_change = self.changes.get(doc_id, None)
         if old_change:
             # old_change['after'] == before
             old_change["after"] = after
         else:
-            self.changes[string_id] = {"before": before, "after": after}
+            self.changes[doc_id] = {"before": before, "after": after}
 
 
-class ProxiedAccessControlledModel(CustomAccessControlledModel):
+class ProxiedModel(CustomNimbusImageModel):
     """
     Enable recording of changes made to the database
     """

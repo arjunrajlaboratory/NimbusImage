@@ -1,6 +1,7 @@
-from ..helpers.proxiedModel import ProxiedAccessControlledModel
+from ..helpers.proxiedModel import ProxiedModel
 from girder.exceptions import ValidationException
 from girder.constants import AccessType
+from girder.models.model_base import AccessControlledModel
 from ..helpers.tasks import runJobRequest
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
@@ -30,11 +31,12 @@ class InterfaceSchema:
     }
 
 
-class WorkerInterfaceModel(ProxiedAccessControlledModel):
+class WorkerInterfaceModel(ProxiedModel, AccessControlledModel):
 
     def __init__(self):
         super().__init__()
         self.ensureIndices(["name", "image"])
+        self.schema = InterfaceSchema.interfaceSchema
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(InterfaceSchema.interfaceSchema)

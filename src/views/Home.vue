@@ -255,9 +255,9 @@ import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import {
   IGirderFolder,
-  IGirderItem,
   IGirderLocation,
   IGirderSelectAble,
+  IUPennCollection,
 } from "@/girder";
 import girderResources from "@/store/girderResources";
 import {
@@ -357,11 +357,11 @@ export default class Home extends Vue {
 
   get configInfo() {
     const infos: {
-      [configId: string]: IGirderItem | null;
+      [configId: string]: IUPennCollection | null;
     } = {};
     for (const datasetView of this.datasetViews) {
       const id = datasetView.configurationId;
-      const item = this.girderResources.watchItem(id);
+      const item = this.girderResources.watchCollection(id);
       infos[id] = item || null;
     }
     return infos;
@@ -414,7 +414,7 @@ export default class Home extends Vue {
     }
     for (const d of this.datasetViews) {
       this.girderResources.getFolder(d.datasetId);
-      this.girderResources.getItem(d.configurationId);
+      this.girderResources.getCollection(d.configurationId);
     }
   }
 
@@ -471,11 +471,14 @@ export default class Home extends Vue {
   refreshRecentDatasetDetails() {
     for (const d of this.datasetViews) {
       this.girderResources.getFolder(d.datasetId);
-      this.girderResources.getItem(d.configurationId);
+      this.girderResources.getCollection(d.configurationId);
     }
   }
 
   onLocationUpdate(selectable: IGirderSelectAble) {
+    if (selectable._modelType === "upenn_collection") {
+      return;
+    }
     if (isDatasetFolder(selectable)) {
       this.$router.push({
         name: "dataset",
