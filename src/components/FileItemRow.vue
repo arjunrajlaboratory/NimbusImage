@@ -10,6 +10,14 @@
     >
       {{ debouncedChipsPerItemId[item._id]?.chips?.[0].text }}
     </v-chip>
+    <v-chip
+      v-else-if="computedChipsIds.has(item._id)"
+      x-small
+      class="ma-1 type-indicator"
+      color="grey darken-1"
+    >
+      Loading info...
+    </v-chip>
     <v-btn
       v-if="debouncedChipsPerItemId[item._id]?.type === 'dataset'"
       x-small
@@ -20,14 +28,6 @@
     >
       <v-icon x-small>mdi-share-variant</v-icon>
     </v-btn>
-    <v-chip
-      v-else-if="computedChipsIds.has(item._id)"
-      x-small
-      class="ma-1 type-indicator"
-      color="grey darken-1"
-    >
-      Loading info...
-    </v-chip>
     <span
       class="text-caption grey--text mx-2"
       v-tooltip="{
@@ -71,7 +71,6 @@
 <script lang="ts">
 import { Vue, Component, Prop } from "vue-property-decorator";
 import { IGirderSelectAble } from "@/girder";
-import { vuetifyConfig } from "@/girder";
 import { formatDateString } from "@/utils/date";
 import ShareDataset from "./ShareDataset.vue";
 
@@ -96,22 +95,5 @@ export default class ItemRow extends Vue {
   shareDialogVisible = false;
 
   formatDateString = formatDateString;
-
-  iconToMdi(icon: string) {
-    return vuetifyConfig.icons.values[icon] || `mdi-${icon}`;
-  }
-
-  iconFromItem(selectable: IGirderSelectAble) {
-    if (selectable._modelType === "file" || selectable._modelType === "item") {
-      return "file";
-    }
-    if (selectable._modelType === "folder") {
-      return "folder";
-    }
-    if (selectable._modelType === "user") {
-      return "user";
-    }
-    return "file";
-  }
 }
 </script>

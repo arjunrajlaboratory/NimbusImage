@@ -176,7 +176,7 @@ export default class BreadCrumbs extends Vue {
   async setItemTextWithResourceName(
     item: { text: string },
     id: string,
-    type: "item" | "folder" | "user",
+    type: "item" | "folder" | "user" | "upenn_collection",
   ) {
     if (type === "user") {
       const user = await this.girderResources.getUser(id);
@@ -301,7 +301,7 @@ export default class BreadCrumbs extends Vue {
         this.setItemTextWithResourceName(
           configurationItem,
           configurationId,
-          "item",
+          "upenn_collection",
         );
       }
     }

@@ -8,6 +8,7 @@ import {
   IGirderAssetstore,
   IGirderLargeImage,
   IGirderApiKey,
+  IUPennCollection,
 } from "@/girder";
 import {
   configurationBaseKeys,
@@ -56,13 +57,13 @@ function toId(item: string | { _id: string }) {
 }
 
 function itemsToResourceObject(items: IGirderSelectAble[]) {
-  const resourceObj: { folder: string[]; item: string[] } = {
+  const resourceObj: { folder: string[]; upenn_collection: string[] } = {
     folder: [],
-    item: [],
+    upenn_collection: [],
   };
   for (const resource of items) {
     const type = resource._modelType;
-    if (type === "folder" || type === "item") {
+    if (type === "folder" || type === "upenn_collection") {
       resourceObj[type].push(resource._id);
     }
   }
@@ -461,7 +462,7 @@ export default class GirderAPI {
     const configurations: IDatasetConfiguration[] = [];
     for (const page of pages) {
       for (const data of page) {
-        configurations.push(asConfigurationItem(data));
+        configurations.push(setBaseCollectionValues(data));
       }
     }
     return configurations;
@@ -568,10 +569,11 @@ export default class GirderAPI {
     data.set("description", description);
     data.set("reuseExisting", "false");
     data.set("metadata", JSON.stringify(metadata));
-    const item: IGirderItem = (await this.client.post("item", data)).data;
+    const item: IGirderItem = (await this.client.post("upenn_collection", data))
+      .data;
 
     // Create configuration from item and configBase
-    return asConfigurationItem(item);
+    return setBaseCollectionValues(item);
   }
 
   createConfigurationFromDataset(
@@ -607,16 +609,18 @@ export default class GirderAPI {
     const metadata = toConfiguationMetadata({ [key]: config[key] });
     const data = new FormData();
     data.set("metadata", JSON.stringify(metadata));
-    const item: IGirderItem = (
-      await this.client.put(`item/${config.id}/metadata`, data)
+    const collection: IUPennCollection = (
+      await this.client.put(`upenn_collection/${config.id}/metadata`, data)
     ).data;
-    return item;
+    return collection;
   }
 
   deleteConfiguration(
     config: IDatasetConfiguration,
   ): Promise<IDatasetConfiguration> {
-    return this.client.delete(`/item/${config.id}`).then(() => config);
+    return this.client
+      .delete(`/upenn_collection/${config.id}`)
+      .then(() => config);
   }
 
   getLayerHistogram(images: IImage[]) {
@@ -886,7 +890,9 @@ function toConfiguationMetadata(data: Partial<IDatasetConfigurationBase>) {
   return metadata;
 }
 
-export function asConfigurationItem(item: IGirderItem): IDatasetConfiguration {
+export function setBaseCollectionValues(
+  item: IGirderItem,
+): IDatasetConfiguration {
   const config: Partial<IDatasetConfiguration> = {
     id: item._id,
     name: item.name,

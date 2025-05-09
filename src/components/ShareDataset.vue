@@ -142,7 +142,7 @@ export default class ShareDataset extends Vue {
       const views = await this.store.api.findDatasetViews({ datasetId });
       views.map(async (view) => {
         try {
-          const configInfo = await this.girderResources.getItem(
+          const configInfo = await this.girderResources.getCollection(
             view.configurationId,
           );
           if (configInfo) {
