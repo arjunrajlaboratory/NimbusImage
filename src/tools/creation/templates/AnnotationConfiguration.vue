@@ -246,6 +246,7 @@ export default class AnnotationConfiguration extends Vue {
   }
 
   mounted() {
+    console.log("AnnotationConfiguration mounted.");
     if (this.value?.tags) {
       this.useAutoTags = false;
     }
@@ -264,12 +265,14 @@ export default class AnnotationConfiguration extends Vue {
       WelcomeTourStatus.NOT_YET_RUN,
     );
 
-    if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
-      Persister.set(
-        WelcomeTourTypes.WORKING_WITH_TAGS,
-        WelcomeTourStatus.ALREADY_RUN,
-      );
-      this.$startTour(WelcomeTourNames[WelcomeTourTypes.WORKING_WITH_TAGS]);
+    if (!(this.$isTourActive && this.$isTourActive())) {
+      if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
+        Persister.set(
+          WelcomeTourTypes.WORKING_WITH_TAGS,
+          WelcomeTourStatus.ALREADY_RUN,
+        );
+        this.$startTour(WelcomeTourNames[WelcomeTourTypes.WORKING_WITH_TAGS]);
+      }
     }
   }
 

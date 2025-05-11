@@ -25,6 +25,7 @@ export class TourManager {
     Vue.prototype.$startTour = this.startTour.bind(this);
     Vue.prototype.$nextStep = this.nextStep.bind(this);
     Vue.prototype.$loadAllTours = this.loadAllTours.bind(this);
+    Vue.prototype.$isTourActive = this.isTourActive.bind(this);
 
     // Watch for route changes
     this.router.afterEach(() => {
@@ -32,6 +33,10 @@ export class TourManager {
         this.checkCurrentStep();
       }
     });
+  }
+
+  public isTourActive(): boolean {
+    return this.isActive;
   }
 
   private async checkCurrentStep() {
@@ -408,6 +413,7 @@ declare module "vue/types/vue" {
     $startTour: (tourName: string) => Promise<void>;
     $nextStep: (targetElementId?: string) => Promise<void>;
     $loadAllTours: () => Promise<Record<string, ITourMetadata>>;
+    $isTourActive: () => boolean;
   }
 }
 
