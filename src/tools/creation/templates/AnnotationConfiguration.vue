@@ -246,7 +246,6 @@ export default class AnnotationConfiguration extends Vue {
   }
 
   mounted() {
-    console.log("AnnotationConfiguration mounted.");
     if (this.value?.tags) {
       this.useAutoTags = false;
     }
