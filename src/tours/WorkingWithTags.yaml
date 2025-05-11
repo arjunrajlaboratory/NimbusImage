@@ -1,0 +1,14 @@
+name: "Working with Tags"
+entryPoint: datasetview
+popular: false
+category: Introduction
+steps:
+  - id: tag-picker-tourstep3
+    route: datasetview
+    element: "#tool-creation-tag-picker-tourstep"
+    title: "Tagging"
+    text: "Tags are a way to label the objects in your dataset. Every object can have one or more tags. These are ways to organize your data and analyses. You can pick which tags to show and which to quantify, allowing you complete flexibility."
+    position: "bottom"
+    waitForElement: 1000
+    modalOverlay: false
+    showNextButton: true

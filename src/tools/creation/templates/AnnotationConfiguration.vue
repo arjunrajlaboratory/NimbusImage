@@ -110,8 +110,14 @@ import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
 import LayerSelect from "@/components/LayerSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
-
-import { AnnotationNames, AnnotationShape } from "@/store/model";
+import Persister from "@/store/Persister";
+import {
+  AnnotationNames,
+  AnnotationShape,
+  WelcomeTourTypes,
+  WelcomeTourStatus,
+  WelcomeTourNames,
+} from "@/store/model";
 
 type VForm = Vue & { validate: () => boolean };
 
@@ -244,6 +250,27 @@ export default class AnnotationConfiguration extends Vue {
       this.useAutoTags = false;
     }
     this.updateFromValue();
+
+    // Tour logic to show the "Working with tags" tour
+    // if the user has not seen it yet
+    // Note for the future: somehow, this component gets mounted twice.
+    // Hence, if you just run the tour here, it will run twice, causing problems.
+    // Given that we only want to show the tour once and we gate that by the
+    // Persister state, this code will just run the one time and it should be fine.
+    // However, this does hide the underlying, but as yet unsolved, problem of the
+    // component getting mounted twice.
+    const tourStatus = Persister.get(
+      WelcomeTourTypes.WORKING_WITH_TAGS,
+      WelcomeTourStatus.NOT_YET_RUN,
+    );
+
+    if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
+      Persister.set(
+        WelcomeTourTypes.WORKING_WITH_TAGS,
+        WelcomeTourStatus.ALREADY_RUN,
+      );
+      this.$startTour(WelcomeTourNames[WelcomeTourTypes.WORKING_WITH_TAGS]);
+    }
   }
 
   @Watch("value")
