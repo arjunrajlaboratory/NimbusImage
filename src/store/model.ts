@@ -1468,6 +1468,7 @@ export enum WelcomeTourTypes {
   HOME = "WelcomeTourType.home",
   VIEWER = "WelcomeTourType.viewer",
   ADVANCED_UPLOAD = "WelcomeTourType.advancedUpload",
+  WORKING_WITH_TAGS = "WelcomeTourType.workingWithTags",
 }
 
 export enum WelcomeTourStatus {
@@ -1480,6 +1481,7 @@ export const WelcomeTourNames = {
   [WelcomeTourTypes.HOME]: "WelcomeTourHome",
   [WelcomeTourTypes.VIEWER]: "WelcomeTourViewer",
   [WelcomeTourTypes.ADVANCED_UPLOAD]: "WelcomeTourAdvancedUpload",
+  [WelcomeTourTypes.WORKING_WITH_TAGS]: "WorkingWithTags",
 };
 
 // https://opengeoscience.github.io/geojs/apidocs/geo.util.html#.pixelCoordinateParams
