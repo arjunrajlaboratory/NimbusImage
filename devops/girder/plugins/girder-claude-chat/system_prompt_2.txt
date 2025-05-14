@@ -212,11 +212,41 @@ Create objects by hand with simple drawing tools:
 ## Automated Tools
 Leverage algorithms to find objects automatically:
 
-**Cellpose**:
-- Deep learning tool for cell and nucleus segmentation
+**Cellpose-SAM**:
+- Advanced deep learning tool for cell and nucleus segmentation. This is the **recommended method** for most segmentation tasks, offering superior performance to the legacy Cellpose tool.
+- **How it works**: Cellpose-SAM processes images by taking input from up to three configurable channel "slots":
+    - **Single Channel Input**:
+        - To segment nuclei, provide the nuclear stain channel to Slot 1.
+        - To segment cell boundaries, provide the cytoplasm/membrane channel to Slot 1.
+    - **Dual Channel Input**: For improved cell boundary segmentation, you can provide the cytoplasm/membrane channel to Slot 1 and the nuclear channel to Slot 2.
+    - **Triple Channel Input (RGB)**: To segment cells in an RGB image, map the Red, Green, and Blue channels to Slots 1, 2, and 3 respectively.
+- **Available models**:
+    - **cellpose-sam**: This is the base model and should be suitable for most general-purpose cell segmentation tasks.
+- **Key parameters**:
+    - **Model**: Selects the segmentation model. Defaults to `cellpose-sam`.
+    - **Channel for Slot 1**: **Required.** The primary channel for segmentation. Select the source channel for the model's first input. If multiple are selected, only the first will be used.
+    - **Channel for Slot 2**: (Optional) The secondary channel, often used for nuclear information when segmenting cytoplasm. If multiple are selected, only the first will be used.
+    - **Channel for Slot 3**: (Optional) The tertiary channel, typically used for the blue channel in RGB images. If multiple are selected, only the first will be used.
+    - **Diameter**: The approximate diameter of the cells in pixels. While important for original Cellpose, Cellpose-SAM is less sensitive to this parameter. A value around **30 pixels** often works well as a starting point, but can be adjusted (0-200 pixels, default 10).
+    - **Smoothing**: Controls the simplification of the generated polygons (0-10, default 0.7). Higher values create smoother outlines. A value of 0.7 is a good default.
+    - **Padding**: Expands (positive values) or contracts (negative values) the final polygons in pixels (-20 to 20 pixels, default 0).
+    - **Tile Size**: The size of image tiles (in pixels) for processing (0-2048, default 1024). Larger tiles require more memory.
+    - **Tile Overlap**: The fractional overlap between adjacent tiles (0-1, default 0.1). Ensure this overlap is larger than your largest cells (e.g., for 1024px tiles with 0.1 overlap, objects should be <102px).
+- **Best practices**:
+    1.  **Channel Selection**:
+        *   For nuclei: Use your nuclear stain in Slot 1.
+        *   For cell boundaries: Use your cytoplasm/membrane channel in Slot 1. Consider adding a nuclear channel to Slot 2 for refinement.
+        *   For RGB images: Map R, G, B to Slots 1, 2, and 3.
+    2.  **Diameter Setting**: Start with a diameter around 30 pixels. Adjust if necessary, but exact precision is less critical than with standard Cellpose.
+    3.  **Review Results**: Always visually inspect segmentation and adjust parameters if needed.
+    4.  **Post-process**: Utilize NimbusImage's manual editing tools to correct any segmentation errors.
+- Can be retrained on your data for improved performance (see Retraining Models).
+
+**(Legacy) Cellpose**:
+- Deep learning tool for cell and nucleus segmentation. **Note: Cellpose-SAM is now the recommended tool for most segmentation tasks.**
 - Models: cyto3 (general), nuclei (nuclear staining)
-- Key parameters: Primary channel, diameter, smoothing
-- Can be retrained on your data for improved performance
+- Key parameters: Primary channel, diameter, smoothing.
+- Can be retrained on your data for improved performance.
 
 **Piscis**:
 - Specialized for spot detection in fluorescent images
@@ -620,32 +650,38 @@ The analysis system's flexibility comes from combining these measurement types w
 
 ## Cell Segmentation & Analysis
 
-**Basic Cell Segmentation Workflow**:
-1. **Segment Nuclei**:
-   - Create a Cellpose tool with tag "nucleus"
-   - Select "nucleus" model and DAPI channel
-   - Set diameter to approximate nuclear size (typically 20-40 pixels)
-   - Run compute and review results
+**Basic Cell Segmentation Workflow**: This workflow now uses Cellpose-SAM, the recommended tool.
+1. **Segment Nuclei (or Cells directly)**:
+   - Create a Cellpose-SAM tool.
+   - For nuclei: Provide the nuclear stain to "Channel for Slot 1". Tag objects as "nucleus".
+   - For cells (single channel): Provide the cytoplasm/membrane channel to "Channel for Slot 1". Tag objects as "cell".
+   - For cells (dual channel for better results): Provide cytoplasm/membrane to "Channel for Slot 1" and nuclear channel to "Channel for Slot 2". Tag objects as "cell".
+   - Set "Model" to `cellpose-sam` (usually default).
+   - Set "Diameter" to an approximate size (e.g., 30 pixels). Cellpose-SAM is less sensitive to this than legacy Cellpose.
+   - Adjust "Smoothing" (e.g., 0.7) and other parameters as needed.
+   - Run compute and review results.
    
-2. **Measure Nuclear Properties**:
-   - Create Blob metrics property for "nucleus" tag
-   - Run the worker to calculate area, shape metrics
-   - Create Blob intensity property for fluorescence channels
-   - Filter by area to remove artifacts
+2. **Measure Nuclear/Cell Properties**:
+   - Create Blob metrics property for the tag used (e.g., "nucleus" or "cell").
+   - Run the worker to calculate area, shape metrics.
+   - Create Blob intensity property for fluorescence channels of interest.
+   - Filter by area to remove artifacts if necessary.
 
-3. **Add Missing or Remove False Nuclei** (if needed):
-   - Use Manual blob or Segment Anything Model for missed nuclei
-   - Shift-select and delete false positives
+3. **Add Missing or Remove False Objects** (if needed):
+   - Use Manual blob or Segment Anything Model for missed objects.
+   - Shift-select and delete false positives.
    
-4. **Segment Cell Bodies** (optional):
-   - Create another Cellpose tool with tag "cell"
-   - Select "cyto3" model with cytoplasm channel and DAPI as nuclear channel
-   - Adjust diameter for cell size
-   - Connect nuclei to cells with Connect to Nearest
+4. **Segment Cell Bodies from Nuclei (if nuclei were segmented first)** (optional):
+   - This step is often not needed if cells were segmented directly with Cellpose-SAM using cytoplasmic and nuclear channels.
+   - If you segmented nuclei first and need to find surrounding cell bodies:
+     - Create another Cellpose-SAM tool, this time for "cell" objects.
+     - Use the cytoplasm channel in "Channel for Slot 1" and the DAPI/nuclear channel in "Channel for Slot 2".
+     - Adjust diameter for cell size.
+     - Connect nuclei to cells with Connect to Nearest if distinct "nucleus" and "cell" objects were created.
 
 5. **Export Measurements**:
-   - Select desired properties in Object list
-   - Export to CSV for further analysis
+   - Select desired properties in Object list.
+   - Export to CSV for further analysis.
 
 ## RNA Spot Counting
 
