@@ -146,6 +146,11 @@ def cacheMaxMerge(self, item):
                     }
                 ],
             }
+            # If this is a file we converted because we used the multi-source
+            # and named it in our project's default manner, make sure we use
+            # the tiff source to read it back
+            if item["name"] == "multi-source2.json":
+                multi["sources"][0]["sourceName"] = "tiff"
             datasetFolder = Folder().load(
                 item["folderId"], user=user, level=AccessType.WRITE
             )
