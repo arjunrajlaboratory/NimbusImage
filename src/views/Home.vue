@@ -414,7 +414,7 @@ export default class Home extends Vue {
     }
     for (const d of this.datasetViews) {
       this.girderResources.getFolder(d.datasetId);
-      this.girderResources.getItem(d.configurationId);
+      this.girderResources.getCollection(d.configurationId);
     }
   }
 
