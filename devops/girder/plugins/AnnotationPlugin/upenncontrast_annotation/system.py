@@ -146,6 +146,11 @@ def cacheMaxMerge(self, item):
                     }
                 ],
             }
+            # If this is a file we converted because we used the multi-source
+            # make sure we use the same source to read it back
+            if item.get("largeImage", {}).get("sourceName", "") in {"tiff"}:
+                multi["sources"][0]["sourceName"] = item["largeImage"][
+                    "sourceName"]
             datasetFolder = Folder().load(
                 item["folderId"], user=user, level=AccessType.WRITE
             )
