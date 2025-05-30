@@ -55,13 +55,34 @@ class AnnotationConnection(ProxiedAccessControlledModel):
     def annotationsRemovedEvent(self, event):
         # Clean connections orphaned by the deletion of the annotations
         annotationStringIds = event.info
-        query = {
-            "$or": [
+        pipeline = [
+            # Select the first annotation from the array
+            {"$match": {"_id": annotationStringIds[0]}},
+            # Bring up all connections who share the same datasetId
+            {"$lookup":
+                {
+                    "from": "annotation_connection",
+                    "localField": "datasetId",
+                    "foreignField": "datasetId",
+                    "as": "datasetConnections"
+                }},
+            # Replace root with connections (remove unnecessary annotation
+            # information)
+            {"$unwind": "$datasetConnections"},
+            {"$replaceRoot": {"newRoot": "$datasetConnections"}},
+            # Only match connections whose childId or parentId match one of
+            # the annotations to remove
+            {"$match": {"$or": [
                 {"childId": {"$in": annotationStringIds}},
-                {"parentId": {"$in": annotationStringIds}},
-            ]
-        }
-        self.removeWithQuery(query)
+                {"parentId": {"$in": annotationStringIds}}
+            ]}},
+            # Only keep the necessary information
+            {"$project": {"_id": 1}}
+        ]
+        connectionsToRemove = [
+            connection["_id"]
+            for connection in Annotation().collection.aggregate(pipeline)]
+        self.removeWithQuery({"_id": {"$in": connectionsToRemove}})
 
     def folderRemovedEvent(self, event):
         if event.info and event.info["_id"]:
