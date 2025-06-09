@@ -1178,6 +1178,7 @@ export enum AnnotationShape {
   Line = "line",
   Polygon = "polygon",
   Rectangle = "rectangle",
+  Any = "any",
 }
 
 export enum FeatureShape {
