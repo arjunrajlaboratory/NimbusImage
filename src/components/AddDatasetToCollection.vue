@@ -67,9 +67,15 @@
       </template>
       <template v-if="option.type == 'upload'">
         <new-dataset
+          v-if="uploadLocation"
           @datasetUploaded="addDatasetToCollectionUploaded"
           :autoMultiConfig="false"
+          :initialUploadLocation="uploadLocation"
         />
+        <div v-else class="text-center my-4">
+          <v-progress-circular indeterminate />
+          <div class="mt-2">Loading upload location...</div>
+        </div>
         <div class="d-flex justify-end mt-2">
           <v-simple-checkbox v-model="option.editVariables" dense />
           Review variables
@@ -106,7 +112,7 @@ import store from "@/store";
 
 import { isDatasetFolder } from "@/utils/girderSelectable";
 import { logError } from "@/utils/log";
-import { IGirderSelectAble } from "@/girder";
+import { IGirderSelectAble, IGirderLocation } from "@/girder";
 
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import MultiSourceConfiguration from "@/views/dataset/MultiSourceConfiguration.vue";
@@ -158,10 +164,19 @@ export default class AddDatasetToCollection extends Vue {
   collection!: IDatasetConfiguration;
 
   option: TAddDatasetOption = defaultDatasetUploadOption();
+  uploadLocation: IGirderLocation | null = null;
 
   $refs!: {
     configuration?: MultiSourceConfiguration;
   };
+
+  async mounted() {
+    try {
+      this.uploadLocation = await this.store.api.getUserPrivateFolder();
+    } catch (error) {
+      this.uploadLocation = this.store.girderUser;
+    }
+  }
 
   get addDatasetOptionType(): TAddDatasetOption["type"] {
     return this.option.type;
