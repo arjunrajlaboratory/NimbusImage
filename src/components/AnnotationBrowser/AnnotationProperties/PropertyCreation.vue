@@ -232,7 +232,8 @@ export default class PropertyCreation extends Vue {
     return (labels: IWorkerLabels) => {
       return (
         labels.isPropertyWorker !== undefined &&
-        (labels.annotationShape || null) === this.filteringShape
+        ((labels.annotationShape || null) === this.filteringShape ||
+          (labels.annotationShape || null) === AnnotationShape.Any)
       );
     };
   }

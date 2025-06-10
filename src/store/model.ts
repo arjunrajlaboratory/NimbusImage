@@ -1178,6 +1178,7 @@ export enum AnnotationShape {
   Line = "line",
   Polygon = "polygon",
   Rectangle = "rectangle",
+  Any = "any",
 }
 
 export enum FeatureShape {
@@ -1192,6 +1193,7 @@ export const AnnotationNames = {
   [AnnotationShape.Line]: "Line",
   [AnnotationShape.Polygon]: "Blob",
   [AnnotationShape.Rectangle]: "Rectangle",
+  [AnnotationShape.Any]: "Any", // This was added to support the "Any" shape
 };
 
 export interface IAnnotationLocation {
