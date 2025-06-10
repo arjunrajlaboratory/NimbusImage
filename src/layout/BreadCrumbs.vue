@@ -33,7 +33,7 @@
                   @click="openAddDatasetDialog(configurationId)"
                 >
                   <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
-                  Add a dataset in this collection
+                  Add a dataset to this collection
                 </div>
               </template>
             </v-select>
