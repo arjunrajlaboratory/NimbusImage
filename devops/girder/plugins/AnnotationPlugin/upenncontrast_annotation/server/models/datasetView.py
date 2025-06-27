@@ -1,6 +1,7 @@
 from girder.constants import AccessType
 from girder.exceptions import ValidationException
-from ..helpers.proxiedModel import ProxiedAccessControlledModel
+from ..helpers.proxiedModel import ProxiedModel
+from girder.models.model_base import AccessControlledModel
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 import fastjsonschema
@@ -38,8 +39,8 @@ class DatasetViewSchema:
         "id": "/girder/plugins/upenncontrast_annotation/models/datasetView",
         "type": "object",
         "properties": {
-            "datasetId": {"type": "string"},
-            "configurationId": {"type": "string"},
+            "datasetId": {"type": "objectId"},
+            "configurationId": {"type": "objectId"},
             "lastLocation": locationSchema,
             # Associate a contrast to a layer id
             "layerContrasts": {
@@ -56,7 +57,7 @@ class DatasetViewSchema:
     }
 
 
-class DatasetView(ProxiedAccessControlledModel):
+class DatasetView(ProxiedModel, AccessControlledModel):
 
     def __init__(self):
         super().__init__()
@@ -68,6 +69,7 @@ class DatasetView(ProxiedAccessControlledModel):
 
     def initialize(self):
         self.name = "dataset_view"
+        self.schema = DatasetViewSchema.datasetViewSchema
 
     def validate(self, document):
         try:

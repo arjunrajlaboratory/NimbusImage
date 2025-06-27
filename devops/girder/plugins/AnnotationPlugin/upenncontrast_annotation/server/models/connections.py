@@ -4,15 +4,16 @@ import numpy as np
 from bson.objectid import ObjectId
 
 from girder import events
-from girder.constants import AccessType, SortDir
+from girder.constants import SortDir
 from girder.exceptions import ValidationException
 from girder.models.folder import Folder
+from girder.utility.acl_mixin import AccessControlMixin
 
 from .annotation import Annotation
 
 from ..helpers.connections import annotationToAnnotationDistance
 from ..helpers.fastjsonschema import customJsonSchemaCompile
-from ..helpers.proxiedModel import ProxiedAccessControlledModel
+from ..helpers.proxiedModel import ProxiedModel
 
 
 class ConnectionSchema:
@@ -27,16 +28,16 @@ class ConnectionSchema:
         "type": "object",
         "properties": {
             "label": {"type": "string"},
-            "parentId": {"type": "string"},
-            "childId": {"type": "string"},
-            "datasetId": {"type": "string"},
+            "parentId": {"type": "objectId"},
+            "childId": {"type": "objectId"},
+            "datasetId": {"type": "objectId"},
             "tags": tagsSchema,
         },
         "required": ["parentId", "childId", "datasetId", "tags"],
     }
 
 
-class AnnotationConnection(ProxiedAccessControlledModel):
+class AnnotationConnection(ProxiedModel, AccessControlMixin):
     # TODO: write lock
 
     def __init__(self):
@@ -47,6 +48,12 @@ class AnnotationConnection(ProxiedAccessControlledModel):
         )
         self.ensureIndices([(compoundSearchIndex, {}),
                             "parentId", "childId", "datasetId"])
+
+        # Used by Girder to define what field are used to check permissions
+        self.resourceColl = 'folder'
+        self.resourceParent = 'datasetId'
+
+        self.schema = ConnectionSchema.connectionSchema
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(ConnectionSchema.connectionSchema)
@@ -86,9 +93,8 @@ class AnnotationConnection(ProxiedAccessControlledModel):
 
     def folderRemovedEvent(self, event):
         if event.info and event.info["_id"]:
-            folderId = str(event.info["_id"])
             query = {
-                "datasetId": folderId,
+                "datasetId": event.info["_id"],
             }
             self.removeWithQuery(query)
 
@@ -144,17 +150,10 @@ class AnnotationConnection(ProxiedAccessControlledModel):
 
         return connections
 
-    def create(self, creator, connection):
-        self.setUserAccess(
-            connection, user=creator, level=AccessType.ADMIN, save=False
-        )
+    def create(self, connection):
         return self.save(connection)
 
-    def createMultiple(self, creator, connections):
-        for connection in connections:
-            self.setUserAccess(
-                connection, user=creator, level=AccessType.ADMIN, save=False
-            )
+    def createMultiple(self, connections):
         return self.saveMany(connections)
 
     def delete(self, connection):
@@ -255,12 +254,11 @@ class AnnotationConnection(ProxiedAccessControlledModel):
             if result is not None:
                 connections.append(
                     self.create(
-                        creator=user,
                         connection={
                             "tags": [],
                             "label": "A Connection -- automatic",
-                            "parentId": str(result[0]["_id"]),
-                            "childId": str(id),
+                            "parentId": result[0]["_id"],
+                            "childId": id,
                             "datasetId": annotation["datasetId"],
                         },
                     )

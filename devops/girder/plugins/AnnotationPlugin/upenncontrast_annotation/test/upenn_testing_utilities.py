@@ -19,7 +19,7 @@ def getSampleAnnotation(datasetId):
     label = "Test Annotation {}".format(random.random())
     annotation = copy.deepcopy(sampleAnnotation)
     annotation["name"] = label
-    annotation["datasetId"] = str(datasetId)
+    annotation["datasetId"] = datasetId
     return annotation
 
 
@@ -37,7 +37,7 @@ def getSampleConnection(parentId, childId, datasetId):
     return {
         "label": label,
         "tags": [],
-        "parentId": str(parentId),
-        "childId": str(childId),
-        "datasetId": str(datasetId),
+        "parentId": parentId,
+        "childId": childId,
+        "datasetId": datasetId,
     }

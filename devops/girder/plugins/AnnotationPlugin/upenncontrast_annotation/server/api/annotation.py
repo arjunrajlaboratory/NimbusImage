@@ -1,15 +1,17 @@
 import orjson
-
 import cherrypy
+
+from bson.objectid import ObjectId
+
 from girder.api import access
 from girder.api.describe import Description, describeRoute, autoDescribeRoute
 from girder.api.rest import Resource, loadmodel, setResponseHeader
 from girder.constants import AccessType
-from girder.exceptions import AccessException, RestException
+from girder.exceptions import RestException
+
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..models.annotation import Annotation as AnnotationModel
-
-from bson.objectid import ObjectId
+from ..helpers.serialization import orJsonDefaults
 
 
 # Helper functions to get dataset ID for recordable endpoints
@@ -82,10 +84,8 @@ class Annotation(Resource):
     @recordable("Create an annotation", getDatasetIdFromAnnotationInBody)
     def create(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        currentUser = self.getCurrentUser()
-        if not currentUser:
-            raise AccessException("User not found", "currentUser")
-        return self._annotationModel.create(currentUser, bodyJson)
+        annotation = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        return self._annotationModel.create(annotation)
 
     @access.user
     @describeRoute(
@@ -99,10 +99,8 @@ class Annotation(Resource):
     )
     def createMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        currentUser = self.getCurrentUser()
-        if not currentUser:
-            raise AccessException("User not found", "currentUser")
-        return self._annotationModel.createMultiple(currentUser, bodyJson)
+        annotations = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        return self._annotationModel.createMultiple(annotations)
 
     @describeRoute(
         Description("Delete an existing annotation")
@@ -205,7 +203,7 @@ class Annotation(Resource):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
         if params["datasetId"] is not None:
-            query["datasetId"] = params["datasetId"]
+            query["datasetId"] = ObjectId(params["datasetId"])
         else:
             return []
         if params["shape"] is not None:
@@ -227,18 +225,13 @@ class Annotation(Resource):
             for annotation in cursor:
                 if not first:
                     chunk.append(b",")
-                # orjson and base json won't serialize ObjectIds
-                annotation["_id"] = str(annotation["_id"])
-                # We don't need to transmit the access control for
-                # annotations
-                annotation.pop("access")
                 # Otherwise, we can use json
                 # chunk.append(json.dumps(annotation, allow_nan=False,
                 #             cls=JsonEncoder, separators=(",", ":")).encode())
                 # If we got rid of ObjectIds, using the json defaults is faster
                 # chunk.append(json.dumps(annotation).encode())
                 # But orjson is faster yet
-                chunk.append(orjson.dumps(annotation))
+                chunk.append(orjson.dumps(annotation, default=orJsonDefaults))
                 first = False
                 if len(chunk) > 1000:
                     yield b"".join(chunk)
