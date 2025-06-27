@@ -2,7 +2,7 @@ import { IGirderFolder, IGirderItem, IGirderSelectAble } from "@/girder";
 
 export function isConfigurationItem(selectable: IGirderSelectAble): boolean {
   return (
-    selectable._modelType === "item" &&
+    selectable._modelType === "upenn_collection" &&
     selectable.meta.subtype === "contrastConfiguration" &&
     selectable.meta.compatibility
   );
