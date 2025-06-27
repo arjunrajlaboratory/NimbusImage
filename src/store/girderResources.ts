@@ -13,11 +13,10 @@ import {
   IGirderLargeImage,
   IGirderSelectAble,
   IGirderUser,
-  IUPennCollection,
 } from "@/girder";
 import Vue from "vue";
 import { IDataset, IDatasetConfiguration } from "./model";
-import { setBaseCollectionValues, asDataset, parseTiles } from "./GirderAPI";
+import { asConfigurationItem, asDataset, parseTiles } from "./GirderAPI";
 
 /**
  * Store to cache requests to resources, mostly items and folders
@@ -103,12 +102,6 @@ export class GirderResources extends VuexModule {
     return resource as IGirderUser | null;
   }
 
-  @Action
-  public async getCollection(id: string): Promise<IGirderItem | null> {
-    const resource = await this.getResource({ id, type: "upenn_collection" });
-    return resource as IGirderItem | null;
-  }
-
   get watchResource() {
     return (id: string, type: IGirderSelectAble["_modelType"]) => {
       if (!(id in this.resources)) {
@@ -124,12 +117,9 @@ export class GirderResources extends VuexModule {
       this.watchResource(id, "folder") as IGirderFolder | null | undefined;
   }
 
-  get watchCollection() {
+  get watchItem() {
     return (id: string) =>
-      this.watchResource(id, "upenn_collection") as
-        | IUPennCollection
-        | null
-        | undefined;
+      this.watchResource(id, "item") as IGirderItem | null | undefined;
   }
 
   get watchUser() {
@@ -166,8 +156,8 @@ export class GirderResources extends VuexModule {
 
   @Action
   async getConfiguration(id: string): Promise<IDatasetConfiguration | null> {
-    const configuration = await this.getCollection(id);
-    return configuration ? setBaseCollectionValues(configuration) : null;
+    const item = await this.getItem(id);
+    return item ? asConfigurationItem(item) : null;
   }
 
   @Action

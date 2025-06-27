@@ -367,7 +367,7 @@ export default class DatasetInfo extends Vue {
     for (const datasetView of this.datasetViews) {
       if (!(datasetView.configurationId in this.configInfo)) {
         this.girderResources
-          .getCollection(datasetView.configurationId)
+          .getItem(datasetView.configurationId)
           .then((item) =>
             Vue.set(this.configInfo, datasetView.configurationId, item),
           );

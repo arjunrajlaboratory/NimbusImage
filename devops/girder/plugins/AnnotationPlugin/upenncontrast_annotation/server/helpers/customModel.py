@@ -1,15 +1,12 @@
 from girder import events
 from girder.exceptions import ValidationException
-from girder.models.model_base import Model
+from girder.models.model_base import AccessControlledModel
 
 from pymongo.errors import BulkWriteError, WriteError
 from bson.objectid import ObjectId
 
-from upenncontrast_annotation.server.helpers.serialization import \
-    convertIdsToObjectIds
 
-
-class CustomNimbusImageModel(Model):
+class CustomAccessControlledModel(AccessControlledModel):
     def saveMany(self, documents, validate=True, triggerEvents=True):
         """
         Create or update several documents in the collection. If a single
@@ -77,12 +74,3 @@ class CustomNimbusImageModel(Model):
             )
 
         return documents
-
-    def convertIdsToObjectIds(self, objOrObjs):
-        if not self.schema:
-            raise NotImplementedError(
-                "Need to define schema to convert object ids to ObjectIds")
-        keysToConvert = [
-            key for key in self.schema["properties"]
-            if self.schema["properties"][key].get("type") == "objectId"]
-        return convertIdsToObjectIds(objOrObjs, keysToConvert)

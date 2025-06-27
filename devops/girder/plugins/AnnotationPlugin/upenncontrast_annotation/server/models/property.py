@@ -1,7 +1,6 @@
-from ..helpers.proxiedModel import ProxiedModel
+from ..helpers.proxiedModel import ProxiedAccessControlledModel
 from girder.exceptions import ValidationException, RestException
 from girder.constants import AccessType
-from girder.models.model_base import AccessControlledModel
 from ..helpers.tasks import runJobRequest
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
@@ -29,15 +28,14 @@ class PropertySchema:
     }
 
 
-class AnnotationProperty(ProxiedModel, AccessControlledModel):
+class AnnotationProperty(ProxiedAccessControlledModel):
     # TODO: write lock
     # TODO: delete hooks: remove all computed values if the property is
     #   deleted ? (big operation)
 
     def __init__(self):
         super().__init__()
-        self.ensureIndices(["name", "image"])
-        self.schema = PropertySchema.propertySchema
+        self.ensureIndices(["name", "image", "datasetId"])
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(PropertySchema.propertySchema)

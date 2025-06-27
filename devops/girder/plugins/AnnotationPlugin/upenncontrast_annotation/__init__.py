@@ -11,11 +11,9 @@ from girder.plugin import GirderPlugin
 
 from girder.constants import TokenScope
 from girder.utility.model_importer import ModelImporter
-from girder.api.v1.resource import allowedDeleteTypes, allowedSearchTypes
 
 from . import system
 from .server.models.annotation import Annotation as AnnotationModel
-from .server.models.collection import Collection as CollectionModel
 from .server.models.connections import AnnotationConnection as ConnectionModel
 from .server.models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
@@ -90,7 +88,6 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         # Laziliy do these imports as they can connect to the database
         from .server.api.annotation import Annotation
         from .server.api.connections import AnnotationConnection
-        from .server.api.collection import Collection
         from .server.api.propertyValues import PropertyValues
         from .server.api.property import AnnotationProperty
         from .server.api.workerInterfaces import WorkerInterfaces
@@ -98,18 +95,10 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         from .server.api.datasetView import DatasetView
         from .server.api.history import History
         from .server.api.user_assetstore import UserAssetstore
-        from .server.api.resource import CustomResource
 
         ModelImporter.registerModel(
             "upenn_annotation", AnnotationModel, "upenncontrast_annotation"
         )
-        ModelImporter.registerModel(
-            "upenn_collection", CollectionModel, "upenncontrast_annotation"
-        )
-        allowedDeleteTypes.add("upenn_collection")
-        # Here we need to add the name of the plugin because the search code
-        # in Girder will use it
-        allowedSearchTypes.add("upenn_collection.upenncontrast_annotation")
         ModelImporter.registerModel(
             "annotation_connection",
             ConnectionModel,
@@ -139,9 +128,7 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
             "document_change", DocumentChangeModel, "upenncontrast_annotation"
         )
 
-        info["apiRoot"].resource = CustomResource()
         info["apiRoot"].upenn_annotation = Annotation()
-        info["apiRoot"].upenn_collection = Collection()
         info["apiRoot"].annotation_connection = AnnotationConnection()
         info["apiRoot"].annotation_property_values = PropertyValues()
         info["apiRoot"].annotation_property = AnnotationProperty()

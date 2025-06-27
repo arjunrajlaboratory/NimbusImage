@@ -129,8 +129,8 @@ class TestConnection:
 
         query = {
             "$or": [
-                {"parentId": annotation1["_id"]},
-                {"childId": annotation2["_id"]},
+                {"parentId": str(annotation1["_id"])},
+                {"childId": str(annotation2["_id"])},
             ]
         }
         cursor = AnnotationConnection().find(
