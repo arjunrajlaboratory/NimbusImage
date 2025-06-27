@@ -48,14 +48,6 @@ export interface IGirderFile extends IGirderBase {
   _modelType: "file";
 }
 
-export interface IUPennCollection extends IGirderBase {
-  _modelType: "upenn_collection";
-  description: string;
-  creatorId: string;
-  folderId: string;
-  meta: any;
-}
-
 // TODO: This type is essentially a wrapper around the IGirderItem type for now.
 // It is defined in case we want to add more properties to the largeImage object in the future.
 export interface IGirderLargeImage extends IGirderItem {
@@ -80,8 +72,7 @@ export type IGirderSelectAble =
   | IGirderItem
   | IGirderUser
   | IGirderFolder
-  | IGirderFile
-  | IUPennCollection;
+  | IGirderFile;
 
 export interface IGirderApiKey {
   _accessLevel: number;

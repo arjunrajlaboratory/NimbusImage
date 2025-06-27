@@ -3,15 +3,7 @@
     <div class="d-flex align-center ma-2">
       <v-icon class="mr-2">mdi-magnify</v-icon>
       <div class="flex-grow-1">
-        <girder-search
-          @select="searchInput"
-          hide-search-icon
-          :searchTypes="[
-            'user',
-            'folder',
-            'upenn_collection.upenncontrast_annotation',
-          ]"
-        >
+        <girder-search @select="searchInput" hide-search-icon>
           <template #searchresult="item">
             <v-icon class="mr-2">{{ iconToMdi(iconFromItem(item)) }}</v-icon>
             <span>{{ item.name }}</span>
@@ -246,11 +238,7 @@ export default class CustomFileManager extends Vue {
   }
 
   searchInput(value: IGirderSelectAble) {
-    if (
-      value._modelType === "upenn_collection" ||
-      value._modelType === "file" ||
-      value._modelType === "item"
-    ) {
+    if (value._modelType === "item" || value._modelType === "file") {
       return;
     }
     this.currentLocation = value;
@@ -270,7 +258,7 @@ export default class CustomFileManager extends Vue {
     }
     switch (selectable._modelType) {
       case "file":
-      case "upenn_collection":
+      case "item":
         return "file";
       case "folder":
         return "folder";
@@ -339,7 +327,7 @@ export default class CustomFileManager extends Vue {
         await Promise.all(
           views.map((view) => {
             this.girderResources
-              .getCollection(view.configurationId)
+              .getItem(view.configurationId)
               .then((configInfo) => {
                 if (!configInfo) {
                   return;

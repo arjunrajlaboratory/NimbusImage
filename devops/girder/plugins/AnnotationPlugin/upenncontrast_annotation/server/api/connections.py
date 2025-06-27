@@ -3,10 +3,9 @@ from girder.api.describe import Description, autoDescribeRoute, describeRoute
 from girder.api.rest import Resource, loadmodel
 from girder.constants import AccessType
 from girder.exceptions import AccessException
-
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
-from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
+from ..models.annotation import Annotation as AnnotationModel
 
 from bson.objectid import ObjectId
 
@@ -99,8 +98,10 @@ class AnnotationConnection(Resource):
     @recordable("Create a connection", getDatasetIdFromConnectionInBody)
     def create(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        connection = self._connectionModel.convertIdsToObjectIds(bodyJson)
-        return self._connectionModel.create(connection)
+        currentUser = self.getCurrentUser()
+        if not currentUser:
+            raise AccessException("User not found", "currentUser")
+        return self._connectionModel.create(currentUser, bodyJson)
 
     @access.user
     @describeRoute(
@@ -114,8 +115,10 @@ class AnnotationConnection(Resource):
     )
     def multipleCreate(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        connections = self._connectionModel.convertIdsToObjectIds(bodyJson)
-        return self._connectionModel.createMultiple(connections)
+        currentUser = self.getCurrentUser()
+        if not currentUser:
+            raise AccessException("User not found", "currentUser")
+        return self._connectionModel.createMultiple(currentUser, bodyJson)
 
     @describeRoute(
         Description("Delete an existing connection")
@@ -202,15 +205,15 @@ class AnnotationConnection(Resource):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
         if "datasetId" in params and params["datasetId"]:
-            query["datasetId"] = ObjectId(params["datasetId"])
+            query["datasetId"] = params["datasetId"]
         if "childId" in params and params["childId"]:
-            query["childId"] = ObjectId(params["childId"])
+            query["childId"] = params["childId"]
         if "parentId" in params and params["parentId"]:
-            query["parentId"] = ObjectId(params["parentId"])
+            query["parentId"] = params["parentId"]
         if "nodeAnnotationId" in params and params["nodeAnnotationId"]:
             query["$or"] = [
-                {"parentId": ObjectId(params["nodeAnnotationId"])},
-                {"childId": ObjectId(params["nodeAnnotationId"])},
+                {"parentId": params["nodeAnnotationId"]},
+                {"childId": params["nodeAnnotationId"]},
             ]
         return self._connectionModel.findWithPermissions(
             query,

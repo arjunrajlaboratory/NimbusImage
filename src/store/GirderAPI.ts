@@ -8,7 +8,6 @@ import {
   IGirderAssetstore,
   IGirderLargeImage,
   IGirderApiKey,
-  IUPennCollection,
 } from "@/girder";
 import {
   configurationBaseKeys,
@@ -39,7 +38,7 @@ import {
 } from "@/store/images";
 import progressStore from "@/store/progress";
 import { Promise as BluebirdPromise } from "bluebird";
-import { AxiosRequestConfig, AxiosResponse, isAxiosError } from "axios";
+import { AxiosRequestConfig, AxiosResponse } from "axios";
 import { fetchAllPages } from "@/utils/fetch";
 import { stringify } from "qs";
 import { logError } from "@/utils/log";
@@ -57,13 +56,13 @@ function toId(item: string | { _id: string }) {
 }
 
 function itemsToResourceObject(items: IGirderSelectAble[]) {
-  const resourceObj: { folder: string[]; upenn_collection: string[] } = {
+  const resourceObj: { folder: string[]; item: string[] } = {
     folder: [],
-    upenn_collection: [],
+    item: [],
   };
   for (const resource of items) {
     const type = resource._modelType;
-    if (type === "folder" || type === "upenn_collection") {
+    if (type === "folder" || type === "item") {
       resourceObj[type].push(resource._id);
     }
   }
@@ -426,27 +425,6 @@ export default class GirderAPI {
     return (response.data as any[]).map(asDatasetView);
   }
 
-  async shareDatasetView(
-    datasetViews: IDatasetView[],
-    userMailOrUsername: string,
-    accessType: number,
-  ) {
-    const datasetViewIds = datasetViews.map((datasetView) => datasetView.id);
-    try {
-      const response = await this.client.post("dataset_view/share", {
-        datasetViewIds,
-        userMailOrUsername,
-        accessType,
-      });
-      return response.data as boolean;
-    } catch (error) {
-      if (isAxiosError(error) && error.response?.data?.message) {
-        return error.response.data.message;
-      }
-      throw error;
-    }
-  }
-
   async getCompatibleConfigurations(dataset: IDataset) {
     const compatibility = getDatasetCompatibility(dataset);
     const pages = await fetchAllPages(this.client, "item/query", {
@@ -462,7 +440,7 @@ export default class GirderAPI {
     const configurations: IDatasetConfiguration[] = [];
     for (const page of pages) {
       for (const data of page) {
-        configurations.push(setBaseCollectionValues(data));
+        configurations.push(asConfigurationItem(data));
       }
     }
     return configurations;
@@ -569,11 +547,10 @@ export default class GirderAPI {
     data.set("description", description);
     data.set("reuseExisting", "false");
     data.set("metadata", JSON.stringify(metadata));
-    const item: IGirderItem = (await this.client.post("upenn_collection", data))
-      .data;
+    const item: IGirderItem = (await this.client.post("item", data)).data;
 
     // Create configuration from item and configBase
-    return setBaseCollectionValues(item);
+    return asConfigurationItem(item);
   }
 
   createConfigurationFromDataset(
@@ -609,18 +586,16 @@ export default class GirderAPI {
     const metadata = toConfiguationMetadata({ [key]: config[key] });
     const data = new FormData();
     data.set("metadata", JSON.stringify(metadata));
-    const collection: IUPennCollection = (
-      await this.client.put(`upenn_collection/${config.id}/metadata`, data)
+    const item: IGirderItem = (
+      await this.client.put(`item/${config.id}/metadata`, data)
     ).data;
-    return collection;
+    return item;
   }
 
   deleteConfiguration(
     config: IDatasetConfiguration,
   ): Promise<IDatasetConfiguration> {
-    return this.client
-      .delete(`/upenn_collection/${config.id}`)
-      .then(() => config);
+    return this.client.delete(`/item/${config.id}`).then(() => config);
   }
 
   getLayerHistogram(images: IImage[]) {
@@ -890,9 +865,7 @@ function toConfiguationMetadata(data: Partial<IDatasetConfigurationBase>) {
   return metadata;
 }
 
-export function setBaseCollectionValues(
-  item: IGirderItem,
-): IDatasetConfiguration {
+export function asConfigurationItem(item: IGirderItem): IDatasetConfiguration {
   const config: Partial<IDatasetConfiguration> = {
     id: item._id,
     name: item.name,

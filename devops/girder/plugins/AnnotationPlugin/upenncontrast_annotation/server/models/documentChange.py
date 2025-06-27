@@ -1,8 +1,7 @@
 from girder.constants import AccessType
 from girder.exceptions import ValidationException
-from girder.models.model_base import AccessControlledModel
 
-from ..helpers.customModel import CustomNimbusImageModel
+from ..helpers.customModel import CustomAccessControlledModel
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 import fastjsonschema
 
@@ -38,16 +37,15 @@ class DocumentChangeSchema:
     }
 
 
-class DocumentChange(CustomNimbusImageModel, AccessControlledModel):
+class DocumentChange(CustomAccessControlledModel):
     """
-    Register actions on some endpoints using the ProxiedModel
-    This class itself doesn't inherit the ProxiedModel
+    Register actions on some endpoints using the ProxiedAccessControlledModel
+    This class itself doesn't inherit the ProxiedAccessControlledModel
     """
 
     def __init__(self):
         super().__init__()
         self.ensureIndices(["historyId", "documentId"])
-        self.schema = DocumentChangeSchema.documentChangeSchema
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(DocumentChangeSchema.documentChangeSchema)

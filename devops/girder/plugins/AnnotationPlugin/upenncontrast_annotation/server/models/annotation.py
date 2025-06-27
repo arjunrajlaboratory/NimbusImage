@@ -7,10 +7,8 @@ from girder.constants import AccessType, SortDir
 from girder.exceptions import ValidationException, RestException
 from girder.models.folder import Folder
 
-from girder.utility.acl_mixin import AccessControlMixin
-
 from ..helpers.fastjsonschema import customJsonSchemaCompile
-from ..helpers.proxiedModel import ProxiedModel
+from ..helpers.proxiedModel import ProxiedAccessControlledModel
 from ..helpers.tasks import runJobRequest
 
 from .propertyValues import AnnotationPropertyValues as PropertiesModel
@@ -60,7 +58,7 @@ class AnnotationSchema:
             "channel": {"type": "integer"},
             "location": locationSchema,
             "shape": shapeSchema,
-            "datasetId": {"type": "objectId"},
+            "datasetId": {"type": "string", "minLength": 1},
             "color": {
                 "type": ["string", "null"],
             },
@@ -77,7 +75,7 @@ class AnnotationSchema:
     }
 
 
-class Annotation(ProxiedModel, AccessControlMixin):
+class Annotation(ProxiedAccessControlledModel):
     """
     Defines a model for storing and handling UPennContrast annotations in the
     database.
@@ -95,20 +93,15 @@ class Annotation(ProxiedModel, AccessControlMixin):
         self.ensureIndices([(compoundSearchIndex, {}),
                             "name", "datasetId", "channel", "location"])
 
-        # Used by Girder to define what field are used to check permissions
-        self.resourceColl = 'folder'
-        self.resourceParent = 'datasetId'
-
-        self.schema = AnnotationSchema.annotationSchema
-
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
     )
 
     def annotationRemovedEvent(self, event):
         if event.info and event.info["_id"]:
+            annotationStringId = str(event.info["_id"])
             events.trigger(
-                "model.upenn_annotation.removeStringIds", [event.info["_id"]]
+                "model.upenn_annotation.removeStringIds", [annotationStringId]
             )
 
     def multipleAnnotationsRemovedEvent(self, event):
@@ -141,8 +134,9 @@ class Annotation(ProxiedModel, AccessControlMixin):
 
     def cleanOrphaned(self, event):
         if event.info and event.info["_id"]:
+            folderId = str(event.info["_id"])
             query = {
-                "datasetId": event.info["_id"],
+                "datasetId": folderId,
             }
             self.removeWithQuery(query)
 
@@ -196,10 +190,17 @@ class Annotation(ProxiedModel, AccessControlMixin):
 
         return annotations
 
-    def create(self, annotation):
+    def create(self, creator, annotation):
+        self.setUserAccess(
+            annotation, user=creator, level=AccessType.ADMIN, save=False
+        )
         return self.save(annotation)
 
-    def createMultiple(self, annotations):
+    def createMultiple(self, creator, annotations):
+        for annotation in annotations:
+            self.setUserAccess(
+                annotation, user=creator, level=AccessType.ADMIN, save=False
+            )
         return self.saveMany(annotations)
 
     def delete(self, annotation):
@@ -220,11 +221,8 @@ class Annotation(ProxiedModel, AccessControlMixin):
         return self.load(id, user=user, level=AccessType.READ)
 
     def updateMultiple(self, annotationUpdates, user):
-
-        annotationIdToUpdate = {
-            ObjectId(update["id"]): update | {
-                "datasetId": ObjectId(update["datasetId"])}
-            for update in annotationUpdates}
+        annotationIdToUpdate = dict((ObjectId(update["id"]), update)
+                                    for update in annotationUpdates)
         query = {
             "_id": {
                 "$in": list(annotationIdToUpdate.keys())

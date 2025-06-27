@@ -1,7 +1,6 @@
-from ..helpers.proxiedModel import ProxiedModel
+from ..helpers.proxiedModel import ProxiedAccessControlledModel
 from girder.exceptions import ValidationException, RestException
 from girder.constants import AccessType
-from girder.models.model_base import AccessControlledModel
 from ..helpers.tasks import runJobRequest
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
@@ -31,12 +30,11 @@ class PreviewSchema:
     }
 
 
-class WorkerPreviewModel(ProxiedModel, AccessControlledModel):
+class WorkerPreviewModel(ProxiedAccessControlledModel):
 
     def __init__(self):
         super().__init__()
         self.ensureIndices(["name", "image"])
-        self.schema = PreviewSchema.previewSchema
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(PreviewSchema.previewSchema)
