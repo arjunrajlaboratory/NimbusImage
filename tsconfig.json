@@ -34,5 +34,18 @@
     "tests/**/*.ts",
     "tests/**/*.tsx"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules"],
+  // Needed to fix lists of v-checkboxes with Vue2.7
+  // See https://github.com/vuejs/language-tools/issues/1969
+  "vueCompilerOptions": {
+    "target": 2.7,
+    "experimentalModelPropName": {
+      "checked": {
+        "input": {
+          "type": "checkbox"
+        },
+        "v-checkbox": true
+      }
+    }
+  }
 }

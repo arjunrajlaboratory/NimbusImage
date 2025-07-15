@@ -1,11 +1,14 @@
+from bson import ObjectId
+
 from girder.api import access
 from girder.api.describe import Description, describeRoute
-from girder.constants import AccessType
 from girder.api.rest import Resource
+from girder.constants import AccessType
+from girder.exceptions import RestException
+
 from ..models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
 )
-from girder.exceptions import AccessException, RestException
 
 
 class PropertyValues(Resource):
@@ -41,11 +44,9 @@ class PropertyValues(Resource):
         .param("datasetId", "The ID of the dataset")
     )
     def add(self, params):
-        currentUser = self.getCurrentUser()
-        if not currentUser:
-            raise AccessException("User not found", "currentUser")
+        params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
+            params)
         return self._annotationPropertyValuesModel.appendValues(
-            currentUser,
             self.getBodyJson(),
             params["annotationId"],
             params["datasetId"],
@@ -64,11 +65,10 @@ class PropertyValues(Resource):
         )
     )
     def addMultiple(self, params):
-        currentUser = self.getCurrentUser()
-        if not currentUser:
-            raise AccessException("User not found", "currentUser")
+        propertyValuesList = self._annotationPropertyValuesModel.\
+            convertIdsToObjectIds(self.getBodyJson())
         return self._annotationPropertyValuesModel.appendMultipleValues(
-            currentUser, self.getBodyJson()
+            propertyValuesList
         )
 
     @describeRoute(
@@ -90,6 +90,8 @@ class PropertyValues(Resource):
             raise RestException(code=400, message="Property ID was invalid")
         if "datasetId" not in params:
             raise RestException(code=400, message="Dataset ID was invalid")
+        params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
+            params)
         self._annotationPropertyValuesModel.delete(
             params["propertyId"], params["datasetId"]
         )
@@ -115,9 +117,9 @@ class PropertyValues(Resource):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
         if "datasetId" in params:
-            query["datasetId"] = params["datasetId"]
+            query["datasetId"] = ObjectId(params["datasetId"])
         if "annotationId" in params:
-            query["annotationId"] = params["annotationId"]
+            query["annotationId"] = ObjectId(params["annotationId"])
         return self._annotationPropertyValuesModel.findWithPermissions(
             query,
             sort=sort,
@@ -143,6 +145,8 @@ class PropertyValues(Resource):
         .param("buckets", "The number of buckets", required=False)
     )
     def histogram(self, params):
+        params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
+            params)
         if "buckets" in params:
             return self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"],

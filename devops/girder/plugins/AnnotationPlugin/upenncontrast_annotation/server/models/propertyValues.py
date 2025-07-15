@@ -1,11 +1,12 @@
 import fastjsonschema
 
 from girder import events
-from girder.constants import AccessType, SortDir
+from girder.constants import SortDir
 from girder.exceptions import ValidationException
+from girder.utility.acl_mixin import AccessControlMixin
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
-from ..helpers.proxiedModel import ProxiedAccessControlledModel
+from ..helpers.proxiedModel import ProxiedModel
 
 
 class PropertySchema:
@@ -19,10 +20,8 @@ class PropertySchema:
         "id": "/girder/plugins/upenncontrast_annotation/models/propertyValues",
         "type": "object",
         "properties": {
-            "annotationId": {
-                "type": "objectId",
-            },
-            "datasetId": {"type": "string"},
+            "annotationId": {"type": "objectId"},
+            "datasetId": {"type": "objectId"},
             "values": {
                 "id": recursiveValuesId,
                 "type": "object",
@@ -42,7 +41,7 @@ class PropertySchema:
     }
 
 
-class AnnotationPropertyValues(ProxiedAccessControlledModel):
+class AnnotationPropertyValues(ProxiedModel, AccessControlMixin):
 
     def __init__(self):
         super().__init__()
@@ -52,6 +51,12 @@ class AnnotationPropertyValues(ProxiedAccessControlledModel):
         )
         self.ensureIndices([(compoundSearchIndex, {}),
                             "annotationId", "datasetId"])
+
+        # Used by Girder to define what field are used to check permissions
+        self.resourceColl = 'folder'
+        self.resourceParent = 'datasetId'
+
+        self.schema = PropertySchema.annotationPropertySchema
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(PropertySchema.annotationPropertySchema)
@@ -105,22 +110,15 @@ class AnnotationPropertyValues(ProxiedAccessControlledModel):
 
         return propertyValuesList
 
-    def appendValues(self, creator, values, annotationId, datasetId):
+    def appendValues(self, values, annotationId, datasetId):
         property_values = {
             "annotationId": annotationId,
             "values": values,
             "datasetId": datasetId,
         }
-        self.setUserAccess(
-            property_values, user=creator, level=AccessType.ADMIN
-        )
         return self.save(property_values)
 
-    def appendMultipleValues(self, creator, list_of_property_values):
-        for property_values in list_of_property_values:
-            self.setUserAccess(
-                property_values, user=creator, level=AccessType.ADMIN
-            )
+    def appendMultipleValues(self, list_of_property_values):
         return self.saveMany(list_of_property_values)
 
     def delete(self, propertyId, datasetId):

@@ -1,9 +1,10 @@
 from girder.constants import SortDir, AccessType
 from girder.exceptions import ValidationException
+from girder.models.model_base import AccessControlledModel
 from girder.utility.model_importer import ModelImporter
 
 from .documentChange import DocumentChange as DocumentChangeModel
-from ..helpers.customModel import CustomAccessControlledModel
+from ..helpers.customModel import CustomNimbusImageModel
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 import fastjsonschema
@@ -42,15 +43,16 @@ class HistorySchema:
     }
 
 
-class History(CustomAccessControlledModel):
+class History(CustomNimbusImageModel, AccessControlledModel):
     """
-    Register actions on some endpoints using the ProxiedAccessControlledModel
-    This class itself doesn't inherit the ProxiedAccessControlledModel
+    Register actions on some endpoints using the ProxiedModel
+    This class itself doesn't inherit the ProxiedModel
     """
 
     def __init__(self):
         super().__init__()
         self.ensureIndices(["name", "datasetId", "userId"])
+        self.schema = HistorySchema.historySchema
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(HistorySchema.historySchema)
@@ -128,7 +130,7 @@ class History(CustomAccessControlledModel):
             document_id = change["documentId"]
             model_name = change["modelName"]
             if model_name != previous_model_name:
-                model: CustomAccessControlledModel = ModelImporter.model(
+                model: CustomNimbusImageModel = ModelImporter.model(
                     model_name, "upenncontrast_annotation"
                 )
                 previous_model_name = model_name
