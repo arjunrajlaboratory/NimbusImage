@@ -270,6 +270,7 @@ export default class CustomFileManager extends Vue {
     }
     switch (selectable._modelType) {
       case "file":
+      case "item":
       case "upenn_collection":
         return "file";
       case "folder":
