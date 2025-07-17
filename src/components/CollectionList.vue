@@ -1,10 +1,22 @@
 <template>
   <div class="collection-list-wrapper">
     <!-- Current folder path display -->
-    <div class="folder-path-display pa-2">
+    <div class="folder-path-display pa-2 grey lighten-5">
       <div class="d-flex align-center">
-        <v-icon class="mr-2" size="20" color="grey">mdi-folder</v-icon>
-        <span class="text-body-2 grey--text">{{ currentFolderPath }}</span>
+        <v-icon class="mr-2" size="20" color="grey darken-2">mdi-folder</v-icon>
+        <span class="text-body-2 mr-2" style="color: #424242"
+          >Collections in:</span
+        >
+        <girder-breadcrumb
+          v-if="currentFolderLocation"
+          :location="currentFolderLocation"
+          root-location-disabled
+          readonly
+          class="folder-breadcrumb"
+        />
+        <span v-else class="text-body-2" style="color: #424242">{{
+          fallbackFolderPath
+        }}</span>
       </div>
     </div>
 
@@ -97,6 +109,8 @@ interface IChipsPerItemId {
 @Component({
   components: {
     CollectionItemRow,
+    GirderBreadcrumb: () =>
+      import("@/girder/components").then((mod) => mod.Breadcrumb),
   },
 })
 export default class CollectionList extends Vue {
@@ -115,38 +129,49 @@ export default class CollectionList extends Vue {
 
   formatDateString = formatDateString;
 
-  get currentFolderPath() {
+  get currentFolderLocation() {
+    const currentFolder = this.store.folderLocation;
+
+    // Return the folder only if it has the properties needed for breadcrumb
+    if (currentFolder && "_id" in currentFolder && "name" in currentFolder) {
+      return currentFolder;
+    }
+
+    return null;
+  }
+
+  get fallbackFolderPath() {
     const currentFolder = this.store.folderLocation;
 
     if (!currentFolder) {
       return "Unknown location";
     }
 
-    // If it's a full folder object with name and _id
-    if ("name" in currentFolder && "_id" in currentFolder) {
-      return `Collections in: ${currentFolder.name}`;
+    // If it's a full folder object with name
+    if ("name" in currentFolder) {
+      return currentFolder.name;
     }
 
     // If it's just a type indicator
     if ("type" in currentFolder) {
       switch (currentFolder.type) {
         case "root":
-          return "Collections in: Root";
+          return "Root";
         case "users":
-          return "Collections in: Users";
+          return "Users";
         case "collections":
-          return "Collections in: Collections";
+          return "Collections";
         default:
-          return `Collections in: ${currentFolder.type}`;
+          return currentFolder.type;
       }
     }
 
     // If it's a user object
     if ("login" in currentFolder) {
-      return `Collections in: ${(currentFolder as any).login}'s folder`;
+      return `${(currentFolder as any).login}'s folder`;
     }
 
-    return "Collections in: Current folder";
+    return "Current folder";
   }
 
   async mounted() {
@@ -371,8 +396,22 @@ export default class CollectionList extends Vue {
 }
 
 .folder-path-display {
-  background-color: #f8f9fa;
-  border-bottom: 1px solid #e0e0e0;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
+}
+
+.folder-breadcrumb {
+  font-size: 14px;
+}
+
+.folder-breadcrumb ::v-deep .v-breadcrumbs__item {
+  font-size: 14px;
+}
+
+.folder-breadcrumb ::v-deep .v-breadcrumbs__divider {
+  color: #999;
+}
+
+.folder-breadcrumb ::v-deep .v-breadcrumbs__item {
+  color: #424242 !important;
 }
 </style>
