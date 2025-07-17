@@ -42,7 +42,7 @@ import { Promise as BluebirdPromise } from "bluebird";
 import { AxiosRequestConfig, AxiosResponse, isAxiosError } from "axios";
 import { fetchAllPages } from "@/utils/fetch";
 import { stringify } from "qs";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 
 // Modern browsers limit concurrency to a single domain at 6 requests (though
 // using HTML 2 might improve that slightly).  For a single layer, if we set
@@ -95,13 +95,23 @@ export default class GirderAPI {
   async getResource(
     id: string,
     type: IGirderSelectAble["_modelType"],
-  ): Promise<IGirderSelectAble> {
-    const response = await this.client.get(`${type}/${id}`);
-    const resource = response.data;
-    if (resource) {
-      resource._modelType = type;
+  ): Promise<IGirderSelectAble | null> {
+    try {
+      const response = await this.client.get(`${type}/${id}`);
+      const resource = response.data;
+      if (resource) {
+        resource._modelType = type;
+      }
+      return response.data;
+    } catch (error) {
+      // Handle cases where the resource has been deleted or doesn't exist
+      if (isAxiosError(error) && (error.response?.status === 400 || error.response?.status === 404)) {
+        logWarning(`Resource ${type}/${id} not found (may have been deleted)`);
+        return null;
+      }
+      // Re-throw other errors
+      throw error;
     }
-    return response.data;
   }
 
   async getAllUserIds(): Promise<string[]> {

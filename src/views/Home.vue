@@ -190,9 +190,26 @@
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4 section-title text-h5"
-                >Browse</v-subheader
-              >
+              <div class="d-flex justify-space-between align-center mb-4">
+                <v-subheader class="headline section-title text-h5 pa-0"
+                  >Browse</v-subheader
+                >
+                <v-btn-toggle
+                  v-model="browseMode"
+                  mandatory
+                  dense
+                  class="browse-toggle"
+                >
+                  <v-btn value="files" small>
+                    <v-icon left small>mdi-folder</v-icon>
+                    Datasets and Files
+                  </v-btn>
+                  <v-btn value="collections" small>
+                    <v-icon left small>mdi-file-tree</v-icon>
+                    Collections
+                  </v-btn>
+                </v-btn-toggle>
+              </div>
               <div class="scrollable">
                 <v-dialog
                   v-model="showZenodoImporter"
@@ -204,7 +221,10 @@
                     @close="showZenodoImporter = false"
                   />
                 </v-dialog>
+                
+                <!-- File Manager View -->
                 <custom-file-manager
+                  v-if="browseMode === 'files'"
                   :location="location"
                   @update:location="onLocationUpdate"
                   :initial-items-per-page="100"
@@ -224,6 +244,9 @@
                     </template>
                   </template>
                 </custom-file-manager>
+                
+                <!-- Collections View -->
+                <collection-list v-else-if="browseMode === 'collections'" />
               </div>
             </section>
           </v-col>
@@ -270,6 +293,7 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
+import CollectionList from "@/components/CollectionList.vue";
 import ZenodoImporter from "@/components/ZenodoImporter.vue";
 import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
@@ -283,6 +307,7 @@ import Persister from "@/store/Persister";
     FileDropzone,
     GirderLocationChooser,
     CustomFileManager,
+    CollectionList,
     ZenodoImporter,
     ZenodoCommunityDisplay,
   },
@@ -293,7 +318,7 @@ export default class Home extends Vue {
   readonly isDatasetFolder = isDatasetFolder;
   // Normally, this environment variable would be set:
   // export VITE_ZENODO_SAMPLES="nimbusimagesampledatasets"
-  readonly zenodoCommunityId = import.meta.env.VITE_ZENODO_SAMPLES;
+  readonly zenodoCommunityId = import.meta.env.VITE_ZENODO_SAMPLES || null;
 
   formatDateNumber = formatDateNumber; // Import function from utils/date.ts for use in template
 
@@ -311,6 +336,7 @@ export default class Home extends Vue {
   isDraggingAdvanced: boolean = false;
   showZenodoImporter: boolean = false;
   showCommunityDisplay: boolean = false;
+  browseMode: "files" | "collections" = "files";
 
   private activeUploadType: "quick" | "advanced" | null = null;
 
@@ -653,6 +679,14 @@ export default class Home extends Vue {
   &.drag-active {
     border: 2px dashed var(--v-primary-base);
     background-color: rgba(var(--v-primary-base), 0.1);
+  }
+}
+
+.browse-toggle {
+  .v-btn {
+    text-transform: none;
+    font-weight: 500;
+    letter-spacing: 0;
   }
 }
 
