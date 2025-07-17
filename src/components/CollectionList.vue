@@ -1,5 +1,13 @@
 <template>
   <div class="collection-list-wrapper">
+    <!-- Current folder path display -->
+    <div class="folder-path-display pa-2">
+      <div class="d-flex align-center">
+        <v-icon class="mr-2" size="20" color="grey">mdi-folder</v-icon>
+        <span class="text-body-2 grey--text">{{ currentFolderPath }}</span>
+      </div>
+    </div>
+
     <div class="d-flex align-center ma-2">
       <v-icon class="mr-2">mdi-magnify</v-icon>
       <div class="flex-grow-1">
@@ -106,6 +114,40 @@ export default class CollectionList extends Vue {
   computedChipsIds: Set<string> = new Set();
 
   formatDateString = formatDateString;
+
+  get currentFolderPath() {
+    const currentFolder = this.store.folderLocation;
+
+    if (!currentFolder) {
+      return "Unknown location";
+    }
+
+    // If it's a full folder object with name and _id
+    if ("name" in currentFolder && "_id" in currentFolder) {
+      return `Collections in: ${currentFolder.name}`;
+    }
+
+    // If it's just a type indicator
+    if ("type" in currentFolder) {
+      switch (currentFolder.type) {
+        case "root":
+          return "Collections in: Root";
+        case "users":
+          return "Collections in: Users";
+        case "collections":
+          return "Collections in: Collections";
+        default:
+          return `Collections in: ${currentFolder.type}`;
+      }
+    }
+
+    // If it's a user object
+    if ("login" in currentFolder) {
+      return `Collections in: ${(currentFolder as any).login}'s folder`;
+    }
+
+    return "Collections in: Current folder";
+  }
 
   async mounted() {
     await this.fetchCollections();
@@ -326,5 +368,11 @@ export default class CollectionList extends Vue {
 
 .collection-item-hover:hover .collection-title {
   color: #1565c0;
+}
+
+.folder-path-display {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+  margin-bottom: 8px;
 }
 </style>

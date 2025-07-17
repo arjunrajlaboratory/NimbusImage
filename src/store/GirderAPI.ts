@@ -105,7 +105,10 @@ export default class GirderAPI {
       return response.data;
     } catch (error) {
       // Handle cases where the resource has been deleted or doesn't exist
-      if (isAxiosError(error) && (error.response?.status === 400 || error.response?.status === 404)) {
+      if (
+        isAxiosError(error) &&
+        (error.response?.status === 400 || error.response?.status === 404)
+      ) {
         logWarning(`Resource ${type}/${id} not found (may have been deleted)`);
         return null;
       }

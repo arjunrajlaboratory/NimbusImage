@@ -221,7 +221,7 @@
                     @close="showZenodoImporter = false"
                   />
                 </v-dialog>
-                
+
                 <!-- File Manager View -->
                 <custom-file-manager
                   v-if="browseMode === 'files'"
@@ -244,7 +244,7 @@
                     </template>
                   </template>
                 </custom-file-manager>
-                
+
                 <!-- Collections View -->
                 <collection-list v-else-if="browseMode === 'collections'" />
               </div>
