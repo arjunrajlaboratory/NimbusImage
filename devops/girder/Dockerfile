@@ -8,11 +8,16 @@ RUN mkdir /mnt/fuse
 RUN mkdir /src
 WORKDIR /src
 
+RUN git clone https://github.com/girder/girder.git
+WORKDIR /src/girder
+RUN pip install -e .
+
+WORKDIR /src
+
 RUN git clone https://github.com/girder/large_image.git
 WORKDIR /src/large_image
 RUN pip install -e .[all] -r requirements-test.txt --find-links https://girder.github.io/large_image_wheels
-RUN pip install girder[mount] girder girder-user-quota git+https://github.com/DigitalSlideArchive/import-tracker.git
-# RUN pip install .[all] ./girder[tasks] girder[mount] --find-links https://girder.github.io/large_image_wheels
+RUN pip install girder[mount] girder-user-quota git+https://github.com/DigitalSlideArchive/import-tracker.git
 
 COPY ./provision.py /src/provision.py
 COPY ./girder.cfg /etc/girder.cfg
