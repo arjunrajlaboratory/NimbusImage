@@ -43,6 +43,9 @@ class ClaudeChatResource(Resource):
         .jsonParam('data', 'Chat structure', paramType='body', required=True)
     )
     def query_claude(self, data):
+        return self.query_claude_imp(data)
+
+    def query_clause_imp(self, data):
         messages = data.get('messages', [])
         logger.debug(f"Processing {len(messages)} messages")
         try:
@@ -67,7 +70,7 @@ class ClaudeChatResource(Resource):
             return {'error': str(e)}
 
 
-class GirderPlugin(plugin.GirderPlugin):
+class GirderClaudeChatPlugin(plugin.GirderPlugin):
     DISPLAY_NAME = 'Claude Chat'
 
     def load(self, info):

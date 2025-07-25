@@ -4,9 +4,6 @@ on:
   push:
     paths:
       - itk/**
-  pull_request:
-    paths:
-      - itk/**
 
 jobs:
   all:

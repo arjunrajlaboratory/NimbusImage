@@ -1,9 +1,1 @@
-# Top level dependencies
-girder>=3.0.4 ; python_version < '3.8'
-girder>=3.0.13.dev6 ; python_version >= '3.8'
-girder-jobs>=3.0.3
--e .
-docker
-
-# External dependencies
 tox
