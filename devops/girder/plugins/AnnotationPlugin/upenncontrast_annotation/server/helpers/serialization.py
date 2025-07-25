@@ -10,7 +10,7 @@ def orJsonDefaults(obj):
 def convertIdsToObjectIds(objOrObjs, keysToConvert):
     def convertIds(obj, keysToConvert):
         for keyToConvert in keysToConvert:
-            if keysToConvert in obj:
+            if keyToConvert in obj:
                 obj[keyToConvert] = ObjectId(obj[keyToConvert])
         return obj
     if isinstance(objOrObjs, dict):
