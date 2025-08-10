@@ -18,8 +18,8 @@ setup(
     ],
     description='A Girder plugin for Claude chat functionality',
     install_requires=[
-        "girder[mount] @ git+https://github.com/girder/girder.git",
-        "anthropic"
+        'girder[mount] @ git+https://github.com/girder/girder.git',
+        'anthropic'
     ],
     license='Apache Software License 2.0',
     long_description=readme,

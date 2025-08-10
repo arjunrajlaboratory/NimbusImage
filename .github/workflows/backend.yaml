@@ -25,4 +25,4 @@ jobs:
       - name: Test AnnotationPlugin
         run: pip install tox && cd devops/girder/plugins/AnnotationPlugin && tox
       - name: Test Claude plugins
-        run: pip install tox && cd devops/girder/plugins/girder_claude_chat && tox
+        run: pip install tox && cd devops/girder/plugins/girder-claude-chat && tox
