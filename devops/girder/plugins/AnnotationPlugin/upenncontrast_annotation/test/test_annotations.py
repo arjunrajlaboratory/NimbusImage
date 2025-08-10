@@ -30,10 +30,10 @@ class TestAnnotation:
         )
         newAnnotation = upenn_utilities.getSampleAnnotation(folder["_id"])
 
-        result = Annotation().create(admin, newAnnotation)
+        result = Annotation().create(newAnnotation)
         assert "_id" in result
         annotId = result["_id"]
-        result = Annotation().getAnnotationById(annotId, user=admin)
+        result = Annotation().load(annotId)
         assert result is not None
         assert result["name"] == newAnnotation["name"]
 
@@ -41,16 +41,16 @@ class TestAnnotation:
         with pytest.raises(Exception, match="Invalid ObjectId"):
             Annotation().load("nosuchid")
         assert (
-            Annotation().load("012345678901234567890123", user=admin) is None
+            Annotation().load("012345678901234567890123") is None
         )
 
         folder = utilities.createFolder(
             admin, "sample", upenn_utilities.datasetMetadata
         )
         sample = upenn_utilities.getSampleAnnotation(folder["_id"])
-        annotation = Annotation().create(admin, sample)
+        annotation = Annotation().create(sample)
 
-        loaded = Annotation().load(annotation["_id"], user=admin)
+        loaded = Annotation().load(annotation["_id"])
         assert (
             loaded["_id"] == annotation["_id"]
             and loaded["name"] == sample["name"]
@@ -61,9 +61,9 @@ class TestAnnotation:
             user, "sample", upenn_utilities.datasetMetadata
         )
         sample = upenn_utilities.getSampleAnnotation(folder["_id"])
-        annotation = Annotation().create(user, sample)
+        annotation = Annotation().create(sample)
 
-        assert Annotation().load(annotation["_id"], user=user) is not None
+        assert Annotation().load(annotation["_id"]) is not None
         result = Annotation().remove(annotation)
         assert result.deleted_count == 1
         assert Annotation().load(annotation["_id"]) is None
@@ -73,19 +73,19 @@ class TestAnnotation:
             user, "sample", upenn_utilities.datasetMetadata
         )
         sample = upenn_utilities.getSampleAnnotation(folder["_id"])
-        annotation = Annotation().create(user, sample)
+        annotation = Annotation().create(sample)
 
         Folder().remove(folder)
-        result = Annotation().load(
-            annotation["_id"], level=AccessType.READ, user=user
-        )
+        result = Annotation().load(annotation["_id"])
         assert result is None
 
     def testValidate(self, admin):
         sample = upenn_utilities.getSampleAnnotation(
             "012345678901234567890123"
         )
-        with pytest.raises(ValidationException, match="does not exist"):
+        with pytest.raises(
+            ValidationException, match="Annotation dataset ID is invalid"
+        ):
             Annotation().validate(sample)
         empty = {}
         with pytest.raises(ValidationException):
@@ -93,5 +93,5 @@ class TestAnnotation:
 
         folder = utilities.createFolder(admin, "sample2", {})
         sample = upenn_utilities.getSampleAnnotation(folder["_id"])
-        with pytest.raises(ValidationException, match="not a dataset"):
+        with pytest.raises(ValidationException, match="Annotation dataset ID is invalid"):
             Annotation().validate(sample)

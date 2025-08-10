@@ -28,10 +28,10 @@ def createTwoAnnotations(user):
     )
 
     parentData = upenn_utilities.getSampleAnnotation(dataset["_id"])
-    parent = Annotation().create(user, parentData)
+    parent = Annotation().create(parentData)
 
     childData = upenn_utilities.getSampleAnnotation(dataset["_id"])
-    child = Annotation().create(user, childData)
+    child = Annotation().create(childData)
     return (parent, child, dataset)
 
 
@@ -49,10 +49,10 @@ class TestConnection:
         connection = upenn_utilities.getSampleConnection(
             parent["_id"], child["_id"], dataset["_id"]
         )
-        result = AnnotationConnection().create(admin, connection)
+        result = AnnotationConnection().create(connection)
         assert "_id" in result
         annotId = result["_id"]
-        result = AnnotationConnection().load(annotId, user=admin)
+        result = AnnotationConnection().load(annotId)
         assert result is not None
         assert result["label"] == connection["label"]
 
@@ -60,7 +60,7 @@ class TestConnection:
         with pytest.raises(Exception, match="Invalid ObjectId"):
             AnnotationConnection().load("nosuchid")
         assert (
-            AnnotationConnection().load("012345678901234567890123", user=admin)
+            AnnotationConnection().load("012345678901234567890123")
             is None
         )
 
@@ -68,9 +68,9 @@ class TestConnection:
         connection = upenn_utilities.getSampleConnection(
             parent["_id"], child["_id"], dataset["_id"]
         )
-        result = AnnotationConnection().create(admin, connection)
+        result = AnnotationConnection().create(connection)
 
-        loaded = AnnotationConnection().load(result["_id"], user=admin)
+        loaded = AnnotationConnection().load(result["_id"])
         assert (
             loaded["_id"] == result["_id"]
             and loaded["label"] == connection["label"]
@@ -81,21 +81,15 @@ class TestConnection:
         connectionData = upenn_utilities.getSampleConnection(
             parent["_id"], child["_id"], dataset["_id"]
         )
-        connection = AnnotationConnection().create(user, connectionData)
+        connection = AnnotationConnection().create(connectionData)
 
         assert (
-            AnnotationConnection().load(
-                connection["_id"], level=AccessType.READ, user=user
-            )
-            is not None
+            AnnotationConnection().load(connection["_id"]) is not None
         )
         result = AnnotationConnection().remove(connection)
         assert result.deleted_count == 1
         assert (
-            AnnotationConnection().load(
-                connection["_id"], level=AccessType.READ, user=user
-            )
-            is None
+            AnnotationConnection().load(connection["_id"]) is None
         )
 
     def testOnAnnotationRemove(self, user, admin):
@@ -107,23 +101,23 @@ class TestConnection:
             annotation2["_id"], annotation1["_id"], dataset["_id"]
         )
 
-        result = AnnotationConnection().create(admin, connection)
-        resultInv = AnnotationConnection().create(admin, connectionInv)
+        result = AnnotationConnection().create(connection)
+        resultInv = AnnotationConnection().create(connectionInv)
 
         # Create a few additional connections to test with the cursor
-        AnnotationConnection().create(admin, connection)
-        AnnotationConnection().create(admin, connection)
-        AnnotationConnection().create(admin, connectionInv)
-        AnnotationConnection().create(admin, connectionInv)
+        AnnotationConnection().create(connection)
+        AnnotationConnection().create(connection)
+        AnnotationConnection().create(connectionInv)
+        AnnotationConnection().create(connectionInv)
 
-        loaded = AnnotationConnection().load(result["_id"], user=admin)
-        loadedInv = AnnotationConnection().load(resultInv["_id"], user=admin)
+        loaded = AnnotationConnection().load(result["_id"])
+        loadedInv = AnnotationConnection().load(resultInv["_id"])
         assert loaded is not None
         assert loadedInv is not None
 
         Annotation().remove(annotation1)
-        loaded = AnnotationConnection().load(result["_id"], user=admin)
-        loadedInv = AnnotationConnection().load(resultInv["_id"], user=admin)
+        loaded = AnnotationConnection().load(result["_id"])
+        loadedInv = AnnotationConnection().load(resultInv["_id"])
         assert loaded is None
         assert loadedInv is None
 
@@ -133,9 +127,7 @@ class TestConnection:
                 {"childId": annotation2["_id"]},
             ]
         }
-        cursor = AnnotationConnection().find(
-            query, level=AccessType.READ, limit=2, user=admin
-        )
+        cursor = AnnotationConnection().find(query, limit=2)
         assert len(list(cursor)) == 0
 
     def testOnDatasetRemove(self, admin):
@@ -143,17 +135,13 @@ class TestConnection:
         connection = upenn_utilities.getSampleConnection(
             parent["_id"], child["_id"], dataset["_id"]
         )
-        result = AnnotationConnection().create(admin, connection)
+        result = AnnotationConnection().create(connection)
 
         assert result is not None
         Folder().remove(dataset)
-        test = Annotation().load(
-            child["_id"], level=AccessType.READ, user=admin
-        )
+        test = Annotation().load(child["_id"])
         assert test is None
-        loaded = AnnotationConnection().load(
-            connection["_id"], level=AccessType.READ, user=admin
-        )
+        loaded = AnnotationConnection().load(connection["_id"])
         assert loaded is None
 
     def testValidate(self, db, admin):
@@ -162,19 +150,25 @@ class TestConnection:
         connection = upenn_utilities.getSampleConnection(
             "012345678901234567890123", child["_id"], dataset["_id"]
         )
-        with pytest.raises(ValidationException, match="does not exist"):
+        with pytest.raises(
+            ValidationException, match="A parent annotation does not exist"
+        ):
             AnnotationConnection().validate(connection)
 
         connection = upenn_utilities.getSampleConnection(
             parent["_id"], "012345678901234567890123", dataset["_id"]
         )
-        with pytest.raises(ValidationException, match="does not exist"):
+        with pytest.raises(
+            ValidationException, match="A child annotation does not exist"
+        ):
             AnnotationConnection().validate(connection)
 
         connection = upenn_utilities.getSampleConnection(
             parent["_id"], child["_id"], "012345678901234567890123"
         )
-        with pytest.raises(ValidationException, match="does not exist"):
+        with pytest.raises(
+            ValidationException, match="Connection dataset ID is invalid"
+        ):
             AnnotationConnection().validate(connection)
 
         empty = {}
@@ -185,7 +179,9 @@ class TestConnection:
         connection = upenn_utilities.getSampleConnection(
             parent["_id"], child["_id"], folder["_id"]
         )
-        with pytest.raises(ValidationException, match="not a dataset"):
+        with pytest.raises(
+            ValidationException, match="Connection dataset ID is invalid"
+        ):
             AnnotationConnection().validate(connection)
 
 
@@ -426,13 +422,14 @@ class TestConnectToNearest:
         distance = annotationToAnnotationDistance(
             self.pointAnnotations[0], self.lineAnnotations[0]
         )
-        assert distance == 4
+        # Distance is computed to the centroid of the line, not endpoints
+        assert distance == 2.5
         distance = annotationToAnnotationDistance(
             self.blobAnnotations[0], self.blobAnnotations[1]
         )
         assert distance == math.sqrt(162)
 
-    def testGetClosestAnnotation(self):
+    def testGetClosestAnnotation(self, db):
         closest, _ = AnnotationConnection().getClosestAnnotation(
             self.pointAnnotationRef, self.pointAnnotations
         )
