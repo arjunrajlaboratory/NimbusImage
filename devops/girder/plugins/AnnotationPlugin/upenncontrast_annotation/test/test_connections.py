@@ -17,7 +17,6 @@ from upenncontrast_annotation.server.helpers.connections import (
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
 
-from girder.constants import AccessType
 from girder.exceptions import ValidationException
 from girder.models.folder import Folder
 

@@ -6,7 +6,6 @@ from upenncontrast_annotation.server.models import annotation
 from girder.models.folder import Folder
 
 from girder.exceptions import ValidationException
-from girder.constants import AccessType
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -93,5 +92,8 @@ class TestAnnotation:
 
         folder = utilities.createFolder(admin, "sample2", {})
         sample = upenn_utilities.getSampleAnnotation(folder["_id"])
-        with pytest.raises(ValidationException, match="Annotation dataset ID is invalid"):
+        with pytest.raises(
+            ValidationException,
+            match="Annotation dataset ID is invalid",
+        ):
             Annotation().validate(sample)
