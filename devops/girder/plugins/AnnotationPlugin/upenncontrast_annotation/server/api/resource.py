@@ -94,11 +94,8 @@ class CustomResource(Resource):
         .jsonParam(
             'body',
             description=(
-                (
-                    'Object with optional keys: folder, item, '
-                    'upenn_collection, user;'
-                )
-                'each a list of ids'
+                'Object with optional keys: folder, item, upenn_collection, '
+                ' user; each a list of ids'
             ),
             paramType='body',
             requireObject=True
