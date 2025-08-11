@@ -87,11 +87,17 @@ class CustomResource(Resource):
     @access.user
     @autoDescribeRoute(
         Description('Batch resolve multiple resource documents by id')
-        .notes('Returns maps keyed by id for each requested type. Enforces READ access.')
+        .notes(
+            'Returns maps keyed by id for each requested type. '
+            'Enforces READ access.'
+        )
         .jsonParam(
             'body',
             description=(
-                'Object with optional keys: folder, item, upenn_collection, user;'
+                (
+                    'Object with optional keys: folder, item, '
+                    'upenn_collection, user;'
+                )
                 'each a list of ids'
             ),
             paramType='body',
@@ -112,7 +118,9 @@ class CustomResource(Resource):
             mapping = {}
             for _id in ids:
                 try:
-                    doc = model.load(_id, level=AccessType.READ, user=user, exc=False)
+                    doc = model.load(
+                        _id, level=AccessType.READ, user=user, exc=False
+                    )
                     if doc:
                         mapping[str(doc['_id'])] = doc
                 except Exception:

@@ -212,9 +212,9 @@ class DatasetView(Resource):
     @autoDescribeRoute(
         Description("Bulk map dataset and configuration ids")
         .notes(
-            "Given many datasetIds and/or configurationIds, returns all matching"
-            " dataset_view pairs. Optionally includes names so the client can"
-            " avoid additional resource lookups."
+            "Given many datasetIds and/or configurationIds, returns all "
+            "matching dataset_view pairs. Optionally includes names so the "
+            "client can avoid additional resource lookups."
         )
         .jsonParam(
             "body",
@@ -246,7 +246,9 @@ class DatasetView(Resource):
         if datasetIds:
             query["datasetId"] = {"$in": [ObjectId(x) for x in datasetIds]}
         if configurationIds:
-            query["configurationId"] = {"$in": [ObjectId(x) for x in configurationIds]}
+            query["configurationId"] = {
+                "$in": [ObjectId(x) for x in configurationIds]
+            }
 
         # Use same sort as find() by default
         sort = None
@@ -280,7 +282,12 @@ class DatasetView(Resource):
                 mapping = {}
                 for _id in ids:
                     try:
-                        doc = model.load(_id, level=AccessType.READ, user=user, exc=False)
+                        doc = model.load(
+                            _id,
+                            level=AccessType.READ,
+                            user=user,
+                            exc=False
+                        )
                         if doc:
                             mapping[str(doc["_id"])] = doc.get("name")
                     except Exception:

@@ -142,7 +142,6 @@ class Collection(Resource):
         .pagingParams(defaultSort='lowerName')
         .errorResponse()
     )
-
     def findByFolders(self, body, limit, offset, sort):
         folderIds = body.get('folderIds') or []
         if not folderIds:
