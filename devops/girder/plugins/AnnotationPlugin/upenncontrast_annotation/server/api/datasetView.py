@@ -29,6 +29,8 @@ class DatasetView(Resource):
         self.route("PUT", (":id",), self.update)
         self.route("GET", (), self.find)
         self.route("POST", ("share",), self.share)
+        # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
+        self.route("POST", ("map",), self.map)
 
     @access.user
     @describeRoute(
@@ -205,3 +207,122 @@ class DatasetView(Resource):
             dataset, targetUser, accessType, save=True)
 
         return True
+
+    @access.user
+    @autoDescribeRoute(
+        Description("Bulk map dataset and configuration ids")
+        .notes(
+            "Given many datasetIds and/or configurationIds, returns all matching"
+            " dataset_view pairs. Optionally includes names so the client can"
+            " avoid additional resource lookups."
+        )
+        .jsonParam(
+            "body",
+            description=(
+                "Object with optional keys: datasetIds, configurationIds, "
+                "includeNames, limit, offset"
+            ),
+            paramType="body",
+            requireObject=True,
+        )
+    )
+    def map(self, body):
+        # Parse input
+        datasetIds = body.get("datasetIds") or []
+        configurationIds = body.get("configurationIds") or []
+        includeNames = bool(body.get("includeNames", False))
+        # Ensure valid integers for pagination (PyMongo requires int, not None)
+        try:
+            limit = int(body.get("limit", 0))
+        except Exception:
+            limit = 0
+        try:
+            offset = int(body.get("offset", 0))
+        except Exception:
+            offset = 0
+
+        # Build query
+        query = {}
+        if datasetIds:
+            query["datasetId"] = {"$in": [ObjectId(x) for x in datasetIds]}
+        if configurationIds:
+            query["configurationId"] = {"$in": [ObjectId(x) for x in configurationIds]}
+
+        # Use same sort as find() by default
+        sort = None
+
+        cursor = self._datasetViewModel.findWithPermissions(
+            query,
+            sort=sort,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            limit=limit,
+            offset=offset,
+        )
+
+        results = []
+        if includeNames:
+            # Preload names maps to avoid per-document lookups later
+            dsIds = set()
+            cfgIds = set()
+            # We must materialize cursor to iterate twice safely
+            views = list(cursor)
+            for v in views:
+                dsIds.add(v["datasetId"])  # ObjectId
+                cfgIds.add(v["configurationId"])  # ObjectId
+
+            # Load names under READ access
+            user = self.getCurrentUser()
+            folderModel = Folder()
+            collectionModel = CollectionModel()
+
+            def load_names(model, ids):
+                mapping = {}
+                for _id in ids:
+                    try:
+                        doc = model.load(_id, level=AccessType.READ, user=user, exc=False)
+                        if doc:
+                            mapping[str(doc["_id"])] = doc.get("name")
+                    except Exception:
+                        # Skip documents we cannot read
+                        continue
+                return mapping
+
+            datasetNames = load_names(folderModel, dsIds)
+            configurationNames = load_names(collectionModel, cfgIds)
+
+            for v in views:
+                dsId = (
+                    str(v["datasetId"])
+                    if isinstance(v["datasetId"], ObjectId)
+                    else v["datasetId"]
+                )
+                cfgId = (
+                    str(v["configurationId"])
+                    if isinstance(v["configurationId"], ObjectId)
+                    else v["configurationId"]
+                )
+                results.append({
+                    "datasetId": dsId,
+                    "configurationId": cfgId,
+                    "datasetName": datasetNames.get(dsId),
+                    "configurationName": configurationNames.get(cfgId),
+                })
+        else:
+            for v in cursor:
+                dsId = (
+                    str(v["datasetId"])
+                    if isinstance(v["datasetId"], ObjectId)
+                    else v["datasetId"]
+                )
+                cfgId = (
+                    str(v["configurationId"])
+                    if isinstance(v["configurationId"], ObjectId)
+                    else v["configurationId"]
+                )
+                results.append({
+                    "datasetId": dsId,
+                    "configurationId": cfgId,
+                })
+
+        return results

@@ -9,6 +9,12 @@ from girder.utility.progress import ProgressContext
 
 class CustomResource(Resource):
 
+    def __init__(self):
+        super().__init__()
+        self.resourceName = 'resource'
+        # Batch resolve endpoint for multiple resource types
+        self.route('POST', ('batch',), self.batchResources)
+
     def _getResourceModel(self, kind, funcName=None):
         """
         Override the function _getResourceModel from Girder`s Resource API to
@@ -77,3 +83,40 @@ class CustomResource(Resource):
                                 != (doc['parentCollection'], doc['parentId'])):
                             model.move(doc, parent, parentType)
                     ctx.update(increment=1)
+
+    @access.user
+    @autoDescribeRoute(
+        Description('Batch resolve multiple resource documents by id')
+        .notes('Returns maps keyed by id for each requested type. Enforces READ access.')
+        .jsonParam(
+            'body',
+            description=(
+                'Object with optional keys: folder, item, upenn_collection, user;'
+                'each a list of ids'
+            ),
+            paramType='body',
+            requireObject=True
+        )
+    )
+    def batchResources(self, body):
+        user = self.getCurrentUser()
+        result = {}
+
+        # Only allow known types
+        allowed = ('folder', 'item', 'upenn_collection', 'user')
+        for kind in allowed:
+            ids = body.get(kind)
+            if not ids:
+                continue
+            model = self._getResourceModel(kind)
+            mapping = {}
+            for _id in ids:
+                try:
+                    doc = model.load(_id, level=AccessType.READ, user=user, exc=False)
+                    if doc:
+                        mapping[str(doc['_id'])] = doc
+                except Exception:
+                    continue
+            result[kind] = mapping
+
+        return result
