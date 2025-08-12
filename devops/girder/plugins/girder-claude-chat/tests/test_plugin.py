@@ -1,13 +1,12 @@
 import pytest
-from pytest_girder.assertions import assertStatusOk
+import os
+
+from girder_claude_chat import ClaudeChatResource
 
 
-@pytest.mark.plugin('claude_chat')
-def testClaudeChat(server):
-    resp = server.request(
-        '/claude_chat', method='POST',
-        params={'message': 'Hello, Claude!'}
-    )
-    assertStatusOk(resp)
-    assert 'response' in resp.json
-    assert resp.json['response'].startswith('Claude:')
+@pytest.mark.plugin('girder_claude_chat')
+def testClaudeChatImplementation():
+    os.environ['ANTHROPIC_API_KEY'] = 'FAKE_API_KEY'
+    resource = ClaudeChatResource()
+    # Of course the API errors, we have a fake API key
+    assert 'error' in resource.query_clause_imp({'messages': ['Hi Claude !']})

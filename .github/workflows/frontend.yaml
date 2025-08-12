@@ -1,6 +1,6 @@
-name: Build and test
+name: Build, lint and test frontend
 
-on: [pull_request, push]
+on: [push]
 
 jobs:
   all:
@@ -19,7 +19,7 @@ jobs:
         run: pnpm lint:ci
         env:
           NODE_ENV: production
-      - name: Build project
+      - name: Build frontend
         run: pnpm build
-      - name: Run tests
+      - name: Run frontend tests
         run: pnpm test

@@ -20,21 +20,21 @@ class ClaudeChatResource(Resource):
 
         # Load system prompt
         try:
-            with open("/src/girder-claude-chat/system_prompt_2.txt", "r") as f:
+            with open('/src/girder-claude-chat/system_prompt_2.txt', 'r') as f:
                 self.system_prompt = f.read().strip()
-            logger.info("Successfully loaded system prompt")
+            logger.info('Successfully loaded system prompt')
         except IOError:
-            logger.error("Failed to load system prompt")
-            self.system_prompt = ""
+            logger.error('Failed to load system prompt')
+            self.system_prompt = ''
 
         # Create client
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        api_key = os.environ.get('ANTHROPIC_API_KEY')
         if api_key:
             self.client = Anthropic(api_key=api_key)
         else:
             logger.error(
                 "Can't create an Anthropic client without an API key,"
-                "the claude_chat endpoint will not work"
+                'the claude_chat endpoint will not work'
             )
 
     @access.user
@@ -43,18 +43,21 @@ class ClaudeChatResource(Resource):
         .jsonParam('data', 'Chat structure', paramType='body', required=True)
     )
     def query_claude(self, data):
+        return self.query_claude_imp(data)
+
+    def query_clause_imp(self, data):
         messages = data.get('messages', [])
-        logger.debug(f"Processing {len(messages)} messages")
+        logger.debug(f'Processing {len(messages)} messages')
         try:
             response = self.client.messages.create(
-                model="claude-3-7-sonnet-20250219",
+                model='claude-3-7-sonnet-20250219',
                 max_tokens=1000,
                 temperature=0,
                 system=[
                     {
-                        "type": "text",
-                        "text": self.system_prompt,
-                        "cache_control": {"type": "ephemeral"}
+                        'type': 'text',
+                        'text': self.system_prompt,
+                        'cache_control': {'type': 'ephemeral'}
                     }
                 ],
                 messages=messages
@@ -62,12 +65,12 @@ class ClaudeChatResource(Resource):
             return {'response': response.content[0].text}
         except Exception as e:
             logger.error(
-                f"Error in full chat endpoint: {str(e)}", exc_info=True
+                f'Error in full chat endpoint: {str(e)}', exc_info=True
             )
             return {'error': str(e)}
 
 
-class GirderPlugin(plugin.GirderPlugin):
+class GirderClaudeChatPlugin(plugin.GirderPlugin):
     DISPLAY_NAME = 'Claude Chat'
 
     def load(self, info):

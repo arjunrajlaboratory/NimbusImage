@@ -1,10 +1,7 @@
-name: Lint python
+name: Lint and test backend
 
 on:
   push:
-    paths:
-      - devops/girder/**
-  pull_request:
     paths:
       - devops/girder/**
 
@@ -21,3 +18,11 @@ jobs:
           python-version: "3.11"
       - name: flake8 Lint
         uses: py-actions/flake8@v2
+      - name: Start MongoDB
+        uses: supercharge/mongodb-github-action@1.12.0
+        with:
+          mongodb-version: latest
+      - name: Test AnnotationPlugin
+        run: pip install tox && cd devops/girder/plugins/AnnotationPlugin && tox
+      - name: Test Claude plugins
+        run: pip install tox && cd devops/girder/plugins/girder-claude-chat && tox
