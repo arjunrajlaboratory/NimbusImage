@@ -34,6 +34,10 @@ def provision(opts):
         # separate machine, this would need to change
         Setting().set("worker.api_url", "http://girder:8080/api/v1")
 
+        # Set the worker broker and backend
+        Setting().set("worker.broker_url", "amqp://user:password@broker")
+        Setting().set("worker.backend_url", "rpc://user:password@broker")
+
     # Make sure we have an assetstore
     if Assetstore().findOne() is None:
         Assetstore().createFilesystemAssetstore("Assetstore", "/assetstore")
