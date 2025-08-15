@@ -1,5 +1,6 @@
 import argparse
 import sys
+import os
 
 from girder.models.assetstore import Assetstore
 from girder.models.setting import Setting
@@ -33,6 +34,15 @@ def provision(opts):
         # This is how the worker addresses the server.  If the worker is on a
         # separate machine, this would need to change
         Setting().set("worker.api_url", "http://girder:8080/api/v1")
+
+    if os.getenv("GIRDER_WORKER_BROKER") is not None:
+        Setting().set("worker.broker", os.getenv("GIRDER_WORKER_BROKER"))
+    else:
+        Setting().set("worker.broker", "amqp://user:password@broker")
+    if os.getenv("GIRDER_WORKER_BACKEND") is not None:
+        Setting().set("worker.backend", os.getenv("GIRDER_WORKER_BACKEND"))
+    else:
+        Setting().set("worker.backend", "rpc://user:password@broker")
 
     # Make sure we have an assetstore
     if Assetstore().findOne() is None:
