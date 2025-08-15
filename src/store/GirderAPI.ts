@@ -439,6 +439,49 @@ export default class GirderAPI {
     return (response.data as any[]).map(asDatasetView);
   }
 
+  // Bulk map dataset and configuration relationships
+  async mapDatasetViews(args: {
+    datasetIds?: string[];
+    configurationIds?: string[];
+    includeNames?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<
+    Array<{
+      datasetId: string;
+      configurationId: string;
+      datasetName?: string;
+      configurationName?: string;
+    }>
+  > {
+    const response = await this.client.post("dataset_view/map", args);
+    return response.data;
+  }
+
+  // Batch resolve multiple resources (folders, items, collections, users)
+  async batchResources(args: {
+    folder?: string[];
+    item?: string[];
+    upenn_collection?: string[];
+    user?: string[];
+  }): Promise<{
+    folder?: Record<string, IGirderFolder>;
+    item?: Record<string, IGirderItem>;
+    upenn_collection?: Record<string, IGirderItem>;
+    user?: Record<string, IGirderUser>;
+  }> {
+    const response = await this.client.post("resource/batch", args);
+    return response.data;
+  }
+
+  // Bulk fetch collections by multiple folder ids
+  async getCollectionsByFolders(folderIds: string[]): Promise<IGirderItem[]> {
+    const response = await this.client.post("upenn_collection/by_folders", {
+      folderIds,
+    });
+    return response.data;
+  }
+
   async shareDatasetView(
     datasetViews: IDatasetView[],
     userMailOrUsername: string,
