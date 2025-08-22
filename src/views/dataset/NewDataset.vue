@@ -22,6 +22,7 @@
         ref="uploader"
         class="mb-2 new-dataset-upload"
         :dest="path"
+        :uploadCls="uploadCls"
         hideStartButton
         hideHeadline
         @filesChanged="filesChanged"
@@ -232,6 +233,7 @@ import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IGirderApiKey, IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
+import UploadManager from "@girder/components/src/utils/upload";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import { IDataset } from "@/store/model";
 import { triggersPerCategory } from "@/utils/parsing";
@@ -256,6 +258,18 @@ type GWCUpload = Vue & {
   startUpload(): any;
   totalProgressPercent: number;
 };
+
+// Custom Girder upload manager that allows us to set the option `use_S3_transfer_acceleration`
+// This has no effect if the assetstore is not an S3 assetstore
+class GirderUploadManager extends UploadManager {
+  constructor(file: File, options: any = {} as any) {
+    options.params = options.params || {};
+    options.params.uploadExtraParameters = JSON.stringify({
+      use_S3_transfer_acceleration: true,
+    });
+    super(file, options);
+  }
+}
 
 function basename(filename: string): string {
   const components = filename.split(".");
@@ -351,6 +365,8 @@ export default class NewDataset extends Vue {
   hideUploader = false;
   name = "";
   description = "";
+
+  uploadCls = GirderUploadManager;
 
   path: IGirderLocation | null = null;
 
