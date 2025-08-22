@@ -735,6 +735,10 @@ export default class GirderAPI {
     }
   }
 
+  cancelJob(jobId: string) {
+    return this.client.put(`/job/${jobId}/cancel`);
+  }
+
   async scheduleHistogramCache(datasetId: string) {
     const largeImageItems = await this.getImages(datasetId);
     const responses = [];
