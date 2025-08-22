@@ -15,6 +15,10 @@ declare module "@girder/components/src/components/Snippet" {
 declare module "@girder/components/src/utils" {
   export const vuetifyConfig: any;
 }
+declare module "@girder/components/src/utils/upload" {
+  const UploadManager: any;
+  export default UploadManager;
+}
 declare module "@girder/components/src/rest" {
   import { AxiosInstance } from "axios";
 
