@@ -45,7 +45,7 @@ class ClaudeChatResource(Resource):
     def query_claude(self, data):
         return self.query_claude_imp(data)
 
-    def query_clause_imp(self, data):
+    def query_claude_imp(self, data):
         messages = data.get('messages', [])
         logger.debug(f'Processing {len(messages)} messages')
         try:
