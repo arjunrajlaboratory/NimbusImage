@@ -410,20 +410,37 @@ export default class GirderAPI {
   async findDatasetViews(options?: {
     datasetId?: string;
     configurationId?: string;
+    datasetIds?: string[];
+    configurationIds?: string[];
   }) {
-    const pages = await fetchAllPages(this.client, "dataset_view", {
-      params: {
-        sort: "lastViewed",
-        ...options,
-      },
-    });
-    const datasetViews: IDatasetView[] = [];
-    for (const page of pages) {
-      for (const data of page) {
-        datasetViews.push(asDatasetView(data));
+    // Use POST for bulk requests, GET for single requests
+    const hasBulkParams = options?.datasetIds || options?.configurationIds;
+
+    if (hasBulkParams) {
+      // Use POST with body for bulk requests (READ OPERATION)
+      // NOTE: This is a POST endpoint for technical reasons (large arrays),
+      // but it only performs read operations - no data is modified
+      const response = await this.client.post("dataset_view/bulk_find", {
+        datasetIds: options?.datasetIds,
+        configurationIds: options?.configurationIds,
+      });
+      return response.data.map(asDatasetView);
+    } else {
+      // Use GET with query params for single requests (backward compatibility)
+      const pages = await fetchAllPages(this.client, "dataset_view", {
+        params: {
+          sort: "lastViewed",
+          ...options,
+        },
+      });
+      const datasetViews: IDatasetView[] = [];
+      for (const page of pages) {
+        for (const data of page) {
+          datasetViews.push(asDatasetView(data));
+        }
       }
+      return datasetViews;
     }
-    return datasetViews;
   }
 
   async getRecentDatasetViews(limit: number, offset: number = 0) {

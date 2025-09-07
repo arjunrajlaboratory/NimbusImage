@@ -28,6 +28,7 @@ class DatasetView(Resource):
         self.route("DELETE", (":id",), self.delete)
         self.route("PUT", (":id",), self.update)
         self.route("GET", (), self.find)
+        self.route("POST", ("bulk_find",), self.findBulk)
         self.route("POST", ("share",), self.share)
         # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
         self.route("POST", ("map",), self.map)
@@ -131,9 +132,12 @@ class DatasetView(Resource):
     def find(self, params):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
+
+        # Handle single IDs from query params
         for key in ["datasetId", "configurationId"]:
             if key in params:
                 query[key] = ObjectId(params[key])
+
         return self._datasetViewModel.findWithPermissions(
             query,
             sort=sort,
@@ -142,6 +146,63 @@ class DatasetView(Resource):
             limit=limit,
             offset=offset,
         )
+
+    @access.user
+    @autoDescribeRoute(
+        Description("""
+        Bulk search for dataset views (READ OPERATION).
+
+        NOTE: This is a POST endpoint for technical reasons (to avoid URL
+        length limits with large arrays), but it performs a READ operation
+        only. No data is created, updated, or deleted.
+
+        Use this endpoint when you need to search for dataset views across 
+        multiple datasets or configurations efficiently.
+        """)
+        .responseClass("dataset_view", array=True)
+        .jsonParam(
+            "body",
+            "Request body with optional arrays: datasetIds, configurationIds",
+            required=False,
+            paramType='body'
+        )
+        .errorResponse()
+        .notes("""
+        Example request body:
+        {
+            "datasetIds": ["id1", "id2", "id3"],
+            "configurationIds": ["config1", "config2"]
+        }
+
+        Returns all dataset views that match ANY of the provided datasets
+        OR configurations (uses MongoDB $in operator for efficient querying).
+        """)
+    )
+    def findBulk(self, body):
+        query = {}
+
+        # Handle multiple IDs from request body
+        if body:
+            for single_key, plural_key in [
+                ("datasetId", "datasetIds"),
+                ("configurationId", "configurationIds")
+            ]:
+                if plural_key in body and body[plural_key]:
+                    # Handle JSON array of IDs
+                    ids = (body[plural_key]
+                           if isinstance(body[plural_key], list)
+                           else [])
+                    if ids:
+                        query[single_key] = {
+                            "$in": [ObjectId(id) for id in ids]
+                        }
+
+        return list(self._datasetViewModel.findWithPermissions(
+            query,
+            sort=None,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+        ))
 
     @access.user
     @autoDescribeRoute(
