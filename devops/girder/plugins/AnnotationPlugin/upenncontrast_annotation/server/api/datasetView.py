@@ -303,16 +303,16 @@ class DatasetView(Resource):
         # Build query
         query = {}
         # Map body field names to query field names (plural to singular)
-        field_mapping = {
+        fieldMapping = {
             "datasetIds": "datasetId",
             "configurationIds": "configurationId"
         }
-        for body_key, query_key in field_mapping.items():
-            if body_key in body:
-                ids_array = body.get(body_key, [])
-                if ids_array:
-                    query[query_key] = {
-                        "$in": [ObjectId(x) for x in ids_array]
+        for bodyKey, queryKey in fieldMapping.items():
+            if bodyKey in body:
+                idsArray = body.get(bodyKey, [])
+                if idsArray:
+                    query[queryKey] = {
+                        "$in": [ObjectId(x) for x in idsArray]
                     }
 
         # Use same sort as find() by default
@@ -341,7 +341,7 @@ class DatasetView(Resource):
             # Load names under READ access using bulk aggregation
             user = self.getCurrentUser()
 
-            def load_names_bulk(model, ids):
+            def loadNamesBulk(model, ids):
                 if not ids:
                     return {}
 
@@ -357,14 +357,14 @@ class DatasetView(Resource):
                 # Build the mapping from the results
                 mapping = {}
                 for doc in docs:
-                    mapping[str(doc["_id"])] = doc.get("name")
+                    mapping[doc["_id"]] = doc.get("name")
 
                 return mapping
 
-            datasetNames = load_names_bulk(Folder(), dsIds)
-            configurationNames = load_names_bulk(CollectionModel(), cfgIds)
+            datasetNames = loadNamesBulk(Folder(), dsIds)
+            configurationNames = loadNamesBulk(CollectionModel(), cfgIds)
 
-        def format_view(v):
+        def formatView(v):
             dsId = str(v["datasetId"])
             cfgId = str(v["configurationId"])
 
@@ -374,14 +374,16 @@ class DatasetView(Resource):
             }
 
             if includeNames:
-                result["datasetName"] = datasetNames.get(dsId)
-                result["configurationName"] = configurationNames.get(cfgId)
+                result["datasetName"] = datasetNames.get(v["datasetId"])
+                result["configurationName"] = configurationNames.get(
+                    v["configurationId"]
+                )
 
             return result
 
         if includeNames:
-            results = [format_view(v) for v in views]
+            results = [formatView(v) for v in views]
         else:
-            results = [format_view(v) for v in cursor]
+            results = [formatView(v) for v in cursor]
 
         return results
