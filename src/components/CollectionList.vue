@@ -196,16 +196,16 @@ export default class CollectionList extends Vue {
   async onFilteredCollectionsChange() {
     // Collect all collection IDs that need chips
     const collectionsNeedingChips = this.filteredCollections.filter(
-      collection => !this.computedChipsIds.has(collection._id)
+      (collection) => !this.computedChipsIds.has(collection._id),
     );
-    
+
     if (collectionsNeedingChips.length === 0) return;
-    
+
     // Mark all as being computed
-    collectionsNeedingChips.forEach(collection => {
+    collectionsNeedingChips.forEach((collection) => {
       this.computedChipsIds.add(collection._id);
     });
-    
+
     // Generate chips for all collections in bulk
     this.addBulkChipPromise(collectionsNeedingChips);
   }
@@ -336,7 +336,9 @@ export default class CollectionList extends Vue {
       }
 
       // Collect all unique dataset IDs that need names
-      const datasetIds: string[] = Array.from(new Set(views.map((view: IDatasetView) => String(view.datasetId))));
+      const datasetIds: string[] = Array.from(
+        new Set(views.map((view: IDatasetView) => String(view.datasetId))),
+      );
 
       // Use bulk API call to get all folder names at once
       let folderInfoMap: { [id: string]: any } = {};
@@ -400,14 +402,16 @@ export default class CollectionList extends Vue {
     };
   }
 
-  async bulkCollectionsToChips(collections: IUPennCollection[]): Promise<{ [collectionId: string]: IChipsPerItemId }> {
+  async bulkCollectionsToChips(
+    collections: IUPennCollection[],
+  ): Promise<{ [collectionId: string]: IChipsPerItemId }> {
     const result: { [collectionId: string]: IChipsPerItemId } = {};
-    
+
     if (collections.length === 0) return result;
-    
+
     try {
       // Get all dataset views for all collections in one bulk call
-      const configurationIds = collections.map(c => c._id);
+      const configurationIds = collections.map((c) => c._id);
       const allViews = await this.store.api.findDatasetViews({
         configurationIds: configurationIds,
       });
@@ -424,7 +428,7 @@ export default class CollectionList extends Vue {
 
       // Collect all unique dataset IDs across all collections
       const allDatasetIds: string[] = Array.from(
-        new Set(allViews.map((view: IDatasetView) => String(view.datasetId)))
+        new Set(allViews.map((view: IDatasetView) => String(view.datasetId))),
       );
 
       // Bulk fetch all folder info at once
@@ -440,7 +444,8 @@ export default class CollectionList extends Vue {
           // Fall back to individual calls if batch fails
           for (const datasetId of allDatasetIds as string[]) {
             try {
-              const folderInfo = await this.girderResources.getFolder(datasetId);
+              const folderInfo =
+                await this.girderResources.getFolder(datasetId);
               if (folderInfo) {
                 folderInfoMap[datasetId] = folderInfo;
               }
@@ -484,13 +489,16 @@ export default class CollectionList extends Vue {
       }
     } catch (error) {
       logError("Failed to bulk fetch dataset views:", error);
-      
+
       // Fall back to individual processing for each collection
       for (const collection of collections) {
         try {
           result[collection._id] = await this.collectionToChips(collection);
         } catch (individualError) {
-          logError(`Failed to process collection ${collection._id}:`, individualError);
+          logError(
+            `Failed to process collection ${collection._id}:`,
+            individualError,
+          );
           result[collection._id] = { chips: [], type: "collection" };
         }
       }
