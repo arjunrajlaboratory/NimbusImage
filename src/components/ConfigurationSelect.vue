@@ -44,8 +44,13 @@
 <script lang="ts">
 import { Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
-import { IDatasetConfiguration } from "@/store/model";
+import { IDatasetConfiguration, areCompatibles } from "@/store/model";
+import {
+  getDatasetCompatibility,
+  setBaseCollectionValues,
+} from "@/store/GirderAPI";
 import routeMapper from "@/utils/routeMapper";
+import { logError } from "@/utils/log";
 
 const Mapper = routeMapper(
   {},
@@ -92,15 +97,86 @@ export default class ConfigurationSelect extends Mapper {
         datasetId: this.dataset.id,
       });
       const linkedConfigurationIds = new Set(
-        views.map((v) => v.configurationId),
+        views.map((v: any) => v.configurationId),
       );
-      const compatibleConfigurations =
-        await this.store.api.getCompatibleConfigurations(this.dataset);
-      this.compatibleConfigurations = compatibleConfigurations.filter(
-        (conf) => !linkedConfigurationIds.has(conf.id),
-      );
+
+      // Get all collections using the new endpoint (like CollectionList.vue does)
+      const allConfigurations = await this.getAllConfigurations();
+
+      // Filter for compatible configurations using client-side logic
+      const datasetCompatibility = getDatasetCompatibility(this.dataset);
+      const compatibleConfigurations = allConfigurations.filter((conf) => {
+        // Skip if already linked
+        if (linkedConfigurationIds.has(conf.id)) {
+          return false;
+        }
+        // Check compatibility using the same logic as AddDatasetToCollection
+        return areCompatibles(conf.compatibility, datasetCompatibility);
+      });
+
+      this.compatibleConfigurations = compatibleConfigurations;
+    } catch (error) {
+      logError("Failed to fetch compatible configurations:", error);
+      this.compatibleConfigurations = [];
     } finally {
       this.loading = false;
+    }
+  }
+
+  async getAllConfigurations(): Promise<IDatasetConfiguration[]> {
+    try {
+      // Get the current folder location from the store
+      const currentFolder = this.store.folderLocation;
+
+      // Check if currentFolder is a full folder object with _id, or fallback to user's private folder
+      let folderId = null;
+      if (currentFolder && "_id" in currentFolder) {
+        folderId = currentFolder._id;
+      } else {
+        // If no current folder with _id, try to get user's private folder
+        const privateFolder = await this.store.api.getUserPrivateFolder();
+        if (privateFolder) {
+          folderId = privateFolder._id;
+        }
+      }
+
+      if (!folderId) {
+        logError("No folderId found");
+        return [];
+      }
+
+      // First attempt: Try fetching collections with folderId (as per backend API)
+      let response;
+
+      try {
+        response = await this.store.api.client.get("upenn_collection", {
+          params: {
+            folderId: folderId,
+            limit: 0, // Get all collections
+            sort: "updated",
+            sortdir: -1,
+          },
+        });
+      } catch (folderError) {
+        // Second attempt: Try without folderId
+        try {
+          response = await this.store.api.client.get("upenn_collection", {
+            params: {
+              limit: 0, // Get all collections
+              sort: "updated",
+              sortdir: -1,
+            },
+          });
+        } catch (noFolderError) {
+          throw noFolderError;
+        }
+      }
+
+      // Convert to IDatasetConfiguration format using the same logic as setBaseCollectionValues
+      return response.data.map((item: any) => setBaseCollectionValues(item));
+    } catch (error) {
+      logError("Failed to fetch all configurations:", error);
+      return [];
     }
   }
 
