@@ -250,7 +250,9 @@ class DatasetView(Resource):
             if body_key in body:
                 ids_array = body.get(body_key, [])
                 if ids_array:
-                    query[query_key] = {"$in": [ObjectId(x) for x in ids_array]}
+                    query[query_key] = {
+                        "$in": [ObjectId(x) for x in ids_array]
+                    }
 
         # Use same sort as find() by default
         sort = None
@@ -281,7 +283,7 @@ class DatasetView(Resource):
             def load_names_bulk(model, ids):
                 if not ids:
                     return {}
-                
+
                 # Use findWithPermissions to bulk load with permission checking
                 # This respects user permissions and is much more efficient
                 # than loading each document individually
@@ -290,12 +292,12 @@ class DatasetView(Resource):
                     user=user,
                     level=AccessType.READ
                 )
-                
+
                 # Build the mapping from the results
                 mapping = {}
                 for doc in docs:
                     mapping[str(doc["_id"])] = doc.get("name")
-                
+
                 return mapping
 
             datasetNames = load_names_bulk(Folder(), dsIds)
@@ -304,16 +306,16 @@ class DatasetView(Resource):
         def format_view(v):
             dsId = str(v["datasetId"])
             cfgId = str(v["configurationId"])
-            
+
             result = {
                 "datasetId": dsId,
                 "configurationId": cfgId,
             }
-            
+
             if includeNames:
                 result["datasetName"] = datasetNames.get(dsId)
                 result["configurationName"] = configurationNames.get(cfgId)
-            
+
             return result
 
         if includeNames:
