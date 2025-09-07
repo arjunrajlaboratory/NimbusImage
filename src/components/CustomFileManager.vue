@@ -327,17 +327,29 @@ export default class CustomFileManager extends Vue {
     const type = isDataset ? "dataset" : "configuration";
 
     // First chip (type indicator)
+    const chipOptions = {
+      dataset: {
+        text: "Dataset",
+        to_name: "dataset",
+        to_params: { datasetId: selectable._id },
+      },
+      configuration: {
+        text: "Collection",
+        to_name: "configuration",
+        to_params: { configurationId: selectable._id },
+      },
+    };
+
+    const chipOption = chipOptions[type];
     const headerChip: IChipAttrs = {
-      text: isDataset ? "Dataset" : "Collection",
+      text: chipOption.text,
       color: "grey darken-1",
     };
     if (this.clickableChips) {
-      headerChip.to = isDataset
-        ? { name: "dataset", params: { datasetId: selectable._id } }
-        : {
-            name: "configuration",
-            params: { configurationId: selectable._id },
-          };
+      headerChip.to = {
+        name: chipOption.to_name,
+        params: chipOption.to_params,
+      };
     }
     ret.push(headerChip);
 
@@ -358,11 +370,18 @@ export default class CustomFileManager extends Vue {
   }
 
   scheduleBatchResolve() {
+    // Clear any existing timer to restart the debounce period
     if (this.batchTimer !== null) {
       window.clearTimeout(this.batchTimer);
       this.batchTimer = null;
     }
-    // Debounce to accumulate ids from the current render pass
+
+    // Debounce mechanism: Wait 50ms to collect IDs from multiple itemToChips calls
+    // This allows Vue's rendering cycle to call itemToChips() many times
+    // (once per item being rendered), accumulating dataset/configuration IDs
+    // in batchQueueDatasetIds and batchQueueConfigurationIds sets.
+    // After 50ms of no new calls, flushBatchResolve() fires a single
+    // bulk API request to resolve all collected IDs at once.
     this.batchTimer = window.setTimeout(() => this.flushBatchResolve(), 50);
   }
 
@@ -394,44 +413,35 @@ export default class CustomFileManager extends Vue {
       } as any);
     } catch (e) {
       // If endpoint not available, fall back silently
+      logError("Failed to map dataset views:", e);
       return;
     }
 
     // Build additional chips per item
-    const addChipsForDataset = (
+    const addChip = (
       id: string,
       chipText: string,
-      configurationId: string,
+      type: "dataset" | "configuration",
+      relatedId: string,
     ) => {
       const current = this.chipsPerItemId[id];
       if (!current) return;
-      const extra: IChipAttrs = {
-        color: "#4baeff",
-        text: chipText,
-        to: this.clickableChips
-          ? { name: "configuration", params: { configurationId } }
-          : undefined,
-      };
-      const chips = [...current.chips, extra];
-      Vue.set(this.chipsPerItemId, id, { chips, type: "dataset" });
-    };
 
-    const addChipsForConfig = (
-      id: string,
-      chipText: string,
-      datasetId: string,
-    ) => {
-      const current = this.chipsPerItemId[id];
-      if (!current) return;
       const extra: IChipAttrs = {
-        color: "#e57373",
+        color: type === "dataset" ? "#4baeff" : "#e57373",
         text: chipText,
         to: this.clickableChips
-          ? { name: "dataset", params: { datasetId } }
+          ? {
+              name: type === "dataset" ? "configuration" : "dataset",
+              params:
+                type === "dataset"
+                  ? { configurationId: relatedId }
+                  : { datasetId: relatedId },
+            }
           : undefined,
       };
       const chips = [...current.chips, extra];
-      Vue.set(this.chipsPerItemId, id, { chips, type: "configuration" });
+      Vue.set(this.chipsPerItemId, id, { chips, type });
     };
 
     // Track missing names to optionally resolve via batchResources
@@ -441,17 +451,19 @@ export default class CustomFileManager extends Vue {
     for (const p of pairs) {
       if (datasetIds.includes(p.datasetId)) {
         if (!p.configurationName) missingConfigIds.add(p.configurationId);
-        addChipsForDataset(
+        addChip(
           p.datasetId,
           p.configurationName || p.configurationId,
+          "dataset",
           p.configurationId,
         );
       }
       if (configurationIds.includes(p.configurationId)) {
         if (!p.datasetName) missingDatasetIds.add(p.datasetId);
-        addChipsForConfig(
+        addChip(
           p.configurationId,
           p.datasetName || p.datasetId,
+          "configuration",
           p.datasetId,
         );
       }
@@ -470,15 +482,17 @@ export default class CustomFileManager extends Vue {
         for (const p of pairs) {
           if (datasetIds.includes(p.datasetId) && !p.configurationName) {
             const name = batch.upenn_collection?.[p.configurationId]?.name;
-            if (name) addChipsForDataset(p.datasetId, name, p.configurationId);
+            if (name) addChip(p.datasetId, name, "dataset", p.configurationId);
           }
           if (configurationIds.includes(p.configurationId) && !p.datasetName) {
             const name = batch.folder?.[p.datasetId]?.name;
-            if (name) addChipsForConfig(p.configurationId, name, p.datasetId);
+            if (name)
+              addChip(p.configurationId, name, "configuration", p.datasetId);
           }
         }
       } catch (e) {
         // Ignore if batch endpoint unavailable
+        logError("Failed to batch resolve resources:", e);
       }
     }
 

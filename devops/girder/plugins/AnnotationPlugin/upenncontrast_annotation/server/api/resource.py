@@ -1,3 +1,4 @@
+from bson import ObjectId
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.v1.resource import Resource
@@ -112,16 +113,21 @@ class CustomResource(Resource):
             if not ids:
                 continue
             model = self._getResourceModel(kind)
+
+            # Use bulk aggregation query instead of individual loads
+            # This is much more efficient than loading each document
+            # individually
+            docs = model.findWithPermissions(
+                query={"_id": {"$in": [ObjectId(x) for x in ids]}},
+                user=user,
+                level=AccessType.READ
+            )
+
+            # Build the mapping from the bulk query results
             mapping = {}
-            for _id in ids:
-                try:
-                    doc = model.load(
-                        _id, level=AccessType.READ, user=user, exc=False
-                    )
-                    if doc:
-                        mapping[str(doc['_id'])] = doc
-                except Exception:
-                    continue
+            for doc in docs:
+                mapping[str(doc['_id'])] = doc
+
             result[kind] = mapping
 
         return result

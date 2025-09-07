@@ -143,9 +143,9 @@ class Collection(Resource):
         .errorResponse()
     )
     def findByFolders(self, body, limit, offset, sort):
-        folderIds = body.get('folderIds') or []
+        folderIds = body.get('folderIds')
         if not folderIds:
-            return []
+            raise ValueError("folderIds is required in the request body")
         query = {"folderId": {"$in": [ObjectId(x) for x in folderIds]}}
         return self._collectionModel.findWithPermissions(
             query, offset, limit, sort=sort, user=self.getCurrentUser())

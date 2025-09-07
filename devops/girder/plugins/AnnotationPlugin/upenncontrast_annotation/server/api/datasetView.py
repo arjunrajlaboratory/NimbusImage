@@ -228,27 +228,29 @@ class DatasetView(Resource):
     )
     def map(self, body):
         # Parse input
-        datasetIds = body.get("datasetIds") or []
-        configurationIds = body.get("configurationIds") or []
         includeNames = bool(body.get("includeNames", False))
         # Ensure valid integers for pagination (PyMongo requires int, not None)
         try:
             limit = int(body.get("limit", 0))
-        except Exception:
+        except ValueError:
             limit = 0
         try:
             offset = int(body.get("offset", 0))
-        except Exception:
+        except ValueError:
             offset = 0
 
         # Build query
         query = {}
-        if datasetIds:
-            query["datasetId"] = {"$in": [ObjectId(x) for x in datasetIds]}
-        if configurationIds:
-            query["configurationId"] = {
-                "$in": [ObjectId(x) for x in configurationIds]
-            }
+        # Map body field names to query field names (plural to singular)
+        field_mapping = {
+            "datasetIds": "datasetId",
+            "configurationIds": "configurationId"
+        }
+        for body_key, query_key in field_mapping.items():
+            if body_key in body:
+                ids_array = body.get(body_key, [])
+                if ids_array:
+                    query[query_key] = {"$in": [ObjectId(x) for x in ids_array]}
 
         # Use same sort as find() by default
         sort = None
@@ -273,63 +275,50 @@ class DatasetView(Resource):
                 dsIds.add(v["datasetId"])  # ObjectId
                 cfgIds.add(v["configurationId"])  # ObjectId
 
-            # Load names under READ access
+            # Load names under READ access using bulk aggregation
             user = self.getCurrentUser()
-            folderModel = Folder()
-            collectionModel = CollectionModel()
 
-            def load_names(model, ids):
+            def load_names_bulk(model, ids):
+                if not ids:
+                    return {}
+                
+                # Use findWithPermissions to bulk load with permission checking
+                # This respects user permissions and is much more efficient
+                # than loading each document individually
+                docs = model.findWithPermissions(
+                    query={"_id": {"$in": list(ids)}},
+                    user=user,
+                    level=AccessType.READ
+                )
+                
+                # Build the mapping from the results
                 mapping = {}
-                for _id in ids:
-                    try:
-                        doc = model.load(
-                            _id,
-                            level=AccessType.READ,
-                            user=user,
-                            exc=False
-                        )
-                        if doc:
-                            mapping[str(doc["_id"])] = doc.get("name")
-                    except Exception:
-                        # Skip documents we cannot read
-                        continue
+                for doc in docs:
+                    mapping[str(doc["_id"])] = doc.get("name")
+                
                 return mapping
 
-            datasetNames = load_names(folderModel, dsIds)
-            configurationNames = load_names(collectionModel, cfgIds)
+            datasetNames = load_names_bulk(Folder(), dsIds)
+            configurationNames = load_names_bulk(CollectionModel(), cfgIds)
 
-            for v in views:
-                dsId = (
-                    str(v["datasetId"])
-                    if isinstance(v["datasetId"], ObjectId)
-                    else v["datasetId"]
-                )
-                cfgId = (
-                    str(v["configurationId"])
-                    if isinstance(v["configurationId"], ObjectId)
-                    else v["configurationId"]
-                )
-                results.append({
-                    "datasetId": dsId,
-                    "configurationId": cfgId,
-                    "datasetName": datasetNames.get(dsId),
-                    "configurationName": configurationNames.get(cfgId),
-                })
+        def format_view(v):
+            dsId = str(v["datasetId"])
+            cfgId = str(v["configurationId"])
+            
+            result = {
+                "datasetId": dsId,
+                "configurationId": cfgId,
+            }
+            
+            if includeNames:
+                result["datasetName"] = datasetNames.get(dsId)
+                result["configurationName"] = configurationNames.get(cfgId)
+            
+            return result
+
+        if includeNames:
+            results = [format_view(v) for v in views]
         else:
-            for v in cursor:
-                dsId = (
-                    str(v["datasetId"])
-                    if isinstance(v["datasetId"], ObjectId)
-                    else v["datasetId"]
-                )
-                cfgId = (
-                    str(v["configurationId"])
-                    if isinstance(v["configurationId"], ObjectId)
-                    else v["configurationId"]
-                )
-                results.append({
-                    "datasetId": dsId,
-                    "configurationId": cfgId,
-                })
+            results = [format_view(v) for v in cursor]
 
         return results
