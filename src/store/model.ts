@@ -1605,44 +1605,71 @@ const colors = [
   "#40C0FF",
 ];
 
+// Commonly reused colors (enum-like)
+export const COLOR = {
+  RED: "#FF0000",
+  GREEN: "#00FF00",
+  BLUE: "#0000FF",
+  WHITE: "#FFFFFF",
+  YELLOW: "#FFFF00",
+  MAGENTA: "#FF00FF",
+  CYAN: "#00FFFF",
+  VIOLET: "#FF33CC",
+  ORANGE: "#FF9933",
+} as const;
+
 // Keys should be all uppercase.  Values should have the same case as the
 // `colors` list.
 const channelColors: { [key: string]: string } = {
-  BRIGHTFIELD: "#FFFFFF",
-  DIC: "#FFFFFF",
-  PHASE: "#FFFFFF",
-  TRANSMISSION: "#FFFFFF",
-  TRANS: "#FFFFFF",
+  BRIGHTFIELD: COLOR.WHITE,
+  DIC: COLOR.WHITE,
+  PHASE: COLOR.WHITE,
+  TRANSMISSION: COLOR.WHITE,
+  TRANS: COLOR.WHITE,
   DAPI: "#007FFF",
   CY3: "#FFEE00", // Pure wavelength here would be yellow, but that's a little loud, so I made it a bit more orange
   TMR: "#FFEE00",
   TAMRA: "#FFEE00",
-  A594: "#FF9933", // I slightly redshifted this from the actual value for discrimination from Cy3
-  ALEXA594: "#FF9933", // I slightly redshifted this from the actual value for discrimination from Cy3
-  CY5: "#FF0000",
-  ATTO647: "#FF0000",
-  ATTO647N: "#FF0000",
-  CY7: "#FF33CC", // I made this more purple to allow discrimination from ALEXA594
+  A594: COLOR.ORANGE, // I slightly redshifted this from the actual value for discrimination from Cy3
+  ALEXA594: COLOR.ORANGE, // I slightly redshifted this from the actual value for discrimination from Cy3
+  CY5: COLOR.RED,
+  ATTO647: COLOR.RED,
+  ATTO647N: COLOR.RED,
+  CY7: COLOR.VIOLET, // I made this more purple to allow discrimination from ALEXA594
   ATTO700: "#FF33CC",
   A700: "#FF33CC",
   YFP: "#52FF00",
   GFP: "#00FF28",
-  DEFAULT: "#FFFFFF",
+  DEFAULT: COLOR.WHITE,
   MCHERRY: "#FFAD00",
   CHERRY: "#FFAD00",
   A488: "#4AFF00",
   ATTO488: "#4AFF00",
   ALEXA488: "#4AFF00",
   FITC: "#4AFF00",
-  TRITC: "#FFFF00",
-  BFP: "#0000FF",
+  TRITC: COLOR.YELLOW,
+  BFP: COLOR.BLUE,
   MORANGE: "#C9FF00",
   MKATE: "#FF3900",
   CFP: "#00C0FF",
-  RED: "#FF0000",
-  GREEN: "#00FF00",
-  BLUE: "#0000FF",
+  RED: COLOR.RED,
+  GREEN: COLOR.GREEN,
+  BLUE: COLOR.BLUE,
 };
+
+/**
+ * Get channel colors with user overrides applied
+ * @param userColors Optional user-specific color overrides
+ * @returns Merged color mapping with user colors taking precedence
+ */
+export function getChannelColors(userColors?: { [key: string]: string }): {
+  [key: string]: string;
+} {
+  return {
+    ...channelColors, // Default colors
+    ...userColors, // User overrides (if any)
+  };
+}
 
 import { v4 as uuidv4 } from "uuid";
 import { ISetQuadStatus } from "@/utils/setFrameQuad";
@@ -1650,9 +1677,11 @@ import { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
 import { TSamNodes } from "@/pipelines/samPipeline";
 
+// TODO: It's kind of weird to have this function here.
 export function newLayer(
   dataset: IDataset,
   layers: IDisplayLayer[],
+  userColors?: { [key: string]: string },
 ): IDisplayLayer {
   const usedColors = new Set(layers.map((l) => l.color));
   const nextColor = colors.filter((c) => !usedColors.has(c));
@@ -1664,7 +1693,9 @@ export function newLayer(
   const channelName =
     dataset.channelNames.get(nextChannel[0] || 0) ||
     `Channel ${nextChannel[0] || 0}`;
-  let channelColor = channelColors[channelName.toUpperCase()];
+  const resolvedChannelColors = getChannelColors(userColors);
+  let channelColor = resolvedChannelColors[channelName.toUpperCase()];
+
   if (!channelColor || usedColors.has(channelColor)) {
     channelColor = nextColor[0] || colors[layers.length % colors.length];
   }

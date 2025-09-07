@@ -594,12 +594,13 @@ export default class GirderAPI {
     description: string,
     folderId: string,
     dataset: IDataset,
+    userColors?: { [key: string]: string },
   ) {
     return this.createConfigurationFromBase(
       name,
       description,
       folderId,
-      defaultConfigurationBase(dataset),
+      defaultConfigurationBase(dataset, userColors),
     );
   }
 
@@ -818,6 +819,28 @@ export default class GirderAPI {
       return [];
     }
   }
+
+  async getUserColors(): Promise<{ [key: string]: string }> {
+    const response = await this.client.get("user_colors");
+    if (response.status !== 200) {
+      throw new Error(
+        `Could not get user colors: ${response.status} ${response.statusText}`,
+      );
+    }
+    return response.data;
+  }
+
+  async setUserColors(channelColors: { [key: string]: string }): Promise<void> {
+    const data = { channelColors };
+
+    const response = await this.client.put("user_colors", data);
+
+    if (response.status !== 200) {
+      throw new Error(
+        `Could not set user colors: ${response.status} ${response.statusText}`,
+      );
+    }
+  }
 }
 
 export function asDataset(folder: IGirderFolder): IDataset {
@@ -839,11 +862,14 @@ export function asDataset(folder: IGirderFolder): IDataset {
   };
 }
 
-function getDefaultLayers(dataset: IDataset) {
+function getDefaultLayers(
+  dataset: IDataset,
+  userColors?: { [key: string]: string },
+) {
   const nLayers = Math.min(6, dataset.channels.length);
   const layers: IDisplayLayer[] = [];
   for (let i = 0; i < nLayers; ++i) {
-    layers.push(newLayer(dataset, layers));
+    layers.push(newLayer(dataset, layers, userColors));
   }
   return layers;
 }
@@ -878,10 +904,11 @@ export function getDatasetScales(dataset: IDataset): IScales {
 
 function defaultConfigurationBase(
   dataset: IDataset,
+  userColors?: { [key: string]: string },
 ): IDatasetConfigurationBase {
   return {
     compatibility: getDatasetCompatibility(dataset),
-    layers: getDefaultLayers(dataset),
+    layers: getDefaultLayers(dataset, userColors),
     tools: [],
     propertyIds: [],
     snapshots: [],
