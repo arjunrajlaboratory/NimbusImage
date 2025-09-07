@@ -156,7 +156,7 @@ class DatasetView(Resource):
         length limits with large arrays), but it performs a READ operation
         only. No data is created, updated, or deleted.
 
-        Use this endpoint when you need to search for dataset views across 
+        Use this endpoint when you need to search for dataset views across
         multiple datasets or configurations efficiently.
         """)
         .responseClass("dataset_view", array=True)

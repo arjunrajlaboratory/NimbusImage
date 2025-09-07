@@ -106,7 +106,12 @@
 import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 
 import { getDatasetCompatibility } from "@/store/GirderAPI";
-import { IDataset, IDatasetConfiguration, areCompatibles } from "@/store/model";
+import {
+  IDataset,
+  IDatasetConfiguration,
+  IDatasetView,
+  areCompatibles,
+} from "@/store/model";
 import girderResources from "@/store/girderResources";
 import store from "@/store";
 
@@ -246,7 +251,7 @@ export default class AddDatasetToCollection extends Vue {
       configurationId: this.collection.id,
     });
     const excludeDatasetIds = new Set(
-      configViews.map((view) => view.datasetId),
+      configViews.map((view: IDatasetView) => view.datasetId),
     );
     const compatibleDatasets = selectedDatasets.filter(
       (dataset) =>

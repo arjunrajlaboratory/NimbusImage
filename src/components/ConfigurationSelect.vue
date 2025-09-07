@@ -44,7 +44,7 @@
 <script lang="ts">
 import { Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
-import { IDatasetConfiguration } from "@/store/model";
+import { IDatasetConfiguration, IDatasetView } from "@/store/model";
 import routeMapper from "@/utils/routeMapper";
 
 const Mapper = routeMapper(
@@ -92,7 +92,7 @@ export default class ConfigurationSelect extends Mapper {
         datasetId: this.dataset.id,
       });
       const linkedConfigurationIds = new Set(
-        views.map((v) => v.configurationId),
+        views.map((v: IDatasetView) => v.configurationId),
       );
       const compatibleConfigurations =
         await this.store.api.getCompatibleConfigurations(this.dataset);
