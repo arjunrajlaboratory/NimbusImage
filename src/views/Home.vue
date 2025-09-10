@@ -494,10 +494,34 @@ export default class Home extends Vue {
     }
   }
 
-  refreshRecentDatasetDetails() {
-    for (const d of this.datasetViews) {
-      this.girderResources.getFolder(d.datasetId);
-      this.girderResources.getCollection(d.configurationId);
+  async refreshRecentDatasetDetails() {
+    if (this.datasetViews.length === 0) return;
+
+    // Collect all unique IDs
+    const datasetIds = Array.from(
+      new Set(this.datasetViews.map((d) => d.datasetId)),
+    );
+    const configurationIds = Array.from(
+      new Set(this.datasetViews.map((d) => d.configurationId)),
+    );
+
+    try {
+      // Use bulk API call to get all folder and collection details at once
+      await this.store.api.batchResources({
+        folder: datasetIds,
+        upenn_collection: configurationIds,
+      });
+
+      // The batchResources call will populate the girderResources cache
+      // so subsequent getFolder/getCollection calls will return cached data
+    } catch (error) {
+      logError("Failed to batch fetch recent dataset details:", error);
+
+      // Fall back to individual calls if batch fails
+      for (const d of this.datasetViews) {
+        this.girderResources.getFolder(d.datasetId);
+        this.girderResources.getCollection(d.configurationId);
+      }
     }
   }
 
