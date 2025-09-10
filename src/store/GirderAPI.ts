@@ -481,6 +481,43 @@ export default class GirderAPI {
     return configurations;
   }
 
+  async getAllConfigurations(
+    folderId?: string,
+  ): Promise<IDatasetConfiguration[]> {
+    try {
+      let targetFolderId = folderId;
+
+      // If no folderId provided, try to get user's private folder
+      if (!targetFolderId) {
+        const privateFolder = await this.getUserPrivateFolder();
+        if (privateFolder) {
+          targetFolderId = privateFolder._id;
+        }
+      }
+
+      if (!targetFolderId) {
+        logError("No folderId found");
+        return [];
+      }
+
+      // Fetch collections with folderId
+      const response = await this.client.get("upenn_collection", {
+        params: {
+          folderId: targetFolderId,
+          limit: 0, // Get all collections
+          sort: "updated",
+          sortdir: -1,
+        },
+      });
+
+      // Convert to IDatasetConfiguration format using the same logic as setBaseCollectionValues
+      return response.data.map((item: any) => setBaseCollectionValues(item));
+    } catch (error) {
+      logError("Failed to fetch all configurations:", error);
+      return [];
+    }
+  }
+
   createDataset(
     name: string,
     description: string,
