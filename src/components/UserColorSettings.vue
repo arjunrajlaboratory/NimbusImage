@@ -263,8 +263,7 @@ export default class UserColorSettings extends VueClass {
   }
 
   getChannelLabel(channel: string): string {
-    const hasUserOverride = this.hasUserOverride(channel);
-    return hasUserOverride ? `${channel} *` : channel;
+    return this.hasUserOverride(channel) ? `${channel} *` : channel;
   }
 
   hasUserOverride(channel: string): boolean {

@@ -827,7 +827,8 @@ export default class GirderAPI {
         `Could not get user colors: ${response.status} ${response.statusText}`,
       );
     }
-    return response.data;
+    // Extract channelColors from the UserColorPreferences dataclass
+    return response.data.channelColors || {};
   }
 
   async setUserColors(channelColors: { [key: string]: string }): Promise<void> {
