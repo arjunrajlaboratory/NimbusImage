@@ -21,16 +21,14 @@ class UserColorsSchema:
         "$schema": "http://json-schema.org/draft-04/schema#",
         "type": "object",
         "patternProperties": {
-            "^[A-Za-z0-9_]+$": {
+            "^.+$": {
                 "type": "string",
                 "pattern": "^#[0-9A-Fa-f]{6}$"
             }
         },
         "additionalProperties": False,
-        "minProperties": 1,
         "description": ("Channel color mappings where keys are channel names "
-                        "(letters, numbers, underscores) and values "
-                        "are hex colors")
+                        "(any non-empty string) and values are hex colors")
     }
 
 
@@ -70,11 +68,6 @@ class UserColors(Model):
         """Set user's color preferences in metadata."""
         # Validate the channel colors format (business logic validation)
         self.validateChannelColors(channelColors)
-
-        # Use Girder's standard setMetadata method if available
-        if hasattr(User(), 'setMetadata'):
-            User().setMetadata(user, {'channelColors': channelColors})
-            return
 
         # Fallback: handle meta field initialization and save
         if 'meta' not in user:

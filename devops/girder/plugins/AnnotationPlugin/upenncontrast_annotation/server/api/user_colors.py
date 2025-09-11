@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Dict
 
 from girder.api import access
@@ -32,7 +32,8 @@ class UserColors(Resource):
     def getUserColors(self):
         user = self.getCurrentUser()
         channelColors = self.userColorsModel.getUserColors(user)
-        return UserColorPreferences(channelColors=channelColors)
+        # Convert dataclass to dictionary for proper JSON serialization
+        return asdict(UserColorPreferences(channelColors=channelColors))
 
     @access.user
     @autoDescribeRoute(
