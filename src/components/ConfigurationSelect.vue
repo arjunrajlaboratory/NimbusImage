@@ -44,8 +44,10 @@
 <script lang="ts">
 import { Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
-import { IDatasetConfiguration } from "@/store/model";
+import { IDatasetConfiguration, areCompatibles } from "@/store/model";
+import { getDatasetCompatibility } from "@/store/GirderAPI";
 import routeMapper from "@/utils/routeMapper";
+import { logError } from "@/utils/log";
 
 const Mapper = routeMapper(
   {},
@@ -92,13 +94,27 @@ export default class ConfigurationSelect extends Mapper {
         datasetId: this.dataset.id,
       });
       const linkedConfigurationIds = new Set(
-        views.map((v) => v.configurationId),
+        views.map((v: any) => v.configurationId),
       );
-      const compatibleConfigurations =
-        await this.store.api.getCompatibleConfigurations(this.dataset);
-      this.compatibleConfigurations = compatibleConfigurations.filter(
-        (conf) => !linkedConfigurationIds.has(conf.id),
-      );
+
+      // Get all collections using the new endpoint (like CollectionList.vue does)
+      const allConfigurations = await this.store.api.getAllConfigurations();
+
+      // Filter for compatible configurations using client-side logic
+      const datasetCompatibility = getDatasetCompatibility(this.dataset);
+      const compatibleConfigurations = allConfigurations.filter((conf) => {
+        // Skip if already linked
+        if (linkedConfigurationIds.has(conf.id)) {
+          return false;
+        }
+        // Check compatibility using the same logic as AddDatasetToCollection
+        return areCompatibles(conf.compatibility, datasetCompatibility);
+      });
+
+      this.compatibleConfigurations = compatibleConfigurations;
+    } catch (error) {
+      logError("Failed to fetch compatible configurations:", error);
+      this.compatibleConfigurations = [];
     } finally {
       this.loading = false;
     }
