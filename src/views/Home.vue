@@ -422,26 +422,79 @@ export default class Home extends Vue {
 
   getUserDisplayName(creatorId: string): string {
     if (!this.userDisplayNames[creatorId]) {
-      this.userDisplayNames[creatorId] = "Loading...";
+      Vue.set(this.userDisplayNames, creatorId, "Loading...");
       this.getUsernameFromId(creatorId).then((user) => {
-        this.userDisplayNames[creatorId] =
-          `${user.fullname} (${user.username})`;
+        Vue.set(
+          this.userDisplayNames,
+          creatorId,
+          `${user.fullname} (${user.username})`,
+        );
       });
     }
     return this.userDisplayNames[creatorId];
   }
 
+  async fetchUsersForDatasets() {
+    const userIds = new Set<string>();
+
+    for (const view of this.datasetViewItems) {
+      if (view.datasetInfo.creatorId) {
+        userIds.add(view.datasetInfo.creatorId);
+      }
+    }
+
+    if (userIds.size > 0) {
+      await this.girderResources.batchFetchResources({
+        userIds: Array.from(userIds),
+      });
+
+      // Update display names
+      for (const userId of userIds) {
+        const user = this.girderResources.watchUser(userId);
+        if (user) {
+          const fullname = `${user.firstName} ${user.lastName}`.trim();
+          this.userDisplayNames[userId] =
+            `${fullname || user.email} (${user.email})`;
+        }
+      }
+    }
+  }
+
   @Watch("datasetViews")
   @Watch("girderResources.resources")
-  fetchDatasetsAndConfigurations() {
+  async fetchDatasetsAndConfigurations() {
+    // Don't proceed if resources are being locked (loaded individually)
     if (Object.keys(girderResources.resourcesLocks).length > 0) {
-      // Some resources will be set later, don't spam getFolder and getItem
       return;
     }
-    for (const d of this.datasetViews) {
-      this.girderResources.getFolder(d.datasetId);
-      this.girderResources.getCollection(d.configurationId);
+
+    // Collect IDs that aren't already in cache
+    const datasetIds: string[] = [];
+    const configIds: string[] = [];
+
+    for (const view of this.datasetViews) {
+      // Check if dataset is not in cache
+      if (!this.girderResources.watchFolder(view.datasetId)) {
+        datasetIds.push(view.datasetId);
+      }
+      // Check if configuration is not in cache
+      if (!this.girderResources.watchCollection(view.configurationId)) {
+        configIds.push(view.configurationId);
+      }
     }
+
+    // Batch fetch all missing resources
+    if (datasetIds.length > 0 || configIds.length > 0) {
+      await this.girderResources.batchFetchResources({
+        folderIds: datasetIds,
+        collectionIds: configIds,
+      });
+    }
+  }
+
+  @Watch("datasetViewItems")
+  async fetchUsersForDatasetsWatcher() {
+    await this.fetchUsersForDatasets();
   }
 
   mounted() {
@@ -495,34 +548,13 @@ export default class Home extends Vue {
   }
 
   async refreshRecentDatasetDetails() {
-    if (this.datasetViews.length === 0) return;
+    const datasetIds = this.datasetViews.map((d) => d.datasetId);
+    const configIds = this.datasetViews.map((d) => d.configurationId);
 
-    // Collect all unique IDs
-    const datasetIds = Array.from(
-      new Set(this.datasetViews.map((d) => d.datasetId)),
-    );
-    const configurationIds = Array.from(
-      new Set(this.datasetViews.map((d) => d.configurationId)),
-    );
-
-    try {
-      // Use bulk API call to get all folder and collection details at once
-      await this.store.api.batchResources({
-        folder: datasetIds,
-        upenn_collection: configurationIds,
-      });
-
-      // The batchResources call will populate the girderResources cache
-      // so subsequent getFolder/getCollection calls will return cached data
-    } catch (error) {
-      logError("Failed to batch fetch recent dataset details:", error);
-
-      // Fall back to individual calls if batch fails
-      for (const d of this.datasetViews) {
-        this.girderResources.getFolder(d.datasetId);
-        this.girderResources.getCollection(d.configurationId);
-      }
-    }
+    await this.girderResources.batchFetchResources({
+      folderIds: datasetIds,
+      collectionIds: configIds,
+    });
   }
 
   onLocationUpdate(selectable: IGirderSelectAble) {
