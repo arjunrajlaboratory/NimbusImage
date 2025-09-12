@@ -1,3 +1,4 @@
+from bson import ObjectId
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.v1.resource import Resource
@@ -8,6 +9,12 @@ from girder.utility.progress import ProgressContext
 
 
 class CustomResource(Resource):
+
+    def __init__(self):
+        super().__init__()
+        self.resourceName = 'resource'
+        # Batch resolve endpoint for multiple resource types
+        self.route('POST', ('batch',), self.batchResources)
 
     def _getResourceModel(self, kind, funcName=None):
         """
@@ -77,3 +84,50 @@ class CustomResource(Resource):
                                 != (doc['parentCollection'], doc['parentId'])):
                             model.move(doc, parent, parentType)
                     ctx.update(increment=1)
+
+    @access.user
+    @autoDescribeRoute(
+        Description('Batch resolve multiple resource documents by id')
+        .notes(
+            'Returns maps keyed by id for each requested type. '
+            'Enforces READ access.'
+        )
+        .jsonParam(
+            'body',
+            description=(
+                'Object with optional keys: folder, item, upenn_collection, '
+                ' user; each a list of ids'
+            ),
+            paramType='body',
+            requireObject=True
+        )
+    )
+    def batchResources(self, body):
+        user = self.getCurrentUser()
+        result = {}
+
+        # Only allow known types
+        allowed = ('folder', 'item', 'upenn_collection', 'user')
+        for kind in allowed:
+            ids = body.get(kind)
+            if not ids:
+                continue
+            model = self._getResourceModel(kind)
+
+            # Use bulk aggregation query instead of individual loads
+            # This is much more efficient than loading each document
+            # individually
+            docs = model.findWithPermissions(
+                query={"_id": {"$in": [ObjectId(x) for x in ids]}},
+                user=user,
+                level=AccessType.READ
+            )
+
+            # Build the mapping from the bulk query results
+            mapping = {}
+            for doc in docs:
+                mapping[str(doc['_id'])] = doc
+
+            result[kind] = mapping
+
+        return result

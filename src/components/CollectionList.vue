@@ -194,13 +194,20 @@ export default class CollectionList extends Vue {
 
   @Watch("filteredCollections")
   async onFilteredCollectionsChange() {
-    // Generate chips for filtered collections
-    for (const collection of this.filteredCollections) {
-      if (!this.computedChipsIds.has(collection._id)) {
-        this.computedChipsIds.add(collection._id);
-        this.addChipPromise(collection);
-      }
-    }
+    // Collect all collection IDs that need chips
+    const collectionsNeedingChips = this.filteredCollections.filter(
+      (collection) => !this.computedChipsIds.has(collection._id),
+    );
+
+    if (collectionsNeedingChips.length === 0) return;
+
+    // Mark all as being computed
+    collectionsNeedingChips.forEach((collection) => {
+      this.computedChipsIds.add(collection._id);
+    });
+
+    // Generate chips for all collections in bulk
+    this.addBulkChipPromise(collectionsNeedingChips);
   }
 
   async fetchCollections() {
@@ -291,6 +298,30 @@ export default class CollectionList extends Vue {
     });
   }
 
+  addBulkChipPromise(collections: IUPennCollection[]) {
+    // Chain a new bulk chip promise with last pending promise
+    this.lastPendingChip = this.lastPendingChip
+      .finally()
+      .then(() => this.bulkCollectionsToChips(collections))
+      .then((allChipAttrs) => {
+        // Update all collections at once
+        for (const [collectionId, chipAttrs] of Object.entries(allChipAttrs)) {
+          Vue.set(this.chipsPerItemId, collectionId, chipAttrs);
+        }
+      })
+      .catch((error) => {
+        logError("Error in bulkCollectionsToChips:", error);
+      });
+
+    // When done with the last promise, update debouncedChipsPerItemId
+    ++this.pendingChips;
+    this.lastPendingChip.finally(() => {
+      if (--this.pendingChips === 0) {
+        this.debouncedChipsPerItemId = { ...this.chipsPerItemId };
+      }
+    });
+  }
+
   async collectionToChips(collection: IUPennCollection) {
     const ret: IChipAttrs[] = [];
 
@@ -300,48 +331,63 @@ export default class CollectionList extends Vue {
         configurationId: collection._id,
       });
 
-      // Create chips for each dataset in the collection
-      const datasetChips = await Promise.all(
-        views.map(async (view: IDatasetView) => {
+      if (views.length === 0) {
+        return { chips: ret, type: "collection" };
+      }
+
+      // Collect all unique dataset IDs that need names
+      const datasetIds: string[] = Array.from(
+        new Set(views.map((view: IDatasetView) => String(view.datasetId))),
+      );
+
+      // Use bulk API call to get all folder names at once
+      let folderInfoMap: { [id: string]: any } = {};
+      try {
+        const batchResponse = await this.store.api.batchResources({
+          folder: datasetIds,
+        });
+        folderInfoMap = batchResponse.folder || {};
+      } catch (error) {
+        logError("Failed to batch fetch folder info:", error);
+        // Fall back to individual calls if batch fails
+        for (const datasetId of datasetIds as string[]) {
           try {
-            const datasetInfo = await this.girderResources.getFolder(
-              view.datasetId,
-            );
-            if (!datasetInfo) {
-              logWarning(
-                `Dataset ${view.datasetId} not found for collection ${collection._id} (may have been deleted)`,
-              );
-              return null;
+            const folderInfo = await this.girderResources.getFolder(datasetId);
+            if (folderInfo) {
+              folderInfoMap[datasetId] = folderInfo;
             }
-
-            const chip: IChipAttrs = {
-              text: datasetInfo.name,
-              color: "#e57373",
-            };
-
-            // Add navigation to dataset
-            chip.to = {
-              name: "dataset",
-              params: { datasetId: view.datasetId },
-            };
-
-            return chip;
-          } catch (error) {
-            logError(
-              `Failed to fetch dataset ${view.datasetId} for collection ${collection._id}:`,
-              error,
-            );
-            return null;
+          } catch (individualError) {
+            logError(`Failed to fetch folder ${datasetId}:`, individualError);
           }
-        }),
-      );
+        }
+      }
 
-      // Filter out null chips and add to results
-      ret.push(
-        ...(datasetChips.filter(
-          (chip: IChipAttrs | null) => chip !== null,
-        ) as IChipAttrs[]),
-      );
+      // Create chips for each dataset using the bulk-fetched data
+      const datasetChips: IChipAttrs[] = [];
+      for (const view of views) {
+        const datasetInfo = folderInfoMap[String(view.datasetId)];
+        if (!datasetInfo) {
+          logWarning(
+            `Dataset ${view.datasetId} not found for collection ${collection._id} (may have been deleted)`,
+          );
+          continue;
+        }
+
+        const chip: IChipAttrs = {
+          text: datasetInfo.name,
+          color: "#e57373",
+        };
+
+        // Add navigation to dataset
+        chip.to = {
+          name: "dataset",
+          params: { datasetId: String(view.datasetId) },
+        };
+
+        datasetChips.push(chip);
+      }
+
+      ret.push(...datasetChips);
     } catch (error) {
       logError(
         "Failed to fetch dataset views for collection:",
@@ -354,6 +400,111 @@ export default class CollectionList extends Vue {
       chips: ret,
       type: "collection",
     };
+  }
+
+  async bulkCollectionsToChips(
+    collections: IUPennCollection[],
+  ): Promise<{ [collectionId: string]: IChipsPerItemId }> {
+    const result: { [collectionId: string]: IChipsPerItemId } = {};
+
+    if (collections.length === 0) return result;
+
+    try {
+      // Get all dataset views for all collections in one bulk call
+      const configurationIds = collections.map((c) => c._id);
+      const allViews = await this.store.api.findDatasetViews({
+        configurationIds: configurationIds,
+      });
+
+      // Group views by configuration ID
+      const viewsByConfigId: { [configId: string]: IDatasetView[] } = {};
+      for (const view of allViews) {
+        const configId = String(view.configurationId);
+        if (!viewsByConfigId[configId]) {
+          viewsByConfigId[configId] = [];
+        }
+        viewsByConfigId[configId].push(view);
+      }
+
+      // Collect all unique dataset IDs across all collections
+      const allDatasetIds: string[] = Array.from(
+        new Set(allViews.map((view: IDatasetView) => String(view.datasetId))),
+      );
+
+      // Bulk fetch all folder info at once
+      let folderInfoMap: { [id: string]: any } = {};
+      if (allDatasetIds.length > 0) {
+        try {
+          const batchResponse = await this.store.api.batchResources({
+            folder: allDatasetIds,
+          });
+          folderInfoMap = batchResponse.folder || {};
+        } catch (error) {
+          logError("Failed to batch fetch folder info:", error);
+          // Fall back to individual calls if batch fails
+          for (const datasetId of allDatasetIds as string[]) {
+            try {
+              const folderInfo =
+                await this.girderResources.getFolder(datasetId);
+              if (folderInfo) {
+                folderInfoMap[datasetId] = folderInfo;
+              }
+            } catch (individualError) {
+              logError(`Failed to fetch folder ${datasetId}:`, individualError);
+            }
+          }
+        }
+      }
+
+      // Generate chips for each collection
+      for (const collection of collections) {
+        const views = viewsByConfigId[collection._id] || [];
+        const chips: IChipAttrs[] = [];
+
+        for (const view of views) {
+          const datasetInfo = folderInfoMap[String(view.datasetId)];
+          if (!datasetInfo) {
+            logWarning(
+              `Dataset ${view.datasetId} not found for collection ${collection._id} (may have been deleted)`,
+            );
+            continue;
+          }
+
+          const chip: IChipAttrs = {
+            text: datasetInfo.name,
+            color: "#e57373",
+            to: {
+              name: "dataset",
+              params: { datasetId: String(view.datasetId) },
+            },
+          };
+
+          chips.push(chip);
+        }
+
+        result[collection._id] = {
+          chips,
+          type: "collection",
+        };
+      }
+    } catch (error) {
+      logError("Failed to bulk fetch dataset views:", error);
+
+      // Fall back to individual processing for each collection
+      for (const collection of collections) {
+        try {
+          result[collection._id] = await this.collectionToChips(collection);
+        } catch (individualError) {
+          logError(
+            `Failed to process collection ${collection._id}:`,
+            individualError,
+          );
+          result[collection._id] = { chips: [], type: "collection" };
+        }
+      }
+    }
+
+    return result;
   }
 }
 </script>

@@ -18,6 +18,7 @@ import {
 import Vue from "vue";
 import { IDataset, IDatasetConfiguration } from "./model";
 import { setBaseCollectionValues, asDataset, parseTiles } from "./GirderAPI";
+import { logError } from "@/utils/log";
 
 /**
  * Store to cache requests to resources, mostly items and folders
@@ -162,6 +163,63 @@ export class GirderResources extends VuexModule {
   @Action
   public ressourceDeleted(id: string) {
     this.setResource({ id, resource: null });
+  }
+
+  @Action
+  public async batchFetchResources({
+    folderIds = [],
+    collectionIds = [],
+    userIds = [],
+  }: {
+    folderIds?: string[];
+    collectionIds?: string[];
+    userIds?: string[];
+  }) {
+    if (
+      folderIds.length === 0 &&
+      collectionIds.length === 0 &&
+      userIds.length === 0
+    ) {
+      return;
+    }
+
+    try {
+      const response = await main.api.batchResources({
+        folder: folderIds,
+        upenn_collection: collectionIds,
+        user: userIds,
+      });
+
+      // Update the cache with all fetched resources
+      if (response.folder) {
+        Object.entries(response.folder).forEach(([id, resource]) => {
+          this.setResource({
+            id,
+            resource: { ...resource, _modelType: "folder" },
+          });
+        });
+      }
+
+      if (response.upenn_collection) {
+        Object.entries(response.upenn_collection).forEach(([id, resource]) => {
+          this.setResource({
+            id,
+            resource: { ...resource, _modelType: "upenn_collection" },
+          });
+        });
+      }
+
+      if (response.user) {
+        Object.entries(response.user).forEach(([id, resource]) => {
+          this.setResource({
+            id,
+            resource: { ...resource, _modelType: "user" },
+          });
+        });
+      }
+    } catch (error) {
+      logError("Failed to batch fetch resources:", error);
+    }
   }
 
   @Action

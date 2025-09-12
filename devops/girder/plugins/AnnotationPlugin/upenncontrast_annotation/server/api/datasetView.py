@@ -28,7 +28,10 @@ class DatasetView(Resource):
         self.route("DELETE", (":id",), self.delete)
         self.route("PUT", (":id",), self.update)
         self.route("GET", (), self.find)
+        self.route("POST", ("bulk_find",), self.findBulk)
         self.route("POST", ("share",), self.share)
+        # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
+        self.route("POST", ("map",), self.map)
 
     @access.user
     @describeRoute(
@@ -129,9 +132,12 @@ class DatasetView(Resource):
     def find(self, params):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
+
+        # Handle single IDs from query params
         for key in ["datasetId", "configurationId"]:
             if key in params:
                 query[key] = ObjectId(params[key])
+
         return self._datasetViewModel.findWithPermissions(
             query,
             sort=sort,
@@ -140,6 +146,63 @@ class DatasetView(Resource):
             limit=limit,
             offset=offset,
         )
+
+    @access.user
+    @autoDescribeRoute(
+        Description("""
+        Bulk search for dataset views (READ OPERATION).
+
+        NOTE: This is a POST endpoint for technical reasons (to avoid URL
+        length limits with large arrays), but it performs a READ operation
+        only. No data is created, updated, or deleted.
+
+        Use this endpoint when you need to search for dataset views across
+        multiple datasets or configurations efficiently.
+        """)
+        .responseClass("dataset_view", array=True)
+        .jsonParam(
+            "body",
+            "Request body with optional arrays: datasetIds, configurationIds",
+            required=False,
+            paramType='body'
+        )
+        .errorResponse()
+        .notes("""
+        Example request body:
+        {
+            "datasetIds": ["id1", "id2", "id3"],
+            "configurationIds": ["config1", "config2"]
+        }
+
+        Returns all dataset views that match ANY of the provided datasets
+        OR configurations (uses MongoDB $in operator for efficient querying).
+        """)
+    )
+    def findBulk(self, body):
+        query = {}
+
+        # Handle multiple IDs from request body
+        if body:
+            for single_key, plural_key in [
+                ("datasetId", "datasetIds"),
+                ("configurationId", "configurationIds")
+            ]:
+                if plural_key in body and body[plural_key]:
+                    # Handle JSON array of IDs
+                    ids = (body[plural_key]
+                           if isinstance(body[plural_key], list)
+                           else [])
+                    if ids:
+                        query[single_key] = {
+                            "$in": [ObjectId(id) for id in ids]
+                        }
+
+        return list(self._datasetViewModel.findWithPermissions(
+            query,
+            sort=None,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+        ))
 
     @access.user
     @autoDescribeRoute(
@@ -205,3 +268,122 @@ class DatasetView(Resource):
             dataset, targetUser, accessType, save=True)
 
         return True
+
+    @access.user
+    @autoDescribeRoute(
+        Description("Bulk map dataset and configuration ids")
+        .notes(
+            "Given many datasetIds and/or configurationIds, returns all "
+            "matching dataset_view pairs. Optionally includes names so the "
+            "client can avoid additional resource lookups."
+        )
+        .jsonParam(
+            "body",
+            description=(
+                "Object with optional keys: datasetIds, configurationIds, "
+                "includeNames, limit, offset"
+            ),
+            paramType="body",
+            requireObject=True,
+        )
+    )
+    def map(self, body):
+        # Parse input
+        includeNames = bool(body.get("includeNames", False))
+        # Ensure valid integers for pagination (PyMongo requires int, not None)
+        try:
+            limit = int(body.get("limit", 0))
+        except ValueError:
+            limit = 0
+        try:
+            offset = int(body.get("offset", 0))
+        except ValueError:
+            offset = 0
+
+        # Build query
+        query = {}
+        # Map body field names to query field names (plural to singular)
+        fieldMapping = {
+            "datasetIds": "datasetId",
+            "configurationIds": "configurationId"
+        }
+        for bodyKey, queryKey in fieldMapping.items():
+            if bodyKey in body:
+                idsArray = body.get(bodyKey, [])
+                if idsArray:
+                    query[queryKey] = {
+                        "$in": [ObjectId(x) for x in idsArray]
+                    }
+
+        # Use same sort as find() by default
+        sort = None
+
+        cursor = self._datasetViewModel.findWithPermissions(
+            query,
+            sort=sort,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            limit=limit,
+            offset=offset,
+        )
+
+        results = []
+        if includeNames:
+            # Preload names maps to avoid per-document lookups later
+            dsIds = set()
+            cfgIds = set()
+            # We must materialize cursor to iterate twice safely
+            views = list(cursor)
+            for v in views:
+                dsIds.add(v["datasetId"])  # ObjectId
+                cfgIds.add(v["configurationId"])  # ObjectId
+
+            # Load names under READ access using bulk aggregation
+            user = self.getCurrentUser()
+
+            def loadNamesBulk(model, ids):
+                if not ids:
+                    return {}
+
+                # Use findWithPermissions to bulk load with permission checking
+                # This respects user permissions and is much more efficient
+                # than loading each document individually
+                docs = model.findWithPermissions(
+                    query={"_id": {"$in": list(ids)}},
+                    user=user,
+                    level=AccessType.READ
+                )
+
+                # Build the mapping from the results
+                mapping = {}
+                for doc in docs:
+                    mapping[doc["_id"]] = doc.get("name")
+
+                return mapping
+
+            datasetNames = loadNamesBulk(Folder(), dsIds)
+            configurationNames = loadNamesBulk(CollectionModel(), cfgIds)
+
+        def formatView(v):
+            dsId = str(v["datasetId"])
+            cfgId = str(v["configurationId"])
+
+            result = {
+                "datasetId": dsId,
+                "configurationId": cfgId,
+            }
+
+            if includeNames:
+                result["datasetName"] = datasetNames.get(v["datasetId"])
+                result["configurationName"] = configurationNames.get(
+                    v["configurationId"]
+                )
+
+            return result
+
+        if includeNames:
+            results = [formatView(v) for v in views]
+        else:
+            results = [formatView(v) for v in cursor]
+
+        return results

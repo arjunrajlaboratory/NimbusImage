@@ -179,6 +179,11 @@ export default class CustomFileManager extends Vue {
   computedChipsIds: Set<string> = new Set();
   selected: IGirderSelectAble[] = [];
 
+  // Batch mapping queues
+  batchQueueDatasetIds: Set<string> = new Set();
+  batchQueueConfigurationIds: Set<string> = new Set();
+  batchTimer: number | null = null;
+
   selectedItemsOptionsMenu: boolean = false;
   rowOptionsMenu: { [itemId: string]: boolean } = {};
 
@@ -310,113 +315,189 @@ export default class CustomFileManager extends Vue {
 
   async itemToChips(selectable: IGirderSelectAble) {
     const ret: IChipAttrs[] = [];
-    const baseChip = {
-      color: "blue",
-    };
 
-    // Store the type with the chips
-    let itemType = null;
+    // Determine type first
+    const isDataset = isDatasetFolder(selectable);
+    const isConfig = isConfigurationItem(selectable);
 
-    // Add chips if item is a dataset
-    if (isDatasetFolder(selectable)) {
-      itemType = "dataset";
-      // Dataset chip
-      const firstChip: IChipAttrs = {
+    if (!isDataset && !isConfig) {
+      return { chips: ret, type: null as any };
+    }
+
+    const type = isDataset ? "dataset" : "configuration";
+
+    // First chip (type indicator)
+    const chipOptions = {
+      dataset: {
         text: "Dataset",
-        color: "grey darken-1",
-      };
-      if (this.clickableChips) {
-        firstChip.to = {
-          name: "dataset",
-          params: { datasetId: selectable._id },
-        };
-      }
-      ret.push(firstChip);
-      // A chip per view
-      if (this.moreChips) {
-        const views = await this.store.api.findDatasetViews({
-          datasetId: selectable._id,
-        });
-        await Promise.all(
-          views.map((view) => {
-            this.girderResources
-              .getCollection(view.configurationId)
-              .then((configInfo) => {
-                if (!configInfo) {
-                  return;
-                }
-                const newChip: IChipAttrs = {
-                  ...baseChip,
-                  text: configInfo.name,
-                  color: "#4baeff",
-                };
-                if (this.clickableChips) {
-                  newChip.to = {
-                    name: "configuration",
-                    params: {
-                      configurationId: view.configurationId,
-                    },
-                  };
-                }
-                ret.push(newChip);
-              });
-          }),
-        );
-      }
-    }
-
-    // Add chips if item is a configuration
-    if (isConfigurationItem(selectable)) {
-      itemType = "configuration";
-      // Collection chip
-      const firstChip: IChipAttrs = {
+        to_name: "dataset",
+        to_params: { datasetId: selectable._id },
+      },
+      configuration: {
         text: "Collection",
-        color: "grey darken-1",
+        to_name: "configuration",
+        to_params: { configurationId: selectable._id },
+      },
+    };
+
+    const chipOption = chipOptions[type];
+    const headerChip: IChipAttrs = {
+      text: chipOption.text,
+      color: "grey darken-1",
+    };
+    if (this.clickableChips) {
+      headerChip.to = {
+        name: chipOption.to_name,
+        params: chipOption.to_params,
       };
-      if (this.clickableChips) {
-        firstChip.to = {
-          name: "configuration",
-          params: { configurationId: selectable._id },
-        };
+    }
+    ret.push(headerChip);
+
+    // If we don't show more chips, return early
+    if (!this.moreChips) {
+      return { chips: ret, type };
+    }
+
+    // Enqueue for batch resolution and return header-only chips for now
+    if (isDataset) {
+      this.batchQueueDatasetIds.add(selectable._id);
+    } else {
+      this.batchQueueConfigurationIds.add(selectable._id);
+    }
+    this.scheduleBatchResolve();
+
+    return { chips: ret, type };
+  }
+
+  scheduleBatchResolve() {
+    // Clear any existing timer to restart the debounce period
+    if (this.batchTimer !== null) {
+      window.clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
+
+    // Debounce mechanism: Wait 50ms to collect IDs from multiple itemToChips calls
+    // This allows Vue's rendering cycle to call itemToChips() many times
+    // (once per item being rendered), accumulating dataset/configuration IDs
+    // in batchQueueDatasetIds and batchQueueConfigurationIds sets.
+    // After 50ms of no new calls, flushBatchResolve() fires a single
+    // bulk API request to resolve all collected IDs at once.
+    this.batchTimer = window.setTimeout(() => this.flushBatchResolve(), 50);
+  }
+
+  async flushBatchResolve() {
+    const datasetIds = Array.from(this.batchQueueDatasetIds);
+    const configurationIds = Array.from(this.batchQueueConfigurationIds);
+    this.batchQueueDatasetIds.clear();
+    this.batchQueueConfigurationIds.clear();
+    this.batchTimer = null;
+
+    if (datasetIds.length === 0 && configurationIds.length === 0) {
+      return;
+    }
+
+    // Query mapping with names
+    let pairs: Array<{
+      datasetId: string;
+      configurationId: string;
+      datasetName?: string;
+      configurationName?: string;
+    }> = [];
+    try {
+      pairs = await this.store.api.mapDatasetViews({
+        datasetIds: datasetIds.length ? datasetIds : undefined,
+        configurationIds: configurationIds.length
+          ? configurationIds
+          : undefined,
+        includeNames: true,
+      } as any);
+    } catch (e) {
+      // If endpoint not available, fall back silently
+      logError("Failed to map dataset views:", e);
+      return;
+    }
+
+    // Build additional chips per item
+    const addChip = (
+      id: string,
+      chipText: string,
+      type: "dataset" | "configuration",
+      relatedId: string,
+    ) => {
+      const current = this.chipsPerItemId[id];
+      if (!current) return;
+
+      const extra: IChipAttrs = {
+        color: type === "dataset" ? "#4baeff" : "#e57373",
+        text: chipText,
+        to: this.clickableChips
+          ? {
+              name: type === "dataset" ? "configuration" : "dataset",
+              params:
+                type === "dataset"
+                  ? { configurationId: relatedId }
+                  : { datasetId: relatedId },
+            }
+          : undefined,
+      };
+      const chips = [...current.chips, extra];
+      Vue.set(this.chipsPerItemId, id, { chips, type });
+    };
+
+    // Track missing names to optionally resolve via batchResources
+    const missingDatasetIds = new Set<string>();
+    const missingConfigIds = new Set<string>();
+
+    for (const p of pairs) {
+      if (datasetIds.includes(p.datasetId)) {
+        if (!p.configurationName) missingConfigIds.add(p.configurationId);
+        addChip(
+          p.datasetId,
+          p.configurationName || p.configurationId,
+          "dataset",
+          p.configurationId,
+        );
       }
-      ret.push(firstChip);
-      // A chip per view
-      if (this.moreChips) {
-        const views = await this.store.api.findDatasetViews({
-          configurationId: selectable._id,
-        });
-        await Promise.all(
-          views.map((view) => {
-            this.girderResources
-              .getFolder(view.datasetId)
-              .then((datasetInfo) => {
-                if (!datasetInfo) {
-                  return;
-                }
-                const newChip: IChipAttrs = {
-                  ...baseChip,
-                  text: datasetInfo.name,
-                  color: "#e57373",
-                };
-                if (this.clickableChips) {
-                  newChip.to = {
-                    name: "dataset", // TODO: change to datasetview. I tried, but I don't think I am passing the right IDs. We need the right datasetViewId.
-                    params: {
-                      datasetId: view.datasetId,
-                    },
-                  };
-                }
-                ret.push(newChip);
-              });
-          }),
+      if (configurationIds.includes(p.configurationId)) {
+        if (!p.datasetName) missingDatasetIds.add(p.datasetId);
+        addChip(
+          p.configurationId,
+          p.datasetName || p.datasetId,
+          "configuration",
+          p.datasetId,
         );
       }
     }
 
-    return {
-      chips: ret,
-      type: itemType,
-    };
+    if (missingDatasetIds.size || missingConfigIds.size) {
+      try {
+        const batch = await this.store.api.batchResources({
+          folder: missingDatasetIds.size
+            ? Array.from(missingDatasetIds)
+            : undefined,
+          upenn_collection: missingConfigIds.size
+            ? Array.from(missingConfigIds)
+            : undefined,
+        });
+        for (const p of pairs) {
+          if (datasetIds.includes(p.datasetId) && !p.configurationName) {
+            const name = batch.upenn_collection?.[p.configurationId]?.name;
+            if (name) addChip(p.datasetId, name, "dataset", p.configurationId);
+          }
+          if (configurationIds.includes(p.configurationId) && !p.datasetName) {
+            const name = batch.folder?.[p.datasetId]?.name;
+            if (name)
+              addChip(p.configurationId, name, "configuration", p.datasetId);
+          }
+        }
+      } catch (e) {
+        // Ignore if batch endpoint unavailable
+        logError("Failed to batch resolve resources:", e);
+      }
+    }
+
+    // Refresh debounced copy after batch update
+    this.debouncedChipsPerItemId = { ...this.chipsPerItemId };
   }
 
   async handleFileUpload(event: Event) {

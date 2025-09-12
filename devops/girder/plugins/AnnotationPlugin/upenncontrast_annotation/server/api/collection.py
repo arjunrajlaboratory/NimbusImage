@@ -24,6 +24,7 @@ class Collection(Resource):
         self.route('PUT', (':id', 'metadata'), self.setMetadata)
         # self.route("PUT", (":id",), self.update)
         self.route("DELETE", (":id",), self.delete)
+        self.route('POST', ('by_folders',), self.findByFolders)
 
     @access.user
     @filtermodel(model=CollectionModel)
@@ -122,3 +123,29 @@ class Collection(Resource):
     def delete(self, upenn_collection):
         self._collectionModel.remove(upenn_collection)
         return {'message': 'Deleted collection %s.' % upenn_collection['name']}
+
+    @access.user
+    @filtermodel(model=CollectionModel)
+    @autoDescribeRoute(
+        Description('List collections grouped by folder ids')
+        .responseClass('Collection', array=True)
+        .notes(
+            'Returns a flat list with folderId on each collection. '
+            'Use client-side grouping if needed.'
+        )
+        .jsonParam(
+            'body',
+            'Object with key "folderIds": array of folder ids',
+            paramType='body',
+            requireObject=True
+        )
+        .pagingParams(defaultSort='lowerName')
+        .errorResponse()
+    )
+    def findByFolders(self, body, limit, offset, sort):
+        folderIds = body.get('folderIds')
+        if not folderIds:
+            raise ValueError("folderIds is required in the request body")
+        query = {"folderId": {"$in": [ObjectId(x) for x in folderIds]}}
+        return self._collectionModel.findWithPermissions(
+            query, offset, limit, sort=sort, user=self.getCurrentUser())

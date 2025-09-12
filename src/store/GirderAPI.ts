@@ -410,20 +410,37 @@ export default class GirderAPI {
   async findDatasetViews(options?: {
     datasetId?: string;
     configurationId?: string;
+    datasetIds?: string[];
+    configurationIds?: string[];
   }) {
-    const pages = await fetchAllPages(this.client, "dataset_view", {
-      params: {
-        sort: "lastViewed",
-        ...options,
-      },
-    });
-    const datasetViews: IDatasetView[] = [];
-    for (const page of pages) {
-      for (const data of page) {
-        datasetViews.push(asDatasetView(data));
+    // Use POST for bulk requests, GET for single requests
+    const hasBulkParams = options?.datasetIds || options?.configurationIds;
+
+    if (hasBulkParams) {
+      // Use POST with body for bulk requests (READ OPERATION)
+      // NOTE: This is a POST endpoint for technical reasons (large arrays),
+      // but it only performs read operations - no data is modified
+      const response = await this.client.post("dataset_view/bulk_find", {
+        datasetIds: options?.datasetIds,
+        configurationIds: options?.configurationIds,
+      });
+      return response.data.map(asDatasetView);
+    } else {
+      // Use GET with query params for single requests (backward compatibility)
+      const pages = await fetchAllPages(this.client, "dataset_view", {
+        params: {
+          sort: "lastViewed",
+          ...options,
+        },
+      });
+      const datasetViews: IDatasetView[] = [];
+      for (const page of pages) {
+        for (const data of page) {
+          datasetViews.push(asDatasetView(data));
+        }
       }
+      return datasetViews;
     }
-    return datasetViews;
   }
 
   async getRecentDatasetViews(limit: number, offset: number = 0) {
@@ -437,6 +454,49 @@ export default class GirderAPI {
     };
     const response = await this.client.get("dataset_view", formData);
     return (response.data as any[]).map(asDatasetView);
+  }
+
+  // Bulk map dataset and configuration relationships
+  async mapDatasetViews(args: {
+    datasetIds?: string[];
+    configurationIds?: string[];
+    includeNames?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<
+    Array<{
+      datasetId: string;
+      configurationId: string;
+      datasetName?: string;
+      configurationName?: string;
+    }>
+  > {
+    const response = await this.client.post("dataset_view/map", args);
+    return response.data;
+  }
+
+  // Batch resolve multiple resources (folders, items, collections, users)
+  async batchResources(args: {
+    folder?: string[];
+    item?: string[];
+    upenn_collection?: string[];
+    user?: string[];
+  }): Promise<{
+    folder?: Record<string, IGirderFolder>;
+    item?: Record<string, IGirderItem>;
+    upenn_collection?: Record<string, IGirderItem>;
+    user?: Record<string, IGirderUser>;
+  }> {
+    const response = await this.client.post("resource/batch", args);
+    return response.data;
+  }
+
+  // Bulk fetch collections by multiple folder ids
+  async getCollectionsByFolders(folderIds: string[]): Promise<IGirderItem[]> {
+    const response = await this.client.post("upenn_collection/by_folders", {
+      folderIds,
+    });
+    return response.data;
   }
 
   async shareDatasetView(
