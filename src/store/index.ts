@@ -258,6 +258,10 @@ export class Main extends VuexModule {
     return this.girderUser != null;
   }
 
+  get userChannelColors() {
+    return this.girderUser?.meta?.channelColors || {};
+  }
+
   get configurationScales() {
     return this.configuration?.scales || exampleConfigurationBase().scales;
   }
@@ -537,6 +541,9 @@ export class Main extends VuexModule {
           .catch(() => {
             this.setAssetstores([]);
           }),
+        this.loadUserColors().catch((error) => {
+          logError("Failed to load user colors during login:", error);
+        }),
       );
     } else {
       this.setAssetstores([]);
@@ -564,6 +571,15 @@ export class Main extends VuexModule {
     this.dataset = null;
     this.selectedConfigurationId = null;
     this.configuration = null;
+  }
+
+  @Mutation
+  private updateUserChannelColors(channelColors: { [key: string]: string }) {
+    if (this.girderUser) {
+      const meta = this.girderUser.meta || {};
+      Vue.set(meta, "channelColors", channelColors);
+      Vue.set(this.girderUser, "meta", meta);
+    }
   }
 
   @Mutation
@@ -1111,6 +1127,7 @@ export class Main extends VuexModule {
         description,
         folderId,
         this.dataset,
+        this.userChannelColors,
       );
       sync.setSaving(false);
       return config;
@@ -1371,7 +1388,7 @@ export class Main extends VuexModule {
     if (!this.configuration || !this.dataset) {
       return;
     }
-    this.pushLayer(newLayer(this.dataset, this.layers));
+    this.pushLayer(newLayer(this.dataset, this.layers, this.userChannelColors));
     await this.syncConfiguration("layers");
   }
 
@@ -2036,6 +2053,38 @@ export class Main extends VuexModule {
   @Action
   async scheduleHistogramCache(datasetId: string) {
     return this.api.scheduleHistogramCache(datasetId);
+  }
+
+  @Action
+  async loadUserColors(): Promise<{ [key: string]: string }> {
+    try {
+      const colors = await this.api.getUserColors();
+
+      // Update the local store with the loaded colors
+      if (colors && Object.keys(colors).length > 0) {
+        this.updateUserChannelColors(colors);
+      }
+
+      return colors;
+    } catch (error) {
+      logError("Failed to load user colors:", error);
+      return {};
+    }
+  }
+
+  @Action
+  async saveUserColors(channelColors: {
+    [key: string]: string;
+  }): Promise<void> {
+    try {
+      await this.api.setUserColors(channelColors);
+
+      // Update the user metadata in the store using mutation
+      this.updateUserChannelColors(channelColors);
+    } catch (error) {
+      logError("Failed to save user colors:", error);
+      throw error;
+    }
   }
 }
 

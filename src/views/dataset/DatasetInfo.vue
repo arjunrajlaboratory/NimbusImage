@@ -207,7 +207,7 @@
                       query: { datasetId },
                     }"
                   >
-                    Add an existing collection…
+                    Add to an existing collection…
                   </v-btn>
                 </template>
                 Add this dataset to an existing collection. Shows a list of all
