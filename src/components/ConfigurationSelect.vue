@@ -44,7 +44,8 @@
 <script lang="ts">
 import { Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
-import { IDatasetConfiguration, IDatasetView } from "@/store/model";
+import { IDatasetConfiguration, areCompatibles } from "@/store/model";
+import { getDatasetCompatibility } from "@/store/GirderAPI";
 import routeMapper from "@/utils/routeMapper";
 import { logError } from "@/utils/log";
 
@@ -93,12 +94,7 @@ export default class ConfigurationSelect extends Mapper {
         datasetId: this.dataset.id,
       });
       const linkedConfigurationIds = new Set(
-        views.map((v: IDatasetView) => v.configurationId),
-      );
-      const compatibleConfigurations =
-        await this.store.api.getCompatibleConfigurations(this.dataset);
-      this.compatibleConfigurations = compatibleConfigurations.filter(
-        (conf) => !linkedConfigurationIds.has(conf.id),
+        views.map((v: any) => v.configurationId),
       );
 
       // Get all collections using the new endpoint (like CollectionList.vue does)
