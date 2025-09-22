@@ -69,6 +69,8 @@
     "mousetrap": "^1.6.4",
     "onnxruntime-common": "1.17.0-dev.20240109-ab897a4a40",
     "onnxruntime-web": "1.17.0-dev.20240111-d0bac8216d",
+    "p-limit": "^7.1.1",
+    "p-retry": "^7.0.0",
     "papaparse": "^5.4.1",
     "patch-package": "^8.0.0",
     "qs": "^6.11.2",

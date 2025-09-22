@@ -16,10 +16,60 @@
       />
     </v-card>
     <v-card v-if="initializing" class="my-4">
-      <v-card-title>
-        <v-progress-circular indeterminate class="mr-4" />
-        Computing all variables from dataset information
+      <v-card-title class="d-flex align-center">
+        <v-progress-circular
+          :value="initProgressPercent"
+          v-if="initTotal > 0 && !initError"
+          class="mr-4"
+        />
+        <v-progress-circular
+          indeterminate
+          v-else-if="!initError"
+          class="mr-4"
+        />
+        <span v-if="!initError">
+          Computing variables: {{ initCompleted }} / {{ initTotal }} ({{
+            initProgressPercent
+          }}%)
+        </span>
+        <span v-else class="red--text">
+          Failed on {{ initError.name }}: {{ initError.message }}
+        </span>
       </v-card-title>
+      <v-card-text v-if="!initError && initPending.length">
+        <div class="mb-2">Pending files ({{ initPending.length }}):</div>
+        <v-simple-table dense>
+          <template v-slot:default>
+            <tbody>
+              <tr v-for="name in initPendingDisplay" :key="name">
+                <td class="text-left d-flex align-center">
+                  <span>{{ name }}</span>
+                  <v-progress-circular
+                    v-if="initInFlight.includes(name)"
+                    indeterminate
+                    size="16"
+                    width="2"
+                    class="ml-2"
+                    color="primary"
+                  />
+                </td>
+              </tr>
+              <tr v-if="initPending.length > initPendingDisplay.length">
+                <td class="text-left font-italic">
+                  ... and
+                  {{ initPending.length - initPendingDisplay.length }} more
+                  files
+                </td>
+              </tr>
+            </tbody>
+          </template>
+        </v-simple-table>
+      </v-card-text>
+      <v-card-text v-else-if="initError">
+        <v-alert type="error" text dense>
+          Processing stopped due to error.
+        </v-alert>
+      </v-card-text>
     </v-card>
     <v-card class="pa-4 my-4" v-else>
       <div class="d-flex">
@@ -200,6 +250,8 @@ import { ITileMeta } from "@/store/GirderAPI";
 import { IGeoJSPositionWithTransform, IJobEventData } from "@/store/model";
 import { logError } from "@/utils/log";
 import { parseTranscodeOutput } from "@/utils/strings";
+import pLimit from "p-limit";
+import pRetry, { AbortError } from "p-retry";
 
 // Possible sources for variables
 enum Sources {
@@ -328,8 +380,25 @@ export default class MultiSourceConfiguration extends Vue {
 
   splitRGBBands: boolean = true;
 
+  // Progress tracking for initialization
+  initTotal: number = 0;
+  initCompleted: number = 0;
+  initPending: string[] = [];
+  initInFlight: string[] = [];
+  initError: { name: string; message: string } | null = null;
+
   get isMultiBandRGBFile(): boolean {
     return this.isRGBFile && this.rgbBandCount > 1;
+  }
+
+  get initProgressPercent(): number {
+    return this.initTotal > 0
+      ? Math.round((this.initCompleted / this.initTotal) * 100)
+      : 0;
+  }
+
+  get initPendingDisplay(): string[] {
+    return this.initPending.slice(0, 5); // Show max 5 pending files
   }
 
   detectColorVsChannels(tileMeta: ITileMeta) {
@@ -614,7 +683,7 @@ export default class MultiSourceConfiguration extends Vue {
     this.girderItems = items;
 
     //  Get info from filename
-    const names = items.map((item) => item.name);
+    const names = items.map((item: IGirderItem) => item.name);
 
     // Enable transcoding by default except for ND2 files
     this.transcode = !names.every((name: string) =>
@@ -667,55 +736,104 @@ export default class MultiSourceConfiguration extends Vue {
       }
     }
 
-    let retries = 0;
-    const maxRetries = hasOibFiles ? 15 : 10; // More retries for OIB files
+    // Initialize progress tracking
+    this.initTotal = items.length;
+    this.initCompleted = 0;
+    this.initPending = items.map((item: IGirderItem) => item.name);
+    this.initInFlight = [];
+    this.initError = null;
 
-    // Get info from file
-    // The getTiles API from large_image expects the field large_image to be set when recovering the tiles,
-    // but due to the S3 assetstore, that field can take a bit of time to be set.
-    // Retry that function a few times if it fails to wait for that field to be set.
-    while (retries < maxRetries) {
-      try {
-        this.tilesMetadata = await Promise.all(
-          items.map(async (item) => {
-            return this.store.api.getTiles(item);
-          }),
-        );
+    const limit = pLimit(4);
+    const results: Array<{ tilesMetadata: ITileMeta; internalMetadata: any }> =
+      [];
 
-        break;
-      } catch (error: any) {
-        logError(
-          `Error retrieving tiles (attempt ${retries + 1}):`,
-          error?.response?.data?.message || error.message,
-        );
+    try {
+      const promises = items.map((item) =>
+        limit(async () => {
+          try {
+            // Mark file as in flight
+            this.initInFlight.push(item.name);
 
-        // Handle OIB files specially
-        if (hasOibFiles) {
-          await new Promise((r) => setTimeout(r, 3000)); // 3-second delay for OIB files
-          retries++;
-          continue;
-        }
+            // Tiles metadata with retries and fixed delay depending on OIB
+            const tilesMetadata = await pRetry(
+              async () => {
+                return this.store.api.getTiles(item);
+              },
+              {
+                retries: hasOibFiles ? 15 : 10,
+                onFailedAttempt: (error: any) => {
+                  const attemptNumber = error?.attemptNumber || 0;
+                  const message =
+                    error?.response?.data?.message || error?.message || "";
+                  logError(
+                    `Error retrieving tiles for item ${item._id} (attempt ${attemptNumber}):`,
+                    message,
+                  );
+                  if (
+                    !hasOibFiles &&
+                    error?.response?.data?.message ===
+                      "No large image file in this item."
+                  ) {
+                    throw new AbortError(message);
+                  }
+                },
+                factor: 1,
+                minTimeout: hasOibFiles ? 3000 : 1000,
+                maxTimeout: hasOibFiles ? 3000 : 1000,
+                randomize: false,
+              },
+            );
 
-        // Standard error handling
-        if (
-          error?.response?.data?.message != "No large image file in this item."
-        ) {
-          throw error;
-        }
-        await new Promise((r) => setTimeout(r, 1000));
-        retries++;
-      }
+            // Internal metadata with modest retries
+            const internalMetadata = await pRetry(
+              async () => this.store.api.getTilesInternalMetadata(item),
+              { retries: 3 },
+            );
+
+            // Update progress on successful completion
+            this.initCompleted++;
+            this.initPending = this.initPending.filter(
+              (name) => name !== item.name,
+            );
+            this.initInFlight = this.initInFlight.filter(
+              (name) => name !== item.name,
+            );
+
+            return { tilesMetadata, internalMetadata };
+          } catch (error: any) {
+            // Remove from in-flight on error
+            this.initInFlight = this.initInFlight.filter(
+              (name) => name !== item.name,
+            );
+
+            // Set error state and stop processing
+            this.initError = {
+              name: item.name,
+              message:
+                error?.response?.data?.message ||
+                error?.message ||
+                "Unknown error",
+            };
+            throw error;
+          }
+        }),
+      );
+
+      const promiseResults = await Promise.all(promises);
+      results.push(...promiseResults);
+    } catch (error) {
+      // If any file failed completely, stop and show error
+      logError("Failed to process tiles metadata:", error);
+      throw error;
     }
 
-    // If we still couldn't get tiles metadata after all retries
-    if (!this.tilesMetadata) {
-      logError("Failed to retrieve tiles metadata after maximum retries");
+    this.tilesMetadata = results.map((r) => r.tilesMetadata);
+    this.tilesInternalMetadata = results.map((r) => r.internalMetadata);
+
+    if (!this.tilesMetadata || !this.tilesInternalMetadata) {
+      logError("Failed to retrieve tiles or internal metadata after retries");
       throw "Could not retrieve tiles from Girder";
     }
-
-    this.tilesInternalMetadata = await Promise.all(
-      items.map((item) => this.store.api.getTilesInternalMetadata(item)),
-    );
 
     // Check for RGB bands
     const firstItem = this.tilesMetadata[0];
