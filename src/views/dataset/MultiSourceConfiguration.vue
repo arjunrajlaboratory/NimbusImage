@@ -687,7 +687,7 @@ export default class MultiSourceConfiguration extends Vue {
 
     // Enable transcoding by default except for ND2 files
     this.transcode = !names.every((name: string) =>
-      name.toLowerCase().endsWith("nd2"),
+      name.toLowerCase().endsWith(".nd2"),
     );
 
     // Add variables from filenames if there is more than one file
@@ -744,11 +744,9 @@ export default class MultiSourceConfiguration extends Vue {
     this.initError = null;
 
     const limit = pLimit(4);
-    const results: Array<{ tilesMetadata: ITileMeta; internalMetadata: any }> =
-      [];
 
     try {
-      const promises = items.map((item) =>
+      const promises = items.map((item: IGirderItem, idx: number) =>
         limit(async () => {
           try {
             // Mark file as in flight
@@ -769,9 +767,13 @@ export default class MultiSourceConfiguration extends Vue {
                     `Error retrieving tiles for item ${item._id} (attempt ${attemptNumber}):`,
                     message,
                   );
+
+                  // For non-OIB files:
+                  // - Keep retrying when the large image isn't ready yet
+                  // - Abort early for any other error
                   if (
                     !hasOibFiles &&
-                    error?.response?.data?.message ===
+                    error?.response?.data?.message !==
                       "No large image file in this item."
                   ) {
                     throw new AbortError(message);
@@ -799,7 +801,7 @@ export default class MultiSourceConfiguration extends Vue {
               (name) => name !== item.name,
             );
 
-            return { tilesMetadata, internalMetadata };
+            return { idx, tilesMetadata, internalMetadata };
           } catch (error: any) {
             // Remove from in-flight on error
             this.initInFlight = this.initInFlight.filter(
@@ -820,15 +822,17 @@ export default class MultiSourceConfiguration extends Vue {
       );
 
       const promiseResults = await Promise.all(promises);
-      results.push(...promiseResults);
+      // Guarantee ordering when rebuilding arrays from concurrent work
+      promiseResults.sort((a: any, b: any) => a.idx - b.idx);
+      this.tilesMetadata = promiseResults.map((r: any) => r.tilesMetadata);
+      this.tilesInternalMetadata = promiseResults.map(
+        (r: any) => r.internalMetadata,
+      );
     } catch (error) {
       // If any file failed completely, stop and show error
       logError("Failed to process tiles metadata:", error);
       throw error;
     }
-
-    this.tilesMetadata = results.map((r) => r.tilesMetadata);
-    this.tilesInternalMetadata = results.map((r) => r.internalMetadata);
 
     if (!this.tilesMetadata || !this.tilesInternalMetadata) {
       logError("Failed to retrieve tiles or internal metadata after retries");
