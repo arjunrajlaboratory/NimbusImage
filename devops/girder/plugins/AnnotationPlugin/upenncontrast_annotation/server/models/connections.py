@@ -43,8 +43,8 @@ class AnnotationConnection(ProxiedModel, AccessControlMixin):
     def __init__(self):
         super().__init__()
         compoundSearchIndex = (
-            ('_id', SortDir.ASCENDING),
-            ('datasetId', SortDir.ASCENDING)
+            ('datasetId', SortDir.ASCENDING),
+            ('_id', SortDir.ASCENDING)
         )
         self.ensureIndices([(compoundSearchIndex, {}),
                             "parentId", "childId", "datasetId"])

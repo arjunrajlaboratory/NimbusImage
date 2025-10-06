@@ -8,6 +8,7 @@ from girder.api.describe import Description, describeRoute, autoDescribeRoute
 from girder.api.rest import Resource, loadmodel, setResponseHeader
 from girder.constants import AccessType
 from girder.exceptions import RestException
+from girder.models.folder import Folder
 
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..models.annotation import Annotation as AnnotationModel
@@ -201,20 +202,27 @@ class Annotation(Resource):
     )
     def find(self, params):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
-        query = {}
-        if params["datasetId"] is not None:
-            query["datasetId"] = ObjectId(params["datasetId"])
-        else:
-            return []
+
+        # First, check dataset permissions explicitly
+        datasetId = ObjectId(params["datasetId"])
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
+
+        # Now query annotations directly without ACL filtering
+        query = {"datasetId": datasetId}
         if params["shape"] is not None:
             query["shape"] = params["shape"]
         if params["tags"] is not None and len(params["tags"]) > 0:
             query["tags"] = {"$all": params["tags"]}
-        cursor = self._annotationModel.findWithPermissions(
+
+        # Use regular find instead of findWithPermissions
+        cursor = self._annotationModel.find(
             query,
             sort=sort,
-            user=self.getCurrentUser(),
-            level=AccessType.READ,
             limit=limit,
             offset=offset,
         )

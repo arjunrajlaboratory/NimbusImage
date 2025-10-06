@@ -5,6 +5,7 @@ from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
 from girder.constants import AccessType
 from girder.exceptions import RestException
+from girder.models.folder import Folder
 
 from ..models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
@@ -116,15 +117,26 @@ class PropertyValues(Resource):
     def find(self, params):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
+
+        # Check dataset permissions if datasetId is provided
         if "datasetId" in params:
-            query["datasetId"] = ObjectId(params["datasetId"])
+            datasetId = ObjectId(params["datasetId"])
+            dataset = Folder().load(
+                datasetId, user=self.getCurrentUser(), level=AccessType.READ
+            )
+            if not dataset:
+                raise RestException(
+                    code=403, message="Access denied to dataset"
+                )
+            query["datasetId"] = datasetId
+
         if "annotationId" in params:
             query["annotationId"] = ObjectId(params["annotationId"])
-        return self._annotationPropertyValuesModel.findWithPermissions(
+
+        # Use regular find instead of findWithPermissions
+        return self._annotationPropertyValuesModel.find(
             query,
             sort=sort,
-            user=self.getCurrentUser(),
-            level=AccessType.READ,
             limit=limit,
             offset=offset,
         )
