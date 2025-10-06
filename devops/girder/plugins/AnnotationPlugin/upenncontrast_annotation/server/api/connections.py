@@ -2,7 +2,8 @@ from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute, describeRoute
 from girder.api.rest import Resource, loadmodel
 from girder.constants import AccessType
-from girder.exceptions import AccessException
+from girder.exceptions import AccessException, RestException
+from girder.models.folder import Folder
 
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..models.annotation import Annotation as AnnotationModel
@@ -201,8 +202,19 @@ class AnnotationConnection(Resource):
     def find(self, params):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
+
+        # Check dataset permissions if datasetId is provided
         if "datasetId" in params and params["datasetId"]:
-            query["datasetId"] = ObjectId(params["datasetId"])
+            datasetId = ObjectId(params["datasetId"])
+            dataset = Folder().load(
+                datasetId, user=self.getCurrentUser(), level=AccessType.READ
+            )
+            if not dataset:
+                raise RestException(
+                    code=403, message="Access denied to dataset"
+                )
+            query["datasetId"] = datasetId
+
         if "childId" in params and params["childId"]:
             query["childId"] = ObjectId(params["childId"])
         if "parentId" in params and params["parentId"]:
@@ -212,11 +224,11 @@ class AnnotationConnection(Resource):
                 {"parentId": ObjectId(params["nodeAnnotationId"])},
                 {"childId": ObjectId(params["nodeAnnotationId"])},
             ]
-        return self._connectionModel.findWithPermissions(
+
+        # Use regular find instead of findWithPermissions
+        return self._connectionModel.find(
             query,
             sort=sort,
-            user=self.getCurrentUser(),
-            level=AccessType.READ,
             limit=limit,
             offset=offset,
         )
