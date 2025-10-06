@@ -205,11 +205,12 @@ class Annotation(Resource):
 
         # First, check dataset permissions explicitly
         datasetId = ObjectId(params["datasetId"])
-        dataset = Folder().load(
-            datasetId, user=self.getCurrentUser(), level=AccessType.READ
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
         )
-        if not dataset:
-            raise RestException(code=403, message="Access denied to dataset")
 
         # Now query annotations directly without ACL filtering
         query = {"datasetId": datasetId}
