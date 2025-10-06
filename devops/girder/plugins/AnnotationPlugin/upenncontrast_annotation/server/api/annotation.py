@@ -202,7 +202,7 @@ class Annotation(Resource):
     )
     def find(self, params):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
-        
+
         # First, check dataset permissions explicitly
         datasetId = ObjectId(params["datasetId"])
         dataset = Folder().load(
@@ -217,7 +217,7 @@ class Annotation(Resource):
             query["shape"] = params["shape"]
         if params["tags"] is not None and len(params["tags"]) > 0:
             query["tags"] = {"$all": params["tags"]}
-        
+
         # Use regular find instead of findWithPermissions
         cursor = self._annotationModel.find(
             query,
