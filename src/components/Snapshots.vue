@@ -1191,8 +1191,6 @@ export default class Snapshots extends Vue {
       for (let i = 0; i < totalSnapshots; i++) {
         const snapshot = snapshots[i];
 
-        console.log("Processing snapshot", snapshot);
-
         // Update progress before processing each snapshot
         this.progress.update({
           id: progressId,
