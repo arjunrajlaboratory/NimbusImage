@@ -101,6 +101,9 @@ function determineTypeAndTitle(payload: {
       case ProgressType.ANNOTATION_REDO:
         title = "Redoing";
         break;
+      case ProgressType.SNAPSHOT_BATCH_DOWNLOAD:
+        title = "Downloading snapshot images";
+        break;
       default:
         title = "Operation in progress";
     }

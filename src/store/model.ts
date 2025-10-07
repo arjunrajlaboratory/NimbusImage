@@ -209,6 +209,7 @@ export enum ProgressType {
   HISTOGRAM_SCHEDULE = "HISTOGRAM_SCHEDULE",
   HISTOGRAM_CACHE = "HISTOGRAM_CACHE",
   MOVIE_GENERATION = "MOVIE_GENERATION",
+  SNAPSHOT_BATCH_DOWNLOAD = "SNAPSHOT_BATCH_DOWNLOAD",
   GENERIC = "GENERIC",
 }
 
@@ -245,7 +246,9 @@ export const PROGRESS_TYPE_ORDER = new Map<ProgressType, number>([
   [ProgressType.MAXMERGE_CACHE, 13],
   [ProgressType.HISTOGRAM_SCHEDULE, 14],
   [ProgressType.HISTOGRAM_CACHE, 15],
-  [ProgressType.GENERIC, 16],
+  [ProgressType.MOVIE_GENERATION, 16],
+  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 17],
+  [ProgressType.GENERIC, 18],
 ]);
 
 export interface IProgress {
