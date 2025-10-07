@@ -1172,13 +1172,35 @@ export default class Snapshots extends Vue {
   async downloadImagesForAllSnapshots() {
     this.downloading = true;
 
+    // Create progress tracker
+    const progressId = await this.progress.create({
+      type: ProgressType.SNAPSHOT_BATCH_DOWNLOAD,
+      title: "Downloading snapshot images",
+    });
+
     try {
       const allUrls: URL[] = [];
       const configuration = this.store.configuration;
       if (!configuration) {
         return;
       }
-      for (const snapshot of configuration.snapshots || []) {
+
+      const snapshots = configuration.snapshots || [];
+      const totalSnapshots = snapshots.length;
+
+      for (let i = 0; i < totalSnapshots; i++) {
+        const snapshot = snapshots[i];
+
+        console.log("Processing snapshot", snapshot);
+
+        // Update progress before processing each snapshot
+        this.progress.update({
+          id: progressId,
+          progress: i,
+          total: totalSnapshots,
+          title: `Processing snapshot ${i + 1} of ${totalSnapshots}`,
+        });
+
         const datasetView = await this.store.api.getDatasetView(
           snapshot.datasetViewId,
         );
@@ -1194,8 +1216,18 @@ export default class Snapshots extends Vue {
           allUrls.push(...currentUrls);
         }
       }
+
+      // Update to show download phase
+      this.progress.update({
+        id: progressId,
+        progress: totalSnapshots,
+        total: totalSnapshots,
+        title: "Downloading files...",
+      });
+
       await this.downloadUrls(allUrls, this.addScalebar);
     } finally {
+      this.progress.complete(progressId);
       this.downloading = false;
     }
   }
