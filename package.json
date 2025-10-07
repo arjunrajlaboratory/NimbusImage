@@ -105,7 +105,7 @@
     "eslint": "8.56.0",
     "eslint-plugin-prettier": "^5.1.2",
     "eslint-plugin-vue": "^9.19.2",
-    "geojs": "^1.14.5",
+    "geojs": "^1.15.4",
     "jsdom": "^24.0.0",
     "prettier": "^3.1.1",
     "pug": "^3.0.1",
