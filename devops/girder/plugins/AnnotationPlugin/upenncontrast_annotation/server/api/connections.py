@@ -231,7 +231,7 @@ class AnnotationConnection(Resource):
             sort=sort,
             limit=limit,
             offset=offset,
-        )
+        ).hint([("datasetId", 1), ("_id", 1)])
 
     @access.user
     @autoDescribeRoute(
