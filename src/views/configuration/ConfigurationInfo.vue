@@ -12,7 +12,7 @@
         </template>
         <v-card>
           <v-card-title>
-            Are you sure to delete "{{ name }}" forever?
+            Are you sure you want to delete "{{ name }}" forever?
           </v-card-title>
           <v-card-actions class="button-bar">
             <v-btn @click="removeConfirm = false">Cancel</v-btn>
@@ -21,7 +21,13 @@
         </v-card>
       </v-dialog>
     </v-container>
-    <v-text-field :value="name" label="Name" readonly />
+    <v-text-field
+      v-model="nameInput"
+      label="Name"
+      :disabled="!store.configuration"
+      @blur="onNameBlur"
+      @keyup.enter="onNameEnter"
+    />
     <v-textarea :value="description" label="Description" readonly />
     <v-card class="mb-4">
       <v-card-title> Datasets </v-card-title>
@@ -33,7 +39,7 @@
         >
           <v-card>
             <v-card-title>
-              Are you sure to remove the view for dataset "{{
+              Are you sure you want to remove the view for dataset "{{
                 datasetInfoCache[viewToRemove.datasetId]
                   ? datasetInfoCache[viewToRemove.datasetId].name
                   : "Unnamed dataset"
@@ -159,6 +165,8 @@ export default class ConfigurationInfo extends Vue {
 
   addDatasetDialog: boolean = false;
 
+  nameInput: string = "";
+
   get name() {
     return store.configuration ? store.configuration.name : "";
   }
@@ -177,6 +185,7 @@ export default class ConfigurationInfo extends Vue {
 
   mounted() {
     this.updateConfigurationViews();
+    this.nameInput = this.name;
   }
 
   openAlert(alert: IAlert) {
@@ -199,6 +208,26 @@ export default class ConfigurationInfo extends Vue {
       this.datasetViews = [];
     }
     return this.datasetViews;
+  }
+
+  @Watch("name")
+  syncNameInput() {
+    this.nameInput = this.name;
+  }
+
+  onNameBlur() {
+    this.tryRename();
+  }
+
+  onNameEnter() {
+    this.tryRename();
+  }
+
+  tryRename() {
+    const trimmed = (this.nameInput || "").trim();
+    if (!this.store.configuration) return;
+    if (trimmed.length === 0 || trimmed === this.name) return;
+    this.store.renameConfiguration(trimmed);
   }
 
   get datasetViewItems(): {
