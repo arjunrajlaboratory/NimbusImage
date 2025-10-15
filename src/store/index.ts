@@ -10,6 +10,8 @@ import {
   DEFAULT_LARGE_IMAGE_SOURCE,
 } from "@/girder";
 import type { AxiosError } from "axios";
+import pLimit from "p-limit";
+import pRetry from "p-retry";
 import {
   Action,
   getModule,
@@ -1178,10 +1180,16 @@ export class Main extends VuexModule {
       const itemsToRemoveLargeImage = transcode
         ? items
         : items.filter((item: any) => !!item.largeImage && item._id !== itemId);
-      const removePromises = itemsToRemoveLargeImage.map((item: IGirderItem) =>
-        this.api.removeLargeImageForItem(item._id),
+      const limit = pLimit(4);
+      const promises = itemsToRemoveLargeImage.map((item: IGirderItem) =>
+        limit(async () => {
+          return pRetry(
+            async () => this.api.removeLargeImageForItem(item._id),
+            { retries: 3, minTimeout: 2000, maxTimeout: 2000, factor: 1 },
+          );
+        }),
       );
-      await Promise.all(removePromises);
+      await Promise.all(promises);
 
       // When transcoding, force the regeneration of large image for the new file
       if (transcode) {
