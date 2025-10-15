@@ -168,7 +168,10 @@ export default class ConfigurationInfo extends Vue {
   nameInput: string = "";
 
   get name() {
-    return store.configuration ? store.configuration.name : "";
+    if (!store.configuration) return "";
+    // Use reactive cache to get latest name after rename
+    const cached = girderResources.watchCollection(store.configuration.id);
+    return cached?.name ?? store.configuration.name;
   }
 
   get description() {
