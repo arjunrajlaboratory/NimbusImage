@@ -159,6 +159,8 @@
           item-key="key"
           class="accent-1"
           @click:row="loadSnapshot"
+          show-select
+          v-model="selectedSnapshotItems"
         >
           <!-- Search bar -->
           <template v-slot:top>
@@ -417,6 +419,17 @@
         <div class="mb-2">
           <v-btn
             color="primary"
+            @click="downloadImagesForSelectedSnapshots()"
+            :disabled="
+              unroll || downloading || selectedSnapshotItems.length === 0
+            "
+          >
+            Download images for selected Snapshots
+          </v-btn>
+        </div>
+        <div class="mb-2">
+          <v-btn
+            color="primary"
             @click="snapshotWithAnnotations()"
             :disabled="unroll || downloading"
           >
@@ -621,6 +634,8 @@ export default class Snapshots extends Vue {
   newTags: string[] = [];
   readonly nameRules = [(name: string) => !!name.trim() || "Name is required"];
   isSaveSnapshotValid: boolean = true;
+
+  selectedSnapshotItems: ISnapshotItem[] = [];
 
   $refs!: {
     // https://github.com/vuetifyjs/vuetify/issues/5962
@@ -1170,6 +1185,24 @@ export default class Snapshots extends Vue {
   }
 
   async downloadImagesForAllSnapshots() {
+    const configuration = this.store.configuration;
+    if (!configuration) {
+      return;
+    }
+    const snapshots = configuration.snapshots || [];
+    await this.downloadImagesForSetOfSnapshots(snapshots);
+  }
+
+  async downloadImagesForSelectedSnapshots() {
+    const configuration = this.store.configuration;
+    if (!configuration) {
+      return;
+    }
+    const selected = this.selectedSnapshotItems.map((s) => s.record);
+    await this.downloadImagesForSetOfSnapshots(selected);
+  }
+
+  async downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
     this.downloading = true;
 
     // Create progress tracker
@@ -1179,13 +1212,12 @@ export default class Snapshots extends Vue {
     });
 
     try {
-      const allUrls: URL[] = [];
       const configuration = this.store.configuration;
       if (!configuration) {
         return;
       }
 
-      const snapshots = configuration.snapshots || [];
+      const allUrls: URL[] = [];
       const totalSnapshots = snapshots.length;
 
       for (let i = 0; i < totalSnapshots; i++) {
