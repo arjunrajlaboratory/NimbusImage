@@ -2748,38 +2748,68 @@ export default class AnnotationViewer extends Vue {
   }
 
   handleValueOnMouseMove(e: any) {
-    this.store.setHoverValue(null);
     this.handleValueOnMouseMoveDebounce(e);
   }
 
   handleValueOnMouseMoveDebounce = debounce(
     this.handleValueOnMouseMoveNoDebounce,
-    25,
+    15,
   );
   async handleValueOnMouseMoveNoDebounce(e: any) {
     if (!this.dataset) {
       return;
     }
-    const values: { [layerId: string]: number[] } = {};
-    const promises: Promise<void>[] = [];
+
+    // Collect all frame indices from all layers (including invisible ones)
+    const frameIndices: number[] = [];
+    const layerToFrameMap: { [layerId: string]: number } = {};
+
     for (const layer of this.validLayers) {
-      if (layer.visible) {
-        const image = this.store.getImagesFromLayer(layer)[0];
-        if (image) {
-          const setPromise = this.store.api
-            .getPixelValue(image, e.geo.x, e.geo.y)
-            .then((pixel) => {
-              if (pixel.value) {
-                values[layer.id] = pixel.value;
-              }
-            });
-          promises.push(setPromise);
-        }
+      const image = this.store.getImagesFromLayer(layer)[0];
+      if (image) {
+        frameIndices.push(image.frameIndex);
+        layerToFrameMap[layer.id] = image.frameIndex;
       }
     }
-    await Promise.all(promises);
-    if (Object.keys(values).length > 0) {
-      this.store.setHoverValue(values);
+
+    if (frameIndices.length === 0) {
+      return;
+    }
+
+    // Get the itemId from the first image (all images should have the same item)
+    const firstImage = this.store.getImagesFromLayer(this.validLayers[0])[0];
+    if (!firstImage) {
+      return;
+    }
+
+    const itemId = firstImage.item._id;
+
+    try {
+      // Make single API call to get pixel values for all layers
+      const pixelData = await this.store.api.getPixelValuesForAllLayers(
+        itemId,
+        e.geo.x,
+        e.geo.y,
+        frameIndices,
+      );
+
+      // Process the response and map back to layers
+      const values: { [layerId: string]: number[] } = {};
+      for (const pixel of pixelData) {
+        // Find which layer this pixel data belongs to by matching frame index
+        for (const [layerId, frameIndex] of Object.entries(layerToFrameMap)) {
+          if (pixel.frame === frameIndex && pixel.value) {
+            values[layerId] = pixel.value;
+            break;
+          }
+        }
+      }
+
+      if (Object.keys(values).length > 0) {
+        this.store.setHoverValue(values);
+      }
+    } catch (error) {
+      logError("Error fetching pixel values:", error);
     }
   }
 
