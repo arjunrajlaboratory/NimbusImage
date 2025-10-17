@@ -26,6 +26,7 @@ import {
   IImage,
   IScales,
   IPixel,
+  IPixelMultiLayer,
   newLayer,
   TJobType,
   IDatasetConfigurationCompatibility,
@@ -347,6 +348,25 @@ export default class GirderAPI {
     const frame = image.frameIndex;
     const params = { left, top, frame };
     const itemId = toId(image.item);
+    const response = await this.client.get(`item/${itemId}/tiles/pixel`, {
+      params,
+    });
+    return response.data;
+  }
+
+  async getPixelValuesForAllLayers(
+    itemId: string,
+    geoX: number,
+    geoY: number,
+    frameIndices: number[],
+  ): Promise<IPixelMultiLayer[]> {
+    if (geoX < 0 || geoY < 0 || frameIndices.length === 0) {
+      return [];
+    }
+    const left = Math.floor(geoX);
+    const top = Math.floor(geoY);
+    const frameList = frameIndices.join(",");
+    const params = { left, top, frameList };
     const response = await this.client.get(`item/${itemId}/tiles/pixel`, {
       params,
     });

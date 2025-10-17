@@ -449,6 +449,12 @@ export interface IPixel {
   value?: number[];
 }
 
+export interface IPixelMultiLayer {
+  frame: number;
+  l?: number;
+  value?: number[];
+}
+
 // https://opengeoscience.github.io/geojs/apidocs/geo.object.html
 export interface IGeoJsObject {
   modified: () => IGeoJsObject;
