@@ -111,6 +111,7 @@ class PropertyValues(Resource):
             "Get all property values for this annotation",
             required=False,
         )
+        .param("afterId", "Cursor for pagination", required=False)
         .pagingParams(defaultSort="_id")
         .errorResponse()
     )
@@ -132,6 +133,12 @@ class PropertyValues(Resource):
 
         if "annotationId" in params:
             query["annotationId"] = ObjectId(params["annotationId"])
+
+        # Support cursor pagination
+        after_id = params.get("afterId")
+        if after_id:
+            query["_id"] = {"$gt": ObjectId(after_id)}
+            offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
         return self._annotationPropertyValuesModel.find(
