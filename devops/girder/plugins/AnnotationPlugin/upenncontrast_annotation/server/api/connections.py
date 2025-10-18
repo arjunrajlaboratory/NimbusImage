@@ -193,9 +193,10 @@ class AnnotationConnection(Resource):
         )
         .param(
             "nodeAnnotationId",
-            "Get all connections to or from this annotation",
+            "Get all connections to or from this annotation",
             required=False,
         )
+        .param("afterId", "Cursor for pagination", required=False)
         .pagingParams(defaultSort="_id")
         .errorResponse()
     )
@@ -224,6 +225,12 @@ class AnnotationConnection(Resource):
                 {"parentId": ObjectId(params["nodeAnnotationId"])},
                 {"childId": ObjectId(params["nodeAnnotationId"])},
             ]
+
+        # Support cursor pagination
+        after_id = params.get("afterId")
+        if after_id:
+            query["_id"] = {"$gt": ObjectId(after_id)}
+            offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
         return self._connectionModel.find(

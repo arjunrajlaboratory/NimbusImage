@@ -197,6 +197,7 @@ class Annotation(Resource):
             required=False,
             requireArray=True,
         )
+        .param("afterId", "Cursor for pagination", required=False)
         .pagingParams(defaultSort="_id")
         .errorResponse()
     )
@@ -218,6 +219,12 @@ class Annotation(Resource):
             query["shape"] = params["shape"]
         if params["tags"] is not None and len(params["tags"]) > 0:
             query["tags"] = {"$all": params["tags"]}
+
+        # Support cursor pagination
+        after_id = params.get("afterId")
+        if after_id:
+            query["_id"] = {"$gt": ObjectId(after_id)}
+            offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
         cursor = self._annotationModel.find(
