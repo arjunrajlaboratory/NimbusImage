@@ -60,12 +60,7 @@ export class GirderResources extends VuexModule {
   }) {
     try {
       const resource = await this.requestResource({ id, type });
-      // Normalize the type in cache to the logical type requested
-      const normalized =
-        resource && resource._modelType !== type
-          ? ({ ...resource, _modelType: type } as IGirderSelectAble)
-          : resource;
-      this.setResource({ id, resource: normalized });
+      this.setResource({ id, resource });
     } catch (e) {
       this.setResource({ id, resource: null });
     }

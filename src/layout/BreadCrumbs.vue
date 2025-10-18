@@ -339,44 +339,47 @@ export default class BreadCrumbs extends Vue {
     }
   }
 
-  @Watch("configurationResource", { immediate: true })
-  onConfigurationResourceChanged(resource: any) {
-    const configurationItem = this.items.find(
-      (item) => item.title === "Collection:",
-    );
-    if (!configurationItem) return;
+  private handleResourceChange(
+    resource: any,
+    itemTitle: string,
+    currentId: string | null,
+    resourceType: "upenn_collection" | "folder",
+  ) {
+    const item = this.items.find((item) => item.title === itemTitle);
+    if (!item) return;
 
     // Trigger fetch when undefined OR null
-    if (resource == null && this.currentConfigurationId) {
+    if (resource == null && currentId) {
       this.girderResources.forceFetchResource({
-        id: this.currentConfigurationId,
-        type: "upenn_collection",
+        id: currentId,
+        type: resourceType,
       });
       return;
     }
 
-    if (resource && resource.name) {
-      Vue.set(configurationItem, "text", resource.name);
+    if (resource?.name) {
+      Vue.set(item, "text", resource.name);
     }
+  }
+
+  @Watch("configurationResource", { immediate: true })
+  onConfigurationResourceChanged(resource: any) {
+    this.handleResourceChange(
+      resource,
+      "Collection:",
+      this.currentConfigurationId,
+      "upenn_collection",
+    );
   }
 
   @Watch("datasetResource", { immediate: true })
   onDatasetResourceChanged(resource: any) {
-    const datasetItem = this.items.find((item) => item.title === "Dataset:");
-    if (!datasetItem) return;
-
-    // Trigger fetch when undefined OR null
-    if (resource == null && this.currentDatasetId) {
-      this.girderResources.forceFetchResource({
-        id: this.currentDatasetId,
-        type: "folder",
-      });
-      return;
-    }
-
-    if (resource && resource.name) {
-      Vue.set(datasetItem, "text", resource.name);
-    }
+    this.handleResourceChange(
+      resource,
+      "Dataset:",
+      this.currentDatasetId,
+      "folder",
+    );
   }
 
   getCurrentViewItem(subitems: IBreadCrumbItem["subItems"]) {

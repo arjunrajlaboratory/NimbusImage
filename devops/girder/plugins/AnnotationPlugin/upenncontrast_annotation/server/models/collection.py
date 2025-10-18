@@ -178,8 +178,10 @@ class Collection(ProxiedModel, AccessControlledModel):
         if description is not None:
             collection['description'] = Item()._validateString(description)
             changed = True
-        if changed:
-            collection['updated'] = datetime.datetime.utcnow()
+        if not changed:
+            return collection
+
+        collection['updated'] = datetime.datetime.utcnow()
         return self.save(collection)
 
     def move(self, collection, folder):
