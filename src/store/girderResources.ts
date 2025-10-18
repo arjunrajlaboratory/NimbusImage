@@ -74,16 +74,46 @@ export class GirderResources extends VuexModule {
     id: string;
     type: IGirderSelectAble["_modelType"];
   }) {
+    // Helper: treat upenn_collection <-> item as equivalent on the wire
+    const typesEquivalent = (a?: string | null, b?: string | null) => {
+      if (!a || !b) return false;
+      if (a === b) return true;
+      // If backend sometimes returns 'item' for collections, accept it
+      if (
+        (a === "item" && b === "upenn_collection") ||
+        (a === "upenn_collection" && b === "item")
+      ) {
+        return true;
+      }
+      return false;
+    };
+
     if (id in this.resourcesLocks) {
       await this.resourcesLocks[id];
     }
-    if (!(id in this.resources)) {
+
+    const cached = this.resources[id];
+
+    // Not cached OR cached with the wrong/ambiguous type → re-fetch
+    if (!(id in this.resources) || !typesEquivalent(cached?._modelType, type)) {
       this.resourcesLocks[id] = this.requestAndSetResource({ id, type });
       await this.resourcesLocks[id];
     }
-    const resource = this.resources[id];
-    // This check ensures that get{Type} returns a resource of the right type (e.g. getFolder)
-    return resource?._modelType === type ? resource : null;
+
+    let resource = this.resources[id];
+
+    // Coerce the cached type to the requested logical type to prevent future mismatches
+    if (resource && !typesEquivalent(resource._modelType, type)) {
+      resource = {
+        ...(resource as any),
+        _modelType: type,
+      } as IGirderSelectAble;
+      this.setResource({ id, resource });
+    }
+
+    return typesEquivalent(this.resources[id]?._modelType, type)
+      ? (this.resources[id] as IGirderSelectAble)
+      : null;
   }
 
   @Action
@@ -141,6 +171,7 @@ export class GirderResources extends VuexModule {
   @Mutation
   private resetResource(id: string) {
     Vue.delete(this.resources, id);
+    Vue.delete(this.resourcesLocks, id);
   }
 
   @Action

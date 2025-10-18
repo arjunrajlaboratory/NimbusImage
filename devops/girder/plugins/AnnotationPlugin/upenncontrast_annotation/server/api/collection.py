@@ -22,7 +22,7 @@ class Collection(Resource):
         self.route("GET", (":id",), self.get)
         self.route("GET", (), self.find)
         self.route('PUT', (':id', 'metadata'), self.setMetadata)
-        # self.route("PUT", (":id",), self.update)
+        self.route("PUT", (":id",), self.update)
         self.route("DELETE", (":id",), self.delete)
         self.route('POST', ('by_folders',), self.findByFolders)
 
@@ -112,6 +112,32 @@ class Collection(Resource):
     def setMetadata(self, upenn_collection, metadata, allowNull):
         return self._collectionModel.setMetadata(
             upenn_collection, metadata, allowNull=allowNull)
+
+    @access.user
+    @filtermodel(model=CollectionModel)
+    @autoDescribeRoute(
+        Description('Update collection name/description.')
+        .responseClass('Collection')
+        .modelParam('id', model=CollectionModel, level=AccessType.WRITE)
+        .param(
+            'name',
+            'New name for the collection.',
+            required=False,
+            strip=True,
+        )
+        .param(
+            'description',
+            'New description for the collection.',
+            required=False,
+            strip=True,
+        )
+    )
+    def update(self, upenn_collection, name, description):
+        return self._collectionModel.updateFields(
+            upenn_collection,
+            name,
+            description,
+        )
 
     @access.user
     @autoDescribeRoute(

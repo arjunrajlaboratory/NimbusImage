@@ -1392,6 +1392,21 @@ export class Main extends VuexModule {
   }
 
   @Action
+  async renameConfiguration(newName: string) {
+    if (!this.configuration) {
+      return;
+    }
+    sync.setSaving(true);
+    try {
+      await this.api.renameConfiguration(this.configuration, newName);
+      this.context.dispatch("ressourceChanged", this.configuration.id);
+      sync.setSaving(false);
+    } catch (error) {
+      sync.setSaving(error as Error);
+    }
+  }
+
+  @Action
   async addLayer() {
     if (!this.configuration || !this.dataset) {
       return;

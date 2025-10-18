@@ -104,6 +104,20 @@ export default class BreadCrumbs extends Vue {
   };
 
   items: IBreadCrumbItem[] = [];
+  private currentConfigurationId: string | null = null;
+  private currentDatasetId: string | null = null;
+
+  get configurationResource() {
+    return this.currentConfigurationId
+      ? this.girderResources.watchCollection(this.currentConfigurationId)
+      : undefined;
+  }
+
+  get datasetResource() {
+    return this.currentDatasetId
+      ? this.girderResources.watchFolder(this.currentDatasetId)
+      : undefined;
+  }
   previousRefreshInfo: {
     datasetId: string | null;
     configurationId: string | null;
@@ -220,6 +234,10 @@ export default class BreadCrumbs extends Vue {
       this.datasetId,
     ]);
 
+    // Set current IDs early so watchers can start working
+    this.currentConfigurationId = configurationId || null;
+    this.currentDatasetId = datasetId || null;
+
     // Cache items if parameters are the same
     // This is useful when route query changes frequently but dataset and configuration don't
     if (
@@ -246,10 +264,12 @@ export default class BreadCrumbs extends Vue {
     // Create dataset item
     let datasetItem: IBreadCrumbItem | undefined;
     if (datasetId) {
+      // Prefill from cache to avoid flicker
+      const cached = this.girderResources.watchFolder(datasetId);
       datasetItem = {
         title: "Dataset:",
         to: { name: "dataset", params },
-        text: "Unknown dataset",
+        text: cached?.name ?? "Unknown dataset",
       };
       newItems.push(datasetItem);
     }
@@ -272,10 +292,12 @@ export default class BreadCrumbs extends Vue {
 
     // Create configuration item
     if (configurationId) {
+      // Prefill from cache to avoid flicker
+      const cached = this.girderResources.watchCollection(configurationId);
       const configurationItem: IBreadCrumbItem = {
         title: "Collection:",
         to: { name: "configuration", params },
-        text: "Unknown configuration",
+        text: cached?.name ?? "Unknown configuration",
       };
       newItems.push(configurationItem);
     }
@@ -284,25 +306,11 @@ export default class BreadCrumbs extends Vue {
     this.items = newItems;
 
     // Fire off asynchronous text updates without modifying the array structure
-    if (datasetItem && datasetId) {
-      this.setItemTextWithResourceName(datasetItem, datasetId, "folder");
-    }
+    // No longer needed for dataset/configuration - watchers handle them reactively
     if (folder?.creatorId) {
       const ownerItem = newItems.find((item) => item.title === "Owner:");
       if (ownerItem) {
         this.setItemTextWithResourceName(ownerItem, folder.creatorId, "user");
-      }
-    }
-    if (configurationId) {
-      const configurationItem = newItems.find(
-        (item) => item.title === "Collection:",
-      );
-      if (configurationItem) {
-        this.setItemTextWithResourceName(
-          configurationItem,
-          configurationId,
-          "upenn_collection",
-        );
       }
     }
 
@@ -329,6 +337,49 @@ export default class BreadCrumbs extends Vue {
         });
       }
     }
+  }
+
+  private handleResourceChange(
+    resource: any,
+    itemTitle: string,
+    currentId: string | null,
+    resourceType: "upenn_collection" | "folder",
+  ) {
+    const item = this.items.find((item) => item.title === itemTitle);
+    if (!item) return;
+
+    // Trigger fetch when undefined OR null
+    if (resource == null && currentId) {
+      this.girderResources.forceFetchResource({
+        id: currentId,
+        type: resourceType,
+      });
+      return;
+    }
+
+    if (resource?.name) {
+      Vue.set(item, "text", resource.name);
+    }
+  }
+
+  @Watch("configurationResource", { immediate: true })
+  onConfigurationResourceChanged(resource: any) {
+    this.handleResourceChange(
+      resource,
+      "Collection:",
+      this.currentConfigurationId,
+      "upenn_collection",
+    );
+  }
+
+  @Watch("datasetResource", { immediate: true })
+  onDatasetResourceChanged(resource: any) {
+    this.handleResourceChange(
+      resource,
+      "Dataset:",
+      this.currentDatasetId,
+      "folder",
+    );
   }
 
   getCurrentViewItem(subitems: IBreadCrumbItem["subItems"]) {
