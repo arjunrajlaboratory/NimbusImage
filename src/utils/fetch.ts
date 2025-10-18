@@ -58,7 +58,9 @@ export async function fetchAllPages(
 
     // If cursor pagination failed, fall back to offset
     if (!result.success) {
-      logWarning(`[Cursor Pagination] Falling back to offset pagination`);
+      logWarning(
+        `[Cursor Pagination] Falling back to offset pagination for endpoint: ${endpoint}`,
+      );
       result = await fetchPagesUsingOffset(
         client,
         endpoint,
@@ -188,7 +190,7 @@ async function fetchPagesUsingCursor(
       pages,
       totalCount,
       downloaded,
-      success: pages.length > 0,
+      success: true, // Cursor pagination completed successfully (even with empty results)
     };
   } catch (err) {
     logError(`Could not get all ${endpoint} pages:\n${err}`);
