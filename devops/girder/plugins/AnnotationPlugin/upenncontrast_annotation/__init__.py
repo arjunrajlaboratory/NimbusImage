@@ -6,6 +6,8 @@ __author__ = """Adrien Boucaud"""
 __email__ = "adrien.boucaud@kitware.com"
 __version__ = "0.0.0"
 
+import logging
+
 
 from girder.plugin import GirderPlugin
 
@@ -28,6 +30,13 @@ from .server.models.workerPreviews import WorkerPreviewModel as PreviewModel
 from .server.models.datasetView import DatasetView as DatasetViewModel
 from .server.models.history import History as HistoryModel
 from .server.models.documentChange import DocumentChange as DocumentChangeModel
+
+
+# Taken from HistomicsUI
+# There are other packages that add to the root log handler; this makes the
+# system very noisy.  Stop that.
+while logging.root.hasHandlers():
+    logging.root.removeHandler(logging.root.handlers[0])
 
 
 class UPennContrastAnnotationAPIPlugin(GirderPlugin):
