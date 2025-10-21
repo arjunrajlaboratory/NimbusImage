@@ -56,33 +56,31 @@ export async function fetchAllPages(
       progressId,
     );
 
-    // If cursor pagination failed, fall back to offset
-    if (!result.success) {
-      logWarning(
-        `[Cursor Pagination] Falling back to offset pagination for endpoint: ${endpoint}`,
-      );
-      result = await fetchPagesUsingOffset(
-        client,
-        endpoint,
-        baseFormData,
-        baseParams,
-        pageSize,
-        firstPage,
-        progressId,
-      );
+    // If cursor pagination succeeded, return early
+    if (result.success) {
+      // Complete progress tracking
+      if (progressId) {
+        await progressStore.complete(progressId);
+      }
+      return result.pages;
     }
-  } else {
-    // Use offset pagination directly
-    result = await fetchPagesUsingOffset(
-      client,
-      endpoint,
-      baseFormData,
-      baseParams,
-      pageSize,
-      firstPage,
-      progressId,
+
+    // If cursor pagination failed, fall back to offset
+    logWarning(
+      `[Cursor Pagination] Falling back to offset pagination for endpoint: ${endpoint}`,
     );
   }
+
+  // Use offset pagination (either as fallback or directly)
+  result = await fetchPagesUsingOffset(
+    client,
+    endpoint,
+    baseFormData,
+    baseParams,
+    pageSize,
+    firstPage,
+    progressId,
+  );
 
   // Complete progress tracking
   if (progressId) {
