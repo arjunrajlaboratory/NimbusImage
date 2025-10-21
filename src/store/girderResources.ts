@@ -77,10 +77,15 @@ export class GirderResources extends VuexModule {
     if (id in this.resourcesLocks) {
       await this.resourcesLocks[id];
     }
-    if (!(id in this.resources)) {
+
+    const cached = this.resources[id];
+
+    // Not cached OR cached with wrong type → re-fetch
+    if (!(id in this.resources) || cached?._modelType !== type) {
       this.resourcesLocks[id] = this.requestAndSetResource({ id, type });
       await this.resourcesLocks[id];
     }
+
     const resource = this.resources[id];
     // This check ensures that get{Type} returns a resource of the right type (e.g. getFolder)
     return resource?._modelType === type ? resource : null;
@@ -141,6 +146,7 @@ export class GirderResources extends VuexModule {
   @Mutation
   private resetResource(id: string) {
     Vue.delete(this.resources, id);
+    Vue.delete(this.resourcesLocks, id);
   }
 
   @Action

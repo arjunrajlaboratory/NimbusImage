@@ -169,6 +169,21 @@ class Collection(ProxiedModel, AccessControlledModel):
         # Validate and save the item
         return self.save(collection)
 
+    def updateFields(self, collection, name=None, description=None):
+        changed = False
+        if name is not None:
+            collection['name'] = Item()._validateString(name)
+            collection['lowerName'] = collection['name'].lower()
+            changed = True
+        if description is not None:
+            collection['description'] = Item()._validateString(description)
+            changed = True
+        if not changed:
+            return collection
+
+        collection['updated'] = datetime.datetime.utcnow()
+        return self.save(collection)
+
     def move(self, collection, folder):
         collection['folderId'] = folder['_id']
         collection['baseParentType'] = folder['baseParentType']

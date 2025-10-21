@@ -186,6 +186,12 @@ export default class GirderAPI {
     });
   }
 
+  renameConfiguration(config: IDatasetConfiguration, name: string) {
+    return this.client.put(`upenn_collection/${config.id}`, null, {
+      params: { name },
+    });
+  }
+
   deleteItems(items: IGirderSelectAble[]) {
     const resourceObj = itemsToResourceObject(items);
     return this.client.delete("resource", {
