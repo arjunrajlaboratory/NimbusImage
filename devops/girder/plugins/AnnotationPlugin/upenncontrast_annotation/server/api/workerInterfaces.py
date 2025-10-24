@@ -3,15 +3,17 @@ from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
 from ..models.workerInterfaces import WorkerInterfaceModel as InterfaceModel
 from girder.exceptions import RestException
+from girder import logger
 
 import docker
+from docker.errors import DockerException
 
 
 class WorkerInterfaces(Resource):
 
     def __init__(self):
         super().__init__()
-        self.dockerClient = docker.from_env()
+        self.dockerClient = None
         self.resourceName = "worker_interface"
         self._interfaceModel = InterfaceModel()
 
@@ -19,6 +21,17 @@ class WorkerInterfaces(Resource):
         self.route("GET", ("available",), self.getAvailableImages)
         self.route("POST", (), self.update)
         self.route("POST", ("request",), self.requestWorkerUpdate)
+
+    def getDockerClient(self):
+        if self.dockerClient:
+            return self.dockerClient
+        try:
+            self.dockerClient = docker.from_env()
+            return self.dockerClient
+        except DockerException:
+            logger.error(
+                "Could not connect to Docker client, jobs will be disabled.")
+            return None
 
     @describeRoute(
         Description("Update an existing image interface")
@@ -55,7 +68,11 @@ class WorkerInterfaces(Resource):
         )
     )
     def getAvailableImages(self, params):
-        images = self.dockerClient.images.list()
+        dockerClient = self.getDockerClient()
+        if not dockerClient:
+            return {}
+
+        images = dockerClient.images.list()
 
         def labelFilter(image):
             return "isUPennContrastWorker" in image.labels and image.tags
