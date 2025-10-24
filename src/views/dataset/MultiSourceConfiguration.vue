@@ -1047,6 +1047,11 @@ export default class MultiSourceConfiguration extends Vue {
       channels = ["Default"];
     }
 
+    // Extract labels for other dimensions
+    const xyLabels: string[] | null = this.extractDimensionLabels("XY");
+    const zLabels: string[] | null = this.extractDimensionLabels("Z");
+    const tLabels: string[] | null = this.extractDimensionLabels("T");
+
     // Handle RGB expansion
     if (this.isMultiBandRGBFile && this.splitRGBBands) {
       // Assuming 3 bands (R,G,B), adjust as needed if dynamic
@@ -1352,14 +1357,42 @@ export default class MultiSourceConfiguration extends Vue {
         transcode: this.transcode,
         eventCallback,
       });
-      // Schedule caches after adding multisource (and transcoding)
-      this.store.scheduleTileFramesComputation(datasetId);
-      this.store.scheduleMaxMergeCache(datasetId);
-      this.store.scheduleHistogramCache(datasetId);
 
       if (!itemId) {
         throw new Error("Failed to add multi source");
       }
+
+      // Store dimension labels as separate metadata on the dataset folder
+      try {
+        const dimensionLabels = {
+          xy: xyLabels,
+          z: zLabels,
+          t: tLabels,
+        };
+        await this.store.api.updateDatasetMetadata(datasetId, {
+          dimensionLabels: dimensionLabels,
+        });
+      } catch (labelError) {
+        console.error(
+          "Failed to store dimension labels (non-fatal):",
+          labelError,
+        );
+        // Don't fail the whole process if label storage fails
+      }
+
+      // Schedule caches after successful metadata upload
+      this.store.scheduleTileFramesComputation(datasetId);
+      this.store.scheduleMaxMergeCache(datasetId);
+
+      // Add a small delay before scheduling histogram cache to ensure the item is processed
+      setTimeout(async () => {
+        try {
+          await this.store.scheduleHistogramCache(datasetId);
+        } catch (error) {
+          console.error("Failed to schedule histogram cache:", error);
+        }
+      }, 2000);
+
       return itemId;
     } catch (error) {
       logError((error as Error).message);
@@ -1383,6 +1416,39 @@ export default class MultiSourceConfiguration extends Vue {
       return this.assignments.C === null;
     }
     return true;
+  }
+
+  // Extract dimension labels for a given dimension
+  extractDimensionLabels(dim: TUpDim): string[] | null {
+    const assignment = this.assignments[dim]?.value;
+    if (!assignment) return null;
+
+    switch (assignment.source) {
+      case Sources.File:
+        const fileData = assignment.data as IFileSourceData;
+        const labelsPerIdx: string[][] = [];
+        for (const itemIdx in fileData) {
+          const values = fileData[itemIdx].values;
+          if (values) {
+            values.forEach((val, idx) => {
+              if (!labelsPerIdx[idx]) labelsPerIdx[idx] = [];
+              if (!labelsPerIdx[idx].includes(val)) {
+                labelsPerIdx[idx].push(val);
+              }
+            });
+          }
+        }
+        return labelsPerIdx.map((labels) => labels.join("/"));
+
+      case Sources.Filename:
+        return assignment.data.values;
+
+      case Sources.Images:
+        return Array.from(
+          { length: assignment.size },
+          (_, i) => `Position ${i}`,
+        );
+    }
   }
 
   // Copy log to clipboard
