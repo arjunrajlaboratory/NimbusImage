@@ -1491,10 +1491,7 @@ export default class MultiSourceConfiguration extends Vue {
         // Invalidate the folder cache so the updated metadata is fetched
         await this.store.girderResources.ressourceChanged(datasetId);
       } catch (labelError) {
-        console.error(
-          "Failed to store dimension labels (non-fatal):",
-          labelError,
-        );
+        logError("Failed to store dimension labels (non-fatal):", labelError);
         // Don't fail the whole process if label storage fails
       }
 
@@ -1507,13 +1504,13 @@ export default class MultiSourceConfiguration extends Vue {
         try {
           await this.store.scheduleHistogramCache(datasetId);
         } catch (error) {
-          console.error("Failed to schedule histogram cache:", error);
+          logError("Failed to schedule histogram cache:", error);
         }
       }, 2000);
 
       return itemId;
     } catch (error) {
-      logError((error as Error).message);
+      logError("Failed to create multi source:", error);
       return null;
     }
   }
