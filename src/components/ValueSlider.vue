@@ -1,5 +1,5 @@
 <template>
-  <div class="value-slider">
+  <div v-if="min !== max" class="value-slider">
     <!-- Row 1: Label and Text Input -->
     <v-row no-gutters class="mb-1">
       <v-col cols="2" class="text-right align-center label-column pa-0">
@@ -12,7 +12,6 @@
           hide-details
           single-line
           type="text"
-          :disabled="min === max"
           dense
           @input="handleInput"
           @blur="handleBlur"
@@ -28,7 +27,6 @@
           :max="max + offset"
           :min="min + offset"
           hide-details
-          :disabled="min === max"
         />
       </v-col>
       <v-col cols="4" class="text-right align-center counter-column pa-0 pl-2">

@@ -12,6 +12,7 @@
           :value-label="xyLabel"
         />
         <v-checkbox
+          v-if="maxXY > 0"
           class="ml-3 my-checkbox"
           v-model="unrollXY"
           label="Unroll"
@@ -29,6 +30,7 @@
           :value-label="zLabel"
         />
         <v-checkbox
+          v-if="maxZ > 0"
           class="ml-3 my-checkbox"
           v-model="unrollZ"
           label="Unroll"
@@ -46,6 +48,7 @@
           :value-label="timeLabel"
         />
         <v-checkbox
+          v-if="maxTime > 0"
           class="ml-3 my-checkbox"
           v-model="unrollT"
           label="Unroll"
