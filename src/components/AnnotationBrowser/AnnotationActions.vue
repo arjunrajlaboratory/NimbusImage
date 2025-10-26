@@ -57,6 +57,9 @@
         </v-row>
         <v-row>
           <v-col class="pa-1">
+            <index-conversion-dialog block />
+          </v-col>
+          <v-col class="pa-1">
             <delete-connections block />
           </v-col>
         </v-row>
@@ -76,6 +79,7 @@ import AnnotationCsvDialog from "@/components/AnnotationBrowser/AnnotationCSVDia
 import AnnotationExport from "@/components/AnnotationBrowser/AnnotationExport.vue";
 import AnnotationImport from "@/components/AnnotationBrowser/AnnotationImport.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
+import IndexConversionDialog from "@/components/AnnotationBrowser/IndexConversionDialog.vue";
 
 @Component({
   components: {
@@ -83,6 +87,7 @@ import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.
     AnnotationExport,
     AnnotationImport,
     DeleteConnections,
+    IndexConversionDialog,
   },
 })
 export default class AnnotationActions extends Vue {
