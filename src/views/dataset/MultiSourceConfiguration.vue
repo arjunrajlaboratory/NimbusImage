@@ -1444,10 +1444,7 @@ export default class MultiSourceConfiguration extends Vue {
         return assignment.data.values;
 
       case Sources.Images:
-        return Array.from(
-          { length: assignment.size },
-          (_, i) => `Position ${i}`,
-        );
+        return Array.from({ length: assignment.size }, (_, i) => `${i + 1}`);
     }
   }
 
