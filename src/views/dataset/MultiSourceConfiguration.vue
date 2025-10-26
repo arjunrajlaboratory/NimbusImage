@@ -1488,6 +1488,8 @@ export default class MultiSourceConfiguration extends Vue {
         await this.store.api.updateDatasetMetadata(datasetId, {
           dimensionLabels: dimensionLabels,
         });
+        // Invalidate the folder cache so the updated metadata is fetched
+        await this.store.girderResources.ressourceChanged(datasetId);
       } catch (labelError) {
         console.error(
           "Failed to store dimension labels (non-fatal):",
