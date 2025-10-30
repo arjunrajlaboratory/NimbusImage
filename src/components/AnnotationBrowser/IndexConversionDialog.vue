@@ -122,9 +122,7 @@ import Papa from "papaparse";
 import { downloadToClient } from "@/utils/download";
 import { logError } from "@/utils/log";
 
-@Component({
-  components: {},
-})
+@Component({})
 export default class IndexConversionDialog extends Vue {
   readonly store = store;
 
@@ -230,40 +228,38 @@ export default class IndexConversionDialog extends Vue {
     return Papa.unparse({ fields, data }, { quotes: [false, false, true] });
   }
 
+  private downloadDimension(
+    suffix: string,
+    count: number,
+    labels: string[] | null,
+  ) {
+    const csv = this.generateCSV(count, labels);
+    const datasetName = this.dataset?.name ?? "dataset";
+    const params = {
+      href: "data:text/csv;charset=utf-8," + encodeURIComponent(csv),
+      download: `${datasetName}_${suffix}_index_conversion.csv`,
+    };
+    downloadToClient(params);
+  }
+
   downloadXY() {
-    const csv = this.generateCSV(
+    this.downloadDimension(
+      "xy",
       this.xyCount,
       this.dimensionLabels?.xy ?? null,
     );
-    const datasetName = this.dataset?.name ?? "dataset";
-    const params = {
-      href: "data:text/csv;charset=utf-8," + encodeURIComponent(csv),
-      download: `${datasetName}_xy_index_conversion.csv`,
-    };
-    downloadToClient(params);
   }
 
   downloadZ() {
-    const csv = this.generateCSV(this.zCount, this.dimensionLabels?.z ?? null);
-    const datasetName = this.dataset?.name ?? "dataset";
-    const params = {
-      href: "data:text/csv;charset=utf-8," + encodeURIComponent(csv),
-      download: `${datasetName}_z_index_conversion.csv`,
-    };
-    downloadToClient(params);
+    this.downloadDimension("z", this.zCount, this.dimensionLabels?.z ?? null);
   }
 
   downloadTime() {
-    const csv = this.generateCSV(
+    this.downloadDimension(
+      "time",
       this.timeCount,
       this.dimensionLabels?.t ?? null,
     );
-    const datasetName = this.dataset?.name ?? "dataset";
-    const params = {
-      href: "data:text/csv;charset=utf-8," + encodeURIComponent(csv),
-      download: `${datasetName}_time_index_conversion.csv`,
-    };
-    downloadToClient(params);
   }
 }
 </script>

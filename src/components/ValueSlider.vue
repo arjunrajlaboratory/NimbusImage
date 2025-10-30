@@ -7,7 +7,7 @@
       </v-col>
       <v-col cols="10" class="text-left align-center value-column pa-0 pl-2">
         <v-text-field
-          v-model="displayValue"
+          :value="displayValue"
           class="mt-0 pt-0 no-underline"
           hide-details
           single-line
@@ -106,10 +106,6 @@ export default class ValueSlider extends Vue {
     return this.valueLabel || (this.value + this.offset).toString();
   }
 
-  set displayValue(_value: string) {
-    // This will be handled by handleInput method
-  }
-
   private updateInternalValue() {
     this.internalValue = this.value + this.offset;
   }
@@ -127,11 +123,13 @@ export default class ValueSlider extends Vue {
       return;
     }
 
-    // If not a number, try to find the label in the available labels
+    // If not a number, check if the input matches the current value label
+    // (If the user types the same label that's already displayed, do nothing)
     if (this.valueLabel && value === this.valueLabel) {
-      // Already at the correct label, do nothing
       return;
     }
+    // Otherwise, if input is not a number and doesn't match the label, do nothing
+    // (The display will be corrected on blur via handleBlur)
   }
 
   handleBlur() {
