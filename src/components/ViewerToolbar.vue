@@ -9,8 +9,10 @@
           :max="maxXY"
           :title="maxXY > 0 ? maxXY + 1 + ' XY Values (Hotkeys w/r)' : ''"
           :offset="1"
+          :value-label="xyLabel"
         />
         <v-checkbox
+          v-if="maxXY > 0"
           class="ml-3 my-checkbox"
           v-model="unrollXY"
           label="Unroll"
@@ -25,8 +27,10 @@
           :max="maxZ"
           :title="maxZ > 0 ? maxZ + 1 + ' Z Values (Hotkeys d/e)' : ''"
           :offset="1"
+          :value-label="zLabel"
         />
         <v-checkbox
+          v-if="maxZ > 0"
           class="ml-3 my-checkbox"
           v-model="unrollZ"
           label="Unroll"
@@ -41,8 +45,10 @@
           :max="maxTime"
           :title="maxTime > 0 ? maxTime + 1 + ' Time Values (Hotkeys s/f)' : ''"
           :offset="1"
+          :value-label="timeLabel"
         />
         <v-checkbox
+          v-if="maxTime > 0"
           class="ml-3 my-checkbox"
           v-model="unrollT"
           label="Unroll"
@@ -149,6 +155,7 @@ import filterStore from "@/store/filters";
 import annotationStore from "@/store/annotation";
 import { ITagAnnotationFilter, TLayerMode } from "@/store/model";
 import { IHotkey } from "@/utils/v-mousetrap";
+import { logError } from "@/utils/log";
 
 @Component({
   components: {
@@ -162,6 +169,42 @@ export default class ViewerToolbar extends Vue {
   readonly store = store;
   readonly filterStore = filterStore;
   readonly annotationStore = annotationStore;
+
+  dimensionLabels: {
+    xy: string[] | null;
+    z: string[] | null;
+    t: string[] | null;
+  } | null = null;
+
+  async mounted() {
+    await this.loadDimensionLabels();
+  }
+
+  @Watch("store.selectedDatasetId")
+  async onDatasetChanged() {
+    await this.loadDimensionLabels();
+  }
+
+  async loadDimensionLabels() {
+    if (!this.store.selectedDatasetId) {
+      this.dimensionLabels = null;
+      return;
+    }
+
+    try {
+      const folder = await this.store.girderResources.getFolder(
+        this.store.selectedDatasetId,
+      );
+      if (folder && folder.meta && folder.meta.dimensionLabels) {
+        this.dimensionLabels = folder.meta.dimensionLabels;
+      } else {
+        this.dimensionLabels = null;
+      }
+    } catch (error) {
+      logError("Failed to load dimension labels:", error);
+      this.dimensionLabels = null;
+    }
+  }
 
   get xy() {
     return this.store.xy;
@@ -236,6 +279,27 @@ export default class ViewerToolbar extends Vue {
 
   get maxTime() {
     return this.store.dataset ? this.store.dataset.time.length - 1 : this.time;
+  }
+
+  get xyLabel() {
+    if (!this.dimensionLabels || !this.dimensionLabels.xy) {
+      return null;
+    }
+    return this.dimensionLabels.xy[this.xy] || null;
+  }
+
+  get zLabel() {
+    if (!this.dimensionLabels || !this.dimensionLabels.z) {
+      return null;
+    }
+    return this.dimensionLabels.z[this.z] || null;
+  }
+
+  get timeLabel() {
+    if (!this.dimensionLabels || !this.dimensionLabels.t) {
+      return null;
+    }
+    return this.dimensionLabels.t[this.time] || null;
   }
 
   get timelapseMode() {

@@ -250,6 +250,7 @@ import { ITileMeta } from "@/store/GirderAPI";
 import { IGeoJSPositionWithTransform, IJobEventData } from "@/store/model";
 import { logError } from "@/utils/log";
 import { parseTranscodeOutput } from "@/utils/strings";
+import { extractDimensionLabelsFromND2 } from "@/utils/ND2FileParsing";
 import pLimit from "p-limit";
 import pRetry, { AbortError } from "p-retry";
 
@@ -1047,6 +1048,11 @@ export default class MultiSourceConfiguration extends Vue {
       channels = ["Default"];
     }
 
+    // Extract labels for other dimensions
+    const xyLabels: string[] | null = this.extractDimensionLabels("XY");
+    const zLabels: string[] | null = this.extractDimensionLabels("Z");
+    const tLabels: string[] | null = this.extractDimensionLabels("T");
+
     // Handle RGB expansion
     if (this.isMultiBandRGBFile && this.splitRGBBands) {
       // Assuming 3 bands (R,G,B), adjust as needed if dynamic
@@ -1352,17 +1358,36 @@ export default class MultiSourceConfiguration extends Vue {
         transcode: this.transcode,
         eventCallback,
       });
-      // Schedule caches after adding multisource (and transcoding)
-      this.store.scheduleTileFramesComputation(datasetId);
-      this.store.scheduleMaxMergeCache(datasetId);
-      this.store.scheduleHistogramCache(datasetId);
 
       if (!itemId) {
         throw new Error("Failed to add multi source");
       }
+
+      // Store dimension labels as separate metadata on the dataset folder
+      try {
+        const dimensionLabels = {
+          xy: xyLabels,
+          z: zLabels,
+          t: tLabels,
+        };
+        await this.store.api.updateDatasetMetadata(datasetId, {
+          dimensionLabels: dimensionLabels,
+        });
+        // Invalidate the folder cache so the updated metadata is fetched
+        await this.store.girderResources.ressourceChanged(datasetId);
+      } catch (labelError) {
+        logError("Failed to store dimension labels (non-fatal):", labelError);
+        // Don't fail the whole process if label storage fails
+      }
+
+      // Schedule caches after successful metadata upload
+      this.store.scheduleTileFramesComputation(datasetId);
+      this.store.scheduleMaxMergeCache(datasetId);
+      this.store.scheduleHistogramCache(datasetId);
+
       return itemId;
     } catch (error) {
-      logError((error as Error).message);
+      logError("Failed to create multi source:", error);
       return null;
     }
   }
@@ -1383,6 +1408,49 @@ export default class MultiSourceConfiguration extends Vue {
       return this.assignments.C === null;
     }
     return true;
+  }
+
+  // Extract dimension labels for a given dimension
+  extractDimensionLabels(dim: TUpDim): string[] | null {
+    const assignment = this.assignments[dim]?.value;
+    if (!assignment) return null;
+
+    // Try to extract labels from ND2 metadata first (only for File source)
+    if (assignment.source === Sources.File && this.tilesInternalMetadata) {
+      const nd2Labels = extractDimensionLabelsFromND2(
+        dim,
+        this.tilesInternalMetadata,
+        assignment.size,
+      );
+      if (nd2Labels) {
+        return nd2Labels;
+      }
+    }
+
+    // Fall back to original extraction logic
+    switch (assignment.source) {
+      case Sources.File:
+        const fileData = assignment.data as IFileSourceData;
+        const labelsPerIdx: string[][] = [];
+        for (const itemIdx in fileData) {
+          const values = fileData[itemIdx].values;
+          if (values) {
+            values.forEach((val, idx) => {
+              if (!labelsPerIdx[idx]) labelsPerIdx[idx] = [];
+              if (!labelsPerIdx[idx].includes(val)) {
+                labelsPerIdx[idx].push(val);
+              }
+            });
+          }
+        }
+        return labelsPerIdx.map((labels) => labels.join("/"));
+
+      case Sources.Filename:
+        return assignment.data.values;
+
+      case Sources.Images:
+        return Array.from({ length: assignment.size }, (_, i) => `${i + 1}`);
+    }
   }
 
   // Copy log to clipboard

@@ -1,60 +1,70 @@
 <template>
-  <v-row>
-    <v-col cols="3" class="text-right align-center label-column">
-      {{ label }}
-    </v-col>
-    <v-col cols="9" class="slider-column">
-      <v-slider
-        v-model="slider"
-        :max="max + offset"
-        :min="min + offset"
-        hide-details
-        :disabled="min === max"
-      >
-        <template #append>
-          <v-container>
-            <v-row>
-              <v-col class="pa-0 text-field-column">
-                <v-text-field
-                  v-model="slider"
-                  class="mt-0 pt-0"
-                  hide-details
-                  single-line
-                  type="number"
-                  :min="min + offset"
-                  :max="max + offset"
-                  :disabled="min === max"
-                  style="width: 50px"
-                  dense
-                >
-                </v-text-field>
-              </v-col>
-            </v-row>
-            <v-row>
-              <v-col class="text-right pa-0">
-                <span class="mt-2 caption font-weight-light">{{
-                  `of ${max + offset}`
-                }}</span>
-              </v-col>
-            </v-row>
-          </v-container>
-        </template>
-      </v-slider>
-    </v-col>
-  </v-row>
+  <div v-if="min !== max" class="value-slider">
+    <!-- Row 1: Label and Text Input -->
+    <v-row no-gutters class="mb-1">
+      <v-col cols="2" class="text-right align-center label-column pa-0">
+        {{ label }}:
+      </v-col>
+      <v-col cols="10" class="text-left align-center value-column pa-0 pl-2">
+        <v-text-field
+          :value="displayValue"
+          class="mt-0 pt-0 no-underline"
+          hide-details
+          single-line
+          type="text"
+          dense
+          @input="handleInput"
+          @blur="handleBlur"
+        />
+      </v-col>
+    </v-row>
+
+    <!-- Row 2: Slider and Counter -->
+    <v-row no-gutters class="mt-0">
+      <v-col cols="6" class="slider-column pa-0 pl-2 offset-2">
+        <v-slider
+          v-model="slider"
+          :max="max + offset"
+          :min="min + offset"
+          hide-details
+        />
+      </v-col>
+      <v-col cols="4" class="text-right align-center counter-column pa-0 pl-2">
+        <span class="caption font-weight-light">
+          {{ `${value + offset} of ${max + offset}` }}
+        </span>
+      </v-col>
+    </v-row>
+  </div>
 </template>
 
 <style scoped>
+.value-slider {
+  width: 100%;
+}
+
 .label-column {
   transform: translateY(2px); /* Move the label vertically */
 }
 
-.slider-column {
-  padding-left: 0px; /* Reduce padding around the slider */
+.counter-column {
+  transform: translateY(2px); /* Align counter with other elements */
 }
 
-.text-field-column {
-  transform: translateY(-4px); /* Move the text input field vertically */
+/* Kill the v-text-field underline (normal and focused) */
+.no-underline ::v-deep .v-text-field__details {
+  display: none;
+}
+
+.no-underline ::v-deep .v-input__slot:before,
+.no-underline ::v-deep .v-input__slot:after {
+  display: none !important;
+}
+
+/* Keep vertical rhythm tight */
+.slider-column ::v-deep .v-slider {
+  margin-top: 1px;
+  margin-bottom: 0;
 }
 </style>
 
@@ -73,6 +83,8 @@ export default class ValueSlider extends Vue {
   readonly label!: string;
   @Prop({ default: 0 })
   readonly offset!: number;
+  @Prop({ default: null })
+  readonly valueLabel!: string | null;
 
   // Will be immediatiely updated by watchValue()
   private internalValue = 0;
@@ -90,12 +102,38 @@ export default class ValueSlider extends Vue {
     this.$emit("input", numberValue - this.offset);
   }
 
+  get displayValue() {
+    return this.valueLabel || (this.value + this.offset).toString();
+  }
+
   private updateInternalValue() {
     this.internalValue = this.value + this.offset;
   }
 
   @Watch("value", { immediate: true })
   watchValue() {
+    this.updateInternalValue();
+  }
+
+  handleInput(value: string) {
+    // Try to parse as number first
+    const numValue = parseInt(value);
+    if (!isNaN(numValue)) {
+      this.slider = numValue;
+      return;
+    }
+
+    // If not a number, check if the input matches the current value label
+    // (If the user types the same label that's already displayed, do nothing)
+    if (this.valueLabel && value === this.valueLabel) {
+      return;
+    }
+    // Otherwise, if input is not a number and doesn't match the label, do nothing
+    // (The display will be corrected on blur via handleBlur)
+  }
+
+  handleBlur() {
+    // On blur, ensure we show the correct value
     this.updateInternalValue();
   }
 }
