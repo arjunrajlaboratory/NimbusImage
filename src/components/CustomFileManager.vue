@@ -669,9 +669,8 @@ export default class CustomFileManager extends Vue {
     }
   }
 }
-</style>
 
-<style lang="scss" scoped>
+// Icon color styles (unscoped to penetrate child components)
 .itemRow .v-icon.mdi-package {
   // targets box_com icon (datasets)
   color: #e57373;
@@ -688,7 +687,9 @@ export default class CustomFileManager extends Vue {
   // targets folders
   color: #b0a69a;
 }
+</style>
 
+<style lang="scss" scoped>
 .type-indicator {
   border-radius: 4px !important; // More rectangular
   font-family: "Roboto Mono", monospace !important; // Monospace font
