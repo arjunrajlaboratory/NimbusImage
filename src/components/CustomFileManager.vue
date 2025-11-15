@@ -36,7 +36,13 @@
       <template v-if="menuEnabled" #headerwidget>
         <v-menu v-model="selectedItemsOptionsMenu" bottom offset-y>
           <template v-slot:activator="{ on, attrs }">
-            <v-btn v-bind="attrs" v-on="on" :disabled="selected.length === 0">
+            <v-btn
+              v-bind="attrs"
+              v-on="on"
+              :disabled="selected.length === 0"
+              outlined
+              class="ghost-button"
+            >
               Selected Items Actions
               <v-icon>mdi-dots-vertical</v-icon>
             </v-btn>
@@ -54,9 +60,10 @@
           style="display: none"
         />
         <v-btn
-          class="mx-2"
+          class="mx-2 ghost-button"
           @click="$refs.fileInput.click()"
           :disabled="shouldDisableSingleFileUpload"
+          outlined
         >
           <v-icon left>mdi-upload</v-icon>
           Upload Individual File
@@ -589,5 +596,45 @@ export default class CustomFileManager extends Vue {
 
 .chip-label {
   font-size: 0.9em;
+}
+
+.ghost-button {
+  background-color: transparent !important;
+
+  .v-icon {
+    color: inherit !important;
+  }
+
+  &.v-btn--disabled {
+    opacity: 0.38;
+  }
+}
+
+// Dark mode styles
+.theme--dark {
+  .ghost-button {
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    color: rgba(255, 255, 255, 0.7) !important;
+
+    &:hover:not(.v-btn--disabled) {
+      background-color: rgba(255, 255, 255, 0.08) !important;
+      border-color: rgba(255, 255, 255, 0.24) !important;
+      color: rgba(255, 255, 255, 0.87) !important;
+    }
+  }
+}
+
+// Light mode styles
+.theme--light {
+  .ghost-button {
+    border-color: rgba(0, 0, 0, 0.12) !important;
+    color: rgba(0, 0, 0, 0.7) !important;
+
+    &:hover:not(.v-btn--disabled) {
+      background-color: rgba(0, 0, 0, 0.04) !important;
+      border-color: rgba(0, 0, 0, 0.24) !important;
+      color: rgba(0, 0, 0, 0.87) !important;
+    }
+  }
 }
 </style>
