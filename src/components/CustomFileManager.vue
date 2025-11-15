@@ -1,6 +1,6 @@
 <template>
   <div class="custom-file-manager-wrapper">
-    <div class="d-flex align-center ma-2">
+    <div class="d-flex align-center ma-2 search-container">
       <v-icon class="mr-2">mdi-magnify</v-icon>
       <div class="flex-grow-1">
         <girder-search
@@ -545,7 +545,7 @@ export default class CustomFileManager extends Vue {
 }
 </script>
 
-<style lang="scss">
+<style lang="scss" scoped>
 .custom-file-manager-wrapper,
 .custom-file-manager-wrapper > .girder-data-browser-snippet,
 .custom-file-manager-wrapper
@@ -567,6 +567,111 @@ export default class CustomFileManager extends Vue {
   overflow-y: auto;
 }
 
+// Search bar styling for dark mode - using unscoped styles to penetrate component boundaries
+</style>
+
+<style lang="scss">
+// Unscoped styles for search bar in dark mode
+.theme--dark {
+  .custom-file-manager-wrapper {
+    .search-container {
+      // Target v-autocomplete (girder-search likely uses this)
+      .v-autocomplete,
+      .v-text-field {
+        .v-input__control {
+          .v-input__slot {
+            background-color: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.12) !important;
+            border-radius: 4px !important;
+
+            &::before,
+            &::after {
+              display: none !important;
+            }
+
+            .v-text-field__slot,
+            .v-autocomplete__slot {
+              input {
+                background-color: transparent !important;
+                color: rgba(255, 255, 255, 0.87) !important;
+                border: none !important;
+                box-shadow: none !important;
+
+                &::placeholder {
+                  color: rgba(255, 255, 255, 0.38) !important;
+                }
+              }
+            }
+
+            .v-input__append-inner,
+            .v-input__prepend-inner {
+              .v-icon {
+                color: rgba(255, 255, 255, 0.6) !important;
+              }
+            }
+          }
+
+          .v-text-field__details,
+          .v-autocomplete__details {
+            .v-messages {
+              color: rgba(255, 255, 255, 0.6) !important;
+            }
+          }
+        }
+
+        &.v-input--is-focused {
+          .v-input__control {
+            .v-input__slot {
+              background-color: rgba(255, 255, 255, 0.08) !important;
+              border-color: rgba(255, 255, 255, 0.24) !important;
+            }
+          }
+        }
+      }
+
+      // Fallback for direct input elements
+      input[type="text"],
+      input[type="search"] {
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 4px !important;
+        color: rgba(255, 255, 255, 0.87) !important;
+
+        &::placeholder {
+          color: rgba(255, 255, 255, 0.38) !important;
+        }
+
+        &:focus {
+          background-color: rgba(255, 255, 255, 0.08) !important;
+          border-color: rgba(255, 255, 255, 0.24) !important;
+          outline: none !important;
+        }
+      }
+    }
+  }
+
+  // More aggressive selector to catch any input in the search container
+  .custom-file-manager-wrapper .search-container * {
+    .v-input__slot {
+      background-color: rgba(255, 255, 255, 0.05) !important;
+      border: 1px solid rgba(255, 255, 255, 0.12) !important;
+
+      input {
+        background-color: transparent !important;
+        color: rgba(255, 255, 255, 0.87) !important;
+        border: none !important;
+        box-shadow: none !important;
+
+        &::placeholder {
+          color: rgba(255, 255, 255, 0.38) !important;
+        }
+      }
+    }
+  }
+}
+</style>
+
+<style lang="scss" scoped>
 .itemRow .v-icon.mdi-package {
   // targets box_com icon (datasets)
   color: #e57373;
