@@ -190,8 +190,8 @@
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
-              <div class="d-flex justify-space-between align-center mb-4">
-                <v-subheader class="headline section-title text-h5 pa-0"
+              <div class="d-flex align-center mb-4">
+                <v-subheader class="headline section-title text-h5 pa-0 mr-4"
                   >Browse</v-subheader
                 >
                 <v-btn-toggle
