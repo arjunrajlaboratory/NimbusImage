@@ -20,133 +20,90 @@
         </div>
       </v-overlay>
       <v-container class="home-container">
+        <header class="home-header mb-3">
+          <h1 class="text-h4 font-weight-bold">NimbusImage</h1>
+        </header>
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
-              <div class="d-flex justify-space-between align-center mb-4">
-                <div class="text-h5">Upload dataset</div>
-                <v-btn
-                  id="try-sample-dataset-tourstep"
-                  v-if="Boolean(zenodoCommunityId)"
-                  color="success"
-                  class="py-2 pulse-btn"
-                  @click="showCommunityDisplay = true"
-                  v-tour-trigger="'try-sample-dataset-tourtrigger'"
+              <!-- Upload Files -->
+              <v-card
+                id="upload-files-tourstep"
+                class="upload-card fill-height"
+                :class="{ 'drag-active': isDragging }"
+                @click="openFileSelector"
+                @dragenter.prevent="isDragging = true"
+                @dragleave.prevent="onDragLeave($event)"
+                @dragover.prevent
+                @drop.prevent="handleDrop"
+              >
+                <v-overlay
+                  :value="isDragging"
+                  absolute
+                  opacity="0.8"
+                  class="d-flex align-center justify-center"
                 >
-                  <v-icon left size="20">mdi-database-import</v-icon>
-                  Try a Sample Dataset
-                </v-btn>
-              </div>
-              <v-row class="flex-column fill-height">
-                <!-- Upload Files -->
-                <v-card
-                  id="upload-files-tourstep"
-                  class="upload-card fill-height"
-                  :class="{ 'drag-active': isDragging }"
-                  @click="openFileSelector"
-                  @dragenter.prevent="isDragging = true"
-                  @dragleave.prevent="onDragLeave($event)"
-                  @dragover.prevent
-                  @drop.prevent="handleDrop"
-                >
-                  <v-overlay
-                    :value="isDragging"
-                    absolute
-                    opacity="0.8"
-                    class="d-flex align-center justify-center"
-                  >
-                    <div class="text-h6 white--text text-center">
-                      Drop files here to upload
-                    </div>
-                  </v-overlay>
+                  <div class="text-h6 white--text text-center">
+                    Drop files here to upload
+                  </div>
+                </v-overlay>
 
-                  <v-card-text
-                    class="d-flex flex-column align-center justify-center fill-height"
+                <v-card-text
+                  class="d-flex flex-column align-center justify-center fill-height"
+                >
+                  <v-icon size="64" color="primary" class="mb-4"
+                    >mdi-upload</v-icon
                   >
-                    <v-icon size="64" color="primary" class="mb-4"
-                      >mdi-upload</v-icon
-                    >
-                    <div class="text-center">
-                      <div class="text-h6 mb-2">Upload files</div>
-                      <div class="text-body-2 mb-2">
-                        Click or drag here to upload files. You can choose to
-                        accept default settings or configure advanced options
-                        after selecting files.
-                      </div>
-                      <div class="text-caption">
-                        Dataset will be uploaded to folder:
-                        <strong>{{ locationName }}</strong>
-                      </div>
+                  <div class="text-center">
+                    <div class="text-h6 mb-2">Upload files</div>
+                    <div class="text-body-2 mb-2">
+                      Click or drag here to upload files. You can choose to
+                      accept default settings or configure advanced options
+                      after selecting files.
                     </div>
-                  </v-card-text>
-                </v-card>
-              </v-row>
+                    <div class="text-caption">
+                      Dataset will be uploaded to folder:
+                      <strong>{{ locationName }}</strong>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
             </section>
           </v-col>
           <v-col class="fill-height recent-dataset">
             <section class="mb-4 home-section">
-              <v-subheader class="headline mb-4 section-title text-h5"
-                >Recent datasets</v-subheader
-              >
-              <v-list two-line class="scrollable py-0">
-                <div v-for="d in datasetViewItems" :key="d.datasetView.id">
-                  <v-tooltip
-                    top
-                    :disabled="
-                      !d.datasetInfo.description && !d.configInfo.description
-                    "
-                  >
-                    <template v-slot:activator="{ on, attrs }">
-                      <v-list-item
-                        @click="navigateToDatasetView(d.datasetView.id)"
-                      >
-                        <v-list-item-content v-bind="attrs" v-on="on">
-                          <v-list-item-title>
-                            {{
-                              d.datasetInfo.name
-                                ? d.datasetInfo.name
-                                : "Unnamed dataset"
-                            }}
-                          </v-list-item-title>
-                          <v-list-item-subtitle>
-                            {{
-                              d.configInfo.name
-                                ? d.configInfo.name
-                                : "Unnamed configuration"
-                            }}
-                            <template v-if="d.datasetInfo.creatorId">
-                              <br />
-                              <span class="text-caption">
-                                Owner:
-                                {{
-                                  getUserDisplayName(d.datasetInfo.creatorId)
-                                }}
-                              </span>
-                            </template>
-                          </v-list-item-subtitle>
-                        </v-list-item-content>
-                        <v-list-item-action
-                          class="my-0 d-flex flex-column justify-center"
-                        >
-                          <div class="text-caption grey--text text-left">
-                            <div>Last accessed:</div>
-                            <div style="line-height: 1.1">
-                              {{ formatDateNumber(d.datasetView.lastViewed) }}
-                            </div>
-                          </div>
-                        </v-list-item-action>
-                      </v-list-item>
-                    </template>
-                    <div v-if="d.datasetInfo.description">
-                      {{ d.datasetInfo.description }}
-                    </div>
-                    <v-divider />
-                    <div v-if="d.configInfo.description">
-                      {{ d.configInfo.description }}
-                    </div>
-                  </v-tooltip>
-                </div>
-              </v-list>
+              <v-tabs v-model="datasetsTab">
+                <v-tab>Recent Datasets</v-tab>
+                <v-tab
+                  v-if="Boolean(zenodoCommunityId)"
+                  id="try-sample-dataset-tourstep"
+                  v-tour-trigger="'try-sample-dataset-tourtrigger'"
+                >
+                  Sample Datasets
+                </v-tab>
+              </v-tabs>
+              <v-tabs-items v-model="datasetsTab" class="fill-height">
+                <v-tab-item class="fill-height">
+                  <recent-datasets
+                    :dataset-view-items="datasetViewItems"
+                    :get-user-display-name="getUserDisplayName"
+                    :format-date-number="formatDateNumber"
+                    @dataset-clicked="navigateToDatasetView"
+                    class="fill-height"
+                  />
+                </v-tab-item>
+                <v-tab-item
+                  v-if="Boolean(zenodoCommunityId)"
+                  class="fill-height"
+                >
+                  <zenodo-community-display
+                    :communityId="zenodoCommunityId"
+                    :embedded="true"
+                    @dataset-selected="handleSampleDatasetSelected"
+                    class="fill-height"
+                  />
+                </v-tab-item>
+              </v-tabs-items>
             </section>
           </v-col>
         </v-row>
@@ -227,14 +184,6 @@
       @change="handleFileSelect"
     />
 
-    <v-dialog v-model="showCommunityDisplay" max-width="1000px" scrollable>
-      <zenodo-community-display
-        :communityId="zenodoCommunityId"
-        @close="showCommunityDisplay = false"
-        @dataset-selected="handleSampleDatasetSelected"
-      />
-    </v-dialog>
-
     <!-- Upload Choice Dialog -->
     <v-dialog v-model="showUploadDialog" max-width="500px" persistent>
       <v-card>
@@ -304,6 +253,7 @@ import CustomFileManager from "@/components/CustomFileManager.vue";
 import CollectionList from "@/components/CollectionList.vue";
 import ZenodoImporter from "@/components/ZenodoImporter.vue";
 import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
+import RecentDatasets from "@/components/RecentDatasets.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
 import { formatDateNumber } from "@/utils/date";
 import { logError } from "@/utils/log";
@@ -318,6 +268,7 @@ import Persister from "@/store/Persister";
     CollectionList,
     ZenodoImporter,
     ZenodoCommunityDisplay,
+    RecentDatasets,
   },
 })
 export default class Home extends Vue {
@@ -342,9 +293,9 @@ export default class Home extends Vue {
 
   isDragging: boolean = false;
   showZenodoImporter: boolean = false;
-  showCommunityDisplay: boolean = false;
   showUploadDialog: boolean = false;
   browseMode: "files" | "collections" = "files";
+  datasetsTab: number = 0;
 
   pendingFiles: File[] = [];
 
@@ -684,7 +635,6 @@ export default class Home extends Vue {
 
   handleSampleDatasetSelected(dataset: any) {
     this.selectedZenodoDataset = dataset;
-    this.showCommunityDisplay = false;
     this.showZenodoImporter = true;
   }
 
@@ -703,6 +653,10 @@ export default class Home extends Vue {
 </script>
 
 <style lang="scss" scoped>
+.home-header {
+  flex-shrink: 0;
+}
+
 .home-container {
   height: calc(100vh - 64px);
   display: flex;
@@ -723,6 +677,31 @@ export default class Home extends Vue {
 
 .recent-dataset {
   max-width: 60%;
+}
+
+.recent-dataset .v-tabs-items {
+  height: calc(100%);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.recent-dataset .v-tab-item {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.recent-dataset .v-tab-item > div {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.recent-dataset .v-tab-item > zenodo-community-display {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .home-section {

@@ -19,7 +19,7 @@ steps:
     text: "Let's use a sample dataset. Click here to pull up some samples."
     position: "bottom"
     onTriggerEvent: "try-sample-dataset-tourtrigger"
-    waitForElement: 1000
+    waitForElement: 3000
     showNextButton: false
 
   - id: my-first-dataset
@@ -31,7 +31,7 @@ steps:
     modalOverlay: true
     showNextButton: false
     onTriggerEvent: "my-first-nimbus-dataset-tourtrigger"
-    waitForElement: 1000
+    waitForElement: 3000
 
   - id: zenodo-importer-import-dataset
     route: root

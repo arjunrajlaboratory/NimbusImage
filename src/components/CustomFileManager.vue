@@ -43,7 +43,7 @@
               outlined
               class="ghost-button"
             >
-              Selected Items Actions
+              Actions
               <v-icon>mdi-dots-vertical</v-icon>
             </v-btn>
           </template>
@@ -66,7 +66,7 @@
           outlined
         >
           <v-icon left>mdi-upload</v-icon>
-          Upload Individual File
+          Upload Non-Image File
         </v-btn>
       </template>
       <template #row-widget="props">
