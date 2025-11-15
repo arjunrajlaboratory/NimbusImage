@@ -11,20 +11,30 @@ steps:
     text: "This tour will guide you through the advanced upload process. Let's get started!"
     position: "bottom"
     waitForElement: 1000  # 1 second timeout
-  - id: quick-upload
+  - id: upload-files
     route: root
-    element: "#quick-upload-tab-tourstep"
-    title: "Quick Upload"
-    text: "If you want to accept all default options and go straight to the image viewer, use quick upload"
-    position: "bottom"
-    waitForElement: 1000
-  - id: advanced-upload
-    route: root
-    element: "#advanced-upload-tab-tourstep"
-    title: "Advanced Upload"
-    text: "Use advanced upload to assign variables to files, composite tiles, and configure additional options. Either drag and drop some files into the 'Advanced Upload' box or click the box to bring up the file browser. I'll meet you on the other side."
+    element: "#upload-files-tourstep"
+    title: "Upload Files"
+    text: "Drag and drop files here or click to browse. After selecting files, you'll be able to choose between accepting defaults for a quick upload or configuring advanced options. Let's click on this box to continue."
     position: "bottom"
     modalOverlay: true
+    waitForElement: 1000
+  - id: accept-defaults
+    route: root
+    element: "#accept-defaults-button-tourstep"
+    title: "Accept Defaults"
+    text: "Click 'Accept defaults' to quickly upload with automatic settings and go straight to the image viewer. This is best for quickly looking at your data."
+    modalOverlay: true
+    position: "bottom"
+    waitForElement: 1000
+  - id: configure-dataset
+    route: root
+    element: "#configure-dataset-button-tourstep"
+    title: "Configure Dataset"
+    text: "Click 'Configure dataset' to customize variable assignments, composite tiles, and other options before uploading. We'll use this option for the tour. Click this button to continue."
+    position: "bottom"
+    modalOverlay: true
+    onTriggerEvent: "configure-dataset-tourtrigger"
     waitForElement: 1000
   - id: dataset-name
     route: newdataset

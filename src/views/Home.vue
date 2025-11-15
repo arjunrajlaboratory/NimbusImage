@@ -37,82 +37,45 @@
                   Try a Sample Dataset
                 </v-btn>
               </div>
-              <v-row class="flex-column">
-                <!-- Quick Upload -->
+              <v-row class="flex-column fill-height">
+                <!-- Upload Files -->
                 <v-card
-                  id="quick-upload-tab-tourstep"
-                  class="mb-4 upload-card"
-                  height="140"
-                  :class="{ 'drag-active': isDraggingQuick }"
-                  @click="openFileSelector('quick')"
-                  @dragenter.prevent="isDraggingQuick = true"
-                  @dragleave.prevent="onDragLeave('quick', $event)"
+                  id="upload-files-tourstep"
+                  class="upload-card fill-height"
+                  :class="{ 'drag-active': isDragging }"
+                  @click="openFileSelector"
+                  @dragenter.prevent="isDragging = true"
+                  @dragleave.prevent="onDragLeave($event)"
                   @dragover.prevent
-                  @drop.prevent="handleQuickDrop"
+                  @drop.prevent="handleDrop"
                 >
                   <v-overlay
-                    :value="isDraggingQuick"
+                    :value="isDragging"
                     absolute
                     opacity="0.8"
                     class="d-flex align-center justify-center"
                   >
                     <div class="text-h6 white--text text-center">
-                      Drop files here for quick upload
+                      Drop files here to upload
                     </div>
                   </v-overlay>
 
-                  <v-card-text class="d-flex align-center fill-height">
-                    <v-icon size="48" color="primary" class="mr-4"
+                  <v-card-text
+                    class="d-flex flex-column align-center justify-center fill-height"
+                  >
+                    <v-icon size="64" color="primary" class="mb-4"
                       >mdi-upload</v-icon
                     >
-                    <div class="flex-grow-1">
-                      <div class="text-h6 mb-1">Quick Upload</div>
-                      <div class="text-body-2">
-                        Click or drag here to directly upload files using
-                        default options and go straight to the image viewer.
+                    <div class="text-center">
+                      <div class="text-h6 mb-2">Upload files</div>
+                      <div class="text-body-2 mb-2">
+                        Click or drag here to upload files. You can choose to
+                        accept default settings or configure advanced options
+                        after selecting files.
                       </div>
-                      <div class="text-caption mt-2">
+                      <div class="text-caption">
                         Dataset will be uploaded to folder:
                         <strong>{{ locationName }}</strong>
-                        <br />
-                        Collection will be created in same folder as dataset
-                      </div>
-                    </div>
-                  </v-card-text>
-                </v-card>
-
-                <!-- Advanced Upload -->
-                <v-card
-                  id="advanced-upload-tab-tourstep"
-                  class="upload-card"
-                  height="140"
-                  :class="{ 'drag-active': isDraggingAdvanced }"
-                  @click="openFileSelector('advanced')"
-                  @dragenter.prevent="isDraggingAdvanced = true"
-                  @dragleave.prevent="onDragLeave('advanced', $event)"
-                  @dragover.prevent
-                  @drop.prevent="handleAdvancedDrop"
-                >
-                  <v-overlay
-                    :value="isDraggingAdvanced"
-                    absolute
-                    opacity="0.8"
-                    class="d-flex align-center justify-center"
-                  >
-                    <div class="text-h6 white--text text-center">
-                      Drop files here for advanced upload
-                    </div>
-                  </v-overlay>
-
-                  <v-card-text class="d-flex align-center fill-height">
-                    <v-icon size="48" color="primary" class="mr-4"
-                      >mdi-cog</v-icon
-                    >
-                    <div class="flex-grow-1">
-                      <div class="text-h6 mb-1">Advanced Upload</div>
-                      <div class="text-body-2">
-                        Click or drag here to upload with custom options for
-                        assigning variables, compositing tiles, and more.
                       </div>
                     </div>
                   </v-card-text>
@@ -187,6 +150,7 @@
             </section>
           </v-col>
         </v-row>
+        <v-divider class="my-4"></v-divider>
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
@@ -270,6 +234,50 @@
         @dataset-selected="handleSampleDatasetSelected"
       />
     </v-dialog>
+
+    <!-- Upload Choice Dialog -->
+    <v-dialog v-model="showUploadDialog" max-width="500px" persistent>
+      <v-card>
+        <v-card-title class="headline">Upload Files</v-card-title>
+        <v-card-text>
+          <div class="mb-4">
+            <v-icon color="primary" class="mr-2">mdi-file-multiple</v-icon>
+            <span class="text-body-1">
+              {{ pendingFiles.length }}
+              {{ pendingFiles.length === 1 ? "file" : "files" }} selected
+            </span>
+          </div>
+          <v-alert type="info" text class="mb-4">
+            <strong>Accept defaults</strong> to let NimbusImage try to
+            automatically read and configure your files for viewing and
+            analysis. <br /><br />
+            <strong>Configure dataset</strong> if you want to adjust how your
+            dataset is configured, including adjusting how dimensions are
+            configured and file transcoding options.
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn text @click="closeUploadDialog">Cancel</v-btn>
+          <v-btn
+            id="accept-defaults-button-tourstep"
+            color="primary"
+            v-tour-trigger="'accept-defaults-tourtrigger'"
+            @click="handleAcceptDefaults"
+          >
+            Accept defaults
+          </v-btn>
+          <v-btn
+            id="configure-dataset-button-tourstep"
+            color="primary"
+            v-tour-trigger="'configure-dataset-tourtrigger'"
+            @click="handleConfigureDataset"
+          >
+            Configure dataset
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -332,13 +340,13 @@ export default class Home extends Vue {
     this.store.setFolderLocation(location);
   }
 
-  isDraggingQuick: boolean = false;
-  isDraggingAdvanced: boolean = false;
+  isDragging: boolean = false;
   showZenodoImporter: boolean = false;
   showCommunityDisplay: boolean = false;
+  showUploadDialog: boolean = false;
   browseMode: "files" | "collections" = "files";
 
-  private activeUploadType: "quick" | "advanced" | null = null;
+  pendingFiles: File[] = [];
 
   userDisplayNames: { [key: string]: string } = {};
 
@@ -604,20 +612,16 @@ export default class Home extends Vue {
     });
   }
 
-  handleQuickDrop(event: DragEvent) {
-    this.isDraggingQuick = false;
+  handleDrop(event: DragEvent) {
+    this.isDragging = false;
     const files = Array.from(event.dataTransfer?.files || []);
-    this.quickUpload(files);
+    if (files.length > 0) {
+      this.pendingFiles = files;
+      this.showUploadDialog = true;
+    }
   }
 
-  handleAdvancedDrop(event: DragEvent) {
-    this.isDraggingAdvanced = false;
-    const files = Array.from(event.dataTransfer?.files || []);
-    this.comprehensiveUpload(files);
-  }
-
-  openFileSelector(type: "quick" | "advanced") {
-    this.activeUploadType = type;
+  openFileSelector() {
     const input = this.$refs.fileInput as HTMLInputElement;
     input.click();
   }
@@ -626,18 +630,16 @@ export default class Home extends Vue {
     const input = event.target as HTMLInputElement;
     const files = Array.from(input.files || []);
 
-    if (this.activeUploadType === "quick") {
-      this.quickUpload(files);
-    } else {
-      this.comprehensiveUpload(files);
+    if (files.length > 0) {
+      this.pendingFiles = files;
+      this.showUploadDialog = true;
     }
 
     // Reset the input
     input.value = "";
-    this.activeUploadType = null;
   }
 
-  onDragLeave(type: "quick" | "advanced", event: DragEvent) {
+  onDragLeave(event: DragEvent) {
     // Check if we're leaving the card and not entering a child element
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     const x = event.clientX;
@@ -650,12 +652,23 @@ export default class Home extends Vue {
       y <= rect.top ||
       y >= rect.bottom
     ) {
-      if (type === "quick") {
-        this.isDraggingQuick = false;
-      } else {
-        this.isDraggingAdvanced = false;
-      }
+      this.isDragging = false;
     }
+  }
+
+  handleAcceptDefaults() {
+    this.quickUpload(this.pendingFiles);
+    this.closeUploadDialog();
+  }
+
+  handleConfigureDataset() {
+    this.comprehensiveUpload(this.pendingFiles);
+    this.closeUploadDialog();
+  }
+
+  closeUploadDialog() {
+    this.showUploadDialog = false;
+    this.pendingFiles = [];
   }
 
   toggleZenodoImporter(): void {
