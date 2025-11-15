@@ -20,9 +20,6 @@
         </div>
       </v-overlay>
       <v-container class="home-container">
-        <header class="home-header mb-3">
-          <h1 class="text-h4 font-weight-bold">NimbusImage</h1>
-        </header>
         <v-row class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
@@ -653,10 +650,6 @@ export default class Home extends Vue {
 </script>
 
 <style lang="scss" scoped>
-.home-header {
-  flex-shrink: 0;
-}
-
 .home-container {
   height: calc(100vh - 64px);
   display: flex;

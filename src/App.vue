@@ -13,6 +13,9 @@
           />
         </v-toolbar-title>
       </span>
+      <h1 v-if="routeName === 'root'" class="text-h4 font-weight-bold ml-4">
+        NimbusImage
+      </h1>
       <bread-crumbs />
       <v-spacer />
       <span v-tooltip="'Upload a new dataset'">
