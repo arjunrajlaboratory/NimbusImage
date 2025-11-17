@@ -1,6 +1,6 @@
 <template>
   <div class="custom-file-manager-wrapper">
-    <div class="d-flex align-center ma-2">
+    <div class="d-flex align-center ma-2 search-container">
       <v-icon class="mr-2">mdi-magnify</v-icon>
       <div class="flex-grow-1">
         <girder-search
@@ -36,8 +36,14 @@
       <template v-if="menuEnabled" #headerwidget>
         <v-menu v-model="selectedItemsOptionsMenu" bottom offset-y>
           <template v-slot:activator="{ on, attrs }">
-            <v-btn v-bind="attrs" v-on="on" :disabled="selected.length === 0">
-              Selected Items Actions
+            <v-btn
+              v-bind="attrs"
+              v-on="on"
+              :disabled="selected.length === 0"
+              outlined
+              class="ghost-button"
+            >
+              Actions
               <v-icon>mdi-dots-vertical</v-icon>
             </v-btn>
           </template>
@@ -54,12 +60,13 @@
           style="display: none"
         />
         <v-btn
-          class="mx-2"
+          class="mx-2 ghost-button"
           @click="$refs.fileInput.click()"
           :disabled="shouldDisableSingleFileUpload"
+          outlined
         >
           <v-icon left>mdi-upload</v-icon>
-          Upload Individual File
+          Upload Non-Image File
         </v-btn>
       </template>
       <template #row-widget="props">
@@ -538,7 +545,7 @@ export default class CustomFileManager extends Vue {
 }
 </script>
 
-<style lang="scss">
+<style lang="scss" scoped>
 .custom-file-manager-wrapper,
 .custom-file-manager-wrapper > .girder-data-browser-snippet,
 .custom-file-manager-wrapper
@@ -560,6 +567,110 @@ export default class CustomFileManager extends Vue {
   overflow-y: auto;
 }
 
+// Search bar styling for dark mode - using unscoped styles to penetrate component boundaries
+</style>
+
+<style lang="scss">
+// Unscoped styles for search bar in dark mode
+.theme--dark {
+  .custom-file-manager-wrapper {
+    .search-container {
+      // Target v-autocomplete (girder-search likely uses this)
+      .v-autocomplete,
+      .v-text-field {
+        .v-input__control {
+          .v-input__slot {
+            background-color: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.12) !important;
+            border-radius: 4px !important;
+
+            &::before,
+            &::after {
+              display: none !important;
+            }
+
+            .v-text-field__slot,
+            .v-autocomplete__slot {
+              input {
+                background-color: transparent !important;
+                color: rgba(255, 255, 255, 0.87) !important;
+                border: none !important;
+                box-shadow: none !important;
+
+                &::placeholder {
+                  color: rgba(255, 255, 255, 0.38) !important;
+                }
+              }
+            }
+
+            .v-input__append-inner,
+            .v-input__prepend-inner {
+              .v-icon {
+                color: rgba(255, 255, 255, 0.6) !important;
+              }
+            }
+          }
+
+          .v-text-field__details,
+          .v-autocomplete__details {
+            .v-messages {
+              color: rgba(255, 255, 255, 0.6) !important;
+            }
+          }
+        }
+
+        &.v-input--is-focused {
+          .v-input__control {
+            .v-input__slot {
+              background-color: rgba(255, 255, 255, 0.08) !important;
+              border-color: rgba(255, 255, 255, 0.24) !important;
+            }
+          }
+        }
+      }
+
+      // Fallback for direct input elements
+      input[type="text"],
+      input[type="search"] {
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 4px !important;
+        color: rgba(255, 255, 255, 0.87) !important;
+
+        &::placeholder {
+          color: rgba(255, 255, 255, 0.38) !important;
+        }
+
+        &:focus {
+          background-color: rgba(255, 255, 255, 0.08) !important;
+          border-color: rgba(255, 255, 255, 0.24) !important;
+          outline: none !important;
+        }
+      }
+    }
+  }
+
+  // More aggressive selector to catch any input in the search container
+  .custom-file-manager-wrapper .search-container * {
+    .v-input__slot {
+      background-color: rgba(255, 255, 255, 0.05) !important;
+      border: 1px solid rgba(255, 255, 255, 0.12) !important;
+
+      input {
+        background-color: transparent !important;
+        color: rgba(255, 255, 255, 0.87) !important;
+        border: none !important;
+        box-shadow: none !important;
+
+        &::placeholder {
+          color: rgba(255, 255, 255, 0.38) !important;
+        }
+      }
+    }
+  }
+}
+
+// Icon color styles (unscoped to penetrate child components)
 .itemRow .v-icon.mdi-package {
   // targets box_com icon (datasets)
   color: #e57373;
@@ -576,7 +687,9 @@ export default class CustomFileManager extends Vue {
   // targets folders
   color: #b0a69a;
 }
+</style>
 
+<style lang="scss" scoped>
 .type-indicator {
   border-radius: 4px !important; // More rectangular
   font-family: "Roboto Mono", monospace !important; // Monospace font
@@ -589,5 +702,45 @@ export default class CustomFileManager extends Vue {
 
 .chip-label {
   font-size: 0.9em;
+}
+
+.ghost-button {
+  background-color: transparent !important;
+
+  .v-icon {
+    color: inherit !important;
+  }
+
+  &.v-btn--disabled {
+    opacity: 0.38;
+  }
+}
+
+// Dark mode styles
+.theme--dark {
+  .ghost-button {
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    color: rgba(255, 255, 255, 0.7) !important;
+
+    &:hover:not(.v-btn--disabled) {
+      background-color: rgba(255, 255, 255, 0.08) !important;
+      border-color: rgba(255, 255, 255, 0.24) !important;
+      color: rgba(255, 255, 255, 0.87) !important;
+    }
+  }
+}
+
+// Light mode styles
+.theme--light {
+  .ghost-button {
+    border-color: rgba(0, 0, 0, 0.12) !important;
+    color: rgba(0, 0, 0, 0.7) !important;
+
+    &:hover:not(.v-btn--disabled) {
+      background-color: rgba(0, 0, 0, 0.04) !important;
+      border-color: rgba(0, 0, 0, 0.24) !important;
+      color: rgba(0, 0, 0, 0.87) !important;
+    }
+  }
 }
 </style>

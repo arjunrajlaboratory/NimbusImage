@@ -1,7 +1,15 @@
 <template>
-  <v-container>
-    <v-card>
+  <v-container :class="{ 'pa-0': embedded, 'fill-height': embedded }">
+    <v-card
+      :class="{
+        'elevation-0': embedded,
+        'd-flex': embedded,
+        'flex-column': embedded,
+        'fill-height': embedded,
+      }"
+    >
       <v-card-title
+        v-if="!embedded"
         class="d-flex justify-space-between align-center"
         id="zenodo-community-display-tourstep"
       >
@@ -10,7 +18,13 @@
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </v-card-title>
-      <v-card-text>
+      <v-card-text
+        :class="{
+          'pt-0': embedded,
+          'flex-grow-1': embedded,
+          'overflow-y-auto': embedded,
+        }"
+      >
         <v-alert v-if="loading" type="info" text>
           Loading sample datasets...
         </v-alert>
@@ -40,47 +54,47 @@
         </template>
 
         <!-- Dataset Cards -->
-        <v-row v-if="datasets.length > 0">
-          <v-col v-for="dataset in datasets" :key="dataset.id" cols="12" md="6">
-            <v-card
-              outlined
-              hover
-              class="h-100 sample-dataset-card"
-              @click="selectDataset(dataset)"
-              :id="getTourStepId(dataset.title)"
-              v-tour-trigger="getTourTriggerId(dataset.title)"
-            >
-              <v-card-title>{{ dataset.title }}</v-card-title>
-              <v-card-subtitle>
-                <v-chip
-                  x-small
-                  class="mr-1"
-                  v-for="(creator, index) in dataset.metadata.creators"
-                  :key="index"
-                >
-                  {{ creator.name }}
+        <div v-if="datasets.length > 0" class="dataset-list">
+          <v-card
+            v-for="dataset in datasets"
+            :key="dataset.id"
+            outlined
+            hover
+            class="sample-dataset-card mb-3"
+            @click="selectDataset(dataset)"
+            :id="getTourStepId(dataset.title)"
+            v-tour-trigger="getTourTriggerId(dataset.title)"
+          >
+            <v-card-title class="pb-2">{{ dataset.title }}</v-card-title>
+            <v-card-subtitle class="pb-2">
+              <v-chip
+                x-small
+                class="mr-1"
+                v-for="(creator, index) in dataset.metadata.creators"
+                :key="index"
+              >
+                {{ creator.name }}
+              </v-chip>
+              <div class="mt-1">
+                Published: {{ formatDate(dataset.created) }}
+              </div>
+            </v-card-subtitle>
+            <v-card-text class="pt-0">
+              <div
+                class="text-truncate-3"
+                v-html="dataset.metadata.description"
+              ></div>
+              <div class="mt-2">
+                <v-chip small color="primary" class="mr-1">
+                  {{ dataset.files.length }} files
                 </v-chip>
-                <div class="mt-1">
-                  Published: {{ formatDate(dataset.created) }}
-                </div>
-              </v-card-subtitle>
-              <v-card-text>
-                <div
-                  class="text-truncate-3"
-                  v-html="dataset.metadata.description"
-                ></div>
-                <div class="mt-2">
-                  <v-chip small color="primary" class="mr-1">
-                    {{ dataset.files.length }} files
-                  </v-chip>
-                  <v-chip small>
-                    {{ formatSize(getTotalSize(dataset.files)) }}
-                  </v-chip>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
+                <v-chip small>
+                  {{ formatSize(getTotalSize(dataset.files)) }}
+                </v-chip>
+              </div>
+            </v-card-text>
+          </v-card>
+        </div>
 
         <!-- Pagination -->
         <v-pagination
@@ -114,6 +128,9 @@ export default class ZenodoCommunityDisplay extends Vue {
 
   @Prop({ default: 10 })
   readonly pageSize!: number;
+
+  @Prop({ default: false })
+  readonly embedded!: boolean;
 
   private zenodoApi = new ZenodoAPI(store.girderRestProxy);
 
@@ -193,21 +210,28 @@ export default class ZenodoCommunityDisplay extends Vue {
 </script>
 
 <style scoped>
+.dataset-list {
+  display: flex;
+  flex-direction: column;
+}
+
 .sample-dataset-card {
   transition:
     transform 0.2s,
     box-shadow 0.2s;
   cursor: pointer;
+  width: 100%;
 }
 
 .sample-dataset-card:hover {
-  transform: translateY(-4px);
+  transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2) !important;
 }
 
 .text-truncate-3 {
   display: -webkit-box;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
