@@ -1037,12 +1037,12 @@ export default class ImageViewer extends Vue {
         (acc, entry) => acc + (entry.imageLayers || []).length,
         0,
       );
-      /* I thought the number of webgl layesr would be
+      /* I thought the number of webgl layers would be
        *  imageLayers (mll * 2) + 1 + this.maps.length
        * but we run out of webgl contexts sooner than that.  Maybe because they
        * get switched on and off?
        */
-      if (currentImageLayers + this.maps.length >= 13) {
+      if (currentImageLayers + this.maps.length >= 11) {
         mapentry.params.layer.renderer = "canvas";
       } else {
         delete mapentry.params.layer.renderer;
