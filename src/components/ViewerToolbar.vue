@@ -10,9 +10,10 @@
           :title="maxXY > 0 ? maxXY + 1 + ' XY Values (Hotkeys w/r)' : ''"
           :offset="1"
           :value-label="xyLabel"
+          :is-unrolled="unrollXY"
         />
         <v-checkbox
-          v-if="maxXY > 0"
+          v-if="maxXY > 0 || unrollXY"
           class="ml-3 my-checkbox"
           v-model="unrollXY"
           label="Unroll"
@@ -28,9 +29,10 @@
           :title="maxZ > 0 ? maxZ + 1 + ' Z Values (Hotkeys d/e)' : ''"
           :offset="1"
           :value-label="zLabel"
+          :is-unrolled="unrollZ"
         />
         <v-checkbox
-          v-if="maxZ > 0"
+          v-if="maxZ > 0 || unrollZ"
           class="ml-3 my-checkbox"
           v-model="unrollZ"
           label="Unroll"
@@ -46,9 +48,10 @@
           :title="maxTime > 0 ? maxTime + 1 + ' Time Values (Hotkeys s/f)' : ''"
           :offset="1"
           :value-label="timeLabel"
+          :is-unrolled="unrollT"
         />
         <v-checkbox
-          v-if="maxTime > 0"
+          v-if="maxTime > 0 || unrollT"
           class="ml-3 my-checkbox"
           v-model="unrollT"
           label="Unroll"

@@ -1,40 +1,50 @@
 <template>
-  <div v-if="min !== max" class="value-slider">
-    <!-- Row 1: Label and Text Input -->
-    <v-row no-gutters class="mb-1">
-      <v-col cols="2" class="text-right align-center label-column pa-0">
-        {{ label }}:
-      </v-col>
-      <v-col cols="10" class="text-left align-center value-column pa-0 pl-2">
-        <v-text-field
-          :value="displayValue"
-          class="mt-0 pt-0 no-underline"
-          hide-details
-          single-line
-          type="text"
-          dense
-          @input="handleInput"
-          @blur="handleBlur"
-        />
-      </v-col>
-    </v-row>
+  <div v-if="min !== max || isUnrolled" class="value-slider">
+    <!-- Show unrolled message when unrolled -->
+    <div v-if="isUnrolled" class="unrolled-message">
+      {{ unrolledMessage }}
+    </div>
+    <!-- Show normal slider when not unrolled -->
+    <template v-else>
+      <!-- Row 1: Label and Text Input -->
+      <v-row no-gutters class="mb-1">
+        <v-col cols="2" class="text-right align-center label-column pa-0">
+          {{ label }}:
+        </v-col>
+        <v-col cols="10" class="text-left align-center value-column pa-0 pl-2">
+          <v-text-field
+            :value="displayValue"
+            class="mt-0 pt-0 no-underline"
+            hide-details
+            single-line
+            type="text"
+            dense
+            @input="handleInput"
+            @blur="handleBlur"
+          />
+        </v-col>
+      </v-row>
 
-    <!-- Row 2: Slider and Counter -->
-    <v-row no-gutters class="mt-0">
-      <v-col cols="6" class="slider-column pa-0 pl-2 offset-2">
-        <v-slider
-          v-model="slider"
-          :max="max + offset"
-          :min="min + offset"
-          hide-details
-        />
-      </v-col>
-      <v-col cols="4" class="text-right align-center counter-column pa-0 pl-2">
-        <span class="caption font-weight-light">
-          {{ `${value + offset} of ${max + offset}` }}
-        </span>
-      </v-col>
-    </v-row>
+      <!-- Row 2: Slider and Counter -->
+      <v-row no-gutters class="mt-0">
+        <v-col cols="6" class="slider-column pa-0 pl-2 offset-2">
+          <v-slider
+            v-model="slider"
+            :max="max + offset"
+            :min="min + offset"
+            hide-details
+          />
+        </v-col>
+        <v-col
+          cols="4"
+          class="text-right align-center counter-column pa-0 pl-2"
+        >
+          <span class="caption font-weight-light">
+            {{ `${value + offset} of ${max + offset}` }}
+          </span>
+        </v-col>
+      </v-row>
+    </template>
   </div>
 </template>
 
@@ -49,6 +59,11 @@
 
 .counter-column {
   transform: translateY(2px); /* Align counter with other elements */
+}
+
+.unrolled-message {
+  padding: 4px 0;
+  font-size: inherit;
 }
 
 /* Kill the v-text-field underline (normal and focused) */
@@ -85,6 +100,8 @@ export default class ValueSlider extends Vue {
   readonly offset!: number;
   @Prop({ default: null })
   readonly valueLabel!: string | null;
+  @Prop({ default: false })
+  readonly isUnrolled!: boolean;
 
   // Will be immediatiely updated by watchValue()
   private internalValue = 0;
@@ -104,6 +121,10 @@ export default class ValueSlider extends Vue {
 
   get displayValue() {
     return this.valueLabel || (this.value + this.offset).toString();
+  }
+
+  get unrolledMessage() {
+    return `${this.label} is unrolled`;
   }
 
   private updateInternalValue() {
