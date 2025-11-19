@@ -67,6 +67,9 @@ export default class ConfigurationSelect extends Mapper {
   @Prop({ default: "Select collections" })
   title!: string;
 
+  @Prop()
+  folderId?: string;
+
   compatibleConfigurations: IDatasetConfiguration[] = [];
   selectedConfigurations: IDatasetConfiguration[] = [];
   loading: boolean = false;
@@ -82,6 +85,7 @@ export default class ConfigurationSelect extends Mapper {
   }
 
   @Watch("dataset")
+  @Watch("folderId")
   async updateCompatibleConfigurations() {
     if (!this.dataset) {
       this.compatibleConfigurations = [];
@@ -98,7 +102,10 @@ export default class ConfigurationSelect extends Mapper {
       );
 
       // Get all collections using the new endpoint (like CollectionList.vue does)
-      const allConfigurations = await this.store.api.getAllConfigurations();
+      // Use folderId if provided, otherwise defaults to user's private folder
+      const allConfigurations = await this.store.api.getAllConfigurations(
+        this.folderId,
+      );
 
       // Filter for compatible configurations using client-side logic
       const datasetCompatibility = getDatasetCompatibility(this.dataset);

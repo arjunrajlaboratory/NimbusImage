@@ -204,7 +204,7 @@
                     color="primary"
                     :to="{
                       name: 'importconfiguration',
-                      query: { datasetId },
+                      query: { datasetId, folderId: datasetParentId },
                     }"
                   >
                     Add to an existing collection…
@@ -338,6 +338,7 @@ export default class DatasetInfo extends Vue {
   showNewCollectionNameDialog = false;
   newCollectionName: string = "";
   selectedFolderId: string | null = null;
+  datasetParentId: string | null = null;
 
   readonly headers = [
     {
@@ -435,6 +436,7 @@ export default class DatasetInfo extends Vue {
   mounted() {
     this.updateDatasetViews();
     this.updateDefaultConfigurationName();
+    this.fetchDatasetParentFolder();
   }
 
   @Watch("dataset")
@@ -453,6 +455,16 @@ export default class DatasetInfo extends Vue {
   updateDefaultConfigurationName() {
     this.defaultConfigurationName =
       (this.datasetName || "Default") + " collection";
+  }
+
+  @Watch("dataset")
+  async fetchDatasetParentFolder() {
+    if (this.dataset) {
+      const folder = await this.girderResources.getFolder(this.dataset.id);
+      this.datasetParentId = folder?.parentId || null;
+    } else {
+      this.datasetParentId = null;
+    }
   }
 
   toRoute(datasetView: IDatasetView) {
