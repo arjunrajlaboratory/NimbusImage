@@ -7,6 +7,28 @@
           <v-switch
             hide-details
             dense
+            v-model="showXYLabels"
+            label="Show XY position labels"
+            title="Display coordinate labels for XY positions"
+          />
+          <v-switch
+            hide-details
+            dense
+            v-model="showZLabels"
+            label="Show Z position labels"
+            title="Display coordinate labels for Z positions"
+          />
+          <v-switch
+            hide-details
+            dense
+            v-model="showTimeLabels"
+            label="Show time labels"
+            title="Display time labels"
+          />
+          <v-divider class="my-2" />
+          <v-switch
+            hide-details
+            dense
             v-model="valueOnHover"
             label="Show channel values on hover"
             title="Show pixel intensity values when hovering cursor over image"
@@ -227,6 +249,30 @@ export default class ViewerSettings extends Vue {
 
   set backgroundColor(value: string) {
     this.store.setBackgroundColor(value);
+  }
+
+  get showXYLabels() {
+    return this.store.showXYLabels;
+  }
+
+  set showXYLabels(value: boolean) {
+    this.store.setShowXYLabels(value);
+  }
+
+  get showZLabels() {
+    return this.store.showZLabels;
+  }
+
+  set showZLabels(value: boolean) {
+    this.store.setShowZLabels(value);
+  }
+
+  get showTimeLabels() {
+    return this.store.showTimeLabels;
+  }
+
+  set showTimeLabels(value: boolean) {
+    this.store.setShowTimeLabels(value);
   }
 }
 </script>
