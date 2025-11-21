@@ -285,6 +285,10 @@ export default class ViewerToolbar extends Vue {
   }
 
   get xyLabel() {
+    if (!this.store.showXYLabels) {
+      // User has disabled XY labels
+      return null;
+    }
     if (!this.dimensionLabels || !this.dimensionLabels.xy) {
       return null;
     }
@@ -292,6 +296,10 @@ export default class ViewerToolbar extends Vue {
   }
 
   get zLabel() {
+    if (!this.store.showZLabels) {
+      // User has disabled Z labels
+      return null;
+    }
     if (!this.dimensionLabels || !this.dimensionLabels.z) {
       return null;
     }
@@ -299,6 +307,10 @@ export default class ViewerToolbar extends Vue {
   }
 
   get timeLabel() {
+    if (!this.store.showTimeLabels) {
+      // User has disabled time labels
+      return null;
+    }
     if (!this.dimensionLabels || !this.dimensionLabels.t) {
       return null;
     }
