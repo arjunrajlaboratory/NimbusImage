@@ -41,6 +41,13 @@
           </v-row>
           <v-row>
             <v-col cols="12">
+              <v-checkbox
+                v-model="makePublic"
+                label="Make Public (accessible to everyone without login)"
+                class="mt-2"
+                dense
+                hide-details
+              ></v-checkbox>
               <v-text-field
                 v-model="usernameOrEmail"
                 label="Username or Email to share with"
@@ -48,12 +55,15 @@
                 dense
                 outlined
                 hide-details
+                :disabled="makePublic"
+                :required="!makePublic"
               ></v-text-field>
               <v-radio-group
                 v-model="accessLevel"
                 row
                 class="mt-2"
                 hide-details
+                :disabled="makePublic"
               >
                 <v-radio label="Private" :value="-1"></v-radio>
                 <v-radio label="View access" :value="0"></v-radio>
@@ -72,7 +82,9 @@
           @click="share"
           :loading="isSharing"
           :disabled="
-            selectedDatasetViews.length === 0 || !usernameOrEmail || isSharing
+            selectedDatasetViews.length === 0 ||
+            (!makePublic && !usernameOrEmail) ||
+            isSharing
           "
         >
           Share
@@ -110,6 +122,7 @@ export default class ShareDataset extends Vue {
   userErrorString: string = "";
   showUserError: boolean = false;
   accessLevel: number = -1;
+  makePublic: boolean = false;
   associatedViews: DatasetViewAndConfigurationName[] = [];
 
   @Watch("value")
@@ -125,6 +138,7 @@ export default class ShareDataset extends Vue {
       this.showUserError = false;
       this.isSharing = false;
       this.accessLevel = -1;
+      this.makePublic = false;
       this.associatedViews = [];
     }
   }
@@ -181,25 +195,42 @@ export default class ShareDataset extends Vue {
     this.showUserError = false;
     this.userErrorString = "";
 
-    const response = await this.store.api.shareDatasetView(
-      this.associatedViews.filter((datasetView) =>
-        this.selectedDatasetViews.includes(datasetView.id),
-      ),
-      this.usernameOrEmail,
-      this.accessLevel,
-    );
+    try {
+      if (this.makePublic) {
+        // Use the dedicated setDatasetPublic endpoint
+        if (!this.dataset) {
+          throw new Error("Dataset not found");
+        }
+        await this.store.api.setDatasetPublic(this.dataset._id, true);
+        this.close();
+      } else {
+        // Use the shareDatasetView endpoint for user sharing
+        const response = await this.store.api.shareDatasetView(
+          this.associatedViews.filter((datasetView) =>
+            this.selectedDatasetViews.includes(datasetView.id),
+          ),
+          this.usernameOrEmail,
+          this.accessLevel,
+          false,
+        );
 
-    if (typeof response === "string") {
-      this.userErrorString =
-        response === "badEmailOrUsername"
-          ? "Unknown user"
-          : "An unknown error occurred";
+        if (typeof response === "string") {
+          this.userErrorString =
+            response === "badEmailOrUsername"
+              ? "Unknown user"
+              : "An unknown error occurred";
+          this.showUserError = true;
+        } else {
+          this.close();
+        }
+      }
+    } catch (error) {
+      logError("Failed to share dataset", error);
+      this.userErrorString = "An error occurred while sharing the dataset";
       this.showUserError = true;
-    } else {
-      this.close();
+    } finally {
+      this.isSharing = false;
     }
-
-    this.isSharing = false;
   }
 }
 </script>

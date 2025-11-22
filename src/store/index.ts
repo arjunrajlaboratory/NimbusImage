@@ -978,7 +978,7 @@ export class Main extends VuexModule {
   @Action
   async setSelectedDataset(id: string | null) {
     this.api.flushCaches();
-    if (!this.isLoggedIn || !id) {
+    if (!id) {
       this.setDataset({ id, data: null });
       return;
     }

@@ -30,10 +30,11 @@ class DatasetView(Resource):
         self.route("GET", (), self.find)
         self.route("POST", ("bulk_find",), self.findBulk)
         self.route("POST", ("share",), self.share)
+        self.route("POST", ("set_public",), self.setDatasetPublic)
         # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
         self.route("POST", ("map",), self.map)
 
-    @access.user
+    @access.public
     @describeRoute(
         Description("Get a dataset view by its id.").param(
             "id", "The dataset view's id", paramType="path"
@@ -112,7 +113,7 @@ class DatasetView(Resource):
         self._datasetViewModel.updateDatasetView(
             dataset_view, new_dataset_view)
 
-    @access.user
+    @access.public
     @describeRoute(
         Description("Search for dataset views.")
         .responseClass("dataset_view")
@@ -147,7 +148,7 @@ class DatasetView(Resource):
             offset=offset,
         )
 
-    @access.user
+    @access.public
     @autoDescribeRoute(
         Description("""
         Bulk search for dataset views (READ OPERATION).
@@ -270,6 +271,54 @@ class DatasetView(Resource):
         return True
 
     @access.user
+    @autoDescribeRoute(
+        Description("Make a dataset and all associated views/configs public or private")
+        .notes("""
+            Sets public READ access on:
+            - The dataset folder itself
+            - All datasetViews for this dataset
+            - All configurations used by those datasetViews
+            
+            Write operations remain restricted to users with WRITE permissions.
+        """)
+        .modelParam('datasetId', 'The dataset folder ID', model=Folder, 
+                    level=AccessType.ADMIN, destName='dataset')
+        .param('public', 'True to make public, False to make private',
+               dataType='boolean', required=True)
+    )
+    def setDatasetPublic(self, dataset, public):
+        """Set a dataset and all associated resources to public or private."""
+        user = self.getCurrentUser()
+        
+        # 1. Set the dataset (folder) itself to public
+        Folder().setPublic(dataset, public, save=True)
+        
+        # 2. Find all DatasetViews for this dataset
+        datasetViews = list(self._datasetViewModel.find({
+            'datasetId': dataset['_id']
+        }))
+        
+        # 3. Collect all unique configuration IDs
+        configIds = {dv['configurationId'] for dv in datasetViews}
+        
+        # 4. Set permissions on all DatasetViews
+        for dv in datasetViews:
+            self._datasetViewModel.setPublic(dv, public, save=True)
+        
+        # 5. Set permissions on all Configurations
+        for configId in configIds:
+            config = CollectionModel().load(configId, force=True)
+            if config:
+                CollectionModel().setPublic(config, public, save=True)
+        
+        return {
+            'dataset': str(dataset['_id']),
+            'public': public,
+            'datasetViewsUpdated': len(datasetViews),
+            'configurationsUpdated': len(configIds)
+        }
+
+    @access.public
     @autoDescribeRoute(
         Description("Bulk map dataset and configuration ids")
         .notes(

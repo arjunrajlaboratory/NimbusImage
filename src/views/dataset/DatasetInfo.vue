@@ -368,9 +368,17 @@ export default class DatasetInfo extends Vue {
       if (!(datasetView.configurationId in this.configInfo)) {
         this.girderResources
           .getCollection(datasetView.configurationId)
-          .then((item) =>
+          .then((item: IGirderItem | null) =>
             Vue.set(this.configInfo, datasetView.configurationId, item),
-          );
+          )
+          .catch((error: unknown) => {
+            logError(
+              `Failed to fetch collection info for ${datasetView.configurationId}:`,
+              error,
+            );
+            // Set to null to prevent retry loops
+            Vue.set(this.configInfo, datasetView.configurationId, null);
+          });
       }
     }
 
@@ -415,19 +423,19 @@ export default class DatasetInfo extends Vue {
       },
       {
         name: "Timepoints",
-        value: this.dataset?.time.length || "?",
+        value: this.dataset?.time?.length || "?",
       },
       {
         name: "XY Slices",
-        value: this.dataset?.xy.length || "?",
+        value: this.dataset?.xy?.length || "?",
       },
       {
         name: "Z Slices",
-        value: this.dataset?.z.length || "?",
+        value: this.dataset?.z?.length || "?",
       },
       {
         name: "Channels",
-        value: this.dataset?.channels.length || "?",
+        value: this.dataset?.channels?.length || "?",
       },
     ];
   }
@@ -440,9 +448,14 @@ export default class DatasetInfo extends Vue {
   @Watch("dataset")
   async updateDatasetViews() {
     if (this.dataset) {
-      this.datasetViews = await this.store.api.findDatasetViews({
-        datasetId: this.dataset.id,
-      });
+      try {
+        this.datasetViews = await this.store.api.findDatasetViews({
+          datasetId: this.dataset.id,
+        });
+      } catch (error) {
+        logError("Failed to fetch dataset views:", error);
+        this.datasetViews = [];
+      }
     } else {
       this.datasetViews = [];
     }
