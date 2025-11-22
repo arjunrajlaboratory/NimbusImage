@@ -57,7 +57,7 @@ class DatasetViewSchema:
     }
 
 
-class DatasetView(ProxiedModel, AccessControlledModel):
+class DatasetView(AccessControlledModel, ProxiedModel):
 
     def __init__(self):
         super().__init__()

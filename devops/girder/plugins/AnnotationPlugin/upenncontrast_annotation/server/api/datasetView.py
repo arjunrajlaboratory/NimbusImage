@@ -288,29 +288,31 @@ class DatasetView(Resource):
     )
     def setDatasetPublic(self, dataset, public):
         """Set a dataset and all associated resources to public or private."""
-        user = self.getCurrentUser()
-        
+
         # 1. Set the dataset (folder) itself to public
         Folder().setPublic(dataset, public, save=True)
-        
-        # 2. Find all DatasetViews for this dataset
-        datasetViews = list(self._datasetViewModel.find({
+
+        # 2. Find all DatasetViews
+        # Use collection.find to get all regardless of permissions
+        # This used to be datasetViews = list(self._datasetViewModel.find({
+        # but changed it here while getting things to work; could test.
+        datasetViews = list(self._datasetViewModel.collection.find({
             'datasetId': dataset['_id']
         }))
-        
-        # 3. Collect all unique configuration IDs
+
+        # 3. Collect unique configuration IDs
         configIds = {dv['configurationId'] for dv in datasetViews}
-        
-        # 4. Set permissions on all DatasetViews
+
+        # 4. Set permissions on DatasetViews
         for dv in datasetViews:
             self._datasetViewModel.setPublic(dv, public, save=True)
-        
-        # 5. Set permissions on all Configurations
+
+        # 5. Set permissions on Configurations
         for configId in configIds:
             config = CollectionModel().load(configId, force=True)
             if config:
                 CollectionModel().setPublic(config, public, save=True)
-        
+
         return {
             'dataset': str(dataset['_id']),
             'public': public,

@@ -1039,9 +1039,12 @@ export class Main extends VuexModule {
       }
       datasetView.lastViewed = Date.now();
       this.setDatasetViewImpl(datasetView);
-      const promises: Promise<any>[] = [
-        this.api.updateDatasetView(datasetView),
-      ];
+      const promises: Promise<any>[] = [];
+
+      // Only update lastViewed if user is logged in (anonymous users can't update)
+      if (this.isLoggedIn) {
+        promises.push(this.api.updateDatasetView(datasetView));
+      }
 
       const newLocation = datasetView.lastLocation;
       const query = app.$route.query;
@@ -1273,7 +1276,9 @@ export class Main extends VuexModule {
   @Debounce(100, { leading: false, trailing: true })
   async fetchHistory() {
     const datasetId = this.dataset?.id;
-    if (datasetId !== undefined) {
+    // Only fetch history if user is logged in to avoid 401 errors
+    // (and because anonymous users should not access history)
+    if (this.isLoggedIn && datasetId !== undefined) {
       const history = await this.api.getHistoryEntries(datasetId);
       this.setHistory(history);
     } else {

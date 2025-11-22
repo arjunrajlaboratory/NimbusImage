@@ -110,7 +110,7 @@ class AnnotationProperty(Resource):
         property.update(self.getBodyJson())
         self._propertyModel.save(property)
 
-    @access.user
+    @access.public
     @describeRoute(
         Description("Search for properties")
         .responseClass("property")
@@ -131,7 +131,7 @@ class AnnotationProperty(Resource):
             offset=offset,
         )
 
-    @access.user
+    @access.public
     @describeRoute(
         Description("Get a property by its id.").param(
             "id", "The annotation property's id", paramType="path"
