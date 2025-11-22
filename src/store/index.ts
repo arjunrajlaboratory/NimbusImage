@@ -869,12 +869,11 @@ export class Main extends VuexModule {
 
   @Action
   private async initFromUrl() {
-    if (this.girderUser && this.selectedDatasetId) {
-      // load after logged in
+    // Note, removed the check for isLoggedIn to allow anonymous users to access datasets
+    if (this.selectedDatasetId) {
       await this.setSelectedDataset(this.selectedDatasetId);
     }
-    if (this.girderUser && this.selectedConfigurationId && this.dataset) {
-      // load after logged in
+    if (this.selectedConfigurationId && this.dataset) {
       await this.setSelectedConfiguration(this.selectedConfigurationId);
     }
   }
@@ -1003,10 +1002,8 @@ export class Main extends VuexModule {
 
   @Action
   async setSelectedConfiguration(id: string | null) {
-    if (!this.isLoggedIn || !id) {
-      this.setConfiguration({ id, data: null });
-      return;
-    }
+    // Note, removed the check for isLoggedIn to allow anonymous users to access configurations
+    // Needed to view public datasets even as anonymous
     try {
       sync.setLoading(true);
       const configuration = await this.context.dispatch("getConfiguration", id);
