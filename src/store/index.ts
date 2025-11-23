@@ -1009,6 +1009,11 @@ export class Main extends VuexModule {
   async setSelectedConfiguration(id: string | null) {
     // Note, removed the check for isLoggedIn to allow anonymous users to access configurations
     // Needed to view public datasets even as anonymous
+    // Note also that this does get called before the user is logged in with a null id,
+    // so we need to return early if the id is null.
+    if (id === null) {
+      return;
+    }
     try {
       sync.setLoading(true);
       const configuration = await this.context.dispatch("getConfiguration", id);
