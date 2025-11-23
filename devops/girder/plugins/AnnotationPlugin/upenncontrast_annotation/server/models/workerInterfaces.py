@@ -31,7 +31,7 @@ class InterfaceSchema:
     }
 
 
-class WorkerInterfaceModel(ProxiedModel, AccessControlledModel):
+class WorkerInterfaceModel(AccessControlledModel, ProxiedModel):
 
     def __init__(self):
         super().__init__()

@@ -29,7 +29,7 @@ class PropertySchema:
     }
 
 
-class AnnotationProperty(ProxiedModel, AccessControlledModel):
+class AnnotationProperty(AccessControlledModel, ProxiedModel):
     # TODO: write lock
     # TODO: delete hooks: remove all computed values if the property is
     #   deleted ? (big operation)

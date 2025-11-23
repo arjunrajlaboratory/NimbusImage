@@ -31,7 +31,7 @@ class PreviewSchema:
     }
 
 
-class WorkerPreviewModel(ProxiedModel, AccessControlledModel):
+class WorkerPreviewModel(AccessControlledModel, ProxiedModel):
 
     def __init__(self):
         super().__init__()
