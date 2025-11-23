@@ -84,7 +84,7 @@ class CollectionSchema:
     }
 
 
-class Collection(ProxiedModel, AccessControlledModel):
+class Collection(AccessControlledModel, ProxiedModel):
 
     def __init__(self):
         super().__init__()
