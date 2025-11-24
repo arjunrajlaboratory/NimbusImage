@@ -97,7 +97,10 @@ class Collection(AccessControlledModel, ProxiedModel):
 
     def initialize(self):
         self.name = 'upenn_collection'
-        self.ensureIndices(('folderId', 'name', 'lowerName',
+        self.ensureIndices(('folderId',
+                            'name',
+                            'lowerName',
+                            'meta.propertyIds',
                             ([('folderId', 1), ('name', 1)], {})))
 
         self.exposeFields(level=AccessType.READ, fields=(
