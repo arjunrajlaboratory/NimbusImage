@@ -472,6 +472,9 @@ export class Properties extends VuexModule {
 
   @Action
   async fetchWorkerImageList() {
+    if (!main.isLoggedIn) {
+      return;
+    }
     const list = await this.propertiesAPI.getWorkerImages();
     // Filter out test images (those with ":test" in their name)
     const filteredList: IWorkerImageList = {};
