@@ -171,6 +171,10 @@ export class Main extends VuexModule {
   overview: boolean = true;
   hoverValue: { [layerId: string]: number[] } | null = null;
 
+  showXYLabels: boolean = true;
+  showZLabels: boolean = true;
+  showTimeLabels: boolean = true;
+
   showScalebar: boolean = true;
   showPixelScalebar: boolean = true;
   scalebarColor: string = "#ffffff";
@@ -408,6 +412,21 @@ export class Main extends VuexModule {
   @Mutation
   public setOverview(value: boolean) {
     this.overview = value;
+  }
+
+  @Mutation
+  public setShowXYLabels(value: boolean) {
+    this.showXYLabels = value;
+  }
+
+  @Mutation
+  public setShowZLabels(value: boolean) {
+    this.showZLabels = value;
+  }
+
+  @Mutation
+  public setShowTimeLabels(value: boolean) {
+    this.showTimeLabels = value;
   }
 
   @Mutation
