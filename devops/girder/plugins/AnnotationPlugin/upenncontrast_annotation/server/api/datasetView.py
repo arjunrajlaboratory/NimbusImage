@@ -283,7 +283,7 @@ class DatasetView(Resource):
 
             Write operations remain restricted to users with WRITE permissions.
         """)
-        .modelParam('datasetId', 'The dataset folder ID', model=Folder, 
+        .modelParam('datasetId', 'The dataset folder ID', model=Folder,
                     level=AccessType.ADMIN, destName='dataset')
         .param('public', 'True to make public, False to make private',
                dataType='boolean', required=True)

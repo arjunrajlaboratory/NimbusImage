@@ -6,7 +6,6 @@ from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from girder.exceptions import RestException, AccessException
 from bson import ObjectId
-from girder import logprint
 
 
 class AnnotationProperty(Resource):
