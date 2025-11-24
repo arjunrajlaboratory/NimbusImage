@@ -12,6 +12,16 @@
         >
           {{ userErrorString }}
         </v-alert>
+        <v-alert
+          v-if="isDatasetPublic"
+          type="info"
+          dense
+          dismissible
+          class="mb-4"
+        >
+          This dataset is already public and accessible to everyone without
+          login.
+        </v-alert>
         <v-container>
           <v-row>
             <v-col cols="4">
@@ -101,6 +111,7 @@ import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { logError } from "@/utils/log";
 import { IDatasetView } from "@/store/model";
+import { toDatasetFolder } from "@/utils/girderSelectable";
 
 interface DatasetViewAndConfigurationName extends IDatasetView {
   configurationName: string;
@@ -125,11 +136,22 @@ export default class ShareDataset extends Vue {
   makePublic: boolean = false;
   associatedViews: DatasetViewAndConfigurationName[] = [];
 
+  get isDatasetPublic(): boolean {
+    if (!this.dataset) {
+      return false;
+    }
+    const folder = toDatasetFolder(this.dataset);
+    return folder?.public === true;
+  }
+
   @Watch("value")
   onValueChanged(val: boolean) {
     this.dialog = val;
     if (val && this.dataset) {
       this.fetchCollectionInfos(this.dataset._id);
+      // Sync makePublic checkbox with actual public status
+      const folder = toDatasetFolder(this.dataset);
+      this.makePublic = folder?.public === true;
     } else {
       // Reset when dialog closes
       this.selectedDatasetViews = [];
