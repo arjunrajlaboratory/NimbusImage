@@ -272,13 +272,15 @@ class DatasetView(Resource):
 
     @access.user
     @autoDescribeRoute(
-        Description("Make a dataset and all associated views/configs public or private")
+        Description(
+            "Make a dataset and all associated views/configs public or private"
+        )
         .notes("""
             Sets public READ access on:
             - The dataset folder itself
             - All datasetViews for this dataset
             - All configurations used by those datasetViews
-            
+
             Write operations remain restricted to users with WRITE permissions.
         """)
         .modelParam('datasetId', 'The dataset folder ID', model=Folder, 

@@ -4,6 +4,7 @@
       <v-btn
         v-bind="{ ...attrs, ...$attrs }"
         v-on="on"
+        :disabled="!isLoggedIn"
         v-description="{
           section: 'Object list actions',
           title: 'Delete connections',
@@ -69,6 +70,10 @@ export default class DeleteConnections extends Vue {
   dialog = false;
   deleting = false;
   selectedDeleteOption: TDeleteOptions = deleteOptions[0].value;
+
+  get isLoggedIn() {
+    return this.store.isLoggedIn;
+  }
 
   cancel() {
     this.dialog = false;
