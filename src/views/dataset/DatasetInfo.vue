@@ -499,12 +499,16 @@ export default class DatasetInfo extends Vue {
   }
 
   removeDatasetView() {
-    if (this.viewToRemove) {
-      // Store whether we're removing the currently selected view
-      const isRemovingSelected =
-        this.viewToRemove.id === this.selectedDatasetViewId;
+    if (!this.viewToRemove) {
+      return;
+    }
+    // Store whether we're removing the currently selected view
+    const isRemovingSelected =
+      this.viewToRemove.id === this.selectedDatasetViewId;
 
-      this.store.deleteDatasetView(this.viewToRemove).then(() => {
+    const promise = this.store.deleteDatasetView(this.viewToRemove);
+    if (promise) {
+      promise.then(() => {
         this.removeDatasetViewConfirm = false;
         this.viewToRemove = null;
 
