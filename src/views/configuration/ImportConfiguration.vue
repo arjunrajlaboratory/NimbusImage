@@ -56,7 +56,7 @@ export default class ImportConfiguration extends Vue {
     if (Array.isArray(folderId)) {
       return folderId[0] || undefined;
     }
-    if (folderId === null || folderId === undefined) {
+    if (folderId === null) {
       return undefined;
     }
     return folderId;
