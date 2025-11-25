@@ -430,7 +430,7 @@ export default class Home extends Vue {
         this.nameTaken = false;
         this.nameError = "";
         try {
-          const exists = await this.checkDatasetNameExists(
+          const exists = await this.store.api.checkDatasetNameExists(
             v.trim(),
             this.selectedLocation,
           );
@@ -462,36 +462,6 @@ export default class Home extends Vue {
       !this.nameTaken &&
       !this.checkingName
     );
-  }
-
-  async checkDatasetNameExists(
-    name: string,
-    parentLocation: IGirderLocation,
-  ): Promise<boolean> {
-    if (!parentLocation || !("_id" in parentLocation)) {
-      return false;
-    }
-
-    try {
-      const parentType = parentLocation._modelType || "folder";
-      const parentId = parentLocation._id;
-      const result = await this.store.api.client.get(
-        `folder?parentType=${parentType}&parentId=${parentId}&name=${encodeURIComponent(name)}`,
-      );
-      // Check if any of the returned folders is a dataset (has the contrastDataset subtype)
-      if (result.data && result.data.length > 0) {
-        // Check if any folder has the contrastDataset metadata subtype
-        return result.data.some(
-          (folder: any) =>
-            folder.meta?.subtype === "contrastDataset" ||
-            folder.meta?.subtype === "dataset",
-        );
-      }
-      return false;
-    } catch (error) {
-      logError("Error checking dataset name:", error);
-      return false; // Don't block on error
-    }
   }
 
   get datasetViews() {
