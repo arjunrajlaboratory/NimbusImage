@@ -182,44 +182,63 @@
     />
 
     <!-- Upload Choice Dialog -->
-    <v-dialog v-model="showUploadDialog" max-width="500px" persistent>
+    <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
       <v-card>
-        <v-card-title class="headline">Upload Files</v-card-title>
+        <v-card-title class="headline">Create dataset</v-card-title>
         <v-card-text>
-          <div class="mb-4">
-            <v-icon color="primary" class="mr-2">mdi-file-multiple</v-icon>
-            <span class="text-body-1">
-              {{ pendingFiles.length }}
-              {{ pendingFiles.length === 1 ? "file" : "files" }} selected
-            </span>
+          <v-text-field
+            v-model="datasetName"
+            label="Dataset Name"
+            required
+            :rules="nameRules"
+            :error-messages="nameError"
+            class="mb-2"
+          />
+
+          <div class="mb-4 text-body-2 text--secondary">
+            {{ pendingFiles.length }}
+            {{ pendingFiles.length === 1 ? "file" : "files" }} selected
           </div>
-          <v-alert type="info" text class="mb-4">
-            <strong>Accept defaults</strong> to let NimbusImage try to
-            automatically read and configure your files for viewing and
-            analysis. <br /><br />
-            <strong>Configure dataset</strong> if you want to adjust how your
-            dataset is configured, including adjusting how dimensions are
-            configured and file transcoding options.
+
+          <v-alert v-if="nameTaken" text type="error" class="mb-4">
+            Could not create dataset <strong>{{ datasetName }}</strong
+            >. This might happen, for instance, if a dataset by that name
+            already exists. Please update the dataset name field and try again.
           </v-alert>
+
+          <v-card class="mb-4">
+            <v-card-title class="text-subtitle-1 pa-3">Location:</v-card-title>
+            <v-card-text class="pt-0">
+              <girder-location-chooser
+                v-model="selectedLocation"
+                :breadcrumb="true"
+                title="Select a Folder to Import the New Dataset"
+              />
+            </v-card-text>
+          </v-card>
         </v-card-text>
         <v-card-actions>
-          <v-spacer></v-spacer>
           <v-btn text @click="closeUploadDialog">Cancel</v-btn>
+          <v-spacer></v-spacer>
+          <v-btn
+            id="configure-dataset-button-tourstep"
+            outlined
+            color="primary"
+            v-tour-trigger="'configure-dataset-tourtrigger'"
+            :disabled="!isFormValid"
+            @click="handleConfigureDataset"
+            class="mr-2"
+          >
+            Advanced Import
+          </v-btn>
           <v-btn
             id="accept-defaults-button-tourstep"
             color="primary"
             v-tour-trigger="'accept-defaults-tourtrigger'"
+            :disabled="!isFormValid"
             @click="handleAcceptDefaults"
           >
-            Accept defaults
-          </v-btn>
-          <v-btn
-            id="configure-dataset-button-tourstep"
-            color="primary"
-            v-tour-trigger="'configure-dataset-tourtrigger'"
-            @click="handleConfigureDataset"
-          >
-            Configure dataset
+            Quick Import
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -252,9 +271,64 @@ import ZenodoImporter from "@/components/ZenodoImporter.vue";
 import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import RecentDatasets from "@/components/RecentDatasets.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
-import { formatDateNumber } from "@/utils/date";
+import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
+import { triggersPerCategory } from "@/utils/parsing";
+
+const allTriggers = Object.values(triggersPerCategory).flat();
+
+function basename(filename: string): string {
+  const components = filename.split(".");
+  return components.length > 1
+    ? components.slice(0, -1).join(".")
+    : components[0];
+}
+
+function findCommonPrefix(strings: string[]): string {
+  // Handle special cases
+  if (strings.length === 0) {
+    return "";
+  } else if (strings.length === 1) {
+    return strings[0];
+  }
+
+  // For filenames that are purely numeric at the start, use first filename + "_multi"
+  if (strings.every((s) => /^\d+/.test(s))) {
+    return basename(strings[0]) + "_multi";
+  }
+
+  // For non-numeric prefixes:
+  // Extract the non-metadata prefix of each filename. Note that because of the
+  // way the regex is constructed, the first match group will never be `null`.
+  const triggerAndDigit = allTriggers.map(
+    (trigger) => `\\d${trigger}|${trigger}\\d`,
+  );
+  const re = new RegExp(`(.*?)(?:_|-|${triggerAndDigit.join("|")})`);
+  const matches = strings.map((s) => s.match(re)![1]);
+
+  // Get the minimum length of all the strings; the common prefix cannot be
+  // longer than this.
+  const minLength = matches.reduce(
+    (acc, cur) => Math.min(acc, cur.length),
+    Infinity,
+  );
+
+  // Sweep through the first string, and compare the letter found in each
+  // position with the letter at that position for all the strings. Stop when an
+  // inequality occurs.
+  let result = [];
+  for (let i = 0; i < minLength; i++) {
+    const ch = matches[0].charAt(i);
+
+    if (!matches.map((s) => s.charAt(i)).every((c) => c === ch)) {
+      break;
+    }
+    result.push(ch);
+  }
+
+  return result.join("");
+}
 
 @Component({
   components: {
@@ -295,6 +369,11 @@ export default class Home extends Vue {
   datasetsTab: number = 0;
 
   pendingFiles: File[] = [];
+  datasetName: string = "";
+  selectedLocation: IGirderLocation | null = null;
+  nameTaken: boolean = false;
+  checkingName: boolean = false;
+  nameError: string = "";
 
   userDisplayNames: { [key: string]: string } = {};
 
@@ -311,6 +390,78 @@ export default class Home extends Vue {
       return alternative[0].toUpperCase() + alternative.slice(1);
     }
     return "Unknown location name";
+  }
+
+  get recommendedName() {
+    const { pendingFiles } = this;
+
+    // If there aren't any files selected yet, return a blank string.
+    if (pendingFiles.length === 0) {
+      return "";
+    }
+
+    // If there is only one file, return its name with the extension struck off.
+    if (pendingFiles.length === 1) {
+      return basename(pendingFiles[0].name);
+    }
+
+    // For more than one file, search for the longest prefix common to all, and
+    // use that as the name if it's nonblank; otherwise use the name of the
+    // first file.
+    const prefix = findCommonPrefix(pendingFiles.map((d) => d.name));
+    if (prefix.length > 0) {
+      return prefix;
+    } else {
+      return basename(pendingFiles[0].name);
+    }
+  }
+
+  get nameRules() {
+    return [
+      (v: string) => v.trim().length > 0 || "Dataset name is required",
+      async (v: string) => {
+        if (!v || !v.trim()) {
+          return true; // Let the required rule handle empty names
+        }
+        if (!this.selectedLocation || !("_id" in this.selectedLocation)) {
+          return true; // Can't check without a location
+        }
+        this.checkingName = true;
+        this.nameTaken = false;
+        this.nameError = "";
+        try {
+          const exists = await this.store.api.checkDatasetNameExists(
+            v.trim(),
+            this.selectedLocation,
+          );
+          if (exists) {
+            this.nameTaken = true;
+            this.nameError =
+              "A dataset with this name already exists in the selected location";
+            return "A dataset with this name already exists";
+          }
+          this.nameTaken = false;
+          this.nameError = "";
+          return true;
+        } catch (error) {
+          // If check fails, don't block submission - let the server handle it
+          this.nameError = "";
+          return true;
+        } finally {
+          this.checkingName = false;
+        }
+      },
+    ];
+  }
+
+  get isFormValid() {
+    return (
+      this.datasetName.trim().length > 0 &&
+      this.selectedLocation !== null &&
+      "_id" in this.selectedLocation &&
+      !this.nameTaken &&
+      !this.checkingName
+    );
   }
 
   get datasetViews() {
@@ -495,6 +646,16 @@ export default class Home extends Vue {
     this.isNavigating = false;
   }
 
+  @Watch("selectedLocation")
+  onLocationChange() {
+    // Clear name validation state when location changes
+    // The validation rule will re-run automatically
+    if (this.nameTaken) {
+      this.nameTaken = false;
+      this.nameError = "";
+    }
+  }
+
   private async initializeRecentViews() {
     try {
       await this.store.fetchRecentDatasetViews();
@@ -535,7 +696,7 @@ export default class Home extends Vue {
     }
   }
 
-  quickUpload(files: File[]) {
+  quickUpload(files: File[], name?: string, location?: IGirderLocation) {
     // Use params to pass props to NewDataset component
     // RouteConfig in src/view/dataset/index.ts has to support it
     this.$router.push({
@@ -543,19 +704,25 @@ export default class Home extends Vue {
       params: {
         quickupload: true,
         defaultFiles: files,
-        initialUploadLocation: this.location,
+        initialUploadLocation: location || this.location,
+        initialName: name,
       } as any,
     });
   }
 
-  comprehensiveUpload(files: File[]) {
+  comprehensiveUpload(
+    files: File[],
+    name?: string,
+    location?: IGirderLocation,
+  ) {
     // Use params to pass props to NewDataset component
     // RouteConfig in src/view/dataset/index.ts has to support it
     this.$router.push({
       name: "newdataset",
       params: {
         defaultFiles: files,
-        initialUploadLocation: this.location,
+        initialUploadLocation: location || this.location,
+        initialName: name,
       } as any,
     });
   }
@@ -565,6 +732,7 @@ export default class Home extends Vue {
     const files = Array.from(event.dataTransfer?.files || []);
     if (files.length > 0) {
       this.pendingFiles = files;
+      this.initializeUploadDialog();
       this.showUploadDialog = true;
     }
   }
@@ -580,11 +748,19 @@ export default class Home extends Vue {
 
     if (files.length > 0) {
       this.pendingFiles = files;
+      this.initializeUploadDialog();
       this.showUploadDialog = true;
     }
 
     // Reset the input
     input.value = "";
+  }
+
+  initializeUploadDialog() {
+    // Set the default name based on recommended name
+    this.datasetName = this.recommendedName + " - " + formatDate(new Date());
+    // Set the default location to current location
+    this.selectedLocation = this.location;
   }
 
   onDragLeave(event: DragEvent) {
@@ -605,18 +781,37 @@ export default class Home extends Vue {
   }
 
   handleAcceptDefaults() {
-    this.quickUpload(this.pendingFiles);
+    if (!this.isFormValid) {
+      return;
+    }
+    this.quickUpload(
+      this.pendingFiles,
+      this.datasetName,
+      this.selectedLocation || undefined,
+    );
     this.closeUploadDialog();
   }
 
   handleConfigureDataset() {
-    this.comprehensiveUpload(this.pendingFiles);
+    if (!this.isFormValid) {
+      return;
+    }
+    this.comprehensiveUpload(
+      this.pendingFiles,
+      this.datasetName,
+      this.selectedLocation || undefined,
+    );
     this.closeUploadDialog();
   }
 
   closeUploadDialog() {
     this.showUploadDialog = false;
     this.pendingFiles = [];
+    this.datasetName = "";
+    this.selectedLocation = null;
+    this.nameTaken = false;
+    this.nameError = "";
+    this.checkingName = false;
   }
 
   toggleZenodoImporter(): void {
