@@ -105,6 +105,14 @@ export class GirderResources extends VuexModule {
 
   @Action
   public async getUser(id: string): Promise<IGirderUser | null> {
+    // Skip user requests if not logged in to avoid 401 errors
+    if (!main.isLoggedIn) {
+      // Mark as null in cache to prevent retry
+      if (!(id in this.resources)) {
+        this.setResource({ id, resource: null });
+      }
+      return null;
+    }
     const resource = await this.getResource({ id, type: "user" });
     return resource as IGirderUser | null;
   }
@@ -189,11 +197,14 @@ export class GirderResources extends VuexModule {
       return;
     }
 
+    // Skip user requests if not logged in to avoid unnecessary 401 errors
+    const effectiveUserIds = main.isLoggedIn ? userIds : [];
+
     try {
       const response = await main.api.batchResources({
         folder: folderIds,
         upenn_collection: collectionIds,
-        user: userIds,
+        user: effectiveUserIds,
       });
 
       // Update the cache with all fetched resources
@@ -223,8 +234,23 @@ export class GirderResources extends VuexModule {
           });
         });
       }
+
+      // If we skipped user requests, mark them as null in cache
+      if (!main.isLoggedIn && userIds.length > 0) {
+        userIds.forEach((id) => {
+          if (!(id in this.resources)) {
+            this.setResource({ id, resource: null });
+          }
+        });
+      }
     } catch (error) {
       logError("Failed to batch fetch resources:", error);
+      // Mark failed resources as null to prevent retry loops
+      [...folderIds, ...collectionIds, ...effectiveUserIds].forEach((id) => {
+        if (!(id in this.resources)) {
+          this.setResource({ id, resource: null });
+        }
+      });
     }
   }
 

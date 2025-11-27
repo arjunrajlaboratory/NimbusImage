@@ -97,7 +97,7 @@ class PropertyValues(Resource):
             params["propertyId"], params["datasetId"]
         )
 
-    @access.user
+    @access.public
     @describeRoute(
         Description("Search for property values")
         .responseClass("annotation")
@@ -148,7 +148,7 @@ class PropertyValues(Resource):
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
 
-    @access.user
+    @access.public
     @describeRoute(
         Description(
             "Get a histogram for property values in the specified dataset"

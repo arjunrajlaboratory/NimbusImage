@@ -180,7 +180,7 @@ class Annotation(Resource):
         bodyJson = kwargs["memoizedBodyJson"]
         self._annotationModel.updateMultiple(bodyJson, self.getCurrentUser())
 
-    @access.user
+    @access.public
     @autoDescribeRoute(
         Description("Search for annotations")
         .responseClass("upenn_annotation")
@@ -259,7 +259,7 @@ class Annotation(Resource):
             cherrypy.response.headers['Girder-Total-Count'] = cursor.count()
         return generateResult
 
-    @access.user
+    @access.public
     @describeRoute(
         Description("Get an annotation by its id.").param(
             "id", "The annotation's id", paramType="path"

@@ -51,7 +51,7 @@ class Collection(Resource):
             metadata=metadata, description=description,
             reuseExisting=reuseExisting)
 
-    @access.user
+    @access.public
     @filtermodel(model=CollectionModel)
     @autoDescribeRoute(
         Description('List or search for collections.')
@@ -75,7 +75,7 @@ class Collection(Resource):
         return self._collectionModel.findWithPermissions(
             query, offset, limit, sort=sort, user=self.getCurrentUser())
 
-    @access.user
+    @access.public
     @filtermodel(model=CollectionModel)
     @autoDescribeRoute(
         Description('Get an collection by ID.')
@@ -150,7 +150,7 @@ class Collection(Resource):
         self._collectionModel.remove(upenn_collection)
         return {'message': 'Deleted collection %s.' % upenn_collection['name']}
 
-    @access.user
+    @access.public
     @filtermodel(model=CollectionModel)
     @autoDescribeRoute(
         Description('List collections grouped by folder ids')

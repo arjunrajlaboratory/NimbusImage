@@ -274,8 +274,12 @@ export default class ConfigurationInfo extends Vue {
   }
 
   removeDatasetView() {
-    if (this.viewToRemove) {
-      this.store.deleteDatasetView(this.viewToRemove).then(() => {
+    if (!this.viewToRemove) {
+      return;
+    }
+    const promise = this.store.deleteDatasetView(this.viewToRemove);
+    if (promise) {
+      promise.then(() => {
         this.removeDatasetViewConfirm = false;
         this.viewToRemove = null;
         this.updateConfigurationViews();
