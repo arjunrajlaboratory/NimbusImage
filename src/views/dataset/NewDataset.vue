@@ -77,7 +77,7 @@
                 v-model="path"
                 :breadcrumb="true"
                 title="Select a Folder to Import the New Dataset"
-                :disabled="quickupload && !pipelineError"
+                :disabled="effectiveQuickupload && !pipelineError"
               />
             </v-row>
           </v-container>
@@ -105,7 +105,7 @@
 
       <div
         class="button-bar d-flex justify-space-between align-center"
-        v-if="!quickupload || pipelineError"
+        v-if="!effectiveQuickupload || pipelineError"
       >
         <div>
           <span class="mr-2"
@@ -135,17 +135,73 @@
       </div>
     </v-form>
 
-    <template v-if="quickupload">
-      <template v-if="configuring">
+    <!-- Collection mode progress header -->
+    <v-card v-if="effectiveCollectionMode && !pipelineError" class="mb-4">
+      <v-card-title>
+        <v-icon left>mdi-folder-multiple</v-icon>
+        Creating Collection: {{ effectiveCollectionName }}
+      </v-card-title>
+      <v-card-subtitle>
+        Dataset
+        {{ store.uploadWorkflow.currentDatasetIndex + 1 }} of
+        {{ totalDatasets }}:
+        <strong>{{ currentDatasetName }}</strong>
+      </v-card-subtitle>
+      <v-card-text>
+        <v-progress-linear
+          :value="
+            ((store.uploadWorkflow.currentDatasetIndex +
+              (uploading || configuring ? 0.5 : 1)) /
+              totalDatasets) *
+            100
+          "
+          height="8"
+          rounded
+        />
+        <div class="mt-2 d-flex">
+          <v-chip
+            v-for="(files, idx) in store.uploadWorkflow.filesPerDataset"
+            :key="idx"
+            :color="
+              idx < store.uploadWorkflow.currentDatasetIndex
+                ? 'success'
+                : idx === store.uploadWorkflow.currentDatasetIndex
+                  ? 'primary'
+                  : 'grey'
+            "
+            small
+            class="mr-1"
+          >
+            {{ idx + 1 }}
+          </v-chip>
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <template v-if="effectiveQuickupload || effectiveCollectionMode">
+      <template v-if="configuring && datasetId">
+        <!-- Always mount MultiSourceConfiguration, but only show UI for first dataset -->
         <multi-source-configuration
           ref="configuration"
           :datasetId="datasetId"
           :autoDatasetRoute="false"
           @log="configurationLogs = $event"
           @generatedJson="generationDone"
-          :class="{ 'd-none': !pipelineError }"
+          @configData="onConfigDataReceived"
+          :class="{
+            'd-none':
+              !pipelineError &&
+              effectiveCollectionMode &&
+              !isProcessingFirstDataset,
+          }"
         />
-        <div class="title mb-2">Configuring the dataset</div>
+        <div class="title mb-2">
+          {{
+            effectiveCollectionMode && !isProcessingFirstDataset
+              ? "Applying configuration to dataset"
+              : "Configuring the dataset"
+          }}
+        </div>
         <v-progress-circular indeterminate />
 
         <!-- Transcoding progress bar and status for the quickupload path -->
@@ -235,7 +291,7 @@ import { IGirderApiKey, IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import UploadManager from "@girder/components/src/utils/upload";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
-import { IDataset } from "@/store/model";
+import { IDataset, IDatasetConfiguration, IJobEventData } from "@/store/model";
 import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
@@ -354,6 +410,15 @@ export default class NewDataset extends Vue {
   @Prop()
   readonly initialDescription?: string;
 
+  @Prop({ type: Array, default: () => [] })
+  readonly filesPerDataset!: File[][];
+
+  @Prop({ default: false })
+  readonly collectionMode!: boolean;
+
+  @Prop()
+  readonly collectionName?: string;
+
   uploadedFiles: File[] | null = null;
 
   configuring = false;
@@ -369,6 +434,7 @@ export default class NewDataset extends Vue {
   uploadCls = GirderUploadManager;
 
   path: IGirderLocation | null = null;
+  // originalPath is now in store.uploadWorkflow.originalPath
 
   dataset: IDataset | null = null;
 
@@ -399,6 +465,10 @@ export default class NewDataset extends Vue {
   maxApiKeyFileSize: number | null = null;
 
   allFiles: File[] = [];
+
+  // Collection mode state is now in store.uploadWorkflow
+  // Keep currentDatasetIndex for backwards compatibility with non-store flows
+  currentDatasetIndex: number = 0;
 
   get maxTotalFileSize() {
     // If the maxApiKeyFileSize is set, use that
@@ -478,10 +548,6 @@ export default class NewDataset extends Vue {
     return [(v: string) => v.trim().length > 0 || `value is required`];
   }
 
-  get files() {
-    return this.uploadedFiles || this.defaultFiles;
-  }
-
   get filesSelected() {
     return this.files.length > 0;
   }
@@ -523,19 +589,105 @@ export default class NewDataset extends Vue {
     return formatSize(this.maxTotalFileSize);
   }
 
+  // Computed properties that use store when upload workflow is active
+  get effectiveQuickupload(): boolean {
+    return this.store.uploadWorkflow.active
+      ? this.store.uploadWorkflow.quickupload
+      : this.quickupload;
+  }
+
+  get effectiveCollectionMode(): boolean {
+    return this.store.uploadWorkflow.active
+      ? this.store.uploadWorkflow.collectionMode
+      : this.collectionMode;
+  }
+
+  get effectiveCollectionName(): string {
+    return (
+      this.store.uploadWorkflow.collectionName || this.collectionName || ""
+    );
+  }
+
+  get totalDatasets(): number {
+    if (this.store.uploadWorkflow.active) {
+      return this.store.uploadTotalDatasets || 1;
+    }
+    return (
+      this.filesPerDataset.length || (this.defaultFiles.length > 0 ? 1 : 0)
+    );
+  }
+
+  get isFirstDataset(): boolean {
+    if (this.store.uploadWorkflow.active) {
+      return this.store.uploadIsFirstDataset;
+    }
+    return this.currentDatasetIndex === 0;
+  }
+
+  get isLastDataset(): boolean {
+    if (this.store.uploadWorkflow.active) {
+      return this.store.uploadIsLastDataset;
+    }
+    return this.currentDatasetIndex >= this.filesPerDataset.length - 1;
+  }
+
+  get isProcessingFirstDataset(): boolean {
+    return this.isFirstDataset;
+  }
+
+  get currentFiles(): File[] {
+    if (
+      this.store.uploadWorkflow.active &&
+      this.store.uploadWorkflow.collectionMode
+    ) {
+      return this.store.uploadCurrentFiles;
+    }
+    if (this.effectiveCollectionMode && this.filesPerDataset.length > 0) {
+      return this.filesPerDataset[this.currentDatasetIndex] || [];
+    }
+    return this.uploadedFiles || this.defaultFiles;
+  }
+
+  get currentDatasetName(): string {
+    if (
+      this.store.uploadWorkflow.active &&
+      this.store.uploadWorkflow.collectionMode
+    ) {
+      return this.store.uploadCurrentDatasetName;
+    }
+    const files = this.currentFiles;
+    if (files.length === 0) return "Dataset";
+    return basename(files[0].name);
+  }
+
+  // Override existing `files` getter to use currentFiles in collection mode
+  get files() {
+    if (this.effectiveCollectionMode) {
+      return this.currentFiles;
+    }
+    return this.uploadedFiles || this.defaultFiles;
+  }
+
   async mounted() {
-    this.path = this.initialUploadLocation;
+    // Read from store if upload workflow is active
+    if (this.store.uploadWorkflow.active) {
+      this.path = this.store.uploadWorkflow.initialUploadLocation;
+      // originalPath is already set in store, no need to track locally
+
+      if (this.store.uploadWorkflow.initialName) {
+        this.name = this.store.uploadWorkflow.initialName;
+      }
+      if (this.store.uploadWorkflow.initialDescription) {
+        this.description = this.store.uploadWorkflow.initialDescription;
+      }
+    } else {
+      // Fallback to props
+      this.path = this.initialUploadLocation;
+      if (this.initialName) this.name = this.initialName;
+      if (this.initialDescription) this.description = this.initialDescription;
+    }
+
     this.maxApiKeyFileSize = await this.getMaxUploadSize();
-
-    // Use initial name and description from props if provided
-    // Currently used for Zenodo imports
-    if (this.initialName) {
-      this.name = this.initialName;
-    }
-
-    if (this.initialDescription) {
-      this.description = this.initialDescription;
-    }
   }
 
   async getMaxUploadSize() {
@@ -585,26 +737,62 @@ export default class NewDataset extends Vue {
     return null;
   }
 
+  async createCollection() {
+    const collection = await this.store.createUploadCollection();
+    if (!collection) {
+      this.pipelineError = true;
+      return;
+    }
+    // Collection is now stored in this.store.uploadWorkflow.collection
+    logError(
+      `[Collection Mode] createCollection completed. Collection in store: ${!!this.store.uploadWorkflow.collection}, collection.id: ${this.store.uploadWorkflow.collection?.id}`,
+    );
+  }
+
   async uploadMounted() {
-    this.$refs.uploader?.inputFilesChanged(this.files);
-    if (this.quickupload) {
-      if (this.initialName) {
+    // Store original path on first dataset only (if not already in store)
+    if (
+      this.effectiveCollectionMode &&
+      this.isFirstDataset &&
+      !this.store.uploadWorkflow.originalPath
+    ) {
+      this.store.setUploadOriginalPath(this.path);
+    }
+
+    // Set files for current dataset
+    const filesToUpload = this.effectiveCollectionMode
+      ? this.currentFiles
+      : this.files;
+    this.$refs.uploader?.inputFilesChanged(filesToUpload);
+
+    if (this.effectiveQuickupload || this.effectiveCollectionMode) {
+      // Set name based on mode
+      if (this.effectiveCollectionMode) {
+        this.name = this.currentDatasetName;
+      } else if (this.initialName) {
         this.name = this.initialName + " - " + formatDate(new Date());
       } else {
         this.name = this.recommendedName + " - " + formatDate(new Date());
       }
 
-      if (this.initialDescription) {
-        this.description = this.initialDescription;
+      const initialDescription = this.store.uploadWorkflow.active
+        ? this.store.uploadWorkflow.initialDescription
+        : this.initialDescription;
+      if (initialDescription && this.isFirstDataset) {
+        this.description = initialDescription;
       }
 
-      await Vue.nextTick(); // "name" prop is set in the form
-      await Vue.nextTick(); // this.valid is updated
+      await Vue.nextTick();
+      await Vue.nextTick();
 
-      // Check for invalid location before proceeding with quickupload
       if (this.invalidLocation) {
         this.pipelineError = true;
-        logError("Invalid location for dataset creation during quickupload");
+        logError("Invalid location for dataset creation");
+        return;
+      }
+
+      // Don't submit if there was a previous error
+      if (this.pipelineError) {
         return;
       }
 
@@ -613,26 +801,71 @@ export default class NewDataset extends Vue {
   }
 
   async submit() {
+    // Don't proceed if there's already an error
+    if (this.pipelineError) {
+      logError("submit() called but pipelineError is set, aborting");
+      return;
+    }
+
     if (!this.valid || !this.path || !("_id" in this.path)) {
       return;
     }
 
-    if (this.fileSizeExceeded) {
-      logError("Maximum total file size exceeded");
+    if (this.fileSizeExceeded || this.invalidLocation) {
       this.pipelineError = true;
       return;
     }
 
-    if (this.invalidLocation) {
-      logError("Invalid location for dataset creation");
+    // In collection mode, use originalPath from store for dataset creation
+    // In single dataset mode, use current path
+    const pathForCreation = this.effectiveCollectionMode
+      ? this.store.uploadWorkflow.originalPath
+      : this.path;
+
+    if (
+      !pathForCreation ||
+      !("_id" in pathForCreation) ||
+      pathForCreation._modelType !== "folder"
+    ) {
+      logError("Invalid path for dataset creation");
       this.pipelineError = true;
       return;
     }
 
+    const datasetName = this.effectiveCollectionMode
+      ? this.currentDatasetName
+      : this.name;
+
+    this.dataset = await this.store.createDataset({
+      name: datasetName,
+      description: this.description,
+      path: pathForCreation,
+    });
+
+    if (this.dataset === null) {
+      this.failedDataset = datasetName;
+      return;
+    }
+
+    // Track datasets in store for collection mode
+    if (this.effectiveCollectionMode) {
+      this.store.addUploadedDataset(this.dataset);
+    }
+
+    this.failedDataset = "";
+    this.path = await this.girderResources.getFolder(this.dataset.id);
+    await Vue.nextTick();
+
+    this.uploading = true;
+    this.$refs.uploader!.startUpload();
+  }
+
+  async submitSingleDataset() {
+    // Extract existing submit() logic here
     this.dataset = await this.store.createDataset({
       name: this.name,
       description: this.description,
-      path: this.path,
+      path: this.path!,
     });
 
     if (this.dataset === null) {
@@ -641,12 +874,133 @@ export default class NewDataset extends Vue {
     }
 
     this.failedDataset = "";
-
     this.path = await this.girderResources.getFolder(this.dataset.id);
     await Vue.nextTick();
 
     this.uploading = true;
     this.$refs.uploader!.startUpload();
+  }
+
+  async configureDatasetWithStrategy() {
+    logError(
+      `[Collection Mode] configureDatasetWithStrategy called. datasetId: ${this.datasetId}, dataset: ${!!this.dataset}`,
+    );
+    this.configuring = true;
+    await Vue.nextTick();
+
+    const config = this.$refs.configuration;
+    if (!config) {
+      logError("MultiSourceConfiguration not mounted for subsequent dataset");
+      this.pipelineError = true;
+      return;
+    }
+
+    const strategy = this.store.uploadWorkflow.assignmentStrategy;
+    if (!strategy) {
+      logError("No assignment strategy saved");
+      this.pipelineError = true;
+      return;
+    }
+
+    logError(
+      `[Collection Mode] Strategy found: transcode=${strategy.transcode}, XY=${!!strategy.XY}, Z=${!!strategy.Z}, T=${!!strategy.T}, C=${!!strategy.C}`,
+    );
+
+    this.progressStatusText = "Detecting file structure...";
+
+    // Use the new method that properly handles async state
+    await config.reinitializeAndApplyStrategy(strategy);
+
+    this.progressStatusText = strategy.transcode
+      ? "Transcoding..."
+      : "Generating configuration...";
+    logError(`[Collection Mode] Calling config.submit()...`);
+    config.submit();
+  }
+
+  async advanceToNextDataset() {
+    logError(
+      `[Collection Mode] advanceToNextDataset called. isLastDataset: ${this.isLastDataset}, currentIndex: ${this.store.uploadWorkflow.currentDatasetIndex}, totalDatasets: ${this.totalDatasets}`,
+    );
+
+    if (this.isLastDataset) {
+      // All datasets processed - navigate to collection
+      logError(
+        "[Collection Mode] All datasets processed, navigating to collection",
+      );
+      this.navigateToCollection();
+      return;
+    }
+
+    // Advance index in store
+    this.store.advanceUploadDatasetIndex();
+    logError(
+      `[Collection Mode] Advanced to dataset index: ${this.store.uploadWorkflow.currentDatasetIndex}`,
+    );
+
+    // Reset local component state
+    this.dataset = null;
+    this.configuring = false;
+    this.configurationLogs = "";
+    this.transcodeProgress = undefined;
+
+    // Reset path from store's originalPath
+    if (!this.store.uploadWorkflow.originalPath) {
+      logError(
+        "[Collection Mode] ERROR: originalPath is not set in store, cannot continue",
+      );
+      this.pipelineError = true;
+      return;
+    }
+    this.path = this.store.uploadWorkflow.originalPath;
+
+    // Show uploader - this will trigger uploadMounted which calls submit()
+    this.hideUploader = false;
+  }
+
+  navigateToCollection() {
+    // Capture collection and datasets BEFORE calling completeUploadWorkflow
+    // because completeUploadWorkflow resets the state
+    logError(
+      `[Collection Mode] navigateToCollection called. Store state - collection: ${!!this.store.uploadWorkflow.collection}, collectionId: ${this.store.uploadWorkflow.collection?.id}, datasets.length: ${this.store.uploadWorkflow.datasets.length}`,
+    );
+
+    const collection = this.store.uploadWorkflow.collection;
+    const datasets = [...this.store.uploadWorkflow.datasets]; // Copy array
+
+    logError(
+      `[Collection Mode] Captured values. collection: ${!!collection}, collectionId: ${collection?.id}, datasets: ${datasets.length}`,
+    );
+
+    // Now reset the workflow state
+    this.store.completeUploadWorkflow();
+
+    if (collection) {
+      // Set the collection in the store so ConfigurationInfo can load it
+      this.store.setSelectedConfiguration(collection.id);
+      logError(
+        `[Collection Mode] Navigating to configuration view: ${collection.id}`,
+      );
+      this.$router.push({
+        name: "configuration",
+        params: { configurationId: collection.id },
+      });
+    } else if (datasets && datasets.length > 0) {
+      logError(
+        `[Collection Mode] No collection found, falling back to first dataset: ${datasets[0].id}`,
+      );
+      this.$router.push({
+        name: "dataset",
+        params: { datasetId: datasets[0].id },
+      });
+    } else {
+      logError(
+        `[Collection Mode] No collection or datasets found, navigating to root`,
+      );
+      this.$router.push({
+        name: "root",
+      });
+    }
   }
 
   filesChanged(files: FileUpload[] | File[]) {
@@ -665,7 +1019,7 @@ export default class NewDataset extends Vue {
     if (totalSize > maxSizeBytes) {
       this.fileSizeExceeded = true;
       this.uploadedFiles = null;
-      if (this.quickupload) {
+      if (this.effectiveQuickupload) {
         this.pipelineError = true;
         return;
       }
@@ -700,9 +1054,23 @@ export default class NewDataset extends Vue {
     this.hideUploader = true;
     this.uploading = false;
 
-    const datasetId = this.dataset!.id;
+    if (!this.dataset) {
+      logError("nextStep called but dataset is null");
+      this.pipelineError = true;
+      return;
+    }
 
-    if (this.quickupload) {
+    const datasetId = this.dataset.id;
+
+    if (this.effectiveCollectionMode) {
+      if (this.isFirstDataset) {
+        // First dataset: run full interactive configuration
+        this.configureDataset();
+      } else {
+        // Subsequent datasets: configure with saved strategy
+        this.configureDatasetWithStrategy();
+      }
+    } else if (this.effectiveQuickupload) {
       this.configureDataset();
     } else if (this.autoMultiConfig) {
       this.$router.push({
@@ -735,9 +1103,98 @@ export default class NewDataset extends Vue {
   }
 
   generationDone(jsonId: string | null) {
-    if (this.quickupload) {
+    logError(
+      `[Collection Mode] generationDone called. jsonId: ${jsonId}, effectiveCollectionMode: ${this.effectiveCollectionMode}, effectiveQuickupload: ${this.effectiveQuickupload}`,
+    );
+    if (this.effectiveCollectionMode) {
+      // For collection mode, handle specially
+      this.handleCollectionGenerationDone(jsonId);
+    } else if (this.effectiveQuickupload) {
+      // Existing single-dataset flow
       this.createView(jsonId);
+    } else {
+      logError(
+        "[Collection Mode] generationDone called but neither collectionMode nor quickupload is active",
+      );
     }
+  }
+
+  async handleCollectionGenerationDone(jsonId: string | null) {
+    logError(
+      `[Collection Mode] handleCollectionGenerationDone called with jsonId: ${jsonId}`,
+    );
+    if (!jsonId) {
+      logError("Failed to generate JSON");
+      this.pipelineError = true;
+      return;
+    }
+
+    // Save assignment STRATEGY from first dataset (not the JSON config)
+    if (this.isFirstDataset && this.$refs.configuration) {
+      logError(
+        `[Collection Mode] Saving assignment strategy from first dataset`,
+      );
+      const strategy = this.$refs.configuration.getAssignmentStrategy();
+      this.store.setUploadAssignmentStrategy(strategy);
+
+      // CRITICAL: Load the full dataset (with tile metadata) before creating collection
+      // The dataset in uploadWorkflow.datasets[] is just the basic folder info,
+      // but createConfigurationFromDataset needs the full tile/frame metadata
+      logError(`[Collection Mode] Loading full dataset: ${this.dataset!.id}`);
+      await this.store.setSelectedDataset(this.dataset!.id);
+
+      // Create the collection using store action
+      logError("[Collection Mode] Creating collection...");
+      await this.createCollection();
+
+      if (this.pipelineError || !this.store.uploadWorkflow.collection) {
+        logError(
+          `[Collection Mode] Collection creation failed. pipelineError: ${this.pipelineError}, collection: ${!!this.store.uploadWorkflow.collection}`,
+        );
+        return;
+      }
+      logError(
+        `[Collection Mode] Collection created successfully: ${this.store.uploadWorkflow.collection.id}`,
+      );
+    }
+
+    // Create dataset view for current dataset
+    const collection = this.store.uploadWorkflow.collection;
+    if (collection && this.dataset) {
+      logError(
+        `[Collection Mode] Creating dataset view for dataset ${this.dataset.id} in collection ${collection.id}`,
+      );
+      try {
+        const datasetView = await this.store.createDatasetView({
+          configurationId: collection.id,
+          datasetId: this.dataset.id,
+        });
+        if (!datasetView) {
+          logError(
+            `[Collection Mode] Failed to create dataset view - API returned null`,
+          );
+        } else {
+          logError(
+            `[Collection Mode] Dataset view created successfully: ${datasetView.id}`,
+          );
+        }
+      } catch (error) {
+        logError(`[Collection Mode] Error creating dataset view:`, error);
+        // Don't fail the whole process if dataset view creation fails
+      }
+    } else {
+      logError(
+        `[Collection Mode] Cannot create dataset view. collection: ${!!collection}, dataset: ${!!this.dataset}`,
+      );
+    }
+
+    this.configuring = false;
+
+    // Move to next dataset or finish
+    logError(
+      `[Collection Mode] Advancing to next dataset. isLastDataset: ${this.isLastDataset}`,
+    );
+    this.advanceToNextDataset();
   }
 
   async createView(jsonId: string | null) {
@@ -810,6 +1267,11 @@ export default class NewDataset extends Vue {
       navigator.clipboard.writeText(this.configurationLogs);
       this.showCopySnackbar = true;
     }
+  }
+
+  onConfigDataReceived(_configData: any) {
+    // This handler is kept for backward compatibility but is no longer used
+    // The assignment strategy is now saved directly in handleCollectionGenerationDone
   }
 }
 </script>

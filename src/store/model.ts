@@ -1828,3 +1828,12 @@ export type TTaggingToolStateSymbol = typeof TaggingToolStateSymbol;
 export interface ITaggingToolState {
   type: TTaggingToolStateSymbol;
 }
+
+// Strategy for how dimensions were assigned during first dataset configuration
+export interface IAssignmentStrategy {
+  XY: { source: "file" | "filename" | "images"; guess: string } | null;
+  Z: { source: "file" | "filename" | "images"; guess: string } | null;
+  T: { source: "file" | "filename" | "images"; guess: string } | null;
+  C: { source: "file" | "filename" | "images"; guess: string } | null;
+  transcode: boolean;
+}

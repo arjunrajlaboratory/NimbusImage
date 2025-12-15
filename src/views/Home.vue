@@ -188,16 +188,48 @@
         <v-card-text>
           <v-text-field
             v-model="datasetName"
-            label="Dataset Name"
+            :label="collectionMode ? 'Collection Name' : 'Dataset Name'"
             required
             :rules="nameRules"
             :error-messages="nameError"
             class="mb-2"
           />
 
+          <!-- Collection mode toggle -->
+          <v-checkbox
+            v-model="collectionMode"
+            label="Upload each file as a separate dataset in a collection"
+            :disabled="pendingFiles.length < 2"
+            hide-details
+            class="mb-4"
+          />
+
+          <!-- Show file-to-dataset mapping when in collection mode -->
+          <v-card v-if="collectionMode" outlined class="mb-4">
+            <v-card-subtitle
+              >Each file will become a separate dataset:</v-card-subtitle
+            >
+            <v-list dense>
+              <v-list-item v-for="(file, idx) in pendingFiles" :key="idx">
+                <v-list-item-icon>
+                  <v-icon small>mdi-file</v-icon>
+                </v-list-item-icon>
+                <v-list-item-content>
+                  <v-list-item-title>{{
+                    getDatasetNameForFile(file)
+                  }}</v-list-item-title>
+                  <v-list-item-subtitle>{{ file.name }}</v-list-item-subtitle>
+                </v-list-item-content>
+              </v-list-item>
+            </v-list>
+          </v-card>
+
           <div class="mb-4 text-body-2 text--secondary">
             {{ pendingFiles.length }}
             {{ pendingFiles.length === 1 ? "file" : "files" }} selected
+            <template v-if="collectionMode">
+              → {{ pendingFiles.length }} datasets
+            </template>
           </div>
 
           <v-alert v-if="nameTaken" text type="error" class="mb-4">
@@ -374,6 +406,7 @@ export default class Home extends Vue {
   nameTaken: boolean = false;
   checkingName: boolean = false;
   nameError: string = "";
+  collectionMode: boolean = false;
 
   userDisplayNames: { [key: string]: string } = {};
 
@@ -416,12 +449,30 @@ export default class Home extends Vue {
     }
   }
 
+  get filesPerDataset(): File[][] {
+    if (this.collectionMode) {
+      // Each file becomes its own dataset
+      return this.pendingFiles.map((file) => [file]);
+    } else {
+      // All files go into one dataset
+      return [this.pendingFiles];
+    }
+  }
+
+  getDatasetNameForFile(file: File): string {
+    return basename(file.name);
+  }
+
   get nameRules() {
     return [
       (v: string) => v.trim().length > 0 || "Dataset name is required",
-      async (v: string) => {
+      async (v: string): Promise<string | boolean> => {
         if (!v || !v.trim()) {
           return true; // Let the required rule handle empty names
+        }
+        // Skip dataset name check in collection mode - collection names are checked differently
+        if (this.collectionMode) {
+          return true;
         }
         if (!this.selectedLocation || !("_id" in this.selectedLocation)) {
           return true; // Can't check without a location
@@ -697,17 +748,19 @@ export default class Home extends Vue {
   }
 
   quickUpload(files: File[], name?: string, location?: IGirderLocation) {
-    // Use params to pass props to NewDataset component
-    // RouteConfig in src/view/dataset/index.ts has to support it
-    this.$router.push({
-      name: "newdataset",
-      params: {
-        quickupload: true,
-        defaultFiles: files,
-        initialUploadLocation: location || this.location,
-        initialName: name,
-      } as any,
+    // Initialize upload workflow in store
+    this.store.initializeUploadWorkflow({
+      quickupload: true,
+      collectionMode: this.collectionMode,
+      collectionName: this.collectionMode ? name || this.datasetName || "" : "",
+      filesPerDataset: this.collectionMode ? this.filesPerDataset : [files],
+      initialUploadLocation: location || this.location,
+      initialName: this.collectionMode ? "" : name || "",
+      initialDescription: "",
     });
+
+    // Navigate without complex params
+    this.$router.push({ name: "newdataset" });
   }
 
   comprehensiveUpload(
@@ -715,16 +768,17 @@ export default class Home extends Vue {
     name?: string,
     location?: IGirderLocation,
   ) {
-    // Use params to pass props to NewDataset component
-    // RouteConfig in src/view/dataset/index.ts has to support it
-    this.$router.push({
-      name: "newdataset",
-      params: {
-        defaultFiles: files,
-        initialUploadLocation: location || this.location,
-        initialName: name,
-      } as any,
+    this.store.initializeUploadWorkflow({
+      quickupload: false,
+      collectionMode: this.collectionMode,
+      collectionName: this.collectionMode ? name || this.datasetName || "" : "",
+      filesPerDataset: this.collectionMode ? this.filesPerDataset : [files],
+      initialUploadLocation: location || this.location,
+      initialName: this.collectionMode ? "" : name || "",
+      initialDescription: "",
     });
+
+    this.$router.push({ name: "newdataset" });
   }
 
   handleDrop(event: DragEvent) {
@@ -812,6 +866,7 @@ export default class Home extends Vue {
     this.nameTaken = false;
     this.nameError = "";
     this.checkingName = false;
+    this.collectionMode = false;
   }
 
   toggleZenodoImporter(): void {

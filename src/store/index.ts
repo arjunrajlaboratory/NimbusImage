@@ -61,6 +61,7 @@ import {
   ICameraInfo,
   IDatasetLocation,
   ConnectionToolStateSymbol,
+  IAssignmentStrategy,
 } from "./model";
 
 import persister from "./Persister";
@@ -144,6 +145,38 @@ export class Main extends VuexModule {
 
   previousMultipleLayerVisibility: string[] = []; // Store IDs of visible layers from multiple/unroll mode
   previousSingleLayerVisibility: string | null = null; // Store ID of the visible layer from single mode
+
+  // Upload workflow state
+  uploadWorkflow: {
+    active: boolean;
+    quickupload: boolean;
+    collectionMode: boolean;
+    collectionName: string;
+    filesPerDataset: File[][];
+    initialUploadLocation: IGirderLocation | null;
+    initialName: string;
+    initialDescription: string;
+    // Collection mode processing state
+    currentDatasetIndex: number;
+    datasets: IDataset[];
+    collection: IDatasetConfiguration | null;
+    assignmentStrategy: IAssignmentStrategy | null;
+    originalPath: IGirderLocation | null;
+  } = {
+    active: false,
+    quickupload: false,
+    collectionMode: false,
+    collectionName: "",
+    filesPerDataset: [],
+    initialUploadLocation: null,
+    initialName: "",
+    initialDescription: "",
+    currentDatasetIndex: 0,
+    datasets: [],
+    collection: null,
+    assignmentStrategy: null,
+    originalPath: null,
+  };
 
   cameraInfo: ICameraInfo = {
     center: { x: 0, y: 0 },
@@ -280,6 +313,44 @@ export class Main extends VuexModule {
     return { ...this.configurationScales, ...this.viewScales };
   }
 
+  // Upload workflow getters
+  get uploadTotalDatasets(): number {
+    return this.uploadWorkflow.filesPerDataset.length;
+  }
+
+  get uploadIsFirstDataset(): boolean {
+    return this.uploadWorkflow.currentDatasetIndex === 0;
+  }
+
+  get uploadIsLastDataset(): boolean {
+    return (
+      this.uploadWorkflow.currentDatasetIndex >=
+      this.uploadWorkflow.filesPerDataset.length - 1
+    );
+  }
+
+  get uploadCurrentFiles(): File[] {
+    const { filesPerDataset, currentDatasetIndex } = this.uploadWorkflow;
+    if (
+      filesPerDataset.length > 0 &&
+      currentDatasetIndex < filesPerDataset.length
+    ) {
+      return filesPerDataset[currentDatasetIndex] || [];
+    }
+    return [];
+  }
+
+  get uploadCurrentDatasetName(): string {
+    const files = this.uploadCurrentFiles;
+    if (files.length === 0)
+      return `Dataset ${this.uploadWorkflow.currentDatasetIndex + 1}`;
+    const filename = files[0].name;
+    const components = filename.split(".");
+    return components.length > 1
+      ? components.slice(0, -1).join(".")
+      : components[0];
+  }
+
   get currentLocation(): IDatasetLocation {
     return {
       xy: this.xy,
@@ -301,6 +372,62 @@ export class Main extends VuexModule {
         this.z,
       );
     };
+  }
+
+  // Upload workflow mutations
+  @Mutation
+  setUploadWorkflow(params: Partial<Main["uploadWorkflow"]>) {
+    Object.assign(this.uploadWorkflow, params);
+  }
+
+  @Mutation
+  resetUploadWorkflow() {
+    this.uploadWorkflow = {
+      active: false,
+      quickupload: false,
+      collectionMode: false,
+      collectionName: "",
+      filesPerDataset: [],
+      initialUploadLocation: null,
+      initialName: "",
+      initialDescription: "",
+      currentDatasetIndex: 0,
+      datasets: [],
+      collection: null,
+      assignmentStrategy: null,
+      originalPath: null,
+    };
+  }
+
+  @Mutation
+  addUploadedDataset(dataset: IDataset) {
+    this.uploadWorkflow.datasets.push(dataset);
+  }
+
+  @Mutation
+  setUploadCollection(collection: IDatasetConfiguration | null) {
+    logError(
+      `[Store] setUploadCollection mutation called. collection: ${!!collection}, id: ${collection?.id}`,
+    );
+    this.uploadWorkflow.collection = collection;
+    logError(
+      `[Store] setUploadCollection: After assignment, store has: ${!!this.uploadWorkflow.collection}, id: ${this.uploadWorkflow.collection?.id}`,
+    );
+  }
+
+  @Mutation
+  setUploadAssignmentStrategy(strategy: IAssignmentStrategy | null) {
+    this.uploadWorkflow.assignmentStrategy = strategy;
+  }
+
+  @Mutation
+  advanceUploadDatasetIndex() {
+    this.uploadWorkflow.currentDatasetIndex++;
+  }
+
+  @Mutation
+  setUploadOriginalPath(path: IGirderLocation | null) {
+    this.uploadWorkflow.originalPath = path;
   }
 
   @Mutation
@@ -1126,6 +1253,102 @@ export class Main extends VuexModule {
       sync.setSaving(error as Error);
     }
     return null;
+  }
+
+  // Upload workflow actions
+  @Action
+  initializeUploadWorkflow(params: {
+    quickupload: boolean;
+    collectionMode: boolean;
+    collectionName: string;
+    filesPerDataset: File[][];
+    initialUploadLocation: IGirderLocation | null;
+    initialName: string;
+    initialDescription: string;
+  }) {
+    this.resetUploadWorkflow();
+    this.setUploadWorkflow({
+      active: true,
+      quickupload: params.quickupload,
+      collectionMode: params.collectionMode,
+      collectionName: params.collectionName,
+      filesPerDataset: params.filesPerDataset,
+      initialUploadLocation: params.initialUploadLocation,
+      initialName: params.initialName,
+      initialDescription: params.initialDescription,
+      originalPath: params.initialUploadLocation,
+    });
+  }
+
+  @Action
+  async createUploadCollection() {
+    const { collectionName, originalPath } = this.uploadWorkflow;
+
+    if (!originalPath || !("_id" in originalPath)) {
+      logError("Cannot determine original path for collection creation");
+      return null;
+    }
+
+    // Use the LOADED dataset (this.dataset) which has full tile metadata,
+    // not datasets[0] which is just basic folder info
+    if (!this.dataset) {
+      logError(
+        "Cannot create collection - dataset not loaded. Call setSelectedDataset first.",
+      );
+      return null;
+    }
+
+    // Use collectionName from store, with fallback
+    let name = collectionName;
+    if (!name || name.trim() === "") {
+      name = `${this.dataset.name || "New"} Collection`;
+    }
+
+    try {
+      sync.setSaving(true);
+      const collection = await this.api.createConfigurationFromDataset(
+        name,
+        "",
+        originalPath._id,
+        this.dataset, // Use the LOADED dataset with tile metadata
+        this.userChannelColors,
+      );
+      sync.setSaving(false);
+
+      if (collection) {
+        logError(
+          `[Store] createUploadCollection: Setting collection in store. collection.id: ${collection.id}`,
+        );
+        this.setUploadCollection(collection);
+        logError(
+          `[Store] createUploadCollection: Collection set. Store now has: ${!!this.uploadWorkflow.collection}, id: ${this.uploadWorkflow.collection?.id}`,
+        );
+      } else {
+        logError(`[Store] createUploadCollection: Collection is null!`);
+      }
+      return collection;
+    } catch (error) {
+      sync.setSaving(error as Error);
+      logError("Failed to create collection:", error);
+      return null;
+    }
+  }
+
+  @Action
+  completeUploadWorkflow() {
+    // Capture values before resetting
+    const collection = this.uploadWorkflow.collection;
+    const datasets = [...this.uploadWorkflow.datasets]; // Copy before reset
+    const collectionId = collection?.id || null;
+
+    logError(
+      `[Store] completeUploadWorkflow: collection=${!!collection}, collectionId=${collectionId}, datasets.length=${datasets.length}`,
+    );
+
+    // Reset the workflow state
+    this.resetUploadWorkflow();
+
+    return { collection, datasets };
   }
 
   @Action
