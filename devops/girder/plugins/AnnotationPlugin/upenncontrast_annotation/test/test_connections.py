@@ -51,15 +51,15 @@ class TestConnection:
         result = AnnotationConnection().create(connection)
         assert "_id" in result
         annotId = result["_id"]
-        result = AnnotationConnection().load(annotId)
+        result = AnnotationConnection().load(annotId, user=admin)
         assert result is not None
         assert result["label"] == connection["label"]
 
     def testLoad(self, admin):
         with pytest.raises(Exception, match="Invalid ObjectId"):
-            AnnotationConnection().load("nosuchid")
+            AnnotationConnection().load("nosuchid", user=admin)
         assert (
-            AnnotationConnection().load("012345678901234567890123")
+            AnnotationConnection().load("012345678901234567890123", user=admin)
             is None
         )
 
@@ -69,7 +69,7 @@ class TestConnection:
         )
         result = AnnotationConnection().create(connection)
 
-        loaded = AnnotationConnection().load(result["_id"])
+        loaded = AnnotationConnection().load(result["_id"], user=admin)
         assert (
             loaded["_id"] == result["_id"]
             and loaded["label"] == connection["label"]
@@ -83,12 +83,12 @@ class TestConnection:
         connection = AnnotationConnection().create(connectionData)
 
         assert (
-            AnnotationConnection().load(connection["_id"]) is not None
+            AnnotationConnection().load(connection["_id"], force=True) is not None
         )
         result = AnnotationConnection().remove(connection)
         assert result.deleted_count == 1
         assert (
-            AnnotationConnection().load(connection["_id"]) is None
+            AnnotationConnection().load(connection["_id"], force=True) is None
         )
 
     def testOnAnnotationRemove(self, user, admin):
@@ -109,14 +109,14 @@ class TestConnection:
         AnnotationConnection().create(connectionInv)
         AnnotationConnection().create(connectionInv)
 
-        loaded = AnnotationConnection().load(result["_id"])
-        loadedInv = AnnotationConnection().load(resultInv["_id"])
+        loaded = AnnotationConnection().load(result["_id"], user=admin)
+        loadedInv = AnnotationConnection().load(resultInv["_id"], user=admin)
         assert loaded is not None
         assert loadedInv is not None
 
         Annotation().remove(annotation1)
-        loaded = AnnotationConnection().load(result["_id"])
-        loadedInv = AnnotationConnection().load(resultInv["_id"])
+        loaded = AnnotationConnection().load(result["_id"], user=admin)
+        loadedInv = AnnotationConnection().load(resultInv["_id"], user=admin)
         assert loaded is None
         assert loadedInv is None
 
@@ -138,9 +138,9 @@ class TestConnection:
 
         assert result is not None
         Folder().remove(dataset)
-        test = Annotation().load(child["_id"])
+        test = Annotation().load(child["_id"], user=admin)
         assert test is None
-        loaded = AnnotationConnection().load(connection["_id"])
+        loaded = AnnotationConnection().load(connection["_id"], user=admin)
         assert loaded is None
 
     def testValidate(self, db, admin):

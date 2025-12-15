@@ -4,6 +4,7 @@ from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models import annotation
 
 from girder.models.folder import Folder
+from girder.constants import AccessType
 
 from girder.exceptions import ValidationException
 
@@ -32,15 +33,15 @@ class TestAnnotation:
         result = Annotation().create(newAnnotation)
         assert "_id" in result
         annotId = result["_id"]
-        result = Annotation().load(annotId)
+        result = Annotation().load(annotId, user=admin)
         assert result is not None
         assert result["name"] == newAnnotation["name"]
 
     def testLoad(self, admin):
         with pytest.raises(Exception, match="Invalid ObjectId"):
-            Annotation().load("nosuchid")
+            Annotation().load("nosuchid", user=admin)
         assert (
-            Annotation().load("012345678901234567890123") is None
+            Annotation().load("012345678901234567890123", user=admin) is None
         )
 
         folder = utilities.createFolder(
@@ -49,7 +50,7 @@ class TestAnnotation:
         sample = upenn_utilities.getSampleAnnotation(folder["_id"])
         annotation = Annotation().create(sample)
 
-        loaded = Annotation().load(annotation["_id"])
+        loaded = Annotation().load(annotation["_id"], user=admin)
         assert (
             loaded["_id"] == annotation["_id"]
             and loaded["name"] == sample["name"]
@@ -62,10 +63,10 @@ class TestAnnotation:
         sample = upenn_utilities.getSampleAnnotation(folder["_id"])
         annotation = Annotation().create(sample)
 
-        assert Annotation().load(annotation["_id"]) is not None
+        assert Annotation().load(annotation["_id"], force=True) is not None
         result = Annotation().remove(annotation)
         assert result.deleted_count == 1
-        assert Annotation().load(annotation["_id"]) is None
+        assert Annotation().load(annotation["_id"], force=True) is None
 
     def testOnDatasetRemove(self, user):
         folder = utilities.createFolder(
@@ -75,7 +76,7 @@ class TestAnnotation:
         annotation = Annotation().create(sample)
 
         Folder().remove(folder)
-        result = Annotation().load(annotation["_id"])
+        result = Annotation().load(annotation["_id"], user=user)
         assert result is None
 
     def testValidate(self, admin):
