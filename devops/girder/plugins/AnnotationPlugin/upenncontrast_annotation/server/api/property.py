@@ -6,6 +6,7 @@ from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from girder.exceptions import RestException, AccessException
 from bson import ObjectId
+from bson.errors import InvalidId
 
 
 class AnnotationProperty(Resource):
@@ -131,6 +132,9 @@ class AnnotationProperty(Resource):
         ))
 
         # Collect all property IDs from accessible configurations
+        # Note: propertyIds are stored as strings in meta.propertyIds (per
+        # schema), but we need ObjectIds to query the _id field, so conversion
+        # is necessary.
         accessible_property_ids = set()
         for config in accessible_configs:
             if 'meta' in config and 'propertyIds' in config['meta']:
@@ -138,11 +142,8 @@ class AnnotationProperty(Resource):
                     accessible_property_ids.add(ObjectId(pid))
 
         # Query properties
-        if accessible_property_ids:
-            query = {'_id': {'$in': list(accessible_property_ids)}}
-        else:
-            # User has no accessible configurations, return empty
-            query = {'_id': {'$in': []}}
+        # Note: $in with an empty list returns no results, same as empty set
+        query = {'_id': {'$in': list(accessible_property_ids)}}
 
         return self._propertyModel.find(
             query,
@@ -158,18 +159,17 @@ class AnnotationProperty(Resource):
         )
     )
     def get(self, id, params):
-        # 1. Validate ID format
-        if not ObjectId.is_valid(id):
-            raise RestException('Invalid Id', code=400)
-
         user = self.getCurrentUser()
 
-        # 2. Load property strictly to ensure it exists (force=True ignores
-        # ACLs) using the 'id' argument passed from the URL
-        prop = self._propertyModel.load(ObjectId(id), force=True)
+        # 1. Convert ID to ObjectId (will raise InvalidId if invalid)
+        try:
+            object_id = ObjectId(id)
+        except InvalidId as exc:
+            raise RestException('Invalid Id', code=400) from exc
 
-        if not prop:
-            raise RestException('Property not found', code=404)
+        # 2. Load property strictly to ensure it exists (force=True ignores
+        # ACLs, exc=True raises exception if not found)
+        prop = self._propertyModel.load(object_id, force=True, exc=True)
 
         # 3. Check if user has READ access to ANY configuration that
         # references this property.
