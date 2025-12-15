@@ -4,7 +4,6 @@ from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models import annotation
 
 from girder.models.folder import Folder
-from girder.constants import AccessType
 
 from girder.exceptions import ValidationException
 

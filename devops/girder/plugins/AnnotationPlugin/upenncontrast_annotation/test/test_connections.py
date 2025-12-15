@@ -83,7 +83,9 @@ class TestConnection:
         connection = AnnotationConnection().create(connectionData)
 
         assert (
-            AnnotationConnection().load(connection["_id"], force=True) is not None
+            AnnotationConnection().load(
+                connection["_id"], force=True
+            ) is not None
         )
         result = AnnotationConnection().remove(connection)
         assert result.deleted_count == 1
