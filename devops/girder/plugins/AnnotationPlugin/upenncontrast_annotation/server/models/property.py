@@ -1,7 +1,6 @@
 from ..helpers.proxiedModel import ProxiedModel
 from girder.exceptions import ValidationException, RestException
 from girder.constants import AccessType
-from girder.models.model_base import AccessControlledModel
 from ..helpers.tasks import runJobRequest
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
@@ -29,7 +28,7 @@ class PropertySchema:
     }
 
 
-class AnnotationProperty(AccessControlledModel, ProxiedModel):
+class AnnotationProperty(ProxiedModel):
     # TODO: write lock
     # TODO: delete hooks: remove all computed values if the property is
     #   deleted ? (big operation)

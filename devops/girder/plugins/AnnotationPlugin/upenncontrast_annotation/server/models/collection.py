@@ -17,7 +17,6 @@ import datetime
 import fastjsonschema
 
 from girder.constants import AccessType
-from girder.models.model_base import AccessControlledModel
 from girder.models.item import Item
 from girder.exceptions import ValidationException, GirderException
 
@@ -84,7 +83,7 @@ class CollectionSchema:
     }
 
 
-class Collection(AccessControlledModel, ProxiedModel):
+class Collection(ProxiedModel):
 
     def __init__(self):
         super().__init__()

@@ -1,7 +1,6 @@
 from girder.constants import AccessType
 from girder.exceptions import ValidationException
 from ..helpers.proxiedModel import ProxiedModel
-from girder.models.model_base import AccessControlledModel
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 import fastjsonschema
@@ -57,7 +56,7 @@ class DatasetViewSchema:
     }
 
 
-class DatasetView(AccessControlledModel, ProxiedModel):
+class DatasetView(ProxiedModel):
 
     def __init__(self):
         super().__init__()
