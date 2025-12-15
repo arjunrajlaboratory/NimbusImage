@@ -28,6 +28,7 @@ import girderResources from "./girderResources";
 
 import { getLayerImages, getLayerSliceIndexes } from "./images";
 import jobs from "./jobs";
+import progress from "./progress";
 
 import {
   IDataset,
@@ -61,6 +62,7 @@ import {
   ICameraInfo,
   IDatasetLocation,
   ConnectionToolStateSymbol,
+  NotificationType,
 } from "./model";
 
 import persister from "./Persister";
@@ -495,6 +497,18 @@ export class Main extends VuexModule {
     }
   }
 
+  /**
+   * Helper function to create a notification when user is not logged in
+   */
+  private createNotLoggedInNotification() {
+    progress.createNotification({
+      type: NotificationType.WARNING,
+      title: "Authentication Required",
+      message: "You must be logged in to perform this action.",
+      timeout: 5,
+    });
+  }
+
   @Action
   removeToolFromConfiguration(toolId: string) {
     if (this.selectedTool?.configuration.id === toolId) {
@@ -630,7 +644,11 @@ export class Main extends VuexModule {
 
   @Action
   async deleteLargeImage(largeImage: IGirderLargeImage) {
-    if (!this.dataset?.id || !largeImage._id || !this.isLoggedIn) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
+    if (!this.dataset?.id || !largeImage._id) {
       return;
     }
 
@@ -808,6 +826,7 @@ export class Main extends VuexModule {
     configurationId: string;
   }) {
     if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
       return null;
     }
     return this.api.createDatasetView({
@@ -1083,6 +1102,7 @@ export class Main extends VuexModule {
   @Action
   deleteDatasetView(datasetView: IDatasetView) {
     if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
       return;
     }
     return this.api.deleteDatasetView(datasetView.id);
@@ -1099,6 +1119,7 @@ export class Main extends VuexModule {
     path: IGirderSelectAble;
   }) {
     if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
       return null;
     }
     try {
@@ -1135,7 +1156,11 @@ export class Main extends VuexModule {
     description: string;
     folderId: string;
   }) {
-    if (!this.dataset || !this.isLoggedIn) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return null;
+    }
+    if (!this.dataset) {
       return null;
     }
     try {
@@ -1235,6 +1260,7 @@ export class Main extends VuexModule {
   @Action
   async deleteConfiguration(configuration: IDatasetConfiguration) {
     if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
       return;
     }
     try {
@@ -1271,6 +1297,7 @@ export class Main extends VuexModule {
   @Action
   async deleteDataset(dataset: IDataset) {
     if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
       return;
     }
     try {
@@ -1404,7 +1431,11 @@ export class Main extends VuexModule {
 
   @Action
   async syncConfiguration(key: keyof IDatasetConfigurationBase) {
-    if (!this.configuration || !this.isLoggedIn) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
+    if (!this.configuration) {
       return;
     }
     sync.setSaving(true);
@@ -1419,7 +1450,11 @@ export class Main extends VuexModule {
 
   @Action
   async renameConfiguration(newName: string) {
-    if (!this.configuration || !this.isLoggedIn) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
+    if (!this.configuration) {
       return;
     }
     sync.setSaving(true);
@@ -1434,7 +1469,11 @@ export class Main extends VuexModule {
 
   @Action
   async addLayer() {
-    if (!this.configuration || !this.dataset || !this.isLoggedIn) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
+    if (!this.configuration || !this.dataset) {
       return;
     }
     this.pushLayer(newLayer(this.dataset, this.layers, this.userChannelColors));
@@ -1566,7 +1605,9 @@ export class Main extends VuexModule {
     }
 
     // Sync the configuration with the backend
-    await this.syncConfiguration("layers");
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
   }
 
   @Action
@@ -1575,7 +1616,9 @@ export class Main extends VuexModule {
       return;
     }
     this.toggleLayer(layerId);
-    await this.syncConfiguration("layers");
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
   }
 
   @Action
@@ -1721,7 +1764,7 @@ export class Main extends VuexModule {
     sync?: boolean;
   }) {
     this.changeLayerImpl(args);
-    if (args.sync !== false) {
+    if (args.sync !== false && this.isLoggedIn) {
       await this.syncConfiguration("layers");
     }
   }
