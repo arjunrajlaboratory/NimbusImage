@@ -14,6 +14,7 @@
         @click.stop="showAnalyzeDialog = true"
         id="measure-objects-button-tourstep"
         v-tour-trigger="'measure-objects-button-tourtrigger'"
+        :disabled="!isLoggedIn"
       >
         Measure objects
       </v-btn>
@@ -93,6 +94,7 @@
 
 <script lang="ts">
 import { Vue, Component } from "vue-property-decorator";
+import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { findIndexOfPath } from "@/utils/paths";
@@ -124,6 +126,7 @@ type TTabKey = (typeof tabs)[number]["key"];
   },
 })
 export default class AnnotationProperties extends Vue {
+  readonly store = store;
   readonly propertyStore = propertyStore;
   readonly filterStore = filterStore;
   readonly findIndexOfPath = findIndexOfPath;
@@ -140,6 +143,10 @@ export default class AnnotationProperties extends Vue {
 
   set activeTabIndex(index: number) {
     this.activeTabKey = tabs[index].key;
+  }
+
+  get isLoggedIn() {
+    return this.store.isLoggedIn;
   }
 
   togglePropertySettings(path: string[]): void {

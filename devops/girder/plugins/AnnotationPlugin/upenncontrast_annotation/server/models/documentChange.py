@@ -1,6 +1,5 @@
 from girder.constants import AccessType
 from girder.exceptions import ValidationException
-from girder.models.model_base import AccessControlledModel
 
 from ..helpers.customModel import CustomNimbusImageModel
 from ..helpers.fastjsonschema import customJsonSchemaCompile
@@ -38,7 +37,7 @@ class DocumentChangeSchema:
     }
 
 
-class DocumentChange(CustomNimbusImageModel, AccessControlledModel):
+class DocumentChange(CustomNimbusImageModel):
     """
     Register actions on some endpoints using the ProxiedModel
     This class itself doesn't inherit the ProxiedModel

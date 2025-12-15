@@ -193,18 +193,27 @@ export default class BreadCrumbs extends Vue {
     type: "item" | "folder" | "user" | "upenn_collection",
   ) {
     if (type === "user") {
-      const user = await this.girderResources.getUser(id);
-      if (user) {
-        Vue.set(
-          item,
-          "text",
-          `${user.firstName} ${user.lastName} (${user.email})`,
-        );
+      try {
+        const user = await this.girderResources.getUser(id);
+        if (user) {
+          Vue.set(
+            item,
+            "text",
+            `${user.firstName} ${user.lastName} (${user.email})`,
+          );
+        }
+      } catch (error) {
+        // Silently handle errors (e.g., 401 when not logged in)
+        // The item text will remain as "Unknown owner" set in refreshItems
       }
     } else {
-      const resource = await this.girderResources.getResource({ id, type });
-      if (resource) {
-        Vue.set(item, "text", resource.name);
+      try {
+        const resource = await this.girderResources.getResource({ id, type });
+        if (resource) {
+          Vue.set(item, "text", resource.name);
+        }
+      } catch (error) {
+        // Silently handle errors - item text will remain as set initially
       }
     }
   }
@@ -310,6 +319,7 @@ export default class BreadCrumbs extends Vue {
     if (folder?.creatorId) {
       const ownerItem = newItems.find((item) => item.title === "Owner:");
       if (ownerItem) {
+        // getUser() API handles auth checks internally, so no need to check isLoggedIn here
         this.setItemTextWithResourceName(ownerItem, folder.creatorId, "user");
       }
     }

@@ -117,7 +117,7 @@ export class Annotations extends VuexModule {
   async createMultipleAnnotations(
     annotationBases: IAnnotationBase[],
   ): Promise<IAnnotation[]> {
-    if (annotationBases.length === 0) {
+    if (annotationBases.length === 0 || !main.isLoggedIn) {
       return [];
     }
 
@@ -177,6 +177,9 @@ export class Annotations extends VuexModule {
 
   @Action
   async undoOrRedo(undo: boolean) {
+    if (!main.isLoggedIn) {
+      return;
+    }
     // Undo the pending annotation if there is one
     if (undo && this.submitPendingAnnotation) {
       this.submitPendingAnnotation(false);
@@ -367,7 +370,7 @@ export class Annotations extends VuexModule {
     annotationBase: IAnnotationBase,
   ): Promise<IAnnotation | null> {
     const submitted = await this.getAnnotationSubmission(annotationBase);
-    if (!submitted) {
+    if (!submitted || !main.isLoggedIn) {
       return null;
     }
 
@@ -519,6 +522,9 @@ export class Annotations extends VuexModule {
     tags: string[];
     channelId: number | null;
   }) {
+    if (!main.isLoggedIn) {
+      return [];
+    }
     sync.setSaving(true);
     const connections = await this.annotationsAPI.createConnections(
       annotationsIds,
@@ -541,7 +547,7 @@ export class Annotations extends VuexModule {
     label: string;
     tags: string[];
   }) {
-    if (!main.dataset) {
+    if (!main.dataset || !main.isLoggedIn) {
       return [];
     }
     sync.setSaving(true);
@@ -574,6 +580,9 @@ export class Annotations extends VuexModule {
     parentIds: string[];
     childIds: string[];
   }) {
+    if (!main.isLoggedIn) {
+      return;
+    }
     const parentsSet = new Set(parentIds);
     const childrenSet = new Set(childIds);
     const connectionsToDelete = this.annotationConnections.filter(
@@ -587,6 +596,9 @@ export class Annotations extends VuexModule {
 
   @Action
   public async deleteConnections(connectionIds: string[]) {
+    if (!main.isLoggedIn) {
+      return;
+    }
     sync.setSaving(true);
     await this.annotationsAPI.deleteMultipleConnections(connectionIds);
     this.deleteMultipleConnections(connectionIds);
@@ -596,6 +608,9 @@ export class Annotations extends VuexModule {
 
   @Action
   public async deleteAllTimelapseConnections() {
+    if (!main.isLoggedIn) {
+      return;
+    }
     const connectionsToDelete = this.annotationConnections.filter(
       (connection) => connection.tags.includes("Time lapse connection"),
     );
@@ -606,6 +621,9 @@ export class Annotations extends VuexModule {
   public async createConnection(
     annotationConnectionBase: IAnnotationConnectionBase,
   ): Promise<IAnnotationConnection | null> {
+    if (!main.isLoggedIn) {
+      return null;
+    }
     sync.setSaving(true);
     const newConnection: IAnnotationConnection | null =
       await this.annotationsAPI.createConnection(annotationConnectionBase);
@@ -620,6 +638,9 @@ export class Annotations extends VuexModule {
   public async createTimelapseConnection(
     annotationConnectionBase: IAnnotationConnectionBase,
   ): Promise<IAnnotationConnection | null> {
+    if (!main.isLoggedIn) {
+      return null;
+    }
     sync.setSaving(true);
     const parentAnnotation = this.getAnnotationFromId(
       annotationConnectionBase.parentId,
@@ -656,7 +677,7 @@ export class Annotations extends VuexModule {
     label: string;
     tags: string[];
   }) {
-    if (!main.dataset) {
+    if (!main.dataset || !main.isLoggedIn) {
       return [];
     }
     sync.setSaving(true);
@@ -787,7 +808,7 @@ export class Annotations extends VuexModule {
 
   @Action
   public async deleteAnnotations(ids: string[]) {
-    if (ids.length === 0) {
+    if (ids.length === 0 || !main.isLoggedIn) {
       return;
     }
 
@@ -839,6 +860,9 @@ export class Annotations extends VuexModule {
     annotationIds: string[];
     editFunction: (annotation: IAnnotation) => void;
   }) {
+    if (!main.isLoggedIn) {
+      return;
+    }
     sync.setSaving(true);
     const newAnnotations = [];
     for (const annotationId of annotationIds) {
@@ -1055,7 +1079,7 @@ export class Annotations extends VuexModule {
     error: IErrorInfoList;
     callback: (success: boolean) => void;
   }) {
-    if (!main.dataset || !main.configuration) {
+    if (!main.dataset || !main.configuration || !main.isLoggedIn) {
       callback(false);
       return null;
     }

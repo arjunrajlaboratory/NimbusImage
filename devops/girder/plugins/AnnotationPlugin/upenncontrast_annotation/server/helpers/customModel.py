@@ -1,6 +1,6 @@
 from girder import events
 from girder.exceptions import ValidationException
-from girder.models.model_base import Model
+from girder.models.model_base import AccessControlledModel
 
 from pymongo.errors import BulkWriteError, WriteError
 from bson.objectid import ObjectId
@@ -9,7 +9,7 @@ from upenncontrast_annotation.server.helpers.serialization import \
     convertIdsToObjectIds
 
 
-class CustomNimbusImageModel(Model):
+class CustomNimbusImageModel(AccessControlledModel):
     def saveMany(self, documents, validate=True, triggerEvents=True):
         """
         Create or update several documents in the collection. If a single

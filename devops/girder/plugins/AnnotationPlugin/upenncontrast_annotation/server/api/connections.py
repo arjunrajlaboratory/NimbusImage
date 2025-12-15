@@ -176,7 +176,7 @@ class AnnotationConnection(Resource):
         connection.update(bodyJson)
         self._connectionModel.save(connection)
 
-    @access.user
+    @access.public
     @autoDescribeRoute(
         Description("Search for connections")
         .responseClass("annotation_connection")
@@ -240,7 +240,7 @@ class AnnotationConnection(Resource):
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
 
-    @access.user
+    @access.public
     @autoDescribeRoute(
         Description("Get an connection by its id.").param(
             "id", "The connection's id", paramType="path"

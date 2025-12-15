@@ -1,6 +1,5 @@
 <template>
   <div>
-    <v-alert :value="!store.isLoggedIn" color="info">Login to start</v-alert>
     <template v-if="store.isLoggedIn">
       <v-overlay
         :value="isNavigating"

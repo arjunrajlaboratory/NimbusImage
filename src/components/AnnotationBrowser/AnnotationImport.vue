@@ -4,6 +4,7 @@
       <v-btn
         v-bind="{ ...attrs, ...$attrs }"
         v-on="on"
+        :disabled="!isLoggedIn"
         v-description="{
           section: 'Object list actions',
           title: 'Import from JSON',
@@ -181,6 +182,10 @@ export default class AnnotationImport extends Vue {
 
   get canImport() {
     return !!store.dataset;
+  }
+
+  get isLoggedIn() {
+    return this.store.isLoggedIn;
   }
 
   @Watch("jsonFile")

@@ -1,6 +1,5 @@
 from girder.constants import SortDir, AccessType
 from girder.exceptions import ValidationException
-from girder.models.model_base import AccessControlledModel
 from girder.utility.model_importer import ModelImporter
 
 from .documentChange import DocumentChange as DocumentChangeModel
@@ -43,7 +42,7 @@ class HistorySchema:
     }
 
 
-class History(CustomNimbusImageModel, AccessControlledModel):
+class History(CustomNimbusImageModel):
     """
     Register actions on some endpoints using the ProxiedModel
     This class itself doesn't inherit the ProxiedModel

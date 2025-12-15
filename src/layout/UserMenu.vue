@@ -2,7 +2,7 @@
   <div>
     <v-dialog v-model="userMenu" v-if="!store.isLoggedIn" max-width="400px">
       <template #activator="{ on }">
-        <v-btn v-if="!store.isLoggedIn" v-on="on">Login</v-btn>
+        <v-btn v-if="!store.isLoggedIn" v-on="on" color="primary">Login</v-btn>
       </template>
       <v-container class="pa-0">
         <v-card class="pa-6">
@@ -78,10 +78,13 @@ export default class UserMenu extends Vue {
 
   @Watch("store.isLoggedIn")
   loggedInOrOut() {
-    this.userMenu = !store.isLoggedIn;
+    // Only close the dialog when user logs in, don't reopen on logout
+    if (store.isLoggedIn) {
+      this.userMenu = false;
+    }
   }
 
-  userMenu: boolean = !store.isLoggedIn;
+  userMenu: boolean = false;
 
   isDomainLocked = !!import.meta.env.VITE_GIRDER_URL;
 
