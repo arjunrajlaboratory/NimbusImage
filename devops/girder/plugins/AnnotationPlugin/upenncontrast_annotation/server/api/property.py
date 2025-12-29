@@ -121,8 +121,9 @@ class AnnotationProperty(Resource):
         .errorResponse()
     )
     def getAllProperties(self, params):
-        # Note that this function is analogous to the "find" function in other classes,
-        # but here we don't have any filtering criteria, so we can just get all properties.
+        # Note that this function is analogous to the "find" function in other
+        # classes, but here we don't have any filtering criteria, so we can
+        # just get all properties.
 
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         user = self.getCurrentUser()
@@ -162,8 +163,10 @@ class AnnotationProperty(Resource):
         )
     )
     def get(self, id, params):
-        # Note that params is not used in this method, but it is required by the describeRoute decorator.
-        # This is because the describeRoute decorator expects a params argument, but we don't need it in this method.
+        # Note that params is not used in this method, but it is required by
+        # the describeRoute decorator. This is because the describeRoute
+        # decorator expects a params argument, but we don't need it in this
+        # method.
 
         user = self.getCurrentUser()
 
