@@ -1,7 +1,6 @@
 from ..helpers.proxiedModel import ProxiedModel
 from girder.exceptions import ValidationException
 from girder.constants import AccessType
-from girder.models.model_base import AccessControlledModel
 from ..helpers.tasks import runJobRequest
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
@@ -31,7 +30,7 @@ class InterfaceSchema:
     }
 
 
-class WorkerInterfaceModel(ProxiedModel, AccessControlledModel):
+class WorkerInterfaceModel(ProxiedModel):
 
     def __init__(self):
         super().__init__()

@@ -114,6 +114,13 @@ export default class GirderAPI {
         logWarning(`Resource ${type}/${id} not found (may have been deleted)`);
         return null;
       }
+      // Handle 401 (Unauthorized) errors - user may not be logged in or doesn't have access
+      if (isAxiosError(error) && error.response?.status === 401) {
+        logWarning(
+          `Resource ${type}/${id} unauthorized (user may not be logged in)`,
+        );
+        return null;
+      }
       // Re-throw other errors
       throw error;
     }
@@ -514,8 +521,21 @@ export default class GirderAPI {
     upenn_collection?: Record<string, IGirderItem>;
     user?: Record<string, IGirderUser>;
   }> {
-    const response = await this.client.post("resource/batch", args);
-    return response.data;
+    try {
+      const response = await this.client.post("resource/batch", args);
+      return response.data;
+    } catch (error) {
+      // Handle 401 (Unauthorized) errors gracefully - user may not be logged in
+      if (isAxiosError(error) && error.response?.status === 401) {
+        logWarning(
+          "Batch resources request unauthorized (user may not be logged in)",
+        );
+        // Return empty result instead of throwing
+        return {};
+      }
+      // Re-throw other errors
+      throw error;
+    }
   }
 
   // Bulk fetch collections by multiple folder ids
@@ -530,6 +550,7 @@ export default class GirderAPI {
     datasetViews: IDatasetView[],
     userMailOrUsername: string,
     accessType: number,
+    makePublic: boolean = false,
   ) {
     const datasetViewIds = datasetViews.map((datasetView) => datasetView.id);
     try {
@@ -537,6 +558,7 @@ export default class GirderAPI {
         datasetViewIds,
         userMailOrUsername,
         accessType,
+        makePublic,
       });
       return response.data as boolean;
     } catch (error) {
@@ -545,6 +567,16 @@ export default class GirderAPI {
       }
       throw error;
     }
+  }
+
+  async setDatasetPublic(datasetId: string, isPublic: boolean) {
+    const response = await this.client.post("dataset_view/set_public", null, {
+      params: {
+        datasetId,
+        public: isPublic,
+      },
+    });
+    return response.data;
   }
 
   async getCompatibleConfigurations(dataset: IDataset) {

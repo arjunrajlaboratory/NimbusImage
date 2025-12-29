@@ -17,7 +17,6 @@ import datetime
 import fastjsonschema
 
 from girder.constants import AccessType
-from girder.models.model_base import AccessControlledModel
 from girder.models.item import Item
 from girder.exceptions import ValidationException, GirderException
 
@@ -84,7 +83,7 @@ class CollectionSchema:
     }
 
 
-class Collection(ProxiedModel, AccessControlledModel):
+class Collection(ProxiedModel):
 
     def __init__(self):
         super().__init__()
@@ -97,7 +96,10 @@ class Collection(ProxiedModel, AccessControlledModel):
 
     def initialize(self):
         self.name = 'upenn_collection'
-        self.ensureIndices(('folderId', 'name', 'lowerName',
+        self.ensureIndices(('folderId',
+                            'name',
+                            'lowerName',
+                            'meta.propertyIds',
                             ([('folderId', 1), ('name', 1)], {})))
 
         self.exposeFields(level=AccessType.READ, fields=(

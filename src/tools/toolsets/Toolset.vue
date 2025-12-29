@@ -14,6 +14,7 @@
                   v-on="{ ...dialog, ...tooltip }"
                   id="add-tool-tourstep"
                   v-tour-trigger="'add-tool-tourtrigger'"
+                  :disabled="!isLoggedIn"
                 >
                   Add new tool
                 </v-btn>
@@ -61,7 +62,12 @@
                         z-index="100"
                       >
                         <template #activator="{}">
-                          <tool-item :tool="tool" v-bind="attrs" v-on="on" />
+                          <tool-item
+                            :tool="tool"
+                            :disabled="!isLoggedIn"
+                            v-bind="attrs"
+                            v-on="on"
+                          />
                         </template>
                         <annotation-worker-menu
                           :tool="tool"
@@ -72,7 +78,12 @@
                     <!-- When the tool is a SAM tool, show options in an expansion panel -->
                     <template v-else-if="tool.type === 'samAnnotation'">
                       <div>
-                        <tool-item :tool="tool" v-bind="attrs" v-on="on" />
+                        <tool-item
+                          :tool="tool"
+                          :disabled="!isLoggedIn"
+                          v-bind="attrs"
+                          v-on="on"
+                        />
                         <template
                           v-if="selectedTool && selectedTool.id === tool.id"
                         >
@@ -82,7 +93,12 @@
                     </template>
                     <!-- Otherwiser, only tool item -->
                     <template v-else>
-                      <tool-item :tool="tool" v-bind="attrs" v-on="on" />
+                      <tool-item
+                        :tool="tool"
+                        :disabled="!isLoggedIn"
+                        v-bind="attrs"
+                        v-on="on"
+                      />
                     </template>
                   </template>
                   <div class="d-flex flex-column">
@@ -174,6 +190,10 @@ export default class Toolset extends Vue {
 
   get selectedTool(): IToolConfiguration | null {
     return this.store.selectedTool?.configuration ?? null;
+  }
+
+  get isLoggedIn() {
+    return this.store.isLoggedIn;
   }
 
   toolCreationDialogOpen: boolean = false;

@@ -84,6 +84,7 @@
                 color="primary"
                 v-on="on"
                 v-bind="attrs"
+                :disabled="!isLoggedIn"
                 v-description="{
                   section: 'Snapshots',
                   title: 'Save as Snapshot',
@@ -594,6 +595,10 @@ export default class Snapshots extends Vue {
       this.markCurrentArea();
       this.drawBoundingBox();
     }
+  }
+
+  get isLoggedIn() {
+    return this.store.isLoggedIn;
   }
 
   tableHeaders: {
