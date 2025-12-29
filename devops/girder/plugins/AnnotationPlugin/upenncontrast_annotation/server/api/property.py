@@ -18,7 +18,7 @@ class AnnotationProperty(Resource):
 
         self.route("DELETE", (":id",), self.delete)
         self.route("GET", (":id",), self.get)
-        self.route("GET", (), self.find)
+        self.route("GET", (), self.getAllProperties)
         self.route("POST", (), self.create)
         self.route("PUT", (":id",), self.update)
         self.route(
@@ -120,7 +120,10 @@ class AnnotationProperty(Resource):
         .pagingParams(defaultSort="_id")
         .errorResponse()
     )
-    def find(self, params):
+    def getAllProperties(self, params):
+        # Note that this function is analogous to the "find" function in other classes,
+        # but here we don't have any filtering criteria, so we can just get all properties.
+
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         user = self.getCurrentUser()
 
@@ -159,17 +162,20 @@ class AnnotationProperty(Resource):
         )
     )
     def get(self, id, params):
+        # Note that params is not used in this method, but it is required by the describeRoute decorator.
+        # This is because the describeRoute decorator expects a params argument, but we don't need it in this method.
+
         user = self.getCurrentUser()
 
         # 1. Convert ID to ObjectId (will raise InvalidId if invalid)
         try:
-            object_id = ObjectId(id)
+            propertyId = ObjectId(id)
         except InvalidId as exc:
             raise RestException('Invalid Id', code=400) from exc
 
         # 2. Load property strictly to ensure it exists (force=True ignores
         # ACLs, exc=True raises exception if not found)
-        prop = self._propertyModel.load(object_id, force=True, exc=True)
+        prop = self._propertyModel.load(propertyId, force=True, exc=True)
 
         # 3. Check if user has READ access to ANY configuration that
         # references this property.

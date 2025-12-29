@@ -52,7 +52,7 @@
           <v-row>
             <v-col cols="12">
               <v-checkbox
-                v-model="makePublic"
+                v-model="isPublicSelected"
                 label="Make Public (accessible to everyone without login)"
                 class="mt-2"
                 dense
@@ -65,15 +65,15 @@
                 dense
                 outlined
                 hide-details
-                :disabled="makePublic"
-                :required="!makePublic"
+                :disabled="isPublicSelected"
+                :required="!isPublicSelected"
               ></v-text-field>
               <v-radio-group
                 v-model="accessLevel"
                 row
                 class="mt-2"
                 hide-details
-                :disabled="makePublic"
+                :disabled="isPublicSelected"
               >
                 <v-radio label="Private" :value="-1"></v-radio>
                 <v-radio label="View access" :value="0"></v-radio>
@@ -93,7 +93,7 @@
           :loading="isSharing"
           :disabled="
             selectedDatasetViews.length === 0 ||
-            (!makePublic && !usernameOrEmail) ||
+            (!isPublicSelected && !usernameOrEmail) ||
             isSharing
           "
         >
@@ -133,7 +133,7 @@ export default class ShareDataset extends Vue {
   userErrorString: string = "";
   showUserError: boolean = false;
   accessLevel: number = -1;
-  makePublic: boolean = false;
+  isPublicSelected: boolean = false;
   associatedViews: DatasetViewAndConfigurationName[] = [];
 
   get isDatasetPublic(): boolean {
@@ -149,9 +149,9 @@ export default class ShareDataset extends Vue {
     this.dialog = val;
     if (val && this.dataset) {
       this.fetchCollectionInfos(this.dataset._id);
-      // Sync makePublic checkbox with actual public status
+      // Sync isPublicSelected checkbox with actual public status
       const folder = toDatasetFolder(this.dataset);
-      this.makePublic = folder?.public === true;
+      this.isPublicSelected = folder?.public === true;
     } else {
       // Reset when dialog closes
       this.selectedDatasetViews = [];
@@ -160,7 +160,7 @@ export default class ShareDataset extends Vue {
       this.showUserError = false;
       this.isSharing = false;
       this.accessLevel = -1;
-      this.makePublic = false;
+      this.isPublicSelected = false;
       this.associatedViews = [];
     }
   }
@@ -218,7 +218,7 @@ export default class ShareDataset extends Vue {
     this.userErrorString = "";
 
     try {
-      if (this.makePublic) {
+      if (this.isPublicSelected) {
         // Use the dedicated setDatasetPublic endpoint
         if (!this.dataset) {
           throw new Error("Dataset not found");
