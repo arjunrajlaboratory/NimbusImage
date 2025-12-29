@@ -1053,6 +1053,13 @@ Customize machine learning algorithms for your data:
 5. Run training process
 6. Custom model appears in Piscis tool's model list
 
+**Finding Your Custom Models**:
+After training completes, your custom model files are stored in special folders in your file system:
+- **Cellpose models**: Located in the `.cellpose` folder at the root of your Private or Public directory
+- **Piscis models**: Located in the `.piscis` folder at the root of your Private or Public directory
+- These folders may be hidden by default in the file browser—look for folders starting with a dot (.)
+- Custom models automatically appear in the model dropdown menu when creating new tools
+
 **Training Tips**:
 - Quality over quantity: Few perfect annotations beat many poor ones
 - Include diverse examples of your structures
