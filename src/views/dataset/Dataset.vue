@@ -30,6 +30,7 @@
 <script lang="ts">
 import store from "@/store";
 import sync from "@/store/sync";
+import { logError } from "@/utils/log";
 import { Component, Vue, Watch } from "vue-property-decorator";
 
 @Component
@@ -57,8 +58,13 @@ export default class Dataset extends Vue {
   async loadDataset() {
     const datasetId = this.$route.params.datasetId;
     if (datasetId) {
-      await store.setSelectedDataset(datasetId);
-      this.isReady = true;
+      try {
+        await store.setSelectedDataset(datasetId);
+        this.isReady = true;
+      } catch (error) {
+        logError("Failed to load dataset:", error);
+        this.isReady = false;
+      }
     }
   }
 }

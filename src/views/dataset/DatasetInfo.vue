@@ -369,9 +369,17 @@ export default class DatasetInfo extends Vue {
       if (!(datasetView.configurationId in this.configInfo)) {
         this.girderResources
           .getCollection(datasetView.configurationId)
-          .then((item) =>
+          .then((item: IGirderItem | null) =>
             Vue.set(this.configInfo, datasetView.configurationId, item),
-          );
+          )
+          .catch((error: unknown) => {
+            logError(
+              `Failed to fetch collection info for ${datasetView.configurationId}:`,
+              error,
+            );
+            // Set to null to prevent retry loops
+            Vue.set(this.configInfo, datasetView.configurationId, null);
+          });
       }
     }
 
@@ -416,19 +424,19 @@ export default class DatasetInfo extends Vue {
       },
       {
         name: "Timepoints",
-        value: this.dataset?.time.length || "?",
+        value: this.dataset?.time?.length || "?",
       },
       {
         name: "XY Slices",
-        value: this.dataset?.xy.length || "?",
+        value: this.dataset?.xy?.length || "?",
       },
       {
         name: "Z Slices",
-        value: this.dataset?.z.length || "?",
+        value: this.dataset?.z?.length || "?",
       },
       {
         name: "Channels",
-        value: this.dataset?.channels.length || "?",
+        value: this.dataset?.channels?.length || "?",
       },
     ];
   }
@@ -442,9 +450,14 @@ export default class DatasetInfo extends Vue {
   @Watch("dataset")
   async updateDatasetViews() {
     if (this.dataset) {
-      this.datasetViews = await this.store.api.findDatasetViews({
-        datasetId: this.dataset.id,
-      });
+      try {
+        this.datasetViews = await this.store.api.findDatasetViews({
+          datasetId: this.dataset.id,
+        });
+      } catch (error) {
+        logError("Failed to fetch dataset views:", error);
+        this.datasetViews = [];
+      }
     } else {
       this.datasetViews = [];
     }
@@ -498,12 +511,16 @@ export default class DatasetInfo extends Vue {
   }
 
   removeDatasetView() {
-    if (this.viewToRemove) {
-      // Store whether we're removing the currently selected view
-      const isRemovingSelected =
-        this.viewToRemove.id === this.selectedDatasetViewId;
+    if (!this.viewToRemove) {
+      return;
+    }
+    // Store whether we're removing the currently selected view
+    const isRemovingSelected =
+      this.viewToRemove.id === this.selectedDatasetViewId;
 
-      this.store.deleteDatasetView(this.viewToRemove).then(() => {
+    const promise = this.store.deleteDatasetView(this.viewToRemove);
+    if (promise) {
+      promise.then(() => {
         this.removeDatasetViewConfirm = false;
         this.viewToRemove = null;
 

@@ -28,6 +28,7 @@ import girderResources from "./girderResources";
 
 import { getLayerImages, getLayerSliceIndexes } from "./images";
 import jobs from "./jobs";
+import progress from "./progress";
 
 import {
   IDataset,
@@ -61,6 +62,7 @@ import {
   ICameraInfo,
   IDatasetLocation,
   ConnectionToolStateSymbol,
+  NotificationType,
   IAssignmentStrategy,
 } from "./model";
 
@@ -641,6 +643,18 @@ export class Main extends VuexModule {
     }
   }
 
+  /**
+   * Helper function to create a notification when user is not logged in
+   */
+  private createNotLoggedInNotification() {
+    progress.createNotification({
+      type: NotificationType.WARNING,
+      title: "Authentication Required",
+      message: "You must be logged in to perform this action.",
+      timeout: 5,
+    });
+  }
+
   @Action
   removeToolFromConfiguration(toolId: string) {
     if (this.selectedTool?.configuration.id === toolId) {
@@ -776,7 +790,13 @@ export class Main extends VuexModule {
 
   @Action
   async deleteLargeImage(largeImage: IGirderLargeImage) {
-    if (!this.dataset?.id || !largeImage._id) return;
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
+    if (!this.dataset?.id || !largeImage._id) {
+      return;
+    }
 
     // Do not delete the default large image (original data)
     if (largeImage.name === DEFAULT_LARGE_IMAGE_SOURCE) {
@@ -951,6 +971,10 @@ export class Main extends VuexModule {
     datasetId: string;
     configurationId: string;
   }) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return null;
+    }
     return this.api.createDatasetView({
       datasetId,
       configurationId,
@@ -1015,12 +1039,11 @@ export class Main extends VuexModule {
 
   @Action
   private async initFromUrl() {
-    if (this.girderUser && this.selectedDatasetId) {
-      // load after logged in
+    // Note, removed the check for isLoggedIn to allow anonymous users to access datasets
+    if (this.selectedDatasetId) {
       await this.setSelectedDataset(this.selectedDatasetId);
     }
-    if (this.girderUser && this.selectedConfigurationId && this.dataset) {
-      // load after logged in
+    if (this.selectedConfigurationId && this.dataset) {
       await this.setSelectedConfiguration(this.selectedConfigurationId);
     }
   }
@@ -1124,7 +1147,7 @@ export class Main extends VuexModule {
   @Action
   async setSelectedDataset(id: string | null) {
     this.api.flushCaches();
-    if (!this.isLoggedIn || !id) {
+    if (!id) {
       this.setDataset({ id, data: null });
       return;
     }
@@ -1149,8 +1172,11 @@ export class Main extends VuexModule {
 
   @Action
   async setSelectedConfiguration(id: string | null) {
-    if (!this.isLoggedIn || !id) {
-      this.setConfiguration({ id, data: null });
+    // Note, removed the check for isLoggedIn to allow anonymous users to access configurations
+    // Needed to view public datasets even as anonymous
+    // Note also that this does get called before the user is logged in with a null id,
+    // so we need to return early if the id is null.
+    if (id === null) {
       return;
     }
     try {
@@ -1185,9 +1211,12 @@ export class Main extends VuexModule {
       }
       datasetView.lastViewed = Date.now();
       this.setDatasetViewImpl(datasetView);
-      const promises: Promise<any>[] = [
-        this.api.updateDatasetView(datasetView),
-      ];
+      const promises: Promise<any>[] = [];
+
+      // Only update lastViewed if user is logged in (anonymous users can't update)
+      if (this.isLoggedIn) {
+        promises.push(this.api.updateDatasetView(datasetView));
+      }
 
       const newLocation = datasetView.lastLocation;
       const query = app.$route.query;
@@ -1218,6 +1247,10 @@ export class Main extends VuexModule {
 
   @Action
   deleteDatasetView(datasetView: IDatasetView) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
     return this.api.deleteDatasetView(datasetView.id);
   }
 
@@ -1231,6 +1264,10 @@ export class Main extends VuexModule {
     description: string;
     path: IGirderSelectAble;
   }) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return null;
+    }
     try {
       sync.setSaving(true);
       const ds = await this.api.createDataset(name, description, path);
@@ -1361,6 +1398,10 @@ export class Main extends VuexModule {
     description: string;
     folderId: string;
   }) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return null;
+    }
     if (!this.dataset) {
       return null;
     }
@@ -1460,6 +1501,10 @@ export class Main extends VuexModule {
 
   @Action
   async deleteConfiguration(configuration: IDatasetConfiguration) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
     try {
       sync.setSaving(true);
       const promises: Promise<any>[] = [];
@@ -1493,6 +1538,10 @@ export class Main extends VuexModule {
 
   @Action
   async deleteDataset(dataset: IDataset) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
     try {
       sync.setSaving(true);
       const promises: Promise<any>[] = [];
@@ -1515,7 +1564,9 @@ export class Main extends VuexModule {
   @Debounce(100, { leading: false, trailing: true })
   async fetchHistory() {
     const datasetId = this.dataset?.id;
-    if (datasetId !== undefined) {
+    // Only fetch history if user is logged in to avoid 401 errors
+    // (and because anonymous users should not access history)
+    if (this.isLoggedIn && datasetId !== undefined) {
       const history = await this.api.getHistoryEntries(datasetId);
       this.setHistory(history);
     } else {
@@ -1539,7 +1590,9 @@ export class Main extends VuexModule {
       return;
     }
     this.setLastLocationInDatasetView(location);
-    await this.api.updateDatasetView(this.datasetView);
+    if (this.isLoggedIn) {
+      await this.api.updateDatasetView(this.datasetView);
+    }
   }
 
   @Action
@@ -1620,6 +1673,10 @@ export class Main extends VuexModule {
 
   @Action
   async syncConfiguration(key: keyof IDatasetConfigurationBase) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
     if (!this.configuration) {
       return;
     }
@@ -1635,6 +1692,10 @@ export class Main extends VuexModule {
 
   @Action
   async renameConfiguration(newName: string) {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
     if (!this.configuration) {
       return;
     }
@@ -1650,6 +1711,10 @@ export class Main extends VuexModule {
 
   @Action
   async addLayer() {
+    if (!this.isLoggedIn) {
+      this.createNotLoggedInNotification();
+      return;
+    }
     if (!this.configuration || !this.dataset) {
       return;
     }
@@ -1782,7 +1847,9 @@ export class Main extends VuexModule {
     }
 
     // Sync the configuration with the backend
-    await this.syncConfiguration("layers");
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
   }
 
   @Action
@@ -1791,7 +1858,9 @@ export class Main extends VuexModule {
       return;
     }
     this.toggleLayer(layerId);
-    await this.syncConfiguration("layers");
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
   }
 
   @Action
@@ -1838,7 +1907,9 @@ export class Main extends VuexModule {
     this.changeLayer({ layerId, delta: { contrast }, sync: true });
     if (this.datasetView) {
       Vue.delete(this.datasetView.layerContrasts, layerId);
-      this.api.updateDatasetView(this.datasetView);
+      if (this.isLoggedIn) {
+        this.api.updateDatasetView(this.datasetView);
+      }
     }
   }
 
@@ -1852,7 +1923,9 @@ export class Main extends VuexModule {
   }) {
     if (this.datasetView) {
       Vue.set(this.datasetView.layerContrasts, layerId, contrast);
-      this.api.updateDatasetView(this.datasetView);
+      if (this.isLoggedIn) {
+        this.api.updateDatasetView(this.datasetView);
+      }
     }
   }
 
@@ -1860,7 +1933,9 @@ export class Main extends VuexModule {
   async resetContrastInView(layerId: string) {
     if (this.datasetView) {
       Vue.delete(this.datasetView.layerContrasts, layerId);
-      this.api.updateDatasetView(this.datasetView);
+      if (this.isLoggedIn) {
+        this.api.updateDatasetView(this.datasetView);
+      }
     }
   }
 
@@ -1888,7 +1963,9 @@ export class Main extends VuexModule {
   }) {
     if (this.datasetView) {
       Vue.set(this.datasetView.scales, itemId, scale);
-      this.api.updateDatasetView(this.datasetView);
+      if (this.isLoggedIn) {
+        this.api.updateDatasetView(this.datasetView);
+      }
     }
   }
 
@@ -1896,7 +1973,9 @@ export class Main extends VuexModule {
   resetScalesInView(itemId: keyof IScales) {
     if (this.datasetView) {
       Vue.delete(this.datasetView.scales, itemId);
-      this.api.updateDatasetView(this.datasetView);
+      if (this.isLoggedIn) {
+        this.api.updateDatasetView(this.datasetView);
+      }
     }
   }
 
@@ -1927,7 +2006,7 @@ export class Main extends VuexModule {
     sync?: boolean;
   }) {
     this.changeLayerImpl(args);
-    if (args.sync !== false) {
+    if (args.sync !== false && this.isLoggedIn) {
       await this.syncConfiguration("layers");
     }
   }
@@ -2265,7 +2344,9 @@ export class Main extends VuexModule {
       return;
     }
     Vue.set(this.datasetView, "layerContrasts", {});
-    this.api.updateDatasetView(this.datasetView);
+    if (this.isLoggedIn) {
+      this.api.updateDatasetView(this.datasetView);
+    }
   }
 
   @Mutation
@@ -2274,7 +2355,9 @@ export class Main extends VuexModule {
       return;
     }
     Vue.set(this.datasetView, "layerContrasts", contrasts);
-    this.api.updateDatasetView(this.datasetView);
+    if (this.isLoggedIn) {
+      this.api.updateDatasetView(this.datasetView);
+    }
   }
 
   @Action
@@ -2342,7 +2425,9 @@ export class Main extends VuexModule {
     [key: string]: string;
   }): Promise<void> {
     try {
-      await this.api.setUserColors(channelColors);
+      if (this.isLoggedIn) {
+        await this.api.setUserColors(channelColors);
+      }
 
       // Update the user metadata in the store using mutation
       this.updateUserChannelColors(channelColors);

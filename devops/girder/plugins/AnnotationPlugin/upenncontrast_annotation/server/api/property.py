@@ -3,7 +3,10 @@ from girder.api.describe import Description, describeRoute
 from girder.constants import AccessType
 from girder.api.rest import Resource, loadmodel
 from ..models.property import AnnotationProperty as PropertyModel
-from girder.exceptions import AccessException
+from ..models.collection import Collection as CollectionModel
+from girder.exceptions import RestException, AccessException
+from bson import ObjectId
+from bson.errors import InvalidId
 
 
 class AnnotationProperty(Resource):
@@ -15,7 +18,7 @@ class AnnotationProperty(Resource):
 
         self.route("DELETE", (":id",), self.delete)
         self.route("GET", (":id",), self.get)
-        self.route("GET", (), self.find)
+        self.route("GET", (), self.getAllProperties)
         self.route("POST", (), self.create)
         self.route("PUT", (":id",), self.update)
         self.route(
@@ -110,37 +113,88 @@ class AnnotationProperty(Resource):
         property.update(self.getBodyJson())
         self._propertyModel.save(property)
 
-    @access.user
+    @access.public
     @describeRoute(
         Description("Search for properties")
         .responseClass("property")
         .pagingParams(defaultSort="_id")
         .errorResponse()
     )
-    def find(self, params):
+    def getAllProperties(self, params):
+        # Note that this function is analogous to the "find" function in other
+        # classes, but here we don't have any filtering criteria, so we can
+        # just get all properties.
+
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
-        query = {}
-        # if 'datasetId' in params:
-        #     query['datasetId'] = params['datasetId']
-        return self._propertyModel.findWithPermissions(
+        user = self.getCurrentUser()
+
+        # Get all accessible configurations
+        accessible_configs = list(CollectionModel().findWithPermissions(
+            {},
+            user=user,
+            level=AccessType.READ
+        ))
+
+        # Collect all property IDs from accessible configurations
+        # Note: propertyIds are stored as strings in meta.propertyIds (per
+        # schema), but we need ObjectIds to query the _id field, so conversion
+        # is necessary.
+        accessible_property_ids = set()
+        for config in accessible_configs:
+            if 'meta' in config and 'propertyIds' in config['meta']:
+                for pid in config['meta']['propertyIds']:
+                    accessible_property_ids.add(ObjectId(pid))
+
+        # Query properties
+        # Note: $in with an empty list returns no results, same as empty set
+        query = {'_id': {'$in': list(accessible_property_ids)}}
+
+        return self._propertyModel.find(
             query,
             sort=sort,
-            user=self.getCurrentUser(),
-            level=AccessType.READ,
             limit=limit,
             offset=offset,
         )
 
-    @access.user
+    @access.public
     @describeRoute(
         Description("Get a property by its id.").param(
             "id", "The annotation property's id", paramType="path"
         )
     )
-    @loadmodel(
-        model="annotation_property",
-        plugin="upenncontrast_annotation",
-        level=AccessType.READ,
-    )
-    def get(self, annotation_property, params):
-        return annotation_property
+    def get(self, id, params):
+        # Note that params is not used in this method, but it is required by
+        # the describeRoute decorator. This is because the describeRoute
+        # decorator expects a params argument, but we don't need it in this
+        # method.
+
+        user = self.getCurrentUser()
+
+        # 1. Convert ID to ObjectId (will raise InvalidId if invalid)
+        try:
+            propertyId = ObjectId(id)
+        except InvalidId as exc:
+            raise RestException('Invalid Id', code=400) from exc
+
+        # 2. Load property strictly to ensure it exists (force=True ignores
+        # ACLs, exc=True raises exception if not found)
+        prop = self._propertyModel.load(propertyId, force=True, exc=True)
+
+        # 3. Check if user has READ access to ANY configuration that
+        # references this property.
+        # Note: CollectionSchema defines propertyIds as strings, so we pass
+        # 'id' directly.
+        accessible_configs = CollectionModel().findWithPermissions(
+            {'meta.propertyIds': id},
+            user=user,
+            level=AccessType.READ,
+            limit=1  # Optimization: We only need to know if ONE exists
+        )
+
+        # 4. If the cursor is empty, access is denied
+        if accessible_configs.count() == 0:
+            # If the user is anonymous and fails check, usually 401 is better,
+            # but 403 or 404 is standard for "hidden" items.
+            raise AccessException(f'Read access denied for property {id}')
+
+        return prop

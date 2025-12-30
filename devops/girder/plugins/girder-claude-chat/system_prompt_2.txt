@@ -77,6 +77,22 @@ NimbusImage organizes image data hierarchically:
 
 This structure allows for efficient data organization and consistent analysis across experiments. For instance, you can collect data for different conditions on different days and then use collections to organize and analyze the data together.
 
+## Sharing Datasets
+NimbusImage allows you to share datasets and collections with other users for collaboration:
+
+**How to Share**:
+1. Click the sharing icon next to a dataset or collection
+2. Enter the email address of the user's NimbusImage account
+3. Choose access level:
+   - **Read**: User can view the dataset and annotations
+   - **Write**: User can modify annotations and analysis
+
+**Important Notes**:
+- To share a dataset, you must also share its parent collection so the recipient can view it properly
+- Shared datasets appear in the recipient's file navigator
+- Changes made by collaborators are visible to all users with access
+- You can remove access at any time by managing sharing settings
+
 # 3. Getting Started
 
 ## Supported File Formats
@@ -92,7 +108,11 @@ For special cases:
 - IncuCyte TIFFs may require pre-processing with the NimbusImage script
 
 ## Uploading Data
-Two main approaches to get your data into NimbusImage:
+NimbusImage provides a streamlined "Create Dataset" dialog to upload your data:
+
+**Accessing Upload Options**:
+- Click the upload button on the home page to open the Create Dataset dialog
+- The dialog offers both quick and advanced upload options in one place
 
 **Quick Upload**:
 - Simply drag and drop files onto the upload zone
@@ -100,14 +120,17 @@ Two main approaches to get your data into NimbusImage:
 - Best for simple datasets and quick exploration
 
 **Advanced Upload**:
-1. **File Selection**: Upload files and name your dataset
-2. **Variable Assignment**: Map filename elements (s01, t02, etc.) to variables
-3. **Compositing Options**: Choose to stitch tiles or keep as separate positions
-4. **Transcoding**: Optimize performance by transcoding to efficient TIFF. Not generally needed for Nikon .nd2 files, but important for Leica .lif and Zeiss .czi files.
-5. **Collection Assignment**: Add to existing or create new collection
+1. **Dataset Name**: Enter a name for your dataset (the system checks to prevent duplicate names)
+2. **Storage Location**: Choose where to save the dataset (Private, Public, or Team folder)
+3. **File Selection**: Upload your image files
+4. **Variable Assignment**: Map filename elements (s01, t02, etc.) to variables
+5. **Compositing Options**: Choose to stitch tiles or keep as separate positions
+6. **Transcoding**: Optimize performance by transcoding to efficient TIFF. Not generally needed for Nikon .nd2 files, but important for Leica .lif and Zeiss .czi files.
+7. **Collection Assignment**: Add to existing or create new collection
 
 ## Navigating the Interface
 After loading your data, navigate the interface:
+- **Home Page**: Tabbed interface with "Recents" showing recently accessed datasets and "Samples" showing example data
 - **Top Bar**: Tabs for objects, connections, measurements, snapshots
 - **Left Panel**: Data navigation, layer controls, toolset management
 - **Center**: Main image viewing area
@@ -124,6 +147,7 @@ Essential controls for viewing your images:
 - **Pan**: Click and drag in the main view
 - **Minimap**: Use the small overview in the top left to navigate quickly
 - **Variable Navigation**: Sliders to move through XY, Z, and time dimensions
+- **Label Display**: Toggle between text/name labels (e.g., "Well A1", "1 second") and numeric identifiers in the Viewer Settings
 
 **Display**:
 - **Contrast**: Click the palette icon to adjust intensity ranges
@@ -816,6 +840,12 @@ Customize visualization with flexible layer controls:
 - Change channel colors with color picker
 - Rename layers for clearer organization
 
+**Custom Color Preferences**:
+- Set your default channel colors in User Profile Settings
+- Custom colors automatically apply to new datasets
+- Preferences are saved to your account and persist across sessions
+- Override on a per-dataset basis when needed
+
 **Advanced Options**:
 - Create new layers via "+" button
 - Assign any channel to any layer
@@ -852,6 +882,7 @@ Create, manage, and export visual bookmarks:
 - Edit or delete snapshots as needed
 - Add tags for organization
 - Use as visual documentation of analysis regions
+- Select individual snapshots using checkboxes for targeted operations
 
 **Scale Bar Options**:
 - Enable scale bar with checkbox
@@ -871,6 +902,7 @@ Share visual results for presentations and publications:
 
 **Download Options**:
 - Single image: "Download images for current location"
+- Selected snapshots: Select specific snapshots and download only those
 - All snapshots: "Download images for all snapshots"
 - With annotations: "Download screenshot of current viewport"
 
@@ -1020,6 +1052,13 @@ Customize machine learning algorithms for your data:
    - Region tag
 5. Run training process
 6. Custom model appears in Piscis tool's model list
+
+**Finding Your Custom Models**:
+After training completes, your custom model files are stored in special folders in your file system:
+- **Cellpose models**: Located in the `.cellpose` folder at the root of your Private or Public directory
+- **Piscis models**: Located in the `.piscis` folder at the root of your Private or Public directory
+- These folders may be hidden by default in the file browser—look for folders starting with a dot (.)
+- Custom models automatically appear in the model dropdown menu when creating new tools
 
 **Training Tips**:
 - Quality over quantity: Few perfect annotations beat many poor ones

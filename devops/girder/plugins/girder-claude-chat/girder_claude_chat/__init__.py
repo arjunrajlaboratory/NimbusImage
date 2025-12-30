@@ -50,9 +50,8 @@ class ClaudeChatResource(Resource):
         logger.debug(f'Processing {len(messages)} messages')
         try:
             response = self.client.messages.create(
-                model='claude-3-7-sonnet-20250219',
-                max_tokens=1000,
-                temperature=0,
+                model='claude-sonnet-4-5-20250929',
+                max_tokens=4096,
                 system=[
                     {
                         'type': 'text',
