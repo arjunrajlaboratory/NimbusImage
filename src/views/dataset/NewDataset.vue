@@ -77,7 +77,7 @@
                 v-model="path"
                 :breadcrumb="true"
                 title="Select a Folder to Import the New Dataset"
-                :disabled="effectiveQuickupload && !pipelineError"
+                :disabled="isQuickImport && !pipelineError"
               />
             </v-row>
           </v-container>
@@ -105,7 +105,7 @@
 
       <div
         class="button-bar d-flex justify-space-between align-center"
-        v-if="!effectiveQuickupload || pipelineError"
+        v-if="!isQuickImport || pipelineError"
       >
         <div>
           <span class="mr-2"
@@ -135,11 +135,11 @@
       </div>
     </v-form>
 
-    <!-- Collection mode progress header -->
-    <v-card v-if="effectiveCollectionMode && !pipelineError" class="mb-4">
+    <!-- Batch mode progress header -->
+    <v-card v-if="isBatchMode && !pipelineError" class="mb-4">
       <v-card-title>
         <v-icon left>mdi-folder-multiple</v-icon>
-        Creating Collection: {{ effectiveCollectionName }}
+        Creating Collection: {{ effectiveBatchName }}
       </v-card-title>
       <v-card-subtitle>
         Dataset
@@ -160,7 +160,7 @@
         />
         <div class="mt-2 d-flex">
           <v-chip
-            v-for="(files, idx) in store.uploadWorkflow.filesPerDataset"
+            v-for="(files, idx) in store.uploadWorkflow.fileGroups"
             :key="idx"
             :color="
               idx < store.uploadWorkflow.currentDatasetIndex
@@ -178,7 +178,7 @@
       </v-card-text>
     </v-card>
 
-    <template v-if="effectiveQuickupload || effectiveCollectionMode">
+    <template v-if="isQuickImport || isBatchMode">
       <template v-if="configuring && datasetId">
         <!-- Always mount MultiSourceConfiguration, but only show UI for first dataset -->
         <multi-source-configuration
@@ -191,13 +191,12 @@
           :class="{
             'd-none':
               !pipelineError &&
-              effectiveCollectionMode &&
-              !isProcessingFirstDataset,
+              (isQuickImport || (isBatchMode && !isProcessingFirstDataset)),
           }"
         />
         <div class="title mb-2">
           {{
-            effectiveCollectionMode && !isProcessingFirstDataset
+            isBatchMode && !isProcessingFirstDataset
               ? "Applying configuration to dataset"
               : "Configuring the dataset"
           }}
@@ -281,6 +280,43 @@
     <v-snackbar v-model="showCopySnackbar" :timeout="2000" color="success" top>
       Log copied to clipboard
     </v-snackbar>
+
+    <!-- Batch mode error dialog -->
+    <v-dialog v-model="showBatchErrorDialog" persistent max-width="500">
+      <v-card>
+        <v-card-title class="headline error--text">
+          <v-icon left color="error">mdi-alert-circle</v-icon>
+          Dataset Failed
+        </v-card-title>
+        <v-card-text>
+          <p>
+            Failed to process dataset
+            {{ store.uploadWorkflow.currentDatasetIndex + 1 }} of
+            {{ totalDatasets }}:
+            <strong>{{ currentDatasetName }}</strong>
+          </p>
+          <v-alert type="error" text dense class="mt-3">
+            {{ batchErrorMessage }}
+          </v-alert>
+          <p class="mt-3">
+            {{ totalDatasets - store.uploadWorkflow.currentDatasetIndex - 1 }}
+            dataset(s) remaining. Would you like to continue with the remaining
+            datasets or stop?
+          </p>
+        </v-card-text>
+        <v-card-actions>
+          <v-btn text @click="handleStopBatch">
+            <v-icon left>mdi-stop</v-icon>
+            Stop and Review
+          </v-btn>
+          <v-spacer></v-spacer>
+          <v-btn color="primary" @click="handleContinueBatch">
+            <v-icon left>mdi-skip-next</v-icon>
+            Skip and Continue
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 <script lang="ts">
@@ -411,13 +447,13 @@ export default class NewDataset extends Vue {
   readonly initialDescription?: string;
 
   @Prop({ type: Array, default: () => [] })
-  readonly filesPerDataset!: File[][];
+  readonly fileGroups!: File[][];
 
   @Prop({ default: false })
-  readonly collectionMode!: boolean;
+  readonly batchMode!: boolean;
 
   @Prop()
-  readonly collectionName?: string;
+  readonly batchName?: string;
 
   uploadedFiles: File[] | null = null;
 
@@ -459,6 +495,11 @@ export default class NewDataset extends Vue {
 
   pipelineError = false;
 
+  // Batch mode error handling
+  showBatchErrorDialog: boolean = false;
+  batchErrorMessage: string = "";
+  skippedDatasets: number[] = [];
+
   fileSizeExceeded = false;
   fileSizeExceededMessage = "";
 
@@ -466,7 +507,7 @@ export default class NewDataset extends Vue {
 
   allFiles: File[] = [];
 
-  // Collection mode state is now in store.uploadWorkflow
+  // Batch mode state is now in store.uploadWorkflow
   // Keep currentDatasetIndex for backwards compatibility with non-store flows
   currentDatasetIndex: number = 0;
 
@@ -590,31 +631,27 @@ export default class NewDataset extends Vue {
   }
 
   // Computed properties that use store when upload workflow is active
-  get effectiveQuickupload(): boolean {
+  get isQuickImport(): boolean {
     return this.store.uploadWorkflow.active
       ? this.store.uploadWorkflow.quickupload
       : this.quickupload;
   }
 
-  get effectiveCollectionMode(): boolean {
+  get isBatchMode(): boolean {
     return this.store.uploadWorkflow.active
-      ? this.store.uploadWorkflow.collectionMode
-      : this.collectionMode;
+      ? this.store.uploadWorkflow.batchMode
+      : this.batchMode;
   }
 
-  get effectiveCollectionName(): string {
-    return (
-      this.store.uploadWorkflow.collectionName || this.collectionName || ""
-    );
+  get effectiveBatchName(): string {
+    return this.store.uploadWorkflow.batchName || this.batchName || "";
   }
 
   get totalDatasets(): number {
     if (this.store.uploadWorkflow.active) {
       return this.store.uploadTotalDatasets || 1;
     }
-    return (
-      this.filesPerDataset.length || (this.defaultFiles.length > 0 ? 1 : 0)
-    );
+    return this.fileGroups.length || (this.defaultFiles.length > 0 ? 1 : 0);
   }
 
   get isFirstDataset(): boolean {
@@ -628,7 +665,7 @@ export default class NewDataset extends Vue {
     if (this.store.uploadWorkflow.active) {
       return this.store.uploadIsLastDataset;
     }
-    return this.currentDatasetIndex >= this.filesPerDataset.length - 1;
+    return this.currentDatasetIndex >= this.fileGroups.length - 1;
   }
 
   get isProcessingFirstDataset(): boolean {
@@ -638,12 +675,12 @@ export default class NewDataset extends Vue {
   get currentFiles(): File[] {
     if (
       this.store.uploadWorkflow.active &&
-      this.store.uploadWorkflow.collectionMode
+      this.store.uploadWorkflow.batchMode
     ) {
       return this.store.uploadCurrentFiles;
     }
-    if (this.effectiveCollectionMode && this.filesPerDataset.length > 0) {
-      return this.filesPerDataset[this.currentDatasetIndex] || [];
+    if (this.isBatchMode && this.fileGroups.length > 0) {
+      return this.fileGroups[this.currentDatasetIndex] || [];
     }
     return this.uploadedFiles || this.defaultFiles;
   }
@@ -651,7 +688,7 @@ export default class NewDataset extends Vue {
   get currentDatasetName(): string {
     if (
       this.store.uploadWorkflow.active &&
-      this.store.uploadWorkflow.collectionMode
+      this.store.uploadWorkflow.batchMode
     ) {
       return this.store.uploadCurrentDatasetName;
     }
@@ -662,7 +699,7 @@ export default class NewDataset extends Vue {
 
   // Override existing `files` getter to use currentFiles in collection mode
   get files() {
-    if (this.effectiveCollectionMode) {
+    if (this.isBatchMode) {
       return this.currentFiles;
     }
     return this.uploadedFiles || this.defaultFiles;
@@ -745,14 +782,14 @@ export default class NewDataset extends Vue {
     }
     // Collection is now stored in this.store.uploadWorkflow.collection
     logError(
-      `[Collection Mode] createCollection completed. Collection in store: ${!!this.store.uploadWorkflow.collection}, collection.id: ${this.store.uploadWorkflow.collection?.id}`,
+      `[Batch Mode] createCollection completed. Collection in store: ${!!this.store.uploadWorkflow.collection}, collection.id: ${this.store.uploadWorkflow.collection?.id}`,
     );
   }
 
   async uploadMounted() {
     // Store original path on first dataset only (if not already in store)
     if (
-      this.effectiveCollectionMode &&
+      this.isBatchMode &&
       this.isFirstDataset &&
       !this.store.uploadWorkflow.originalPath
     ) {
@@ -760,14 +797,12 @@ export default class NewDataset extends Vue {
     }
 
     // Set files for current dataset
-    const filesToUpload = this.effectiveCollectionMode
-      ? this.currentFiles
-      : this.files;
+    const filesToUpload = this.isBatchMode ? this.currentFiles : this.files;
     this.$refs.uploader?.inputFilesChanged(filesToUpload);
 
-    if (this.effectiveQuickupload || this.effectiveCollectionMode) {
+    if (this.isQuickImport || this.isBatchMode) {
       // Set name based on mode
-      if (this.effectiveCollectionMode) {
+      if (this.isBatchMode) {
         this.name = this.currentDatasetName;
       } else if (this.initialName) {
         this.name = this.initialName + " - " + formatDate(new Date());
@@ -818,7 +853,7 @@ export default class NewDataset extends Vue {
 
     // In collection mode, use originalPath from store for dataset creation
     // In single dataset mode, use current path
-    const pathForCreation = this.effectiveCollectionMode
+    const pathForCreation = this.isBatchMode
       ? this.store.uploadWorkflow.originalPath
       : this.path;
 
@@ -832,9 +867,7 @@ export default class NewDataset extends Vue {
       return;
     }
 
-    const datasetName = this.effectiveCollectionMode
-      ? this.currentDatasetName
-      : this.name;
+    const datasetName = this.isBatchMode ? this.currentDatasetName : this.name;
 
     this.dataset = await this.store.createDataset({
       name: datasetName,
@@ -848,7 +881,7 @@ export default class NewDataset extends Vue {
     }
 
     // Track datasets in store for collection mode
-    if (this.effectiveCollectionMode) {
+    if (this.isBatchMode) {
       this.store.addUploadedDataset(this.dataset);
     }
 
@@ -883,7 +916,7 @@ export default class NewDataset extends Vue {
 
   async configureDatasetWithStrategy() {
     logError(
-      `[Collection Mode] configureDatasetWithStrategy called. datasetId: ${this.datasetId}, dataset: ${!!this.dataset}`,
+      `[Batch Mode] configureDatasetWithStrategy called. datasetId: ${this.datasetId}, dataset: ${!!this.dataset}`,
     );
     this.configuring = true;
     await Vue.nextTick();
@@ -891,19 +924,19 @@ export default class NewDataset extends Vue {
     const config = this.$refs.configuration;
     if (!config) {
       logError("MultiSourceConfiguration not mounted for subsequent dataset");
-      this.pipelineError = true;
+      this.handleBatchError("Configuration component not ready");
       return;
     }
 
-    const strategy = this.store.uploadWorkflow.assignmentStrategy;
+    const strategy = this.store.uploadWorkflow.dimensionStrategy;
     if (!strategy) {
-      logError("No assignment strategy saved");
-      this.pipelineError = true;
+      logError("No dimension strategy saved from first dataset");
+      this.handleBatchError("No dimension strategy saved from first dataset");
       return;
     }
 
     logError(
-      `[Collection Mode] Strategy found: transcode=${strategy.transcode}, XY=${!!strategy.XY}, Z=${!!strategy.Z}, T=${!!strategy.T}, C=${!!strategy.C}`,
+      `[Batch Mode] Strategy found: transcode=${strategy.transcode}, XY=${!!strategy.XY}, Z=${!!strategy.Z}, T=${!!strategy.T}, C=${!!strategy.C}`,
     );
 
     this.progressStatusText = "Detecting file structure...";
@@ -914,20 +947,18 @@ export default class NewDataset extends Vue {
     this.progressStatusText = strategy.transcode
       ? "Transcoding..."
       : "Generating configuration...";
-    logError(`[Collection Mode] Calling config.submit()...`);
+    logError(`[Batch Mode] Calling config.submit()...`);
     config.submit();
   }
 
   async advanceToNextDataset() {
     logError(
-      `[Collection Mode] advanceToNextDataset called. isLastDataset: ${this.isLastDataset}, currentIndex: ${this.store.uploadWorkflow.currentDatasetIndex}, totalDatasets: ${this.totalDatasets}`,
+      `[Batch Mode] advanceToNextDataset called. isLastDataset: ${this.isLastDataset}, currentIndex: ${this.store.uploadWorkflow.currentDatasetIndex}, totalDatasets: ${this.totalDatasets}`,
     );
 
     if (this.isLastDataset) {
       // All datasets processed - navigate to collection
-      logError(
-        "[Collection Mode] All datasets processed, navigating to collection",
-      );
+      logError("[Batch Mode] All datasets processed, navigating to collection");
       this.navigateToCollection();
       return;
     }
@@ -935,7 +966,7 @@ export default class NewDataset extends Vue {
     // Advance index in store
     this.store.advanceUploadDatasetIndex();
     logError(
-      `[Collection Mode] Advanced to dataset index: ${this.store.uploadWorkflow.currentDatasetIndex}`,
+      `[Batch Mode] Advanced to dataset index: ${this.store.uploadWorkflow.currentDatasetIndex}`,
     );
 
     // Reset local component state
@@ -947,7 +978,7 @@ export default class NewDataset extends Vue {
     // Reset path from store's originalPath
     if (!this.store.uploadWorkflow.originalPath) {
       logError(
-        "[Collection Mode] ERROR: originalPath is not set in store, cannot continue",
+        "[Batch Mode] ERROR: originalPath is not set in store, cannot continue",
       );
       this.pipelineError = true;
       return;
@@ -962,14 +993,14 @@ export default class NewDataset extends Vue {
     // Capture collection and datasets BEFORE calling completeUploadWorkflow
     // because completeUploadWorkflow resets the state
     logError(
-      `[Collection Mode] navigateToCollection called. Store state - collection: ${!!this.store.uploadWorkflow.collection}, collectionId: ${this.store.uploadWorkflow.collection?.id}, datasets.length: ${this.store.uploadWorkflow.datasets.length}`,
+      `[Batch Mode] navigateToCollection called. Store state - collection: ${!!this.store.uploadWorkflow.collection}, collectionId: ${this.store.uploadWorkflow.collection?.id}, datasets.length: ${this.store.uploadWorkflow.datasets.length}`,
     );
 
     const collection = this.store.uploadWorkflow.collection;
     const datasets = [...this.store.uploadWorkflow.datasets]; // Copy array
 
     logError(
-      `[Collection Mode] Captured values. collection: ${!!collection}, collectionId: ${collection?.id}, datasets: ${datasets.length}`,
+      `[Batch Mode] Captured values. collection: ${!!collection}, collectionId: ${collection?.id}, datasets: ${datasets.length}`,
     );
 
     // Now reset the workflow state
@@ -979,7 +1010,7 @@ export default class NewDataset extends Vue {
       // Set the collection in the store so ConfigurationInfo can load it
       this.store.setSelectedConfiguration(collection.id);
       logError(
-        `[Collection Mode] Navigating to configuration view: ${collection.id}`,
+        `[Batch Mode] Navigating to configuration view: ${collection.id}`,
       );
       this.$router.push({
         name: "configuration",
@@ -987,7 +1018,7 @@ export default class NewDataset extends Vue {
       });
     } else if (datasets && datasets.length > 0) {
       logError(
-        `[Collection Mode] No collection found, falling back to first dataset: ${datasets[0].id}`,
+        `[Batch Mode] No collection found, falling back to first dataset: ${datasets[0].id}`,
       );
       this.$router.push({
         name: "dataset",
@@ -995,12 +1026,75 @@ export default class NewDataset extends Vue {
       });
     } else {
       logError(
-        `[Collection Mode] No collection or datasets found, navigating to root`,
+        `[Batch Mode] No collection or datasets found, navigating to root`,
       );
       this.$router.push({
         name: "root",
       });
     }
+  }
+
+  /**
+   * Handle errors during batch upload. Shows a dialog letting user choose to stop or continue.
+   * For single dataset uploads, falls back to setting pipelineError directly.
+   */
+  handleBatchError(message: string) {
+    if (!this.isBatchMode) {
+      // Single dataset mode - use existing pipelineError behavior
+      this.pipelineError = true;
+      return;
+    }
+
+    // Batch mode - show dialog
+    this.batchErrorMessage = message;
+    this.showBatchErrorDialog = true;
+  }
+
+  /**
+   * User chose to stop the batch upload after an error.
+   * Navigate to partial results if any datasets were processed.
+   */
+  handleStopBatch() {
+    this.showBatchErrorDialog = false;
+    this.pipelineError = true;
+
+    // Navigate to partial results
+    const collection = this.store.uploadWorkflow.collection;
+    const datasets = [...this.store.uploadWorkflow.datasets];
+
+    // Reset workflow state
+    this.store.completeUploadWorkflow();
+
+    if (collection && datasets.length > 0) {
+      // Navigate to collection with processed datasets
+      this.$router.push({
+        name: "configuration",
+        params: { configurationId: collection.id },
+      });
+    } else if (datasets.length > 0) {
+      // Navigate to first dataset
+      this.$router.push({
+        name: "dataset",
+        params: { datasetId: datasets[0].id },
+      });
+    } else {
+      this.$router.push({ name: "root" });
+    }
+  }
+
+  /**
+   * User chose to skip the failed dataset and continue with remaining datasets.
+   */
+  handleContinueBatch() {
+    this.showBatchErrorDialog = false;
+    this.skippedDatasets.push(this.store.uploadWorkflow.currentDatasetIndex);
+
+    // Reset error states
+    this.pipelineError = false;
+    this.batchErrorMessage = "";
+
+    // Advance to next dataset
+    this.advanceToNextDataset();
   }
 
   filesChanged(files: FileUpload[] | File[]) {
@@ -1019,7 +1113,7 @@ export default class NewDataset extends Vue {
     if (totalSize > maxSizeBytes) {
       this.fileSizeExceeded = true;
       this.uploadedFiles = null;
-      if (this.effectiveQuickupload) {
+      if (this.isQuickImport) {
         this.pipelineError = true;
         return;
       }
@@ -1062,7 +1156,7 @@ export default class NewDataset extends Vue {
 
     const datasetId = this.dataset.id;
 
-    if (this.effectiveCollectionMode) {
+    if (this.isBatchMode) {
       if (this.isFirstDataset) {
         // First dataset: run full interactive configuration
         this.configureDataset();
@@ -1070,7 +1164,7 @@ export default class NewDataset extends Vue {
         // Subsequent datasets: configure with saved strategy
         this.configureDatasetWithStrategy();
       }
-    } else if (this.effectiveQuickupload) {
+    } else if (this.isQuickImport) {
       this.configureDataset();
     } else if (this.autoMultiConfig) {
       this.$router.push({
@@ -1104,24 +1198,24 @@ export default class NewDataset extends Vue {
 
   generationDone(jsonId: string | null) {
     logError(
-      `[Collection Mode] generationDone called. jsonId: ${jsonId}, effectiveCollectionMode: ${this.effectiveCollectionMode}, effectiveQuickupload: ${this.effectiveQuickupload}`,
+      `[Batch Mode] generationDone called. jsonId: ${jsonId}, isBatchMode: ${this.isBatchMode}, isQuickImport: ${this.isQuickImport}`,
     );
-    if (this.effectiveCollectionMode) {
+    if (this.isBatchMode) {
       // For collection mode, handle specially
       this.handleCollectionGenerationDone(jsonId);
-    } else if (this.effectiveQuickupload) {
+    } else if (this.isQuickImport) {
       // Existing single-dataset flow
       this.createView(jsonId);
     } else {
       logError(
-        "[Collection Mode] generationDone called but neither collectionMode nor quickupload is active",
+        "[Batch Mode] generationDone called but neither batchMode nor quickupload is active",
       );
     }
   }
 
   async handleCollectionGenerationDone(jsonId: string | null) {
     logError(
-      `[Collection Mode] handleCollectionGenerationDone called with jsonId: ${jsonId}`,
+      `[Batch Mode] handleCollectionGenerationDone called with jsonId: ${jsonId}`,
     );
     if (!jsonId) {
       logError("Failed to generate JSON");
@@ -1129,32 +1223,30 @@ export default class NewDataset extends Vue {
       return;
     }
 
-    // Save assignment STRATEGY from first dataset (not the JSON config)
+    // Save dimension STRATEGY from first dataset (not the JSON config)
     if (this.isFirstDataset && this.$refs.configuration) {
-      logError(
-        `[Collection Mode] Saving assignment strategy from first dataset`,
-      );
-      const strategy = this.$refs.configuration.getAssignmentStrategy();
-      this.store.setUploadAssignmentStrategy(strategy);
+      logError(`[Batch Mode] Saving dimension strategy from first dataset`);
+      const strategy = this.$refs.configuration.getDimensionStrategy();
+      this.store.setUploadDimensionStrategy(strategy);
 
       // CRITICAL: Load the full dataset (with tile metadata) before creating collection
       // The dataset in uploadWorkflow.datasets[] is just the basic folder info,
       // but createConfigurationFromDataset needs the full tile/frame metadata
-      logError(`[Collection Mode] Loading full dataset: ${this.dataset!.id}`);
+      logError(`[Batch Mode] Loading full dataset: ${this.dataset!.id}`);
       await this.store.setSelectedDataset(this.dataset!.id);
 
       // Create the collection using store action
-      logError("[Collection Mode] Creating collection...");
+      logError("[Batch Mode] Creating collection...");
       await this.createCollection();
 
       if (this.pipelineError || !this.store.uploadWorkflow.collection) {
         logError(
-          `[Collection Mode] Collection creation failed. pipelineError: ${this.pipelineError}, collection: ${!!this.store.uploadWorkflow.collection}`,
+          `[Batch Mode] Collection creation failed. pipelineError: ${this.pipelineError}, collection: ${!!this.store.uploadWorkflow.collection}`,
         );
         return;
       }
       logError(
-        `[Collection Mode] Collection created successfully: ${this.store.uploadWorkflow.collection.id}`,
+        `[Batch Mode] Collection created successfully: ${this.store.uploadWorkflow.collection.id}`,
       );
     }
 
@@ -1162,7 +1254,7 @@ export default class NewDataset extends Vue {
     const collection = this.store.uploadWorkflow.collection;
     if (collection && this.dataset) {
       logError(
-        `[Collection Mode] Creating dataset view for dataset ${this.dataset.id} in collection ${collection.id}`,
+        `[Batch Mode] Creating dataset view for dataset ${this.dataset.id} in collection ${collection.id}`,
       );
       try {
         const datasetView = await this.store.createDatasetView({
@@ -1171,20 +1263,20 @@ export default class NewDataset extends Vue {
         });
         if (!datasetView) {
           logError(
-            `[Collection Mode] Failed to create dataset view - API returned null`,
+            `[Batch Mode] Failed to create dataset view - API returned null`,
           );
         } else {
           logError(
-            `[Collection Mode] Dataset view created successfully: ${datasetView.id}`,
+            `[Batch Mode] Dataset view created successfully: ${datasetView.id}`,
           );
         }
       } catch (error) {
-        logError(`[Collection Mode] Error creating dataset view:`, error);
+        logError(`[Batch Mode] Error creating dataset view:`, error);
         // Don't fail the whole process if dataset view creation fails
       }
     } else {
       logError(
-        `[Collection Mode] Cannot create dataset view. collection: ${!!collection}, dataset: ${!!this.dataset}`,
+        `[Batch Mode] Cannot create dataset view. collection: ${!!collection}, dataset: ${!!this.dataset}`,
       );
     }
 
@@ -1192,7 +1284,7 @@ export default class NewDataset extends Vue {
 
     // Move to next dataset or finish
     logError(
-      `[Collection Mode] Advancing to next dataset. isLastDataset: ${this.isLastDataset}`,
+      `[Batch Mode] Advancing to next dataset. isLastDataset: ${this.isLastDataset}`,
     );
     this.advanceToNextDataset();
   }

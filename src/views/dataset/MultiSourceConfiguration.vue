@@ -250,7 +250,7 @@ import { ITileMeta } from "@/store/GirderAPI";
 import {
   IGeoJSPositionWithTransform,
   IJobEventData,
-  IAssignmentStrategy,
+  IDimensionStrategy,
 } from "@/store/model";
 import { logError } from "@/utils/log";
 import { parseTranscodeOutput } from "@/utils/strings";
@@ -1532,8 +1532,8 @@ export default class MultiSourceConfiguration extends Vue {
   }
 
   // Extract the current assignment strategy for saving
-  getAssignmentStrategy(): IAssignmentStrategy {
-    const strategy: IAssignmentStrategy = {
+  getDimensionStrategy(): IDimensionStrategy {
+    const strategy: IDimensionStrategy = {
       XY: null,
       Z: null,
       T: null,
@@ -1556,7 +1556,7 @@ export default class MultiSourceConfiguration extends Vue {
 
   // Reinitialize and apply strategy - handles race conditions with @Watch
   async reinitializeAndApplyStrategy(
-    strategy: IAssignmentStrategy,
+    strategy: IDimensionStrategy,
   ): Promise<void> {
     logError(
       `[MultiSourceConfig] reinitializeAndApplyStrategy called for datasetId: ${this.datasetId}`,
@@ -1603,13 +1603,13 @@ export default class MultiSourceConfiguration extends Vue {
     );
 
     // Now apply the strategy
-    this.applyAssignmentStrategy(strategy);
+    this.applyDimensionStrategy(strategy);
   }
 
   // Apply a saved strategy to current dimensions
-  applyAssignmentStrategy(strategy: IAssignmentStrategy): void {
+  applyDimensionStrategy(strategy: IDimensionStrategy): void {
     logError(
-      `[MultiSourceConfig] applyAssignmentStrategy called. Available dimensions: ${this.dimensions.length}`,
+      `[MultiSourceConfig] applyDimensionStrategy called. Available dimensions: ${this.dimensions.length}`,
     );
     logError(
       `[MultiSourceConfig] Strategy: transcode=${strategy.transcode}, XY=${!!strategy.XY}, Z=${!!strategy.Z}, T=${!!strategy.T}, C=${!!strategy.C}`,

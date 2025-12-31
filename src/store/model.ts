@@ -1830,7 +1830,7 @@ export interface ITaggingToolState {
 }
 
 // Strategy for how dimensions were assigned during first dataset configuration
-export interface IAssignmentStrategy {
+export interface IDimensionStrategy {
   XY: { source: "file" | "filename" | "images"; guess: string } | null;
   Z: { source: "file" | "filename" | "images"; guess: string } | null;
   T: { source: "file" | "filename" | "images"; guess: string } | null;

@@ -63,7 +63,7 @@ import {
   IDatasetLocation,
   ConnectionToolStateSymbol,
   NotificationType,
-  IAssignmentStrategy,
+  IDimensionStrategy,
 } from "./model";
 
 import persister from "./Persister";
@@ -148,35 +148,55 @@ export class Main extends VuexModule {
   previousMultipleLayerVisibility: string[] = []; // Store IDs of visible layers from multiple/unroll mode
   previousSingleLayerVisibility: string | null = null; // Store ID of the visible layer from single mode
 
-  // Upload workflow state
+  /**
+   * Upload workflow state for single and batch dataset uploads.
+   * Tracks the entire upload process from file selection to completion.
+   */
   uploadWorkflow: {
+    // --- Mode flags ---
+    /** Whether an upload workflow is currently active */
     active: boolean;
+    /** Quick import mode: auto-guess configuration for all datasets */
     quickupload: boolean;
-    collectionMode: boolean;
-    collectionName: string;
-    filesPerDataset: File[][];
+    /** Batch mode: upload multiple files as separate datasets */
+    batchMode: boolean;
+
+    // --- Input data ---
+    /** Name for the batch/collection (only used in batch mode) */
+    batchName: string;
+    /** File groups: each array element contains files for one dataset */
+    fileGroups: File[][];
+    /** Initial location where datasets will be created */
     initialUploadLocation: IGirderLocation | null;
+    /** Initial dataset name (for single dataset mode) */
     initialName: string;
+    /** Initial dataset description */
     initialDescription: string;
-    // Collection mode processing state
+
+    // --- Processing state (batch mode) ---
+    /** Index of the dataset currently being processed (0-based) */
     currentDatasetIndex: number;
+    /** Datasets that have been successfully created */
     datasets: IDataset[];
+    /** The configuration/collection linking all datasets (batch mode) */
     collection: IDatasetConfiguration | null;
-    assignmentStrategy: IAssignmentStrategy | null;
+    /** Dimension mapping strategy captured from first dataset */
+    dimensionStrategy: IDimensionStrategy | null;
+    /** Original path for creating datasets (preserved across batch) */
     originalPath: IGirderLocation | null;
   } = {
     active: false,
     quickupload: false,
-    collectionMode: false,
-    collectionName: "",
-    filesPerDataset: [],
+    batchMode: false,
+    batchName: "",
+    fileGroups: [],
     initialUploadLocation: null,
     initialName: "",
     initialDescription: "",
     currentDatasetIndex: 0,
     datasets: [],
     collection: null,
-    assignmentStrategy: null,
+    dimensionStrategy: null,
     originalPath: null,
   };
 
@@ -317,7 +337,7 @@ export class Main extends VuexModule {
 
   // Upload workflow getters
   get uploadTotalDatasets(): number {
-    return this.uploadWorkflow.filesPerDataset.length;
+    return this.uploadWorkflow.fileGroups.length;
   }
 
   get uploadIsFirstDataset(): boolean {
@@ -327,17 +347,14 @@ export class Main extends VuexModule {
   get uploadIsLastDataset(): boolean {
     return (
       this.uploadWorkflow.currentDatasetIndex >=
-      this.uploadWorkflow.filesPerDataset.length - 1
+      this.uploadWorkflow.fileGroups.length - 1
     );
   }
 
   get uploadCurrentFiles(): File[] {
-    const { filesPerDataset, currentDatasetIndex } = this.uploadWorkflow;
-    if (
-      filesPerDataset.length > 0 &&
-      currentDatasetIndex < filesPerDataset.length
-    ) {
-      return filesPerDataset[currentDatasetIndex] || [];
+    const { fileGroups, currentDatasetIndex } = this.uploadWorkflow;
+    if (fileGroups.length > 0 && currentDatasetIndex < fileGroups.length) {
+      return fileGroups[currentDatasetIndex] || [];
     }
     return [];
   }
@@ -387,16 +404,16 @@ export class Main extends VuexModule {
     this.uploadWorkflow = {
       active: false,
       quickupload: false,
-      collectionMode: false,
-      collectionName: "",
-      filesPerDataset: [],
+      batchMode: false,
+      batchName: "",
+      fileGroups: [],
       initialUploadLocation: null,
       initialName: "",
       initialDescription: "",
       currentDatasetIndex: 0,
       datasets: [],
       collection: null,
-      assignmentStrategy: null,
+      dimensionStrategy: null,
       originalPath: null,
     };
   }
@@ -418,8 +435,8 @@ export class Main extends VuexModule {
   }
 
   @Mutation
-  setUploadAssignmentStrategy(strategy: IAssignmentStrategy | null) {
-    this.uploadWorkflow.assignmentStrategy = strategy;
+  setUploadDimensionStrategy(strategy: IDimensionStrategy | null) {
+    this.uploadWorkflow.dimensionStrategy = strategy;
   }
 
   @Mutation
@@ -1296,9 +1313,9 @@ export class Main extends VuexModule {
   @Action
   initializeUploadWorkflow(params: {
     quickupload: boolean;
-    collectionMode: boolean;
-    collectionName: string;
-    filesPerDataset: File[][];
+    batchMode: boolean;
+    batchName: string;
+    fileGroups: File[][];
     initialUploadLocation: IGirderLocation | null;
     initialName: string;
     initialDescription: string;
@@ -1307,9 +1324,9 @@ export class Main extends VuexModule {
     this.setUploadWorkflow({
       active: true,
       quickupload: params.quickupload,
-      collectionMode: params.collectionMode,
-      collectionName: params.collectionName,
-      filesPerDataset: params.filesPerDataset,
+      batchMode: params.batchMode,
+      batchName: params.batchName,
+      fileGroups: params.fileGroups,
       initialUploadLocation: params.initialUploadLocation,
       initialName: params.initialName,
       initialDescription: params.initialDescription,
@@ -1319,7 +1336,7 @@ export class Main extends VuexModule {
 
   @Action
   async createUploadCollection() {
-    const { collectionName, originalPath } = this.uploadWorkflow;
+    const { batchName, originalPath } = this.uploadWorkflow;
 
     if (!originalPath || !("_id" in originalPath)) {
       logError("Cannot determine original path for collection creation");
@@ -1335,8 +1352,8 @@ export class Main extends VuexModule {
       return null;
     }
 
-    // Use collectionName from store, with fallback
-    let name = collectionName;
+    // Use batchName from store, with fallback
+    let name = batchName;
     if (!name || name.trim() === "") {
       name = `${this.dataset.name || "New"} Collection`;
     }

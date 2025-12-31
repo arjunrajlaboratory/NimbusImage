@@ -187,7 +187,7 @@
         <v-card-text>
           <v-text-field
             v-model="datasetName"
-            :label="collectionMode ? 'Collection Name' : 'Dataset Name'"
+            :label="batchMode ? 'Collection Name' : 'Dataset Name'"
             required
             :rules="nameRules"
             :error-messages="nameError"
@@ -196,7 +196,7 @@
 
           <!-- Collection mode toggle -->
           <v-checkbox
-            v-model="collectionMode"
+            v-model="batchMode"
             label="Upload each file as a separate dataset in a collection"
             :disabled="pendingFiles.length < 2"
             hide-details
@@ -204,7 +204,7 @@
           />
 
           <!-- Show file-to-dataset mapping when in collection mode -->
-          <v-card v-if="collectionMode" outlined class="mb-4">
+          <v-card v-if="batchMode" outlined class="mb-4">
             <v-card-subtitle
               >Each file will become a separate dataset:</v-card-subtitle
             >
@@ -226,7 +226,7 @@
           <div class="mb-4 text-body-2 text--secondary">
             {{ pendingFiles.length }}
             {{ pendingFiles.length === 1 ? "file" : "files" }} selected
-            <template v-if="collectionMode">
+            <template v-if="batchMode">
               → {{ pendingFiles.length }} datasets
             </template>
           </div>
@@ -405,7 +405,7 @@ export default class Home extends Vue {
   nameTaken: boolean = false;
   checkingName: boolean = false;
   nameError: string = "";
-  collectionMode: boolean = false;
+  batchMode: boolean = false;
 
   userDisplayNames: { [key: string]: string } = {};
 
@@ -448,8 +448,8 @@ export default class Home extends Vue {
     }
   }
 
-  get filesPerDataset(): File[][] {
-    if (this.collectionMode) {
+  get fileGroups(): File[][] {
+    if (this.batchMode) {
       // Each file becomes its own dataset
       return this.pendingFiles.map((file) => [file]);
     } else {
@@ -470,7 +470,7 @@ export default class Home extends Vue {
           return true; // Let the required rule handle empty names
         }
         // Skip dataset name check in collection mode - collection names are checked differently
-        if (this.collectionMode) {
+        if (this.batchMode) {
           return true;
         }
         if (!this.selectedLocation || !("_id" in this.selectedLocation)) {
@@ -750,11 +750,11 @@ export default class Home extends Vue {
     // Initialize upload workflow in store
     this.store.initializeUploadWorkflow({
       quickupload: true,
-      collectionMode: this.collectionMode,
-      collectionName: this.collectionMode ? name || this.datasetName || "" : "",
-      filesPerDataset: this.collectionMode ? this.filesPerDataset : [files],
+      batchMode: this.batchMode,
+      batchName: this.batchMode ? name || this.datasetName || "" : "",
+      fileGroups: this.batchMode ? this.fileGroups : [files],
       initialUploadLocation: location || this.location,
-      initialName: this.collectionMode ? "" : name || "",
+      initialName: this.batchMode ? "" : name || "",
       initialDescription: "",
     });
 
@@ -769,11 +769,11 @@ export default class Home extends Vue {
   ) {
     this.store.initializeUploadWorkflow({
       quickupload: false,
-      collectionMode: this.collectionMode,
-      collectionName: this.collectionMode ? name || this.datasetName || "" : "",
-      filesPerDataset: this.collectionMode ? this.filesPerDataset : [files],
+      batchMode: this.batchMode,
+      batchName: this.batchMode ? name || this.datasetName || "" : "",
+      fileGroups: this.batchMode ? this.fileGroups : [files],
       initialUploadLocation: location || this.location,
-      initialName: this.collectionMode ? "" : name || "",
+      initialName: this.batchMode ? "" : name || "",
       initialDescription: "",
     });
 
@@ -865,7 +865,7 @@ export default class Home extends Vue {
     this.nameTaken = false;
     this.nameError = "";
     this.checkingName = false;
-    this.collectionMode = false;
+    this.batchMode = false;
   }
 
   toggleZenodoImporter(): void {
