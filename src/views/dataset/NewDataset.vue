@@ -444,6 +444,42 @@ export default class NewDataset extends Vue {
   readonly store = store;
   readonly girderResources = girderResources;
 
+  /**
+   * TODO (2025-12-31): Refactor props vs store inconsistency
+   *
+   * PROBLEM:
+   * This component has two ways of receiving data:
+   * 1. Props (defaultFiles, initialName, quickupload, batchMode, etc.)
+   * 2. Vuex store (store.uploadWorkflow.*)
+   *
+   * When navigating from Home.vue via router.push({ name: "newdataset" }),
+   * NO PROPS are passed - data is stored in Vuex before navigation. However,
+   * the component still has props and some code paths check props instead of
+   * the store, causing bugs (e.g., initialName prop is undefined even though
+   * store.uploadWorkflow.initialName has the correct value).
+   *
+   * CURRENT WORKAROUNDS:
+   * - The `files` getter checks store.uploadCurrentFiles when uploadWorkflow.active
+   * - The `configureDataset()` method checks store.uploadWorkflow.initialName
+   *   instead of the initialName prop
+   * - Similar patterns throughout where we prefer store over props
+   *
+   * RECOMMENDED FIX:
+   * 1. Decide on ONE pattern: store-only makes sense since the upload workflow
+   *    spans navigation and needs persistent state
+   * 2. Remove or deprecate these props: defaultFiles, initialName, initialDescription,
+   *    quickupload, batchMode, batchName, fileGroups, initialUploadLocation
+   * 3. Always read from store.uploadWorkflow when uploadWorkflow.active is true
+   * 4. Keep props only if there's a legitimate use case for embedding this
+   *    component directly (without the upload workflow)
+   * 5. Update all code paths to consistently use store values
+   *
+   * WHY THIS MATTERS:
+   * The mixed pattern makes it easy to introduce bugs - you might check a prop
+   * that's never passed, or forget to check the store. Consolidating to one
+   * pattern will make the code more maintainable and less error-prone.
+   */
+
   @Prop({ type: Array, default: () => [] })
   readonly defaultFiles!: File[];
 
