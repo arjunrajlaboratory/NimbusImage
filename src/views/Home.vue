@@ -203,21 +203,44 @@
             class="mb-4"
           />
 
-          <!-- Show file-to-dataset mapping when in collection mode -->
+          <!-- Show file-to-dataset mapping when in batch mode -->
           <v-card v-if="batchMode" outlined class="mb-4">
-            <v-card-subtitle
-              >Each file will become a separate dataset:</v-card-subtitle
-            >
+            <v-card-subtitle>
+              Each file will become a separate dataset:
+              <v-progress-circular
+                v-if="validatingNames"
+                indeterminate
+                size="16"
+                width="2"
+                class="ml-2"
+              />
+            </v-card-subtitle>
             <v-list dense>
               <v-list-item v-for="(file, idx) in pendingFiles" :key="idx">
                 <v-list-item-icon>
-                  <v-icon small>mdi-file</v-icon>
+                  <v-icon
+                    small
+                    :color="nameConflicts.includes(idx) ? 'error' : ''"
+                  >
+                    {{
+                      nameConflicts.includes(idx)
+                        ? "mdi-alert-circle"
+                        : "mdi-file"
+                    }}
+                  </v-icon>
                 </v-list-item-icon>
                 <v-list-item-content>
-                  <v-list-item-title>{{
-                    getDatasetNameForFile(file)
-                  }}</v-list-item-title>
-                  <v-list-item-subtitle>{{ file.name }}</v-list-item-subtitle>
+                  <v-text-field
+                    v-model="datasetNames[idx]"
+                    :error="nameConflicts.includes(idx)"
+                    :error-messages="getNameError(idx)"
+                    dense
+                    hide-details="auto"
+                    @input="validateDatasetNamesDebounced"
+                  />
+                  <v-list-item-subtitle class="text--secondary mt-1">
+                    {{ file.name }}
+                  </v-list-item-subtitle>
                 </v-list-item-content>
               </v-list-item>
             </v-list>
@@ -407,6 +430,12 @@ export default class Home extends Vue {
   nameError: string = "";
   batchMode: boolean = false;
 
+  // Batch mode dataset name editing
+  datasetNames: string[] = [];
+  nameConflicts: number[] = [];  // Array instead of Set for Vue 2 reactivity
+  validatingNames: boolean = false;
+  validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
   userDisplayNames: { [key: string]: string } = {};
 
   get locationName() {
@@ -462,6 +491,97 @@ export default class Home extends Vue {
     return basename(file.name);
   }
 
+  initializeDatasetNames() {
+    this.datasetNames = this.pendingFiles.map((file) =>
+      this.getDatasetNameForFile(file),
+    );
+    this.nameConflicts = [];
+  }
+
+  validateDatasetNamesDebounced() {
+    // Debounce to avoid interfering with button clicks
+    if (this.validateNamesDebounceTimer) {
+      clearTimeout(this.validateNamesDebounceTimer);
+    }
+    this.validateNamesDebounceTimer = setTimeout(() => {
+      this.validateDatasetNames();
+    }, 300);
+  }
+
+  async validateDatasetNames() {
+    if (
+      !this.batchMode ||
+      !this.selectedLocation ||
+      !("_id" in this.selectedLocation)
+    ) {
+      return;
+    }
+
+    this.validatingNames = true;
+    const conflicts: number[] = [];
+
+    try {
+      // Check for internal duplicates first
+      const nameCounts = new Map<string, number[]>();
+      this.datasetNames.forEach((name, idx) => {
+        const lower = name.trim().toLowerCase();
+        if (!nameCounts.has(lower)) {
+          nameCounts.set(lower, []);
+        }
+        nameCounts.get(lower)!.push(idx);
+      });
+
+      // Mark all indices that have duplicate names
+      nameCounts.forEach((indices) => {
+        if (indices.length > 1) {
+          indices.forEach((idx) => {
+            if (!conflicts.includes(idx)) {
+              conflicts.push(idx);
+            }
+          });
+        }
+      });
+
+      // Check each unique name against existing datasets
+      const uniqueNames = [...new Set(this.datasetNames.map((n) => n.trim()))];
+      for (const name of uniqueNames) {
+        if (!name) continue;
+        const exists = await this.store.api.checkDatasetNameExists(
+          name,
+          this.selectedLocation,
+        );
+        if (exists) {
+          // Mark all indices with this name as conflicts
+          this.datasetNames.forEach((n, idx) => {
+            if (n.trim().toLowerCase() === name.toLowerCase()) {
+              if (!conflicts.includes(idx)) {
+                conflicts.push(idx);
+              }
+            }
+          });
+        }
+      }
+    } finally {
+      this.nameConflicts = conflicts;
+      this.validatingNames = false;
+    }
+  }
+
+  getNameError(idx: number): string {
+    if (!this.nameConflicts.includes(idx)) return "";
+    const name = this.datasetNames[idx]?.trim().toLowerCase();
+
+    // Check if it's a duplicate within the batch
+    const duplicateCount = this.datasetNames.filter(
+      (n) => n.trim().toLowerCase() === name,
+    ).length;
+
+    if (duplicateCount > 1) {
+      return "Duplicate name in batch";
+    }
+    return "Dataset already exists in this location";
+  }
+
   get nameRules() {
     return [
       (v: string) => v.trim().length > 0 || "Dataset name is required",
@@ -505,13 +625,21 @@ export default class Home extends Vue {
   }
 
   get isFormValid() {
-    return (
+    const baseValid =
       this.datasetName.trim().length > 0 &&
       this.selectedLocation !== null &&
       "_id" in this.selectedLocation &&
       !this.nameTaken &&
-      !this.checkingName
-    );
+      !this.checkingName;
+
+    // Additional validation for batch mode
+    if (this.batchMode) {
+      const hasEmptyNames = this.datasetNames.some((n) => !n?.trim());
+      const hasConflicts = this.nameConflicts.length > 0;
+      return baseValid && !hasEmptyNames && !hasConflicts && !this.validatingNames;
+    }
+
+    return baseValid;
   }
 
   get datasetViews() {
@@ -704,6 +832,28 @@ export default class Home extends Vue {
       this.nameTaken = false;
       this.nameError = "";
     }
+    // Validate batch mode dataset names when location changes
+    if (this.batchMode && this.pendingFiles.length > 0) {
+      this.validateDatasetNames();
+    }
+  }
+
+  @Watch("pendingFiles")
+  onPendingFilesChange() {
+    this.initializeDatasetNames();
+    if (this.batchMode && this.selectedLocation) {
+      this.validateDatasetNames();
+    }
+  }
+
+  @Watch("batchMode")
+  onBatchModeChange(newVal: boolean) {
+    if (newVal) {
+      this.initializeDatasetNames();
+      if (this.selectedLocation) {
+        this.validateDatasetNames();
+      }
+    }
   }
 
   private async initializeRecentViews() {
@@ -753,6 +903,7 @@ export default class Home extends Vue {
       batchMode: this.batchMode,
       batchName: this.batchMode ? name || this.datasetName || "" : "",
       fileGroups: this.batchMode ? this.fileGroups : [files],
+      datasetNames: this.batchMode ? [...this.datasetNames] : [],
       initialUploadLocation: location || this.location,
       initialName: this.batchMode ? "" : name || "",
       initialDescription: "",
@@ -772,6 +923,7 @@ export default class Home extends Vue {
       batchMode: this.batchMode,
       batchName: this.batchMode ? name || this.datasetName || "" : "",
       fileGroups: this.batchMode ? this.fileGroups : [files],
+      datasetNames: this.batchMode ? [...this.datasetNames] : [],
       initialUploadLocation: location || this.location,
       initialName: this.batchMode ? "" : name || "",
       initialDescription: "",
@@ -866,6 +1018,14 @@ export default class Home extends Vue {
     this.nameError = "";
     this.checkingName = false;
     this.batchMode = false;
+    // Reset batch mode name validation state
+    this.datasetNames = [];
+    this.nameConflicts = [];
+    this.validatingNames = false;
+    if (this.validateNamesDebounceTimer) {
+      clearTimeout(this.validateNamesDebounceTimer);
+      this.validateNamesDebounceTimer = null;
+    }
   }
 
   toggleZenodoImporter(): void {

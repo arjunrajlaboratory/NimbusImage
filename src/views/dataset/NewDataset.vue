@@ -731,7 +731,16 @@ export default class NewDataset extends Vue {
     if (this.isBatchMode) {
       return this.currentFiles;
     }
-    return this.uploadedFiles || this.defaultFiles;
+    // Check uploadedFiles first (for manual file selection)
+    if (this.uploadedFiles) {
+      return this.uploadedFiles;
+    }
+    // Check store if upload workflow is active
+    if (this.store.uploadWorkflow.active) {
+      return this.store.uploadCurrentFiles;
+    }
+    // Fall back to defaultFiles prop
+    return this.defaultFiles;
   }
 
   async mounted() {
@@ -830,11 +839,15 @@ export default class NewDataset extends Vue {
     this.$refs.uploader?.inputFilesChanged(filesToUpload);
 
     if (this.isQuickImport || this.isBatchMode) {
-      // Set name based on mode
+      // Set name based on mode - prefer store value over prop
+      const initialName = this.store.uploadWorkflow.active
+        ? this.store.uploadWorkflow.initialName
+        : this.initialName;
+
       if (this.isBatchMode) {
         this.name = this.currentDatasetName;
-      } else if (this.initialName) {
-        this.name = this.initialName + " - " + formatDate(new Date());
+      } else if (initialName) {
+        this.name = initialName + " - " + formatDate(new Date());
       } else {
         this.name = this.recommendedName + " - " + formatDate(new Date());
       }

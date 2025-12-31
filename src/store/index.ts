@@ -184,6 +184,8 @@ export class Main extends VuexModule {
     dimensionStrategy: IDimensionStrategy | null;
     /** Original path for creating datasets (preserved across batch) */
     originalPath: IGirderLocation | null;
+    /** User-edited dataset names for batch mode (indexed by fileGroups) */
+    datasetNames: string[];
   } = {
     active: false,
     quickupload: false,
@@ -198,6 +200,7 @@ export class Main extends VuexModule {
     collection: null,
     dimensionStrategy: null,
     originalPath: null,
+    datasetNames: [],
   };
 
   cameraInfo: ICameraInfo = {
@@ -360,9 +363,19 @@ export class Main extends VuexModule {
   }
 
   get uploadCurrentDatasetName(): string {
+    const { datasetNames, currentDatasetIndex } = this.uploadWorkflow;
+
+    // Use user-provided name if available
+    if (
+      datasetNames.length > currentDatasetIndex &&
+      datasetNames[currentDatasetIndex]?.trim()
+    ) {
+      return datasetNames[currentDatasetIndex];
+    }
+
+    // Fallback to filename-derived name
     const files = this.uploadCurrentFiles;
-    if (files.length === 0)
-      return `Dataset ${this.uploadWorkflow.currentDatasetIndex + 1}`;
+    if (files.length === 0) return `Dataset ${currentDatasetIndex + 1}`;
     const filename = files[0].name;
     const components = filename.split(".");
     return components.length > 1
@@ -415,6 +428,7 @@ export class Main extends VuexModule {
       collection: null,
       dimensionStrategy: null,
       originalPath: null,
+      datasetNames: [],
     };
   }
 
@@ -1319,6 +1333,7 @@ export class Main extends VuexModule {
     initialUploadLocation: IGirderLocation | null;
     initialName: string;
     initialDescription: string;
+    datasetNames: string[];
   }) {
     this.resetUploadWorkflow();
     this.setUploadWorkflow({
@@ -1331,6 +1346,7 @@ export class Main extends VuexModule {
       initialName: params.initialName,
       initialDescription: params.initialDescription,
       originalPath: params.initialUploadLocation,
+      datasetNames: params.datasetNames,
     });
   }
 
