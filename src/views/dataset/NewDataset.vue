@@ -339,16 +339,16 @@
 import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IGirderApiKey, IGirderLocation } from "@/girder";
+import { IGirderApiKey, IGirderLocation, IGirderSelectAble } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import UploadManager from "@girder/components/src/utils/upload";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
-import { IDataset, IDatasetConfiguration, IJobEventData } from "@/store/model";
+import { IDataset, IDimensionStrategy } from "@/store/model";
 import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
 import { importAnnotationsFromData } from "@/utils/annotationImport";
@@ -976,7 +976,8 @@ export default class NewDataset extends Vue {
     this.dataset = await this.store.createDataset({
       name: this.name,
       description: this.description,
-      path: this.path!,
+      // Type assertion: at runtime, path is a folder with _id, not a special location type
+      path: this.path as IGirderSelectAble,
     });
 
     if (this.dataset === null) {
@@ -1310,7 +1311,14 @@ export default class NewDataset extends Vue {
     // Save dimension STRATEGY from first dataset (not the JSON config)
     if (this.isFirstDataset && this.$refs.configuration) {
       logError(`[Batch Mode] Saving dimension strategy from first dataset`);
-      const strategy = this.$refs.configuration.getDimensionStrategy();
+      // Type assertion needed because Vue 2 class component methods aren't fully inferred
+      const strategy = (
+        this.$refs.configuration as InstanceType<
+          typeof MultiSourceConfiguration
+        > & {
+          getDimensionStrategy: () => IDimensionStrategy;
+        }
+      ).getDimensionStrategy();
       this.store.setUploadDimensionStrategy(strategy);
 
       // CRITICAL: Load the full dataset (with tile metadata) before creating collection
@@ -1446,6 +1454,10 @@ export default class NewDataset extends Vue {
   }
 
   onConfigDataReceived(_configData: any) {
+    logWarning(
+      "onConfigDataReceived called but is no longer used; _configData: ",
+      _configData,
+    );
     // This handler is kept for backward compatibility but is no longer used
     // The assignment strategy is now saved directly in handleCollectionGenerationDone
   }
