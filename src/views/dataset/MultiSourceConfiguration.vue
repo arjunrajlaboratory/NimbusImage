@@ -571,6 +571,39 @@ export default class MultiSourceConfiguration extends Vue {
     C: null,
   };
 
+  /**
+   * Watch assignments and save to store when changed.
+   * This allows NewDataset.vue to read the strategy from the store
+   * instead of calling getDimensionStrategy() via $refs.
+   */
+  @Watch("assignments", { deep: true })
+  onAssignmentsChange() {
+    this.saveDimensionStrategyToStore();
+  }
+
+  @Watch("transcode")
+  onTranscodeChange() {
+    this.saveDimensionStrategyToStore();
+  }
+
+  /**
+   * Save the current dimension strategy to the store.
+   * Only saves when in batch mode for the first dataset.
+   */
+  saveDimensionStrategyToStore() {
+    // Only save strategy during batch mode upload workflow for first dataset
+    if (
+      !this.store.uploadWorkflow.active ||
+      !this.store.uploadWorkflow.batchMode ||
+      !this.store.uploadIsFirstDataset
+    ) {
+      return;
+    }
+
+    const strategy = this.getDimensionStrategy();
+    this.store.setUploadDimensionStrategy(strategy);
+  }
+
   searchInput: string = "";
   filenameVariableCount = 0;
   fileVariableCount = 0;
@@ -1531,7 +1564,12 @@ export default class MultiSourceConfiguration extends Vue {
     }
   }
 
-  // Extract the current assignment strategy for saving
+  /**
+   * Extract the current dimension assignment strategy.
+   * Used internally by saveDimensionStrategyToStore() to save to the Vuex store
+   * when assignments change. The store-based approach allows other components
+   * (like NewDataset.vue) to read the strategy without using $refs.
+   */
   getDimensionStrategy(): IDimensionStrategy {
     const strategy: IDimensionStrategy = {
       XY: null,

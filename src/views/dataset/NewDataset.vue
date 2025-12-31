@@ -343,7 +343,7 @@ import { IGirderApiKey, IGirderLocation, IGirderSelectAble } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import UploadManager from "@girder/components/src/utils/upload";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
-import { IDataset, IDimensionStrategy } from "@/store/model";
+import { IDataset } from "@/store/model";
 import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
@@ -1308,18 +1308,12 @@ export default class NewDataset extends Vue {
       return;
     }
 
-    // Save dimension STRATEGY from first dataset (not the JSON config)
-    if (this.isFirstDataset && this.$refs.configuration) {
-      logError(`[Batch Mode] Saving dimension strategy from first dataset`);
-      // Type assertion needed because Vue 2 class component methods aren't fully inferred
-      const strategy = (
-        this.$refs.configuration as InstanceType<
-          typeof MultiSourceConfiguration
-        > & {
-          getDimensionStrategy: () => IDimensionStrategy;
-        }
-      ).getDimensionStrategy();
-      this.store.setUploadDimensionStrategy(strategy);
+    // Dimension strategy is automatically saved to store by MultiSourceConfiguration
+    // via watchers on assignments and transcode changes
+    if (this.isFirstDataset) {
+      logError(
+        `[Batch Mode] Using dimension strategy from store (saved by MultiSourceConfiguration)`,
+      );
 
       // CRITICAL: Load the full dataset (with tile metadata) before creating collection
       // The dataset in uploadWorkflow.datasets[] is just the basic folder info,
