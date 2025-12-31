@@ -10,6 +10,7 @@
       </v-card-text>
     </v-card>
     <v-form
+      v-show="!showConfigAtTop"
       ref="form"
       v-model="valid"
       :disabled="
@@ -124,7 +125,8 @@
               !filesSelected ||
               uploading ||
               fileSizeExceeded ||
-              invalidLocation
+              invalidLocation ||
+              configuring
             "
             color="success"
             @click="submit"
@@ -178,9 +180,26 @@
       </v-card-text>
     </v-card>
 
-    <template v-if="isQuickImport || isBatchMode">
+    <!-- Advanced batch mode: Show config UI prominently for first dataset -->
+    <template v-if="showConfigAtTop && datasetId">
+      <v-alert type="info" text class="mb-4">
+        Configure the dimension assignments for the first dataset. These
+        settings will be applied to all subsequent datasets.
+      </v-alert>
+      <multi-source-configuration
+        ref="configuration"
+        :datasetId="datasetId"
+        :autoDatasetRoute="false"
+        @log="configurationLogs = $event"
+        @generatedJson="generationDone"
+        @configData="onConfigDataReceived"
+      />
+    </template>
+
+    <!-- Quick import and auto-processing batch mode -->
+    <template v-if="(isQuickImport || isBatchMode) && !showConfigAtTop">
       <template v-if="configuring && datasetId">
-        <!-- Always mount MultiSourceConfiguration, but only show UI for first dataset -->
+        <!-- Mount MultiSourceConfiguration for auto-processing -->
         <multi-source-configuration
           ref="configuration"
           :datasetId="datasetId"
@@ -188,12 +207,9 @@
           @log="configurationLogs = $event"
           @generatedJson="generationDone"
           @configData="onConfigDataReceived"
-          :class="{
-            'd-none':
-              !pipelineError &&
-              (isQuickImport || (isBatchMode && !isProcessingFirstDataset)),
-          }"
+          class="d-none"
         />
+        <!-- Show status text and spinner when auto-processing -->
         <div class="title mb-2">
           {{
             isBatchMode && !isProcessingFirstDataset
@@ -670,6 +686,19 @@ export default class NewDataset extends Vue {
 
   get isProcessingFirstDataset(): boolean {
     return this.isFirstDataset;
+  }
+
+  /**
+   * Whether to show MultiSourceConfiguration at the top of the view.
+   * True for advanced batch mode (first dataset) during configuration.
+   */
+  get showConfigAtTop(): boolean {
+    return (
+      this.isBatchMode &&
+      !this.isQuickImport &&
+      this.isProcessingFirstDataset &&
+      this.configuring
+    );
   }
 
   get currentFiles(): File[] {
@@ -1193,7 +1222,13 @@ export default class NewDataset extends Vue {
     }
     // Ensure that the component is initialized
     await (config.initialized || config.initialize());
-    config.submit();
+
+    // In advanced batch mode (first dataset), wait for user to manually submit
+    // In quick import mode, auto-submit
+    if (this.isQuickImport) {
+      config.submit();
+    }
+    // Otherwise, user will click submit in MultiSourceConfiguration UI
   }
 
   generationDone(jsonId: string | null) {
