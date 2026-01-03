@@ -187,16 +187,71 @@
         <v-card-text>
           <v-text-field
             v-model="datasetName"
-            label="Dataset Name"
+            :label="batchMode ? 'Collection Name' : 'Dataset Name'"
             required
             :rules="nameRules"
             :error-messages="nameError"
             class="mb-2"
           />
 
+          <!-- Collection mode toggle -->
+          <v-checkbox
+            v-model="batchMode"
+            label="Upload each file as a separate dataset in a collection"
+            :disabled="pendingFiles.length < 2"
+            hide-details
+            class="mb-4"
+          />
+
+          <!-- Show file-to-dataset mapping when in batch mode -->
+          <v-card v-if="batchMode" outlined class="mb-4">
+            <v-card-subtitle>
+              Each file will become a separate dataset:
+              <v-progress-circular
+                v-if="validatingNames"
+                indeterminate
+                size="16"
+                width="2"
+                class="ml-2"
+              />
+            </v-card-subtitle>
+            <v-list dense>
+              <v-list-item v-for="(file, idx) in pendingFiles" :key="idx">
+                <v-list-item-icon>
+                  <v-icon
+                    small
+                    :color="nameConflicts.includes(idx) ? 'error' : ''"
+                  >
+                    {{
+                      nameConflicts.includes(idx)
+                        ? "mdi-alert-circle"
+                        : "mdi-file"
+                    }}
+                  </v-icon>
+                </v-list-item-icon>
+                <v-list-item-content>
+                  <v-text-field
+                    v-model="datasetNames[idx]"
+                    :error="nameConflicts.includes(idx)"
+                    :error-messages="getNameError(idx)"
+                    dense
+                    hide-details="auto"
+                    @input="validateDatasetNamesDebounced"
+                  />
+                  <v-list-item-subtitle class="text--secondary mt-1">
+                    {{ file.name }}
+                  </v-list-item-subtitle>
+                </v-list-item-content>
+              </v-list-item>
+            </v-list>
+          </v-card>
+
           <div class="mb-4 text-body-2 text--secondary">
             {{ pendingFiles.length }}
             {{ pendingFiles.length === 1 ? "file" : "files" }} selected
+            <template v-if="batchMode">
+              → {{ pendingFiles.length }} datasets
+            </template>
           </div>
 
           <v-alert v-if="nameTaken" text type="error" class="mb-4">
@@ -373,6 +428,13 @@ export default class Home extends Vue {
   nameTaken: boolean = false;
   checkingName: boolean = false;
   nameError: string = "";
+  batchMode: boolean = false;
+
+  // Batch mode dataset name editing
+  datasetNames: string[] = [];
+  nameConflicts: number[] = []; // Array instead of Set for Vue 2 reactivity
+  validatingNames: boolean = false;
+  validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   userDisplayNames: { [key: string]: string } = {};
 
@@ -415,52 +477,133 @@ export default class Home extends Vue {
     }
   }
 
+  get fileGroups(): File[][] {
+    if (this.batchMode) {
+      // Each file becomes its own dataset
+      return this.pendingFiles.map((file) => [file]);
+    } else {
+      // All files go into one dataset
+      return [this.pendingFiles];
+    }
+  }
+
+  getDatasetNameForFile(file: File): string {
+    return basename(file.name);
+  }
+
+  initializeDatasetNames() {
+    this.datasetNames = this.pendingFiles.map((file) =>
+      this.getDatasetNameForFile(file),
+    );
+    this.nameConflicts = [];
+  }
+
+  validateDatasetNamesDebounced() {
+    // Debounce to avoid interfering with button clicks
+    if (this.validateNamesDebounceTimer) {
+      clearTimeout(this.validateNamesDebounceTimer);
+    }
+    this.validateNamesDebounceTimer = setTimeout(() => {
+      this.validateDatasetNames();
+    }, 300);
+  }
+
+  async validateDatasetNames() {
+    if (
+      !this.batchMode ||
+      !this.selectedLocation ||
+      !("_id" in this.selectedLocation)
+    ) {
+      return;
+    }
+
+    this.validatingNames = true;
+    const conflicts: number[] = [];
+
+    try {
+      // Check for internal duplicates first
+      const nameCounts = new Map<string, number[]>();
+      this.datasetNames.forEach((name, idx) => {
+        const lower = name.trim().toLowerCase();
+        if (!nameCounts.has(lower)) {
+          nameCounts.set(lower, []);
+        }
+        nameCounts.get(lower)!.push(idx);
+      });
+
+      // Mark all indices that have duplicate names
+      nameCounts.forEach((indices) => {
+        if (indices.length > 1) {
+          indices.forEach((idx) => {
+            if (!conflicts.includes(idx)) {
+              conflicts.push(idx);
+            }
+          });
+        }
+      });
+
+      // Check each unique name against existing datasets
+      const uniqueNames = [...new Set(this.datasetNames.map((n) => n.trim()))];
+      for (const name of uniqueNames) {
+        if (!name) continue;
+        const exists = await this.store.api.checkDatasetNameExists(
+          name,
+          this.selectedLocation,
+        );
+        if (exists) {
+          // Mark all indices with this name as conflicts
+          this.datasetNames.forEach((n, idx) => {
+            if (n.trim().toLowerCase() === name.toLowerCase()) {
+              if (!conflicts.includes(idx)) {
+                conflicts.push(idx);
+              }
+            }
+          });
+        }
+      }
+    } finally {
+      this.nameConflicts = conflicts;
+      this.validatingNames = false;
+    }
+  }
+
+  getNameError(idx: number): string {
+    if (!this.nameConflicts.includes(idx)) return "";
+    const name = this.datasetNames[idx]?.trim().toLowerCase();
+
+    // Check if it's a duplicate within the batch
+    const duplicateCount = this.datasetNames.filter(
+      (n) => n.trim().toLowerCase() === name,
+    ).length;
+
+    if (duplicateCount > 1) {
+      return "Duplicate name in batch";
+    }
+    return "Dataset already exists in this location";
+  }
+
   get nameRules() {
-    return [
-      (v: string) => v.trim().length > 0 || "Dataset name is required",
-      async (v: string) => {
-        if (!v || !v.trim()) {
-          return true; // Let the required rule handle empty names
-        }
-        if (!this.selectedLocation || !("_id" in this.selectedLocation)) {
-          return true; // Can't check without a location
-        }
-        this.checkingName = true;
-        this.nameTaken = false;
-        this.nameError = "";
-        try {
-          const exists = await this.store.api.checkDatasetNameExists(
-            v.trim(),
-            this.selectedLocation,
-          );
-          if (exists) {
-            this.nameTaken = true;
-            this.nameError =
-              "A dataset with this name already exists in the selected location";
-            return "A dataset with this name already exists";
-          }
-          this.nameTaken = false;
-          this.nameError = "";
-          return true;
-        } catch (error) {
-          // If check fails, don't block submission - let the server handle it
-          this.nameError = "";
-          return true;
-        } finally {
-          this.checkingName = false;
-        }
-      },
-    ];
+    return [(v: string) => v.trim().length > 0 || "Dataset name is required"];
   }
 
   get isFormValid() {
-    return (
+    const baseValid =
       this.datasetName.trim().length > 0 &&
       this.selectedLocation !== null &&
       "_id" in this.selectedLocation &&
       !this.nameTaken &&
-      !this.checkingName
-    );
+      !this.checkingName;
+
+    // Additional validation for batch mode
+    if (this.batchMode) {
+      const hasEmptyNames = this.datasetNames.some((n) => !n?.trim());
+      const hasConflicts = this.nameConflicts.length > 0;
+      return (
+        baseValid && !hasEmptyNames && !hasConflicts && !this.validatingNames
+      );
+    }
+
+    return baseValid;
   }
 
   get datasetViews() {
@@ -653,6 +796,70 @@ export default class Home extends Vue {
       this.nameTaken = false;
       this.nameError = "";
     }
+    // Validate batch mode dataset names when location changes
+    if (this.batchMode && this.pendingFiles.length > 0) {
+      this.validateDatasetNames();
+    }
+  }
+
+  @Watch("pendingFiles")
+  onPendingFilesChange() {
+    this.initializeDatasetNames();
+    if (this.batchMode && this.selectedLocation) {
+      this.validateDatasetNames();
+    }
+  }
+
+  @Watch("batchMode")
+  onBatchModeChange(newVal: boolean) {
+    if (newVal) {
+      this.initializeDatasetNames();
+      if (this.selectedLocation) {
+        this.validateDatasetNames();
+      }
+    }
+  }
+
+  @Watch("datasetName")
+  async onDatasetNameChange(newName: string) {
+    // Skip validation in batch mode - collection names are checked differently
+    if (this.batchMode) {
+      return;
+    }
+
+    if (!newName || !newName.trim()) {
+      this.nameTaken = false;
+      this.nameError = "";
+      return;
+    }
+
+    if (!this.selectedLocation || !("_id" in this.selectedLocation)) {
+      return;
+    }
+
+    this.checkingName = true;
+    this.nameTaken = false;
+    this.nameError = "";
+
+    try {
+      const exists = await this.store.api.checkDatasetNameExists(
+        newName.trim(),
+        this.selectedLocation,
+      );
+      if (exists) {
+        this.nameTaken = true;
+        this.nameError =
+          "A dataset with this name already exists in the selected location";
+      } else {
+        this.nameTaken = false;
+        this.nameError = "";
+      }
+    } catch (error) {
+      // If check fails, don't block submission - let the server handle it
+      this.nameError = "";
+    } finally {
+      this.checkingName = false;
+    }
   }
 
   private async initializeRecentViews() {
@@ -696,17 +903,20 @@ export default class Home extends Vue {
   }
 
   quickUpload(files: File[], name?: string, location?: IGirderLocation) {
-    // Use params to pass props to NewDataset component
-    // RouteConfig in src/view/dataset/index.ts has to support it
-    this.$router.push({
-      name: "newdataset",
-      params: {
-        quickupload: true,
-        defaultFiles: files,
-        initialUploadLocation: location || this.location,
-        initialName: name,
-      } as any,
+    // Initialize upload workflow in store
+    this.store.initializeUploadWorkflow({
+      quickupload: true,
+      batchMode: this.batchMode,
+      batchName: this.batchMode ? name || this.datasetName || "" : "",
+      fileGroups: this.batchMode ? this.fileGroups : [files],
+      datasetNames: this.batchMode ? [...this.datasetNames] : [],
+      initialUploadLocation: location || this.location,
+      initialName: this.batchMode ? "" : name || "",
+      initialDescription: "",
     });
+
+    // Navigate without complex params
+    this.$router.push({ name: "newdataset" });
   }
 
   comprehensiveUpload(
@@ -714,16 +924,18 @@ export default class Home extends Vue {
     name?: string,
     location?: IGirderLocation,
   ) {
-    // Use params to pass props to NewDataset component
-    // RouteConfig in src/view/dataset/index.ts has to support it
-    this.$router.push({
-      name: "newdataset",
-      params: {
-        defaultFiles: files,
-        initialUploadLocation: location || this.location,
-        initialName: name,
-      } as any,
+    this.store.initializeUploadWorkflow({
+      quickupload: false,
+      batchMode: this.batchMode,
+      batchName: this.batchMode ? name || this.datasetName || "" : "",
+      fileGroups: this.batchMode ? this.fileGroups : [files],
+      datasetNames: this.batchMode ? [...this.datasetNames] : [],
+      initialUploadLocation: location || this.location,
+      initialName: this.batchMode ? "" : name || "",
+      initialDescription: "",
     });
+
+    this.$router.push({ name: "newdataset" });
   }
 
   handleDrop(event: DragEvent) {
@@ -811,6 +1023,15 @@ export default class Home extends Vue {
     this.nameTaken = false;
     this.nameError = "";
     this.checkingName = false;
+    this.batchMode = false;
+    // Reset batch mode name validation state
+    this.datasetNames = [];
+    this.nameConflicts = [];
+    this.validatingNames = false;
+    if (this.validateNamesDebounceTimer) {
+      clearTimeout(this.validateNamesDebounceTimer);
+      this.validateNamesDebounceTimer = null;
+    }
   }
 
   toggleZenodoImporter(): void {
