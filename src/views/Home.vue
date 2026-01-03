@@ -432,7 +432,7 @@ export default class Home extends Vue {
 
   // Batch mode dataset name editing
   datasetNames: string[] = [];
-  nameConflicts: number[] = [];  // Array instead of Set for Vue 2 reactivity
+  nameConflicts: number[] = []; // Array instead of Set for Vue 2 reactivity
   validatingNames: boolean = false;
   validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -583,45 +583,7 @@ export default class Home extends Vue {
   }
 
   get nameRules() {
-    return [
-      (v: string) => v.trim().length > 0 || "Dataset name is required",
-      async (v: string): Promise<string | boolean> => {
-        if (!v || !v.trim()) {
-          return true; // Let the required rule handle empty names
-        }
-        // Skip dataset name check in collection mode - collection names are checked differently
-        if (this.batchMode) {
-          return true;
-        }
-        if (!this.selectedLocation || !("_id" in this.selectedLocation)) {
-          return true; // Can't check without a location
-        }
-        this.checkingName = true;
-        this.nameTaken = false;
-        this.nameError = "";
-        try {
-          const exists = await this.store.api.checkDatasetNameExists(
-            v.trim(),
-            this.selectedLocation,
-          );
-          if (exists) {
-            this.nameTaken = true;
-            this.nameError =
-              "A dataset with this name already exists in the selected location";
-            return "A dataset with this name already exists";
-          }
-          this.nameTaken = false;
-          this.nameError = "";
-          return true;
-        } catch (error) {
-          // If check fails, don't block submission - let the server handle it
-          this.nameError = "";
-          return true;
-        } finally {
-          this.checkingName = false;
-        }
-      },
-    ];
+    return [(v: string) => v.trim().length > 0 || "Dataset name is required"];
   }
 
   get isFormValid() {
@@ -636,7 +598,9 @@ export default class Home extends Vue {
     if (this.batchMode) {
       const hasEmptyNames = this.datasetNames.some((n) => !n?.trim());
       const hasConflicts = this.nameConflicts.length > 0;
-      return baseValid && !hasEmptyNames && !hasConflicts && !this.validatingNames;
+      return (
+        baseValid && !hasEmptyNames && !hasConflicts && !this.validatingNames
+      );
     }
 
     return baseValid;
@@ -853,6 +817,48 @@ export default class Home extends Vue {
       if (this.selectedLocation) {
         this.validateDatasetNames();
       }
+    }
+  }
+
+  @Watch("datasetName")
+  async onDatasetNameChange(newName: string) {
+    // Skip validation in batch mode - collection names are checked differently
+    if (this.batchMode) {
+      return;
+    }
+
+    if (!newName || !newName.trim()) {
+      this.nameTaken = false;
+      this.nameError = "";
+      return;
+    }
+
+    if (!this.selectedLocation || !("_id" in this.selectedLocation)) {
+      return;
+    }
+
+    this.checkingName = true;
+    this.nameTaken = false;
+    this.nameError = "";
+
+    try {
+      const exists = await this.store.api.checkDatasetNameExists(
+        newName.trim(),
+        this.selectedLocation,
+      );
+      if (exists) {
+        this.nameTaken = true;
+        this.nameError =
+          "A dataset with this name already exists in the selected location";
+      } else {
+        this.nameTaken = false;
+        this.nameError = "";
+      }
+    } catch (error) {
+      // If check fails, don't block submission - let the server handle it
+      this.nameError = "";
+    } finally {
+      this.checkingName = false;
     }
   }
 

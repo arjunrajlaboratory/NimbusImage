@@ -855,9 +855,6 @@ export default class NewDataset extends Vue {
       return;
     }
     // Collection is now stored in this.store.uploadWorkflow.collection
-    logError(
-      `[Batch Mode] createCollection completed. Collection in store: ${!!this.store.uploadWorkflow.collection}, collection.id: ${this.store.uploadWorkflow.collection?.id}`,
-    );
   }
 
   async uploadMounted() {
@@ -883,8 +880,10 @@ export default class NewDataset extends Vue {
       if (this.isBatchMode) {
         this.name = this.currentDatasetName;
       } else if (initialName) {
-        this.name = initialName + " - " + formatDate(new Date());
+        // Use initialName as-is - it already includes the date from Home.vue
+        this.name = initialName;
       } else {
+        // Fallback: add date only when no initialName provided
         this.name = this.recommendedName + " - " + formatDate(new Date());
       }
 
@@ -994,9 +993,6 @@ export default class NewDataset extends Vue {
   }
 
   async configureDatasetWithStrategy() {
-    logError(
-      `[Batch Mode] configureDatasetWithStrategy called. datasetId: ${this.datasetId}, dataset: ${!!this.dataset}`,
-    );
     this.configuring = true;
     await Vue.nextTick();
 
@@ -1014,10 +1010,6 @@ export default class NewDataset extends Vue {
       return;
     }
 
-    logError(
-      `[Batch Mode] Strategy found: transcode=${strategy.transcode}, XY=${!!strategy.XY}, Z=${!!strategy.Z}, T=${!!strategy.T}, C=${!!strategy.C}`,
-    );
-
     this.progressStatusText = "Detecting file structure...";
 
     // Use the new method that properly handles async state
@@ -1026,27 +1018,18 @@ export default class NewDataset extends Vue {
     this.progressStatusText = strategy.transcode
       ? "Transcoding..."
       : "Generating configuration...";
-    logError(`[Batch Mode] Calling config.submit()...`);
     config.submit();
   }
 
   async advanceToNextDataset() {
-    logError(
-      `[Batch Mode] advanceToNextDataset called. isLastDataset: ${this.isLastDataset}, currentIndex: ${this.store.uploadWorkflow.currentDatasetIndex}, totalDatasets: ${this.totalDatasets}`,
-    );
-
     if (this.isLastDataset) {
       // All datasets processed - navigate to collection
-      logError("[Batch Mode] All datasets processed, navigating to collection");
       this.navigateToCollection();
       return;
     }
 
     // Advance index in store
     this.store.advanceUploadDatasetIndex();
-    logError(
-      `[Batch Mode] Advanced to dataset index: ${this.store.uploadWorkflow.currentDatasetIndex}`,
-    );
 
     // Reset local component state
     this.dataset = null;
@@ -1071,16 +1054,9 @@ export default class NewDataset extends Vue {
   navigateToCollection() {
     // Capture collection and datasets BEFORE calling completeUploadWorkflow
     // because completeUploadWorkflow resets the state
-    logError(
-      `[Batch Mode] navigateToCollection called. Store state - collection: ${!!this.store.uploadWorkflow.collection}, collectionId: ${this.store.uploadWorkflow.collection?.id}, datasets.length: ${this.store.uploadWorkflow.datasets.length}`,
-    );
 
     const collection = this.store.uploadWorkflow.collection;
     const datasets = [...this.store.uploadWorkflow.datasets]; // Copy array
-
-    logError(
-      `[Batch Mode] Captured values. collection: ${!!collection}, collectionId: ${collection?.id}, datasets: ${datasets.length}`,
-    );
 
     // Now reset the workflow state
     this.store.completeUploadWorkflow();
@@ -1088,25 +1064,16 @@ export default class NewDataset extends Vue {
     if (collection) {
       // Set the collection in the store so ConfigurationInfo can load it
       this.store.setSelectedConfiguration(collection.id);
-      logError(
-        `[Batch Mode] Navigating to configuration view: ${collection.id}`,
-      );
       this.$router.push({
         name: "configuration",
         params: { configurationId: collection.id },
       });
     } else if (datasets && datasets.length > 0) {
-      logError(
-        `[Batch Mode] No collection found, falling back to first dataset: ${datasets[0].id}`,
-      );
       this.$router.push({
         name: "dataset",
         params: { datasetId: datasets[0].id },
       });
     } else {
-      logError(
-        `[Batch Mode] No collection or datasets found, navigating to root`,
-      );
       this.$router.push({
         name: "root",
       });
@@ -1282,9 +1249,6 @@ export default class NewDataset extends Vue {
   }
 
   generationDone(jsonId: string | null) {
-    logError(
-      `[Batch Mode] generationDone called. jsonId: ${jsonId}, isBatchMode: ${this.isBatchMode}, isQuickImport: ${this.isQuickImport}`,
-    );
     if (this.isBatchMode) {
       // For collection mode, handle specially
       this.handleCollectionGenerationDone(jsonId);
@@ -1292,16 +1256,11 @@ export default class NewDataset extends Vue {
       // Existing single-dataset flow
       this.createView(jsonId);
     } else {
-      logError(
-        "[Batch Mode] generationDone called but neither batchMode nor quickupload is active",
-      );
+      return;
     }
   }
 
   async handleCollectionGenerationDone(jsonId: string | null) {
-    logError(
-      `[Batch Mode] handleCollectionGenerationDone called with jsonId: ${jsonId}`,
-    );
     if (!jsonId) {
       logError("Failed to generate JSON");
       this.pipelineError = true;
@@ -1311,37 +1270,23 @@ export default class NewDataset extends Vue {
     // Dimension strategy is automatically saved to store by MultiSourceConfiguration
     // via watchers on assignments and transcode changes
     if (this.isFirstDataset) {
-      logError(
-        `[Batch Mode] Using dimension strategy from store (saved by MultiSourceConfiguration)`,
-      );
-
       // CRITICAL: Load the full dataset (with tile metadata) before creating collection
       // The dataset in uploadWorkflow.datasets[] is just the basic folder info,
       // but createConfigurationFromDataset needs the full tile/frame metadata
-      logError(`[Batch Mode] Loading full dataset: ${this.dataset!.id}`);
       await this.store.setSelectedDataset(this.dataset!.id);
 
       // Create the collection using store action
-      logError("[Batch Mode] Creating collection...");
       await this.createCollection();
 
       if (this.pipelineError || !this.store.uploadWorkflow.collection) {
-        logError(
-          `[Batch Mode] Collection creation failed. pipelineError: ${this.pipelineError}, collection: ${!!this.store.uploadWorkflow.collection}`,
-        );
+        logWarning("Failed to create collection");
         return;
       }
-      logError(
-        `[Batch Mode] Collection created successfully: ${this.store.uploadWorkflow.collection.id}`,
-      );
     }
 
     // Create dataset view for current dataset
     const collection = this.store.uploadWorkflow.collection;
     if (collection && this.dataset) {
-      logError(
-        `[Batch Mode] Creating dataset view for dataset ${this.dataset.id} in collection ${collection.id}`,
-      );
       try {
         const datasetView = await this.store.createDatasetView({
           configurationId: collection.id,
@@ -1350,10 +1295,6 @@ export default class NewDataset extends Vue {
         if (!datasetView) {
           logError(
             `[Batch Mode] Failed to create dataset view - API returned null`,
-          );
-        } else {
-          logError(
-            `[Batch Mode] Dataset view created successfully: ${datasetView.id}`,
           );
         }
       } catch (error) {
@@ -1369,9 +1310,6 @@ export default class NewDataset extends Vue {
     this.configuring = false;
 
     // Move to next dataset or finish
-    logError(
-      `[Batch Mode] Advancing to next dataset. isLastDataset: ${this.isLastDataset}`,
-    );
     this.advanceToNextDataset();
   }
 

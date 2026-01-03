@@ -252,7 +252,7 @@ import {
   IJobEventData,
   IDimensionStrategy,
 } from "@/store/model";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 import { parseTranscodeOutput } from "@/utils/strings";
 import { extractDimensionLabelsFromND2 } from "@/utils/ND2FileParsing";
 import pLimit from "p-limit";
@@ -719,23 +719,9 @@ export default class MultiSourceConfiguration extends Vue {
   }
 
   async initializeImplementation() {
-    logError(
-      `[MultiSourceConfig] initializeImplementation called for datasetId: ${this.datasetId}`,
-    );
-    logError(
-      `[MultiSourceConfig] Current state - dimensions: ${this.dimensions.length}, assignments: XY=${!!this.assignments.XY}, Z=${!!this.assignments.Z}, T=${!!this.assignments.T}, C=${!!this.assignments.C}`,
-    );
-
     // Get tile information
     const items = await this.store.api.getItems(this.datasetId);
-    logError(
-      `[MultiSourceConfig] Retrieved ${items.length} items for dataset ${this.datasetId}`,
-    );
-    if (items.length > 0) {
-      logError(
-        `[MultiSourceConfig] Item names: ${items.map((i: IGirderItem) => i.name).join(", ")}`,
-      );
-    }
+
     this.girderItems = items;
 
     //  Get info from filename
@@ -748,17 +734,8 @@ export default class MultiSourceConfiguration extends Vue {
 
     // Add variables from filenames if there is more than one file
     if (names.length > 1) {
-      logError(
-        `[MultiSourceConfig] Processing ${names.length} filenames for metadata extraction`,
-      );
       const filenameMetadata = collectFilenameMetadata2(names);
-      logError(
-        `[MultiSourceConfig] Extracted ${filenameMetadata.length} filename variables`,
-      );
       filenameMetadata.forEach((filenameData) => {
-        logError(
-          `[MultiSourceConfig] Adding filename dimension: ${filenameData.guess}, size=${filenameData.values.length}`,
-        );
         this.addSizeToDimension(
           filenameData.guess,
           filenameData.values.length,
@@ -768,10 +745,6 @@ export default class MultiSourceConfiguration extends Vue {
           },
         );
       });
-    } else {
-      logError(
-        `[MultiSourceConfig] Only ${names.length} file(s), skipping filename metadata extraction`,
-      );
     }
 
     // Check for OIB files; for whatever reason, these need to be
@@ -914,26 +887,17 @@ export default class MultiSourceConfiguration extends Vue {
     this.rgbBandCount = firstItem?.bandCount || 0;
     this.isRGBFile = this.detectColorVsChannels(firstItem);
 
-    logError(
-      `[MultiSourceConfig] Processing ${this.tilesMetadata.length} tiles for file metadata`,
-    );
     let maxFramesPerItem = 0;
     let hasFileVariable = false;
     this.tilesMetadata.forEach((tile, tileIdx) => {
       const frames: number = tile.frames?.length || 1;
       maxFramesPerItem = Math.max(maxFramesPerItem, frames);
-      logError(
-        `[MultiSourceConfig] Tile ${tileIdx}: frames=${frames}, IndexRange=${!!tile.IndexRange}, IndexStride=${!!tile.IndexStride}`,
-      );
       if (tile.IndexRange && tile.IndexStride) {
         hasFileVariable = true;
         for (const dim in this.dimensionNames) {
           const indexDim = `Index${dim}`;
           const range = tile.IndexRange[indexDim];
           if (range) {
-            logError(
-              `[MultiSourceConfig] Adding file dimension: ${dim}, range=${range}, stride=${tile.IndexStride[indexDim]}`,
-            );
             this.addSizeToDimension(
               // We know that the keys of this.dimensionNames are of type TDimensions
               dim as TDimensions,
@@ -953,12 +917,9 @@ export default class MultiSourceConfiguration extends Vue {
         }
       }
     });
-    logError(
-      `[MultiSourceConfig] After processing tiles - hasFileVariable=${hasFileVariable}, maxFramesPerItem=${maxFramesPerItem}, dimensions.length=${this.dimensions.length}`,
-    );
 
     if (!hasFileVariable) {
-      logError(
+      logWarning(
         `[MultiSourceConfig] No file variables found, adding Images dimension for Z with size=${maxFramesPerItem}`,
       );
       this.addSizeToDimension(
@@ -969,15 +930,6 @@ export default class MultiSourceConfiguration extends Vue {
           data: null,
         },
         "All frames per item",
-      );
-    }
-
-    logError(
-      `[MultiSourceConfig] Final dimensions after initialization: ${this.dimensions.length}`,
-    );
-    if (this.dimensions.length > 0) {
-      logError(
-        `[MultiSourceConfig] Dimensions: ${this.dimensions.map((d: any) => `${d.name} (${d.guess}, ${d.source}, size=${d.size})`).join(", ")}`,
       );
     }
 
@@ -1596,15 +1548,8 @@ export default class MultiSourceConfiguration extends Vue {
   async reinitializeAndApplyStrategy(
     strategy: IDimensionStrategy,
   ): Promise<void> {
-    logError(
-      `[MultiSourceConfig] reinitializeAndApplyStrategy called for datasetId: ${this.datasetId}`,
-    );
-
     // Wait for any pending initialization to complete first
     while (this.initializing) {
-      logError(
-        `[MultiSourceConfig] Waiting for pending initialization to complete...`,
-      );
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
@@ -1624,10 +1569,6 @@ export default class MultiSourceConfiguration extends Vue {
     this.initInFlight = [];
     this.initError = null;
 
-    logError(
-      `[MultiSourceConfig] State reset, running fresh initializeImplementation`,
-    );
-
     // Run initialization directly (not through initialize() to avoid the guard)
     this.initializing = true;
     try {
@@ -1636,28 +1577,12 @@ export default class MultiSourceConfiguration extends Vue {
       this.initializing = false;
     }
 
-    logError(
-      `[MultiSourceConfig] Initialization complete. dimensions: ${this.dimensions.length}`,
-    );
-
     // Now apply the strategy
     this.applyDimensionStrategy(strategy);
   }
 
   // Apply a saved strategy to current dimensions
   applyDimensionStrategy(strategy: IDimensionStrategy): void {
-    logError(
-      `[MultiSourceConfig] applyDimensionStrategy called. Available dimensions: ${this.dimensions.length}`,
-    );
-    logError(
-      `[MultiSourceConfig] Strategy: transcode=${strategy.transcode}, XY=${!!strategy.XY}, Z=${!!strategy.Z}, T=${!!strategy.T}, C=${!!strategy.C}`,
-    );
-    if (this.dimensions.length > 0) {
-      logError(
-        `[MultiSourceConfig] Available dimensions: ${this.dimensions.map((d: any) => `${d.name} (${d.guess}, ${d.source}, size=${d.size})`).join(", ")}`,
-      );
-    }
-
     // Set transcode setting
     this.transcode = strategy.transcode;
 
@@ -1666,16 +1591,12 @@ export default class MultiSourceConfiguration extends Vue {
       const savedStrategy = strategy[dim];
 
       if (!savedStrategy) {
-        logError(
+        logWarning(
           `[MultiSourceConfig] No saved strategy for ${dim}, setting to null`,
         );
         this.assignments[dim] = null;
         continue;
       }
-
-      logError(
-        `[MultiSourceConfig] Looking for match for ${dim}: source=${savedStrategy.source}, guess=${savedStrategy.guess}`,
-      );
 
       // First, try to find exact match (same source and guess)
       let matchingDimension = this.dimensions.find(
@@ -1687,7 +1608,7 @@ export default class MultiSourceConfiguration extends Vue {
 
       // If no exact match, try matching just the guess (dimension type)
       if (!matchingDimension) {
-        logError(
+        logWarning(
           `[MultiSourceConfig] No exact match for ${dim}, trying guess-only match`,
         );
         matchingDimension = this.dimensions.find(
@@ -1697,7 +1618,7 @@ export default class MultiSourceConfiguration extends Vue {
 
       // If still no match, try matching just the source type
       if (!matchingDimension) {
-        logError(
+        logWarning(
           `[MultiSourceConfig] No guess match for ${dim}, trying source-only match`,
         );
         matchingDimension = this.dimensions.find(
@@ -1706,31 +1627,16 @@ export default class MultiSourceConfiguration extends Vue {
       }
 
       if (matchingDimension) {
-        logError(
-          `[MultiSourceConfig] Found match for ${dim}: ${matchingDimension.name} (${matchingDimension.guess}, ${matchingDimension.source})`,
-        );
         this.assignments[dim] =
           this.assignmentOptionToAssignmentItem(matchingDimension);
       } else {
-        logError(
+        logWarning(
           `[MultiSourceConfig] No match found for ${dim}, using default`,
         );
         // Fall back to default for this dimension
         this.assignments[dim] = this.getDefaultAssignmentItem(dim);
-        if (this.assignments[dim]) {
-          logError(
-            `[MultiSourceConfig] Default assignment for ${dim}: ${this.assignments[dim]?.value?.name}`,
-          );
-        } else {
-          logError(
-            `[MultiSourceConfig] No default assignment available for ${dim}`,
-          );
-        }
       }
     }
-    logError(
-      `[MultiSourceConfig] After applyStrategy - assignments: XY=${!!this.assignments.XY}, Z=${!!this.assignments.Z}, T=${!!this.assignments.T}, C=${!!this.assignments.C}`,
-    );
   }
 }
 </script>

@@ -78,7 +78,7 @@ import { Debounce } from "@/utils/debounce";
 import { TCompositionMode } from "@/utils/compositionModes";
 import { createSamToolStateFromToolConfiguration } from "@/pipelines/samPipeline";
 import { isEqual } from "lodash";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 
 const apiRootSuffix = "/api/v1";
 const defaultGirderUrl =
@@ -439,13 +439,7 @@ export class Main extends VuexModule {
 
   @Mutation
   setUploadCollection(collection: IDatasetConfiguration | null) {
-    logError(
-      `[Store] setUploadCollection mutation called. collection: ${!!collection}, id: ${collection?.id}`,
-    );
     this.uploadWorkflow.collection = collection;
-    logError(
-      `[Store] setUploadCollection: After assignment, store has: ${!!this.uploadWorkflow.collection}, id: ${this.uploadWorkflow.collection?.id}`,
-    );
   }
 
   @Mutation
@@ -1386,15 +1380,9 @@ export class Main extends VuexModule {
       sync.setSaving(false);
 
       if (collection) {
-        logError(
-          `[Store] createUploadCollection: Setting collection in store. collection.id: ${collection.id}`,
-        );
         this.setUploadCollection(collection);
-        logError(
-          `[Store] createUploadCollection: Collection set. Store now has: ${!!this.uploadWorkflow.collection}, id: ${this.uploadWorkflow.collection?.id}`,
-        );
       } else {
-        logError(`[Store] createUploadCollection: Collection is null!`);
+        logWarning(`[Store] createUploadCollection: Collection is null!`);
       }
       return collection;
     } catch (error) {
@@ -1409,11 +1397,6 @@ export class Main extends VuexModule {
     // Capture values before resetting
     const collection = this.uploadWorkflow.collection;
     const datasets = [...this.uploadWorkflow.datasets]; // Copy before reset
-    const collectionId = collection?.id || null;
-
-    logError(
-      `[Store] completeUploadWorkflow: collection=${!!collection}, collectionId=${collectionId}, datasets.length=${datasets.length}`,
-    );
 
     // Reset the workflow state
     this.resetUploadWorkflow();
