@@ -158,6 +158,7 @@
 </template>
 <script lang="ts">
 import { Vue, Component, Watch } from "vue-property-decorator";
+import isEqual from "lodash/isEqual";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IDatasetView, IDisplaySlice, areCompatibles } from "@/store/model";
@@ -320,24 +321,27 @@ export default class ConfigurationInfo extends Vue {
             );
           }
 
-          // Check channel differences
-          const configChannelKeys = Object.keys(configCompat.channels).sort();
-          const datasetChannelKeys = Object.keys(datasetCompat.channels).sort();
-          if (configChannelKeys.join(",") !== datasetChannelKeys.join(",")) {
-            const datasetCount = datasetChannelKeys.length;
-            const configCount = configChannelKeys.length;
-            if (datasetCount !== configCount) {
+          // Check channel differences using isEqual (same as areCompatibles)
+          if (!isEqual(configCompat.channels, datasetCompat.channels)) {
+            const configChannelCount = Object.keys(
+              configCompat.channels,
+            ).length;
+            const datasetChannelCount = Object.keys(
+              datasetCompat.channels,
+            ).length;
+
+            if (configChannelCount !== datasetChannelCount) {
               warnings.push(
-                `Channels: Dataset has ${datasetCount}, collection expects ${configCount}`,
+                `Channels: Dataset has ${datasetChannelCount}, collection expects ${configChannelCount}`,
               );
             } else {
-              // Same count but different channel indices
-              const datasetNames = datasetChannelKeys
-                .map((k) => datasetCompat.channels[parseInt(k)])
-                .join(", ");
-              const configNames = configChannelKeys
-                .map((k) => configCompat.channels[parseInt(k)])
-                .join(", ");
+              // Same count but different channel indices or names
+              const datasetNames = Object.values(datasetCompat.channels).join(
+                ", ",
+              );
+              const configNames = Object.values(configCompat.channels).join(
+                ", ",
+              );
               warnings.push(
                 `Channels: Dataset has [${datasetNames}], collection expects [${configNames}]`,
               );
