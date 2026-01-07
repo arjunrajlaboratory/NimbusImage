@@ -11,7 +11,7 @@ from bson.objectid import ObjectId
 
 from girder.api import access
 from girder.api.describe import autoDescribeRoute, Description
-from girder.api.rest import Resource, setResponseHeader
+from girder.api.rest import Resource, setResponseHeader, setContentDisposition
 from girder.constants import AccessType
 from girder.models.folder import Folder
 
@@ -20,6 +20,7 @@ from ..models.connections import AnnotationConnection as ConnectionModel
 from ..models.propertyValues import AnnotationPropertyValues as PropertyValuesModel
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
+from ..models.datasetView import DatasetView as DatasetViewModel
 from ..helpers.serialization import orJsonDefaults
 
 
@@ -35,6 +36,7 @@ class Export(Resource):
         self._propertyValuesModel = PropertyValuesModel()
         self._propertyModel = PropertyModel()
         self._collectionModel = CollectionModel()
+        self._datasetViewModel = DatasetViewModel()
 
         self.route("GET", ("json",), self.exportJson)
 
@@ -77,6 +79,12 @@ class Export(Resource):
             default=True,
             required=False
         )
+        .param(
+            "filename",
+            "Filename for the downloaded file",
+            default="export.json",
+            required=False
+        )
         .errorResponse("Dataset not found or access denied", 404)
     )
     def exportJson(
@@ -86,7 +94,8 @@ class Export(Resource):
         includeAnnotations=True,
         includeConnections=True,
         includeProperties=True,
-        includePropertyValues=True
+        includePropertyValues=True,
+        filename="export.json"
     ):
         """
         Export annotation data for a dataset as JSON.
@@ -110,7 +119,11 @@ class Export(Resource):
 
         configObjectId = ObjectId(configurationId) if configurationId else None
 
+        # Ensure filename ends with .json
+        safe_filename = filename if filename.endswith('.json') else filename + '.json'
+
         setResponseHeader("Content-Type", "application/json")
+        setContentDisposition(safe_filename, disposition='attachment')
 
         return self._generateExportJson(
             datasetObjectId,
@@ -194,8 +207,8 @@ class Export(Resource):
         Stream property definitions as a JSON array.
 
         If configurationId is provided, gets properties from that
-        configuration. Otherwise, aggregates properties from all
-        configurations for the dataset.
+        configuration. Otherwise, finds all configurations associated with
+        the dataset via DatasetViews and aggregates their properties.
         """
         propertyIds = set()
 
@@ -206,10 +219,16 @@ class Export(Resource):
                 for pid in config['meta']['propertyIds']:
                     propertyIds.add(ObjectId(pid))
         else:
-            # Aggregate from all configurations for this dataset
-            configs = self._collectionModel.find({"folderId": datasetId})
-            for config in configs:
-                if 'meta' in config and 'propertyIds' in config['meta']:
+            # Find all configurations via DatasetViews
+            # Dataset -> DatasetViews -> Configurations
+            datasetViews = list(self._datasetViewModel.collection.find({
+                'datasetId': datasetId
+            }))
+            configIds = {dv['configurationId'] for dv in datasetViews}
+
+            for configId in configIds:
+                config = self._collectionModel.load(configId, force=True)
+                if config and 'meta' in config and 'propertyIds' in config['meta']:
                     for pid in config['meta']['propertyIds']:
                         propertyIds.add(ObjectId(pid))
 

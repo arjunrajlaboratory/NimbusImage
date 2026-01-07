@@ -10,6 +10,9 @@ from upenncontrast_annotation.server.models.propertyValues import (
     AnnotationPropertyValues,
 )
 from upenncontrast_annotation.server.models.collection import Collection
+from upenncontrast_annotation.server.models.datasetView import (
+    DatasetView as DatasetViewModel
+)
 from upenncontrast_annotation.server.api.export import Export
 
 from girder.models.folder import Folder
@@ -162,7 +165,8 @@ class TestExport:
 
         # Should have the property from configuration
         assert len(result["annotationProperties"]) == 1
-        assert str(result["annotationProperties"][0]["_id"]) == str(prop["_id"])
+        assert str(result["annotationProperties"][0]["_id"]) == \
+            str(prop["_id"])
 
     def testExportJsonExcludeAnnotations(self, admin):
         """Test export with annotations excluded."""
@@ -270,3 +274,162 @@ class TestExport:
         result_ids = {str(a["_id"]) for a in result}
         expected_ids = {str(ann["_id"]) for ann in annotations}
         assert result_ids == expected_ids
+
+    def testExportJsonPropertiesViaDatasetView(self, admin):
+        """Test that properties are found via DatasetViews when no
+        configurationId is provided."""
+        dataset, annotations, connections = createDatasetWithData(admin)
+
+        # Create two properties
+        property1_data = {
+            "name": "Property One",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        }
+        prop1 = AnnotationProperty().save(property1_data)
+
+        property2_data = {
+            "name": "Property Two",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["point"]},
+            "shape": "point",
+            "workerInterface": {}
+        }
+        prop2 = AnnotationProperty().save(property2_data)
+
+        # Create a configuration with these properties
+        config = createConfiguration(
+            admin, dataset, [prop1["_id"], prop2["_id"]]
+        )
+
+        # Create a DatasetView linking the dataset to the configuration
+        # This is how the frontend links datasets to configurations
+        DatasetViewModel().create(
+            admin,
+            {
+                "datasetId": dataset["_id"],
+                "configurationId": config["_id"],
+                "lastLocation": {"xy": 0, "z": 0, "time": 0},
+                "layerContrasts": {}
+            }
+        )
+
+        # Export WITHOUT configurationId - should find properties via
+        # DatasetView
+        export = Export()
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,  # No configurationId - should look up via DatasetViews
+            includeAnnotations=True,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=True
+        )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
+
+        # Should have found both properties via the DatasetView
+        assert len(result["annotationProperties"]) == 2
+        result_prop_ids = {
+            str(p["_id"]) for p in result["annotationProperties"]
+        }
+        expected_prop_ids = {
+            str(prop1["_id"]),
+            str(prop2["_id"])
+        }
+        assert result_prop_ids == expected_prop_ids
+
+    def testExportJsonPropertiesViaMultipleDatasetViews(self, admin):
+        """Test that properties are aggregated from multiple DatasetViews."""
+        dataset, annotations, connections = createDatasetWithData(admin)
+
+        # Create three properties
+        prop1 = AnnotationProperty().save({
+            "name": "Property A",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        prop2 = AnnotationProperty().save({
+            "name": "Property B",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["point"]},
+            "shape": "point",
+            "workerInterface": {}
+        })
+        prop3 = AnnotationProperty().save({
+            "name": "Property C",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["line"]},
+            "shape": "line",
+            "workerInterface": {}
+        })
+
+        # Create two configurations with different properties
+        config1 = createConfiguration(
+            admin,
+            dataset,
+            [
+                prop1["_id"],
+                prop2["_id"]
+            ]
+        )
+        config2 = createConfiguration(
+            admin,
+            dataset,
+            [
+                prop2["_id"],
+                prop3["_id"]
+            ]
+        )
+
+        # Create DatasetViews linking to both configurations
+        DatasetViewModel().create(
+            admin,
+            {
+                "datasetId": dataset["_id"],
+                "configurationId": config1["_id"],
+                "lastLocation": {"xy": 0, "z": 0, "time": 0},
+                "layerContrasts": {}
+            }
+        )
+        DatasetViewModel().create(
+            admin,
+            {
+                "datasetId": dataset["_id"],
+                "configurationId": config2["_id"],
+                "lastLocation": {"xy": 0, "z": 0, "time": 0},
+                "layerContrasts": {}
+            }
+        )
+
+        # Export without configurationId
+        export = Export()
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,
+            includeAnnotations=True,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=True
+        )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
+
+        # Should have all 3 unique properties (prop2 is in both configs,
+        # but deduplicated)
+        assert len(result["annotationProperties"]) == 3
+        result_prop_ids = {
+            str(p["_id"]) for p in result["annotationProperties"]
+        }
+        expected_prop_ids = {
+            str(prop1["_id"]),
+            str(prop2["_id"]),
+            str(prop3["_id"])
+        }
+        assert result_prop_ids == expected_prop_ids

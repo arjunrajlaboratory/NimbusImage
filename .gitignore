@@ -46,3 +46,4 @@ src/**/*.js
 *__pycache__*
 *.egg-info
 *.tox
+CLAUDE.local.md
