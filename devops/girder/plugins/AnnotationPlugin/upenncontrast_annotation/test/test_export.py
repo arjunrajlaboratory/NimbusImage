@@ -15,8 +15,6 @@ from upenncontrast_annotation.server.models.datasetView import (
 )
 from upenncontrast_annotation.server.api.export import Export
 
-from girder.models.folder import Folder
-
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
 

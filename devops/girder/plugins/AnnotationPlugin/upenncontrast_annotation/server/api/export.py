@@ -17,7 +17,9 @@ from girder.models.folder import Folder
 
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
-from ..models.propertyValues import AnnotationPropertyValues as PropertyValuesModel
+from ..models.propertyValues import (
+    AnnotationPropertyValues as PropertyValuesModel
+)
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
@@ -120,7 +122,9 @@ class Export(Resource):
         configObjectId = ObjectId(configurationId) if configurationId else None
 
         # Ensure filename ends with .json
-        safe_filename = filename if filename.endswith('.json') else filename + '.json'
+        safe_filename = (
+            filename if filename.endswith('.json') else filename + '.json'
+        )
 
         setResponseHeader("Content-Type", "application/json")
         setContentDisposition(safe_filename, disposition='attachment')
@@ -228,7 +232,8 @@ class Export(Resource):
 
             for configId in configIds:
                 config = self._collectionModel.load(configId, force=True)
-                if config and 'meta' in config and 'propertyIds' in config['meta']:
+                if (config and 'meta' in config and
+                        'propertyIds' in config['meta']):
                     for pid in config['meta']['propertyIds']:
                         propertyIds.add(ObjectId(pid))
 
