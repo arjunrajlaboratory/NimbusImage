@@ -1,8 +1,8 @@
 """
 Export API for downloading annotation data as JSON.
 
-This endpoint provides a memory-efficient way to export annotations,
-connections, properties, and property values for a dataset.
+This endpoint exports annotations, connections, properties, and property
+values for a dataset.
 """
 
 import orjson
@@ -102,7 +102,7 @@ class Export(Resource):
         """
         Export annotation data for a dataset as JSON.
 
-        Returns a streaming JSON response with the following structure:
+        Returns a JSON response with the following structure:
         {
             "annotations": [...],
             "annotationConnections": [...],
@@ -129,86 +129,37 @@ class Export(Resource):
         setResponseHeader("Content-Type", "application/json")
         setContentDisposition(safe_filename, disposition='attachment')
 
-        return self._generateExportJson(
-            datasetObjectId,
-            configObjectId,
-            includeAnnotations,
-            includeConnections,
-            includeProperties,
-            includePropertyValues
-        )
+        # Build export data
+        data = {}
 
-    def _generateExportJson(
-        self,
-        datasetId,
-        configurationId,
-        includeAnnotations,
-        includeConnections,
-        includeProperties,
-        includePropertyValues
-    ):
-        """
-        Generator function that yields JSON chunks.
+        if includeAnnotations:
+            data["annotations"] = list(self._annotationModel.find(
+                {"datasetId": datasetObjectId}
+            ))
 
-        This is returned as a callable to match Girder's streaming pattern.
-        """
+        if includeConnections:
+            data["annotationConnections"] = list(self._connectionModel.find(
+                {"datasetId": datasetObjectId}
+            ))
+
+        if includeProperties:
+            data["annotationProperties"] = self._getProperties(
+                datasetObjectId, configObjectId
+            )
+
+        if includePropertyValues:
+            data["annotationPropertyValues"] = self._getPropertyValues(
+                datasetObjectId
+            )
+
+        # Return as generator so Girder streams raw bytes
         def generate():
-            yield b'{'
-            first_section = True
-
-            # Annotations
-            if includeAnnotations:
-                if not first_section:
-                    yield b','
-                first_section = False
-                yield b'"annotations":'
-                yield from self._streamAnnotations(datasetId)
-
-            # Connections
-            if includeConnections:
-                if not first_section:
-                    yield b','
-                first_section = False
-                yield b'"annotationConnections":'
-                yield from self._streamConnections(datasetId)
-
-            # Properties
-            if includeProperties:
-                if not first_section:
-                    yield b','
-                first_section = False
-                yield b'"annotationProperties":'
-                yield from self._streamProperties(datasetId, configurationId)
-
-            # Property Values
-            if includePropertyValues:
-                if not first_section:
-                    yield b','
-                first_section = False
-                yield b'"annotationPropertyValues":'
-                yield from self._streamPropertyValues(datasetId)
-
-            yield b'}'
-
+            yield orjson.dumps(data, default=orJsonDefaults)
         return generate
 
-    def _streamAnnotations(self, datasetId):
-        """Stream annotations as a JSON array."""
-        cursor = self._annotationModel.find(
-            {"datasetId": datasetId}
-        ).hint([("datasetId", 1), ("_id", 1)])
-        yield from self._streamCursorAsArray(cursor)
-
-    def _streamConnections(self, datasetId):
-        """Stream connections as a JSON array."""
-        cursor = self._connectionModel.find(
-            {"datasetId": datasetId}
-        ).hint([("datasetId", 1), ("_id", 1)])
-        yield from self._streamCursorAsArray(cursor)
-
-    def _streamProperties(self, datasetId, configurationId):
+    def _getProperties(self, datasetId, configurationId):
         """
-        Stream property definitions as a JSON array.
+        Get property definitions as a list.
 
         If configurationId is provided, gets properties from that
         configuration. Otherwise, finds all configurations associated with
@@ -238,16 +189,14 @@ class Export(Resource):
                         propertyIds.add(ObjectId(pid))
 
         if propertyIds:
-            cursor = self._propertyModel.find(
+            return list(self._propertyModel.find(
                 {"_id": {"$in": list(propertyIds)}}
-            )
-            yield from self._streamCursorAsArray(cursor)
-        else:
-            yield b'[]'
+            ))
+        return []
 
-    def _streamPropertyValues(self, datasetId):
+    def _getPropertyValues(self, datasetId):
         """
-        Stream property values as a JSON object keyed by annotationId.
+        Get property values as a dict keyed by annotationId.
 
         The backend stores property values as individual documents:
         {"annotationId": "abc", "values": {"propId1": {"Area": 100}}}
@@ -255,49 +204,12 @@ class Export(Resource):
         This method transforms them into the frontend format:
         {"abc": {"propId1": {"Area": 100}}}
         """
-        cursor = self._propertyValuesModel.find(
-            {"datasetId": datasetId}
-        ).hint([("datasetId", 1), ("_id", 1)])
-
-        yield b'{'
-        first = True
+        result = {}
+        cursor = self._propertyValuesModel.find({"datasetId": datasetId})
 
         for doc in cursor:
             annotationId = str(doc["annotationId"])
             values = doc.get("values", {})
+            result[annotationId] = values
 
-            if not first:
-                yield b','
-            first = False
-
-            # Output: "annotationId": {...values...}
-            yield orjson.dumps(annotationId)
-            yield b':'
-            yield orjson.dumps(values, default=orJsonDefaults)
-
-        yield b'}'
-
-    def _streamCursorAsArray(self, cursor, chunk_size=1000):
-        """
-        Generic helper to stream a MongoDB cursor as a JSON array.
-
-        Yields chunks of JSON to avoid building the entire array in memory.
-        """
-        chunk = [b"["]
-        first = True
-        count = 0
-
-        for doc in cursor:
-            if not first:
-                chunk.append(b",")
-            chunk.append(orjson.dumps(doc, default=orJsonDefaults))
-            first = False
-            count += 1
-
-            if count >= chunk_size:
-                yield b"".join(chunk)
-                chunk = []
-                count = 0
-
-        chunk.append(b"]")
-        yield b"".join(chunk)
+        return result
