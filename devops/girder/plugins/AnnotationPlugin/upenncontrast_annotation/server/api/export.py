@@ -1,11 +1,9 @@
 """
 Export API for downloading annotation data as JSON.
 
-This endpoint exports annotations, connections, properties, and property
-values for a dataset.
+This endpoint provides a memory-efficient way to export annotations,
+connections, properties, and property values for a dataset.
 """
-
-import orjson
 
 from bson.objectid import ObjectId
 
@@ -23,7 +21,7 @@ from ..models.propertyValues import (
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
-from ..helpers.serialization import orJsonDefaults
+from ..helpers.serialization import jsonGenerator
 
 
 class Export(Resource):
@@ -32,6 +30,8 @@ class Export(Resource):
     def __init__(self):
         super().__init__()
         self.resourceName = "export"
+
+        self.exportBufferLength = 1000
 
         self._annotationModel = AnnotationModel()
         self._connectionModel = ConnectionModel()
@@ -102,7 +102,7 @@ class Export(Resource):
         """
         Export annotation data for a dataset as JSON.
 
-        Returns a JSON response with the following structure:
+        Returns a streaming JSON response with the following structure:
         {
             "annotations": [...],
             "annotationConnections": [...],
@@ -129,87 +129,127 @@ class Export(Resource):
         setResponseHeader("Content-Type", "application/json")
         setContentDisposition(safe_filename, disposition='attachment')
 
-        # Build export data
-        data = {}
+        return self._generateExportJson(
+            datasetObjectId,
+            configObjectId,
+            includeAnnotations,
+            includeConnections,
+            includeProperties,
+            includePropertyValues
+        )
 
-        if includeAnnotations:
-            data["annotations"] = list(self._annotationModel.find(
-                {"datasetId": datasetObjectId}
-            ))
+    def _generateExportJson(
+        self,
+        datasetId,
+        configurationId,
+        includeAnnotations,
+        includeConnections,
+        includeProperties,
+        includePropertyValues
+    ):
+        """
+        Generator function that yields JSON chunks.
 
-        if includeConnections:
-            data["annotationConnections"] = list(self._connectionModel.find(
-                {"datasetId": datasetObjectId}
-            ))
-
-        if includeProperties:
-            data["annotationProperties"] = self._getProperties(
-                datasetObjectId, configObjectId
-            )
-
-        if includePropertyValues:
-            data["annotationPropertyValues"] = self._getPropertyValues(
-                datasetObjectId
-            )
-
-        # Return as generator so Girder streams raw bytes
+        This is returned as a callable to match Girder's streaming pattern.
+        """
         def generate():
-            yield orjson.dumps(data, default=orJsonDefaults)
+            exportObject = {}
+
+            # First construct the JSON object
+
+            # Annotations
+            if includeAnnotations:
+                exportObject["annotations"] = self._annotationModel.find(
+                    {"datasetId": datasetId}
+                ).hint([("datasetId", 1), ("_id", 1)])
+
+            # Connections
+            if includeConnections:
+                exportObject["annotationConnections"] = \
+                    self._connectionModel.find(
+                    {"datasetId": datasetId}
+                ).hint([("datasetId", 1), ("_id", 1)])
+
+            # Properties
+            if includeProperties:
+                propertyIds = set()
+
+                if configurationId:
+                    # Get specific configuration
+                    config = self._collectionModel.load(
+                        configurationId, force=True)
+                    if config and 'meta' in config \
+                            and 'propertyIds' in config['meta']:
+                        for pid in config['meta']['propertyIds']:
+                            propertyIds.add(ObjectId(pid))
+                else:
+                    # Find all configurations via DatasetViews
+                    # Dataset -> DatasetViews -> Configurations
+                    datasetViews = list(
+                        self._datasetViewModel.collection.find({
+                            'datasetId': datasetId
+                        }))
+                    configIds = {dv['configurationId'] for dv in datasetViews}
+
+                    for configId in configIds:
+                        config = self._collectionModel.load(
+                            configId, force=True)
+                        if (config and 'meta' in config
+                                and 'propertyIds' in config['meta']):
+                            for pid in config['meta']['propertyIds']:
+                                propertyIds.add(ObjectId(pid))
+
+                exportObject["annotationProperties"] = \
+                    self._propertyModel.find(
+                    {"_id": {"$in": list(propertyIds)}}
+                ) if propertyIds else []
+
+            if includePropertyValues:
+                exportObject["annotationPropertyValues"] = \
+                    self._propertyValuesModel.collection.aggregate([
+                        {
+                            "$project": {
+                                "_id": 0,
+                                "k": {"$toString": "$annotationId"},
+                                "v": "$values"
+                            }
+                        },
+                        {
+                            "$group": {
+                                "_id": None,
+                                "pairs": {
+                                    "$push": {
+                                        "k": "$k",
+                                        "v": "$v"
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "$project": {
+                                "_id": 0,
+                                "result": {
+                                    "$arrayToObject": "$pairs"
+                                }
+                            }
+                        },
+                        {
+                            "$replaceRoot": {
+                                "newRoot": "$result"
+                            }
+                        }
+                    ])
+
+            generator = jsonGenerator(exportObject)
+            buffer = b""
+            while True:
+                try:
+                    buffer += next(generator)
+                    if len(buffer) > self.exportBufferLength:
+                        yield buffer
+                        buffer = b""
+                except StopIteration:
+                    break
+            yield buffer
+
         return generate
-
-    def _getProperties(self, datasetId, configurationId):
-        """
-        Get property definitions as a list.
-
-        If configurationId is provided, gets properties from that
-        configuration. Otherwise, finds all configurations associated with
-        the dataset via DatasetViews and aggregates their properties.
-        """
-        propertyIds = set()
-
-        if configurationId:
-            # Get specific configuration
-            config = self._collectionModel.load(configurationId, force=True)
-            if config and 'meta' in config and 'propertyIds' in config['meta']:
-                for pid in config['meta']['propertyIds']:
-                    propertyIds.add(ObjectId(pid))
-        else:
-            # Find all configurations via DatasetViews
-            # Dataset -> DatasetViews -> Configurations
-            datasetViews = list(self._datasetViewModel.collection.find({
-                'datasetId': datasetId
-            }))
-            configIds = {dv['configurationId'] for dv in datasetViews}
-
-            for configId in configIds:
-                config = self._collectionModel.load(configId, force=True)
-                if (config and 'meta' in config and
-                        'propertyIds' in config['meta']):
-                    for pid in config['meta']['propertyIds']:
-                        propertyIds.add(ObjectId(pid))
-
-        if propertyIds:
-            return list(self._propertyModel.find(
-                {"_id": {"$in": list(propertyIds)}}
-            ))
-        return []
-
-    def _getPropertyValues(self, datasetId):
-        """
-        Get property values as a dict keyed by annotationId.
-
-        The backend stores property values as individual documents:
-        {"annotationId": "abc", "values": {"propId1": {"Area": 100}}}
-
-        This method transforms them into the frontend format:
-        {"abc": {"propId1": {"Area": 100}}}
-        """
-        result = {}
-        cursor = self._propertyValuesModel.find({"datasetId": datasetId})
-
-        for doc in cursor:
-            annotationId = str(doc["annotationId"])
-            values = doc.get("values", {})
-            result[annotationId] = values
-
-        return result

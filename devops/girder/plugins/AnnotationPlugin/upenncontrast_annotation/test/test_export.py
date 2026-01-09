@@ -1,4 +1,5 @@
 import pytest
+import json
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.connections import (
@@ -81,35 +82,6 @@ def createConfiguration(user, dataset, propertyIds=None):
     return config
 
 
-def buildExportData(export, datasetId, configurationId=None,
-                    includeAnnotations=True, includeConnections=True,
-                    includeProperties=True, includePropertyValues=True):
-    """Helper to build export data dict like the endpoint does."""
-    data = {}
-
-    if includeAnnotations:
-        data["annotations"] = list(export._annotationModel.find(
-            {"datasetId": datasetId}
-        ))
-
-    if includeConnections:
-        data["annotationConnections"] = list(export._connectionModel.find(
-            {"datasetId": datasetId}
-        ))
-
-    if includeProperties:
-        data["annotationProperties"] = export._getProperties(
-            datasetId, configurationId
-        )
-
-    if includePropertyValues:
-        data["annotationPropertyValues"] = export._getPropertyValues(
-            datasetId
-        )
-
-    return data
-
-
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
 class TestExport:
@@ -117,8 +89,22 @@ class TestExport:
         """Test basic export with all data types."""
         dataset, annotations, connections = createDatasetWithData(admin)
 
+        # Create Export instance and call the method
         export = Export()
-        result = buildExportData(export, dataset["_id"])
+
+        # Get the generator function
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,  # no configurationId
+            includeAnnotations=True,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=True
+        )
+
+        # Collect the output
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
 
         # Verify structure
         assert "annotations" in result
@@ -146,7 +132,7 @@ class TestExport:
 
     def testExportJsonWithConfiguration(self, admin):
         """Test export with a specific configuration."""
-        dataset, _, _ = createDatasetWithData(admin)
+        dataset, annotations, connections = createDatasetWithData(admin)
 
         # Create a property
         property_data = {
@@ -163,9 +149,17 @@ class TestExport:
 
         # Export with configurationId
         export = Export()
-        result = buildExportData(
-            export, dataset["_id"], configurationId=config["_id"]
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            config["_id"],
+            includeAnnotations=True,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=True
         )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
 
         # Should have the property from configuration
         assert len(result["annotationProperties"]) == 1
@@ -174,12 +168,20 @@ class TestExport:
 
     def testExportJsonExcludeAnnotations(self, admin):
         """Test export with annotations excluded."""
-        dataset, _, _ = createDatasetWithData(admin)
+        dataset, annotations, connections = createDatasetWithData(admin)
 
         export = Export()
-        result = buildExportData(
-            export, dataset["_id"], includeAnnotations=False
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,
+            includeAnnotations=False,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=True
         )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
 
         # Should not have annotations key
         assert "annotations" not in result
@@ -188,12 +190,20 @@ class TestExport:
 
     def testExportJsonExcludeConnections(self, admin):
         """Test export with connections excluded."""
-        dataset, _, _ = createDatasetWithData(admin)
+        dataset, annotations, connections = createDatasetWithData(admin)
 
         export = Export()
-        result = buildExportData(
-            export, dataset["_id"], includeConnections=False
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,
+            includeAnnotations=True,
+            includeConnections=False,
+            includeProperties=True,
+            includePropertyValues=True
         )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
 
         # Should have annotations but not connections
         assert "annotations" in result
@@ -201,12 +211,20 @@ class TestExport:
 
     def testExportJsonExcludePropertyValues(self, admin):
         """Test export with property values excluded."""
-        dataset, _, _ = createDatasetWithData(admin)
+        dataset, annotations, connections = createDatasetWithData(admin)
 
         export = Export()
-        result = buildExportData(
-            export, dataset["_id"], includePropertyValues=False
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,
+            includeAnnotations=True,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=False
         )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
 
         # Should have annotations but not property values
         assert "annotations" in result
@@ -219,7 +237,17 @@ class TestExport:
         )
 
         export = Export()
-        result = buildExportData(export, dataset["_id"])
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,
+            includeAnnotations=True,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=True
+        )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
 
         # Should have empty arrays/objects
         assert result["annotations"] == []
@@ -227,39 +255,29 @@ class TestExport:
         assert result["annotationProperties"] == []
         assert result["annotationPropertyValues"] == {}
 
-    def testGetPropertyValues(self, admin):
-        """Test the property values helper method."""
-        dataset, annotations, _ = createDatasetWithData(admin)
-
-        export = Export()
-        result = export._getPropertyValues(dataset["_id"])
-
-        # Should have property values for first annotation
-        ann1_id = str(annotations[0]["_id"])
-        assert ann1_id in result
-        assert "test_property" in result[ann1_id]
-        assert result[ann1_id]["test_property"]["Area"] == 100
-
     def testExportJsonPropertiesViaDatasetView(self, admin):
         """Test that properties are found via DatasetViews when no
         configurationId is provided."""
-        dataset, _, _ = createDatasetWithData(admin)
+        dataset, annotations, connections = createDatasetWithData(admin)
 
         # Create two properties
-        prop1 = AnnotationProperty().save({
+        property1_data = {
             "name": "Property One",
             "image": "properties/test:latest",
             "tags": {"exclusive": False, "tags": ["polygon"]},
             "shape": "polygon",
             "workerInterface": {}
-        })
-        prop2 = AnnotationProperty().save({
+        }
+        prop1 = AnnotationProperty().save(property1_data)
+
+        property2_data = {
             "name": "Property Two",
             "image": "properties/test:latest",
             "tags": {"exclusive": False, "tags": ["point"]},
             "shape": "point",
             "workerInterface": {}
-        })
+        }
+        prop2 = AnnotationProperty().save(property2_data)
 
         # Create a configuration with these properties
         config = createConfiguration(
@@ -267,6 +285,7 @@ class TestExport:
         )
 
         # Create a DatasetView linking the dataset to the configuration
+        # This is how the frontend links datasets to configurations
         DatasetViewModel().create(
             admin,
             {
@@ -280,19 +299,32 @@ class TestExport:
         # Export WITHOUT configurationId - should find properties via
         # DatasetView
         export = Export()
-        result = buildExportData(export, dataset["_id"])
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,  # No configurationId - should look up via DatasetViews
+            includeAnnotations=True,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=True
+        )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
 
         # Should have found both properties via the DatasetView
         assert len(result["annotationProperties"]) == 2
         result_prop_ids = {
             str(p["_id"]) for p in result["annotationProperties"]
         }
-        expected_prop_ids = {str(prop1["_id"]), str(prop2["_id"])}
+        expected_prop_ids = {
+            str(prop1["_id"]),
+            str(prop2["_id"])
+        }
         assert result_prop_ids == expected_prop_ids
 
     def testExportJsonPropertiesViaMultipleDatasetViews(self, admin):
         """Test that properties are aggregated from multiple DatasetViews."""
-        dataset, _, _ = createDatasetWithData(admin)
+        dataset, annotations, connections = createDatasetWithData(admin)
 
         # Create three properties
         prop1 = AnnotationProperty().save({
@@ -319,10 +351,20 @@ class TestExport:
 
         # Create two configurations with different properties
         config1 = createConfiguration(
-            admin, dataset, [prop1["_id"], prop2["_id"]]
+            admin,
+            dataset,
+            [
+                prop1["_id"],
+                prop2["_id"]
+            ]
         )
         config2 = createConfiguration(
-            admin, dataset, [prop2["_id"], prop3["_id"]]
+            admin,
+            dataset,
+            [
+                prop2["_id"],
+                prop3["_id"]
+            ]
         )
 
         # Create DatasetViews linking to both configurations
@@ -347,7 +389,17 @@ class TestExport:
 
         # Export without configurationId
         export = Export()
-        result = buildExportData(export, dataset["_id"])
+        generator_func = export._generateExportJson(
+            dataset["_id"],
+            None,
+            includeAnnotations=True,
+            includeConnections=True,
+            includeProperties=True,
+            includePropertyValues=True
+        )
+
+        result_bytes = b"".join(generator_func())
+        result = json.loads(result_bytes)
 
         # Should have all 3 unique properties (prop2 is in both configs,
         # but deduplicated)
@@ -356,6 +408,8 @@ class TestExport:
             str(p["_id"]) for p in result["annotationProperties"]
         }
         expected_prop_ids = {
-            str(prop1["_id"]), str(prop2["_id"]), str(prop3["_id"])
+            str(prop1["_id"]),
+            str(prop2["_id"]),
+            str(prop3["_id"])
         }
         assert result_prop_ids == expected_prop_ids
