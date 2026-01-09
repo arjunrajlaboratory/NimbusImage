@@ -10,6 +10,7 @@
       </v-card-text>
     </v-card>
     <v-form
+      v-show="!showConfigAtTop"
       ref="form"
       v-model="valid"
       :disabled="
@@ -77,7 +78,7 @@
                 v-model="path"
                 :breadcrumb="true"
                 title="Select a Folder to Import the New Dataset"
-                :disabled="quickupload && !pipelineError"
+                :disabled="isQuickImport && !pipelineError"
               />
             </v-row>
           </v-container>
@@ -105,7 +106,7 @@
 
       <div
         class="button-bar d-flex justify-space-between align-center"
-        v-if="!quickupload || pipelineError"
+        v-if="!isQuickImport || pipelineError"
       >
         <div>
           <span class="mr-2"
@@ -124,7 +125,8 @@
               !filesSelected ||
               uploading ||
               fileSizeExceeded ||
-              invalidLocation
+              invalidLocation ||
+              configuring
             "
             color="success"
             @click="submit"
@@ -135,17 +137,86 @@
       </div>
     </v-form>
 
-    <template v-if="quickupload">
-      <template v-if="configuring">
+    <!-- Batch mode progress header -->
+    <v-card v-if="isBatchMode && !pipelineError" class="mb-4">
+      <v-card-title>
+        <v-icon left>mdi-folder-multiple</v-icon>
+        Creating Collection: {{ effectiveBatchName }}
+      </v-card-title>
+      <v-card-subtitle>
+        Dataset
+        {{ store.uploadWorkflow.currentDatasetIndex + 1 }} of
+        {{ totalDatasets }}:
+        <strong>{{ currentDatasetName }}</strong>
+      </v-card-subtitle>
+      <v-card-text>
+        <v-progress-linear
+          :value="
+            ((store.uploadWorkflow.currentDatasetIndex +
+              (uploading || configuring ? 0.5 : 1)) /
+              totalDatasets) *
+            100
+          "
+          height="8"
+          rounded
+        />
+        <div class="mt-2 d-flex">
+          <v-chip
+            v-for="(files, idx) in store.uploadWorkflow.fileGroups"
+            :key="idx"
+            :color="
+              idx < store.uploadWorkflow.currentDatasetIndex
+                ? 'success'
+                : idx === store.uploadWorkflow.currentDatasetIndex
+                  ? 'primary'
+                  : 'grey'
+            "
+            small
+            class="mr-1"
+          >
+            {{ idx + 1 }}
+          </v-chip>
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <!-- Advanced batch mode: Show config UI prominently for first dataset -->
+    <template v-if="showConfigAtTop && datasetId">
+      <v-alert type="info" text class="mb-4">
+        Configure the dimension assignments for the first dataset. These
+        settings will be applied to all subsequent datasets.
+      </v-alert>
+      <multi-source-configuration
+        ref="configuration"
+        :datasetId="datasetId"
+        :autoDatasetRoute="false"
+        @log="configurationLogs = $event"
+        @generatedJson="generationDone"
+        @configData="onConfigDataReceived"
+      />
+    </template>
+
+    <!-- Quick import and auto-processing batch mode -->
+    <template v-if="(isQuickImport || isBatchMode) && !showConfigAtTop">
+      <template v-if="configuring && datasetId">
+        <!-- Mount MultiSourceConfiguration for auto-processing -->
         <multi-source-configuration
           ref="configuration"
           :datasetId="datasetId"
           :autoDatasetRoute="false"
           @log="configurationLogs = $event"
           @generatedJson="generationDone"
-          :class="{ 'd-none': !pipelineError }"
+          @configData="onConfigDataReceived"
+          class="d-none"
         />
-        <div class="title mb-2">Configuring the dataset</div>
+        <!-- Show status text and spinner when auto-processing -->
+        <div class="title mb-2">
+          {{
+            isBatchMode && !isProcessingFirstDataset
+              ? "Applying configuration to dataset"
+              : "Configuring the dataset"
+          }}
+        </div>
         <v-progress-circular indeterminate />
 
         <!-- Transcoding progress bar and status for the quickupload path -->
@@ -225,13 +296,50 @@
     <v-snackbar v-model="showCopySnackbar" :timeout="2000" color="success" top>
       Log copied to clipboard
     </v-snackbar>
+
+    <!-- Batch mode error dialog -->
+    <v-dialog v-model="showBatchErrorDialog" persistent max-width="500">
+      <v-card>
+        <v-card-title class="headline error--text">
+          <v-icon left color="error">mdi-alert-circle</v-icon>
+          Dataset Failed
+        </v-card-title>
+        <v-card-text>
+          <p>
+            Failed to process dataset
+            {{ store.uploadWorkflow.currentDatasetIndex + 1 }} of
+            {{ totalDatasets }}:
+            <strong>{{ currentDatasetName }}</strong>
+          </p>
+          <v-alert type="error" text dense class="mt-3">
+            {{ batchErrorMessage }}
+          </v-alert>
+          <p class="mt-3">
+            {{ totalDatasets - store.uploadWorkflow.currentDatasetIndex - 1 }}
+            dataset(s) remaining. Would you like to continue with the remaining
+            datasets or stop?
+          </p>
+        </v-card-text>
+        <v-card-actions>
+          <v-btn text @click="handleStopBatch">
+            <v-icon left>mdi-stop</v-icon>
+            Stop and Review
+          </v-btn>
+          <v-spacer></v-spacer>
+          <v-btn color="primary" @click="handleContinueBatch">
+            <v-icon left>mdi-skip-next</v-icon>
+            Skip and Continue
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 <script lang="ts">
 import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IGirderApiKey, IGirderLocation } from "@/girder";
+import { IGirderApiKey, IGirderLocation, IGirderSelectAble } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import UploadManager from "@girder/components/src/utils/upload";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
@@ -240,7 +348,7 @@ import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
 import { importAnnotationsFromData } from "@/utils/annotationImport";
@@ -336,6 +444,42 @@ export default class NewDataset extends Vue {
   readonly store = store;
   readonly girderResources = girderResources;
 
+  /**
+   * TODO (2025-12-31): Refactor props vs store inconsistency
+   *
+   * PROBLEM:
+   * This component has two ways of receiving data:
+   * 1. Props (defaultFiles, initialName, quickupload, batchMode, etc.)
+   * 2. Vuex store (store.uploadWorkflow.*)
+   *
+   * When navigating from Home.vue via router.push({ name: "newdataset" }),
+   * NO PROPS are passed - data is stored in Vuex before navigation. However,
+   * the component still has props and some code paths check props instead of
+   * the store, causing bugs (e.g., initialName prop is undefined even though
+   * store.uploadWorkflow.initialName has the correct value).
+   *
+   * CURRENT WORKAROUNDS:
+   * - The `files` getter checks store.uploadCurrentFiles when uploadWorkflow.active
+   * - The `configureDataset()` method checks store.uploadWorkflow.initialName
+   *   instead of the initialName prop
+   * - Similar patterns throughout where we prefer store over props
+   *
+   * RECOMMENDED FIX:
+   * 1. Decide on ONE pattern: store-only makes sense since the upload workflow
+   *    spans navigation and needs persistent state
+   * 2. Remove or deprecate these props: defaultFiles, initialName, initialDescription,
+   *    quickupload, batchMode, batchName, fileGroups, initialUploadLocation
+   * 3. Always read from store.uploadWorkflow when uploadWorkflow.active is true
+   * 4. Keep props only if there's a legitimate use case for embedding this
+   *    component directly (without the upload workflow)
+   * 5. Update all code paths to consistently use store values
+   *
+   * WHY THIS MATTERS:
+   * The mixed pattern makes it easy to introduce bugs - you might check a prop
+   * that's never passed, or forget to check the store. Consolidating to one
+   * pattern will make the code more maintainable and less error-prone.
+   */
+
   @Prop({ type: Array, default: () => [] })
   readonly defaultFiles!: File[];
 
@@ -354,6 +498,15 @@ export default class NewDataset extends Vue {
   @Prop()
   readonly initialDescription?: string;
 
+  @Prop({ type: Array, default: () => [] })
+  readonly fileGroups!: File[][];
+
+  @Prop({ default: false })
+  readonly batchMode!: boolean;
+
+  @Prop()
+  readonly batchName?: string;
+
   uploadedFiles: File[] | null = null;
 
   configuring = false;
@@ -369,6 +522,7 @@ export default class NewDataset extends Vue {
   uploadCls = GirderUploadManager;
 
   path: IGirderLocation | null = null;
+  // originalPath is now in store.uploadWorkflow.originalPath
 
   dataset: IDataset | null = null;
 
@@ -393,12 +547,21 @@ export default class NewDataset extends Vue {
 
   pipelineError = false;
 
+  // Batch mode error handling
+  showBatchErrorDialog: boolean = false;
+  batchErrorMessage: string = "";
+  skippedDatasets: number[] = [];
+
   fileSizeExceeded = false;
   fileSizeExceededMessage = "";
 
   maxApiKeyFileSize: number | null = null;
 
   allFiles: File[] = [];
+
+  // Batch mode state is now in store.uploadWorkflow
+  // Keep currentDatasetIndex for backwards compatibility with non-store flows
+  currentDatasetIndex: number = 0;
 
   get maxTotalFileSize() {
     // If the maxApiKeyFileSize is set, use that
@@ -478,10 +641,6 @@ export default class NewDataset extends Vue {
     return [(v: string) => v.trim().length > 0 || `value is required`];
   }
 
-  get files() {
-    return this.uploadedFiles || this.defaultFiles;
-  }
-
   get filesSelected() {
     return this.files.length > 0;
   }
@@ -523,19 +682,141 @@ export default class NewDataset extends Vue {
     return formatSize(this.maxTotalFileSize);
   }
 
+  // Computed properties that use store when upload workflow is active
+  get isQuickImport(): boolean {
+    return this.store.uploadWorkflow.active
+      ? this.store.uploadWorkflow.quickupload
+      : this.quickupload;
+  }
+
+  get isBatchMode(): boolean {
+    return this.store.uploadWorkflow.active
+      ? this.store.uploadWorkflow.batchMode
+      : this.batchMode;
+  }
+
+  get effectiveBatchName(): string {
+    return this.store.uploadWorkflow.batchName || this.batchName || "";
+  }
+
+  get totalDatasets(): number {
+    if (this.store.uploadWorkflow.active) {
+      return this.store.uploadTotalDatasets || 1;
+    }
+    return this.fileGroups.length || (this.defaultFiles.length > 0 ? 1 : 0);
+  }
+
+  get isFirstDataset(): boolean {
+    if (this.store.uploadWorkflow.active) {
+      return this.store.uploadIsFirstDataset;
+    }
+    return this.currentDatasetIndex === 0;
+  }
+
+  get isLastDataset(): boolean {
+    if (this.store.uploadWorkflow.active) {
+      return this.store.uploadIsLastDataset;
+    }
+    return this.currentDatasetIndex >= this.fileGroups.length - 1;
+  }
+
+  get isProcessingFirstDataset(): boolean {
+    return this.isFirstDataset;
+  }
+
+  /**
+   * Whether to show MultiSourceConfiguration at the top of the view.
+   * True for advanced batch mode (first dataset) during configuration.
+   */
+  get showConfigAtTop(): boolean {
+    return (
+      this.isBatchMode &&
+      !this.isQuickImport &&
+      this.isProcessingFirstDataset &&
+      this.configuring
+    );
+  }
+
+  /**
+   * Get the files for the current dataset being processed.
+   *
+   * This getter handles two different flows (see TODO at line ~447):
+   * 1. Store-based workflow: When uploadWorkflow.active is true, files come from
+   *    the store (set before navigation from Home.vue)
+   * 2. Prop-based workflow: When uploadWorkflow.active is false, files come from
+   *    props (for direct component embedding)
+   *
+   * Note: We explicitly check `store.uploadWorkflow.active && store.uploadWorkflow.batchMode`
+   * rather than using `this.isBatchMode` in the first condition because we need to
+   * ensure the store workflow is actually active before accessing store.uploadCurrentFiles.
+   * The second condition uses `this.isBatchMode` which falls back to the prop when
+   * the store workflow isn't active.
+   */
+  get currentFiles(): File[] {
+    // Store-based batch mode: files managed by store
+    if (
+      this.store.uploadWorkflow.active &&
+      this.store.uploadWorkflow.batchMode
+    ) {
+      return this.store.uploadCurrentFiles;
+    }
+    // Prop-based batch mode: files passed via fileGroups prop
+    if (this.isBatchMode && this.fileGroups.length > 0) {
+      return this.fileGroups[this.currentDatasetIndex] || [];
+    }
+    // Single dataset mode: files from uploader or defaultFiles prop
+    return this.uploadedFiles || this.defaultFiles;
+  }
+
+  get currentDatasetName(): string {
+    if (
+      this.store.uploadWorkflow.active &&
+      this.store.uploadWorkflow.batchMode
+    ) {
+      return this.store.uploadCurrentDatasetName;
+    }
+    const files = this.currentFiles;
+    if (files.length === 0) return "Dataset";
+    return basename(files[0].name);
+  }
+
+  // Override existing `files` getter to use currentFiles in collection mode
+  get files() {
+    if (this.isBatchMode) {
+      return this.currentFiles;
+    }
+    // Check uploadedFiles first (for manual file selection)
+    if (this.uploadedFiles) {
+      return this.uploadedFiles;
+    }
+    // Check store if upload workflow is active
+    if (this.store.uploadWorkflow.active) {
+      return this.store.uploadCurrentFiles;
+    }
+    // Fall back to defaultFiles prop
+    return this.defaultFiles;
+  }
+
   async mounted() {
-    this.path = this.initialUploadLocation;
+    // Read from store if upload workflow is active
+    if (this.store.uploadWorkflow.active) {
+      this.path = this.store.uploadWorkflow.initialUploadLocation;
+      // originalPath is already set in store, no need to track locally
+
+      if (this.store.uploadWorkflow.initialName) {
+        this.name = this.store.uploadWorkflow.initialName;
+      }
+      if (this.store.uploadWorkflow.initialDescription) {
+        this.description = this.store.uploadWorkflow.initialDescription;
+      }
+    } else {
+      // Fallback to props
+      this.path = this.initialUploadLocation;
+      if (this.initialName) this.name = this.initialName;
+      if (this.initialDescription) this.description = this.initialDescription;
+    }
+
     this.maxApiKeyFileSize = await this.getMaxUploadSize();
-
-    // Use initial name and description from props if provided
-    // Currently used for Zenodo imports
-    if (this.initialName) {
-      this.name = this.initialName;
-    }
-
-    if (this.initialDescription) {
-      this.description = this.initialDescription;
-    }
   }
 
   async getMaxUploadSize() {
@@ -585,26 +866,63 @@ export default class NewDataset extends Vue {
     return null;
   }
 
+  async createCollection() {
+    const collection = await this.store.createUploadCollection();
+    if (!collection) {
+      this.pipelineError = true;
+      return;
+    }
+    // Collection is now stored in this.store.uploadWorkflow.collection
+  }
+
   async uploadMounted() {
-    this.$refs.uploader?.inputFilesChanged(this.files);
-    if (this.quickupload) {
-      if (this.initialName) {
-        this.name = this.initialName + " - " + formatDate(new Date());
+    // Store original path on first dataset only (if not already in store)
+    if (
+      this.isBatchMode &&
+      this.isFirstDataset &&
+      !this.store.uploadWorkflow.originalPath
+    ) {
+      this.store.setUploadOriginalPath(this.path);
+    }
+
+    // Set files for current dataset
+    const filesToUpload = this.isBatchMode ? this.currentFiles : this.files;
+    this.$refs.uploader?.inputFilesChanged(filesToUpload);
+
+    if (this.isQuickImport || this.isBatchMode) {
+      // Set name based on mode - prefer store value over prop
+      const initialName = this.store.uploadWorkflow.active
+        ? this.store.uploadWorkflow.initialName
+        : this.initialName;
+
+      if (this.isBatchMode) {
+        this.name = this.currentDatasetName;
+      } else if (initialName) {
+        // Use initialName as-is - it already includes the date from Home.vue
+        this.name = initialName;
       } else {
+        // Fallback: add date only when no initialName provided
         this.name = this.recommendedName + " - " + formatDate(new Date());
       }
 
-      if (this.initialDescription) {
-        this.description = this.initialDescription;
+      const initialDescription = this.store.uploadWorkflow.active
+        ? this.store.uploadWorkflow.initialDescription
+        : this.initialDescription;
+      if (initialDescription && this.isFirstDataset) {
+        this.description = initialDescription;
       }
 
-      await Vue.nextTick(); // "name" prop is set in the form
-      await Vue.nextTick(); // this.valid is updated
+      await Vue.nextTick();
+      await Vue.nextTick();
 
-      // Check for invalid location before proceeding with quickupload
       if (this.invalidLocation) {
         this.pipelineError = true;
-        logError("Invalid location for dataset creation during quickupload");
+        logError("Invalid location for dataset creation");
+        return;
+      }
+
+      // Don't submit if there was a previous error
+      if (this.pipelineError) {
         return;
       }
 
@@ -613,26 +931,70 @@ export default class NewDataset extends Vue {
   }
 
   async submit() {
+    // Don't proceed if there's already an error
+    if (this.pipelineError) {
+      logError("submit() called but pipelineError is set, aborting");
+      return;
+    }
+
     if (!this.valid || !this.path || !("_id" in this.path)) {
       return;
     }
 
-    if (this.fileSizeExceeded) {
-      logError("Maximum total file size exceeded");
+    if (this.fileSizeExceeded || this.invalidLocation) {
       this.pipelineError = true;
       return;
     }
 
-    if (this.invalidLocation) {
-      logError("Invalid location for dataset creation");
+    // In collection mode, use originalPath from store for dataset creation
+    // In single dataset mode, use current path
+    const pathForCreation = this.isBatchMode
+      ? this.store.uploadWorkflow.originalPath
+      : this.path;
+
+    if (
+      !pathForCreation ||
+      !("_id" in pathForCreation) ||
+      pathForCreation._modelType !== "folder"
+    ) {
+      logError("Invalid path for dataset creation");
       this.pipelineError = true;
       return;
     }
 
+    const datasetName = this.isBatchMode ? this.currentDatasetName : this.name;
+
+    this.dataset = await this.store.createDataset({
+      name: datasetName,
+      description: this.description,
+      path: pathForCreation,
+    });
+
+    if (this.dataset === null) {
+      this.failedDataset = datasetName;
+      return;
+    }
+
+    // Track datasets in store for collection mode
+    if (this.isBatchMode) {
+      this.store.addUploadedDataset(this.dataset);
+    }
+
+    this.failedDataset = "";
+    this.path = await this.girderResources.getFolder(this.dataset.id);
+    await Vue.nextTick();
+
+    this.uploading = true;
+    this.$refs.uploader!.startUpload();
+  }
+
+  async submitSingleDataset() {
+    // Extract existing submit() logic here
     this.dataset = await this.store.createDataset({
       name: this.name,
       description: this.description,
-      path: this.path,
+      // Type assertion: at runtime, path is a folder with _id, not a special location type
+      path: this.path as IGirderSelectAble,
     });
 
     if (this.dataset === null) {
@@ -641,12 +1003,162 @@ export default class NewDataset extends Vue {
     }
 
     this.failedDataset = "";
-
     this.path = await this.girderResources.getFolder(this.dataset.id);
     await Vue.nextTick();
 
     this.uploading = true;
     this.$refs.uploader!.startUpload();
+  }
+
+  async configureDatasetWithStrategy() {
+    this.configuring = true;
+    await Vue.nextTick();
+
+    const config = this.$refs.configuration;
+    if (!config) {
+      logError("MultiSourceConfiguration not mounted for subsequent dataset");
+      this.handleBatchError("Configuration component not ready");
+      return;
+    }
+
+    const strategy = this.store.uploadWorkflow.dimensionStrategy;
+    if (!strategy) {
+      logError("No dimension strategy saved from first dataset");
+      this.handleBatchError("No dimension strategy saved from first dataset");
+      return;
+    }
+
+    this.progressStatusText = "Detecting file structure...";
+
+    // Use the new method that properly handles async state
+    await config.reinitializeAndApplyStrategy(strategy);
+
+    this.progressStatusText = strategy.transcode
+      ? "Transcoding..."
+      : "Generating configuration...";
+    config.submit();
+  }
+
+  async advanceToNextDataset() {
+    if (this.isLastDataset) {
+      // All datasets processed - navigate to collection
+      this.navigateToCollection();
+      return;
+    }
+
+    // Advance index in store
+    this.store.advanceUploadDatasetIndex();
+
+    // Reset local component state
+    this.dataset = null;
+    this.configuring = false;
+    this.configurationLogs = "";
+    this.transcodeProgress = undefined;
+
+    // Reset path from store's originalPath
+    if (!this.store.uploadWorkflow.originalPath) {
+      logError(
+        "[Batch Mode] ERROR: originalPath is not set in store, cannot continue",
+      );
+      this.pipelineError = true;
+      return;
+    }
+    this.path = this.store.uploadWorkflow.originalPath;
+
+    // Show uploader - this will trigger uploadMounted which calls submit()
+    this.hideUploader = false;
+  }
+
+  navigateToCollection() {
+    // Capture collection and datasets BEFORE calling completeUploadWorkflow
+    // because completeUploadWorkflow resets the state
+
+    const collection = this.store.uploadWorkflow.collection;
+    const datasets = [...this.store.uploadWorkflow.datasets]; // Copy array
+
+    // Now reset the workflow state
+    this.store.completeUploadWorkflow();
+
+    if (collection) {
+      // Set the collection in the store so ConfigurationInfo can load it
+      this.store.setSelectedConfiguration(collection.id);
+      this.$router.push({
+        name: "configuration",
+        params: { configurationId: collection.id },
+      });
+    } else if (datasets && datasets.length > 0) {
+      this.$router.push({
+        name: "dataset",
+        params: { datasetId: datasets[0].id },
+      });
+    } else {
+      this.$router.push({
+        name: "root",
+      });
+    }
+  }
+
+  /**
+   * Handle errors during batch upload. Shows a dialog letting user choose to stop or continue.
+   * For single dataset uploads, falls back to setting pipelineError directly.
+   */
+  handleBatchError(message: string) {
+    if (!this.isBatchMode) {
+      // Single dataset mode - use existing pipelineError behavior
+      this.pipelineError = true;
+      return;
+    }
+
+    // Batch mode - show dialog
+    this.batchErrorMessage = message;
+    this.showBatchErrorDialog = true;
+  }
+
+  /**
+   * User chose to stop the batch upload after an error.
+   * Navigate to partial results if any datasets were processed.
+   */
+  handleStopBatch() {
+    this.showBatchErrorDialog = false;
+    this.pipelineError = true;
+
+    // Navigate to partial results
+    const collection = this.store.uploadWorkflow.collection;
+    const datasets = [...this.store.uploadWorkflow.datasets];
+
+    // Reset workflow state
+    this.store.completeUploadWorkflow();
+
+    if (collection && datasets.length > 0) {
+      // Navigate to collection with processed datasets
+      this.$router.push({
+        name: "configuration",
+        params: { configurationId: collection.id },
+      });
+    } else if (datasets.length > 0) {
+      // Navigate to first dataset
+      this.$router.push({
+        name: "dataset",
+        params: { datasetId: datasets[0].id },
+      });
+    } else {
+      this.$router.push({ name: "root" });
+    }
+  }
+
+  /**
+   * User chose to skip the failed dataset and continue with remaining datasets.
+   */
+  handleContinueBatch() {
+    this.showBatchErrorDialog = false;
+    this.skippedDatasets.push(this.store.uploadWorkflow.currentDatasetIndex);
+
+    // Reset error states
+    this.pipelineError = false;
+    this.batchErrorMessage = "";
+
+    // Advance to next dataset
+    this.advanceToNextDataset();
   }
 
   filesChanged(files: FileUpload[] | File[]) {
@@ -665,7 +1177,7 @@ export default class NewDataset extends Vue {
     if (totalSize > maxSizeBytes) {
       this.fileSizeExceeded = true;
       this.uploadedFiles = null;
-      if (this.quickupload) {
+      if (this.isQuickImport) {
         this.pipelineError = true;
         return;
       }
@@ -700,9 +1212,23 @@ export default class NewDataset extends Vue {
     this.hideUploader = true;
     this.uploading = false;
 
-    const datasetId = this.dataset!.id;
+    if (!this.dataset) {
+      logError("nextStep called but dataset is null");
+      this.pipelineError = true;
+      return;
+    }
 
-    if (this.quickupload) {
+    const datasetId = this.dataset.id;
+
+    if (this.isBatchMode) {
+      if (this.isFirstDataset) {
+        // First dataset: run full interactive configuration
+        this.configureDataset();
+      } else {
+        // Subsequent datasets: configure with saved strategy
+        this.configureDatasetWithStrategy();
+      }
+    } else if (this.isQuickImport) {
       this.configureDataset();
     } else if (this.autoMultiConfig) {
       this.$router.push({
@@ -731,13 +1257,78 @@ export default class NewDataset extends Vue {
     }
     // Ensure that the component is initialized
     await (config.initialized || config.initialize());
-    config.submit();
+
+    // In advanced batch mode (first dataset), wait for user to manually submit
+    // In quick import mode, auto-submit
+    if (this.isQuickImport) {
+      config.submit();
+    }
+    // Otherwise, user will click submit in MultiSourceConfiguration UI
   }
 
   generationDone(jsonId: string | null) {
-    if (this.quickupload) {
+    if (this.isBatchMode) {
+      // For collection mode, handle specially
+      this.handleCollectionGenerationDone(jsonId);
+    } else if (this.isQuickImport) {
+      // Existing single-dataset flow
       this.createView(jsonId);
+    } else {
+      return;
     }
+  }
+
+  async handleCollectionGenerationDone(jsonId: string | null) {
+    if (!jsonId) {
+      logError("Failed to generate JSON");
+      this.pipelineError = true;
+      return;
+    }
+
+    // Dimension strategy is automatically saved to store by MultiSourceConfiguration
+    // via watchers on assignments and transcode changes
+    if (this.isFirstDataset) {
+      // CRITICAL: Load the full dataset (with tile metadata) before creating collection
+      // The dataset in uploadWorkflow.datasets[] is just the basic folder info,
+      // but createConfigurationFromDataset needs the full tile/frame metadata
+      await this.store.setSelectedDataset(this.dataset!.id);
+
+      // Create the collection using store action
+      await this.createCollection();
+
+      if (this.pipelineError || !this.store.uploadWorkflow.collection) {
+        logWarning("Failed to create collection");
+        return;
+      }
+    }
+
+    // Create dataset view for current dataset
+    const collection = this.store.uploadWorkflow.collection;
+    if (collection && this.dataset) {
+      try {
+        const datasetView = await this.store.createDatasetView({
+          configurationId: collection.id,
+          datasetId: this.dataset.id,
+        });
+        if (!datasetView) {
+          logError(
+            `[Batch Mode] Failed to create dataset view - API returned null`,
+          );
+        }
+      } catch (error) {
+        logError(`[Batch Mode] Error creating dataset view:`, error);
+        // Don't fail the whole process if dataset view creation fails
+      }
+    } else {
+      logError(
+        `[Batch Mode] Cannot create dataset view. collection: ${!!collection}, dataset: ${!!this.dataset}`,
+      );
+    }
+
+    this.configuring = false;
+
+    // Move to next dataset or finish
+    this.advanceToNextDataset();
   }
 
   async createView(jsonId: string | null) {
@@ -810,6 +1401,15 @@ export default class NewDataset extends Vue {
       navigator.clipboard.writeText(this.configurationLogs);
       this.showCopySnackbar = true;
     }
+  }
+
+  onConfigDataReceived(_configData: any) {
+    logWarning(
+      "onConfigDataReceived called but is no longer used; _configData: ",
+      _configData,
+    );
+    // This handler is kept for backward compatibility but is no longer used
+    // The assignment strategy is now saved directly in handleCollectionGenerationDone
   }
 }
 </script>

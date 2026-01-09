@@ -247,8 +247,12 @@ import {
 } from "@/utils/parsing";
 import { IGirderItem } from "@/girder";
 import { ITileMeta } from "@/store/GirderAPI";
-import { IGeoJSPositionWithTransform, IJobEventData } from "@/store/model";
-import { logError } from "@/utils/log";
+import {
+  IGeoJSPositionWithTransform,
+  IJobEventData,
+  IDimensionStrategy,
+} from "@/store/model";
+import { logError, logWarning } from "@/utils/log";
 import { parseTranscodeOutput } from "@/utils/strings";
 import { extractDimensionLabelsFromND2 } from "@/utils/ND2FileParsing";
 import pLimit from "p-limit";
@@ -369,6 +373,9 @@ export default class MultiSourceConfiguration extends Vue {
   // For the transcodinglog dialog
   showLogDialog: boolean = false;
   showCopySnackbar: boolean = false;
+
+  // Store last generated config for reuse
+  lastGeneratedConfig: any = null;
 
   // For progress tracking of the transcoding
   transcodeProgress: number | undefined = undefined;
@@ -564,6 +571,39 @@ export default class MultiSourceConfiguration extends Vue {
     C: null,
   };
 
+  /**
+   * Watch assignments and save to store when changed.
+   * This allows NewDataset.vue to read the strategy from the store
+   * instead of calling getDimensionStrategy() via $refs.
+   */
+  @Watch("assignments", { deep: true })
+  onAssignmentsChange() {
+    this.saveDimensionStrategyToStore();
+  }
+
+  @Watch("transcode")
+  onTranscodeChange() {
+    this.saveDimensionStrategyToStore();
+  }
+
+  /**
+   * Save the current dimension strategy to the store.
+   * Only saves when in batch mode for the first dataset.
+   */
+  saveDimensionStrategyToStore() {
+    // Only save strategy during batch mode upload workflow for first dataset
+    if (
+      !this.store.uploadWorkflow.active ||
+      !this.store.uploadWorkflow.batchMode ||
+      !this.store.uploadIsFirstDataset
+    ) {
+      return;
+    }
+
+    const strategy = this.getDimensionStrategy();
+    this.store.setUploadDimensionStrategy(strategy);
+  }
+
   searchInput: string = "";
   filenameVariableCount = 0;
   fileVariableCount = 0;
@@ -681,6 +721,7 @@ export default class MultiSourceConfiguration extends Vue {
   async initializeImplementation() {
     // Get tile information
     const items = await this.store.api.getItems(this.datasetId);
+
     this.girderItems = items;
 
     //  Get info from filename
@@ -693,7 +734,7 @@ export default class MultiSourceConfiguration extends Vue {
 
     // Add variables from filenames if there is more than one file
     if (names.length > 1) {
-      collectFilenameMetadata2(names).forEach((filenameData) =>
+      collectFilenameMetadata2(names).forEach((filenameData) => {
         this.addSizeToDimension(
           filenameData.guess,
           filenameData.values.length,
@@ -701,8 +742,8 @@ export default class MultiSourceConfiguration extends Vue {
             source: Sources.Filename,
             data: filenameData,
           },
-        ),
-      );
+        );
+      });
     }
 
     // Check for OIB files; for whatever reason, these need to be
@@ -854,26 +895,32 @@ export default class MultiSourceConfiguration extends Vue {
         hasFileVariable = true;
         for (const dim in this.dimensionNames) {
           const indexDim = `Index${dim}`;
-          this.addSizeToDimension(
-            // We know that the keys of this.dimensionNames are of type TDimensions
-            dim as TDimensions,
-            tile.IndexRange[indexDim],
-            {
-              source: Sources.File,
-              data: {
-                [tileIdx]: {
-                  range: tile.IndexRange[indexDim],
-                  stride: tile.IndexStride[indexDim],
-                  values: dim === "C" ? tile.channels : null,
+          const range = tile.IndexRange[indexDim];
+          if (range) {
+            this.addSizeToDimension(
+              // We know that the keys of this.dimensionNames are of type TDimensions
+              dim as TDimensions,
+              range,
+              {
+                source: Sources.File,
+                data: {
+                  [tileIdx]: {
+                    range: range,
+                    stride: tile.IndexStride[indexDim],
+                    values: dim === "C" ? tile.channels : null,
+                  },
                 },
               },
-            },
-          );
+            );
+          }
         }
       }
     });
 
     if (!hasFileVariable) {
+      logWarning(
+        `[MultiSourceConfig] No file variables found, adding Images dimension for Z with size=${maxFramesPerItem}`,
+      );
       this.addSizeToDimension(
         "Z",
         maxFramesPerItem,
@@ -992,7 +1039,7 @@ export default class MultiSourceConfiguration extends Vue {
   async submit() {
     const jsonId = await this.generateJson();
 
-    this.$emit("generatedJson", jsonId);
+    this.$emit("generatedJson", jsonId, this.lastGeneratedConfig);
 
     if (!jsonId) {
       return;
@@ -1321,6 +1368,18 @@ export default class MultiSourceConfiguration extends Vue {
       }
     }
 
+    // Build config data for potential reuse
+    const configData = {
+      channels,
+      sources,
+      uniformSources: true,
+      singleBand: this.isMultiBandRGBFile,
+    };
+
+    // Store and emit the config data
+    this.lastGeneratedConfig = configData;
+    this.$emit("configData", configData);
+
     this.logs = "";
     this.isUploading = true;
     this.transcodeProgress = undefined;
@@ -1349,12 +1408,7 @@ export default class MultiSourceConfiguration extends Vue {
     try {
       const itemId = await this.store.addMultiSourceMetadata({
         parentId: datasetId,
-        metadata: JSON.stringify({
-          channels,
-          sources,
-          uniformSources: true,
-          singleBand: this.isMultiBandRGBFile,
-        }),
+        metadata: JSON.stringify(configData),
         transcode: this.transcode,
         eventCallback,
       });
@@ -1458,6 +1512,129 @@ export default class MultiSourceConfiguration extends Vue {
     if (navigator.clipboard && this.logs) {
       navigator.clipboard.writeText(this.logs);
       this.showCopySnackbar = true;
+    }
+  }
+
+  /**
+   * Extract the current dimension assignment strategy.
+   * Used internally by saveDimensionStrategyToStore() to save to the Vuex store
+   * when assignments change. The store-based approach allows other components
+   * (like NewDataset.vue) to read the strategy without using $refs.
+   */
+  getDimensionStrategy(): IDimensionStrategy {
+    const strategy: IDimensionStrategy = {
+      XY: null,
+      Z: null,
+      T: null,
+      C: null,
+      transcode: this.transcode,
+    };
+
+    for (const dim of ["XY", "Z", "T", "C"] as const) {
+      const assignment = this.assignments[dim];
+      if (assignment?.value) {
+        strategy[dim] = {
+          source: assignment.value.source,
+          guess: assignment.value.guess,
+        };
+      }
+    }
+
+    return strategy;
+  }
+
+  // Reinitialize and apply strategy - handles race conditions with @Watch
+  async reinitializeAndApplyStrategy(
+    strategy: IDimensionStrategy,
+  ): Promise<void> {
+    // Wait for any pending initialization to complete first
+    while (this.initializing) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    // Reset all internal state
+    this.dimensions = [];
+    this.assignments = { XY: null, Z: null, T: null, C: null };
+    this.tilesMetadata = null;
+    this.tilesInternalMetadata = null;
+    this.girderItems = [];
+    this.filenameVariableCount = 0;
+    this.fileVariableCount = 0;
+    this.imageVariableCount = 0;
+    this.assignmentIdCount = 0;
+    this.initTotal = 0;
+    this.initCompleted = 0;
+    this.initPending = [];
+    this.initInFlight = [];
+    this.initError = null;
+
+    // Run initialization directly (not through initialize() to avoid the guard)
+    this.initializing = true;
+    try {
+      await this.initializeImplementation();
+    } finally {
+      this.initializing = false;
+    }
+
+    // Now apply the strategy
+    this.applyDimensionStrategy(strategy);
+  }
+
+  // Apply a saved strategy to current dimensions
+  applyDimensionStrategy(strategy: IDimensionStrategy): void {
+    // Set transcode setting
+    this.transcode = strategy.transcode;
+
+    // For each dimension axis, try to find a matching dimension option
+    for (const dim of ["XY", "Z", "T", "C"] as const) {
+      const savedStrategy = strategy[dim];
+
+      if (!savedStrategy) {
+        logWarning(
+          `[MultiSourceConfig] No saved strategy for ${dim}, setting to null`,
+        );
+        this.assignments[dim] = null;
+        continue;
+      }
+
+      // First, try to find exact match (same source and guess)
+      let matchingDimension = this.dimensions.find(
+        (d) =>
+          d.source === savedStrategy.source &&
+          d.guess === savedStrategy.guess &&
+          d.size > 0,
+      );
+
+      // If no exact match, try matching just the guess (dimension type)
+      if (!matchingDimension) {
+        logWarning(
+          `[MultiSourceConfig] No exact match for ${dim}, trying guess-only match`,
+        );
+        matchingDimension = this.dimensions.find(
+          (d) => d.guess === savedStrategy.guess && d.size > 0,
+        );
+      }
+
+      // If still no match, try matching just the source type
+      if (!matchingDimension) {
+        logWarning(
+          `[MultiSourceConfig] No guess match for ${dim}, trying source-only match`,
+        );
+        matchingDimension = this.dimensions.find(
+          (d) => d.source === savedStrategy.source && d.size > 0,
+        );
+      }
+
+      if (matchingDimension) {
+        this.assignments[dim] =
+          this.assignmentOptionToAssignmentItem(matchingDimension);
+      } else {
+        logWarning(
+          `[MultiSourceConfig] No match found for ${dim}, using default`,
+        );
+        // Fall back to default for this dimension
+        this.assignments[dim] = this.getDefaultAssignmentItem(dim);
+      }
     }
   }
 }

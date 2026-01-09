@@ -64,6 +64,28 @@
                   d.datasetInfo ? d.datasetInfo.description : "No description"
                 }}
               </v-list-item-subtitle>
+              <div
+                v-if="
+                  datasetCompatibilityWarnings[d.datasetView.datasetId] &&
+                  datasetCompatibilityWarnings[d.datasetView.datasetId].length >
+                    0
+                "
+                class="compatibility-warnings mt-1"
+              >
+                <v-chip
+                  v-for="(warning, index) in datasetCompatibilityWarnings[
+                    d.datasetView.datasetId
+                  ]"
+                  :key="index"
+                  small
+                  color="warning"
+                  text-color="white"
+                  class="mr-1 mb-1"
+                >
+                  <v-icon small left>mdi-alert</v-icon>
+                  {{ warning }}
+                </v-chip>
+              </div>
             </v-list-item-content>
             <v-list-item-action>
               <span class="button-bar">
@@ -136,9 +158,11 @@
 </template>
 <script lang="ts">
 import { Vue, Component, Watch } from "vue-property-decorator";
+import isEqual from "lodash/isEqual";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IDatasetView, IDisplaySlice } from "@/store/model";
+import { IDatasetView, IDisplaySlice, areCompatibles } from "@/store/model";
+import { getDatasetCompatibility } from "@/store/GirderAPI";
 import { IGirderFolder } from "@/girder";
 import ScaleSettings from "@/components/ScaleSettings.vue";
 import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
@@ -162,6 +186,7 @@ export default class ConfigurationInfo extends Vue {
 
   datasetViews: IDatasetView[] = [];
   datasetInfoCache: { [datasetId: string]: IGirderFolder } = {};
+  datasetCompatibilityWarnings: { [datasetId: string]: string[] } = {};
 
   addDatasetDialog: boolean = false;
 
@@ -252,6 +277,89 @@ export default class ConfigurationInfo extends Vue {
           Vue.set(this.datasetInfoCache, datasetView.datasetId, folder),
         );
     }
+    this.checkDatasetsCompatibility();
+  }
+
+  async checkDatasetsCompatibility() {
+    if (!this.configuration) {
+      return;
+    }
+    const configCompat = this.configuration.compatibility;
+    if (!configCompat) {
+      return;
+    }
+
+    // Clear old warnings
+    this.datasetCompatibilityWarnings = {};
+
+    for (const datasetView of this.datasetViews) {
+      try {
+        const dataset = await this.girderResources.getDataset({
+          id: datasetView.datasetId,
+        });
+        if (!dataset) {
+          continue;
+        }
+
+        const datasetCompat = getDatasetCompatibility(dataset);
+        if (!areCompatibles(configCompat, datasetCompat)) {
+          const warnings: string[] = [];
+
+          if (configCompat.xyDimensions !== datasetCompat.xyDimensions) {
+            warnings.push(
+              `XY: Dataset has ${datasetCompat.xyDimensions}, collection expects ${configCompat.xyDimensions}`,
+            );
+          }
+          if (configCompat.zDimensions !== datasetCompat.zDimensions) {
+            warnings.push(
+              `Z: Dataset has ${datasetCompat.zDimensions}, collection expects ${configCompat.zDimensions}`,
+            );
+          }
+          if (configCompat.tDimensions !== datasetCompat.tDimensions) {
+            warnings.push(
+              `T: Dataset has ${datasetCompat.tDimensions}, collection expects ${configCompat.tDimensions}`,
+            );
+          }
+
+          // Check channel differences using isEqual (same as areCompatibles)
+          if (!isEqual(configCompat.channels, datasetCompat.channels)) {
+            const configChannelCount = Object.keys(
+              configCompat.channels,
+            ).length;
+            const datasetChannelCount = Object.keys(
+              datasetCompat.channels,
+            ).length;
+
+            if (configChannelCount !== datasetChannelCount) {
+              warnings.push(
+                `Channels: Dataset has ${datasetChannelCount}, collection expects ${configChannelCount}`,
+              );
+            } else {
+              // Same count but different channel indices or names
+              const datasetNames = Object.values(datasetCompat.channels).join(
+                ", ",
+              );
+              const configNames = Object.values(configCompat.channels).join(
+                ", ",
+              );
+              warnings.push(
+                `Channels: Dataset has [${datasetNames}], collection expects [${configNames}]`,
+              );
+            }
+          }
+
+          if (warnings.length > 0) {
+            Vue.set(
+              this.datasetCompatibilityWarnings,
+              datasetView.datasetId,
+              warnings,
+            );
+          }
+        }
+      } catch (err) {
+        // Silently skip datasets that fail to load
+      }
+    }
   }
 
   toRoute(datasetView: IDatasetView) {
@@ -312,6 +420,12 @@ export default class ConfigurationInfo extends Vue {
 <style lang="scss" scoped>
 .code {
   margin: 0 1em 0 0.5em;
+}
+
+.compatibility-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
 }
 </style>
 

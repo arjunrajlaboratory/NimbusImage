@@ -9,6 +9,7 @@ multi_data
 .venv
 .env
 .python-version
+CLAUDE.local.md
 
 #unplugin-vue-components plugin
 components.d.ts
