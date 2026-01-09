@@ -1,5 +1,4 @@
 import pytest
-import json
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.connections import (
