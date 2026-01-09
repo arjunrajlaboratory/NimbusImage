@@ -737,16 +737,34 @@ export default class NewDataset extends Vue {
     );
   }
 
+  /**
+   * Get the files for the current dataset being processed.
+   *
+   * This getter handles two different flows (see TODO at line ~447):
+   * 1. Store-based workflow: When uploadWorkflow.active is true, files come from
+   *    the store (set before navigation from Home.vue)
+   * 2. Prop-based workflow: When uploadWorkflow.active is false, files come from
+   *    props (for direct component embedding)
+   *
+   * Note: We explicitly check `store.uploadWorkflow.active && store.uploadWorkflow.batchMode`
+   * rather than using `this.isBatchMode` in the first condition because we need to
+   * ensure the store workflow is actually active before accessing store.uploadCurrentFiles.
+   * The second condition uses `this.isBatchMode` which falls back to the prop when
+   * the store workflow isn't active.
+   */
   get currentFiles(): File[] {
+    // Store-based batch mode: files managed by store
     if (
       this.store.uploadWorkflow.active &&
       this.store.uploadWorkflow.batchMode
     ) {
       return this.store.uploadCurrentFiles;
     }
+    // Prop-based batch mode: files passed via fileGroups prop
     if (this.isBatchMode && this.fileGroups.length > 0) {
       return this.fileGroups[this.currentDatasetIndex] || [];
     }
+    // Single dataset mode: files from uploader or defaultFiles prop
     return this.uploadedFiles || this.defaultFiles;
   }
 

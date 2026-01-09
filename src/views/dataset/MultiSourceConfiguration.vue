@@ -734,8 +734,7 @@ export default class MultiSourceConfiguration extends Vue {
 
     // Add variables from filenames if there is more than one file
     if (names.length > 1) {
-      const filenameMetadata = collectFilenameMetadata2(names);
-      filenameMetadata.forEach((filenameData) => {
+      collectFilenameMetadata2(names).forEach((filenameData) => {
         this.addSizeToDimension(
           filenameData.guess,
           filenameData.values.length,
