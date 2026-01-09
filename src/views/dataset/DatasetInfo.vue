@@ -340,6 +340,12 @@ export default class DatasetInfo extends Vue {
   selectedFolderId: string | null = null;
   datasetParentId: string | null = null;
 
+  // Dataset statistics counts
+  annotationCount: number | null = null;
+  connectionCount: number | null = null;
+  propertyCount: number | null = null;
+  propertyValueCount: number | null = null;
+
   readonly headers = [
     {
       text: "Field",
@@ -438,6 +444,22 @@ export default class DatasetInfo extends Vue {
         name: "Channels",
         value: this.dataset?.channels?.length || "?",
       },
+      {
+        name: "Annotations",
+        value: this.annotationCount ?? "Loading...",
+      },
+      {
+        name: "Connections",
+        value: this.connectionCount ?? "Loading...",
+      },
+      {
+        name: "Properties",
+        value: this.propertyCount ?? "Loading...",
+      },
+      {
+        name: "Property Values",
+        value: this.propertyValueCount ?? "Loading...",
+      },
     ];
   }
 
@@ -445,6 +467,62 @@ export default class DatasetInfo extends Vue {
     this.updateDatasetViews();
     this.updateDefaultConfigurationName();
     this.fetchDatasetParentFolder();
+    this.fetchCounts();
+  }
+
+  @Watch("dataset")
+  onDatasetChangeForCounts() {
+    this.fetchCounts();
+  }
+
+  @Watch("selectedDatasetViewId")
+  onSelectedViewChangeForCounts() {
+    this.fetchPropertyCount();
+  }
+
+  async fetchCounts() {
+    if (!this.dataset) {
+      this.annotationCount = null;
+      this.connectionCount = null;
+      this.propertyCount = null;
+      this.propertyValueCount = null;
+      return;
+    }
+
+    const datasetId = this.dataset.id;
+
+    // Fetch counts in parallel
+    const [annotationCount, connectionCount, propertyValueCount] =
+      await Promise.all([
+        this.store.annotationsAPI.getAnnotationCount(datasetId),
+        this.store.annotationsAPI.getConnectionCount(datasetId),
+        this.store.annotationsAPI.getPropertyValueCount(datasetId),
+      ]);
+
+    this.annotationCount = annotationCount;
+    this.connectionCount = connectionCount;
+    this.propertyValueCount = propertyValueCount;
+
+    // Property count depends on selected configuration
+    await this.fetchPropertyCount();
+  }
+
+  async fetchPropertyCount() {
+    if (!this.selectedDatasetViewId) {
+      this.propertyCount = null;
+      return;
+    }
+
+    const selectedView = this.datasetViews.find(
+      (v) => v.id === this.selectedDatasetViewId,
+    );
+    if (selectedView) {
+      this.propertyCount = await this.store.propertiesAPI.getPropertyCount(
+        selectedView.configurationId,
+      );
+    } else {
+      this.propertyCount = null;
+    }
   }
 
   @Watch("dataset")
