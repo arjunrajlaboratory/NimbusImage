@@ -3,7 +3,9 @@ import pytest
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
-from upenncontrast_annotation.server.models.connections import AnnotationConnection
+from upenncontrast_annotation.server.models.connections import (
+    AnnotationConnection,
+)
 from upenncontrast_annotation.server.models.propertyValues import (
     AnnotationPropertyValues,
 )
@@ -213,7 +215,8 @@ class TestPropertyValuesCount:
 
 
 def getDefaultConfigMetadata():
-    """Return default configuration metadata matching CollectionSchema requirements"""
+    """Return default configuration metadata matching CollectionSchema
+    requirements"""
     return {
         "subtype": "contrastConfiguration",
         "compatibility": {},
@@ -229,7 +232,8 @@ def getDefaultConfigMetadata():
 @pytest.mark.plugin("upenncontrast_annotation")
 class TestPropertyCount:
     def testPropertyCountEmpty(self, admin, server):
-        """Test property count returns 0 for configuration with no properties"""
+        """Test property count returns 0 for configuration with no
+        properties"""
         folder = utilities.createFolder(
             admin, "test_dataset", upenn_utilities.datasetMetadata
         )
