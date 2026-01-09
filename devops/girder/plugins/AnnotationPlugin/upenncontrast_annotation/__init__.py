@@ -109,6 +109,7 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         from .server.api.user_assetstore import UserAssetstore
         from .server.api.user_colors import UserColors
         from .server.api.resource import CustomResource
+        from .server.api.export import Export
 
         ModelImporter.registerModel(
             "upenn_annotation", AnnotationModel, "upenncontrast_annotation"
@@ -161,4 +162,5 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].history = History()
         info["apiRoot"].user_assetstore = UserAssetstore()
         info["apiRoot"].user_colors = UserColors()
+        info["apiRoot"].export = Export()
         system.addSystemEndpoints(info["apiRoot"])
