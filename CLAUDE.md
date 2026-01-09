@@ -218,6 +218,89 @@ Workers run in Docker containers via Girder Worker:
 - Jobs tracked in `src/store/jobs.ts`
 - Progress monitoring via SSE events
 
+## Code Review Guidelines
+
+### Avoid Looped Database Calls
+
+Never iterate and make individual API calls in a loop. This hammers the backend and causes performance issues. Use batch/aggregated endpoints instead.
+
+**Bad - Looped calls:**
+```typescript
+// DON'T DO THIS
+for (const annotation of annotations) {
+  await api.createAnnotation(annotation);
+}
+
+for (const id of annotationIds) {
+  await api.deleteAnnotation(id);
+}
+```
+
+**Good - Batch calls:**
+```typescript
+// USE BATCH ENDPOINTS
+await api.createMultipleAnnotations(annotations);
+await api.deleteMultipleAnnotations(annotationIds);
+```
+
+**Available batch endpoints** (see `annotation_client/annotations.py`):
+- `createMultipleAnnotations(annotations)` - Create annotations in bulk
+- `deleteMultipleAnnotations(annotationIds)` - Delete annotations in bulk
+- `createMultipleConnections(connections)` - Create connections in bulk
+- `deleteMultipleConnections(connectionIds)` - Delete connections in bulk
+- `addMultipleAnnotationPropertyValues(entries)` - Add property values in bulk (auto-batches at 10K)
+
+### Avoid Unnecessary Temporary Variables
+
+Don't create intermediate variables that are only used once immediately after assignment.
+
+**Bad:**
+```typescript
+const newAnnotations = await api.getAnnotations();
+this.setAnnotations(newAnnotations);
+
+const filtered = annotations.filter(a => a.tags.includes(tag));
+return filtered;
+```
+
+**Good:**
+```typescript
+this.setAnnotations(await api.getAnnotations());
+
+return annotations.filter(a => a.tags.includes(tag));
+```
+
+Exception: Keep temporaries when they improve readability for complex expressions or when the variable name documents intent.
+
+### Backend Security and Access Control
+
+When editing backend code, always maintain the existing security and access control patterns:
+
+- Use `AccessType` decorators consistently (`READ`, `WRITE`, `ADMIN`)
+- Check user permissions before data operations
+- Validate that users have access to the dataset/resource being modified
+- Never bypass access checks, even for "convenience"
+- Follow existing patterns in the plugin for permission validation
+
+### Flag Repeated Frontend Calls
+
+When editing frontend code, identify patterns where multiple backend calls could be consolidated. Flag these for discussion:
+
+```typescript
+// FLAG THIS: Multiple calls that could be a single batch endpoint
+await Promise.all(items.map(item => api.updateItem(item)));
+// Could this be a batch endpoint on the backend?
+```
+
+When you see such patterns, note them and suggest whether a new batch endpoint should be created.
+
+### Code Factorization
+
+- Look for repeated code patterns that should be extracted into utility functions
+- If you notice a pattern that looks like it should be handled by an existing package, mention it so we can search for appropriate libraries
+- Prefer composition over duplication
+- Extract common API patterns into reusable methods
+
 ## Testing
 
 - Unit tests use Vitest
