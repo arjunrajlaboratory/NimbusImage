@@ -60,6 +60,7 @@ class Annotation(Resource):
         self.route("DELETE", (":id",), self.delete)
         self.route("GET", (":id",), self.get)
         self.route("GET", (), self.find)
+        self.route("GET", ("count",), self.count)
         self.route("POST", (), self.create)
         self.route("PUT", (":id",), self.update)
         self.route("PUT", ("multiple",), self.updateMultiple)
@@ -258,6 +259,41 @@ class Annotation(Resource):
         if callable(getattr(cursor, 'count', None)):
             cherrypy.response.headers['Girder-Total-Count'] = cursor.count()
         return generateResult
+
+    @access.public
+    @autoDescribeRoute(
+        Description("Get annotation count for a dataset")
+        .param("datasetId", "Get count for this dataset", required=True)
+        .param("shape", "Filter annotations by shape", required=False)
+        .jsonParam(
+            "tags",
+            (
+                "Filter annotations by tags: get annotations which contain"
+                "the given tags (and potentially other additional tags)"
+            ),
+            required=False,
+            requireArray=True,
+        )
+        .errorResponse()
+    )
+    def count(self, params):
+        datasetId = ObjectId(params["datasetId"])
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
+
+        query = {"datasetId": datasetId}
+        if params.get("shape"):
+            query["shape"] = params["shape"]
+        if params.get("tags") and len(params["tags"]) > 0:
+            query["tags"] = {"$all": params["tags"]}
+
+        return {
+            "count": self._annotationModel.collection.count_documents(query)
+        }
 
     @access.public
     @describeRoute(

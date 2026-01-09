@@ -77,6 +77,7 @@ class AnnotationConnection(Resource):
         self.route("DELETE", (":id",), self.delete)
         self.route("GET", (":id",), self.get)
         self.route("GET", (), self.find)
+        self.route("GET", ("count",), self.count)
         self.route("POST", (), self.create)
         self.route("PUT", (":id",), self.update)
         self.route("POST", ("connectTo",), self.connectToNearest)
@@ -239,6 +240,25 @@ class AnnotationConnection(Resource):
             limit=limit,
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
+
+    @access.public
+    @autoDescribeRoute(
+        Description("Get connection count for a dataset")
+        .param("datasetId", "Get count for this dataset", required=True)
+        .errorResponse()
+    )
+    def count(self, params):
+        datasetId = ObjectId(params["datasetId"])
+        dataset = Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.READ
+        )
+        if not dataset:
+            raise RestException(code=403, message="Access denied to dataset")
+
+        query = {"datasetId": datasetId}
+        return {
+            "count": self._connectionModel.collection.count_documents(query)
+        }
 
     @access.public
     @autoDescribeRoute(

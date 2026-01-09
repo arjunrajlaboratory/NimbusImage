@@ -30,6 +30,7 @@ setup(
         "girder-jobs <5,>=3.2.8",
         "girder-user-quota",
         "fastjsonschema",
+        "orjson",
         "import_tracker "
         "@ git+https://github.com/DigitalSlideArchive/import-tracker.git"
     ],
