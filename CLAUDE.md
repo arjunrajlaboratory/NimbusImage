@@ -306,8 +306,8 @@ When you see such patterns, note them and suggest whether a new batch endpoint s
 Place code in appropriate locations:
 
 - **API methods** should live in their respective API files (`GirderAPI.ts`, `AnnotationsAPI.ts`, etc.), not in Vue components
-- **Store state** should be organized into focused modules. `src/store/index.ts` is already large (2000+ lines); consider creating new store modules for distinct feature areas
-- **Utility functions** shared across components should go in `src/utils/`
+- **Store state** should be organized into focused modules. `src/store/index.ts` is already large (2000+ lines); consider creating new store modules for distinct feature areas when implementing new categories of features.
+- **Utility functions** shared across components should go in `src/utils/`. Search for existing utility functions before creating new ones.
 
 **Bad:**
 ```typescript
@@ -357,18 +357,10 @@ const propertyId = request.params.id;
 
 Don't add checks or code that duplicate existing behavior:
 
-- **Don't add login checks in frontend** when the UI already hides buttons from unauthenticated users and the backend enforces access control
 - **Don't add validation** that will happen anyway (e.g., checking if an ID is valid before converting to ObjectId, when the conversion itself throws on invalid IDs)
-- **Don't keep duplicate logic paths** that do exactly the same thing
 
 **Bad:**
-```typescript
-// Frontend - unnecessary if button is already hidden from logged-out users
-async deleteDataset() {
-  if (!this.isLoggedIn) return;  // Backend will reject anyway
-  await api.deleteDataset(this.datasetId);
-}
-
+```python
 // Backend - redundant validation
 if not is_valid_object_id(id):
     raise ValidationException("Invalid ID")
@@ -381,7 +373,6 @@ When working with Girder/Python backend code:
 
 - Use `exc=True` when loading models to automatically raise exceptions if not found, rather than manual null checks
 - Be mindful of ObjectId conversions - some values are stored as strings in metadata but need conversion for queries
-- Consider rate limiting for public API endpoints to prevent database flooding
 
 **Bad:**
 ```python
