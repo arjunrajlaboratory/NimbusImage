@@ -301,6 +301,108 @@ When you see such patterns, note them and suggest whether a new batch endpoint s
 - Prefer composition over duplication
 - Extract common API patterns into reusable methods
 
+### Code Organization and Placement
+
+Place code in appropriate locations:
+
+- **API methods** should live in their respective API files (`GirderAPI.ts`, `AnnotationsAPI.ts`, etc.), not in Vue components
+- **Store state** should be organized into focused modules. `src/store/index.ts` is already large (2000+ lines); consider creating new store modules for distinct feature areas
+- **Utility functions** shared across components should go in `src/utils/`
+
+**Bad:**
+```typescript
+// In a Vue component
+async checkDatasetNameExists(name: string) {
+  const response = await this.girderRest.get(`dataset/name/${name}`);
+  return response.data.exists;
+}
+```
+
+**Good:**
+```typescript
+// In GirderAPI.ts
+async checkDatasetNameExists(name: string): Promise<boolean> {
+  const response = await this.client.get(`dataset/name/${name}`);
+  return response.data.exists;
+}
+```
+
+### Naming Clarity
+
+Use clear, descriptive names that reflect current functionality:
+
+- Rename functions when their signature changes (e.g., if a function no longer uses `params`, remove it from the name)
+- Use specific variable names instead of generic ones (`propertyId` instead of `id` or `item`)
+- Boolean variables should indicate their purpose: prefer `isPublicSelected` or `canBePublic` over ambiguous names like `makePublic`
+
+**Bad:**
+```typescript
+function getPropertyFromParams(params: any) {  // params is no longer used
+  return this.getPropertyById(this.currentPropertyId);
+}
+
+const id = request.params.id;  // Which ID? Be specific
+```
+
+**Good:**
+```typescript
+function getProperty() {
+  return this.getPropertyById(this.currentPropertyId);
+}
+
+const propertyId = request.params.id;
+```
+
+### Avoid Redundant Checks and Code
+
+Don't add checks or code that duplicate existing behavior:
+
+- **Don't add login checks in frontend** when the UI already hides buttons from unauthenticated users and the backend enforces access control
+- **Don't add validation** that will happen anyway (e.g., checking if an ID is valid before converting to ObjectId, when the conversion itself throws on invalid IDs)
+- **Don't keep duplicate logic paths** that do exactly the same thing
+
+**Bad:**
+```typescript
+// Frontend - unnecessary if button is already hidden from logged-out users
+async deleteDataset() {
+  if (!this.isLoggedIn) return;  // Backend will reject anyway
+  await api.deleteDataset(this.datasetId);
+}
+
+// Backend - redundant validation
+if not is_valid_object_id(id):
+    raise ValidationException("Invalid ID")
+obj_id = ObjectId(id)  # This already throws on invalid ID
+```
+
+### Backend Python Patterns
+
+When working with Girder/Python backend code:
+
+- Use `exc=True` when loading models to automatically raise exceptions if not found, rather than manual null checks
+- Be mindful of ObjectId conversions - some values are stored as strings in metadata but need conversion for queries
+- Consider rate limiting for public API endpoints to prevent database flooding
+
+**Bad:**
+```python
+prop = PropertyModel().load(property_id, user=user, level=AccessType.READ)
+if prop is None:
+    raise RestException("Property not found", 404)
+```
+
+**Good:**
+```python
+prop = PropertyModel().load(property_id, user=user, level=AccessType.READ, exc=True)
+```
+
+### Simplify Where Possible
+
+Look for opportunities to simplify code:
+
+- Replace verbose null checks with concise equivalents: `if (value === null || value === undefined)` can become `if (value == null)`
+- Consider whether streaming/complex implementations are necessary for typical use cases
+- Question whether custom implementations can be replaced with library functions (e.g., `orjson.dumps()` instead of manual JSON streaming)
+
 ## Testing
 
 - Unit tests use Vitest
