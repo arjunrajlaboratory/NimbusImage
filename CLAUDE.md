@@ -396,9 +396,44 @@ Look for opportunities to simplify code:
 
 ## Testing
 
+### Frontend Tests
 - Unit tests use Vitest
 - Test files: `*.test.ts` alongside source
 - Run with `pnpm test`
+
+### Backend Tests (Girder Plugin)
+The AnnotationPlugin has Python tests using pytest via tox:
+
+```bash
+# Navigate to the plugin directory
+cd devops/girder/plugins/AnnotationPlugin
+
+# Run all tests
+tox
+
+# Recreate tox environment (after dependency changes)
+tox -r
+```
+
+**Test Structure:**
+- Tests location: `upenncontrast_annotation/test/`
+- `test_annotations.py` - Annotation model and API tests
+- `test_connections.py` - Connection model and helper tests
+- `test_export.py` - JSON export endpoint tests
+- `conftest.py` - Pytest fixtures
+- `girder_utilities.py` - Test helper for creating folders
+- `upenn_testing_utilities.py` - Sample data generators
+
+**Writing Backend Tests:**
+```python
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestMyFeature:
+    def testSomething(self, admin):
+        # admin fixture provides authenticated admin user
+        folder = utilities.createFolder(admin, "name", datasetMetadata)
+        # ... test logic
+```
 
 ## Important Notes
 
@@ -414,3 +449,23 @@ The chat system (`src/store/chat.ts`) integrates Claude for image analysis:
 - Chat history stored in browser IndexedDB
 - API key configured via `ANTHROPIC_API_KEY` environment variable
 - Chat UI in `ChatComponent.vue`
+
+## Allowed Tools
+
+The following commands are pre-approved for Claude Code to run without confirmation:
+
+```
+# Docker commands for backend development
+Bash(docker compose build:*)
+Bash(docker compose:*)
+Bash(curl:*)
+
+# Testing
+Bash(tox)
+Bash(tox:*)
+
+# Git operations
+Bash(git add:*)
+Bash(git commit:*)
+Bash(git push:*)
+```
