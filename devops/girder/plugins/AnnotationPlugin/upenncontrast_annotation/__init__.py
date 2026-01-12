@@ -30,6 +30,7 @@ from .server.models.workerPreviews import WorkerPreviewModel as PreviewModel
 from .server.models.datasetView import DatasetView as DatasetViewModel
 from .server.models.history import History as HistoryModel
 from .server.models.documentChange import DocumentChange as DocumentChangeModel
+from .server.models.project import Project as ProjectModel
 
 
 # Taken from HistomicsUI
@@ -110,6 +111,7 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         from .server.api.user_colors import UserColors
         from .server.api.resource import CustomResource
         from .server.api.export import Export
+        from .server.api.project import Project
 
         ModelImporter.registerModel(
             "upenn_annotation", AnnotationModel, "upenncontrast_annotation"
@@ -149,6 +151,10 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         ModelImporter.registerModel(
             "document_change", DocumentChangeModel, "upenncontrast_annotation"
         )
+        ModelImporter.registerModel(
+            "upenn_project", ProjectModel, "upenncontrast_annotation"
+        )
+        allowedDeleteTypes.add("upenn_project")
 
         info["apiRoot"].resource = CustomResource()
         info["apiRoot"].upenn_annotation = Annotation()
@@ -163,4 +169,5 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].user_assetstore = UserAssetstore()
         info["apiRoot"].user_colors = UserColors()
         info["apiRoot"].export = Export()
+        info["apiRoot"].project = Project()
         system.addSystemEndpoints(info["apiRoot"])

@@ -429,6 +429,40 @@ export interface IDatasetAccessList {
   configurations: IDatasetAccessConfiguration[];
 }
 
+export interface IProjectDatasetReference {
+  datasetId: string;
+  addedDate: string;
+}
+
+export interface IProjectCollectionReference {
+  collectionId: string;
+  addedDate: string;
+}
+
+export interface IProjectMetadata {
+  title: string;
+  description: string;
+  license: string;
+  keywords: string[];
+}
+
+export type TProjectStatus = "draft" | "exporting" | "exported";
+
+export interface IProject {
+  id: string;
+  name: string;
+  description: string;
+  creatorId: string;
+  created: string;
+  updated: string;
+  meta: {
+    datasets: IProjectDatasetReference[];
+    collections: IProjectCollectionReference[];
+    metadata: IProjectMetadata;
+    status: TProjectStatus;
+  };
+}
+
 export type TDisplaySliceType = "current" | "max-merge" | "constant" | "offset";
 
 export interface IDisplaySlice {

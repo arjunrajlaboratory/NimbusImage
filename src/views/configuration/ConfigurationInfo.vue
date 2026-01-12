@@ -3,6 +3,15 @@
     <alert-dialog ref="alert" />
     <v-container class="d-flex">
       <v-spacer />
+      <v-btn
+        color="primary"
+        class="mr-2"
+        @click="showAddToProjectDialog = true"
+        :disabled="!store.configuration"
+      >
+        <v-icon left>mdi-folder-star</v-icon>
+        Add Collection to Project...
+      </v-btn>
       <v-dialog v-model="removeConfirm" max-width="33vw">
         <template #activator="{ on }">
           <v-btn color="red" v-on="on" :disabled="!store.configuration">
@@ -154,6 +163,14 @@
         <scale-settings :configuration-only="true" />
       </v-card-text>
     </v-card>
+
+    <add-collection-to-project-dialog
+      v-if="configuration"
+      v-model="showAddToProjectDialog"
+      :collection-id="configuration.id"
+      :collection-name="name"
+      @added="onAddedToProject"
+    />
   </v-container>
 </template>
 <script lang="ts">
@@ -167,9 +184,15 @@ import { IGirderFolder } from "@/girder";
 import ScaleSettings from "@/components/ScaleSettings.vue";
 import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
+import AddCollectionToProjectDialog from "@/components/AddCollectionToProjectDialog.vue";
 
 @Component({
-  components: { AddDatasetToCollection, AlertDialog, ScaleSettings },
+  components: {
+    AddCollectionToProjectDialog,
+    AddDatasetToCollection,
+    AlertDialog,
+    ScaleSettings,
+  },
 })
 export default class ConfigurationInfo extends Vue {
   readonly store = store;
@@ -189,6 +212,7 @@ export default class ConfigurationInfo extends Vue {
   datasetCompatibilityWarnings: { [datasetId: string]: string[] } = {};
 
   addDatasetDialog: boolean = false;
+  showAddToProjectDialog: boolean = false;
 
   nameInput: string = "";
 
@@ -413,6 +437,11 @@ export default class ConfigurationInfo extends Vue {
       this.removeConfirm = false;
       this.$router.back();
     });
+  }
+
+  onAddedToProject(_projectId: string) {
+    // Collection was added to project - could navigate or show notification
+    this.showAddToProjectDialog = false;
   }
 }
 </script>
