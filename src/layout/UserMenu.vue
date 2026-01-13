@@ -77,14 +77,15 @@ export default class UserMenu extends Vue {
   readonly store = store;
 
   @Watch("store.isLoggedIn")
+  @Watch("store.hasUserLoggedOut")
   loggedInOrOut() {
     // Only close the dialog when user logs in, don't reopen on logout
-    if (store.isLoggedIn) {
+    if (store.isLoggedIn || store.hasUserLoggedOut) {
       this.userMenu = false;
     }
   }
 
-  userMenu: boolean = false;
+  userMenu: boolean = this.$route.name == "root";
 
   isDomainLocked = !!import.meta.env.VITE_GIRDER_URL;
 
