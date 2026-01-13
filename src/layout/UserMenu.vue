@@ -84,6 +84,16 @@ export default class UserMenu extends Vue {
     }
   }
 
+  mounted() {
+    // Auto-open login dialog if access_token is in URL (OAuth callback)
+    // This handles the case where an OAuth provider redirectsback to
+    // the app with an access_token that needs to be processed
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has("access_token") && !store.isLoggedIn) {
+      this.userMenu = true;
+    }
+  }
+
   userMenu: boolean = false;
 
   isDomainLocked = !!import.meta.env.VITE_GIRDER_URL;
