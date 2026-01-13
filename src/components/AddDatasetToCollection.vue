@@ -387,5 +387,7 @@ export default class AddDatasetToCollection extends Vue {
   display: flex;
   flex-direction: column;
   overflow: auto;
+  min-height: 0;
+  flex: 1;
 }
 </style>

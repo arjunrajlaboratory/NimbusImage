@@ -105,10 +105,8 @@ export class Projects extends VuexModule {
 
   @Action
   async fetchProject(projectId: string): Promise<IProject | null> {
-    if (!main.isLoggedIn) {
-      return null;
-    }
-
+    // Note: removed isLoggedIn check to allow page refresh to work properly
+    // The API call will fail if not authenticated anyway
     sync.setSaving(true);
     try {
       const project = await main.projectsAPI.getProject(projectId);
@@ -353,6 +351,14 @@ export class Projects extends VuexModule {
       );
       sync.setSaving(error as Error);
       return null;
+    }
+  }
+
+  @Action
+  async setSelectedProject(projectId: string | null): Promise<void> {
+    this.setCurrentProjectId(projectId);
+    if (projectId && !this.getProjectById(projectId)) {
+      await this.fetchProject(projectId);
     }
   }
 

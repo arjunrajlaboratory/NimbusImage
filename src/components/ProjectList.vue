@@ -48,6 +48,7 @@
           :key="project.id"
           class="project-item"
           :class="{ 'project-item-hover': !loading }"
+          @click="navigateToProject(project)"
         >
           <v-list-item-avatar>
             <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
@@ -334,6 +335,13 @@ export default class ProjectList extends Vue {
       this.deleting = false;
     }
   }
+
+  navigateToProject(project: IProject) {
+    this.$router.push({
+      name: "project",
+      params: { projectId: project.id },
+    });
+  }
 }
 </script>
 
@@ -358,6 +366,7 @@ export default class ProjectList extends Vue {
 .project-item {
   border-bottom: 1px solid #e0e0e0;
   transition: background-color 0.2s;
+  cursor: pointer;
 
   &:hover.project-item-hover {
     background-color: #f5f5f5;
