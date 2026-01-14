@@ -1,6 +1,15 @@
 import { RestClientInstance } from "@/girder";
 import { IProject } from "./model";
-import { logError } from "@/utils/log";
+
+/**
+ * Extract string ID from MongoDB ObjectId (handles both {$oid: string} format and plain strings)
+ */
+function toStringId(id: any): string {
+  if (typeof id === "object" && id !== null && "$oid" in id) {
+    return id.$oid;
+  }
+  return String(id);
+}
 
 /**
  * Convert backend project response to IProject interface
@@ -15,12 +24,11 @@ function toProject(data: any): IProject {
     updated: data.updated,
     meta: {
       datasets: (data.meta?.datasets || []).map((d: any) => ({
-        datasetId: typeof d.datasetId === "object" ? d.datasetId : d.datasetId,
+        datasetId: toStringId(d.datasetId),
         addedDate: d.addedDate,
       })),
       collections: (data.meta?.collections || []).map((c: any) => ({
-        collectionId:
-          typeof c.collectionId === "object" ? c.collectionId : c.collectionId,
+        collectionId: toStringId(c.collectionId),
         addedDate: c.addedDate,
       })),
       metadata: data.meta?.metadata || {
@@ -48,26 +56,16 @@ export default class ProjectsAPI {
     creatorId?: string;
     status?: string;
   }): Promise<IProject[]> {
-    try {
-      const response = await this.client.get("project", { params });
-      return response.data.map(toProject);
-    } catch (error) {
-      logError("Failed to fetch projects:", error);
-      return [];
-    }
+    const response = await this.client.get("project", { params });
+    return response.data.map(toProject);
   }
 
   /**
    * Get a single project by ID
    */
-  async getProject(id: string): Promise<IProject | null> {
-    try {
-      const response = await this.client.get(`project/${id}`);
-      return toProject(response.data);
-    } catch (error) {
-      logError(`Failed to fetch project ${id}:`, error);
-      return null;
-    }
+  async getProject(id: string): Promise<IProject> {
+    const response = await this.client.get(`project/${id}`);
+    return toProject(response.data);
   }
 
   /**
@@ -76,16 +74,11 @@ export default class ProjectsAPI {
   async createProject(
     name: string,
     description: string = "",
-  ): Promise<IProject | null> {
-    try {
-      const response = await this.client.post("project", null, {
-        params: { name, description },
-      });
-      return toProject(response.data);
-    } catch (error) {
-      logError("Failed to create project:", error);
-      return null;
-    }
+  ): Promise<IProject> {
+    const response = await this.client.post("project", null, {
+      params: { name, description },
+    });
+    return toProject(response.data);
   }
 
   /**
@@ -95,33 +88,22 @@ export default class ProjectsAPI {
     id: string,
     name?: string,
     description?: string,
-  ): Promise<IProject | null> {
-    try {
-      const params: { name?: string; description?: string } = {};
-      if (name !== undefined) params.name = name;
-      if (description !== undefined) params.description = description;
+  ): Promise<IProject> {
+    const params: { name?: string; description?: string } = {};
+    if (name !== undefined) params.name = name;
+    if (description !== undefined) params.description = description;
 
-      const response = await this.client.put(`project/${id}`, null, {
-        params,
-      });
-      return toProject(response.data);
-    } catch (error) {
-      logError(`Failed to update project ${id}:`, error);
-      return null;
-    }
+    const response = await this.client.put(`project/${id}`, null, {
+      params,
+    });
+    return toProject(response.data);
   }
 
   /**
    * Delete a project
    */
-  async deleteProject(id: string): Promise<boolean> {
-    try {
-      await this.client.delete(`project/${id}`);
-      return true;
-    } catch (error) {
-      logError(`Failed to delete project ${id}:`, error);
-      return false;
-    }
+  async deleteProject(id: string): Promise<void> {
+    await this.client.delete(`project/${id}`);
   }
 
   /**
@@ -130,21 +112,13 @@ export default class ProjectsAPI {
   async addDatasetToProject(
     projectId: string,
     datasetId: string,
-  ): Promise<IProject | null> {
-    try {
-      const response = await this.client.post(
-        `project/${projectId}/dataset`,
-        null,
-        { params: { datasetId } },
-      );
-      return toProject(response.data);
-    } catch (error) {
-      logError(
-        `Failed to add dataset ${datasetId} to project ${projectId}:`,
-        error,
-      );
-      return null;
-    }
+  ): Promise<IProject> {
+    const response = await this.client.post(
+      `project/${projectId}/dataset`,
+      null,
+      { params: { datasetId } },
+    );
+    return toProject(response.data);
   }
 
   /**
@@ -153,19 +127,11 @@ export default class ProjectsAPI {
   async removeDatasetFromProject(
     projectId: string,
     datasetId: string,
-  ): Promise<IProject | null> {
-    try {
-      const response = await this.client.delete(
-        `project/${projectId}/dataset/${datasetId}`,
-      );
-      return toProject(response.data);
-    } catch (error) {
-      logError(
-        `Failed to remove dataset ${datasetId} from project ${projectId}:`,
-        error,
-      );
-      return null;
-    }
+  ): Promise<IProject> {
+    const response = await this.client.delete(
+      `project/${projectId}/dataset/${datasetId}`,
+    );
+    return toProject(response.data);
   }
 
   /**
@@ -174,21 +140,13 @@ export default class ProjectsAPI {
   async addCollectionToProject(
     projectId: string,
     collectionId: string,
-  ): Promise<IProject | null> {
-    try {
-      const response = await this.client.post(
-        `project/${projectId}/collection`,
-        null,
-        { params: { collectionId } },
-      );
-      return toProject(response.data);
-    } catch (error) {
-      logError(
-        `Failed to add collection ${collectionId} to project ${projectId}:`,
-        error,
-      );
-      return null;
-    }
+  ): Promise<IProject> {
+    const response = await this.client.post(
+      `project/${projectId}/collection`,
+      null,
+      { params: { collectionId } },
+    );
+    return toProject(response.data);
   }
 
   /**
@@ -197,19 +155,11 @@ export default class ProjectsAPI {
   async removeCollectionFromProject(
     projectId: string,
     collectionId: string,
-  ): Promise<IProject | null> {
-    try {
-      const response = await this.client.delete(
-        `project/${projectId}/collection/${collectionId}`,
-      );
-      return toProject(response.data);
-    } catch (error) {
-      logError(
-        `Failed to remove collection ${collectionId} from project ${projectId}:`,
-        error,
-      );
-      return null;
-    }
+  ): Promise<IProject> {
+    const response = await this.client.delete(
+      `project/${projectId}/collection/${collectionId}`,
+    );
+    return toProject(response.data);
   }
 
   /**
@@ -222,18 +172,17 @@ export default class ProjectsAPI {
       description?: string;
       license?: string;
       keywords?: string[];
+      authors?: string;
+      doi?: string;
+      publicationDate?: string;
+      funding?: string;
     },
-  ): Promise<IProject | null> {
-    try {
-      const response = await this.client.put(
-        `project/${projectId}/metadata`,
-        metadata,
-      );
-      return toProject(response.data);
-    } catch (error) {
-      logError(`Failed to update metadata for project ${projectId}:`, error);
-      return null;
-    }
+  ): Promise<IProject> {
+    const response = await this.client.put(
+      `project/${projectId}/metadata`,
+      metadata,
+    );
+    return toProject(response.data);
   }
 
   /**
@@ -242,19 +191,14 @@ export default class ProjectsAPI {
   async updateProjectStatus(
     projectId: string,
     status: "draft" | "exporting" | "exported",
-  ): Promise<IProject | null> {
-    try {
-      const response = await this.client.put(
-        `project/${projectId}/status`,
-        null,
-        {
-          params: { status },
-        },
-      );
-      return toProject(response.data);
-    } catch (error) {
-      logError(`Failed to update status for project ${projectId}:`, error);
-      return null;
-    }
+  ): Promise<IProject> {
+    const response = await this.client.put(
+      `project/${projectId}/status`,
+      null,
+      {
+        params: { status },
+      },
+    );
+    return toProject(response.data);
   }
 }

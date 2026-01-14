@@ -1092,7 +1092,7 @@ export default class Home extends Vue {
     this.showZenodoImporter = true;
   }
 
-  handleProjectClicked(_project: any) {
+  handleProjectClicked() {
     // Switch to Projects browse mode when clicking a project
     this.browseMode = "projects";
   }

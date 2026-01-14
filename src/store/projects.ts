@@ -185,12 +185,10 @@ export class Projects extends VuexModule {
 
     sync.setSaving(true);
     try {
-      const success = await main.projectsAPI.deleteProject(projectId);
-      if (success) {
-        this.removeProjectImpl(projectId);
-      }
+      await main.projectsAPI.deleteProject(projectId);
+      this.removeProjectImpl(projectId);
       sync.setSaving(false);
-      return success;
+      return true;
     } catch (error) {
       logError(`Failed to delete project ${projectId}:`, error);
       sync.setSaving(error as Error);
@@ -326,6 +324,10 @@ export class Projects extends VuexModule {
       description?: string;
       license?: string;
       keywords?: string[];
+      authors?: string;
+      doi?: string;
+      publicationDate?: string;
+      funding?: string;
     };
   }): Promise<IProject | null> {
     if (!main.isLoggedIn) {

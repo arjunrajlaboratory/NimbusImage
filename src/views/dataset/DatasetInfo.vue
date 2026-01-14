@@ -714,7 +714,7 @@ export default class DatasetInfo extends Vue {
     }
   }
 
-  onAddedToProject(_projectId: string) {
+  onAddedToProject() {
     this.showAddToProjectDialog = false;
   }
 

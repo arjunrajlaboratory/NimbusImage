@@ -67,7 +67,7 @@
                 x-small
                 outlined
                 class="mr-1"
-                :color="getStatusColor(project.meta.status)"
+                :color="getProjectStatusColor(project.meta.status)"
               >
                 {{ project.meta.status }}
               </v-chip>
@@ -210,7 +210,7 @@
 import { Vue, Component } from "vue-property-decorator";
 import store from "@/store";
 import projects from "@/store/projects";
-import { IProject } from "@/store/model";
+import { IProject, getProjectStatusColor } from "@/store/model";
 import { formatDateString } from "@/utils/date";
 
 @Component
@@ -237,6 +237,7 @@ export default class ProjectList extends Vue {
   deleting = false;
 
   formatDateString = formatDateString;
+  getProjectStatusColor = getProjectStatusColor;
 
   async mounted() {
     await this.fetchProjects();
@@ -263,17 +264,6 @@ export default class ProjectList extends Vue {
       await this.projects.fetchProjects();
     } finally {
       this.loading = false;
-    }
-  }
-
-  getStatusColor(status: string): string {
-    switch (status) {
-      case "exported":
-        return "success";
-      case "exporting":
-        return "warning";
-      default:
-        return "grey";
     }
   }
 

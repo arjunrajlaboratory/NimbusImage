@@ -426,7 +426,12 @@ import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import projects from "@/store/projects";
 import girderResources from "@/store/girderResources";
-import { IProject, IDatasetView, TProjectStatus } from "@/store/model";
+import {
+  IProject,
+  IDatasetView,
+  TProjectStatus,
+  getProjectStatusColor,
+} from "@/store/model";
 import { IGirderFolder, IGirderItem } from "@/girder";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vue";
@@ -536,14 +541,7 @@ export default class ProjectInfo extends Vue {
   }
 
   get statusColor(): string {
-    switch (this.project?.meta.status) {
-      case "exported":
-        return "success";
-      case "exporting":
-        return "warning";
-      default:
-        return "grey";
-    }
+    return getProjectStatusColor(this.project?.meta.status);
   }
 
   get canStartExport(): boolean {
@@ -794,14 +792,31 @@ export default class ProjectInfo extends Vue {
         }
       }
 
-      // Step 2: Fetch dataset views for each collection
-      // (dataset_view API doesn't support batch by multiple configurationIds easily)
-      for (const c of this.project.meta.collections) {
-        if (!this.collectionDatasetViewsCache[c.collectionId]) {
-          const views = await this.store.api.findDatasetViews({
-            configurationId: c.collectionId,
-          });
-          Vue.set(this.collectionDatasetViewsCache, c.collectionId, views);
+      // Step 2: Batch fetch dataset views for all collections at once
+      const uncachedCollectionIds = this.project.meta.collections
+        .map((c) => c.collectionId)
+        .filter((id) => !this.collectionDatasetViewsCache[id]);
+
+      if (uncachedCollectionIds.length > 0) {
+        const allViews = await this.store.api.findDatasetViews({
+          configurationIds: uncachedCollectionIds,
+        });
+
+        // Group views by configurationId and populate cache
+        const viewsByCollection = new Map<string, IDatasetView[]>();
+        for (const view of allViews) {
+          const views = viewsByCollection.get(view.configurationId) || [];
+          views.push(view);
+          viewsByCollection.set(view.configurationId, views);
+        }
+
+        // Populate cache (including empty arrays for collections with no views)
+        for (const collectionId of uncachedCollectionIds) {
+          Vue.set(
+            this.collectionDatasetViewsCache,
+            collectionId,
+            viewsByCollection.get(collectionId) || [],
+          );
         }
       }
 
@@ -944,12 +959,11 @@ export default class ProjectInfo extends Vue {
           description: this.metadata.description,
           license: this.metadata.license,
           keywords: this.metadata.keywords,
-          // Extended fields (will be stored in meta.metadata)
           authors: this.metadata.authors,
           doi: this.metadata.doi,
           publicationDate: this.metadata.publicationDate,
           funding: this.metadata.funding,
-        } as any,
+        },
       });
       // Update originalMetadata to match current values after successful save
       this.originalMetadata = {

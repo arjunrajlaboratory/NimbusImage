@@ -444,9 +444,29 @@ export interface IProjectMetadata {
   description: string;
   license: string;
   keywords: string[];
+  authors?: string;
+  doi?: string;
+  publicationDate?: string;
+  funding?: string;
 }
 
 export type TProjectStatus = "draft" | "exporting" | "exported";
+
+/**
+ * Get display color for project status
+ */
+export function getProjectStatusColor(
+  status: TProjectStatus | undefined,
+): string {
+  switch (status) {
+    case "exported":
+      return "success";
+    case "exporting":
+      return "warning";
+    default:
+      return "grey";
+  }
+}
 
 export interface IProject {
   id: string;

@@ -439,7 +439,7 @@ export default class ConfigurationInfo extends Vue {
     });
   }
 
-  onAddedToProject(_projectId: string) {
+  onAddedToProject() {
     // Collection was added to project - could navigate or show notification
     this.showAddToProjectDialog = false;
   }
