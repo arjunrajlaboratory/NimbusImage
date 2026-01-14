@@ -54,7 +54,9 @@ class TestProject:
             project_model.load("nosuchid", user=admin)
 
         # Test loading non-existent ID
-        assert project_model.load("012345678901234567890123", user=admin) is None
+        assert (
+            project_model.load("012345678901234567890123", user=admin) is None
+        )
 
         # Create and load a project
         created = project_model.createProject(
@@ -100,11 +102,17 @@ class TestProject:
         # Add dataset to project
         updated = project_model.addDataset(proj, str(folder["_id"]))
         assert len(updated["meta"]["datasets"]) == 1
-        # datasetId may be stored as ObjectId or string depending on implementation
-        assert str(updated["meta"]["datasets"][0]["datasetId"]) == str(folder["_id"])
+        # datasetId may be stored as ObjectId or string depending on
+        # implementation
+        assert (
+            str(updated["meta"]["datasets"][0]["datasetId"])
+            == str(folder["_id"])
+        )
 
         # Adding same dataset again should raise ValidationException
-        with pytest.raises(ValidationException, match="Dataset already in project"):
+        with pytest.raises(
+            ValidationException, match="Dataset already in project"
+        ):
             project_model.addDataset(updated, str(folder["_id"]))
 
     def test_project_remove_dataset(self, admin):
@@ -145,7 +153,9 @@ class TestProject:
         assert updated["description"] == "Original description"
 
         # Update description only
-        updated = project_model.updateFields(updated, description="New description")
+        updated = project_model.updateFields(
+            updated, description="New description"
+        )
         assert updated["name"] == "New Name"
         assert updated["description"] == "New description"
 
@@ -194,7 +204,10 @@ class TestProject:
         })
 
         assert updated["meta"]["metadata"]["title"] == "Publication Title"
-        assert updated["meta"]["metadata"]["description"] == "Publication description"
+        assert (
+            updated["meta"]["metadata"]["description"]
+            == "Publication description"
+        )
         assert updated["meta"]["metadata"]["license"] == "MIT"
         assert updated["meta"]["metadata"]["keywords"] == ["test", "project"]
 
@@ -222,8 +235,14 @@ class TestProject:
         )
 
         # Admin should see their projects
-        admin_projects = list(project_model.findWithPermissions({}, user=admin))
+        admin_projects = list(
+            project_model.findWithPermissions({}, user=admin)
+        )
         assert len(admin_projects) >= 2
+        # Verify the created projects are in the results
+        project_ids = {p["_id"] for p in admin_projects}
+        assert proj1["_id"] in project_ids
+        assert proj2["_id"] in project_ids
 
         # Find by creatorId
         filtered = list(project_model.findWithPermissions(
