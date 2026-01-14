@@ -7,6 +7,10 @@
       <v-chip :color="statusColor" text-color="white" small class="mr-2">
         {{ project.meta.status }}
       </v-chip>
+      <v-chip v-if="totalProjectSize > 0" outlined small class="mr-2">
+        <v-icon left small>mdi-database</v-icon>
+        {{ formatSize(totalProjectSize) }} total
+      </v-chip>
       <v-spacer />
       <v-btn
         v-if="canStartExport"
@@ -90,6 +94,9 @@
               <v-list-item-content>
                 <v-list-item-title class="font-weight-medium">
                   {{ item.info?.name || "Loading..." }}
+                  <span v-if="item.info?.size" class="ml-2 grey--text text-body-2">
+                    ({{ formatSize(item.info.size) }})
+                  </span>
                 </v-list-item-title>
                 <v-list-item-subtitle v-if="item.info?.description">
                   {{ item.info.description }}
@@ -156,7 +163,10 @@
                     {{ item.info?.name || "Loading..." }}
                   </v-list-item-title>
                   <v-list-item-subtitle>
-                    {{ item.datasetViews.length }} dataset(s) in this collection
+                    {{ item.datasetViews.length }} dataset(s)
+                    <span v-if="collectionSizes[item.collectionId]">
+                      · {{ formatSize(collectionSizes[item.collectionId]) }}
+                    </span>
                   </v-list-item-subtitle>
                 </v-list-item-content>
                 <v-list-item-action>
@@ -185,6 +195,12 @@
                 <v-list-item-content>
                   <v-list-item-title class="text-body-2">
                     {{ datasetInfoCache[dv.datasetId]?.name || "Loading..." }}
+                    <span
+                      v-if="datasetInfoCache[dv.datasetId]?.size"
+                      class="ml-2 grey--text"
+                    >
+                      ({{ formatSize(datasetInfoCache[dv.datasetId]?.size || 0) }})
+                    </span>
                   </v-list-item-title>
                 </v-list-item-content>
                 <v-list-item-action>
@@ -357,6 +373,7 @@ import { IGirderFolder, IGirderItem } from "@/girder";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vue";
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
+import { formatSize } from "@/utils/conversion";
 
 interface IProjectMetadataForm {
   title: string;
@@ -500,6 +517,56 @@ export default class ProjectInfo extends Vue {
     );
   }
 
+  get collectionSizes(): { [collectionId: string]: number } {
+    const sizes: { [collectionId: string]: number } = {};
+    for (const c of this.project?.meta.collections || []) {
+      const datasetViews = this.collectionDatasetViewsCache[c.collectionId] || [];
+      let totalSize = 0;
+      for (const dv of datasetViews) {
+        const folder = this.datasetInfoCache[dv.datasetId];
+        if (folder?.size) {
+          totalSize += folder.size;
+        }
+      }
+      sizes[c.collectionId] = totalSize;
+    }
+    return sizes;
+  }
+
+  get totalProjectSize(): number {
+    const seenDatasetIds = new Set<string>();
+    let total = 0;
+
+    // Add sizes from direct datasets
+    for (const d of this.project?.meta.datasets || []) {
+      if (!seenDatasetIds.has(d.datasetId)) {
+        seenDatasetIds.add(d.datasetId);
+        const folder = this.datasetInfoCache[d.datasetId];
+        if (folder?.size) {
+          total += folder.size;
+        }
+      }
+    }
+
+    // Add sizes from collection datasets (only if not already counted)
+    for (const c of this.project?.meta.collections || []) {
+      const datasetViews = this.collectionDatasetViewsCache[c.collectionId] || [];
+      for (const dv of datasetViews) {
+        if (!seenDatasetIds.has(dv.datasetId)) {
+          seenDatasetIds.add(dv.datasetId);
+          const folder = this.datasetInfoCache[dv.datasetId];
+          if (folder?.size) {
+            total += folder.size;
+          }
+        }
+      }
+    }
+
+    return total;
+  }
+
+  formatSize = formatSize;
+
   mounted() {
     this.initializeFromProject();
   }
@@ -546,9 +613,20 @@ export default class ProjectInfo extends Vue {
     if (!this.project) return;
     this.loadingDatasets = true;
     try {
+      // Collect all dataset IDs that aren't already cached
+      const datasetIds = this.project.meta.datasets
+        .map((d) => d.datasetId)
+        .filter((id) => !this.datasetInfoCache[id]);
+
+      if (datasetIds.length > 0) {
+        // Batch fetch all folders at once
+        await this.girderResources.batchFetchResources({ folderIds: datasetIds });
+      }
+
+      // Populate local cache from the store's resources
       for (const d of this.project.meta.datasets) {
         if (!this.datasetInfoCache[d.datasetId]) {
-          const folder = await this.girderResources.getFolder(d.datasetId);
+          const folder = this.girderResources.watchFolder(d.datasetId);
           if (folder) {
             Vue.set(this.datasetInfoCache, d.datasetId, folder);
           }
@@ -563,29 +641,61 @@ export default class ProjectInfo extends Vue {
     if (!this.project) return;
     this.loadingCollections = true;
     try {
-      for (const c of this.project.meta.collections) {
-        if (!this.collectionInfoCache[c.collectionId]) {
-          const collection = await this.girderResources.getCollection(
-            c.collectionId,
-          );
-          if (collection) {
-            Vue.set(this.collectionInfoCache, c.collectionId, collection);
+      // Step 1: Batch fetch all collections at once
+      const collectionIds = this.project.meta.collections
+        .map((c) => c.collectionId)
+        .filter((id) => !this.collectionInfoCache[id]);
+
+      if (collectionIds.length > 0) {
+        await this.girderResources.batchFetchResources({
+          collectionIds: collectionIds,
+        });
+
+        // Populate local collection cache from the store's resources
+        for (const c of this.project.meta.collections) {
+          if (!this.collectionInfoCache[c.collectionId]) {
+            const collection = this.girderResources.watchCollection(
+              c.collectionId,
+            );
+            if (collection) {
+              Vue.set(this.collectionInfoCache, c.collectionId, collection);
+            }
           }
-          // Also fetch dataset views for this collection
+        }
+      }
+
+      // Step 2: Fetch dataset views for each collection
+      // (dataset_view API doesn't support batch by multiple configurationIds easily)
+      for (const c of this.project.meta.collections) {
+        if (!this.collectionDatasetViewsCache[c.collectionId]) {
           const views = await this.store.api.findDatasetViews({
             configurationId: c.collectionId,
           });
           Vue.set(this.collectionDatasetViewsCache, c.collectionId, views);
-          // Fetch info for each dataset in this collection
-          for (const view of views) {
-            if (!this.datasetInfoCache[view.datasetId]) {
-              const folder = await this.girderResources.getFolder(
-                view.datasetId,
-              );
-              if (folder) {
-                Vue.set(this.datasetInfoCache, view.datasetId, folder);
-              }
-            }
+        }
+      }
+
+      // Step 3: Batch fetch all datasets from all collections at once
+      const allDatasetIds = new Set<string>();
+      for (const c of this.project.meta.collections) {
+        const views = this.collectionDatasetViewsCache[c.collectionId] || [];
+        for (const view of views) {
+          if (!this.datasetInfoCache[view.datasetId]) {
+            allDatasetIds.add(view.datasetId);
+          }
+        }
+      }
+
+      if (allDatasetIds.size > 0) {
+        await this.girderResources.batchFetchResources({
+          folderIds: Array.from(allDatasetIds),
+        });
+
+        // Populate local dataset cache from the store's resources
+        for (const datasetId of allDatasetIds) {
+          const folder = this.girderResources.watchFolder(datasetId);
+          if (folder) {
+            Vue.set(this.datasetInfoCache, datasetId, folder);
           }
         }
       }
