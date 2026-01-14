@@ -34,7 +34,10 @@
               </div>
 
               <v-list v-else dense class="project-select-list">
-                <v-list-item-group v-model="selectedProjectIndex" color="primary">
+                <v-list-item-group
+                  v-model="selectedProjectIndex"
+                  color="primary"
+                >
                   <v-list-item
                     v-for="project in availableProjects"
                     :key="project.id"
@@ -59,7 +62,10 @@
                         {{ project.meta.collections.length }} collection{{
                           project.meta.collections.length !== 1 ? "s" : ""
                         }}
-                        <span v-if="isCollectionInProject(project)" class="ml-1">
+                        <span
+                          v-if="isCollectionInProject(project)"
+                          class="ml-1"
+                        >
                           (already added)
                         </span>
                       </v-list-item-subtitle>
@@ -174,7 +180,9 @@ export default class AddCollectionToProjectDialog extends Vue {
   }
 
   isCollectionInProject(project: IProject): boolean {
-    return project.meta.collections.some((c) => c.collectionId === this.collectionId);
+    return project.meta.collections.some(
+      (c) => c.collectionId === this.collectionId,
+    );
   }
 
   async loadProjects() {

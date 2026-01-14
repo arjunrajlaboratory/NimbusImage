@@ -74,29 +74,66 @@
 
     <!-- Datasets Card -->
     <v-card class="mb-4">
-      <v-card-title>
-        Datasets ({{ project.meta.datasets.length }})
+      <v-card-title class="d-flex align-center">
+        <span>Datasets ({{ filteredDatasetItems.length }})</span>
+        <v-spacer />
+        <v-text-field
+          v-model="datasetFilter"
+          placeholder="Filter datasets..."
+          prepend-inner-icon="mdi-magnify"
+          clearable
+          dense
+          hide-details
+          outlined
+          style="max-width: 250px"
+          class="ml-2"
+        />
       </v-card-title>
       <v-card-text>
         <v-progress-linear v-if="loadingDatasets" indeterminate />
-        <div
-          v-else-if="project.meta.datasets.length === 0"
-          class="text-center pa-4"
-        >
+        <div v-else-if="allDatasetItems.length === 0" class="text-center pa-4">
           <v-icon size="48" color="grey">mdi-folder-outline</v-icon>
           <div class="text-body-2 grey--text mt-2">
             No datasets in this project yet.
           </div>
         </div>
+        <div
+          v-else-if="datasetFilter && filteredDatasetItems.length === 0"
+          class="text-center pa-4"
+        >
+          <v-icon size="48" color="grey">mdi-magnify</v-icon>
+          <div class="text-body-2 grey--text mt-2">
+            No datasets match "{{ datasetFilter }}"
+          </div>
+        </div>
         <v-list v-else class="pa-0">
-          <template v-for="(item, index) in datasetItems">
+          <template v-for="(item, index) in filteredDatasetItems">
             <v-list-item :key="item.datasetId" class="px-4">
               <v-list-item-content>
-                <v-list-item-title class="font-weight-medium">
-                  {{ item.info?.name || "Loading..." }}
-                  <span v-if="item.info?.size" class="ml-2 grey--text text-body-2">
+                <v-list-item-title
+                  class="font-weight-medium d-flex align-center flex-wrap"
+                >
+                  <span>{{ item.info?.name || "Loading..." }}</span>
+                  <span
+                    v-if="item.info?.size"
+                    class="ml-2 grey--text text-body-2"
+                  >
                     ({{ formatSize(item.info.size) }})
                   </span>
+                  <v-chip
+                    v-for="collId in item.collectionIds"
+                    :key="collId"
+                    x-small
+                    class="ml-2"
+                    color="#4baeff"
+                    text-color="white"
+                    :to="{
+                      name: 'configuration',
+                      params: { configurationId: collId },
+                    }"
+                  >
+                    {{ collectionInfoCache[collId]?.name || "Collection" }}
+                  </v-chip>
                 </v-list-item-title>
                 <v-list-item-subtitle v-if="item.info?.description">
                   {{ item.info.description }}
@@ -105,6 +142,7 @@
               <v-list-item-action>
                 <span class="button-bar">
                   <v-btn
+                    v-if="item.source === 'direct'"
                     color="warning"
                     @click="confirmRemoveDataset(item.datasetId)"
                   >
@@ -123,7 +161,7 @@
               </v-list-item-action>
             </v-list-item>
             <v-divider
-              v-if="index < datasetItems.length - 1"
+              v-if="index < filteredDatasetItems.length - 1"
               :key="'divider-' + item.datasetId"
             />
           </template>
@@ -140,22 +178,40 @@
 
     <!-- Collections Card -->
     <v-card class="mb-4">
-      <v-card-title>
-        Collections ({{ project.meta.collections.length }})
+      <v-card-title class="d-flex align-center">
+        <span>Collections ({{ filteredCollectionItems.length }})</span>
+        <v-spacer />
+        <v-text-field
+          v-model="collectionFilter"
+          placeholder="Filter collections..."
+          prepend-inner-icon="mdi-magnify"
+          clearable
+          dense
+          hide-details
+          outlined
+          style="max-width: 250px"
+          class="ml-2"
+        />
       </v-card-title>
       <v-card-text>
         <v-progress-linear v-if="loadingCollections" indeterminate />
-        <div
-          v-else-if="project.meta.collections.length === 0"
-          class="text-center pa-4"
-        >
+        <div v-else-if="collectionItems.length === 0" class="text-center pa-4">
           <v-icon size="48" color="grey">mdi-folder-multiple-outline</v-icon>
           <div class="text-body-2 grey--text mt-2">
             No collections in this project yet.
           </div>
         </div>
+        <div
+          v-else-if="collectionFilter && filteredCollectionItems.length === 0"
+          class="text-center pa-4"
+        >
+          <v-icon size="48" color="grey">mdi-magnify</v-icon>
+          <div class="text-body-2 grey--text mt-2">
+            No collections match "{{ collectionFilter }}"
+          </div>
+        </div>
         <v-list v-else class="pa-0">
-          <template v-for="(item, index) in collectionItems">
+          <template v-for="(item, index) in filteredCollectionItems">
             <v-list-group :key="item.collectionId" no-action>
               <template #activator>
                 <v-list-item-content>
@@ -199,7 +255,9 @@
                       v-if="datasetInfoCache[dv.datasetId]?.size"
                       class="ml-2 grey--text"
                     >
-                      ({{ formatSize(datasetInfoCache[dv.datasetId]?.size || 0) }})
+                      ({{
+                        formatSize(datasetInfoCache[dv.datasetId]?.size || 0)
+                      }})
                     </span>
                   </v-list-item-title>
                 </v-list-item-content>
@@ -217,7 +275,7 @@
               </v-list-item>
             </v-list-group>
             <v-divider
-              v-if="index < collectionItems.length - 1"
+              v-if="index < filteredCollectionItems.length - 1"
               :key="'divider-' + item.collectionId"
             />
           </template>
@@ -386,6 +444,14 @@ interface IProjectMetadataForm {
   funding: string;
 }
 
+interface IUnifiedDatasetItem {
+  datasetId: string;
+  addedDate: string;
+  info: IGirderFolder | undefined;
+  source: "direct" | "collection";
+  collectionIds: string[];
+}
+
 @Component({
   components: {
     AlertDialog,
@@ -421,6 +487,10 @@ export default class ProjectInfo extends Vue {
   // Loading state
   loadingDatasets = false;
   loadingCollections = false;
+
+  // Filter state
+  datasetFilter = "";
+  collectionFilter = "";
 
   // Caches
   datasetInfoCache: { [datasetId: string]: IGirderFolder } = {};
@@ -503,6 +573,62 @@ export default class ProjectInfo extends Vue {
     }));
   }
 
+  get allDatasetItems(): IUnifiedDatasetItem[] {
+    const datasetMap = new Map<string, IUnifiedDatasetItem>();
+
+    // Add direct datasets
+    for (const d of this.project?.meta.datasets || []) {
+      datasetMap.set(d.datasetId, {
+        datasetId: d.datasetId,
+        addedDate: d.addedDate,
+        info: this.datasetInfoCache[d.datasetId],
+        source: "direct",
+        collectionIds: [],
+      });
+    }
+
+    // Add/update with collection datasets
+    for (const c of this.project?.meta.collections || []) {
+      const views = this.collectionDatasetViewsCache[c.collectionId] || [];
+      for (const v of views) {
+        const existing = datasetMap.get(v.datasetId);
+        if (existing) {
+          existing.collectionIds.push(c.collectionId);
+        } else {
+          datasetMap.set(v.datasetId, {
+            datasetId: v.datasetId,
+            addedDate: "",
+            info: this.datasetInfoCache[v.datasetId],
+            source: "collection",
+            collectionIds: [c.collectionId],
+          });
+        }
+      }
+    }
+
+    return Array.from(datasetMap.values());
+  }
+
+  get filteredDatasetItems(): IUnifiedDatasetItem[] {
+    if (!this.datasetFilter.trim()) {
+      return this.allDatasetItems;
+    }
+    const filter = this.datasetFilter.toLowerCase();
+    return this.allDatasetItems.filter((item) =>
+      item.info?.name?.toLowerCase().includes(filter),
+    );
+  }
+
+  get filteredCollectionItems() {
+    if (!this.collectionFilter.trim()) {
+      return this.collectionItems;
+    }
+    const filter = this.collectionFilter.toLowerCase();
+    return this.collectionItems.filter((item) =>
+      item.info?.name?.toLowerCase().includes(filter),
+    );
+  }
+
   get hasMetadataChanges(): boolean {
     return (
       this.metadata.title !== this.originalMetadata.title ||
@@ -520,7 +646,8 @@ export default class ProjectInfo extends Vue {
   get collectionSizes(): { [collectionId: string]: number } {
     const sizes: { [collectionId: string]: number } = {};
     for (const c of this.project?.meta.collections || []) {
-      const datasetViews = this.collectionDatasetViewsCache[c.collectionId] || [];
+      const datasetViews =
+        this.collectionDatasetViewsCache[c.collectionId] || [];
       let totalSize = 0;
       for (const dv of datasetViews) {
         const folder = this.datasetInfoCache[dv.datasetId];
@@ -550,7 +677,8 @@ export default class ProjectInfo extends Vue {
 
     // Add sizes from collection datasets (only if not already counted)
     for (const c of this.project?.meta.collections || []) {
-      const datasetViews = this.collectionDatasetViewsCache[c.collectionId] || [];
+      const datasetViews =
+        this.collectionDatasetViewsCache[c.collectionId] || [];
       for (const dv of datasetViews) {
         if (!seenDatasetIds.has(dv.datasetId)) {
           seenDatasetIds.add(dv.datasetId);
@@ -620,7 +748,9 @@ export default class ProjectInfo extends Vue {
 
       if (datasetIds.length > 0) {
         // Batch fetch all folders at once
-        await this.girderResources.batchFetchResources({ folderIds: datasetIds });
+        await this.girderResources.batchFetchResources({
+          folderIds: datasetIds,
+        });
       }
 
       // Populate local cache from the store's resources

@@ -22,7 +22,12 @@
                   {{ project.name }}
                 </v-list-item-title>
                 <v-list-item-subtitle>
-                  <v-chip x-small outlined class="mr-1" :color="getStatusColor(project.meta.status)">
+                  <v-chip
+                    x-small
+                    outlined
+                    class="mr-1"
+                    :color="getStatusColor(project.meta.status)"
+                  >
                     {{ project.meta.status }}
                   </v-chip>
                   <span class="text-caption">
@@ -38,7 +43,9 @@
                   </template>
                 </v-list-item-subtitle>
               </v-list-item-content>
-              <v-list-item-action class="my-0 d-flex flex-column justify-center">
+              <v-list-item-action
+                class="my-0 d-flex flex-column justify-center"
+              >
                 <div class="text-caption grey--text text-left">
                   <div>Updated:</div>
                   <div style="line-height: 1.1">

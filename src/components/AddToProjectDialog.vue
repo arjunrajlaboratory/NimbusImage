@@ -34,7 +34,10 @@
               </div>
 
               <v-list v-else dense class="project-select-list">
-                <v-list-item-group v-model="selectedProjectIndex" color="primary">
+                <v-list-item-group
+                  v-model="selectedProjectIndex"
+                  color="primary"
+                >
                   <v-list-item
                     v-for="project in availableProjects"
                     :key="project.id"

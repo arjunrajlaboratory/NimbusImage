@@ -17,10 +17,17 @@
 
       <v-progress-linear v-if="loading" indeterminate />
 
-      <div v-else-if="filteredCollections.length === 0" class="text-center pa-4">
+      <div
+        v-else-if="filteredCollections.length === 0"
+        class="text-center pa-4"
+      >
         <v-icon size="48" color="grey">mdi-folder-multiple-outline</v-icon>
         <div class="text-body-2 grey--text mt-2">
-          {{ searchQuery ? "No collections match your search" : "No collections available" }}
+          {{
+            searchQuery
+              ? "No collections match your search"
+              : "No collections available"
+          }}
         </div>
       </div>
 
@@ -148,7 +155,10 @@ export default class AddCollectionToProjectFilterDialog extends Vue {
           collectionId: collection.id,
         });
       }
-      this.$emit("added", this.selectedCollections.map((c) => c.id));
+      this.$emit(
+        "added",
+        this.selectedCollections.map((c) => c.id),
+      );
       this.selectedIndices = [];
     } finally {
       this.adding = false;

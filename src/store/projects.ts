@@ -31,8 +31,7 @@ export class Projects extends VuexModule {
   get recentProjects(): IProject[] {
     return [...this.projects]
       .sort(
-        (a, b) =>
-          new Date(b.updated).getTime() - new Date(a.updated).getTime(),
+        (a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime(),
       )
       .slice(0, 5);
   }

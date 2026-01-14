@@ -274,7 +274,12 @@ export default class FileManagerOptions extends Vue {
   }
 
   get openedDialogs() {
-    return [this.moveDialog, this.renameDialog, this.deleteDialog, this.addToProjectDialog];
+    return [
+      this.moveDialog,
+      this.renameDialog,
+      this.deleteDialog,
+      this.addToProjectDialog,
+    ];
   }
 
   get isADialogOpen() {

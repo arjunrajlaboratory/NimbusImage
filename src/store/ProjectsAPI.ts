@@ -244,9 +244,13 @@ export default class ProjectsAPI {
     status: "draft" | "exporting" | "exported",
   ): Promise<IProject | null> {
     try {
-      const response = await this.client.put(`project/${projectId}/status`, null, {
-        params: { status },
-      });
+      const response = await this.client.put(
+        `project/${projectId}/status`,
+        null,
+        {
+          params: { status },
+        },
+      );
       return toProject(response.data);
     } catch (error) {
       logError(`Failed to update status for project ${projectId}:`, error);
