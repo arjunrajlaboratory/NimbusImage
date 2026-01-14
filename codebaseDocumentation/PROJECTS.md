@@ -205,31 +205,83 @@ async saveMetadata() {
 }
 ```
 
-#### 6. Caching Pattern
+#### 6. Caching Pattern with Batch Loading
 
-ProjectInfo.vue uses local caches for related data:
+ProjectInfo.vue uses local caches for related data, with batch loading for efficiency:
 
 ```typescript
 // Cache objects indexed by ID
 datasetInfoCache: { [datasetId: string]: IGirderFolder } = {};
 collectionInfoCache: { [collectionId: string]: IGirderItem } = {};
+collectionDatasetViewsCache: { [collectionId: string]: IDatasetView[] } = {};
 
-// Fetch and cache on project load
+// Batch fetch on project load (avoids N individual API calls)
 async fetchDatasetInfo() {
+  const allDatasetIds = new Set<string>();
+  // Collect direct datasets
   for (const d of this.project.meta.datasets) {
-    if (!this.datasetInfoCache[d.datasetId]) {
-      const folder = await this.girderResources.getFolder(d.datasetId);
-      Vue.set(this.datasetInfoCache, d.datasetId, folder);  // Reactive update
+    allDatasetIds.add(d.datasetId);
+  }
+  // Collect datasets from collections
+  for (const c of this.project.meta.collections) {
+    const views = this.collectionDatasetViewsCache[c.collectionId] || [];
+    for (const v of views) {
+      allDatasetIds.add(v.datasetId);
     }
   }
+  // Single batch request
+  await this.girderResources.batchFetchResources({
+    folderIds: Array.from(allDatasetIds),
+  });
+  // Update local cache from global cache
+  for (const id of allDatasetIds) {
+    const folder = this.girderResources.watchFolder(id);
+    if (folder) Vue.set(this.datasetInfoCache, id, folder);
+  }
+}
+```
+
+#### 7. Unified Dataset List Pattern
+
+ProjectInfo.vue combines direct datasets with collection datasets using deduplication:
+
+```typescript
+interface IUnifiedDatasetItem {
+  datasetId: string;
+  addedDate: string;
+  info: IGirderFolder | undefined;
+  source: "direct" | "collection";
+  collectionIds: string[];  // Collections this dataset belongs to
 }
 
-// Computed property combines list with cache
-get datasetItems() {
-  return this.project.meta.datasets.map((d) => ({
-    datasetId: d.datasetId,
-    info: this.datasetInfoCache[d.datasetId],
-  }));
+get allDatasetItems(): IUnifiedDatasetItem[] {
+  const datasetMap = new Map<string, IUnifiedDatasetItem>();
+
+  // Add direct datasets first
+  for (const d of this.project?.meta.datasets || []) {
+    datasetMap.set(d.datasetId, {
+      datasetId: d.datasetId,
+      addedDate: d.addedDate,
+      info: this.datasetInfoCache[d.datasetId],
+      source: "direct",
+      collectionIds: [],
+    });
+  }
+
+  // Add/update with collection datasets (tracks which collections contain each)
+  for (const c of this.project?.meta.collections || []) {
+    const views = this.collectionDatasetViewsCache[c.collectionId] || [];
+    for (const v of views) {
+      const existing = datasetMap.get(v.datasetId);
+      if (existing) {
+        existing.collectionIds.push(c.collectionId);
+      } else {
+        datasetMap.set(v.datasetId, { ...newItem, collectionIds: [c.collectionId] });
+      }
+    }
+  }
+
+  return Array.from(datasetMap.values());
 }
 ```
 
@@ -378,10 +430,22 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 - Click to navigate to project detail
 
 ### Project Detail (`/project/:projectId`)
-- **Header**: Status chip + workflow buttons (Start Export, Mark as Exported) + Delete
+- **Header**: Status chip + total project size + workflow buttons (Start Export, Mark as Exported) + Delete
 - **Editable Fields**: Name and description (blur to save)
-- **Datasets List**: Two-line list with name/description, Remove and View buttons (styled to match ConfigurationInfo.vue)
-- **Collections List**: Expandable two-line list (shows nested datasets), Remove and View buttons per collection
+- **Datasets List**:
+  - Filter search bar for real-time name filtering
+  - Unified view showing both direct datasets and datasets from collections
+  - Individual dataset sizes displayed
+  - Collection indicator chips (blue `#4baeff`) show which collection(s) contain each dataset
+  - Chips are clickable and navigate to the collection
+  - Remove button only shown for directly-added datasets
+  - "No results" state when filter produces no matches
+- **Collections List**:
+  - Filter search bar for real-time name filtering
+  - Expandable two-line list showing nested datasets with sizes
+  - Collection size displayed (sum of dataset sizes)
+  - Remove and View buttons per collection
+  - "No results" state when filter produces no matches
 - **Publication Metadata**: Title, description, license, keywords, authors, DOI, publication date, funding
   - Save button disabled until changes are detected (uses `originalMetadata` tracking pattern)
 
@@ -398,6 +462,9 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 - [x] Remove dataset/collection from project UI
 - [x] Publication metadata editing
 - [x] Status workflow buttons
+- [x] Dataset/collection size display (individual and total)
+- [x] Dataset/collection filtering (search bars)
+- [x] Unified dataset view (show collection datasets with indicator chips)
 - [ ] Zenodo export integration
 - [ ] Project sharing/permissions
 - [ ] Bulk operations (add multiple datasets/collections at once)
