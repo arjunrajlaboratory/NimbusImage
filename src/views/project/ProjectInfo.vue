@@ -4,14 +4,19 @@
 
     <!-- Header with Delete Button -->
     <v-container class="d-flex align-center">
+      <!-- TODO: Export workflow UI - not yet implemented
+           Uncomment when Zenodo export integration is ready
       <v-chip :color="statusColor" text-color="white" small class="mr-2">
         {{ project.meta.status }}
       </v-chip>
+      -->
       <v-chip v-if="totalProjectSize > 0" outlined small class="mr-2">
         <v-icon left small>mdi-database</v-icon>
         {{ formatSize(totalProjectSize) }} total
       </v-chip>
       <v-spacer />
+      <!-- TODO: Export workflow buttons - not yet implemented
+           Uncomment when Zenodo export integration is ready
       <v-btn
         v-if="canStartExport"
         color="primary"
@@ -30,6 +35,7 @@
         <v-icon left>mdi-check</v-icon>
         Mark as Exported
       </v-btn>
+      -->
       <v-dialog v-model="deleteConfirm" max-width="33vw">
         <template #activator="{ on }">
           <v-btn color="red" v-on="on">
