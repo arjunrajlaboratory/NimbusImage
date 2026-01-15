@@ -85,6 +85,7 @@ interface Submenu {
   submenuInterface: any;
   submenuInterfaceIdx: any;
   items: Item[];
+  displayName?: string; // Override template.name for display (used for dynamic categories)
 }
 
 interface AugmentedItem extends Item {
@@ -121,7 +122,7 @@ export default class ToolTypeSelection extends Vue {
       (items, submenu) => [
         ...items,
         { divider: true },
-        { header: submenu.template.name },
+        { header: submenu.displayName ?? submenu.template.name },
         ...submenu.items.map((item) => ({ ...item, submenu }) as AugmentedItem),
       ],
       [] as (AugmentedItem | { divider: boolean } | { header: string })[],
@@ -131,12 +132,22 @@ export default class ToolTypeSelection extends Vue {
   get submenus(): Submenu[] {
     return this.templates
       .filter((template) => !hiddenToolTexts.has(template.name))
-      .map((template) => {
+      .flatMap((template) => {
         const submenuInterfaceIdx = template.interface.findIndex(
           (elem: any) => elem.isSubmenu,
         );
         const submenuInterface = template.interface[submenuInterfaceIdx] || {};
         let items: Omit<Item, "key">[] = [];
+
+        // For dockerImage type, we create multiple submenus (one per category)
+        if (submenuInterface.type === "dockerImage") {
+          return this.createDockerImageSubmenus(
+            template,
+            submenuInterface,
+            submenuInterfaceIdx,
+          );
+        }
+
         switch (submenuInterface.type) {
           case "annotation":
             items = this.store.availableToolShapes;
@@ -146,27 +157,6 @@ export default class ToolTypeSelection extends Vue {
               ...item,
               value: { [submenuInterface.id]: item },
             }));
-            break;
-          case "dockerImage":
-            for (const image in this.propertyStore.workerImageList) {
-              const labels = this.propertyStore.workerImageList[image];
-              if (labels.isAnnotationWorker !== undefined) {
-                const annotationInterface = template.interface.find(
-                  (elem: any) => elem.type === "annotation",
-                );
-                const annotationSetupDefault: Partial<IAnnotationSetup> = {
-                  shape: labels.annotationShape ?? AnnotationShape.Point,
-                };
-                items.push({
-                  text: labels.interfaceName || image,
-                  description: labels.description || "",
-                  value: {
-                    [submenuInterface.id]: { image },
-                    [annotationInterface.id]: annotationSetupDefault,
-                  },
-                });
-              }
-            }
             break;
           default:
             items.push({
@@ -191,6 +181,65 @@ export default class ToolTypeSelection extends Vue {
           items: keydItems,
         };
       });
+  }
+
+  /**
+   * Creates multiple submenus for docker workers, grouped by interfaceCategory.
+   * Each category becomes its own section in the tool type selection UI.
+   */
+  createDockerImageSubmenus(
+    template: any,
+    submenuInterface: any,
+    submenuInterfaceIdx: number,
+  ): Submenu[] {
+    // Group workers by interfaceCategory
+    const itemsByCategory: { [category: string]: Omit<Item, "key">[] } = {};
+    const annotationInterface = template.interface.find(
+      (elem: any) => elem.type === "annotation",
+    );
+
+    for (const image in this.propertyStore.workerImageList) {
+      const labels = this.propertyStore.workerImageList[image];
+      if (labels.isAnnotationWorker !== undefined) {
+        const category = labels.interfaceCategory || "Other Automated Tools";
+        if (!itemsByCategory[category]) {
+          itemsByCategory[category] = [];
+        }
+        const annotationSetupDefault: Partial<IAnnotationSetup> = {
+          shape: labels.annotationShape ?? AnnotationShape.Point,
+        };
+        itemsByCategory[category].push({
+          text: labels.interfaceName || image,
+          description: labels.description || "",
+          value: {
+            [submenuInterface.id]: { image },
+            [annotationInterface.id]: annotationSetupDefault,
+          },
+        });
+      }
+    }
+
+    // Create a submenu for each category
+    const categories = Object.keys(itemsByCategory).sort();
+    return categories.map((category) => {
+      const items = itemsByCategory[category];
+      const keydItems: Item[] = items
+        .filter((item) => !hiddenToolTexts.has(item.text))
+        .map(
+          (item, itemIdx) =>
+            ({
+              key: `${template.type}-${category}#${itemIdx}`,
+              ...item,
+            }) as Item,
+        );
+      return {
+        template,
+        submenuInterface,
+        submenuInterfaceIdx,
+        items: keydItems,
+        displayName: category,
+      };
+    });
   }
 
   selectItem(item: AugmentedItem) {
