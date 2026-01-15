@@ -367,7 +367,8 @@ class DatasetView(Resource):
         # but NOT email, so we need to fetch emails separately
         accessList = Folder().getFullAccessList(dataset)
 
-        # Bulk fetch emails for all users (getFullAccessList doesn't include them)
+        # Bulk fetch emails for all users
+        # (getFullAccessList doesn't include them)
         userIds = [u['id'] for u in accessList.get('users', [])]
         userEmails = {}
         if userIds:
