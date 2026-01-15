@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialog" max-width="650px">
+  <v-dialog v-model="dialog" max-width="750px">
     <v-card>
       <v-card-title>
         Share Dataset: {{ dataset ? dataset.name : "" }}
@@ -80,10 +80,13 @@
                   </thead>
                   <tbody>
                     <tr v-for="user in users" :key="user.id">
-                      <td>
-                        <span :title="user.login">{{
-                          user.name || user.login
-                        }}</span>
+                      <td class="text-left">
+                        <div class="font-weight-medium">
+                          {{ user.name || user.login }}
+                        </div>
+                        <div class="text-caption grey--text text-left">
+                          {{ user.email || user.login }}
+                        </div>
                       </td>
                       <td>
                         <span

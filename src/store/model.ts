@@ -411,6 +411,7 @@ export interface IDatasetAccessUser {
   id: string;
   login: string;
   name: string;
+  email: string;
   level: 0 | 1 | 2; // READ=0, WRITE=1, ADMIN=2
 }
 

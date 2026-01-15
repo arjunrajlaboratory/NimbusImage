@@ -310,8 +310,6 @@ class DatasetView(Resource):
 
         # 2. Find all DatasetViews
         # Use collection.find to get all regardless of permissions
-        # This used to be datasetViews = list(self._datasetViewModel.find({
-        # but changed it here while getting things to work; could test.
         datasetViews = list(self._datasetViewModel.collection.find({
             'datasetId': dataset['_id']
         }))
@@ -320,20 +318,23 @@ class DatasetView(Resource):
         configIds = {dv['configurationId'] for dv in datasetViews}
 
         # 4. Set permissions on DatasetViews
+        # Note: setPublic must be called individually as it modifies ACLs
         for dv in datasetViews:
             self._datasetViewModel.setPublic(dv, public, save=True)
 
-        # 5. Set permissions on Configurations
-        for configId in configIds:
-            config = CollectionModel().load(configId, force=True)
-            if config:
-                CollectionModel().setPublic(config, public, save=True)
+        # 5. Bulk load configurations, then set permissions
+        # (Bulk load avoids N+1 queries; setPublic must still be individual)
+        configs = list(CollectionModel().collection.find({
+            '_id': {'$in': list(configIds)}
+        }))
+        for config in configs:
+            CollectionModel().setPublic(config, public, save=True)
 
         return {
             'dataset': str(dataset['_id']),
             'public': public,
             'datasetViewsUpdated': len(datasetViews),
-            'configurationsUpdated': len(configIds)
+            'configurationsUpdated': len(configs)
         }
 
     @access.user
@@ -354,10 +355,27 @@ class DatasetView(Resource):
         .errorResponse('Admin access was denied for the dataset.', 403)
     )
     def getDatasetAccess(self, dataset):
-        """Return the full access list for a dataset and its configurations."""
+        """Return the full access list for a dataset and its configurations.
+
+        TODO: Consider allowing READ access users to view (but not modify) the
+        access list. Currently requires ADMIN, which means only the owner can
+        see who has access. Some systems allow viewing access lists at lower
+        permission levels.
+        """
         # Get full access list from the dataset folder
-        # getFullAccessList returns users/groups with names already populated
+        # getFullAccessList returns users/groups with login and name populated
+        # but NOT email, so we need to fetch emails separately
         accessList = Folder().getFullAccessList(dataset)
+
+        # Bulk fetch emails for all users (getFullAccessList doesn't include them)
+        userIds = [u['id'] for u in accessList.get('users', [])]
+        userEmails = {}
+        if userIds:
+            users = list(User().collection.find(
+                {'_id': {'$in': userIds}},
+                {'email': 1}
+            ))
+            userEmails = {u['_id']: u.get('email', '') for u in users}
 
         # Find all DatasetViews for this dataset
         datasetViews = list(self._datasetViewModel.collection.find({
@@ -367,16 +385,22 @@ class DatasetView(Resource):
         # Get unique configuration IDs
         configIds = {dv['configurationId'] for dv in datasetViews}
 
-        # Build configurations list with public status
-        configurations = []
-        for configId in configIds:
-            config = CollectionModel().load(configId, force=True)
-            if config:
-                configurations.append({
-                    'id': str(configId),
-                    'name': config.get('name', ''),
-                    'public': config.get('public', False)
-                })
+        # Bulk load all configurations at once (avoid N+1 queries)
+        # TODO: The UI currently doesn't expose per-configuration public status
+        # because configurations are confusing for most users. Most datasets
+        # have just one configuration anyway. Consider adding this UI later
+        # if users request more granular public/private control.
+        configs = list(CollectionModel().collection.find({
+            '_id': {'$in': list(configIds)}
+        }))
+        configurations = [
+            {
+                'id': str(config['_id']),
+                'name': config.get('name', ''),
+                'public': config.get('public', False)
+            }
+            for config in configs
+        ]
 
         return {
             'datasetId': str(dataset['_id']),
@@ -386,6 +410,7 @@ class DatasetView(Resource):
                     'id': str(u['id']),
                     'login': u.get('login', ''),
                     'name': u.get('name', ''),
+                    'email': userEmails.get(u['id'], ''),
                     'level': u['level']
                 }
                 for u in accessList.get('users', [])
