@@ -31,6 +31,7 @@ class DatasetView(Resource):
         self.route("POST", ("bulk_find",), self.findBulk)
         self.route("POST", ("share",), self.share)
         self.route("POST", ("set_public",), self.setDatasetPublic)
+        self.route("GET", ("access", ":datasetId"), self.getDatasetAccess)
         # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
         self.route("POST", ("map",), self.map)
 
@@ -207,7 +208,13 @@ class DatasetView(Resource):
 
     @access.user
     @autoDescribeRoute(
-        Description("Share a DatasetView to another user")
+        Description("Share or revoke access to DatasetViews for another user")
+        .notes("""
+            Set accessType to:
+            - 0 (READ) for view-only access
+            - 1 (WRITE) for edit access
+            - null to remove user's access entirely
+        """)
         .jsonParam(
             "body",
             description="Should match schema",
@@ -219,7 +226,7 @@ class DatasetView(Resource):
                 "properties": {
                     "datasetViewIds": {"type": "array"},
                     "userMailOrUsername": {"type": "string"},
-                    "accessType": {"type": "number"},
+                    "accessType": {"type": ["number", "null"]},
                 },
                 "required": [
                     "datasetViewIds", "userMailOrUsername", "accessType"],
@@ -238,8 +245,15 @@ class DatasetView(Resource):
         if not targetUser:
             logprint.error(f"Cannot find user {body['userMailOrUsername']}")
             raise RestException("badEmailOrUsername")
-        # Will raise if accessType is a bad value
-        accessType = AccessType().validate(body["accessType"])
+
+        # accessType can be null (to remove access) or a valid access level
+        rawAccessType = body["accessType"]
+        if rawAccessType is None:
+            # None means remove access - Girder's setUserAccess handles this
+            accessType = None
+        else:
+            # Will raise if accessType is a bad value
+            accessType = AccessType().validate(rawAccessType)
 
         # Will raise if user has not WRITE permissions on a datasetView
         datasetViews = [
@@ -320,6 +334,64 @@ class DatasetView(Resource):
             'public': public,
             'datasetViewsUpdated': len(datasetViews),
             'configurationsUpdated': len(configIds)
+        }
+
+    @access.user
+    @autoDescribeRoute(
+        Description("Get access list for a dataset and its associated configs")
+        .notes("""
+            Returns the current access list for a dataset, including:
+            - List of users with their access levels
+            - Public status of the dataset
+            - Associated configurations with their public status
+
+            Requires ADMIN access to the dataset folder.
+        """)
+        .modelParam('datasetId', 'The dataset folder ID', model=Folder,
+                    level=AccessType.ADMIN, destName='dataset',
+                    paramType='path')
+        .errorResponse('ID was invalid.')
+        .errorResponse('Admin access was denied for the dataset.', 403)
+    )
+    def getDatasetAccess(self, dataset):
+        """Return the full access list for a dataset and its configurations."""
+        # Get full access list from the dataset folder
+        # getFullAccessList returns users/groups with names already populated
+        accessList = Folder().getFullAccessList(dataset)
+
+        # Find all DatasetViews for this dataset
+        datasetViews = list(self._datasetViewModel.collection.find({
+            'datasetId': dataset['_id']
+        }))
+
+        # Get unique configuration IDs
+        configIds = {dv['configurationId'] for dv in datasetViews}
+
+        # Build configurations list with public status
+        configurations = []
+        for configId in configIds:
+            config = CollectionModel().load(configId, force=True)
+            if config:
+                configurations.append({
+                    'id': str(configId),
+                    'name': config.get('name', ''),
+                    'public': config.get('public', False)
+                })
+
+        return {
+            'datasetId': str(dataset['_id']),
+            'public': dataset.get('public', False),
+            'users': [
+                {
+                    'id': str(u['id']),
+                    'login': u.get('login', ''),
+                    'name': u.get('name', ''),
+                    'level': u['level']
+                }
+                for u in accessList.get('users', [])
+            ],
+            'groups': accessList.get('groups', []),
+            'configurations': configurations
         }
 
     @access.public

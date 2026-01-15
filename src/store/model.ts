@@ -406,6 +406,28 @@ export interface IDatasetView extends IDatasetViewBase {
   readonly id: string;
 }
 
+// Access control types for sharing datasets
+export interface IDatasetAccessUser {
+  id: string;
+  login: string;
+  name: string;
+  level: 0 | 1 | 2; // READ=0, WRITE=1, ADMIN=2
+}
+
+export interface IDatasetAccessConfiguration {
+  id: string;
+  name: string;
+  public: boolean;
+}
+
+export interface IDatasetAccessList {
+  datasetId: string;
+  public: boolean;
+  users: IDatasetAccessUser[];
+  groups: unknown[]; // Future use
+  configurations: IDatasetAccessConfiguration[];
+}
+
 export type TDisplaySliceType = "current" | "max-merge" | "constant" | "offset";
 
 export interface IDisplaySlice {
