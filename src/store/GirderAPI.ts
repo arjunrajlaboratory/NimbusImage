@@ -17,6 +17,7 @@ import {
   exampleConfigurationBase,
   IContrast,
   IDataset,
+  IDatasetAccessList,
   IDatasetConfiguration,
   IDatasetConfigurationBase,
   IDatasetView,
@@ -546,11 +547,17 @@ export default class GirderAPI {
     return response.data;
   }
 
+  /**
+   * Share or revoke access to dataset views for a user.
+   * @param datasetViews - The dataset views to share
+   * @param userMailOrUsername - Email or username of the target user
+   * @param accessType - 0 (READ), 1 (WRITE), or -1 to remove access
+   * @returns true on success, or an error message string on failure
+   */
   async shareDatasetView(
     datasetViews: IDatasetView[],
     userMailOrUsername: string,
     accessType: number,
-    makePublic: boolean = false,
   ) {
     const datasetViewIds = datasetViews.map((datasetView) => datasetView.id);
     try {
@@ -558,7 +565,6 @@ export default class GirderAPI {
         datasetViewIds,
         userMailOrUsername,
         accessType,
-        makePublic,
       });
       return response.data as boolean;
     } catch (error) {
@@ -567,6 +573,16 @@ export default class GirderAPI {
       }
       throw error;
     }
+  }
+
+  /**
+   * Get the current access list for a dataset.
+   * Returns users with their access levels and associated configurations.
+   * Requires ADMIN access to the dataset.
+   */
+  async getDatasetAccess(datasetId: string): Promise<IDatasetAccessList> {
+    const response = await this.client.get(`dataset_view/access/${datasetId}`);
+    return response.data;
   }
 
   async setDatasetPublic(datasetId: string, isPublic: boolean) {
