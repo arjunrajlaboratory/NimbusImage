@@ -165,6 +165,22 @@ this.$emit("eventName", payload);
 @Ref() readonly myElement!: HTMLElement;
 ```
 
+## Logging
+
+**Never use `console.log`, `console.warn`, or `console.error` directly** - eslint will reject them.
+
+Use the logging utilities from `@/utils/log`:
+
+```typescript
+import { logWarning, logError } from "@/utils/log";
+
+// Instead of console.warn()
+logWarning("Something unexpected happened");
+
+// Instead of console.error()
+logError("An error occurred", error);
+```
+
 ## Style Guidelines
 
 - Use scoped SCSS: `<style lang="scss" scoped>`

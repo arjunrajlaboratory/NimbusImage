@@ -77,6 +77,7 @@ import propertiesStore from "@/store/properties";
 import store from "@/store";
 import { AnnotationShape, IToolTemplate } from "@/store/model";
 import { getTourStepId, getTourTriggerId } from "@/utils/strings";
+import { logWarning } from "@/utils/log";
 import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
 
 interface Item {
@@ -363,7 +364,7 @@ export default class ToolTypeSelection extends Vue {
     const seen = new Set<string>();
     for (const name of this.featuredToolNames) {
       if (seen.has(name)) {
-        console.warn(`[ToolTypeSelection] Duplicate featured tool: "${name}"`);
+        logWarning(`[ToolTypeSelection] Duplicate featured tool: "${name}"`);
       }
       seen.add(name);
     }
@@ -375,9 +376,7 @@ export default class ToolTypeSelection extends Vue {
       );
       for (const name of this.featuredToolNames) {
         if (!allToolNames.has(name)) {
-          console.warn(
-            `[ToolTypeSelection] Featured tool not found: "${name}"`,
-          );
+          logWarning(`[ToolTypeSelection] Featured tool not found: "${name}"`);
         }
       }
     });
