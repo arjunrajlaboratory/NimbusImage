@@ -141,6 +141,49 @@ def get(self, doc):
     return doc
 ```
 
+**Security: `modelParam` vs `param`**
+
+Always use `modelParam` when accepting IDs that reference resources requiring access control:
+
+```python
+# Good - validates existence AND checks WRITE access
+.modelParam('datasetId', model=Folder, level=AccessType.WRITE,
+            destName='dataset', paramType='formData')
+
+# Bad - no validation, no access check (allows any string, even invalid IDs)
+.param('datasetId', 'Dataset ID to add.', paramType='formData')
+```
+
+Use plain `.param()` only for:
+- Simple string/number values that aren't resource IDs
+- Enum values or search filters
+- IDs where access control is handled elsewhere (rare)
+
+**Custom Plugin Models vs Girder Built-in Models**
+
+This plugin defines custom models that are NOT Girder's built-in models:
+
+| Resource | Plugin Model | NOT Girder's |
+|----------|--------------|--------------|
+| Datasets | `Folder` (Girder) | - |
+| Collections/Configs | `Collection` (plugin) | `Item` |
+| Projects | `Project` (plugin) | - |
+| Annotations | `Annotation` (plugin) | - |
+| Dataset Views | `DatasetView` (plugin) | - |
+
+When using `modelParam`, always use the correct model:
+
+```python
+# Good - uses plugin's Collection model for configurations
+from upenncontrast_annotation.server.models.collection import Collection
+.modelParam('collectionId', model=Collection, level=AccessType.WRITE, ...)
+
+# Bad - Girder's Item model won't find plugin collections!
+from girder.models.item import Item
+.modelParam('collectionId', model=Item, level=AccessType.WRITE, ...)
+# Results in: "Invalid item id" errors
+```
+
 ## API Endpoint Patterns
 
 ### Route Registration
@@ -359,6 +402,41 @@ from girder import logprint
 logprint.info("Informational message")
 logprint.warning("Warning message")
 logprint.error(f"Error: {details}")
+```
+
+## Linting
+
+Backend Python code is linted with **flake8** (default settings: 79 char line limit).
+
+CI runs flake8 via `.github/workflows/backend.yaml` on all pushes to `devops/girder/**`.
+
+**Fix lint errors with autopep8:**
+
+```bash
+# Install autopep8 (one-time)
+pip install autopep8
+
+# Fix a specific file
+autopep8 --in-place --aggressive path/to/file.py
+
+# Fix all Python files in a directory
+autopep8 --in-place --aggressive --recursive devops/girder/plugins/AnnotationPlugin/
+
+# Preview changes without modifying (dry run)
+autopep8 --diff path/to/file.py
+```
+
+**Common issues:**
+- `E501 line too long` - Break lines at 79 characters
+- For chained method calls (like `.modelParam(...)`), break after opening paren and align continuation
+
+**Check before committing:**
+```bash
+# Run flake8 locally (if installed)
+flake8 devops/girder/plugins/AnnotationPlugin/
+
+# Or use pipx (no install needed)
+pipx run flake8 devops/girder/plugins/AnnotationPlugin/
 ```
 
 ## Docker Development

@@ -429,6 +429,60 @@ export interface IDatasetAccessList {
   configurations: IDatasetAccessConfiguration[];
 }
 
+export interface IProjectDatasetReference {
+  datasetId: string;
+  addedDate: string;
+}
+
+export interface IProjectCollectionReference {
+  collectionId: string;
+  addedDate: string;
+}
+
+export interface IProjectMetadata {
+  title: string;
+  description: string;
+  license: string;
+  keywords: string[];
+  authors?: string;
+  doi?: string;
+  publicationDate?: string;
+  funding?: string;
+}
+
+export type TProjectStatus = "draft" | "exporting" | "exported";
+
+/**
+ * Get display color for project status
+ */
+export function getProjectStatusColor(
+  status: TProjectStatus | undefined,
+): string {
+  switch (status) {
+    case "exported":
+      return "success";
+    case "exporting":
+      return "warning";
+    default:
+      return "grey";
+  }
+}
+
+export interface IProject {
+  id: string;
+  name: string;
+  description: string;
+  creatorId: string;
+  created: string;
+  updated: string;
+  meta: {
+    datasets: IProjectDatasetReference[];
+    collections: IProjectCollectionReference[];
+    metadata: IProjectMetadata;
+    status: TProjectStatus;
+  };
+}
+
 export type TDisplaySliceType = "current" | "max-merge" | "constant" | "offset";
 
 export interface IDisplaySlice {

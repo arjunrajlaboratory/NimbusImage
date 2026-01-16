@@ -56,6 +56,21 @@
       <v-list-item @click.stop="renameDialog = true">
         <v-list-item-title> Rename </v-list-item-title>
       </v-list-item>
+      <!-- Add to Project (for folders/datasets) -->
+      <template v-if="items[0]._modelType === 'folder' && store.isLoggedIn">
+        <v-list-item @click.stop="addToProjectDialog = true">
+          <v-list-item-title>
+            <v-icon left small color="#8e24aa">mdi-folder-star</v-icon>
+            Add to Project
+          </v-list-item-title>
+        </v-list-item>
+        <add-to-project-dialog
+          v-model="addToProjectDialog"
+          :dataset-id="items[0]._id"
+          :dataset-name="items[0].name"
+          @added="onAddedToProject"
+        />
+      </template>
       <v-dialog v-model="renameDialog">
         <v-card>
           <v-card-title> New name </v-card-title>
@@ -183,6 +198,8 @@ const MutatingAction = createDecorator((options, key) => {
   components: {
     GirderLocationChooser: () =>
       import("@/components/GirderLocationChooser.vue").then((mod) => mod),
+    AddToProjectDialog: () =>
+      import("@/components/AddToProjectDialog.vue").then((mod) => mod.default),
   },
 })
 export default class FileManagerOptions extends Vue {
@@ -200,6 +217,8 @@ export default class FileManagerOptions extends Vue {
   newName: string = "";
 
   deleteDialog: boolean = false;
+
+  addToProjectDialog: boolean = false;
 
   moveFolderToAssetstorResolve: ((confirmation: boolean) => void) | null = null;
 
@@ -255,7 +274,12 @@ export default class FileManagerOptions extends Vue {
   }
 
   get openedDialogs() {
-    return [this.moveDialog, this.renameDialog, this.deleteDialog];
+    return [
+      this.moveDialog,
+      this.renameDialog,
+      this.deleteDialog,
+      this.addToProjectDialog,
+    ];
   }
 
   get isADialogOpen() {
@@ -322,6 +346,11 @@ export default class FileManagerOptions extends Vue {
     } finally {
       this.closeMenu();
     }
+  }
+
+  onAddedToProject() {
+    this.addToProjectDialog = false;
+    this.closeMenu();
   }
 }
 </script>

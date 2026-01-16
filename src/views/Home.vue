@@ -70,6 +70,7 @@
             <section class="mb-4 home-section">
               <v-tabs v-model="datasetsTab">
                 <v-tab>Recent Datasets</v-tab>
+                <v-tab>Recent Projects</v-tab>
                 <v-tab
                   v-if="Boolean(zenodoCommunityId)"
                   id="try-sample-dataset-tourstep"
@@ -85,6 +86,15 @@
                     :get-user-display-name="getUserDisplayName"
                     :format-date-number="formatDateNumber"
                     @dataset-clicked="navigateToDatasetView"
+                    class="fill-height"
+                  />
+                </v-tab-item>
+                <v-tab-item class="fill-height">
+                  <recent-projects
+                    :projects="recentProjects"
+                    :loading="loadingProjects"
+                    :get-user-display-name="getUserDisplayName"
+                    @project-clicked="handleProjectClicked"
                     class="fill-height"
                   />
                 </v-tab-item>
@@ -125,6 +135,10 @@
                     <v-icon left small>mdi-file-tree</v-icon>
                     Collections
                   </v-btn>
+                  <v-btn value="projects" small>
+                    <v-icon left small>mdi-folder-star</v-icon>
+                    Projects
+                  </v-btn>
                 </v-btn-toggle>
               </div>
               <div class="scrollable">
@@ -164,6 +178,9 @@
 
                 <!-- Collections View -->
                 <collection-list v-else-if="browseMode === 'collections'" />
+
+                <!-- Projects View -->
+                <project-list v-else-if="browseMode === 'projects'" />
               </div>
             </section>
           </v-col>
@@ -321,6 +338,9 @@ import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import CollectionList from "@/components/CollectionList.vue";
+import ProjectList from "@/components/ProjectList.vue";
+import RecentProjects from "@/components/RecentProjects.vue";
+import projects from "@/store/projects";
 import ZenodoImporter from "@/components/ZenodoImporter.vue";
 import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import RecentDatasets from "@/components/RecentDatasets.vue";
@@ -391,6 +411,8 @@ function findCommonPrefix(strings: string[]): string {
     GirderLocationChooser,
     CustomFileManager,
     CollectionList,
+    ProjectList,
+    RecentProjects,
     ZenodoImporter,
     ZenodoCommunityDisplay,
     RecentDatasets,
@@ -399,6 +421,7 @@ function findCommonPrefix(strings: string[]): string {
 export default class Home extends Vue {
   readonly store = store;
   readonly girderResources = girderResources;
+  readonly projectsStore = projects;
   readonly isDatasetFolder = isDatasetFolder;
   // Normally, this environment variable would be set:
   // export VITE_ZENODO_SAMPLES="nimbusimagesampledatasets"
@@ -419,8 +442,9 @@ export default class Home extends Vue {
   isDragging: boolean = false;
   showZenodoImporter: boolean = false;
   showUploadDialog: boolean = false;
-  browseMode: "files" | "collections" = "files";
+  browseMode: "files" | "collections" | "projects" = "files";
   datasetsTab: number = 0;
+  loadingProjects: boolean = false;
 
   pendingFiles: File[] = [];
   datasetName: string = "";
@@ -618,6 +642,10 @@ export default class Home extends Vue {
     return result;
   }
 
+  get recentProjects() {
+    return this.projectsStore.recentProjects;
+  }
+
   get datasetInfo() {
     const infos: {
       [datasetId: string]: IGirderFolder | null;
@@ -750,6 +778,7 @@ export default class Home extends Vue {
     this.initializeRecentViews();
     this.refreshRecentDatasetDetails();
     this.initializeWelcomeTour();
+    this.fetchRecentProjects();
     this.isNavigating = false; // Reset navigation state on mount
   }
 
@@ -758,6 +787,8 @@ export default class Home extends Vue {
     if (isLoggedIn) {
       // User has just logged in, try initializing the tour
       this.initializeWelcomeTour();
+      // Fetch recent projects
+      this.fetchRecentProjects();
     }
   }
 
@@ -867,6 +898,17 @@ export default class Home extends Vue {
       await this.store.fetchRecentDatasetViews();
     } catch (error) {
       logError("Failed to initialize recent views:", error);
+    }
+  }
+
+  private async fetchRecentProjects() {
+    this.loadingProjects = true;
+    try {
+      await this.projectsStore.fetchProjects();
+    } catch (error) {
+      logError("Failed to fetch recent projects:", error);
+    } finally {
+      this.loadingProjects = false;
     }
   }
 
@@ -1048,6 +1090,11 @@ export default class Home extends Vue {
   handleSampleDatasetSelected(dataset: any) {
     this.selectedZenodoDataset = dataset;
     this.showZenodoImporter = true;
+  }
+
+  handleProjectClicked() {
+    // Switch to Projects browse mode when clicking a project
+    this.browseMode = "projects";
   }
 
   selectedZenodoDataset: any = null;

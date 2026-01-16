@@ -48,6 +48,7 @@ export interface IGirderFolder extends IGirderBase {
   parentId?: string;
   public?: boolean;
   notPublic?: boolean;
+  size?: number;
 }
 
 export interface IGirderFile extends IGirderBase {
