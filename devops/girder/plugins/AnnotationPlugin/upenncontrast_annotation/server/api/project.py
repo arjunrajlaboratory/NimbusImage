@@ -16,6 +16,9 @@ from girder.models.folder import Folder
 from upenncontrast_annotation.server.models.project import (
     Project as ProjectModel
 )
+from upenncontrast_annotation.server.models.collection import (
+    Collection as CollectionModel
+)
 
 
 class Project(Resource):
@@ -164,16 +167,17 @@ class Project(Resource):
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Add a collection to a project.')
-        .notes('Requires WRITE access on the project.')
+        .notes('Requires WRITE access on both project and collection.')
         .modelParam('id', model=ProjectModel, level=AccessType.WRITE,
                     destName='project')
-        .param('collectionId', 'Collection ID to add.', paramType='formData')
+        .modelParam('collectionId', model=CollectionModel, level=AccessType.WRITE,
+                    destName='collection', paramType='formData')
         .errorResponse()
         .errorResponse('Write access denied.', 403)
     )
-    def addCollection(self, project, collectionId):
-        """Add collection to project."""
-        return self._projectModel.addCollection(project, collectionId)
+    def addCollection(self, project, collection):
+        """Add collection to project (WRITE permission enforced on both)."""
+        return self._projectModel.addCollection(project, collection['_id'])
 
     @access.user
     @filtermodel(model=ProjectModel)

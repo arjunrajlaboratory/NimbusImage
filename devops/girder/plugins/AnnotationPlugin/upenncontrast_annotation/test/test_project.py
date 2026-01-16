@@ -1,9 +1,12 @@
 import pytest
+import random
 
 from upenncontrast_annotation.server.models.project import Project
 from upenncontrast_annotation.server.models import project
+from upenncontrast_annotation.server.models.collection import Collection
 
-from girder.exceptions import ValidationException
+from girder.constants import AccessType
+from girder.exceptions import ValidationException, AccessException
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -249,3 +252,161 @@ class TestProject:
             {"creatorId": admin["_id"]}, user=admin
         ))
         assert all(p["creatorId"] == admin["_id"] for p in filtered)
+
+    def test_project_add_collection(self, admin):
+        """Test adding a collection to a project."""
+        project_model = Project()
+        collection_model = Collection()
+
+        # Create a dataset folder for the collection
+        unique_name = f"test_dataset_coll_{random.random()}"
+        folder = utilities.createFolder(
+            admin, unique_name, upenn_utilities.datasetMetadata
+        )
+
+        # Create a collection (configuration)
+        config_meta = {
+            "subtype": "contrastDataset",
+            "compatibility": {},
+            "layers": [],
+            "tools": [],
+            "propertyIds": [],
+            "snapshots": [],
+            "scales": {}
+        }
+        config = collection_model.createCollection(
+            name=f"test_config_{random.random()}",
+            creator=admin,
+            folder=folder,
+            metadata=config_meta,
+            description="Test configuration"
+        )
+
+        # Create a project
+        proj = project_model.createProject(
+            name="Collection Test Project",
+            creator=admin,
+            description="Test"
+        )
+
+        # Add collection to project
+        updated = project_model.addCollection(proj, str(config["_id"]))
+        assert len(updated["meta"]["collections"]) == 1
+        assert (
+            str(updated["meta"]["collections"][0]["collectionId"])
+            == str(config["_id"])
+        )
+
+        # Adding same collection again should raise ValidationException
+        with pytest.raises(
+            ValidationException, match="Collection already in project"
+        ):
+            project_model.addCollection(updated, str(config["_id"]))
+
+    def test_project_remove_collection(self, admin):
+        """Test removing a collection from a project."""
+        project_model = Project()
+        collection_model = Collection()
+
+        # Create a dataset folder for the collection
+        unique_name = f"test_dataset_remove_coll_{random.random()}"
+        folder = utilities.createFolder(
+            admin, unique_name, upenn_utilities.datasetMetadata
+        )
+
+        # Create a collection
+        config_meta = {
+            "subtype": "contrastDataset",
+            "compatibility": {},
+            "layers": [],
+            "tools": [],
+            "propertyIds": [],
+            "snapshots": [],
+            "scales": {}
+        }
+        config = collection_model.createCollection(
+            name=f"test_config_remove_{random.random()}",
+            creator=admin,
+            folder=folder,
+            metadata=config_meta,
+            description="Test configuration"
+        )
+
+        # Create a project with a collection
+        proj = project_model.createProject(
+            name="Remove Collection Test Project",
+            creator=admin,
+            description="Test"
+        )
+        proj = project_model.addCollection(proj, str(config["_id"]))
+        assert len(proj["meta"]["collections"]) == 1
+
+        # Remove the collection
+        updated = project_model.removeCollection(proj, str(config["_id"]))
+        assert len(updated["meta"]["collections"]) == 0
+
+    def test_project_collection_access_control(self, admin, user):
+        """Test that adding a collection requires WRITE access to it.
+
+        This tests the access control at the model level. The API layer
+        uses modelParam to enforce WRITE access on the collection before
+        the model method is called.
+        """
+        collection_model = Collection()
+
+        # Create a dataset folder for the collection as admin
+        unique_name = f"test_dataset_access_{random.random()}"
+        folder = utilities.createFolder(
+            admin, unique_name, upenn_utilities.datasetMetadata
+        )
+
+        # Create a collection as admin
+        config_meta = {
+            "subtype": "contrastDataset",
+            "compatibility": {},
+            "layers": [],
+            "tools": [],
+            "propertyIds": [],
+            "snapshots": [],
+            "scales": {}
+        }
+        config = collection_model.createCollection(
+            name=f"test_config_access_{random.random()}",
+            creator=admin,
+            folder=folder,
+            metadata=config_meta,
+            description="Test configuration"
+        )
+
+        # User should not have access to load the collection with WRITE level
+        # (only the creator has access by default)
+        with pytest.raises(AccessException):
+            collection_model.load(
+                config["_id"], user=user, level=AccessType.WRITE
+            )
+
+        # But user can load with READ if given READ access
+        collection_model.setUserAccess(
+            config, user, AccessType.READ, save=True
+        )
+        loaded = collection_model.load(
+            config["_id"], user=user, level=AccessType.READ
+        )
+        assert loaded is not None
+
+        # User still can't load with WRITE (only has READ)
+        with pytest.raises(AccessException):
+            collection_model.load(
+                config["_id"], user=user, level=AccessType.WRITE
+            )
+
+        # Give user WRITE access
+        collection_model.setUserAccess(
+            config, user, AccessType.WRITE, save=True
+        )
+
+        # Now user can load with WRITE
+        loaded = collection_model.load(
+            config["_id"], user=user, level=AccessType.WRITE
+        )
+        assert loaded is not None
