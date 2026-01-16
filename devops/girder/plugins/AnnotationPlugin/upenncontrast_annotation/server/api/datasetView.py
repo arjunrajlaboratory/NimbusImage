@@ -213,7 +213,7 @@ class DatasetView(Resource):
             Set accessType to:
             - 0 (READ) for view-only access
             - 1 (WRITE) for edit access
-            - null to remove user's access entirely
+            - -1 to remove user's access entirely
         """)
         .jsonParam(
             "body",
@@ -226,7 +226,7 @@ class DatasetView(Resource):
                 "properties": {
                     "datasetViewIds": {"type": "array"},
                     "userMailOrUsername": {"type": "string"},
-                    "accessType": {"type": ["number", "null"]},
+                    "accessType": {"type": "number"},
                 },
                 "required": [
                     "datasetViewIds", "userMailOrUsername", "accessType"],
@@ -246,14 +246,9 @@ class DatasetView(Resource):
             logprint.error(f"Cannot find user {body['userMailOrUsername']}")
             raise RestException("badEmailOrUsername")
 
-        # accessType can be null (to remove access) or a valid access level
-        rawAccessType = body["accessType"]
-        if rawAccessType is None:
-            # None means remove access - Girder's setUserAccess handles this
-            accessType = None
-        else:
-            # Will raise if accessType is a bad value
-            accessType = AccessType().validate(rawAccessType)
+        # Will raise if accessType is a bad value
+        # -1 means remove access (Girder convention), 0=READ, 1=WRITE, 2=ADMIN
+        accessType = AccessType().validate(body["accessType"])
 
         # Will raise if user has not WRITE permissions on a datasetView
         datasetViews = [
@@ -308,9 +303,8 @@ class DatasetView(Resource):
         # 1. Set the dataset (folder) itself to public
         Folder().setPublic(dataset, public, save=True)
 
-        # 2. Find all DatasetViews
-        # Use collection.find to get all regardless of permissions
-        datasetViews = list(self._datasetViewModel.collection.find({
+        # 2. Find all DatasetViews (force=True bypasses permissions for admin)
+        datasetViews = list(self._datasetViewModel.find({
             'datasetId': dataset['_id']
         }))
 
@@ -324,7 +318,7 @@ class DatasetView(Resource):
 
         # 5. Bulk load configurations, then set permissions
         # (Bulk load avoids N+1 queries; setPublic must still be individual)
-        configs = list(CollectionModel().collection.find({
+        configs = list(CollectionModel().find({
             '_id': {'$in': list(configIds)}
         }))
         for config in configs:
@@ -372,14 +366,14 @@ class DatasetView(Resource):
         userIds = [u['id'] for u in accessList.get('users', [])]
         userEmails = {}
         if userIds:
-            users = list(User().collection.find(
+            users = list(User().find(
                 {'_id': {'$in': userIds}},
-                {'email': 1}
+                fields=['email']
             ))
             userEmails = {u['_id']: u.get('email', '') for u in users}
 
         # Find all DatasetViews for this dataset
-        datasetViews = list(self._datasetViewModel.collection.find({
+        datasetViews = list(self._datasetViewModel.find({
             'datasetId': dataset['_id']
         }))
 
@@ -391,7 +385,7 @@ class DatasetView(Resource):
         # because configurations are confusing for most users. Most datasets
         # have just one configuration anyway. Consider adding this UI later
         # if users request more granular public/private control.
-        configs = list(CollectionModel().collection.find({
+        configs = list(CollectionModel().find({
             '_id': {'$in': list(configIds)}
         }))
         configurations = [

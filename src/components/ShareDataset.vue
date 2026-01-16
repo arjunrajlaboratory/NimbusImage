@@ -406,7 +406,7 @@ export default class ShareDataset extends Vue {
       const response = await this.store.api.shareDatasetView(
         selectedViews,
         user.login,
-        null, // null to remove access
+        -1, // -1 to remove access (Girder convention)
       );
 
       if (typeof response === "string") {

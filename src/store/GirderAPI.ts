@@ -551,13 +551,13 @@ export default class GirderAPI {
    * Share or revoke access to dataset views for a user.
    * @param datasetViews - The dataset views to share
    * @param userMailOrUsername - Email or username of the target user
-   * @param accessType - 0 (READ), 1 (WRITE), or null to remove access
+   * @param accessType - 0 (READ), 1 (WRITE), or -1 to remove access
    * @returns true on success, or an error message string on failure
    */
   async shareDatasetView(
     datasetViews: IDatasetView[],
     userMailOrUsername: string,
-    accessType: number | null,
+    accessType: number,
   ) {
     const datasetViewIds = datasetViews.map((datasetView) => datasetView.id);
     try {
