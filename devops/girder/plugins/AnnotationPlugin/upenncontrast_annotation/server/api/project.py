@@ -170,8 +170,9 @@ class Project(Resource):
         .notes('Requires WRITE access on both project and collection.')
         .modelParam('id', model=ProjectModel, level=AccessType.WRITE,
                     destName='project')
-        .modelParam('collectionId', model=CollectionModel, level=AccessType.WRITE,
-                    destName='collection', paramType='formData')
+        .modelParam('collectionId', model=CollectionModel,
+                    level=AccessType.WRITE, destName='collection',
+                    paramType='formData')
         .errorResponse()
         .errorResponse('Write access denied.', 403)
     )

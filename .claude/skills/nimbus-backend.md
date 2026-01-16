@@ -404,6 +404,41 @@ logprint.warning("Warning message")
 logprint.error(f"Error: {details}")
 ```
 
+## Linting
+
+Backend Python code is linted with **flake8** (default settings: 79 char line limit).
+
+CI runs flake8 via `.github/workflows/backend.yaml` on all pushes to `devops/girder/**`.
+
+**Fix lint errors with autopep8:**
+
+```bash
+# Install autopep8 (one-time)
+pip install autopep8
+
+# Fix a specific file
+autopep8 --in-place --aggressive path/to/file.py
+
+# Fix all Python files in a directory
+autopep8 --in-place --aggressive --recursive devops/girder/plugins/AnnotationPlugin/
+
+# Preview changes without modifying (dry run)
+autopep8 --diff path/to/file.py
+```
+
+**Common issues:**
+- `E501 line too long` - Break lines at 79 characters
+- For chained method calls (like `.modelParam(...)`), break after opening paren and align continuation
+
+**Check before committing:**
+```bash
+# Run flake8 locally (if installed)
+flake8 devops/girder/plugins/AnnotationPlugin/
+
+# Or use pipx (no install needed)
+pipx run flake8 devops/girder/plugins/AnnotationPlugin/
+```
+
 ## Docker Development
 
 ```bash
