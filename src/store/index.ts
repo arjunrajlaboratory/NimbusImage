@@ -267,22 +267,30 @@ export class Main extends VuexModule {
 
   toolTemplateList: any[] = [];
   selectedTool: IActiveTool | null = null;
-  readonly availableToolShapes: { value: string; text: string }[] = [
+  readonly availableToolShapes: {
+    value: string;
+    text: string;
+    description?: string;
+  }[] = [
     {
       text: AnnotationNames[AnnotationShape.Point],
       value: AnnotationShape.Point,
+      description: "Click to place point markers on the image",
     },
     {
       text: AnnotationNames[AnnotationShape.Polygon],
       value: AnnotationShape.Polygon,
+      description: "Draw freeform shapes by dragging",
     },
     {
       text: AnnotationNames[AnnotationShape.Line],
       value: AnnotationShape.Line,
+      description: "Draw freeform lines by dragging",
     },
     {
       text: AnnotationNames[AnnotationShape.Rectangle],
       value: AnnotationShape.Rectangle,
+      description: "Draw rectangular regions by dragging",
     },
   ];
 
