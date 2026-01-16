@@ -1,10 +1,10 @@
 <template>
-  <div class="tool-selection-dialog">
-    <div class="dialog-header">
-      <h1 class="dialog-title">Select Tool Type</h1>
-    </div>
+  <v-card class="tool-selection-dialog">
+    <v-card-title class="dialog-header">
+      <span class="dialog-title">Select Tool Type</span>
+    </v-card-title>
 
-    <div class="dialog-content">
+    <v-card-text class="dialog-content">
       <!-- Featured section at top -->
       <div v-if="featuredItems.length > 0" class="category category-featured">
         <div class="category-header">
@@ -67,8 +67,8 @@
           </div>
         </div>
       </div>
-    </div>
-  </div>
+    </v-card-text>
+  </v-card>
 </template>
 
 <script lang="ts">
@@ -332,7 +332,7 @@ export default class ToolTypeSelection extends Vue {
     this.$emit("selected", returnValue);
   }
 
-  get templates() {
+  get templates(): IToolTemplate[] {
     return this.store.toolTemplateList;
   }
 
@@ -347,11 +347,40 @@ export default class ToolTypeSelection extends Vue {
       if (response.ok) {
         const config: FeaturedToolsConfig = await response.json();
         this.featuredToolNames = config.featuredTools || [];
+        this.validateFeaturedTools();
       }
     } catch {
       // If config doesn't exist or fails to load, use empty array
       this.featuredToolNames = [];
     }
+  }
+
+  /**
+   * Validates featured tools configuration and logs warnings for issues
+   */
+  validateFeaturedTools() {
+    // Check for duplicates
+    const seen = new Set<string>();
+    for (const name of this.featuredToolNames) {
+      if (seen.has(name)) {
+        console.warn(`[ToolTypeSelection] Duplicate featured tool: "${name}"`);
+      }
+      seen.add(name);
+    }
+
+    // Check for non-matching names (after submenus are computed)
+    this.$nextTick(() => {
+      const allToolNames = new Set(
+        this.submenus.flatMap((s) => s.items.map((i) => i.text)),
+      );
+      for (const name of this.featuredToolNames) {
+        if (!allToolNames.has(name)) {
+          console.warn(
+            `[ToolTypeSelection] Featured tool not found: "${name}"`,
+          );
+        }
+      }
+    });
   }
 
   refreshWorkers() {
@@ -368,7 +397,7 @@ export default class ToolTypeSelection extends Vue {
 </script>
 
 <style lang="scss" scoped>
-// Category colors
+// Category accent colors (kept for visual distinction)
 $color-manual: #60a5fa;
 $color-selection: #22d3ee;
 $color-ai: #a78bfa;
@@ -380,73 +409,34 @@ $color-edits: #f87171;
 $color-other: #94a3b8;
 $color-featured: #fbbf24; // Gold for featured
 
-// Base colors
-$bg-dialog: #1a1a1e;
-$bg-card: #252529;
-$bg-card-hover: #2a2a2f;
-$text-primary: #f5f5f5;
-$text-secondary: rgba(255, 255, 255, 0.6);
-$text-muted: rgba(255, 255, 255, 0.4);
-$border-subtle: rgba(255, 255, 255, 0.08);
-
 .tool-selection-dialog {
-  background: $bg-dialog;
   border-radius: 16px;
   width: 100%;
-  max-width: 1000px;
-  margin: 0 auto;
-  box-shadow:
-    0 25px 50px -12px rgba(0, 0, 0, 0.5),
-    0 0 0 1px $border-subtle;
   overflow: hidden;
-  font-family:
-    "DM Sans",
-    -apple-system,
-    BlinkMacSystemFont,
-    sans-serif;
 }
 
 .dialog-header {
-  padding: 24px 28px 20px;
-  border-bottom: 1px solid $border-subtle;
+  padding: 24px 28px 20px !important;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
 }
 
 .dialog-title {
   font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: $text-primary;
-  margin: 0;
 }
 
 .dialog-content {
-  padding: 8px 20px 28px;
+  padding: 8px 20px 28px !important;
   max-height: 70vh;
   overflow-y: auto;
-
-  &::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  &::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  &::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-  }
-
-  &::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.25);
-  }
 }
 
 .category {
   padding: 20px 0 12px;
 
   &:not(:first-child) {
-    border-top: 1px solid $border-subtle;
+    border-top: 1px solid rgba(128, 128, 128, 0.2);
     margin-top: 8px;
   }
 }
@@ -474,8 +464,7 @@ $border-subtle: rgba(255, 255, 255, 0.08);
 
 .category-count {
   font-size: 0.75rem;
-  color: $text-muted;
-  background: rgba(255, 255, 255, 0.05);
+  opacity: 0.6;
   padding: 2px 8px;
   border-radius: 10px;
 }
@@ -487,7 +476,6 @@ $border-subtle: rgba(255, 255, 255, 0.08);
 }
 
 .tool-card {
-  background: $bg-card;
   border-radius: 10px;
   padding: 14px 16px;
   cursor: pointer;
@@ -511,7 +499,6 @@ $border-subtle: rgba(255, 255, 255, 0.08);
 
   &:hover {
     transform: translateY(-2px);
-    background: $bg-card-hover;
   }
 }
 
@@ -520,17 +507,45 @@ $border-subtle: rgba(255, 255, 255, 0.08);
   font-weight: 600;
   margin-bottom: 6px;
   line-height: 1.3;
-  color: $text-primary;
 }
 
 .tool-card-description {
   font-size: 0.78rem;
-  color: $text-secondary;
+  opacity: 0.7;
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+// Theme-specific styles (theme class is on the v-card itself)
+.tool-selection-dialog.theme--dark {
+  .category-count {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .tool-card {
+    background: rgba(255, 255, 255, 0.05);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+}
+
+.tool-selection-dialog.theme--light {
+  .category-count {
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  .tool-card {
+    background: rgba(0, 0, 0, 0.03);
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+  }
 }
 
 // Category-specific colors

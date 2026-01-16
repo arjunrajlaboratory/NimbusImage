@@ -4,7 +4,7 @@
       <v-expansion-panel-header class="pa-2">
         <v-toolbar-title> Toolset </v-toolbar-title>
         <!-- Tool Type Selection -->
-        <v-dialog v-model="toolTypeDialogOpen" width="90%">
+        <v-dialog v-model="toolTypeDialogOpen" max-width="1000px">
           <template v-slot:activator="{ on: dialog }">
             <v-tooltip top>
               <template v-slot:activator="{ on: tooltip }">
