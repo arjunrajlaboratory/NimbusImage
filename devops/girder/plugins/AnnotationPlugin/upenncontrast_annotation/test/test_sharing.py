@@ -9,7 +9,6 @@ import random
 from girder.constants import AccessType
 from girder.exceptions import AccessException
 from girder.models.folder import Folder
-from girder.models.user import User
 
 from upenncontrast_annotation.server.models.datasetView import (
     DatasetView as DatasetViewModel
