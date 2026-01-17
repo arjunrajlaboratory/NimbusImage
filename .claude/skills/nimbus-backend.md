@@ -406,9 +406,27 @@ logprint.error(f"Error: {details}")
 
 ## Linting
 
-Backend Python code is linted with **flake8** (default settings: 79 char line limit).
+Backend Python code is linted with **flake8**. The project uses a max line length of 88 characters.
 
 CI runs flake8 via `.github/workflows/backend.yaml` on all pushes to `devops/girder/**`.
+
+**Install flake8:**
+```bash
+# macOS (via Homebrew)
+brew install flake8
+
+# Or using pipx (no global install needed)
+pipx run flake8 ...
+```
+
+**Check before committing:**
+```bash
+# Run flake8 with project settings
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation --max-line-length=88
+
+# Check a specific file
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py --max-line-length=88
+```
 
 **Fix lint errors with autopep8:**
 
@@ -417,27 +435,18 @@ CI runs flake8 via `.github/workflows/backend.yaml` on all pushes to `devops/gir
 pip install autopep8
 
 # Fix a specific file
-autopep8 --in-place --aggressive path/to/file.py
+autopep8 --in-place --aggressive --max-line-length=88 path/to/file.py
 
 # Fix all Python files in a directory
-autopep8 --in-place --aggressive --recursive devops/girder/plugins/AnnotationPlugin/
+autopep8 --in-place --aggressive --recursive --max-line-length=88 devops/girder/plugins/AnnotationPlugin/
 
 # Preview changes without modifying (dry run)
 autopep8 --diff path/to/file.py
 ```
 
 **Common issues:**
-- `E501 line too long` - Break lines at 79 characters
+- `E501 line too long` - Break lines at 88 characters (project standard)
 - For chained method calls (like `.modelParam(...)`), break after opening paren and align continuation
-
-**Check before committing:**
-```bash
-# Run flake8 locally (if installed)
-flake8 devops/girder/plugins/AnnotationPlugin/
-
-# Or use pipx (no install needed)
-pipx run flake8 devops/girder/plugins/AnnotationPlugin/
-```
 
 ## Docker Development
 
@@ -446,7 +455,16 @@ pipx run flake8 devops/girder/plugins/AnnotationPlugin/
 docker compose down
 docker compose build
 docker compose up -d
+# Wait ~15-30 seconds for Girder to fully start
 
 # View logs
 docker compose logs -f girder
+```
+
+**Note:** Avoid `docker compose build --no-cache` unless absolutely necessary - it rebuilds everything from scratch including large_image installation, which takes a long time (10+ minutes). A normal `docker compose build` should pick up code changes.
+
+**Testing API changes:** After rebuilding, test with curl:
+```bash
+curl -X 'GET' 'http://localhost:8080/api/v1/export/csv?datasetId=YOUR_ID' \
+  -H 'Girder-Token: YOUR_TOKEN'
 ```
