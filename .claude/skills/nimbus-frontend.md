@@ -191,7 +191,7 @@ When using `:loading` on `v-btn`, the default slot content is replaced with just
 <v-btn
   :loading="isLoading"
   :disabled="isLoading"
-  :min-width="isLoading ? 200 : undefined"
+  :min-width="isLoading ? 260 : undefined"
   @click="doAction"
 >
   <template v-slot:loader>
