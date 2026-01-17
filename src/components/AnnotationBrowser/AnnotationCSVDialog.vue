@@ -130,6 +130,7 @@
           :disabled="!store.dataset || isDownloading"
           :loading="isDownloading"
           color="success"
+          :min-width="isDownloading ? 200 : undefined"
         >
           <template v-slot:loader>
             <v-progress-circular
