@@ -125,9 +125,17 @@
       <v-card-actions>
         <v-spacer></v-spacer>
         <v-btn @click="dialog = false" text>Close</v-btn>
-        <v-btn @click="download" :disabled="!store.dataset" color="success">
-          <v-icon> mdi-save </v-icon>
-          Download
+        <v-btn
+          @click="download"
+          :disabled="!store.dataset || isDownloading"
+          :loading="isDownloading"
+          color="success"
+        >
+          <template v-if="isDownloading"> Preparing download... </template>
+          <template v-else>
+            <v-icon> mdi-save </v-icon>
+            Download
+          </template>
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -242,6 +250,7 @@ export default class AnnotationCsvDialog extends Vue {
 
   processingProgress: number = 0;
   isProcessing: boolean = false;
+  isDownloading: boolean = false;
 
   async generateCSVStringForAnnotations() {
     this.isProcessing = true;
@@ -374,14 +383,19 @@ export default class AnnotationCsvDialog extends Vue {
       return;
     }
 
-    // Always use backend endpoint for downloads (handles large datasets)
-    await this.store.exportAPI.exportCsv({
-      datasetId: this.store.dataset.id,
-      propertyPaths: this.getIncludedPropertyPaths(),
-      annotationIds: this.annotations.map((a) => a.id),
-      undefinedValue: this.getUndefinedValueString(),
-      filename: this.filename || "upenn_annotation_export.csv",
-    });
+    this.isDownloading = true;
+    try {
+      // Always use backend endpoint for downloads (handles large datasets)
+      await this.store.exportAPI.exportCsv({
+        datasetId: this.store.dataset.id,
+        propertyPaths: this.getIncludedPropertyPaths(),
+        annotationIds: this.annotations.map((a) => a.id),
+        undefinedValue: this.getUndefinedValueString(),
+        filename: this.filename || "upenn_annotation_export.csv",
+      });
+    } finally {
+      this.isDownloading = false;
+    }
   }
 
   get displayedPropertyPaths() {
