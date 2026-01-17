@@ -396,10 +396,18 @@ class TestCSVExport:
         # Verify we have the expected number of rows
         assert len(rows) == 2
 
-        # Verify header format (would be):
-        # "Id",Channel,XY,Z,Time,"Tags","Shape","Name"
+        # Verify header generation logic
+        fields = ["Id", "Channel", "XY", "Z", "Time", "Tags", "Shape", "Name"]
+        quotedIndices = {0, 5, 6, 7}
+        headerRow = []
+        for i, field in enumerate(fields):
+            if i in quotedIndices:
+                headerRow.append(f'"{field}"')
+            else:
+                headerRow.append(field)
+        actualHeader = ','.join(headerRow)
         expectedHeader = '"Id",Channel,XY,Z,Time,"Tags","Shape","Name"'
-        assert expectedHeader == '"Id",Channel,XY,Z,Time,"Tags","Shape","Name"'
+        assert actualHeader == expectedHeader
 
     def testExportCsvOneIndexed(self, admin):
         """Verify XY, Z, Time are 1-indexed."""

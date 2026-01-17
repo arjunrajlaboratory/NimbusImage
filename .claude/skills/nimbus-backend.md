@@ -465,6 +465,8 @@ docker compose logs -f girder
 
 **Testing API changes:** After rebuilding, test with curl:
 ```bash
-curl -X 'GET' 'http://localhost:8080/api/v1/export/csv?datasetId=YOUR_ID' \
-  -H 'Girder-Token: YOUR_TOKEN'
+curl -X POST 'http://localhost:8080/api/v1/export/csv' \
+  -H 'Content-Type: application/json' \
+  -H 'Girder-Token: YOUR_TOKEN' \
+  -d '{"datasetId":"YOUR_ID"}'
 ```

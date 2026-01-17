@@ -319,7 +319,8 @@ class Export(Resource):
 
             # Add property columns
             for path in parsedPropertyPaths:
-                propertyName = self._getPropertyColumnName(path, propertyNameMap)
+                propertyName = self._getPropertyColumnName(
+                    path, propertyNameMap)
                 if propertyName:
                     fields.append(propertyName)
 
@@ -469,7 +470,7 @@ class Export(Resource):
         Format a value for CSV output.
 
         Handles number formatting to match frontend behavior:
-        - Integers (or floats that are whole numbers) are shown without decimals
+        - Integers (or whole number floats) are shown without decimals
         - Other floats keep their decimal representation
 
         Args:
