@@ -437,17 +437,17 @@ class TestMyFeature:
 
 ### Backend Linting
 
-The backend uses flake8 for Python linting with a max line length of 88 characters:
+The backend uses flake8 for Python linting with the default max line length of 79 characters:
 
 ```bash
 # Install flake8 (macOS)
 brew install flake8
 
-# Run flake8 on backend code
-flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation --max-line-length=88
+# Run flake8 on backend code (uses default 79 char limit)
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation
 
 # Run flake8 on a specific file
-flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py --max-line-length=88
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py
 ```
 
 Note: Linting is also run as part of tox tests, so `tox` will catch linting errors.

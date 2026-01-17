@@ -181,6 +181,35 @@ logWarning("Something unexpected happened");
 logError("An error occurred", error);
 ```
 
+## Vuetify Patterns
+
+### Button Loading States
+
+When using `:loading` on `v-btn`, the default slot content is replaced with just a spinner. To show custom loading content (e.g., text + spinner), use the `loader` slot:
+
+```vue
+<v-btn
+  :loading="isLoading"
+  :disabled="isLoading"
+  :min-width="isLoading ? 200 : undefined"
+  @click="doAction"
+>
+  <template v-slot:loader>
+    <v-progress-circular
+      indeterminate
+      size="18"
+      width="2"
+      class="mr-2"
+    ></v-progress-circular>
+    Loading...
+  </template>
+  <v-icon>mdi-check</v-icon>
+  Submit
+</v-btn>
+```
+
+Note: Use `:min-width` to ensure the button expands to fit longer loading text.
+
 ## Style Guidelines
 
 - Use scoped SCSS: `<style lang="scss" scoped>`
