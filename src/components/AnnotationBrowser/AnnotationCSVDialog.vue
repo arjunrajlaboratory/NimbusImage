@@ -131,11 +131,17 @@
           :loading="isDownloading"
           color="success"
         >
-          <template v-if="isDownloading"> Preparing download... </template>
-          <template v-else>
-            <v-icon> mdi-save </v-icon>
-            Download
+          <template v-slot:loader>
+            <v-progress-circular
+              indeterminate
+              size="18"
+              width="2"
+              class="mr-2"
+            ></v-progress-circular>
+            Preparing download...
           </template>
+          <v-icon> mdi-save </v-icon>
+          Download
         </v-btn>
       </v-card-actions>
     </v-card>
