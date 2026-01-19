@@ -1020,12 +1020,18 @@ describe("annotation store", () => {
       expect(stats.stubCount).toBe(80); // 80% of 100
       expect(stats.hydratedPercent).toBe(20);
 
+      // Field breakdown should exist
+      expect(stats.fieldBreakdown).toBeDefined();
+      const breakdown = stats.fieldBreakdown as { [field: string]: number };
+      expect(breakdown.id).toBeGreaterThan(0);
+      expect(breakdown.coordinates).toBeGreaterThan(0);
+
       // Memory estimates should be positive
       expect(stats.totalCoordinateBytes).toBeGreaterThan(0);
-      expect(stats.hydratedCoordinateBytes).toBeGreaterThan(0);
-      expect(stats.stubCoordinateBytes).toBeGreaterThan(0);
+      expect(stats.totalMetadataBytes).toBeGreaterThan(0);
+      expect(stats.avgBytesPerAnnotation).toBeGreaterThan(0);
 
-      // Theoretical savings should show ~80% of coordinate memory saved
+      // Theoretical savings should be positive (stubs save coordinate data)
       expect(stats.theoreticalSavingsPercent).toBeGreaterThan(0);
       expect(stats.theoreticalSavingsBytes).toBeGreaterThan(0);
     });

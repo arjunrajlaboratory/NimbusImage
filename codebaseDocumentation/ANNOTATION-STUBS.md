@@ -31,7 +31,7 @@ Currently, all annotation data is loaded fully when fetching annotations for a d
 
 ### Memory Analysis
 
-Based on actual annotation data:
+**Theoretical estimates** (complex polygons with 20 coordinates):
 
 ```
 Polygon with 20 coordinates:
@@ -47,10 +47,34 @@ Stub (centroid only):
 Memory reduction: ~82% per annotation
 ```
 
-For 10,000 annotations:
-- Current: ~5.8 MB just for annotation data
-- With stubs: ~1.0 MB
-- **Savings: ~4.8 MB**
+**Real-world measurements** (26K annotations, mostly 4-coordinate rectangles):
+
+Using the `memoryStats` getter on actual data:
+
+```
+Field breakdown (avg bytes per annotation):
+- id: 48           (MongoDB ObjectId string)
+- datasetId: 48    (MongoDB ObjectId - REDUNDANT, removed from stubs)
+- location: 54     ({XY, Z, Time} object with string keys)
+- tags: 36         (array of tag strings)
+- shape: 14        (enum string like "polygon")
+- channel: 8       (number)
+- color: 1         (usually null)
+- name: 0          (usually null)
+- coordinates: 160 (4 coords × ~40 bytes each)
+
+Total per annotation: ~369 bytes
+- Metadata: ~209 bytes
+- Coordinates: ~160 bytes
+```
+
+**Actual savings for 26K simple annotations:**
+- Removing `datasetId`: 48 bytes × 26K = **1.19 MB**
+- Removing `name`: ~0 (already null)
+- Removing coordinates (80% stubs): ~2.07 MB
+- **Total savings: ~3.2 MB (~35% reduction)**
+
+**Key insight**: For simple shapes (4 coordinates), metadata dominates storage. The biggest wins come from removing redundant fields (`datasetId`) rather than coordinate compression.
 
 ### Architecture Pattern
 
@@ -95,6 +119,56 @@ This means:
 - Stubs are always visible but simplified (points)
 - When user interacts with an annotation, it gets hydrated and renders fully
 - User sees the actual shapes for annotations they care about
+
+### Stub Field Decisions
+
+Based on real-world memory profiling, we made deliberate decisions about what to include/exclude from stubs:
+
+#### Fields INCLUDED in stubs:
+
+| Field | Bytes | Reason |
+|-------|-------|--------|
+| `id` | 48 | Required to identify the annotation |
+| `tags` | ~36 | Required for filtering |
+| `shape` | 14 | Useful for UI display (showing original shape type) |
+| `channel` | 8 | Required for layer assignment |
+| `location` | 54 | Required for frame filtering (XY, Z, Time) |
+| `centroid` | ~56 | Replaces coordinates for stub rendering |
+| `color` | ~1 | Custom color override (usually null) |
+
+#### Fields EXCLUDED from stubs:
+
+| Field | Bytes | Reason |
+|-------|-------|--------|
+| `datasetId` | 48 | **Redundant** - identical for all annotations in a dataset. The store already knows the current dataset. Saves ~1.2 MB for 26K annotations. |
+| `name` | ~24 | Usually null. Can retrieve from hydrated annotation when needed. |
+| `coordinates` | varies | Replaced by `centroid`. This is the primary memory savings. |
+
+#### Fields we considered optimizing but kept as-is:
+
+**`shape` (kept as string enum, not numeric index)**
+
+We considered storing shape as a numeric index (1 byte) instead of string ("polygon" = 14 bytes) to save ~13 bytes per annotation (~340 KB for 26K annotations).
+
+**Decision: Keep as string enum.**
+
+Reasoning:
+1. The savings (~340 KB) are modest compared to `datasetId` removal (~1.2 MB)
+2. Converting between index and enum adds CPU overhead on every stub creation
+3. For datasets with millions of annotations, this overhead compounds
+4. The string enum is more debuggable and doesn't require lookup tables
+5. Complexity cost outweighs the memory benefit
+
+**`location` (kept as object, not compact integers)**
+
+We considered storing location as 3 raw integers (12 bytes) instead of `{XY, Z, Time}` object (~54 bytes).
+
+**Decision: Keep as object for now.**
+
+Reasoning:
+1. Would require changes throughout the codebase that expects the object format
+2. The savings (~1 MB for 26K annotations) are meaningful but require more refactoring
+3. Can revisit if memory becomes a bottleneck
 
 ---
 
@@ -578,6 +652,9 @@ If issues arise:
 5. **Color handling**: Include in stub, fall back to layer color ✅
 6. **Vue 2 reactivity**: Use plain objects `{ [id: string]: true }` instead of `Set<string>` ✅
 7. **Selection mutations**: Create new objects (spread/destructure) to trigger reactivity ✅
+8. **datasetId in stub**: NO - redundant, same for all annotations in dataset. Saves ~48 bytes/annotation ✅
+9. **name in stub**: NO - usually null, can get from hydrated annotation when needed ✅
+10. **shape as numeric index**: NO - conversion overhead not worth ~13 bytes savings. Keep as string enum ✅
 
 ## Open Questions
 

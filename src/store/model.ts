@@ -1306,16 +1306,18 @@ export interface IAnnotation extends IAnnotationBase {
 /**
  * Minimal annotation for memory-efficient storage.
  * Rendered as a point at the centroid location.
+ *
+ * Memory optimizations:
+ * - No datasetId (same for all annotations in a dataset, known from context)
+ * - No name (usually null, can get from hydrated annotation if needed)
  */
 export interface IAnnotationStub {
   id: string;
-  name: string | null;
   tags: string[];
   shape: AnnotationShape; // Original shape (for UI display)
   channel: number;
   location: IAnnotationLocation;
   centroid: IGeoJSPosition; // Pre-computed centroid
-  datasetId: string;
   color: string | null;
 }
 

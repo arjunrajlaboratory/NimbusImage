@@ -38,6 +38,28 @@ import { logError } from "@/utils/log";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
+/**
+ * Estimate the byte size of a value using JSON serialization approach.
+ * This gives a reasonable approximation of in-memory size for string-heavy data.
+ */
+function estimateSize(value: unknown): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "string") return value.length * 2; // UTF-16
+  if (typeof value === "number") return 8;
+  if (typeof value === "boolean") return 4;
+  if (Array.isArray(value)) {
+    return value.reduce((sum: number, item) => sum + estimateSize(item), 0) + 16; // array overhead
+  }
+  if (typeof value === "object") {
+    let size = 16; // object overhead
+    for (const [key, val] of Object.entries(value)) {
+      size += key.length * 2 + estimateSize(val);
+    }
+    return size;
+  }
+  return 8;
+}
+
 @Module({ dynamic: true, store, name: "annotation" })
 export class Annotations extends VuexModule {
   annotationsAPI = main.annotationsAPI;
@@ -137,64 +159,137 @@ export class Annotations extends VuexModule {
   /**
    * Calculate memory statistics for stub/hydrated architecture.
    * Returns estimated bytes for stubs, hydrated annotations, and theoretical savings.
+   * Also includes detailed field-by-field breakdown.
    */
   get memoryStats() {
-    // Estimate bytes per coordinate (x, y, z = 3 * 8 bytes for doubles)
-    const BYTES_PER_COORDINATE = 24;
-    // Estimate bytes for stub metadata (id, name, tags, shape, channel, location, centroid, datasetId, color)
-    const BYTES_PER_STUB = 200; // approximate overhead for string IDs, metadata
+    const totalAnnotations = this.annotations.length;
+    if (totalAnnotations === 0) {
+      return {
+        totalAnnotations: 0,
+        stubCount: 0,
+        hydratedCount: 0,
+        hydratedPercent: 0,
+        fieldBreakdown: {},
+        avgBytesPerAnnotation: 0,
+        avgCoordinatesPerAnnotation: 0,
+        totalCoordinateBytes: 0,
+        totalMetadataBytes: 0,
+        theoreticalSavingsPercent: 0,
+      };
+    }
 
-    let totalCoordinateBytes = 0;
-    let hydratedCoordinateBytes = 0;
-    let stubCount = 0;
-    let hydratedCount = 0;
+    // Sample first 100 annotations for detailed field analysis
+    const sampleSize = Math.min(100, totalAnnotations);
+    const fieldTotals: { [field: string]: number } = {
+      id: 0,
+      name: 0,
+      tags: 0,
+      shape: 0,
+      channel: 0,
+      location: 0,
+      coordinates: 0,
+      datasetId: 0,
+      color: 0,
+    };
 
-    for (const annotation of this.annotations) {
-      const coordBytes = annotation.coordinates.length * BYTES_PER_COORDINATE;
-      totalCoordinateBytes += coordBytes;
+    let totalCoordinateCount = 0;
 
-      if (this.hydratedAnnotations.has(annotation.id)) {
-        hydratedCoordinateBytes += coordBytes;
-        hydratedCount++;
+    for (let i = 0; i < sampleSize; i++) {
+      const ann = this.annotations[i];
+      fieldTotals.id += estimateSize(ann.id);
+      fieldTotals.name += estimateSize(ann.name);
+      fieldTotals.tags += estimateSize(ann.tags);
+      fieldTotals.shape += estimateSize(ann.shape);
+      fieldTotals.channel += estimateSize(ann.channel);
+      fieldTotals.location += estimateSize(ann.location);
+      fieldTotals.coordinates += estimateSize(ann.coordinates);
+      fieldTotals.datasetId += estimateSize(ann.datasetId);
+      fieldTotals.color += estimateSize(ann.color);
+      totalCoordinateCount += ann.coordinates.length;
+    }
+
+    // Calculate averages per annotation
+    const fieldAverages: { [field: string]: number } = {};
+    let avgMetadataBytes = 0;
+    let avgCoordinateBytes = 0;
+
+    for (const [field, total] of Object.entries(fieldTotals)) {
+      const avg = total / sampleSize;
+      fieldAverages[field] = Math.round(avg);
+      if (field === "coordinates") {
+        avgCoordinateBytes = avg;
       } else {
-        stubCount++;
+        avgMetadataBytes += avg;
       }
     }
 
-    const totalAnnotations = this.annotations.length;
-    const stubMetadataBytes = stubCount * BYTES_PER_STUB;
-    const hydratedMetadataBytes = hydratedCount * BYTES_PER_STUB;
+    const avgCoordinatesPerAnnotation = totalCoordinateCount / sampleSize;
+    const avgBytesPerAnnotation = avgMetadataBytes + avgCoordinateBytes;
 
-    // Current usage (mock): all coordinates + stubs for all + hydrated map
-    const currentMockUsage = totalCoordinateBytes + (totalAnnotations * BYTES_PER_STUB);
+    // Count hydrated vs stubs
+    let hydratedCount = 0;
+    let stubCount = 0;
+    let hydratedCoordinateBytes = 0;
+    let stubCoordinateBytes = 0;
 
-    // Theoretical usage with real stubs: only hydrated coordinates + all stub metadata
-    const theoreticalUsage = hydratedCoordinateBytes + (totalAnnotations * BYTES_PER_STUB);
+    for (const annotation of this.annotations) {
+      const coordBytes = estimateSize(annotation.coordinates);
+      if (this.hydratedAnnotations.has(annotation.id)) {
+        hydratedCount++;
+        hydratedCoordinateBytes += coordBytes;
+      } else {
+        stubCount++;
+        stubCoordinateBytes += coordBytes;
+      }
+    }
 
-    // Full usage if everything was hydrated
-    const fullUsage = totalCoordinateBytes + (totalAnnotations * BYTES_PER_STUB);
+    // Extrapolate to full dataset
+    const totalMetadataBytes = Math.round(avgMetadataBytes * totalAnnotations);
+    const totalCoordinateBytes = Math.round(avgCoordinateBytes * totalAnnotations);
+    const totalBytes = totalMetadataBytes + totalCoordinateBytes;
 
-    const savings = fullUsage - theoreticalUsage;
-    const savingsPercent = fullUsage > 0 ? (savings / fullUsage) * 100 : 0;
+    // Stub would only need: metadata (minus name, datasetId) + centroid
+    // Centroid is 3 numbers = ~24 bytes, but stored as object with x,y,z keys
+    const centroidBytes = 56; // { x: number, y: number, z: number } with key overhead
+    // Stubs don't include: name, datasetId, coordinates (replaced by centroid)
+    const stubMetadataBytes = avgMetadataBytes - fieldAverages.name - fieldAverages.datasetId;
+    const theoreticalStubBytes = stubMetadataBytes + centroidBytes;
+
+    // Theoretical savings: stubs save (full annotation - stub size) per stub annotation
+    const fullAnnotationBytes = avgBytesPerAnnotation;
+    const savingsPerStub = fullAnnotationBytes - theoreticalStubBytes;
+    const theoreticalSavingsBytes = Math.round(savingsPerStub * stubCount);
+    const theoreticalSavingsPercent = totalBytes > 0 ? (theoreticalSavingsBytes / totalBytes) * 100 : 0;
 
     return {
       totalAnnotations,
       stubCount,
       hydratedCount,
-      hydratedPercent: totalAnnotations > 0 ? (hydratedCount / totalAnnotations) * 100 : 0,
+      hydratedPercent: (hydratedCount / totalAnnotations) * 100,
+
+      // Field breakdown (average bytes per annotation)
+      fieldBreakdown: fieldAverages,
+      avgMetadataBytes: Math.round(avgMetadataBytes),
+      avgCoordinateBytes: Math.round(avgCoordinateBytes),
+      avgBytesPerAnnotation: Math.round(avgBytesPerAnnotation),
+      avgCoordinatesPerAnnotation: Math.round(avgCoordinatesPerAnnotation * 10) / 10,
+
+      // Totals
+      totalMetadataBytes,
       totalCoordinateBytes,
-      hydratedCoordinateBytes,
-      stubCoordinateBytes: totalCoordinateBytes - hydratedCoordinateBytes,
-      currentMockUsageBytes: currentMockUsage,
-      theoreticalUsageBytes: theoreticalUsage,
-      fullUsageBytes: fullUsage,
-      theoreticalSavingsBytes: savings,
-      theoreticalSavingsPercent: savingsPercent,
-      // Human readable
-      currentMockUsageMB: (currentMockUsage / (1024 * 1024)).toFixed(2),
-      theoreticalUsageMB: (theoreticalUsage / (1024 * 1024)).toFixed(2),
-      fullUsageMB: (fullUsage / (1024 * 1024)).toFixed(2),
-      theoreticalSavingsMB: (savings / (1024 * 1024)).toFixed(2),
+      totalBytes,
+
+      // Stub analysis
+      theoreticalStubBytes: Math.round(theoreticalStubBytes),
+      savingsPerStub: Math.round(savingsPerStub),
+      theoreticalSavingsBytes,
+      theoreticalSavingsPercent: Math.round(theoreticalSavingsPercent * 10) / 10,
+
+      // Human readable (MB)
+      totalMB: (totalBytes / (1024 * 1024)).toFixed(2),
+      metadataMB: (totalMetadataBytes / (1024 * 1024)).toFixed(2),
+      coordinatesMB: (totalCoordinateBytes / (1024 * 1024)).toFixed(2),
+      theoreticalSavingsMB: (theoreticalSavingsBytes / (1024 * 1024)).toFixed(2),
     };
   }
 
@@ -574,13 +669,11 @@ export class Annotations extends VuexModule {
     // Newly created annotations are always hydrated
     const stub: IAnnotationStub = {
       id: value.id,
-      name: value.name,
       tags: value.tags,
       shape: value.shape,
       channel: value.channel,
       location: value.location,
       centroid,
-      datasetId: value.datasetId,
       color: value.color,
     };
     this.annotationStubs.set(value.id, stub);
@@ -603,13 +696,11 @@ export class Annotations extends VuexModule {
     // Update stub/hydrated maps
     const stub: IAnnotationStub = {
       id: annotation.id,
-      name: annotation.name,
       tags: annotation.tags,
       shape: annotation.shape,
       channel: annotation.channel,
       location: annotation.location,
       centroid,
-      datasetId: annotation.datasetId,
       color: annotation.color,
     };
     this.annotationStubs.set(annotation.id, stub);
@@ -656,13 +747,11 @@ export class Annotations extends VuexModule {
       // Create stub for all annotations
       const stub: IAnnotationStub = {
         id: annotation.id,
-        name: annotation.name,
         tags: annotation.tags,
         shape: annotation.shape,
         channel: annotation.channel,
         location: annotation.location,
         centroid,
-        datasetId: annotation.datasetId,
         color: annotation.color,
       };
       this.annotationStubs.set(annotation.id, stub);
@@ -1220,6 +1309,8 @@ export class Annotations extends VuexModule {
       } else {
         this.setAnnotations([]);
       }
+      // Log memory statistics for stub/hydrated architecture
+      console.log("[Annotation Store] Memory Stats:", this.memoryStats);
     } catch (error) {
       this.setAnnotations([]);
       this.setConnections([]);
