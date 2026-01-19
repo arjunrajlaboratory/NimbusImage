@@ -1303,6 +1303,32 @@ export interface IAnnotation extends IAnnotationBase {
   name: string | null;
 }
 
+/**
+ * Minimal annotation for memory-efficient storage.
+ * Rendered as a point at the centroid location.
+ */
+export interface IAnnotationStub {
+  id: string;
+  name: string | null;
+  tags: string[];
+  shape: AnnotationShape; // Original shape (for UI display)
+  channel: number;
+  location: IAnnotationLocation;
+  centroid: IGeoJSPosition; // Pre-computed centroid
+  datasetId: string;
+  color: string | null;
+}
+
+/** Union type for annotation or stub */
+export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
+
+/** Type guard: check if annotation has coordinates (is hydrated) */
+export function isHydratedAnnotation(
+  annotation: TAnnotationOrStub,
+): annotation is IAnnotation {
+  return "coordinates" in annotation && Array.isArray(annotation.coordinates);
+}
+
 export enum TrackPositionType {
   INTERIOR = "interior",
   START = "start",

@@ -73,6 +73,8 @@ import {
   ConnectionToolStateSymbol,
   IGeoJSMouseState,
   TrackPositionType,
+  TAnnotationOrStub,
+  isHydratedAnnotation,
 } from "../store/model";
 
 import { logError, logWarning } from "@/utils/log";
@@ -812,11 +814,11 @@ export default class AnnotationViewer extends Vue {
       this.textLayer
         .createFeature("text")
         .data(this.displayedAnnotations)
-        .position((annotation: IAnnotation) => {
+        .position((annotation: TAnnotationOrStub) => {
           return unrolledCoordinates[annotation.id];
         })
         .style({
-          text: (annotation: IAnnotation) => {
+          text: (annotation: TAnnotationOrStub) => {
             const index = this.annotationStore.annotationIdToIdx[annotation.id];
             return index + ": " + annotation.tags.join(", ");
           },
@@ -902,50 +904,55 @@ export default class AnnotationViewer extends Vue {
     return (id: string) => validLayerIds.has(id);
   }
 
-  // A map: map<layer id, map<annotation id, annotation>>
+  // A map: map<layer id, map<annotation id, annotation or stub>>
   // It provides an easy way to get all the annotations visible from a layer or
   // to check if an annotation belongs to a layer
-  get layerAnnotations() {
-    // channel -> array of annotations
-    const channelToAnnotationIds: Map<number, IAnnotation[]> = new Map();
+  // Uses stub/hydrated architecture for memory efficiency
+  get layerAnnotations(): Map<string, Map<string, TAnnotationOrStub>> {
+    // channel -> array of annotations/stubs
+    const channelToAnnotations: Map<number, TAnnotationOrStub[]> = new Map();
     for (const annotation of this.displayableAnnotations) {
-      if (!channelToAnnotationIds.has(annotation.channel)) {
-        channelToAnnotationIds.set(annotation.channel, []);
+      // Get the annotation or stub from the store
+      // This returns a stub for non-hydrated annotations
+      const annotationOrStub =
+        this.annotationStore.getAnnotationOrStub(annotation.id) ?? annotation;
+      if (!channelToAnnotations.has(annotationOrStub.channel)) {
+        channelToAnnotations.set(annotationOrStub.channel, []);
       }
-      channelToAnnotationIds.get(annotation.channel)!.push(annotation);
+      channelToAnnotations.get(annotationOrStub.channel)!.push(annotationOrStub);
     }
 
     // layer id -> set of annotation ids
-    const layerIdToAnnotationIds: Map<
+    const layerIdToAnnotations: Map<
       string,
-      Map<string, IAnnotation>
+      Map<string, TAnnotationOrStub>
     > = new Map();
     for (const layer of this.validLayers) {
       // Create a new set of annotation ids for this layer
-      const annotationIdsSet: Map<string, IAnnotation> = new Map();
-      layerIdToAnnotationIds.set(layer.id, annotationIdsSet);
+      const annotationMap: Map<string, TAnnotationOrStub> = new Map();
+      layerIdToAnnotations.set(layer.id, annotationMap);
 
       // Get all annotations in the layer's channel
       // Check if we should include annotations for this layer
       if (layer.visible || this.showAnnotationsFromHiddenLayers) {
         const layerChannelAnnotations =
-          channelToAnnotationIds.get(layer.channel) || [];
+          channelToAnnotations.get(layer.channel) || [];
         const sliceIndexes = this.store.layerSliceIndexes(layer);
         const allXY = this.store.unrollXY || layer.xy.type === "max-merge";
         const allZ = this.store.unrollZ || layer.z.type === "max-merge";
         const allT = this.store.unrollT || layer.time.type === "max-merge";
-        for (const annotation of layerChannelAnnotations) {
+        for (const annotationOrStub of layerChannelAnnotations) {
           if (
-            (allXY || annotation.location.XY === sliceIndexes?.xyIndex) &&
-            (allZ || annotation.location.Z === sliceIndexes?.zIndex) &&
-            (allT || annotation.location.Time === sliceIndexes?.tIndex)
+            (allXY || annotationOrStub.location.XY === sliceIndexes?.xyIndex) &&
+            (allZ || annotationOrStub.location.Z === sliceIndexes?.zIndex) &&
+            (allT || annotationOrStub.location.Time === sliceIndexes?.tIndex)
           ) {
-            annotationIdsSet.set(annotation.id, annotation);
+            annotationMap.set(annotationOrStub.id, annotationOrStub);
           }
         }
       }
     }
-    return layerIdToAnnotationIds;
+    return layerIdToAnnotations;
   }
 
   get layerDisplaysAnnotation() {
@@ -964,11 +971,11 @@ export default class AnnotationViewer extends Vue {
     return totalAnnotationIdsSet;
   }
 
-  // An array of annotations
-  get displayedAnnotations() {
-    const annotationList: IAnnotation[] = [];
-    for (const layerAnnotationIdsSet of this.layerAnnotations.values()) {
-      for (const annotation of layerAnnotationIdsSet.values()) {
+  // An array of annotations or stubs
+  get displayedAnnotations(): TAnnotationOrStub[] {
+    const annotationList: TAnnotationOrStub[] = [];
+    for (const layerAnnotationSet of this.layerAnnotations.values()) {
+      for (const annotation of layerAnnotationSet.values()) {
         annotationList.push(annotation);
       }
     }
@@ -1618,7 +1625,10 @@ export default class AnnotationViewer extends Vue {
     }
   }
 
-  createGeoJSAnnotation(annotation: IAnnotation, layerId?: string) {
+  createGeoJSAnnotation(
+    annotation: TAnnotationOrStub,
+    layerId?: string,
+  ): IGeoJSAnnotation | null {
     if (!this.store.dataset || !this.store.dataset.anyImage()) {
       return null;
     }
@@ -1627,11 +1637,27 @@ export default class AnnotationViewer extends Vue {
     if (!anyImage) {
       return null;
     }
-    const coordinates = this.unrolledCoordinates(
-      annotation.coordinates,
-      annotation.location,
-      anyImage,
-    );
+
+    let coordinates: IGeoJSPosition[];
+    let renderShape: AnnotationShape;
+
+    if (isHydratedAnnotation(annotation)) {
+      // Full shape - use actual coordinates
+      coordinates = this.unrolledCoordinates(
+        annotation.coordinates,
+        annotation.location,
+        anyImage,
+      );
+      renderShape = annotation.shape;
+    } else {
+      // Stub: render as point at centroid location
+      coordinates = this.unrolledCoordinates(
+        [annotation.centroid],
+        annotation.location,
+        anyImage,
+      );
+      renderShape = AnnotationShape.Point;
+    }
 
     // Consolidate all options into a single object
     const layer = this.store.getLayerFromId(layerId);
@@ -1652,10 +1678,11 @@ export default class AnnotationViewer extends Vue {
       layerId,
       customColor,
       style,
+      isStub: !isHydratedAnnotation(annotation), // Track if this is a stub
     };
 
     const newGeoJSAnnotation = geojsAnnotationFactory(
-      annotation.shape,
+      renderShape,
       coordinates,
       options,
     );

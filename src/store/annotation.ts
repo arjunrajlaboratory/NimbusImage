@@ -27,6 +27,9 @@ import {
   IErrorInfoList,
   ProgressType,
   IJobEventData,
+  IAnnotationStub,
+  TAnnotationOrStub,
+  isHydratedAnnotation,
 } from "./model";
 
 import Vue, { markRaw } from "vue";
@@ -47,7 +50,16 @@ export class Annotations extends VuexModule {
   annotationCentroids: { [annotationId: string]: IGeoJSPosition } = {};
   annotationIdToIdx: { [annotationId: string]: number } = {};
 
-  selectedAnnotations: IAnnotation[] = [];
+  // Stub/Hydrated annotation architecture
+  // All annotations as stubs (source of truth for "what exists")
+  annotationStubs: Map<string, IAnnotationStub> = new Map();
+  // Cache of hydrated annotations (full coordinate data)
+  hydratedAnnotations: Map<string, IAnnotation> = new Map();
+
+  // Selection (ID-based for memory efficiency)
+  // Using plain object instead of Set for Vue 2 reactivity
+  _selectedAnnotationIds: { [id: string]: true } = {};
+
   activeAnnotationIds: string[] = [];
 
   // Store copied annotations for paste operation
@@ -59,10 +71,41 @@ export class Annotations extends VuexModule {
 
   isDeletingAnnotations: boolean = false;
 
-  get selectedAnnotationIds() {
-    return this.selectedAnnotations.map(
-      (annotation: IAnnotation) => annotation.id,
-    );
+  // Returns array of selected annotation IDs
+  get selectedAnnotationIds(): string[] {
+    return Object.keys(this._selectedAnnotationIds);
+  }
+
+  // Computed getter: returns full annotations from selected IDs
+  // For backward compatibility - computes from IDs
+  get selectedAnnotations(): IAnnotation[] {
+    return Object.keys(this._selectedAnnotationIds)
+      .map((id) => this.hydratedAnnotations.get(id) ?? this.getAnnotationFromId(id))
+      .filter((a): a is IAnnotation => a !== undefined);
+  }
+
+  // Check if an annotation is hydrated (has full coordinate data)
+  get isHydrated() {
+    return (id: string) => this.hydratedAnnotations.has(id);
+  }
+
+  // Get stub for an annotation
+  get getStub() {
+    return (id: string) => this.annotationStubs.get(id);
+  }
+
+  // Get hydrated annotation if available
+  get getHydratedAnnotation() {
+    return (id: string) => this.hydratedAnnotations.get(id);
+  }
+
+  // Get annotation or stub for an ID
+  get getAnnotationOrStub() {
+    return (id: string): TAnnotationOrStub | undefined => {
+      const hydrated = this.hydratedAnnotations.get(id);
+      if (hydrated) return hydrated;
+      return this.annotationStubs.get(id);
+    };
   }
 
   get allAnnotationIds() {
@@ -70,8 +113,8 @@ export class Annotations extends VuexModule {
   }
 
   get isAnnotationSelected() {
-    const annotationIdsSet = new Set(this.selectedAnnotationIds);
-    return (annotationId: string) => annotationIdsSet.has(annotationId);
+    // Direct O(1) lookup using the object
+    return (annotationId: string) => annotationId in this._selectedAnnotationIds;
   }
 
   get isDeleting() {
@@ -88,6 +131,70 @@ export class Annotations extends VuexModule {
     return (annotationId: string) => {
       const idx = this.annotationIdToIdx[annotationId];
       return idx === undefined ? undefined : this.annotations[idx];
+    };
+  }
+
+  /**
+   * Calculate memory statistics for stub/hydrated architecture.
+   * Returns estimated bytes for stubs, hydrated annotations, and theoretical savings.
+   */
+  get memoryStats() {
+    // Estimate bytes per coordinate (x, y, z = 3 * 8 bytes for doubles)
+    const BYTES_PER_COORDINATE = 24;
+    // Estimate bytes for stub metadata (id, name, tags, shape, channel, location, centroid, datasetId, color)
+    const BYTES_PER_STUB = 200; // approximate overhead for string IDs, metadata
+
+    let totalCoordinateBytes = 0;
+    let hydratedCoordinateBytes = 0;
+    let stubCount = 0;
+    let hydratedCount = 0;
+
+    for (const annotation of this.annotations) {
+      const coordBytes = annotation.coordinates.length * BYTES_PER_COORDINATE;
+      totalCoordinateBytes += coordBytes;
+
+      if (this.hydratedAnnotations.has(annotation.id)) {
+        hydratedCoordinateBytes += coordBytes;
+        hydratedCount++;
+      } else {
+        stubCount++;
+      }
+    }
+
+    const totalAnnotations = this.annotations.length;
+    const stubMetadataBytes = stubCount * BYTES_PER_STUB;
+    const hydratedMetadataBytes = hydratedCount * BYTES_PER_STUB;
+
+    // Current usage (mock): all coordinates + stubs for all + hydrated map
+    const currentMockUsage = totalCoordinateBytes + (totalAnnotations * BYTES_PER_STUB);
+
+    // Theoretical usage with real stubs: only hydrated coordinates + all stub metadata
+    const theoreticalUsage = hydratedCoordinateBytes + (totalAnnotations * BYTES_PER_STUB);
+
+    // Full usage if everything was hydrated
+    const fullUsage = totalCoordinateBytes + (totalAnnotations * BYTES_PER_STUB);
+
+    const savings = fullUsage - theoreticalUsage;
+    const savingsPercent = fullUsage > 0 ? (savings / fullUsage) * 100 : 0;
+
+    return {
+      totalAnnotations,
+      stubCount,
+      hydratedCount,
+      hydratedPercent: totalAnnotations > 0 ? (hydratedCount / totalAnnotations) * 100 : 0,
+      totalCoordinateBytes,
+      hydratedCoordinateBytes,
+      stubCoordinateBytes: totalCoordinateBytes - hydratedCoordinateBytes,
+      currentMockUsageBytes: currentMockUsage,
+      theoreticalUsageBytes: theoreticalUsage,
+      fullUsageBytes: fullUsage,
+      theoreticalSavingsBytes: savings,
+      theoreticalSavingsPercent: savingsPercent,
+      // Human readable
+      currentMockUsageMB: (currentMockUsage / (1024 * 1024)).toFixed(2),
+      theoreticalUsageMB: (theoreticalUsage / (1024 * 1024)).toFixed(2),
+      fullUsageMB: (fullUsage / (1024 * 1024)).toFixed(2),
+      theoreticalSavingsMB: (savings / (1024 * 1024)).toFixed(2),
     };
   }
 
@@ -254,63 +361,65 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
-  public setSelected(selected: IAnnotation[]) {
-    this.selectedAnnotations = selected;
-  }
-
-  @Mutation
-  public selectAnnotation(annotation: IAnnotation) {
-    if (this.selectedAnnotations.find((a) => a.id === annotation.id)) {
-      return;
+  public setSelected(selected: IAnnotation[] | string[]) {
+    // Accept both IAnnotation[] and string[], extract IDs
+    // Create new object for Vue 2 reactivity
+    const newSelection: { [id: string]: true } = {};
+    for (const item of selected) {
+      const id = typeof item === "string" ? item : item.id;
+      newSelection[id] = true;
     }
-    this.selectedAnnotations = [...this.selectedAnnotations, annotation];
+    this._selectedAnnotationIds = newSelection;
   }
 
   @Mutation
-  public selectAnnotations(selected: IAnnotation[]) {
-    const selectedAnnotationIds = this.selectedAnnotations.map(
-      (annotation: IAnnotation) => annotation.id,
-    );
-    const annotationsToAdd = selected.filter(
-      (annotation) => !selectedAnnotationIds.includes(annotation.id),
-    );
-    this.selectedAnnotations = [
-      ...this.selectedAnnotations,
-      ...annotationsToAdd,
-    ];
+  public selectAnnotation(annotation: IAnnotation | string) {
+    const id = typeof annotation === "string" ? annotation : annotation.id;
+    // Create new object for Vue 2 reactivity (replacing entire object triggers reactivity)
+    this._selectedAnnotationIds = { ...this._selectedAnnotationIds, [id]: true };
   }
 
   @Mutation
-  public unselectAnnotation(annotation: IAnnotation) {
-    const index = this.selectedAnnotations.findIndex(
-      (a: IAnnotation) => a.id === annotation.id,
-    );
-    if (index >= 0) {
-      this.selectedAnnotations.splice(index, 1);
+  public selectAnnotations(selected: IAnnotation[] | string[]) {
+    // Create new object with all selected IDs for Vue 2 reactivity
+    const newSelection = { ...this._selectedAnnotationIds };
+    for (const item of selected) {
+      const id = typeof item === "string" ? item : item.id;
+      newSelection[id] = true;
     }
+    this._selectedAnnotationIds = newSelection;
   }
 
   @Mutation
-  public unselectAnnotations(selected: IAnnotation[]) {
-    const selectedAnnotationsIds = selected.map(
-      (annotation: IAnnotation) => annotation.id,
-    );
-    const annotationsToSelect = this.selectedAnnotations.filter(
-      (annotation: IAnnotation) =>
-        !selectedAnnotationsIds.includes(annotation.id),
-    );
-    this.selectedAnnotations = [...annotationsToSelect];
+  public unselectAnnotation(annotation: IAnnotation | string) {
+    const id = typeof annotation === "string" ? annotation : annotation.id;
+    // Create new object without the ID for Vue 2 reactivity
+    const { [id]: _, ...rest } = this._selectedAnnotationIds;
+    this._selectedAnnotationIds = rest;
+  }
+
+  @Mutation
+  public unselectAnnotations(selected: IAnnotation[] | string[]) {
+    // Create new object without the IDs for Vue 2 reactivity
+    const newSelection = { ...this._selectedAnnotationIds };
+    for (const item of selected) {
+      const id = typeof item === "string" ? item : item.id;
+      delete newSelection[id];
+    }
+    this._selectedAnnotationIds = newSelection;
   }
 
   @Action
-  public toggleSelected(selected: IAnnotation[]) {
-    selected.forEach((annotation) => {
-      if (this.selectedAnnotations.find((a) => a.id === annotation.id)) {
-        this.unselectAnnotation(annotation);
+  public toggleSelected(selected: IAnnotation[] | string[]) {
+    for (const item of selected) {
+      const id = typeof item === "string" ? item : item.id;
+      // Use 'in' operator to check object keys
+      if (id in this._selectedAnnotationIds) {
+        this.unselectAnnotation(id);
       } else {
-        this.selectAnnotation(annotation);
+        this.selectAnnotation(id);
       }
-    });
+    }
   }
 
   @Mutation
@@ -457,12 +566,25 @@ export class Annotations extends VuexModule {
   @Mutation
   private addAnnotationImpl(value: IAnnotation) {
     this.annotations.push(value);
-    Vue.set(
-      this.annotationCentroids,
-      value.id,
-      simpleCentroid(value.coordinates),
-    );
+    const centroid = simpleCentroid(value.coordinates);
+    Vue.set(this.annotationCentroids, value.id, centroid);
     Vue.set(this.annotationIdToIdx, value.id, this.annotations.length - 1);
+
+    // Add to stub/hydrated maps
+    // Newly created annotations are always hydrated
+    const stub: IAnnotationStub = {
+      id: value.id,
+      name: value.name,
+      tags: value.tags,
+      shape: value.shape,
+      channel: value.channel,
+      location: value.location,
+      centroid,
+      datasetId: value.datasetId,
+      color: value.color,
+    };
+    this.annotationStubs.set(value.id, stub);
+    this.hydratedAnnotations.set(value.id, value);
   }
 
   @Mutation
@@ -474,12 +596,27 @@ export class Annotations extends VuexModule {
     index: number;
   }) {
     Vue.set(this.annotations, index, annotation);
-    Vue.set(
-      this.annotationCentroids,
-      annotation.id,
-      simpleCentroid(annotation.coordinates),
-    );
+    const centroid = simpleCentroid(annotation.coordinates);
+    Vue.set(this.annotationCentroids, annotation.id, centroid);
     Vue.set(this.annotationIdToIdx, annotation.id, index);
+
+    // Update stub/hydrated maps
+    const stub: IAnnotationStub = {
+      id: annotation.id,
+      name: annotation.name,
+      tags: annotation.tags,
+      shape: annotation.shape,
+      channel: annotation.channel,
+      location: annotation.location,
+      centroid,
+      datasetId: annotation.datasetId,
+      color: annotation.color,
+    };
+    this.annotationStubs.set(annotation.id, stub);
+    // If already hydrated, update; otherwise keep it as stub-only
+    if (this.hydratedAnnotations.has(annotation.id)) {
+      this.hydratedAnnotations.set(annotation.id, annotation);
+    }
   }
 
   @Mutation
@@ -501,14 +638,39 @@ export class Annotations extends VuexModule {
     this.annotations = values;
     this.annotationCentroids = {};
     this.annotationIdToIdx = {};
-    for (let idx = 0; idx < this.annotations.length; ++idx) {
-      const annotation = this.annotations[idx];
-      Vue.set(
-        this.annotationCentroids,
-        annotation.id,
-        simpleCentroid(annotation.coordinates),
-      );
+
+    // Clear stub/hydrated maps
+    this.annotationStubs = new Map();
+    this.hydratedAnnotations = new Map();
+
+    // Mock data strategy: first 20% hydrated, rest as stubs
+    const hydratedCount = Math.ceil(nAnnotations * 0.2);
+
+    for (let idx = 0; idx < nAnnotations; ++idx) {
+      const annotation = values[idx];
+      const centroid = simpleCentroid(annotation.coordinates);
+
+      Vue.set(this.annotationCentroids, annotation.id, centroid);
       Vue.set(this.annotationIdToIdx, annotation.id, idx);
+
+      // Create stub for all annotations
+      const stub: IAnnotationStub = {
+        id: annotation.id,
+        name: annotation.name,
+        tags: annotation.tags,
+        shape: annotation.shape,
+        channel: annotation.channel,
+        location: annotation.location,
+        centroid,
+        datasetId: annotation.datasetId,
+        color: annotation.color,
+      };
+      this.annotationStubs.set(annotation.id, stub);
+
+      // Keep first 20% hydrated
+      if (idx < hydratedCount) {
+        this.hydratedAnnotations.set(annotation.id, annotation);
+      }
     }
   }
 
