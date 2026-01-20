@@ -82,6 +82,7 @@ import { logError, logWarning } from "@/utils/log";
 import {
   pointDistance,
   getAnnotationStyleFromBaseStyle,
+  getStubStyleFromBaseStyle,
   unrollIndexFromImages,
   geojsAnnotationFactory,
   tagFilterFunction,
@@ -679,12 +680,23 @@ export default class AnnotationViewer extends Vue {
     annotationId: string,
     annotationColor: string | null,
     layerColor?: string,
+    isStub: boolean = false,
   ) {
     // Use "hover" style for annotations selected by a tool
     const hovered =
       annotationId === this.hoveredAnnotationId ||
       this.toolHighlightedAnnotationIds.has(annotationId);
     const selected = this.isAnnotationSelected(annotationId);
+
+    // Stubs use specialized styling (smaller, thinner strokes)
+    if (isStub) {
+      return getStubStyleFromBaseStyle(
+        annotationColor || layerColor,
+        hovered,
+        selected,
+      );
+    }
+
     return getAnnotationStyleFromBaseStyle(
       this.baseStyle,
       annotationColor || layerColor,
@@ -1120,7 +1132,7 @@ export default class AnnotationViewer extends Vue {
       const isHoveredGT = annotationId === this.hoveredAnnotationId;
       const isSelectedGT = this.isAnnotationSelected(annotationId);
       for (const geoJSAnnotation of geoJSAnnotationList) {
-        const { layerId, isHovered, isSelected, style, customColor } =
+        const { layerId, isHovered, isSelected, style, customColor, isStub } =
           geoJSAnnotation.options();
         // If hover or select changed, update style
         if (isHovered != isHoveredGT || isSelected != isSelectedGT) {
@@ -1129,6 +1141,7 @@ export default class AnnotationViewer extends Vue {
             annotationId,
             customColor,
             layer?.color,
+            isStub ?? false,
           );
           geoJSAnnotation.options("style", { ...style, ...newStyle });
           geoJSAnnotation.options("isHovered", isHoveredGT);
@@ -1678,10 +1691,12 @@ export default class AnnotationViewer extends Vue {
     // Consolidate all options into a single object
     const layer = this.store.getLayerFromId(layerId);
     const customColor = annotation.color;
+    const isStub = !isHydratedAnnotation(annotation);
     const style = this.getAnnotationStyle(
       annotation.id,
       customColor,
       layer?.color,
+      isStub,
     );
 
     const options = {
@@ -1694,7 +1709,7 @@ export default class AnnotationViewer extends Vue {
       layerId,
       customColor,
       style,
-      isStub: !isHydratedAnnotation(annotation), // Track if this is a stub
+      isStub, // Track if this is a stub for restyling
     };
 
     const newGeoJSAnnotation = geojsAnnotationFactory(
@@ -1745,7 +1760,7 @@ export default class AnnotationViewer extends Vue {
 
   private restyleAnnotations() {
     for (const geoJSAnnotation of this.annotationLayer.annotations()) {
-      const { girderId, layerId, style, customColor } =
+      const { girderId, layerId, style, customColor, isStub } =
         geoJSAnnotation.options();
       if (girderId) {
         const layer = this.store.getLayerFromId(layerId);
@@ -1753,6 +1768,7 @@ export default class AnnotationViewer extends Vue {
           girderId,
           customColor,
           layer?.color,
+          isStub ?? false,
         );
         geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
       }
@@ -2810,10 +2826,16 @@ export default class AnnotationViewer extends Vue {
   // Debounced visibility update to avoid excessive re-renders during pan/zoom
   updateVisibilityDebounced = debounce(() => {
     const filteredIds = this.filteredAnnotations.map((a) => a.id);
+    // Calculate viewport diagonal for adaptive zoom threshold
+    const mapSize = this.map?.size();
+    const viewportDiagonal = mapSize
+      ? Math.sqrt(mapSize.width ** 2 + mapSize.height ** 2)
+      : undefined;
     this.annotationStore.updateVisibilityAndHydration({
       filteredIds,
       zoom: this.zoom,
       gcsBounds: this.gcsBounds,
+      viewportDiagonal,
     });
   }, 100);
 

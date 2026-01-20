@@ -148,6 +148,12 @@ vi.mock("@/utils/annotation", () => ({
   simpleCentroid: vi.fn((coords) =>
     coords.length > 0 ? { x: coords[0].x, y: coords[0].y } : { x: 0, y: 0 },
   ),
+  selectRandomSubset: vi.fn((ids, maxCount) =>
+    ids.length <= maxCount ? ids : ids.slice(0, maxCount),
+  ),
+  estimateAnnotationRadius: vi.fn((coords) =>
+    coords.length <= 1 ? 5 : 10, // Return a default radius for testing
+  ),
 }));
 
 // Mock the log utility

@@ -16,6 +16,52 @@ type TAnnotationStyle = IGeoJSLineFeatureStyle &
   IGeoJSPointFeatureStyle &
   IGeoJSPolygonFeatureStyle;
 
+/**
+ * Stub-specific styling - fixed pixel size, thinner strokes.
+ * Stubs render as small dots that don't change size with zoom.
+ */
+export function getStubStyleFromBaseStyle(
+  annotationColor?: string,
+  isHovered: boolean = false,
+  isSelected: boolean = false,
+): TAnnotationStyle {
+  const style: TAnnotationStyle = {
+    stroke: true,
+    strokeColor: "black",
+    strokeOpacity: 0.8,
+    strokeWidth: 2, // Thinner than full (4)
+    fillColor: "white",
+    fillOpacity: 0.4,
+    fill: true,
+    radius: 5, // Fixed small radius
+    scaled: 1, // Always scale with zoom (fixed world size)
+  };
+
+  if (annotationColor) {
+    const geoColor = { ...geojs.util.convertColor(annotationColor) };
+    geoColor.r *= 0.75;
+    geoColor.g *= 0.75;
+    geoColor.b *= 0.75;
+    style.fillColor = annotationColor;
+    style.strokeColor = geoColor;
+  }
+
+  if (isSelected) {
+    style.strokeWidth = 3;
+    if (annotationColor) {
+      style.strokeColor = geojs.util.convertColor(annotationColor);
+    }
+  }
+
+  if (isHovered) {
+    style.fillOpacity = 0.1;
+    style.strokeWidth = 3;
+    style.strokeColor = { r: 1, g: 0.9, b: 0.9 };
+  }
+
+  return style;
+}
+
 // Which style an annotation should have, depending on its layer (color change)
 export function getAnnotationStyleFromBaseStyle(
   baseStyle: { [key: string]: any; color?: TGeoJSColor },
@@ -227,4 +273,49 @@ export function tagCloudFilterFunction(
     return filterTags.every((filterTag) => inputTags.includes(filterTag));
   }
   return inputTags.some((inputTag) => filterTags.includes(inputTag));
+}
+
+/**
+ * Simple hash function for strings (djb2 algorithm)
+ */
+function hashString(str: string): number {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) + hash + str.charCodeAt(i);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Seeded random selection - deterministic based on ID hashes.
+ * Provides consistent "random" ordering for good spatial distribution.
+ */
+export function selectRandomSubset(ids: string[], maxCount: number): string[] {
+  if (ids.length <= maxCount) return ids;
+
+  // Sort by hash of ID for consistent pseudo-random ordering
+  const sorted = [...ids].sort((a, b) => hashString(a) - hashString(b));
+  return sorted.slice(0, maxCount);
+}
+
+/**
+ * Estimate annotation radius from coordinates (bounding box diagonal / 2)
+ */
+export function estimateAnnotationRadius(
+  coordinates: IGeoJSPosition[],
+): number {
+  if (coordinates.length <= 1) return 5; // Point - use default
+
+  let minX = Infinity,
+    maxX = -Infinity;
+  let minY = Infinity,
+    maxY = -Infinity;
+  for (const coord of coordinates) {
+    minX = Math.min(minX, coord.x);
+    maxX = Math.max(maxX, coord.x);
+    minY = Math.min(minY, coord.y);
+    maxY = Math.max(maxY, coord.y);
+  }
+
+  return Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2) / 2;
 }

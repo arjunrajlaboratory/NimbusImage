@@ -35,7 +35,11 @@ import {
 } from "./model";
 
 import Vue, { markRaw } from "vue";
-import { simpleCentroid } from "@/utils/annotation";
+import {
+  simpleCentroid,
+  selectRandomSubset,
+  estimateAnnotationRadius,
+} from "@/utils/annotation";
 import { logError } from "@/utils/log";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
@@ -369,6 +373,26 @@ export class Annotations extends VuexModule {
     return tagSet;
   }
 
+  /**
+   * Calculate median annotation radius from stubs.
+   * Used for adaptive zoom threshold calculation.
+   */
+  get medianAnnotationRadius(): number {
+    const radii: number[] = [];
+    for (const stub of this.annotationStubs.values()) {
+      if (stub.estimatedRadius && stub.estimatedRadius > 0) {
+        radii.push(stub.estimatedRadius);
+      }
+    }
+    if (radii.length === 0) return 0;
+
+    radii.sort((a, b) => a - b);
+    const mid = Math.floor(radii.length / 2);
+    return radii.length % 2 !== 0
+      ? radii[mid]
+      : (radii[mid - 1] + radii[mid]) / 2;
+  }
+
   hoveredAnnotationId: string | null = null;
 
   @Mutation
@@ -636,14 +660,16 @@ export class Annotations extends VuexModule {
    * @param filteredIds - IDs of annotations that pass the current filters
    * @param zoom - Current camera zoom level
    * @param gcsBounds - Optional viewport bounds (4 corner points) for spatial filtering
+   * @param viewportDiagonal - Optional viewport diagonal in pixels for adaptive threshold
    */
   @Action
   updateVisibilityAndHydration(params: {
     filteredIds: string[];
     zoom: number;
     gcsBounds?: IGeoJSPosition[];
+    viewportDiagonal?: number;
   }) {
-    const { filteredIds, zoom, gcsBounds } = params;
+    const { filteredIds, zoom, gcsBounds, viewportDiagonal } = params;
     const { maxVisible, hydrateThreshold, zoomThreshold } =
       this.visibilityConfig;
 
@@ -671,15 +697,30 @@ export class Annotations extends VuexModule {
       });
     }
 
-    // 2. Visibility: limit to maxVisible
+    // 2. Visibility: limit to maxVisible using random selection for spatial coverage
     const visibleIds =
       viewportFilteredIds.length <= maxVisible
         ? viewportFilteredIds
-        : viewportFilteredIds.slice(0, maxVisible);
+        : selectRandomSubset(viewportFilteredIds, maxVisible);
 
-    // 3. Determine hydration mode: shapes if under threshold and zoomed in
+    // 3. Adaptive zoom threshold: show shapes when median annotation is large enough
+    let effectiveZoomThreshold = zoomThreshold;
+    if (viewportDiagonal && this.medianAnnotationRadius > 0) {
+      // Show shapes when median annotation is at least 2% of viewport diagonal
+      // medianAnnotationRadius is in world units, need to convert to pixels
+      // At zoom level N, 1 world unit = 2^N pixels (GeoJS convention)
+      const medianRadiusInPixels =
+        this.medianAnnotationRadius * Math.pow(2, zoom);
+      const minVisibleSize = viewportDiagonal * 0.02;
+
+      // If annotations are large enough at current zoom, show as shapes
+      effectiveZoomThreshold =
+        medianRadiusInPixels >= minVisibleSize ? 0 : Infinity;
+    }
+
+    // 4. Determine hydration mode: shapes if under threshold and zoomed in enough
     const showShapes =
-      visibleIds.length <= hydrateThreshold && zoom >= zoomThreshold;
+      visibleIds.length <= hydrateThreshold && zoom >= effectiveZoomThreshold;
 
     // 3. Apply visibility
     this.setVisibleAnnotationIds(visibleIds);
@@ -860,6 +901,7 @@ export class Annotations extends VuexModule {
       location: value.location,
       centroid,
       color: value.color,
+      estimatedRadius: estimateAnnotationRadius(value.coordinates),
     };
     this.annotationStubs.set(value.id, stub);
     this.hydratedAnnotations.set(value.id, value);
@@ -887,6 +929,7 @@ export class Annotations extends VuexModule {
       location: annotation.location,
       centroid,
       color: annotation.color,
+      estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
     };
     this.annotationStubs.set(annotation.id, stub);
     // If already hydrated, update; otherwise keep it as stub-only
@@ -938,6 +981,7 @@ export class Annotations extends VuexModule {
         location: annotation.location,
         centroid,
         color: annotation.color,
+        estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
       };
       this.annotationStubs.set(annotation.id, stub);
 

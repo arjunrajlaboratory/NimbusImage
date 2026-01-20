@@ -1319,6 +1319,7 @@ export interface IAnnotationStub {
   location: IAnnotationLocation;
   centroid: IGeoJSPosition; // Pre-computed centroid
   color: string | null;
+  estimatedRadius?: number; // sqrt(area/pi) or bbox diagonal/2 for adaptive zoom
 }
 
 /** Union type for annotation or stub */
