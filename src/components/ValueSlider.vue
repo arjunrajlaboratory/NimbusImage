@@ -12,16 +12,38 @@
           {{ label }}:
         </v-col>
         <v-col cols="10" class="text-left align-center value-column pa-0 pl-2">
-          <v-text-field
-            :value="displayValue"
-            class="mt-0 pt-0 no-underline"
-            hide-details
-            single-line
-            type="text"
-            dense
-            @input="handleInput"
-            @blur="handleBlur"
-          />
+          <div class="d-flex align-center">
+            <v-text-field
+              :value="displayValue"
+              class="mt-0 pt-0 no-underline flex-grow-0"
+              hide-details
+              single-line
+              type="text"
+              dense
+              @input="handleInput"
+              @blur="handleBlur"
+            />
+            <div class="step-arrows ml-1">
+              <v-btn
+                x-small
+                icon
+                class="step-btn"
+                :disabled="value >= max"
+                @click="increment"
+              >
+                <v-icon x-small>mdi-chevron-up</v-icon>
+              </v-btn>
+              <v-btn
+                x-small
+                icon
+                class="step-btn"
+                :disabled="value <= min"
+                @click="decrement"
+              >
+                <v-icon x-small>mdi-chevron-down</v-icon>
+              </v-btn>
+            </div>
+          </div>
         </v-col>
       </v-row>
 
@@ -80,6 +102,23 @@
 .slider-column ::v-deep .v-slider {
   margin-top: 1px;
   margin-bottom: 0;
+}
+
+/* Step arrows styling */
+.step-arrows {
+  display: flex;
+  flex-direction: column;
+  margin-left: 4px;
+}
+
+.step-btn {
+  height: 14px !important;
+  width: 14px !important;
+  min-width: 14px !important;
+}
+
+.step-btn .v-icon {
+  font-size: 14px !important;
 }
 </style>
 
@@ -156,6 +195,18 @@ export default class ValueSlider extends Vue {
   handleBlur() {
     // On blur, ensure we show the correct value
     this.updateInternalValue();
+  }
+
+  increment() {
+    if (this.value < this.max) {
+      this.$emit("input", this.value + 1);
+    }
+  }
+
+  decrement() {
+    if (this.value > this.min) {
+      this.$emit("input", this.value - 1);
+    }
   }
 }
 </script>
