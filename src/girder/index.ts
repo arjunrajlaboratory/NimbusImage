@@ -25,6 +25,7 @@ export interface IGirderUser extends IGirderBase {
   email: string;
   firstName: string;
   lastName: string;
+  admin?: boolean;
   meta?: {
     channelColors?: { [key: string]: string };
     [key: string]: any;

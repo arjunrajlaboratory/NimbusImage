@@ -334,6 +334,10 @@ export class Main extends VuexModule {
     return this.girderUser != null;
   }
 
+  get isAdmin() {
+    return this.girderUser?.admin === true;
+  }
+
   get userChannelColors() {
     return this.girderUser?.meta?.channelColors || {};
   }
