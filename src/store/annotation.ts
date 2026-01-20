@@ -30,6 +30,8 @@ import {
   IAnnotationStub,
   TAnnotationOrStub,
   isHydratedAnnotation,
+  THydrationMode,
+  IVisibilityConfig,
 } from "./model";
 
 import Vue, { markRaw } from "vue";
@@ -48,7 +50,9 @@ function estimateSize(value: unknown): number {
   if (typeof value === "number") return 8;
   if (typeof value === "boolean") return 4;
   if (Array.isArray(value)) {
-    return value.reduce((sum: number, item) => sum + estimateSize(item), 0) + 16; // array overhead
+    return (
+      value.reduce((sum: number, item) => sum + estimateSize(item), 0) + 16
+    ); // array overhead
   }
   if (typeof value === "object") {
     let size = 16; // object overhead
@@ -82,6 +86,20 @@ export class Annotations extends VuexModule {
   // Using plain object instead of Set for Vue 2 reactivity
   _selectedAnnotationIds: { [id: string]: true } = {};
 
+  // Visibility tracking (plain object for Vue 2 reactivity)
+  // Determines which annotations should be rendered
+  _visibleAnnotationIds: { [id: string]: true } = {};
+
+  // Hydration mode - 'shapes' (render full geometry) or 'dots' (render centroids only)
+  hydrationMode: THydrationMode = "dots";
+
+  // Configuration thresholds for visibility and hydration
+  visibilityConfig: IVisibilityConfig = {
+    maxVisible: 10000, // Max annotations to render
+    hydrateThreshold: 5000, // Max to show as shapes (above this, use dots)
+    zoomThreshold: 3, // Min zoom level for shapes
+  };
+
   activeAnnotationIds: string[] = [];
 
   // Store copied annotations for paste operation
@@ -102,7 +120,10 @@ export class Annotations extends VuexModule {
   // For backward compatibility - computes from IDs
   get selectedAnnotations(): IAnnotation[] {
     return Object.keys(this._selectedAnnotationIds)
-      .map((id) => this.hydratedAnnotations.get(id) ?? this.getAnnotationFromId(id))
+      .map(
+        (id) =>
+          this.hydratedAnnotations.get(id) ?? this.getAnnotationFromId(id),
+      )
       .filter((a): a is IAnnotation => a !== undefined);
   }
 
@@ -130,13 +151,50 @@ export class Annotations extends VuexModule {
     };
   }
 
+  // Check if annotation should be rendered (is in visible set)
+  get isVisible() {
+    return (id: string): boolean => id in this._visibleAnnotationIds;
+  }
+
+  // Get array of visible annotation IDs
+  get visibleAnnotationIds(): string[] {
+    return Object.keys(this._visibleAnnotationIds);
+  }
+
+  // Check if annotation should render as shape (not dot)
+  // Selected annotations always render as shapes if hydrated
+  get shouldRenderAsShape() {
+    return (id: string): boolean => {
+      // Selected annotations always render as shapes if hydrated
+      if (id in this._selectedAnnotationIds) {
+        return this.hydratedAnnotations.has(id);
+      }
+      // Otherwise, check hydration mode and hydration status
+      return (
+        this.hydrationMode === "shapes" && this.hydratedAnnotations.has(id)
+      );
+    };
+  }
+
+  // Get annotation for rendering (respects hydration mode)
+  // Returns full annotation if should render as shape, stub otherwise
+  get getForRendering() {
+    return (id: string): TAnnotationOrStub | undefined => {
+      if (this.shouldRenderAsShape(id)) {
+        return this.hydratedAnnotations.get(id);
+      }
+      return this.annotationStubs.get(id);
+    };
+  }
+
   get allAnnotationIds() {
     return this.annotations.map((annotation: IAnnotation) => annotation.id);
   }
 
   get isAnnotationSelected() {
     // Direct O(1) lookup using the object
-    return (annotationId: string) => annotationId in this._selectedAnnotationIds;
+    return (annotationId: string) =>
+      annotationId in this._selectedAnnotationIds;
   }
 
   get isDeleting() {
@@ -245,21 +303,25 @@ export class Annotations extends VuexModule {
 
     // Extrapolate to full dataset
     const totalMetadataBytes = Math.round(avgMetadataBytes * totalAnnotations);
-    const totalCoordinateBytes = Math.round(avgCoordinateBytes * totalAnnotations);
+    const totalCoordinateBytes = Math.round(
+      avgCoordinateBytes * totalAnnotations,
+    );
     const totalBytes = totalMetadataBytes + totalCoordinateBytes;
 
     // Stub would only need: metadata (minus name, datasetId) + centroid
     // Centroid is 3 numbers = ~24 bytes, but stored as object with x,y,z keys
     const centroidBytes = 56; // { x: number, y: number, z: number } with key overhead
     // Stubs don't include: name, datasetId, coordinates (replaced by centroid)
-    const stubMetadataBytes = avgMetadataBytes - fieldAverages.name - fieldAverages.datasetId;
+    const stubMetadataBytes =
+      avgMetadataBytes - fieldAverages.name - fieldAverages.datasetId;
     const theoreticalStubBytes = stubMetadataBytes + centroidBytes;
 
     // Theoretical savings: stubs save (full annotation - stub size) per stub annotation
     const fullAnnotationBytes = avgBytesPerAnnotation;
     const savingsPerStub = fullAnnotationBytes - theoreticalStubBytes;
     const theoreticalSavingsBytes = Math.round(savingsPerStub * stubCount);
-    const theoreticalSavingsPercent = totalBytes > 0 ? (theoreticalSavingsBytes / totalBytes) * 100 : 0;
+    const theoreticalSavingsPercent =
+      totalBytes > 0 ? (theoreticalSavingsBytes / totalBytes) * 100 : 0;
 
     return {
       totalAnnotations,
@@ -272,7 +334,8 @@ export class Annotations extends VuexModule {
       avgMetadataBytes: Math.round(avgMetadataBytes),
       avgCoordinateBytes: Math.round(avgCoordinateBytes),
       avgBytesPerAnnotation: Math.round(avgBytesPerAnnotation),
-      avgCoordinatesPerAnnotation: Math.round(avgCoordinatesPerAnnotation * 10) / 10,
+      avgCoordinatesPerAnnotation:
+        Math.round(avgCoordinatesPerAnnotation * 10) / 10,
 
       // Totals
       totalMetadataBytes,
@@ -283,13 +346,16 @@ export class Annotations extends VuexModule {
       theoreticalStubBytes: Math.round(theoreticalStubBytes),
       savingsPerStub: Math.round(savingsPerStub),
       theoreticalSavingsBytes,
-      theoreticalSavingsPercent: Math.round(theoreticalSavingsPercent * 10) / 10,
+      theoreticalSavingsPercent:
+        Math.round(theoreticalSavingsPercent * 10) / 10,
 
       // Human readable (MB)
       totalMB: (totalBytes / (1024 * 1024)).toFixed(2),
       metadataMB: (totalMetadataBytes / (1024 * 1024)).toFixed(2),
       coordinatesMB: (totalCoordinateBytes / (1024 * 1024)).toFixed(2),
-      theoreticalSavingsMB: (theoreticalSavingsBytes / (1024 * 1024)).toFixed(2),
+      theoreticalSavingsMB: (theoreticalSavingsBytes / (1024 * 1024)).toFixed(
+        2,
+      ),
     };
   }
 
@@ -471,7 +537,10 @@ export class Annotations extends VuexModule {
   public selectAnnotation(annotation: IAnnotation | string) {
     const id = typeof annotation === "string" ? annotation : annotation.id;
     // Create new object for Vue 2 reactivity (replacing entire object triggers reactivity)
-    this._selectedAnnotationIds = { ...this._selectedAnnotationIds, [id]: true };
+    this._selectedAnnotationIds = {
+      ...this._selectedAnnotationIds,
+      [id]: true,
+    };
   }
 
   @Mutation
@@ -504,6 +573,49 @@ export class Annotations extends VuexModule {
     this._selectedAnnotationIds = newSelection;
   }
 
+  @Mutation
+  setVisibleAnnotationIds(ids: string[]) {
+    // Create new object for Vue 2 reactivity
+    const newVisible: { [id: string]: true } = {};
+    for (const id of ids) {
+      newVisible[id] = true;
+    }
+    this._visibleAnnotationIds = newVisible;
+  }
+
+  @Mutation
+  setHydrationMode(mode: THydrationMode) {
+    this.hydrationMode = mode;
+  }
+
+  @Mutation
+  hydrateFromBackend(ids: string[]) {
+    // "Fetch" from annotations[] (backend simulation)
+    // In the future, this will be replaced with real API calls
+    for (const id of ids) {
+      if (!this.hydratedAnnotations.has(id)) {
+        const full = this.annotations.find((a) => a.id === id);
+        if (full) {
+          this.hydratedAnnotations.set(id, full);
+        }
+      }
+    }
+    // Trigger Vue 2 reactivity by replacing the Map
+    this.hydratedAnnotations = new Map(this.hydratedAnnotations);
+  }
+
+  @Mutation
+  clearNonSelectedHydration() {
+    // Keep only hydrated annotations that are selected
+    const newMap = new Map<string, IAnnotation>();
+    for (const [id, ann] of this.hydratedAnnotations) {
+      if (id in this._selectedAnnotationIds) {
+        newMap.set(id, ann);
+      }
+    }
+    this.hydratedAnnotations = newMap;
+  }
+
   @Action
   public toggleSelected(selected: IAnnotation[] | string[]) {
     for (const item of selected) {
@@ -514,6 +626,79 @@ export class Annotations extends VuexModule {
       } else {
         this.selectAnnotation(id);
       }
+    }
+  }
+
+  /**
+   * Update visibility and hydration based on filtered annotations and zoom level.
+   * This is the main entry point for the dynamic visibility system.
+   *
+   * @param filteredIds - IDs of annotations that pass the current filters
+   * @param zoom - Current camera zoom level
+   * @param gcsBounds - Optional viewport bounds (4 corner points) for spatial filtering
+   */
+  @Action
+  updateVisibilityAndHydration(params: {
+    filteredIds: string[];
+    zoom: number;
+    gcsBounds?: IGeoJSPosition[];
+  }) {
+    const { filteredIds, zoom, gcsBounds } = params;
+    const { maxVisible, hydrateThreshold, zoomThreshold } =
+      this.visibilityConfig;
+
+    // 1. Filter by viewport bounds if provided
+    let viewportFilteredIds = filteredIds;
+    if (gcsBounds && gcsBounds.length === 4) {
+      // Compute axis-aligned bounding box from the 4 corners
+      const xs = gcsBounds.map((p) => p.x);
+      const ys = gcsBounds.map((p) => p.y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+
+      // Filter annotations whose centroid is within the viewport
+      viewportFilteredIds = filteredIds.filter((id) => {
+        const centroid = this.annotationCentroids[id];
+        if (!centroid) return false;
+        return (
+          centroid.x >= minX &&
+          centroid.x <= maxX &&
+          centroid.y >= minY &&
+          centroid.y <= maxY
+        );
+      });
+    }
+
+    // 2. Visibility: limit to maxVisible
+    const visibleIds =
+      viewportFilteredIds.length <= maxVisible
+        ? viewportFilteredIds
+        : viewportFilteredIds.slice(0, maxVisible);
+
+    // 3. Determine hydration mode: shapes if under threshold and zoomed in
+    const showShapes =
+      visibleIds.length <= hydrateThreshold && zoom >= zoomThreshold;
+
+    // 3. Apply visibility
+    this.setVisibleAnnotationIds(visibleIds);
+
+    // 4. Apply hydration mode
+    this.setHydrationMode(showShapes ? "shapes" : "dots");
+
+    // 5. Hydrate as needed
+    if (showShapes) {
+      // Hydrate all visible annotations
+      this.hydrateFromBackend(visibleIds);
+    } else {
+      // Clear non-selected hydration to save memory
+      this.clearNonSelectedHydration();
+    }
+
+    // 6. Always hydrate selected annotations (they render as shapes)
+    if (this.selectedAnnotationIds.length > 0) {
+      this.hydrateFromBackend(this.selectedAnnotationIds);
     }
   }
 

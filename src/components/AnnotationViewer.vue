@@ -289,6 +289,14 @@ export default class AnnotationViewer extends Vue {
     return this.store.dataset;
   }
 
+  get zoom() {
+    return this.store.cameraInfo.zoom;
+  }
+
+  get gcsBounds() {
+    return this.store.cameraInfo.gcsBounds;
+  }
+
   get workerImage() {
     return this.selectedToolConfiguration?.values?.image?.image;
   }
@@ -908,18 +916,26 @@ export default class AnnotationViewer extends Vue {
   // It provides an easy way to get all the annotations visible from a layer or
   // to check if an annotation belongs to a layer
   // Uses stub/hydrated architecture for memory efficiency
+  // Respects visibility budget and hydration mode
   get layerAnnotations(): Map<string, Map<string, TAnnotationOrStub>> {
     // channel -> array of annotations/stubs
     const channelToAnnotations: Map<number, TAnnotationOrStub[]> = new Map();
     for (const annotation of this.displayableAnnotations) {
-      // Get the annotation or stub from the store
-      // This returns a stub for non-hydrated annotations
+      // Skip if not in visible set (respects render budget)
+      if (!this.annotationStore.isVisible(annotation.id)) {
+        continue;
+      }
+
+      // Get the annotation for rendering (respects hydration mode)
+      // Returns full annotation for shapes mode, stub for dots mode
       const annotationOrStub =
-        this.annotationStore.getAnnotationOrStub(annotation.id) ?? annotation;
+        this.annotationStore.getForRendering(annotation.id) ?? annotation;
       if (!channelToAnnotations.has(annotationOrStub.channel)) {
         channelToAnnotations.set(annotationOrStub.channel, []);
       }
-      channelToAnnotations.get(annotationOrStub.channel)!.push(annotationOrStub);
+      channelToAnnotations
+        .get(annotationOrStub.channel)!
+        .push(annotationOrStub);
     }
 
     // layer id -> set of annotation ids
@@ -2630,6 +2646,14 @@ export default class AnnotationViewer extends Vue {
     this.drawTooltips();
   }
 
+  // Watch for changes that affect visibility budget and hydration mode
+  @Watch("filteredAnnotations")
+  @Watch("zoom")
+  @Watch("gcsBounds")
+  onVisibilityInputsChanged() {
+    this.updateVisibilityDebounced();
+  }
+
   @Watch("unrollH")
   @Watch("unrollW")
   onUnrollChanged() {
@@ -2782,6 +2806,17 @@ export default class AnnotationViewer extends Vue {
     this.handleValueOnMouseMoveNoDebounce,
     15,
   );
+
+  // Debounced visibility update to avoid excessive re-renders during pan/zoom
+  updateVisibilityDebounced = debounce(() => {
+    const filteredIds = this.filteredAnnotations.map((a) => a.id);
+    this.annotationStore.updateVisibilityAndHydration({
+      filteredIds,
+      zoom: this.zoom,
+      gcsBounds: this.gcsBounds,
+    });
+  }, 100);
+
   async handleValueOnMouseMoveNoDebounce(e: any) {
     if (!this.dataset) {
       return;

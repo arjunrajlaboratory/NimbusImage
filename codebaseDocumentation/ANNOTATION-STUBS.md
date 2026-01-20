@@ -335,6 +335,251 @@ if (isHydratedAnnotation(annotation)) {
 
 ---
 
+### Phase 4: Dynamic Visibility and Hydration 🔄 IN PROGRESS
+
+**Goal**: Add dynamic visibility tracking and smart hydration to efficiently render 100K+ annotations. Annotations outside the viewport or above count thresholds render as dots; those in view and under thresholds render as full shapes.
+
+#### 4.1 Architecture Overview
+
+**Data Flow**:
+```
+annotations[] (full data, simulates backend)
+       │
+       ▼
+annotationStubs (what exists - source of truth)
+       │
+       ▼
+filteredAnnotations (user filters applied)
+       │
+       ▼
+gcsBounds filtering (viewport spatial filter)  ← NEW
+       │
+       ▼
+_visibleAnnotationIds (render budget, max 10K)
+       │
+       ▼
+hydrationMode (shapes vs dots based on count + zoom)
+       │
+       ▼
+hydratedAnnotations (full data for visible shapes)
+       │
+       ▼
+GeoJS Renderer (dots or full geometry)
+```
+
+#### 4.2 New State Fields
+
+Added to `src/store/annotation.ts`:
+
+```typescript
+// Visibility tracking (plain object for Vue 2 reactivity)
+_visibleAnnotationIds: { [id: string]: true } = {};
+
+// Hydration mode - 'shapes' or 'dots'
+hydrationMode: THydrationMode = "dots";
+
+// Configuration thresholds
+visibilityConfig: IVisibilityConfig = {
+  maxVisible: 10000,      // Max annotations to render
+  hydrateThreshold: 5000, // Max to show as shapes
+  zoomThreshold: 3,       // Min zoom level for shapes
+};
+```
+
+#### 4.3 New Types
+
+Added to `src/store/model.ts`:
+
+```typescript
+export type THydrationMode = "shapes" | "dots";
+
+export interface IVisibilityConfig {
+  maxVisible: number;
+  hydrateThreshold: number;
+  zoomThreshold: number;
+}
+```
+
+#### 4.4 Core Action: `updateVisibilityAndHydration`
+
+The main entry point for the visibility system. Called on filter changes, zoom, or pan.
+
+```typescript
+@Action
+updateVisibilityAndHydration(params: {
+  filteredIds: string[];
+  zoom: number;
+  gcsBounds?: IGeoJSPosition[];  // Viewport corners for spatial filtering
+}) {
+  // 1. Filter by viewport bounds (spatial filtering)
+  let viewportFilteredIds = filteredIds;
+  if (gcsBounds && gcsBounds.length === 4) {
+    // Compute axis-aligned bounding box from 4 corners
+    const xs = gcsBounds.map((p) => p.x);
+    const ys = gcsBounds.map((p) => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+    // Filter to annotations whose centroid is in viewport
+    viewportFilteredIds = filteredIds.filter((id) => {
+      const centroid = this.annotationCentroids[id];
+      if (!centroid) return false;
+      return centroid.x >= minX && centroid.x <= maxX &&
+             centroid.y >= minY && centroid.y <= maxY;
+    });
+  }
+
+  // 2. Apply maxVisible budget
+  const visibleIds = viewportFilteredIds.length <= maxVisible
+    ? viewportFilteredIds
+    : viewportFilteredIds.slice(0, maxVisible);
+
+  // 3. Determine hydration mode
+  const showShapes = visibleIds.length <= hydrateThreshold && zoom >= zoomThreshold;
+
+  // 4. Apply state changes
+  this.setVisibleAnnotationIds(visibleIds);
+  this.setHydrationMode(showShapes ? "shapes" : "dots");
+
+  // 5. Hydrate as needed
+  if (showShapes) {
+    this.hydrateFromBackend(visibleIds);
+  } else {
+    this.clearNonSelectedHydration();
+  }
+
+  // 6. Always hydrate selected (they render as shapes)
+  if (this.selectedAnnotationIds.length > 0) {
+    this.hydrateFromBackend(this.selectedAnnotationIds);
+  }
+}
+```
+
+#### 4.5 Key Getters
+
+```typescript
+// Check if annotation should be rendered
+get isVisible() {
+  return (id: string): boolean => id in this._visibleAnnotationIds;
+}
+
+// Check if annotation should render as shape (not dot)
+get shouldRenderAsShape() {
+  return (id: string): boolean => {
+    if (id in this._selectedAnnotationIds) {
+      return this.hydratedAnnotations.has(id);
+    }
+    return this.hydrationMode === "shapes" && this.hydratedAnnotations.has(id);
+  };
+}
+
+// Get annotation for rendering (respects hydration mode)
+get getForRendering() {
+  return (id: string): TAnnotationOrStub | undefined => {
+    if (this.shouldRenderAsShape(id)) {
+      return this.hydratedAnnotations.get(id);
+    }
+    return this.annotationStubs.get(id);
+  };
+}
+```
+
+#### 4.6 AnnotationViewer.vue Changes
+
+**Added getters**:
+```typescript
+get zoom() {
+  return this.store.cameraInfo.zoom;
+}
+
+get gcsBounds() {
+  return this.store.cameraInfo.gcsBounds;
+}
+```
+
+**Added watcher with debouncing**:
+```typescript
+@Watch("filteredAnnotations")
+@Watch("zoom")
+@Watch("gcsBounds")
+onVisibilityInputsChanged() {
+  this.updateVisibilityDebounced();
+}
+
+updateVisibilityDebounced = debounce(() => {
+  const filteredIds = this.filteredAnnotations.map((a) => a.id);
+  this.annotationStore.updateVisibilityAndHydration({
+    filteredIds,
+    zoom: this.zoom,
+    gcsBounds: this.gcsBounds,
+  });
+}, 100);
+```
+
+**Updated `layerAnnotations` getter**:
+```typescript
+// Skip annotations not in visibility budget
+if (!this.annotationStore.isVisible(annotation.id)) continue;
+
+// Use getForRendering which respects hydration mode
+const annotationOrStub = this.annotationStore.getForRendering(annotation.id);
+```
+
+#### 4.7 ImageViewer.vue Bug Fix
+
+**Problem**: Zoom changes weren't updating `cameraInfo` because only `pan` events were listened to.
+
+**Fix**: Added zoom event listener in `_setupMap`:
+```typescript
+map.geoOn(geojs.event.pan, synchronizationCallback);
+map.geoOn(geojs.event.zoom, synchronizationCallback);  // ADDED
+```
+
+#### 4.8 Observed Behavior
+
+| State | Zoom | Viewport Annotations | Hydration Mode | Result |
+|-------|------|---------------------|----------------|--------|
+| Zoomed out | -0.39 | 10,000 (capped) | dots | Circles at centroids |
+| Zoomed in | 5 | 44 | shapes | Full rectangles |
+
+The system correctly switches between modes based on viewport contents and zoom level.
+
+#### 4.9 Remaining To-Do Items
+
+**Styling Adjustments (4.6)**:
+- [ ] Adjust dot size for stub rendering (currently uses default point size)
+- [ ] Review shape outline thickness and colors
+- [ ] Consider different visual treatment for dots vs shapes (opacity, border style)
+- [ ] Ensure selected annotations stand out visually in both modes
+
+**Threshold Tuning (4.7)**:
+- [ ] Test and tune `maxVisible` (currently 10,000) - balance between coverage and performance
+- [ ] Test and tune `hydrateThreshold` (currently 5,000) - when to switch to shapes
+- [ ] Test and tune `zoomThreshold` (currently 3) - minimum zoom for shapes
+- [ ] Consider making thresholds configurable via UI or configuration
+
+**Performance Review (4.8)**:
+- [ ] Profile `updateVisibilityAndHydration` with 100K+ annotations
+- [ ] Evaluate cost of viewport filtering (iterates all filtered annotations)
+- [ ] Review debounce timing (currently 100ms) - balance responsiveness vs CPU
+- [ ] Monitor memory usage during rapid pan/zoom
+- [ ] Test hydration/dehydration memory churn
+
+**R-tree Spatial Index (4.10)**:
+- [ ] Implement R-tree for efficient viewport queries (current O(n) filtering won't scale to 100K+)
+- [ ] Evaluate libraries: `rbush` (lightweight), `flatbush` (static, very fast), or custom implementation
+- [ ] Index annotation centroids on dataset load
+- [ ] Replace linear viewport filtering in `updateVisibilityAndHydration` with R-tree bbox query
+- [ ] Consider R-tree for selection (click/lasso) to avoid iterating all annotations
+- [ ] Benchmark: compare current linear scan vs R-tree query performance
+
+**Selection Updates (4.9)**:
+- [ ] Verify selection works correctly with visibility filtering
+- [ ] Test that selected annotations always render as shapes
+- [ ] Consider whether non-visible annotations should be selectable
+
+---
+
 ## Current Selection/Intersection Mechanism
 
 Understanding how drag selection and click selection work is critical for future phases.
@@ -716,10 +961,17 @@ If issues arise:
   - [x] `createGeoJSAnnotation` handles stubs vs hydrated
   - [x] Stubs render as points at centroid
   - [x] Hydrated render as full shapes
-- [ ] Phase 4: Selection and Interaction Updates (NEXT)
-  - [ ] Update selection to work without GeoJS annotations (for non-rendered stubs)
-  - [ ] Implement centroid-based intersection testing for stubs
-  - [ ] Consider spatial indexing for large datasets
+- [~] Phase 4: Dynamic Visibility and Hydration (IN PROGRESS)
+  - [x] 4.1 Visibility tracking state (`_visibleAnnotationIds`, `hydrationMode`, `visibilityConfig`)
+  - [x] 4.2 Hydration mode switching (shapes vs dots based on count + zoom)
+  - [x] 4.3 Viewport-based spatial filtering using `gcsBounds`
+  - [x] 4.4 Zoom event listener fix in ImageViewer.vue
+  - [x] 4.5 Debounced visibility updates in AnnotationViewer.vue
+  - [ ] 4.6 Styling adjustments (dot size, shape outlines, colors)
+  - [ ] 4.7 Threshold tuning (`maxVisible`, `hydrateThreshold`, `zoomThreshold`)
+  - [ ] 4.8 Performance review and optimization
+  - [ ] 4.9 Selection updates for non-rendered annotations (if needed)
+  - [ ] 4.10 R-tree spatial index for efficient viewport queries
 - [ ] Phase 5: Backend API for Stub Fetching
 - [ ] Phase 6: On-Demand Hydration
 - [ ] Phase 7: Connection Stubs (Optional)
@@ -750,3 +1002,32 @@ If issues arise:
 - Added tests for stub/hydrated architecture
 - Added tests for memory stats
 - Added tests for click/drag selection reactivity
+
+### Files Modified in Phase 4
+
+**`src/store/model.ts`**:
+- Added `THydrationMode` type (`"shapes" | "dots"`)
+- Added `IVisibilityConfig` interface (thresholds for visibility/hydration)
+
+**`src/store/annotation.ts`**:
+- Added `_visibleAnnotationIds: { [id: string]: true }` for visibility tracking
+- Added `hydrationMode: THydrationMode` state
+- Added `visibilityConfig: IVisibilityConfig` with default thresholds
+- Added getters: `isVisible`, `visibleAnnotationIds`, `shouldRenderAsShape`, `getForRendering`
+- Added mutations: `setVisibleAnnotationIds`, `setHydrationMode`, `hydrateFromBackend`, `clearNonSelectedHydration`
+- Added action: `updateVisibilityAndHydration` with viewport-based spatial filtering
+
+**`src/components/AnnotationViewer.vue`**:
+- Added `zoom` getter for camera zoom level
+- Added `gcsBounds` getter for viewport bounds
+- Added `@Watch("gcsBounds")` to visibility watcher
+- Added `updateVisibilityDebounced` function (100ms debounce)
+- Updated `layerAnnotations` to use `isVisible` and `getForRendering`
+
+**`src/components/ImageViewer.vue`**:
+- Added `geojs.event.zoom` listener to `synchronizationCallback` (bug fix - zoom changes now update `cameraInfo`)
+
+**`src/store/__tests__/annotation.test.ts`**:
+- Added tests for visibility state management
+- Added tests for hydration mode switching
+- Added tests for `updateVisibilityAndHydration` action

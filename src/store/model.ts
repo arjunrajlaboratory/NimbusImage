@@ -1324,6 +1324,16 @@ export interface IAnnotationStub {
 /** Union type for annotation or stub */
 export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
 
+/** Hydration mode - determines whether visible annotations render as shapes or dots */
+export type THydrationMode = "shapes" | "dots";
+
+/** Configuration for visibility and hydration thresholds */
+export interface IVisibilityConfig {
+  maxVisible: number; // Max annotations to render
+  hydrateThreshold: number; // Max to show as shapes (above this, use dots)
+  zoomThreshold: number; // Min zoom level for shapes
+}
+
 /** Type guard: check if annotation has coordinates (is hydrated) */
 export function isHydratedAnnotation(
   annotation: TAnnotationOrStub,

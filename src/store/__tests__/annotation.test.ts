@@ -11,7 +11,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Use vi.hoisted to define mock objects that will be available when vi.mock is hoisted
-const { mockAnnotationsAPI, mockMainStore, mockSyncStore, mockProgressStore, mockJobsStore } = vi.hoisted(() => {
+const {
+  mockAnnotationsAPI,
+  mockMainStore,
+  mockSyncStore,
+  mockProgressStore,
+  mockJobsStore,
+} = vi.hoisted(() => {
   const mockAnnotationsAPI = {
     createAnnotation: vi.fn().mockResolvedValue(null),
     createMultipleAnnotations: vi.fn().mockResolvedValue([]),
@@ -49,7 +55,9 @@ const { mockAnnotationsAPI, mockMainStore, mockSyncStore, mockProgressStore, moc
     },
     annotationsAPI: mockAnnotationsAPI,
     getLayerFromId: vi.fn().mockReturnValue(null),
-    layerSliceIndexes: vi.fn().mockReturnValue({ xyIndex: 0, zIndex: 0, tIndex: 0 }),
+    layerSliceIndexes: vi
+      .fn()
+      .mockReturnValue({ xyIndex: 0, zIndex: 0, tIndex: 0 }),
     loadLargeImages: vi.fn().mockResolvedValue(false),
     scheduleTileFramesComputation: vi.fn(),
     scheduleMaxMergeCache: vi.fn(),
@@ -74,7 +82,13 @@ const { mockAnnotationsAPI, mockMainStore, mockSyncStore, mockProgressStore, moc
     addJob: vi.fn().mockResolvedValue(true),
   };
 
-  return { mockAnnotationsAPI, mockMainStore, mockSyncStore, mockProgressStore, mockJobsStore };
+  return {
+    mockAnnotationsAPI,
+    mockMainStore,
+    mockSyncStore,
+    mockProgressStore,
+    mockJobsStore,
+  };
 });
 
 // Mock the imported modules - these run after vi.hoisted
@@ -456,7 +470,9 @@ describe("annotation store", () => {
 
       await store.pasteAnnotations();
 
-      expect(mockAnnotationsAPI.createMultipleAnnotations).not.toHaveBeenCalled();
+      expect(
+        mockAnnotationsAPI.createMultipleAnnotations,
+      ).not.toHaveBeenCalled();
     });
 
     it("pasteAnnotations does nothing without dataset", async () => {
@@ -466,7 +482,9 @@ describe("annotation store", () => {
 
       await store.pasteAnnotations();
 
-      expect(mockAnnotationsAPI.createMultipleAnnotations).not.toHaveBeenCalled();
+      expect(
+        mockAnnotationsAPI.createMultipleAnnotations,
+      ).not.toHaveBeenCalled();
     });
 
     it("pasteAnnotations creates new annotations at current location", async () => {
@@ -541,9 +559,9 @@ describe("annotation store", () => {
         const result = await store.createMultipleAnnotations(bases);
 
         expect(mockSyncStore.setSaving).toHaveBeenCalledWith(true);
-        expect(mockAnnotationsAPI.createMultipleAnnotations).toHaveBeenCalledWith(
-          bases,
-        );
+        expect(
+          mockAnnotationsAPI.createMultipleAnnotations,
+        ).toHaveBeenCalledWith(bases);
         expect(result).toEqual(createdAnnotations);
         expect(store.annotations).toContainEqual(createdAnnotations[0]);
         expect(store.annotations).toContainEqual(createdAnnotations[1]);
@@ -594,9 +612,9 @@ describe("annotation store", () => {
         await store.deleteAnnotations([annotations[0].id, annotations[2].id]);
 
         expect(mockSyncStore.setSaving).toHaveBeenCalledWith(true);
-        expect(mockAnnotationsAPI.deleteMultipleAnnotations).toHaveBeenCalledWith(
-          [annotations[0].id, annotations[2].id],
-        );
+        expect(
+          mockAnnotationsAPI.deleteMultipleAnnotations,
+        ).toHaveBeenCalledWith([annotations[0].id, annotations[2].id]);
         expect(store.annotations).toHaveLength(1);
         expect(store.annotations[0].id).toBe(annotations[1].id);
         expect(mockProgressStore.create).toHaveBeenCalled();
@@ -660,9 +678,9 @@ describe("annotation store", () => {
         // by awaiting the promise that was started
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(mockAnnotationsAPI.deleteMultipleAnnotations).toHaveBeenCalledWith(
-          selectedIds,
-        );
+        expect(
+          mockAnnotationsAPI.deleteMultipleAnnotations,
+        ).toHaveBeenCalledWith(selectedIds);
         expect(store.selectedAnnotations).toHaveLength(0);
       });
     });
@@ -676,7 +694,9 @@ describe("annotation store", () => {
 
         await store.deleteUnselectedAnnotations();
 
-        expect(mockAnnotationsAPI.deleteMultipleAnnotations).toHaveBeenCalledWith(
+        expect(
+          mockAnnotationsAPI.deleteMultipleAnnotations,
+        ).toHaveBeenCalledWith(
           expect.arrayContaining([annotations[0].id, annotations[2].id]),
         );
       });
@@ -714,7 +734,10 @@ describe("annotation store", () => {
 
     it("removeTagsByAnnotationIds removes specified tags", async () => {
       const annotations = [
-        createMockAnnotation({ id: "ann-1", tags: ["keep", "remove1", "remove2"] }),
+        createMockAnnotation({
+          id: "ann-1",
+          tags: ["keep", "remove1", "remove2"],
+        }),
         createMockAnnotation({ id: "ann-2", tags: ["keep", "remove1"] }),
       ];
       store.setAnnotations(annotations);
@@ -824,12 +847,12 @@ describe("annotation store", () => {
 
       await store.fetchAnnotations();
 
-      expect(mockAnnotationsAPI.getAnnotationsForDatasetId).toHaveBeenCalledWith(
-        dataset.id,
-      );
-      expect(mockAnnotationsAPI.getConnectionsForDatasetId).toHaveBeenCalledWith(
-        dataset.id,
-      );
+      expect(
+        mockAnnotationsAPI.getAnnotationsForDatasetId,
+      ).toHaveBeenCalledWith(dataset.id);
+      expect(
+        mockAnnotationsAPI.getConnectionsForDatasetId,
+      ).toHaveBeenCalledWith(dataset.id);
       expect(store.annotations).toEqual(annotations);
       expect(store.annotationConnections).toEqual(connections);
     });
@@ -1116,9 +1139,9 @@ describe("annotation store", () => {
       store.activateAnnotations(["id1"]);
       store.activateAnnotations(["id1", "id2"]);
 
-      expect(store.activeAnnotationIds.filter((id) => id === "id1")).toHaveLength(
-        1,
-      );
+      expect(
+        store.activeAnnotationIds.filter((id) => id === "id1"),
+      ).toHaveLength(1);
     });
 
     it("deactivateAnnotations removes ids from active list", () => {
@@ -1210,6 +1233,200 @@ describe("annotation store", () => {
       await store.colorSelectedAnnotations({ color: "#00FF00" });
 
       expect(mockAnnotationsAPI.updateAnnotations).toHaveBeenCalled();
+    });
+  });
+
+  describe("visibility and hydration", () => {
+    it("setVisibleAnnotationIds sets visible annotations", () => {
+      const annotations = createMockAnnotations(5);
+      store.setAnnotations(annotations);
+
+      store.setVisibleAnnotationIds([annotations[0].id, annotations[2].id]);
+
+      expect(store.isVisible(annotations[0].id)).toBe(true);
+      expect(store.isVisible(annotations[1].id)).toBe(false);
+      expect(store.isVisible(annotations[2].id)).toBe(true);
+      expect(store.visibleAnnotationIds).toHaveLength(2);
+    });
+
+    it("setHydrationMode changes hydration mode", () => {
+      expect(store.hydrationMode).toBe("dots"); // default
+
+      store.setHydrationMode("shapes");
+
+      expect(store.hydrationMode).toBe("shapes");
+
+      store.setHydrationMode("dots");
+
+      expect(store.hydrationMode).toBe("dots");
+    });
+
+    it("hydrateFromBackend hydrates annotations from backend simulation", () => {
+      const annotations = createMockAnnotations(10);
+      store.setAnnotations(annotations);
+      // By default, first 20% (2) are hydrated, rest are stubs
+
+      // Hydrate some additional annotations
+      store.hydrateFromBackend([annotations[5].id, annotations[7].id]);
+
+      expect(store.hydratedAnnotations.has(annotations[5].id)).toBe(true);
+      expect(store.hydratedAnnotations.has(annotations[7].id)).toBe(true);
+      expect(store.isHydrated(annotations[5].id)).toBe(true);
+    });
+
+    it("clearNonSelectedHydration keeps only selected hydrated", () => {
+      const annotations = createMockAnnotations(10);
+      store.setAnnotations(annotations);
+      // Hydrate some annotations
+      store.hydrateFromBackend([
+        annotations[3].id,
+        annotations[5].id,
+        annotations[7].id,
+      ]);
+
+      // Select only one
+      store.setSelected([annotations[3].id]);
+
+      // Clear non-selected
+      store.clearNonSelectedHydration();
+
+      // Only selected should remain hydrated
+      expect(store.hydratedAnnotations.has(annotations[3].id)).toBe(true);
+      expect(store.hydratedAnnotations.has(annotations[5].id)).toBe(false);
+      expect(store.hydratedAnnotations.has(annotations[7].id)).toBe(false);
+    });
+
+    it("shouldRenderAsShape returns true for selected annotations if hydrated", () => {
+      const annotations = createMockAnnotations(10);
+      store.setAnnotations(annotations);
+      store.setSelected([annotations[5].id]);
+
+      // Hydrate the selected annotation
+      store.hydrateFromBackend([annotations[5].id]);
+
+      // In dots mode, selected should still render as shape
+      store.setHydrationMode("dots");
+      expect(store.shouldRenderAsShape(annotations[5].id)).toBe(true);
+      // Non-selected should not render as shape in dots mode
+      expect(store.shouldRenderAsShape(annotations[6].id)).toBe(false);
+    });
+
+    it("shouldRenderAsShape returns true in shapes mode if hydrated", () => {
+      const annotations = createMockAnnotations(10);
+      store.setAnnotations(annotations);
+      store.hydrateFromBackend([annotations[3].id, annotations[5].id]);
+
+      store.setHydrationMode("shapes");
+
+      expect(store.shouldRenderAsShape(annotations[3].id)).toBe(true);
+      expect(store.shouldRenderAsShape(annotations[5].id)).toBe(true);
+      // Non-hydrated should not render as shape even in shapes mode
+      expect(store.shouldRenderAsShape(annotations[9].id)).toBe(false);
+    });
+
+    it("getForRendering returns appropriate data based on mode", () => {
+      const annotations = createMockAnnotations(10);
+      store.setAnnotations(annotations);
+      store.hydrateFromBackend([annotations[3].id]);
+
+      // In dots mode, getForRendering returns stub
+      store.setHydrationMode("dots");
+      const stubResult = store.getForRendering(annotations[3].id);
+      expect(stubResult).toBeDefined();
+      expect("centroid" in stubResult!).toBe(true);
+
+      // In shapes mode, getForRendering returns hydrated
+      store.setHydrationMode("shapes");
+      const hydratedResult = store.getForRendering(annotations[3].id);
+      expect(hydratedResult).toBeDefined();
+      expect("coordinates" in hydratedResult!).toBe(true);
+    });
+
+    it("updateVisibilityAndHydration sets visibility and hydration mode", async () => {
+      const annotations = createMockAnnotations(100);
+      store.setAnnotations(annotations);
+      const filteredIds = annotations.map((a) => a.id);
+
+      // High zoom (should use shapes if under threshold)
+      await store.updateVisibilityAndHydration({
+        filteredIds: filteredIds.slice(0, 100),
+        zoom: 5, // Above threshold (3)
+      });
+
+      // 100 is under hydrateThreshold (5000), so should be shapes
+      expect(store.visibleAnnotationIds).toHaveLength(100);
+      expect(store.hydrationMode).toBe("shapes");
+    });
+
+    it("updateVisibilityAndHydration limits visibility to maxVisible", async () => {
+      // Create more than maxVisible annotations
+      const annotations = createMockAnnotations(100);
+      store.setAnnotations(annotations);
+
+      // Override config for testing
+      store.visibilityConfig.maxVisible = 50;
+
+      const filteredIds = annotations.map((a) => a.id);
+      await store.updateVisibilityAndHydration({
+        filteredIds,
+        zoom: 5,
+      });
+
+      expect(store.visibleAnnotationIds).toHaveLength(50);
+    });
+
+    it("updateVisibilityAndHydration uses dots mode when zoomed out", async () => {
+      const annotations = createMockAnnotations(100);
+      store.setAnnotations(annotations);
+      const filteredIds = annotations.map((a) => a.id);
+
+      // Low zoom (should use dots)
+      await store.updateVisibilityAndHydration({
+        filteredIds,
+        zoom: 1, // Below threshold (3)
+      });
+
+      expect(store.hydrationMode).toBe("dots");
+    });
+
+    it("updateVisibilityAndHydration uses dots mode when over threshold", async () => {
+      const annotations = createMockAnnotations(100);
+      store.setAnnotations(annotations);
+
+      // Override config for testing
+      store.visibilityConfig.hydrateThreshold = 50;
+
+      const filteredIds = annotations.map((a) => a.id);
+      await store.updateVisibilityAndHydration({
+        filteredIds, // 100 > 50 threshold
+        zoom: 5,
+      });
+
+      expect(store.hydrationMode).toBe("dots");
+    });
+
+    it("updateVisibilityAndHydration always hydrates selected annotations", async () => {
+      const annotations = createMockAnnotations(100);
+      store.setAnnotations(annotations);
+
+      // Select some annotations
+      store.setSelected([annotations[50].id, annotations[60].id]);
+
+      // Use dots mode by zooming out
+      await store.updateVisibilityAndHydration({
+        filteredIds: annotations.map((a) => a.id),
+        zoom: 1,
+      });
+
+      // Selected should be hydrated even in dots mode
+      expect(store.hydratedAnnotations.has(annotations[50].id)).toBe(true);
+      expect(store.hydratedAnnotations.has(annotations[60].id)).toBe(true);
+    });
+
+    it("visibilityConfig has expected defaults", () => {
+      expect(store.visibilityConfig.maxVisible).toBe(10000);
+      expect(store.visibilityConfig.hydrateThreshold).toBe(5000);
+      expect(store.visibilityConfig.zoomThreshold).toBe(3);
     });
   });
 });

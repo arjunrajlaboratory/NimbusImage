@@ -232,7 +232,8 @@ export function createMockMainStore(overrides: Record<string, any> = {}) {
     layerSliceIndexes:
       overrides.layerSliceIndexes ??
       vi.fn().mockReturnValue({ xyIndex: 0, zIndex: 0, tIndex: 0 }),
-    loadLargeImages: overrides.loadLargeImages ?? vi.fn().mockResolvedValue(false),
+    loadLargeImages:
+      overrides.loadLargeImages ?? vi.fn().mockResolvedValue(false),
     scheduleTileFramesComputation:
       overrides.scheduleTileFramesComputation ?? vi.fn(),
     scheduleMaxMergeCache: overrides.scheduleMaxMergeCache ?? vi.fn(),
