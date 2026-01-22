@@ -6,6 +6,7 @@ values for a dataset.
 """
 
 import orjson
+from dataclasses import dataclass
 
 from bson.objectid import ObjectId
 
@@ -24,6 +25,28 @@ from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
 from ..helpers.serialization import orJsonDefaults
+
+
+@dataclass
+class CsvColumn:
+    """Definition of a CSV column with its quoting behavior."""
+
+    name: str
+    is_quoted: bool
+
+
+# Fixed columns for CSV export, defined at module level for visibility.
+# Property columns are added dynamically and are never quoted.
+CSV_FIXED_COLUMNS = [
+    CsvColumn("Id", is_quoted=True),
+    CsvColumn("Channel", is_quoted=False),
+    CsvColumn("XY", is_quoted=False),
+    CsvColumn("Z", is_quoted=False),
+    CsvColumn("Time", is_quoted=False),
+    CsvColumn("Tags", is_quoted=True),
+    CsvColumn("Shape", is_quoted=True),
+    CsvColumn("Name", is_quoted=True),
+]
 
 
 class Export(Resource):
@@ -309,28 +332,21 @@ class Export(Resource):
 
         # Generator for streaming CSV output
         def generate():
-            # Build header
-            fields = [
-                "Id", "Channel", "XY", "Z", "Time", "Tags", "Shape", "Name"
-            ]
-            # Track which columns should be quoted (matching frontend)
-            # Id=0, Tags=5, Shape=6, Name=7 are quoted
-            quotedIndices = {0, 5, 6, 7}
-
-            # Add property columns
+            # Build column definitions: fixed columns + property columns
+            columns = list(CSV_FIXED_COLUMNS)
             for path in parsedPropertyPaths:
                 propertyName = self._getPropertyColumnName(
                     path, propertyNameMap)
                 if propertyName:
-                    fields.append(propertyName)
+                    columns.append(CsvColumn(propertyName, is_quoted=False))
 
-            # Build header with selective quoting
+            # Build header row
             headerRow = []
-            for i, field in enumerate(fields):
-                if i in quotedIndices:
-                    headerRow.append(f'"{field}"')
+            for col in columns:
+                if col.is_quoted:
+                    headerRow.append(f'"{col.name}"')
                 else:
-                    headerRow.append(field)
+                    headerRow.append(col.name)
             yield ','.join(headerRow) + '\n'
 
             # Load property values for all annotations in dataset
@@ -349,19 +365,19 @@ class Export(Resource):
             for annotation in cursor:
                 annId = str(annotation["_id"])
 
-                # Build row values
+                # Build row values (order must match CSV_FIXED_COLUMNS)
                 location = annotation.get("location", {})
                 tags = annotation.get("tags", [])
 
                 row = [
-                    annId,  # Id - quoted
-                    str(annotation.get("channel", 0)),  # Channel - not quoted
-                    str(location.get("XY", 0) + 1),  # XY - 1-indexed
-                    str(location.get("Z", 0) + 1),  # Z - 1-indexed
-                    str(location.get("Time", 0) + 1),  # Time - 1-indexed
-                    ", ".join(tags),  # Tags - quoted
-                    annotation.get("shape", ""),  # Shape - quoted
-                    annotation.get("name", "") or "",  # Name - quoted
+                    annId,
+                    str(annotation.get("channel", 0)),
+                    str(location.get("XY", 0) + 1),
+                    str(location.get("Z", 0) + 1),
+                    str(location.get("Time", 0) + 1),
+                    ", ".join(tags),
+                    annotation.get("shape", ""),
+                    annotation.get("name", "") or "",
                 ]
 
                 # Add property values
@@ -373,11 +389,10 @@ class Export(Resource):
                     else:
                         row.append(self._formatValue(value))
 
-                # Format row with selective quoting
+                # Format row with quoting based on column definitions
                 formattedRow = []
-                for i, value in enumerate(row):
-                    if i in quotedIndices:
-                        # Escape any existing quotes in the value
+                for col, value in zip(columns, row):
+                    if col.is_quoted:
                         escapedValue = value.replace('"', '""')
                         formattedRow.append(f'"{escapedValue}"')
                     else:
