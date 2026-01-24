@@ -1,3 +1,18 @@
+---
+name: nimbus-backend
+description: Guidelines for backend development in the NimbusImage Girder plugin including API patterns, access control, database queries, testing, and Docker development.
+allowed-tools:
+  - Bash
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+  - Task
+  - TodoWrite
+user-invocable: true
+---
+
 # Nimbus Backend Development (Girder)
 
 Guidelines for backend development in the NimbusImage Girder plugin.
