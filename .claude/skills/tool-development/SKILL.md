@@ -1,3 +1,18 @@
+---
+name: tool-development
+description: Guidelines for creating and modifying tools in the NimbusImage application including template structure, interface elements, and implementation patterns.
+allowed-tools:
+  - Bash
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+  - Task
+  - TodoWrite
+user-invocable: true
+---
+
 # NimbusImage Tool Development
 
 Guidelines for creating and modifying tools in the NimbusImage application.

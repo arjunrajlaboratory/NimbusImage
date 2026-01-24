@@ -1,3 +1,18 @@
+---
+name: nimbus-frontend
+description: Guidelines for frontend development in the NimbusImage application including Vue 2, Vuetify, Vuex patterns, theming, and component structure.
+allowed-tools:
+  - Bash
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+  - Task
+  - TodoWrite
+user-invocable: true
+---
+
 # Nimbus Frontend Development
 
 Guidelines for frontend development in the NimbusImage application.
