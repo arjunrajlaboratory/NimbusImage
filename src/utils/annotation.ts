@@ -276,9 +276,10 @@ export function tagCloudFilterFunction(
 }
 
 /**
- * Simple hash function for strings (djb2 algorithm)
+ * Simple hash function for strings (djb2 algorithm).
+ * Returns an unsigned 32-bit integer.
  */
-function hashString(str: string): number {
+export function hashString(str: string): number {
   let hash = 5381;
   for (let i = 0; i < str.length; i++) {
     hash = (hash << 5) + hash + str.charCodeAt(i);
@@ -287,8 +288,18 @@ function hashString(str: string): number {
 }
 
 /**
+ * Compute a deterministic hash value between 0 and 1 for an ID.
+ * Used for consistent visibility ranking across pan/zoom operations.
+ */
+export function hashToNormalizedValue(id: string): number {
+  return hashString(id) / 0xffffffff;
+}
+
+/**
  * Seeded random selection - deterministic based on ID hashes.
  * Provides consistent "random" ordering for good spatial distribution.
+ * Annotations with lower hash values are selected first, ensuring
+ * stable visibility as the viewport changes.
  */
 export function selectRandomSubset(ids: string[], maxCount: number): string[] {
   if (ids.length <= maxCount) return ids;

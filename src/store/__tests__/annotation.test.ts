@@ -154,6 +154,23 @@ vi.mock("@/utils/annotation", () => ({
   estimateAnnotationRadius: vi.fn((coords) =>
     coords.length <= 1 ? 5 : 10, // Return a default radius for testing
   ),
+  hashString: vi.fn((str) => {
+    // Simple mock hash function for testing
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+    }
+    return hash >>> 0;
+  }),
+  hashToNormalizedValue: vi.fn((id) => {
+    // Return a deterministic value based on the id for testing
+    // This mimics the real function behavior
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = (hash << 5) - hash + id.charCodeAt(i);
+    }
+    return (hash >>> 0) / 0xffffffff;
+  }),
 }));
 
 // Mock the log utility
@@ -1353,13 +1370,12 @@ describe("annotation store", () => {
       store.setAnnotations(annotations);
       const filteredIds = annotations.map((a) => a.id);
 
-      // High zoom (should use shapes if under threshold)
+      // With 100 annotations under maxHydrated (10000), should show shapes
       await store.updateVisibilityAndHydration({
         filteredIds: filteredIds.slice(0, 100),
-        zoom: 5, // Above threshold (3)
       });
 
-      // 100 is under hydrateThreshold (5000), so should be shapes
+      // 100 is under maxHydrated (10000), so should be shapes
       expect(store.visibleAnnotationIds).toHaveLength(100);
       expect(store.hydrationMode).toBe("shapes");
     });
@@ -1375,37 +1391,39 @@ describe("annotation store", () => {
       const filteredIds = annotations.map((a) => a.id);
       await store.updateVisibilityAndHydration({
         filteredIds,
-        zoom: 5,
       });
 
       expect(store.visibleAnnotationIds).toHaveLength(50);
     });
 
-    it("updateVisibilityAndHydration uses dots mode when zoomed out", async () => {
-      const annotations = createMockAnnotations(100);
-      store.setAnnotations(annotations);
-      const filteredIds = annotations.map((a) => a.id);
-
-      // Low zoom (should use dots)
-      await store.updateVisibilityAndHydration({
-        filteredIds,
-        zoom: 1, // Below threshold (3)
-      });
-
-      expect(store.hydrationMode).toBe("dots");
-    });
-
-    it("updateVisibilityAndHydration uses dots mode when over threshold", async () => {
+    it("updateVisibilityAndHydration limits hydration to maxHydrated", async () => {
       const annotations = createMockAnnotations(100);
       store.setAnnotations(annotations);
 
       // Override config for testing
-      store.visibilityConfig.hydrateThreshold = 50;
+      store.visibilityConfig.maxHydrated = 30;
 
       const filteredIds = annotations.map((a) => a.id);
       await store.updateVisibilityAndHydration({
-        filteredIds, // 100 > 50 threshold
-        zoom: 5,
+        filteredIds,
+      });
+
+      // Should have 100 visible but only 30 hydrated
+      expect(store.visibleAnnotationIds).toHaveLength(100);
+      // hydratedAnnotations includes the 30 largest by size
+      expect(store.hydratedAnnotations.size).toBe(30);
+    });
+
+    it("updateVisibilityAndHydration uses dots mode when no annotations to hydrate", async () => {
+      const annotations = createMockAnnotations(100);
+      store.setAnnotations(annotations);
+
+      // Override config to allow no hydration
+      store.visibilityConfig.maxHydrated = 0;
+
+      const filteredIds = annotations.map((a) => a.id);
+      await store.updateVisibilityAndHydration({
+        filteredIds,
       });
 
       expect(store.hydrationMode).toBe("dots");
@@ -1418,21 +1436,20 @@ describe("annotation store", () => {
       // Select some annotations
       store.setSelected([annotations[50].id, annotations[60].id]);
 
-      // Use dots mode by zooming out
+      // Use dots mode by setting maxHydrated to 0
+      store.visibilityConfig.maxHydrated = 0;
       await store.updateVisibilityAndHydration({
         filteredIds: annotations.map((a) => a.id),
-        zoom: 1,
       });
 
-      // Selected should be hydrated even in dots mode
+      // Selected should be hydrated even when maxHydrated is 0
       expect(store.hydratedAnnotations.has(annotations[50].id)).toBe(true);
       expect(store.hydratedAnnotations.has(annotations[60].id)).toBe(true);
     });
 
     it("visibilityConfig has expected defaults", () => {
-      expect(store.visibilityConfig.maxVisible).toBe(10000);
-      expect(store.visibilityConfig.hydrateThreshold).toBe(5000);
-      expect(store.visibilityConfig.zoomThreshold).toBe(3);
+      expect(store.visibilityConfig.maxVisible).toBe(20000);
+      expect(store.visibilityConfig.maxHydrated).toBe(10000);
     });
   });
 });

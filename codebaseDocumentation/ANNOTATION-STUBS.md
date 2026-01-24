@@ -352,19 +352,22 @@ annotationStubs (what exists - source of truth)
 filteredAnnotations (user filters applied)
        │
        ▼
-gcsBounds filtering (viewport spatial filter)  ← NEW
+gcsBounds filtering (viewport spatial filter)
        │
        ▼
-_visibleAnnotationIds (render budget, max 10K)
+hash-based ranking (stable visibility selection)
        │
        ▼
-hydrationMode (shapes vs dots based on count + zoom)
+_visibleAnnotationIds (render budget, max 20K)
        │
        ▼
-hydratedAnnotations (full data for visible shapes)
+size-based ranking (largest first)
        │
        ▼
-GeoJS Renderer (dots or full geometry)
+hydratedAnnotations (top 10K by size)
+       │
+       ▼
+GeoJS Renderer (dots for stubs, shapes for hydrated)
 ```
 
 #### 4.2 New State Fields
@@ -380,9 +383,10 @@ hydrationMode: THydrationMode = "dots";
 
 // Configuration thresholds
 visibilityConfig: IVisibilityConfig = {
-  maxVisible: 10000,      // Max annotations to render
-  hydrateThreshold: 5000, // Max to show as shapes
-  zoomThreshold: 3,       // Min zoom level for shapes
+  maxVisible: 20000,   // Max annotations to render (visibility budget)
+  maxHydrated: 10000,  // Max annotations to hydrate (show as shapes, sorted by size)
+  // TODO: Re-enable zoom-based thresholds if needed
+  // zoomThreshold: 3,
 };
 ```
 
@@ -394,23 +398,33 @@ Added to `src/store/model.ts`:
 export type THydrationMode = "shapes" | "dots";
 
 export interface IVisibilityConfig {
-  maxVisible: number;
-  hydrateThreshold: number;
-  zoomThreshold: number;
+  maxVisible: number;   // Max annotations to render (visibility budget)
+  maxHydrated: number;  // Max annotations to hydrate (show as shapes, sorted by size)
+  // TODO: Re-enable zoom-based thresholds if needed
+  // zoomThreshold: number;
 }
 ```
 
 #### 4.4 Core Action: `updateVisibilityAndHydration`
 
-The main entry point for the visibility system. Called on filter changes, zoom, or pan.
+The main entry point for the visibility system. Called on filter changes or viewport pan.
+
+**Strategy**:
+1. **Visibility**: Hash-based ranking ensures stable visibility across pan/zoom (same annotations remain visible)
+2. **Hydration**: Size-based ranking prioritizes larger annotations for shape rendering
 
 ```typescript
 @Action
 updateVisibilityAndHydration(params: {
   filteredIds: string[];
-  zoom: number;
   gcsBounds?: IGeoJSPosition[];  // Viewport corners for spatial filtering
+  // TODO: Re-enable zoom-based thresholds if needed
+  // zoom: number;
+  // viewportDiagonal?: number;
 }) {
+  const { filteredIds, gcsBounds } = params;
+  const { maxVisible, maxHydrated } = this.visibilityConfig;
+
   // 1. Filter by viewport bounds (spatial filtering)
   let viewportFilteredIds = filteredIds;
   if (gcsBounds && gcsBounds.length === 4) {
@@ -429,26 +443,37 @@ updateVisibilityAndHydration(params: {
     });
   }
 
-  // 2. Apply maxVisible budget
+  // 2. Visibility: Select top `maxVisible` by hash rank
+  // Using hash-based ranking ensures stable visibility across pan/zoom
   const visibleIds = viewportFilteredIds.length <= maxVisible
     ? viewportFilteredIds
-    : viewportFilteredIds.slice(0, maxVisible);
+    : selectRandomSubset(viewportFilteredIds, maxVisible);
 
-  // 3. Determine hydration mode
-  const showShapes = visibleIds.length <= hydrateThreshold && zoom >= zoomThreshold;
+  // 3. Hydration: Sort visible by size (largest first), hydrate top `maxHydrated`
+  const idsWithSize = visibleIds.map((id) => {
+    const stub = this.annotationStubs.get(id);
+    return { id, size: stub?.estimatedRadius ?? 0 };
+  });
+  idsWithSize.sort((a, b) => b.size - a.size);  // Descending by size
 
-  // 4. Apply state changes
+  const idsToHydrate = idsWithSize.slice(0, maxHydrated).map((item) => item.id);
+
+  // 4. Apply visibility
   this.setVisibleAnnotationIds(visibleIds);
-  this.setHydrationMode(showShapes ? "shapes" : "dots");
 
-  // 5. Hydrate as needed
-  if (showShapes) {
-    this.hydrateFromBackend(visibleIds);
-  } else {
-    this.clearNonSelectedHydration();
+  // 5. Determine hydration mode and apply
+  const hasHydratedInViewport = idsToHydrate.length > 0;
+  this.setHydrationMode(hasHydratedInViewport ? "shapes" : "dots");
+
+  // 6. Hydrate the selected annotations (sorted by size)
+  if (idsToHydrate.length > 0) {
+    this.hydrateFromBackend(idsToHydrate);
   }
 
-  // 6. Always hydrate selected (they render as shapes)
+  // 7. Clear hydration for annotations no longer in the hydration list
+  this.clearNonSelectedHydration(idsToHydrate);
+
+  // 8. Always hydrate selected annotations (they render as shapes)
   if (this.selectedAnnotationIds.length > 0) {
     this.hydrateFromBackend(this.selectedAnnotationIds);
   }
@@ -488,10 +513,6 @@ get getForRendering() {
 
 **Added getters**:
 ```typescript
-get zoom() {
-  return this.store.cameraInfo.zoom;
-}
-
 get gcsBounds() {
   return this.store.cameraInfo.gcsBounds;
 }
@@ -500,8 +521,9 @@ get gcsBounds() {
 **Added watcher with debouncing**:
 ```typescript
 @Watch("filteredAnnotations")
-@Watch("zoom")
 @Watch("gcsBounds")
+// TODO: Re-enable zoom watcher if zoom-based thresholds are re-enabled
+// @Watch("zoom")
 onVisibilityInputsChanged() {
   this.updateVisibilityDebounced();
 }
@@ -510,8 +532,10 @@ updateVisibilityDebounced = debounce(() => {
   const filteredIds = this.filteredAnnotations.map((a) => a.id);
   this.annotationStore.updateVisibilityAndHydration({
     filteredIds,
-    zoom: this.zoom,
     gcsBounds: this.gcsBounds,
+    // TODO: Re-enable zoom-based thresholds if needed
+    // zoom: this.zoom,
+    // viewportDiagonal: computed from this.map?.size(),
   });
 }, 100);
 ```
@@ -535,14 +559,18 @@ map.geoOn(geojs.event.pan, synchronizationCallback);
 map.geoOn(geojs.event.zoom, synchronizationCallback);  // ADDED
 ```
 
-#### 4.8 Observed Behavior
+#### 4.8 Current Behavior
 
-| State | Zoom | Viewport Annotations | Hydration Mode | Result |
-|-------|------|---------------------|----------------|--------|
-| Zoomed out | -0.39 | 10,000 (capped) | dots | Circles at centroids |
-| Zoomed in | 5 | 44 | shapes | Full rectangles |
+The system now uses a two-tier approach:
+1. **Visibility**: Hash-based ranking selects up to 20K annotations for rendering (stable across pan/zoom)
+2. **Hydration**: Size-based ranking hydrates up to 10K of the largest visible annotations as shapes
 
-The system correctly switches between modes based on viewport contents and zoom level.
+| Viewport Annotations | Visible | Hydrated | Mode |
+|---------------------|---------|----------|------|
+| < 20K | All | Top 10K by size | shapes (for hydrated) |
+| > 20K | 20K (hash-ranked) | Top 10K by size | mixed |
+
+Selected annotations are always hydrated regardless of thresholds.
 
 #### 4.9 Stub-Specific Styling (WIP)
 
@@ -590,21 +618,28 @@ export function getStubStyleFromBaseStyle(
 
 **Open question**: Should stubs respect the user's `scaleAnnotationsWithZoom` preference, or always use fixed world size for visual distinction?
 
-#### 4.10 Random Subset Selection
+#### 4.10 Hash-Based Visibility Selection
 
-**Problem**: Previous implementation used `viewportFilteredIds.slice(0, maxVisible)` which always selected the first N annotations by ID order. This can lead to poor spatial coverage if annotations are ordered by location.
+**Problem**: Original implementation used `viewportFilteredIds.slice(0, maxVisible)` which always selected the first N annotations by ID order. This can lead to poor spatial coverage if annotations are ordered by location, and causes visible annotations to "shift" as the viewport changes.
 
-**Solution**: Deterministic pseudo-random selection based on ID hash for consistent, spatially-distributed sampling.
+**Solution**: Deterministic hash-based selection ensures:
+1. Same annotations remain visible across pan/zoom (stable visibility)
+2. Good spatial coverage through pseudo-random distribution
 
 **New utilities in `src/utils/annotation.ts`**:
 ```typescript
-// Simple hash function (djb2 algorithm)
-function hashString(str: string): number {
+// Simple hash function (djb2 algorithm) - exported for direct use
+export function hashString(str: string): number {
   let hash = 5381;
   for (let i = 0; i < str.length; i++) {
     hash = (hash << 5) + hash + str.charCodeAt(i);
   }
   return hash >>> 0;
+}
+
+// Compute a deterministic hash value between 0 and 1 for an ID
+export function hashToNormalizedValue(id: string): number {
+  return hashString(id) / 0xffffffff;
 }
 
 // Seeded random selection - deterministic based on ID hashes
@@ -618,34 +653,49 @@ export function selectRandomSubset(ids: string[], maxCount: number): string[] {
 
 **Usage in `updateVisibilityAndHydration`**:
 ```typescript
-const visibleIds =
-  viewportFilteredIds.length <= maxVisible
-    ? viewportFilteredIds
-    : selectRandomSubset(viewportFilteredIds, maxVisible);
+const visibleIds = viewportFilteredIds.length <= maxVisible
+  ? viewportFilteredIds
+  : selectRandomSubset(viewportFilteredIds, maxVisible);
 ```
 
 **Benefits**:
+- Stable visibility: same annotations remain visible as viewport changes
 - Better spatial coverage across the viewport
-- Deterministic: same input always produces same output (no flickering during pan/zoom)
+- Deterministic: same input always produces same output (no flickering)
 - No additional dependencies (pure JS)
 
-#### 4.11 Adaptive Zoom Threshold
+#### 4.11 Size-Based Hydration Ranking
 
-**Problem**: Static `zoomThreshold: 3` doesn't account for annotation size. Large annotations should show as shapes even at lower zoom levels, while small annotations need more zoom.
+**Current approach**: Hydration is based purely on annotation size, not zoom level.
 
-**Solution**: Calculate effective zoom threshold based on median annotation radius vs viewport diagonal.
+The largest annotations (by `estimatedRadius`) are prioritized for hydration because:
+1. Larger annotations benefit more from shape rendering (more visible detail)
+2. Small annotations look similar as dots vs shapes at typical zoom levels
 
-**New field in `IAnnotationStub`** (`src/store/model.ts`):
+**Implementation**:
+```typescript
+// Sort visible annotations by size (largest first)
+const idsWithSize = visibleIds.map((id) => {
+  const stub = this.annotationStubs.get(id);
+  return { id, size: stub?.estimatedRadius ?? 0 };
+});
+idsWithSize.sort((a, b) => b.size - a.size);  // Descending by size
+
+// Hydrate top maxHydrated
+const idsToHydrate = idsWithSize.slice(0, maxHydrated).map((item) => item.id);
+```
+
+**Supporting infrastructure** (still present for potential future use):
+
+`IAnnotationStub` includes `estimatedRadius`:
 ```typescript
 export interface IAnnotationStub {
   // ... existing fields
-  estimatedRadius?: number;  // sqrt(area/pi) or bbox diagonal/2
+  estimatedRadius?: number;  // bbox diagonal / 2
 }
 ```
 
-**New utilities**:
-
-`src/utils/annotation.ts`:
+`estimateAnnotationRadius` utility:
 ```typescript
 export function estimateAnnotationRadius(coordinates: IGeoJSPosition[]): number {
   if (coordinates.length <= 1) return 5;  // Point - use default
@@ -662,62 +712,26 @@ export function estimateAnnotationRadius(coordinates: IGeoJSPosition[]): number 
 }
 ```
 
-`src/store/annotation.ts`:
+#### 4.11.1 Zoom-Based Threshold (Deferred)
+
+**Note**: Zoom-based adaptive thresholds were implemented but are currently commented out. The code is preserved for potential future use.
+
+The idea was to show shapes only when annotations are large enough relative to the viewport:
 ```typescript
-get medianAnnotationRadius(): number {
-  const radii: number[] = [];
-  for (const stub of this.annotationStubs.values()) {
-    if (stub.estimatedRadius && stub.estimatedRadius > 0) {
-      radii.push(stub.estimatedRadius);
-    }
-  }
-  if (radii.length === 0) return 0;
-  radii.sort((a, b) => a - b);
-  const mid = Math.floor(radii.length / 2);
-  return radii.length % 2 !== 0 ? radii[mid] : (radii[mid - 1] + radii[mid]) / 2;
-}
+// TODO: Re-enable if needed
+// let effectiveZoomThreshold = zoomThreshold;
+// if (viewportDiagonal && this.medianAnnotationRadius > 0) {
+//   const medianRadiusInPixels = this.medianAnnotationRadius * Math.pow(2, zoom);
+//   const minVisibleSize = viewportDiagonal * 0.02;
+//   effectiveZoomThreshold = medianRadiusInPixels >= minVisibleSize ? 0 : Infinity;
+// }
 ```
 
-**Adaptive threshold logic in `updateVisibilityAndHydration`**:
-```typescript
-// New parameter: viewportDiagonal (computed from map.size())
-let effectiveZoomThreshold = zoomThreshold;
-if (viewportDiagonal && this.medianAnnotationRadius > 0) {
-  // Show shapes when median annotation is at least 2% of viewport diagonal
-  const medianRadiusInPixels = this.medianAnnotationRadius * Math.pow(2, zoom);
-  const minVisibleSize = viewportDiagonal * 0.02;
-  effectiveZoomThreshold = medianRadiusInPixels >= minVisibleSize ? 0 : Infinity;
-}
-```
-
-**Changes in `AnnotationViewer.vue`**:
-```typescript
-updateVisibilityDebounced = debounce(() => {
-  const mapSize = this.map?.size();
-  const viewportDiagonal = mapSize
-    ? Math.sqrt(mapSize.width ** 2 + mapSize.height ** 2)
-    : undefined;
-  this.annotationStore.updateVisibilityAndHydration({
-    filteredIds,
-    zoom: this.zoom,
-    gcsBounds: this.gcsBounds,
-    viewportDiagonal,  // NEW
-  });
-}, 100);
-```
-
-**How it works**:
-1. Each stub stores `estimatedRadius` (bbox diagonal / 2) computed at creation time
-2. `medianAnnotationRadius` getter computes median radius across all stubs
-3. At each visibility update, compare median radius (in pixels at current zoom) to viewport
-4. If median annotation is >= 2% of viewport diagonal, show as shapes (threshold = 0)
-5. Otherwise, keep showing as dots (threshold = Infinity)
-
-**Tuning**: The 2% threshold is arbitrary and may need adjustment based on user feedback.
+The `medianAnnotationRadius` getter is still available if this feature is re-enabled.
 
 #### 4.12 Remaining To-Do Items
 
-**Styling Adjustments (4.6 continued)**:
+**Styling Adjustments**:
 - [x] Add `getStubStyleFromBaseStyle()` function with thinner strokes and lower opacity
 - [x] Update `getAnnotationStyle()` to accept `isStub` parameter
 - [x] Update all style call sites to pass `isStub` flag
@@ -725,26 +739,32 @@ updateVisibilityDebounced = debounce(() => {
 - [ ] Fine-tune stub radius (currently 5 world units)
 - [ ] Consider different hover/selection effects for stubs vs full annotations
 
-**Threshold Tuning (4.7)**:
-- [ ] Test and tune `maxVisible` (currently 10,000) - balance between coverage and performance
-- [ ] Test and tune `hydrateThreshold` (currently 5,000) - when to switch to shapes
-- [x] Added adaptive zoom threshold based on annotation size vs viewport (replaces static `zoomThreshold`)
-- [ ] Tune the 2% viewport diagonal threshold for adaptive zoom
+**Threshold Tuning**:
+- [ ] Test and tune `maxVisible` (currently 20,000) - balance between coverage and performance
+- [ ] Test and tune `maxHydrated` (currently 10,000) - how many shapes to render
 - [ ] Consider making thresholds configurable via UI or configuration
+- [ ] (Deferred) Re-enable zoom-based adaptive thresholds if needed
 
-**Random Selection (4.10)**:
-- [x] Implement deterministic random subset selection using ID hash
+**Hash-Based Selection**:
+- [x] Implement deterministic hash-based subset selection for stable visibility
+- [x] Added `hashToNormalizedValue()` for normalized 0-1 hash values
 - [ ] Evaluate if hash-based ordering provides good spatial distribution in practice
 - [ ] Consider alternative strategies (grid-based sampling, importance sampling)
 
-**Performance Review (4.8)**:
+**Size-Based Hydration**:
+- [x] Sort visible annotations by `estimatedRadius` (largest first)
+- [x] Hydrate top `maxHydrated` annotations
+- [ ] Evaluate if size-based ranking is the right heuristic
+- [ ] Consider other ranking strategies (density, importance, user focus)
+
+**Performance Review**:
 - [ ] Profile `updateVisibilityAndHydration` with 100K+ annotations
 - [ ] Evaluate cost of viewport filtering (iterates all filtered annotations)
 - [ ] Review debounce timing (currently 100ms) - balance responsiveness vs CPU
 - [ ] Monitor memory usage during rapid pan/zoom
 - [ ] Test hydration/dehydration memory churn
 
-**R-tree Spatial Index (4.10)**:
+**R-tree Spatial Index**:
 - [ ] Implement R-tree for efficient viewport queries (current O(n) filtering won't scale to 100K+)
 - [ ] Evaluate libraries: `rbush` (lightweight), `flatbush` (static, very fast), or custom implementation
 - [ ] Index annotation centroids on dataset load
@@ -752,7 +772,7 @@ updateVisibilityDebounced = debounce(() => {
 - [ ] Consider R-tree for selection (click/lasso) to avoid iterating all annotations
 - [ ] Benchmark: compare current linear scan vs R-tree query performance
 
-**Selection Updates (4.9)**:
+**Selection Updates**:
 - [ ] Verify selection works correctly with visibility filtering
 - [ ] Test that selected annotations always render as shapes
 - [ ] Consider whether non-visible annotations should be selectable
@@ -1166,17 +1186,18 @@ Before completing Phase 4, the following items need manual review and adjustment
   - [x] Hydrated render as full shapes
 - [~] Phase 4: Dynamic Visibility and Hydration (IN PROGRESS)
   - [x] 4.1 Visibility tracking state (`_visibleAnnotationIds`, `hydrationMode`, `visibilityConfig`)
-  - [x] 4.2 Hydration mode switching (shapes vs dots based on count + zoom)
+  - [x] 4.2 Hydration mode switching (shapes vs dots based on hydration count)
   - [x] 4.3 Viewport-based spatial filtering using `gcsBounds`
   - [x] 4.4 Zoom event listener fix in ImageViewer.vue
   - [x] 4.5 Debounced visibility updates in AnnotationViewer.vue
-  - [~] 4.6 Styling adjustments (stub-specific styling with thinner strokes - WIP)
-  - [~] 4.7 Threshold tuning (adaptive zoom threshold based on annotation size - WIP)
+  - [x] 4.6 Styling adjustments (stub-specific styling with thinner strokes)
+  - [x] 4.10 Hash-based visibility selection (stable across pan/zoom)
+  - [x] 4.11 Size-based hydration ranking (largest annotations first)
+  - [~] 4.7 Threshold tuning (maxVisible=20K, maxHydrated=10K - may need adjustment)
   - [ ] 4.8 Performance review and optimization
   - [ ] 4.9 Selection updates for non-rendered annotations (if needed)
-  - [x] 4.10 Random subset selection (hash-based deterministic sampling)
-  - [x] 4.11 Adaptive zoom threshold (based on median annotation radius vs viewport)
   - [ ] 4.12 R-tree spatial index for efficient viewport queries
+  - [~] Zoom-based adaptive threshold (deferred/commented out)
 - [ ] Phase 5: Backend API for Stub Fetching
 - [ ] Phase 6: On-Demand Hydration
 - [ ] Phase 7: Connection Stubs (Optional)
@@ -1212,32 +1233,34 @@ Before completing Phase 4, the following items need manual review and adjustment
 
 **`src/store/model.ts`**:
 - Added `THydrationMode` type (`"shapes" | "dots"`)
-- Added `IVisibilityConfig` interface (thresholds for visibility/hydration)
-- Added `estimatedRadius?: number` to `IAnnotationStub` (for adaptive zoom threshold)
+- Added `IVisibilityConfig` interface with `maxVisible` and `maxHydrated` (zoom threshold deferred)
+- Added `estimatedRadius?: number` to `IAnnotationStub` for size-based hydration ranking
 
 **`src/utils/annotation.ts`**:
 - Added `getStubStyleFromBaseStyle()` - stub-specific styling with thinner strokes and lower opacity
-- Added `hashString()` - djb2 hash function for deterministic random selection
-- Added `selectRandomSubset()` - hash-based subset selection for spatial coverage
+- Added `hashString()` (exported) - djb2 hash function for deterministic selection
+- Added `hashToNormalizedValue()` - returns 0-1 value for hash ranking
+- Added `selectRandomSubset()` - hash-based subset selection for stable visibility
 - Added `estimateAnnotationRadius()` - computes bbox diagonal / 2 for size estimation
 
 **`src/store/annotation.ts`**:
 - Added `_visibleAnnotationIds: { [id: string]: true }` for visibility tracking
 - Added `hydrationMode: THydrationMode` state
-- Added `visibilityConfig: IVisibilityConfig` with default thresholds
+- Added `visibilityConfig: IVisibilityConfig` with defaults: `maxVisible: 20000`, `maxHydrated: 10000`
 - Added getters: `isVisible`, `visibleAnnotationIds`, `shouldRenderAsShape`, `getForRendering`
-- Added getter: `medianAnnotationRadius` - median of all stub radii for adaptive threshold
-- Added mutations: `setVisibleAnnotationIds`, `setHydrationMode`, `hydrateFromBackend`, `clearNonSelectedHydration`
+- Added getter: `medianAnnotationRadius` (for potential future zoom-based threshold)
+- Added mutations: `setVisibleAnnotationIds`, `setHydrationMode`, `hydrateFromBackend`
+- Updated `clearNonSelectedHydration()` to accept optional `preserveIds` parameter
 - Added action: `updateVisibilityAndHydration` with:
-  - Viewport-based spatial filtering
-  - Random subset selection via `selectRandomSubset()`
-  - Adaptive zoom threshold based on `medianAnnotationRadius` and `viewportDiagonal`
+  - Viewport-based spatial filtering via `gcsBounds`
+  - Hash-based visibility selection via `selectRandomSubset()` (stable across pan/zoom)
+  - Size-based hydration ranking (largest annotations first)
+  - Zoom-based threshold logic commented out (deferred)
 - Updated stub creation in `addAnnotationImpl`, `setAnnotation`, `setAnnotations` to include `estimatedRadius`
 
 **`src/components/AnnotationViewer.vue`**:
-- Added `zoom` getter for camera zoom level
 - Added `gcsBounds` getter for viewport bounds
-- Added `@Watch("gcsBounds")` to visibility watcher
+- Commented out `@Watch("zoom")` (zoom no longer triggers visibility updates)
 - Added `updateVisibilityDebounced` function (100ms debounce)
 - Updated `layerAnnotations` to use `isVisible` and `getForRendering`
 - Added import for `getStubStyleFromBaseStyle`
@@ -1245,13 +1268,14 @@ Before completing Phase 4, the following items need manual review and adjustment
 - Updated `createGeoJSAnnotation()` to pass `isStub` flag in options
 - Updated `restyleAnnotations()` to extract `isStub` from annotation options
 - Updated style update logic in `drawNewAnnotations()` to use `isStub`
-- Updated `updateVisibilityDebounced()` to compute and pass `viewportDiagonal`
+- Simplified `updateVisibilityDebounced()` to only pass `filteredIds` and `gcsBounds`
 
 **`src/components/ImageViewer.vue`**:
 - Added `geojs.event.zoom` listener to `synchronizationCallback` (bug fix - zoom changes now update `cameraInfo`)
 
 **`src/store/__tests__/annotation.test.ts`**:
 - Added tests for visibility state management
-- Added tests for hydration mode switching
+- Added tests for hydration mode switching based on `maxHydrated`
 - Added tests for `updateVisibilityAndHydration` action
-- Added mocks for `selectRandomSubset` and `estimateAnnotationRadius`
+- Added mocks for `selectRandomSubset`, `estimateAnnotationRadius`, `hashString`, `hashToNormalizedValue`
+- Updated test expectations for new config structure (`maxHydrated` instead of `hydrateThreshold`)

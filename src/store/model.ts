@@ -1330,9 +1330,10 @@ export type THydrationMode = "shapes" | "dots";
 
 /** Configuration for visibility and hydration thresholds */
 export interface IVisibilityConfig {
-  maxVisible: number; // Max annotations to render
-  hydrateThreshold: number; // Max to show as shapes (above this, use dots)
-  zoomThreshold: number; // Min zoom level for shapes
+  maxVisible: number; // Max annotations to render (visibility budget)
+  maxHydrated: number; // Max annotations to hydrate (show as shapes, sorted by size)
+  // TODO: Re-enable zoom-based thresholds if needed
+  // zoomThreshold: number; // Min zoom level for shapes
 }
 
 /** Type guard: check if annotation has coordinates (is hydrated) */

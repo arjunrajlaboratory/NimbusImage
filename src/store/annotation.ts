@@ -39,6 +39,7 @@ import {
   simpleCentroid,
   selectRandomSubset,
   estimateAnnotationRadius,
+  hashToNormalizedValue,
 } from "@/utils/annotation";
 import { logError } from "@/utils/log";
 import progress from "./progress";
@@ -99,9 +100,10 @@ export class Annotations extends VuexModule {
 
   // Configuration thresholds for visibility and hydration
   visibilityConfig: IVisibilityConfig = {
-    maxVisible: 10000, // Max annotations to render
-    hydrateThreshold: 5000, // Max to show as shapes (above this, use dots)
-    zoomThreshold: 3, // Min zoom level for shapes
+    maxVisible: 20000, // Max annotations to render (visibility budget)
+    maxHydrated: 10000, // Max annotations to hydrate (show as shapes, sorted by size)
+    // TODO: Re-enable zoom-based thresholds if needed
+    // zoomThreshold: 3, // Min zoom level for shapes
   };
 
   activeAnnotationIds: string[] = [];
@@ -629,11 +631,12 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
-  clearNonSelectedHydration() {
-    // Keep only hydrated annotations that are selected
+  clearNonSelectedHydration(preserveIds: string[] = []) {
+    // Keep only hydrated annotations that are selected or in the preserve list
+    const preserveSet = new Set(preserveIds);
     const newMap = new Map<string, IAnnotation>();
     for (const [id, ann] of this.hydratedAnnotations) {
-      if (id in this._selectedAnnotationIds) {
+      if (id in this._selectedAnnotationIds || preserveSet.has(id)) {
         newMap.set(id, ann);
       }
     }
@@ -654,24 +657,27 @@ export class Annotations extends VuexModule {
   }
 
   /**
-   * Update visibility and hydration based on filtered annotations and zoom level.
+   * Update visibility and hydration based on filtered annotations and viewport.
    * This is the main entry point for the dynamic visibility system.
    *
+   * Strategy:
+   * 1. Filter by viewport bounds
+   * 2. Visibility: Select top `maxVisible` by hash rank (stable across pan/zoom)
+   * 3. Hydration: Sort visible by size (largest first), hydrate top `maxHydrated`
+   *
    * @param filteredIds - IDs of annotations that pass the current filters
-   * @param zoom - Current camera zoom level
    * @param gcsBounds - Optional viewport bounds (4 corner points) for spatial filtering
-   * @param viewportDiagonal - Optional viewport diagonal in pixels for adaptive threshold
    */
   @Action
   updateVisibilityAndHydration(params: {
     filteredIds: string[];
-    zoom: number;
     gcsBounds?: IGeoJSPosition[];
-    viewportDiagonal?: number;
+    // TODO: Re-enable zoom-based thresholds if needed
+    // zoom: number;
+    // viewportDiagonal?: number;
   }) {
-    const { filteredIds, zoom, gcsBounds, viewportDiagonal } = params;
-    const { maxVisible, hydrateThreshold, zoomThreshold } =
-      this.visibilityConfig;
+    const { filteredIds, gcsBounds } = params;
+    const { maxVisible, maxHydrated } = this.visibilityConfig;
 
     // 1. Filter by viewport bounds if provided
     let viewportFilteredIds = filteredIds;
@@ -697,50 +703,49 @@ export class Annotations extends VuexModule {
       });
     }
 
-    // 2. Visibility: limit to maxVisible using random selection for spatial coverage
+    // 2. Visibility: Select top `maxVisible` by hash rank
+    // Using hash-based ranking ensures stable visibility across pan/zoom
+    // (same annotations remain visible as viewport changes)
     const visibleIds =
       viewportFilteredIds.length <= maxVisible
         ? viewportFilteredIds
         : selectRandomSubset(viewportFilteredIds, maxVisible);
 
-    // 3. Adaptive zoom threshold: show shapes when median annotation is large enough
-    let effectiveZoomThreshold = zoomThreshold;
-    if (viewportDiagonal && this.medianAnnotationRadius > 0) {
-      // Show shapes when median annotation is at least 2% of viewport diagonal
-      // medianAnnotationRadius is in world units, need to convert to pixels
-      // At zoom level N, 1 world unit = 2^N pixels (GeoJS convention)
-      const medianRadiusInPixels =
-        this.medianAnnotationRadius * Math.pow(2, zoom);
-      const minVisibleSize = viewportDiagonal * 0.02;
+    // 3. Hydration: Sort visible by size (largest first), hydrate top `maxHydrated`
+    // This ensures larger annotations (which benefit more from shape rendering) are prioritized
+    const idsWithSize = visibleIds.map((id) => {
+      const stub = this.annotationStubs.get(id);
+      return { id, size: stub?.estimatedRadius ?? 0 };
+    });
+    idsWithSize.sort((a, b) => b.size - a.size); // Descending by size
 
-      // If annotations are large enough at current zoom, show as shapes
-      effectiveZoomThreshold =
-        medianRadiusInPixels >= minVisibleSize ? 0 : Infinity;
-    }
+    const idsToHydrate = idsWithSize.slice(0, maxHydrated).map((item) => item.id);
 
-    // 4. Determine hydration mode: shapes if under threshold and zoomed in enough
-    const showShapes =
-      visibleIds.length <= hydrateThreshold && zoom >= effectiveZoomThreshold;
-
-    // 3. Apply visibility
+    // 4. Apply visibility
     this.setVisibleAnnotationIds(visibleIds);
 
-    // 4. Apply hydration mode
-    this.setHydrationMode(showShapes ? "shapes" : "dots");
+    // 5. Determine hydration mode and apply
+    // Mode is "shapes" if we have any hydrated annotations in viewport
+    const hasHydratedInViewport = idsToHydrate.length > 0;
+    this.setHydrationMode(hasHydratedInViewport ? "shapes" : "dots");
 
-    // 5. Hydrate as needed
-    if (showShapes) {
-      // Hydrate all visible annotations
-      this.hydrateFromBackend(visibleIds);
-    } else {
-      // Clear non-selected hydration to save memory
-      this.clearNonSelectedHydration();
+    // 6. Hydrate the selected annotations (sorted by size)
+    if (idsToHydrate.length > 0) {
+      this.hydrateFromBackend(idsToHydrate);
     }
 
-    // 6. Always hydrate selected annotations (they render as shapes)
+    // 7. Clear hydration for annotations no longer in the hydration list
+    // (except selected annotations which are always hydrated)
+    this.clearNonSelectedHydration(idsToHydrate);
+
+    // 8. Always hydrate selected annotations (they render as shapes)
     if (this.selectedAnnotationIds.length > 0) {
       this.hydrateFromBackend(this.selectedAnnotationIds);
     }
+
+    // TODO: Re-enable zoom-based adaptive thresholds if needed
+    // The previous implementation used median annotation radius vs viewport diagonal
+    // to determine when to switch between shapes and dots mode
   }
 
   @Mutation

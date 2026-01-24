@@ -2664,8 +2664,9 @@ export default class AnnotationViewer extends Vue {
 
   // Watch for changes that affect visibility budget and hydration mode
   @Watch("filteredAnnotations")
-  @Watch("zoom")
   @Watch("gcsBounds")
+  // TODO: Re-enable zoom watcher if zoom-based thresholds are re-enabled
+  // @Watch("zoom")
   onVisibilityInputsChanged() {
     this.updateVisibilityDebounced();
   }
@@ -2826,16 +2827,12 @@ export default class AnnotationViewer extends Vue {
   // Debounced visibility update to avoid excessive re-renders during pan/zoom
   updateVisibilityDebounced = debounce(() => {
     const filteredIds = this.filteredAnnotations.map((a) => a.id);
-    // Calculate viewport diagonal for adaptive zoom threshold
-    const mapSize = this.map?.size();
-    const viewportDiagonal = mapSize
-      ? Math.sqrt(mapSize.width ** 2 + mapSize.height ** 2)
-      : undefined;
     this.annotationStore.updateVisibilityAndHydration({
       filteredIds,
-      zoom: this.zoom,
       gcsBounds: this.gcsBounds,
-      viewportDiagonal,
+      // TODO: Re-enable zoom-based thresholds if needed
+      // zoom: this.zoom,
+      // viewportDiagonal: computed from this.map?.size(),
     });
   }, 100);
 

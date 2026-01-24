@@ -129,6 +129,7 @@ export class Main extends VuexModule {
   girderUser: IGirderUser | null = this.girderRest.user as IGirderUser | null;
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
+  hasUserLoggedOut: boolean = false;
 
   history: IHistoryEntry[] = [];
 
@@ -332,6 +333,10 @@ export class Main extends VuexModule {
 
   get isLoggedIn() {
     return this.girderUser != null;
+  }
+
+  get isAdmin() {
+    return this.girderUser?.admin === true;
   }
 
   get userChannelColors() {
@@ -770,6 +775,7 @@ export class Main extends VuexModule {
     this.dataset = null;
     this.selectedConfigurationId = null;
     this.configuration = null;
+    this.hasUserLoggedOut = true;
   }
 
   @Mutation
