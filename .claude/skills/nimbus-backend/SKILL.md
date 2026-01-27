@@ -421,9 +421,27 @@ logprint.error(f"Error: {details}")
 
 ## Linting
 
-Backend Python code is linted with **flake8** (default settings: 79 char line limit).
+Backend Python code is linted with **flake8** using the default max line length of 79 characters.
 
 CI runs flake8 via `.github/workflows/backend.yaml` on all pushes to `devops/girder/**`.
+
+**Install flake8:**
+```bash
+# macOS (via Homebrew)
+brew install flake8
+
+# Or using pipx (no global install needed)
+pipx run flake8 ...
+```
+
+**Check before committing:**
+```bash
+# Run flake8 (uses default 79 char limit)
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation
+
+# Check a specific file
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py
+```
 
 **Fix lint errors with autopep8:**
 
@@ -442,17 +460,8 @@ autopep8 --diff path/to/file.py
 ```
 
 **Common issues:**
-- `E501 line too long` - Break lines at 79 characters
+- `E501 line too long` - Break lines at 79 characters (flake8 default)
 - For chained method calls (like `.modelParam(...)`), break after opening paren and align continuation
-
-**Check before committing:**
-```bash
-# Run flake8 locally (if installed)
-flake8 devops/girder/plugins/AnnotationPlugin/
-
-# Or use pipx (no install needed)
-pipx run flake8 devops/girder/plugins/AnnotationPlugin/
-```
 
 ## Docker Development
 
@@ -461,7 +470,18 @@ pipx run flake8 devops/girder/plugins/AnnotationPlugin/
 docker compose down
 docker compose build
 docker compose up -d
+# Wait ~15-30 seconds for Girder to fully start
 
 # View logs
 docker compose logs -f girder
+```
+
+**Note:** Avoid `docker compose build --no-cache` unless absolutely necessary - it rebuilds everything from scratch including large_image installation, which takes a long time (10+ minutes). A normal `docker compose build` should pick up code changes.
+
+**Testing API changes:** After rebuilding, test with curl:
+```bash
+curl -X POST 'http://localhost:8080/api/v1/export/csv' \
+  -H 'Content-Type: application/json' \
+  -H 'Girder-Token: YOUR_TOKEN' \
+  -d '{"datasetId":"YOUR_ID"}'
 ```

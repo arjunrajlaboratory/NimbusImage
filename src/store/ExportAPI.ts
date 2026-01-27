@@ -11,6 +11,14 @@ export interface IExportOptions {
   filename?: string;
 }
 
+export interface ICsvExportOptions {
+  datasetId: string;
+  propertyPaths?: string[][];
+  annotationIds?: string[];
+  undefinedValue?: "" | "NA" | "NaN";
+  filename?: string;
+}
+
 export default class ExportAPI {
   private readonly client: RestClientInstance;
 
@@ -60,5 +68,52 @@ export default class ExportAPI {
       href: url,
       download: options.filename || "export.json",
     });
+  }
+
+  /**
+   * Export dataset annotations as CSV via POST request.
+   * Uses POST to avoid URL length limits with large property/annotation lists.
+   * Streams response from backend - handles large datasets without memory issues.
+   */
+  async exportCsv(options: ICsvExportOptions): Promise<void> {
+    const url = `${this.client.apiRoot}/export/csv`;
+    const token = (this.client as any).token;
+
+    const body = {
+      datasetId: options.datasetId,
+      propertyPaths: options.propertyPaths || [],
+      annotationIds: options.annotationIds || [],
+      undefinedValue: options.undefinedValue ?? "",
+      filename: options.filename || "export.csv",
+    };
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token && token !== "#/") {
+      headers["Girder-Token"] = token;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new Error(`CSV export failed: ${response.statusText}`);
+    }
+
+    // Get the blob and trigger download
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+
+    downloadToClient({
+      href: downloadUrl,
+      download: options.filename || "export.csv",
+    });
+
+    // Clean up the object URL after a short delay
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
   }
 }

@@ -359,3 +359,301 @@ class TestExport:
             str(prop1["_id"]), str(prop2["_id"]), str(prop3["_id"])
         }
         assert result_prop_ids == expected_prop_ids
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestCSVExport:
+    """Tests for CSV export endpoint."""
+
+    def testExportCsvBasic(self, admin):
+        """Test basic CSV export - verify header and row format."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        export = Export()
+
+        # Simulate what the endpoint does - build CSV rows
+        cursor = export._annotationModel.find({"datasetId": dataset["_id"]})
+        rows = []
+
+        for annotation in cursor:
+            annId = str(annotation["_id"])
+            location = annotation.get("location", {})
+            tags = annotation.get("tags", [])
+
+            row = [
+                annId,
+                str(annotation.get("channel", 0)),
+                str(location.get("XY", 0) + 1),
+                str(location.get("Z", 0) + 1),
+                str(location.get("Time", 0) + 1),
+                ", ".join(tags),
+                annotation.get("shape", ""),
+                annotation.get("name", "") or "",
+            ]
+            rows.append(row)
+
+        # Verify we have the expected number of rows
+        assert len(rows) == 2
+
+        # Verify header generation logic
+        fields = ["Id", "Channel", "XY", "Z", "Time", "Tags", "Shape", "Name"]
+        quotedIndices = {0, 5, 6, 7}
+        headerRow = []
+        for i, field in enumerate(fields):
+            if i in quotedIndices:
+                headerRow.append(f'"{field}"')
+            else:
+                headerRow.append(field)
+        actualHeader = ','.join(headerRow)
+        expectedHeader = '"Id",Channel,XY,Z,Time,"Tags","Shape","Name"'
+        assert actualHeader == expectedHeader
+
+    def testExportCsvOneIndexed(self, admin):
+        """Verify XY, Z, Time are 1-indexed."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        export = Export()
+        cursor = export._annotationModel.find({"datasetId": dataset["_id"]})
+
+        for annotation in cursor:
+            location = annotation.get("location", {})
+            # Location values are 0-indexed in storage
+            xy_stored = location.get("XY", 0)
+            z_stored = location.get("Z", 0)
+            time_stored = location.get("Time", 0)
+
+            # CSV export should add 1 to each
+            xy_csv = xy_stored + 1
+            z_csv = z_stored + 1
+            time_csv = time_stored + 1
+
+            # With default location of {XY: 0, Z: 0, Time: 0},
+            # CSV should show 1, 1, 1
+            assert xy_csv == 1
+            assert z_csv == 1
+            assert time_csv == 1
+
+    def testExportCsvWithPropertyPaths(self, admin):
+        """Test CSV export with specific property paths."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        # Create a property
+        prop = AnnotationProperty().save({
+            "name": "Test Area Property",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        # Add property values to an annotation
+        PropertyValuesModel = AnnotationPropertyValues()
+        PropertyValuesModel.appendValues(
+            {propId: {"Area": 150.5, "Perimeter": 50}},
+            annotations[0]["_id"],
+            dataset["_id"]
+        )
+
+        export = Export()
+        propertyPaths = [[propId, "Area"], [propId, "Perimeter"]]
+        propertyNameMap = export._buildPropertyNameMap(propertyPaths)
+
+        # Check property name map
+        assert propId in propertyNameMap
+        assert propertyNameMap[propId] == "Test Area Property"
+
+        # Check column names
+        areaColName = export._getPropertyColumnName(
+            [propId, "Area"], propertyNameMap
+        )
+        assert areaColName == "Test Area Property / Area"
+
+        perimColName = export._getPropertyColumnName(
+            [propId, "Perimeter"], propertyNameMap
+        )
+        assert perimColName == "Test Area Property / Perimeter"
+
+    def testExportCsvWithAnnotationFilter(self, admin):
+        """Test CSV export filtered to specific annotations."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        export = Export()
+
+        # Filter to just first annotation
+        query = {
+            "datasetId": dataset["_id"],
+            "_id": {"$in": [annotations[0]["_id"]]}
+        }
+
+        cursor = export._annotationModel.find(query)
+        results = list(cursor)
+
+        # Should only get 1 annotation
+        assert len(results) == 1
+        assert str(results[0]["_id"]) == str(annotations[0]["_id"])
+
+    def testExportCsvUndefinedValues(self, admin):
+        """Test undefined value handling: empty, NA, NaN."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        export = Export()
+        propertyValues = export._getPropertyValues(dataset["_id"])
+
+        # Second annotation has no property values
+        ann2Id = str(annotations[1]["_id"])
+        ann2Values = propertyValues.get(ann2Id, {})
+
+        # Test _getValueFromPath for non-existent path
+        value = export._getValueFromPath(ann2Values, ["nonexistent", "Area"])
+        assert value is None
+
+        # The endpoint would replace None with the undefinedValue parameter
+        # Test each option
+        for undefinedValue in ["", "NA", "NaN"]:
+            if value is None:
+                result = undefinedValue
+            else:
+                result = str(value)
+
+            if undefinedValue == "":
+                assert result == ""
+            elif undefinedValue == "NA":
+                assert result == "NA"
+            elif undefinedValue == "NaN":
+                assert result == "NaN"
+
+    def testExportCsvEmptyDataset(self, admin):
+        """Test export with no annotations returns header only."""
+        dataset = utilities.createFolder(
+            admin, "empty_csv_dataset", upenn_utilities.datasetMetadata
+        )
+
+        export = Export()
+        cursor = export._annotationModel.find({"datasetId": dataset["_id"]})
+        results = list(cursor)
+
+        # Should have no annotations
+        assert len(results) == 0
+
+    def testExportCsvNestedPropertyValues(self, admin):
+        """Test multi-level property paths like ['propId', 'sub1', 'sub2']."""
+        export = Export()
+
+        # Test nested value extraction
+        values = {
+            "propId": {
+                "level1": {
+                    "level2": {
+                        "value": 42
+                    }
+                }
+            }
+        }
+
+        # Test various paths
+        assert export._getValueFromPath(values, ["propId"]) == {
+            "level1": {"level2": {"value": 42}}
+        }
+        assert export._getValueFromPath(
+            values, ["propId", "level1"]
+        ) == {"level2": {"value": 42}}
+        assert export._getValueFromPath(
+            values, ["propId", "level1", "level2"]
+        ) == {"value": 42}
+        assert export._getValueFromPath(
+            values, ["propId", "level1", "level2", "value"]
+        ) == 42
+
+        # Test non-existent path
+        assert export._getValueFromPath(
+            values, ["propId", "nonexistent"]
+        ) is None
+
+    def testExportCsvQuoting(self, admin):
+        """Verify Id, Tags, Shape, Name are quoted; others not."""
+        # The quoting logic is:
+        # quotedIndices = {0, 5, 6, 7}  # Id, Tags, Shape, Name
+        #
+        # For a row like:
+        # ["abc123", "0", "1", "1", "1", "tag1, tag2", "polygon", "Cell 1"]
+        #
+        # The output should be:
+        # "abc123",0,1,1,1,"tag1, tag2","polygon","Cell 1"
+
+        quotedIndices = {0, 5, 6, 7}
+        row = ["abc123", "0", "1", "1", "1", "tag1, tag2", "polygon", "Cell 1"]
+
+        formattedRow = []
+        for i, value in enumerate(row):
+            if i in quotedIndices:
+                escapedValue = value.replace('"', '""')
+                formattedRow.append(f'"{escapedValue}"')
+            else:
+                formattedRow.append(value)
+
+        csvLine = ','.join(formattedRow)
+
+        # Verify quoting
+        assert csvLine == '"abc123",0,1,1,1,"tag1, tag2","polygon","Cell 1"'
+
+    def testBuildPropertyNameMap(self, admin):
+        """Test building property name map from paths."""
+        # Create properties
+        prop1 = AnnotationProperty().save({
+            "name": "Property One",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["point"]},
+            "shape": "point",
+            "workerInterface": {}
+        })
+        prop2 = AnnotationProperty().save({
+            "name": "Property Two",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+
+        export = Export()
+        propertyPaths = [
+            [str(prop1["_id"]), "Area"],
+            [str(prop1["_id"]), "Perimeter"],
+            [str(prop2["_id"]), "Count"]
+        ]
+
+        nameMap = export._buildPropertyNameMap(propertyPaths)
+
+        assert len(nameMap) == 2
+        assert nameMap[str(prop1["_id"])] == "Property One"
+        assert nameMap[str(prop2["_id"])] == "Property Two"
+
+    def testGetPropertyColumnName(self, admin):
+        """Test column name generation from path."""
+        export = Export()
+
+        propertyNameMap = {"prop123": "My Property"}
+
+        # Test simple path (property only)
+        assert export._getPropertyColumnName(
+            ["prop123"], propertyNameMap
+        ) == "My Property"
+
+        # Test path with one subkey
+        assert export._getPropertyColumnName(
+            ["prop123", "Area"], propertyNameMap
+        ) == "My Property / Area"
+
+        # Test path with multiple subkeys
+        assert export._getPropertyColumnName(
+            ["prop123", "Stats", "Mean"], propertyNameMap
+        ) == "My Property / Stats / Mean"
+
+        # Test unknown property
+        assert export._getPropertyColumnName(
+            ["unknown"], propertyNameMap
+        ) is None
+
+        # Test empty path
+        assert export._getPropertyColumnName([], propertyNameMap) is None

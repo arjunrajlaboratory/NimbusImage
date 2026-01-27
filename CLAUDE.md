@@ -419,7 +419,7 @@ tox -r
 - Tests location: `upenncontrast_annotation/test/`
 - `test_annotations.py` - Annotation model and API tests
 - `test_connections.py` - Connection model and helper tests
-- `test_export.py` - JSON export endpoint tests
+- `test_export.py` - JSON and CSV export endpoint tests
 - `conftest.py` - Pytest fixtures
 - `girder_utilities.py` - Test helper for creating folders
 - `upenn_testing_utilities.py` - Sample data generators
@@ -434,6 +434,23 @@ class TestMyFeature:
         folder = utilities.createFolder(admin, "name", datasetMetadata)
         # ... test logic
 ```
+
+### Backend Linting
+
+The backend uses flake8 for Python linting with the default max line length of 79 characters:
+
+```bash
+# Install flake8 (macOS)
+brew install flake8
+
+# Run flake8 on backend code (uses default 79 char limit)
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation
+
+# Run flake8 on a specific file
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py
+```
+
+Note: Linting is also run as part of tox tests, so `tox` will catch linting errors.
 
 ## Important Notes
 
