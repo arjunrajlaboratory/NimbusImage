@@ -333,7 +333,7 @@ class Export(Resource):
         # Generator for streaming CSV output
         def generate():
             # Build column definitions: fixed columns + property columns
-            columns = list(CSV_FIXED_COLUMNS)
+            columns = CSV_FIXED_COLUMNS.copy()
             for path in parsedPropertyPaths:
                 propertyName = self._getPropertyColumnName(
                     path, propertyNameMap)
