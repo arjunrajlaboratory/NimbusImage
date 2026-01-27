@@ -82,16 +82,65 @@ NimbusImage allows you to share datasets and collections with other users for co
 
 **How to Share**:
 1. Click the sharing icon next to a dataset or collection
-2. Enter the email address of the user's NimbusImage account
-3. Choose access level:
+2. The Share dialog shows all users who currently have access and their permission levels
+3. To add a user: Enter their email address or username and select an access level
+4. Choose access level:
    - **Read**: User can view the dataset and annotations
    - **Write**: User can modify annotations and analysis
+
+**Managing Access**:
+- View all users with access in the Share dialog
+- Change permission levels for any user at any time
+- Remove access by clicking the remove button next to a user
+- The dataset owner cannot be removed (shown with a lock icon)
+- Changes take effect immediately in real-time
+
+**Making a Dataset Public**:
+- Toggle the "Public" checkbox to make a dataset viewable by anyone with the link
+- Public datasets can be viewed by anyone, even without a NimbusImage account
+- This is useful for sharing data with reviewers, collaborators, or the public
+- Public access is read-only; users cannot modify annotations without an account and explicit write access
 
 **Important Notes**:
 - To share a dataset, you must also share its parent collection so the recipient can view it properly
 - Shared datasets appear in the recipient's file navigator
 - Changes made by collaborators are visible to all users with access
-- You can remove access at any time by managing sharing settings
+
+## Projects
+Projects are a way to group related datasets and collections together, designed for organizing work for publication and future repository deposits:
+
+**What Projects Are For**:
+- Group datasets and collections that belong together (e.g., all data for a paper)
+- Add publication metadata (title, description, authors, license, keywords, DOI)
+- Prepare data for future export to repositories like Zenodo
+- Organize your work beyond the folder-based file system
+
+**Creating and Managing Projects**:
+1. Navigate to the "Projects" tab on the Home page
+2. Click "Create Project" to make a new project
+3. Give your project a name and optional description
+4. Projects appear in your Recent Projects list for quick access
+
+**Adding Items to Projects**:
+- From a dataset's info page: Click "Add to Project" button
+- From a collection's info page: Click "Add to Project" button
+- Projects can contain both individual datasets and entire collections
+- A unified view shows all datasets (both directly added and those within collections)
+
+**Publication Metadata**:
+- Edit publication details like title, description, and license
+- Add authors with names and affiliations
+- Include keywords for discoverability
+- Add a DOI if already assigned
+- This metadata will be used when exporting to repositories (coming soon)
+
+**Project Views**:
+- See total size of all datasets in the project
+- Filter and search datasets and collections within a project
+- Expand collections to see their contained datasets
+- Navigate directly to any dataset or collection from the project view
+
+Projects provide a logical grouping layer that sits above the file system, making it easier to organize and eventually share complete research outputs.
 
 # 3. Getting Started
 
@@ -127,6 +176,18 @@ NimbusImage provides a streamlined "Create Dataset" dialog to upload your data:
 5. **Compositing Options**: Choose to stitch tiles or keep as separate positions
 6. **Transcoding**: Optimize performance by transcoding to efficient TIFF. Not generally needed for Nikon .nd2 files, but important for Leica .lif and Zeiss .czi files.
 7. **Collection Assignment**: Add to existing or create new collection
+
+**Batch Dataset Upload**:
+Upload multiple files at once, creating one dataset per file in a single collection:
+1. Enable "Batch Dataset Mode" checkbox in the upload dialog
+2. Drag and drop multiple image files (e.g., multiple .nd2 or .czi files)
+3. Each file becomes its own dataset, all grouped in a new collection
+4. **Quick Import**: Processes all files with default settings
+5. **Advanced Import**: Configure dimension settings on the first file, and those settings apply to all subsequent files
+6. The system checks for duplicate filenames before uploading
+7. After import, you'll see a compatibility check—if files have different dimensions or channels, you'll be warned about which aspects don't match
+
+This is ideal for experiments where you have many separate image files (e.g., one per well or condition) that you want to analyze together in a single collection.
 
 ## Navigating the Interface
 After loading your data, navigate the interface:
@@ -170,7 +231,7 @@ NimbusImage provides a robust file management system to organize datasets, colle
 - **Action buttons** to create folders, upload files, and perform other operations
 
 ## Upload Options
-NimbusImage offers two approaches for uploading image data:
+NimbusImage offers several approaches for uploading image data:
 
 **Quick Upload**:
 - Simply drag and drop files directly
@@ -183,6 +244,13 @@ NimbusImage offers two approaches for uploading image data:
 - Allows configuration of tiling and compositing options
 - Enables specific collection placement
 - Offers adjustable transcoding settings
+
+**Batch Dataset Mode**:
+- Enable with checkbox to upload multiple files at once
+- Creates one dataset per file, all in a single collection
+- Configure settings once (on first file) and apply to all
+- Ideal for multi-well plates or condition-based experiments
+- Warns about compatibility issues if files have different properties
 
 ## Storage Organization
 NimbusImage provides specific locations for storing datasets and files:
