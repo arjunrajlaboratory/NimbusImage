@@ -26,13 +26,18 @@
           <span
             v-for="(legend, idx) in filenameLegend"
             :key="idx"
-            class="legend-item mr-3"
+            class="legend-item mr-4"
           >
             <span
               class="legend-color"
               :style="{ backgroundColor: legend.color }"
             ></span>
-            <span class="text-caption">{{ legend.label }}</span>
+            <span class="text-caption">
+              {{ legend.label }}
+              <span v-if="legend.showGuess" class="grey--text text--darken-1">
+                (guessed: {{ legend.guess }})
+              </span>
+            </span>
           </span>
         </div>
       </div>
@@ -544,12 +549,13 @@ export default class MultiSourceConfiguration extends Vue {
   };
 
   /**
-   * Get the filename-sourced variables with their token positions
+   * Get the filename-sourced variables with their token positions and assignments
    */
   get filenameVariables(): {
     dimension: TAssignmentOption;
     tokenIndex: number;
     value: string;
+    assignedTo: TUpDim | null; // The dimension this variable is actually assigned to
   }[] {
     if (!this.girderItems.length) return [];
 
@@ -561,6 +567,7 @@ export default class MultiSourceConfiguration extends Vue {
       dimension: TAssignmentOption;
       tokenIndex: number;
       value: string;
+      assignedTo: TUpDim | null;
     }[] = [];
 
     // Find filename-sourced dimensions and their token positions
@@ -574,7 +581,17 @@ export default class MultiSourceConfiguration extends Vue {
       // Find which token matches this value
       const tokenIndex = tokens.findIndex((token) => token === value);
       if (tokenIndex !== -1) {
-        result.push({ dimension: dim, tokenIndex, value });
+        // Find the actual assignment for this dimension
+        let assignedTo: TUpDim | null = null;
+        for (const [assignmentDim, assignment] of Object.entries(
+          this.assignments,
+        )) {
+          if (assignment?.value.id === dim.id) {
+            assignedTo = assignmentDim as TUpDim;
+            break;
+          }
+        }
+        result.push({ dimension: dim, tokenIndex, value, assignedTo });
       }
     }
 
@@ -602,7 +619,7 @@ export default class MultiSourceConfiguration extends Vue {
     // Tokens are at even indices (0, 2, 4, ...), delimiters at odd indices
     const tokenToVariable = new Map<
       number,
-      { guess: TDimensions; name: string }
+      { guess: TDimensions; assignedTo: TUpDim | null; name: string }
     >();
 
     let tokenCount = 0;
@@ -613,6 +630,7 @@ export default class MultiSourceConfiguration extends Vue {
           if (varInfo.tokenIndex === tokenCount) {
             tokenToVariable.set(i, {
               guess: varInfo.dimension.guess,
+              assignedTo: varInfo.assignedTo,
               name: varInfo.dimension.name,
             });
           }
@@ -625,14 +643,19 @@ export default class MultiSourceConfiguration extends Vue {
     return parts.map((part, idx) => {
       const varInfo = tokenToVariable.get(idx);
       if (varInfo) {
+        // Use assignment color if assigned, otherwise use guess color
+        const colorKey = varInfo.assignedTo || varInfo.guess;
+        const assignmentLabel = varInfo.assignedTo
+          ? this.dimensionNames[varInfo.assignedTo]
+          : "Unassigned";
         return {
           text: part,
           class: "filename-variable",
           style: {
-            backgroundColor: this.variableColors[varInfo.guess],
+            backgroundColor: this.variableColors[colorKey],
             color: "#ffffff",
           },
-          title: `${varInfo.name} (${this.dimensionNames[varInfo.guess]})`,
+          title: `${varInfo.name} → ${assignmentLabel}`,
         };
       }
       return {
@@ -645,21 +668,38 @@ export default class MultiSourceConfiguration extends Vue {
   }
 
   /**
-   * Legend items for the highlighted variables
+   * Legend items for the highlighted variables, showing both guess and assignment
    */
-  get filenameLegend(): { label: string; color: string }[] {
-    const legend: { label: string; color: string }[] = [];
-    const addedGuesses = new Set<TDimensions>();
+  get filenameLegend(): {
+    label: string;
+    color: string;
+    guess: string;
+    showGuess: boolean;
+  }[] {
+    const legend: {
+      label: string;
+      color: string;
+      guess: string;
+      showGuess: boolean;
+    }[] = [];
 
     for (const varInfo of this.filenameVariables) {
       const guess = varInfo.dimension.guess;
-      if (!addedGuesses.has(guess)) {
-        addedGuesses.add(guess);
-        legend.push({
-          label: `${this.dimensionNames[guess]} (${guess})`,
-          color: this.variableColors[guess],
-        });
-      }
+      const assignedTo = varInfo.assignedTo;
+      // Use assignment color if assigned, otherwise use guess color
+      const colorKey = assignedTo || guess;
+      const assignmentLabel = assignedTo
+        ? `${this.dimensionNames[assignedTo]} (${assignedTo})`
+        : "Unassigned";
+      const guessLabel = `${this.dimensionNames[guess]} (${guess})`;
+      const showGuess = assignedTo !== null && assignedTo !== guess;
+
+      legend.push({
+        label: assignmentLabel,
+        color: this.variableColors[colorKey],
+        guess: guessLabel,
+        showGuess,
+      });
     }
 
     return legend;
