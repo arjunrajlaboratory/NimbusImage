@@ -1,12 +1,13 @@
 import { DataFrame } from "dataframe-js";
 import { logError } from "@/utils/log";
 
-function processFilenamesDF(filenames: string[]): DataFrame {
-  const delimiterPattern = /[_\.\/]/;
+/** Pattern used to split filenames into tokens (underscores, dots, slashes) */
+export const filenameDelimiterPattern = /[_\.\/]/;
 
+function processFilenamesDF(filenames: string[]): DataFrame {
   // Tokenize each filename
   const tokenizedData: string[][] = filenames.map((filename) => {
-    const tokens = filename.split(delimiterPattern);
+    const tokens = filename.split(filenameDelimiterPattern);
     return [filename, ...tokens];
   });
 
