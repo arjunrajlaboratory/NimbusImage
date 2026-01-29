@@ -278,6 +278,7 @@ import store from "@/store";
 
 import {
   collectFilenameMetadata2,
+  filenameDelimiterPattern,
   IVariableGuess,
   TDimensions,
 } from "@/utils/parsing";
@@ -341,6 +342,14 @@ type TAssignmentOption =
 interface IAssignment {
   text: string;
   value: TAssignmentOption;
+}
+
+/** Represents a filename-sourced variable with its token position and assignment */
+interface IFilenameVariable {
+  dimension: TAssignmentOption;
+  tokenIndex: number;
+  value: string;
+  assignedTo: TUpDim | null;
 }
 
 type TUpDim = "XY" | "Z" | "T" | "C";
@@ -551,24 +560,13 @@ export default class MultiSourceConfiguration extends Vue {
   /**
    * Get the filename-sourced variables with their token positions and assignments
    */
-  get filenameVariables(): {
-    dimension: TAssignmentOption;
-    tokenIndex: number;
-    value: string;
-    assignedTo: TUpDim | null; // The dimension this variable is actually assigned to
-  }[] {
+  get filenameVariables(): IFilenameVariable[] {
     if (!this.girderItems.length) return [];
 
     const exampleFilename = this.girderItems[0].name;
-    const delimiterPattern = /[_\.\/]/;
-    const tokens = exampleFilename.split(delimiterPattern);
+    const tokens = exampleFilename.split(filenameDelimiterPattern);
 
-    const result: {
-      dimension: TAssignmentOption;
-      tokenIndex: number;
-      value: string;
-      assignedTo: TUpDim | null;
-    }[] = [];
+    const result: IFilenameVariable[] = [];
 
     // Find filename-sourced dimensions and their token positions
     for (const dim of this.dimensions) {
@@ -579,6 +577,7 @@ export default class MultiSourceConfiguration extends Vue {
       const value = filenameData.values[valueIdx];
 
       // Find which token matches this value
+      // Note: If multiple tokens have the same value, highlights the first occurrence
       const tokenIndex = tokens.findIndex((token) => token === value);
       if (tokenIndex !== -1) {
         // Find the actual assignment for this dimension
@@ -612,8 +611,9 @@ export default class MultiSourceConfiguration extends Vue {
     }
 
     const exampleFilename = this.girderItems[0].name;
-    const delimiterPattern = /([_\.\/])/; // Capture delimiters
-    const parts = exampleFilename.split(delimiterPattern);
+    // Create a capturing version of the delimiter pattern to preserve delimiters in split
+    const capturingPattern = new RegExp(`(${filenameDelimiterPattern.source})`);
+    const parts = exampleFilename.split(capturingPattern);
 
     // Build a map of token index to variable info
     // Tokens are at even indices (0, 2, 4, ...), delimiters at odd indices
