@@ -242,8 +242,8 @@ export class Main extends VuexModule {
   showPixelScalebar: boolean = true;
   scalebarColor: string = "#ffffff";
 
-  scaleAnnotationsWithZoom: boolean = true;
-  annotationsRadius: number = 10;
+  scaleAnnotationsWithZoom: boolean = false;
+  annotationsRadius: number = 4;
   annotationOpacity: number = 0.5;
 
   compositionMode: TCompositionMode = "lighten";
