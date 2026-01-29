@@ -5,6 +5,37 @@
         >Variables</v-subheader
       >
       <v-divider class="my-2" />
+      <div
+        v-if="highlightedFilenameSegments.length > 0"
+        class="filename-highlight-container mb-4 pa-3"
+      >
+        <div class="text-caption grey--text mb-1">
+          Example filename with extracted variables:
+        </div>
+        <div class="filename-highlight-text">
+          <span
+            v-for="(segment, idx) in highlightedFilenameSegments"
+            :key="idx"
+            :class="segment.class"
+            :style="segment.style"
+            :title="segment.title"
+            >{{ segment.text }}</span
+          >
+        </div>
+        <div class="filename-highlight-legend mt-2">
+          <span
+            v-for="(legend, idx) in filenameLegend"
+            :key="idx"
+            class="legend-item mr-3"
+          >
+            <span
+              class="legend-color"
+              :style="{ backgroundColor: legend.color }"
+            ></span>
+            <span class="text-caption">{{ legend.label }}</span>
+          </span>
+        </div>
+      </div>
       <v-data-table :headers="headers" :items="items" item-key="key" />
       <v-checkbox
         v-if="isMultiBandRGBFile"
@@ -502,6 +533,136 @@ export default class MultiSourceConfiguration extends Vue {
           key: `${dim.id}_${dim.guess}_${dim.source}`,
         };
       });
+  }
+
+  // Colors for highlighting different variables in the filename
+  readonly variableColors: { [key in TDimensions]: string } = {
+    XY: "#4CAF50", // Green
+    Z: "#2196F3", // Blue
+    T: "#FF9800", // Orange
+    C: "#9C27B0", // Purple
+  };
+
+  /**
+   * Get the filename-sourced variables with their token positions
+   */
+  get filenameVariables(): {
+    dimension: TAssignmentOption;
+    tokenIndex: number;
+    value: string;
+  }[] {
+    if (!this.girderItems.length) return [];
+
+    const exampleFilename = this.girderItems[0].name;
+    const delimiterPattern = /[_\.\/]/;
+    const tokens = exampleFilename.split(delimiterPattern);
+
+    const result: {
+      dimension: TAssignmentOption;
+      tokenIndex: number;
+      value: string;
+    }[] = [];
+
+    // Find filename-sourced dimensions and their token positions
+    for (const dim of this.dimensions) {
+      if (dim.source !== Sources.Filename || dim.size === 0) continue;
+
+      const filenameData = dim.data as IFilenameSourceData;
+      const valueIdx = filenameData.valueIdxPerFilename[exampleFilename];
+      const value = filenameData.values[valueIdx];
+
+      // Find which token matches this value
+      const tokenIndex = tokens.findIndex((token) => token === value);
+      if (tokenIndex !== -1) {
+        result.push({ dimension: dim, tokenIndex, value });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Compute segments of the filename with highlighting information
+   */
+  get highlightedFilenameSegments(): {
+    text: string;
+    class: string;
+    style: { backgroundColor?: string; color?: string };
+    title: string;
+  }[] {
+    if (!this.girderItems.length || this.filenameVariables.length === 0) {
+      return [];
+    }
+
+    const exampleFilename = this.girderItems[0].name;
+    const delimiterPattern = /([_\.\/])/; // Capture delimiters
+    const parts = exampleFilename.split(delimiterPattern);
+
+    // Build a map of token index to variable info
+    // Tokens are at even indices (0, 2, 4, ...), delimiters at odd indices
+    const tokenToVariable = new Map<
+      number,
+      { guess: TDimensions; name: string }
+    >();
+
+    let tokenCount = 0;
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 0) {
+        // This is a token (not a delimiter)
+        for (const varInfo of this.filenameVariables) {
+          if (varInfo.tokenIndex === tokenCount) {
+            tokenToVariable.set(i, {
+              guess: varInfo.dimension.guess,
+              name: varInfo.dimension.name,
+            });
+          }
+        }
+        tokenCount++;
+      }
+    }
+
+    // Build segments
+    return parts.map((part, idx) => {
+      const varInfo = tokenToVariable.get(idx);
+      if (varInfo) {
+        return {
+          text: part,
+          class: "filename-variable",
+          style: {
+            backgroundColor: this.variableColors[varInfo.guess],
+            color: "#ffffff",
+          },
+          title: `${varInfo.name} (${this.dimensionNames[varInfo.guess]})`,
+        };
+      }
+      return {
+        text: part,
+        class: "",
+        style: {},
+        title: "",
+      };
+    });
+  }
+
+  /**
+   * Legend items for the highlighted variables
+   */
+  get filenameLegend(): { label: string; color: string }[] {
+    const legend: { label: string; color: string }[] = [];
+    const addedGuesses = new Set<TDimensions>();
+
+    for (const varInfo of this.filenameVariables) {
+      const guess = varInfo.dimension.guess;
+      if (!addedGuesses.has(guess)) {
+        addedGuesses.add(guess);
+        legend.push({
+          label: `${this.dimensionNames[guess]} (${guess})`,
+          color: this.variableColors[guess],
+        });
+      }
+    }
+
+    return legend;
   }
 
   dimensions: TAssignmentOption[] = [];
@@ -1668,5 +1829,46 @@ export default class MultiSourceConfiguration extends Vue {
   border-radius: 4px;
   width: 100%;
   color: rgba(255, 255, 255, 0.85);
+}
+
+.filename-highlight-container {
+  background-color: rgba(0, 0, 0, 0.03);
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.filename-highlight-text {
+  font-family: "Roboto Mono", "Consolas", "Monaco", monospace;
+  font-size: 14px;
+  padding: 8px 12px;
+  background-color: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.filename-variable {
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.filename-highlight-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
 }
 </style>
