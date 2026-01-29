@@ -64,6 +64,7 @@ import {
   ICameraInfo,
   IDatasetLocation,
   ConnectionToolStateSymbol,
+  CombineToolStateSymbol,
   NotificationType,
   IDimensionStrategy,
 } from "./model";
@@ -645,6 +646,12 @@ export class Main extends VuexModule {
         case "connection":
           state = {
             type: ConnectionToolStateSymbol,
+            selectedAnnotationId: null,
+          };
+          break;
+        case "combine":
+          state = {
+            type: CombineToolStateSymbol,
             selectedAnnotationId: null,
           };
           break;

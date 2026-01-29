@@ -1026,6 +1026,147 @@ export class Annotations extends VuexModule {
     this.updateAnnotationsPerId({ annotationIds: [id], editFunction });
   }
 
+  /**
+   * Combine two polygon annotations into one by computing their union.
+   * The first annotation is updated with the union shape, and the second
+   * annotation is deleted. Connections referencing the second annotation
+   * are transferred to the first annotation.
+   *
+   * @param firstAnnotationId - The ID of the annotation to keep (will be updated)
+   * @param secondAnnotationId - The ID of the annotation to merge and delete
+   * @returns true if successful, false otherwise
+   */
+  @Action
+  public async combineAnnotations({
+    firstAnnotationId,
+    secondAnnotationId,
+  }: {
+    firstAnnotationId: string;
+    secondAnnotationId: string;
+  }): Promise<boolean> {
+    if (!main.isLoggedIn || !main.dataset) {
+      return false;
+    }
+
+    const firstAnnotation = this.getAnnotationFromId(firstAnnotationId);
+    const secondAnnotation = this.getAnnotationFromId(secondAnnotationId);
+
+    if (!firstAnnotation || !secondAnnotation) {
+      logError("Cannot combine: one or both annotations not found");
+      return false;
+    }
+
+    // Import dynamically to avoid issues if polygon-clipping isn't available
+    const { computePolygonUnion } = await import("@/utils/polygonUnion");
+
+    // Compute the union of the two polygons
+    const unionCoordinates = computePolygonUnion(
+      firstAnnotation.coordinates,
+      secondAnnotation.coordinates,
+    );
+
+    if (!unionCoordinates) {
+      logError("Failed to compute polygon union");
+      return false;
+    }
+
+    sync.setSaving(true);
+
+    try {
+      // Step 1: Update the first annotation with the union coordinates
+      await this.updateAnnotationsPerId({
+        annotationIds: [firstAnnotationId],
+        editFunction: (annotation: IAnnotation) => {
+          annotation.coordinates = unionCoordinates;
+        },
+      });
+
+      // Step 2: Transfer connections from the second annotation to the first
+      // Find connections where secondAnnotation is involved
+      const connectionsToUpdate = this.annotationConnections.filter(
+        (conn) =>
+          conn.parentId === secondAnnotationId ||
+          conn.childId === secondAnnotationId,
+      );
+
+      if (connectionsToUpdate.length > 0) {
+        // Create new connections with the updated references
+        const newConnectionBases: IAnnotationConnectionBase[] = [];
+        const connectionIdsToDelete: string[] = [];
+
+        for (const conn of connectionsToUpdate) {
+          const newParentId =
+            conn.parentId === secondAnnotationId
+              ? firstAnnotationId
+              : conn.parentId;
+          const newChildId =
+            conn.childId === secondAnnotationId
+              ? firstAnnotationId
+              : conn.childId;
+
+          // Skip self-connections (if both annotations had connections to each other)
+          if (newParentId === newChildId) {
+            connectionIdsToDelete.push(conn.id);
+            continue;
+          }
+
+          // Check if this connection already exists (to avoid duplicates)
+          const existingConnection = this.annotationConnections.find(
+            (existing) =>
+              existing.id !== conn.id &&
+              existing.parentId === newParentId &&
+              existing.childId === newChildId,
+          );
+
+          if (existingConnection) {
+            // Connection already exists, just delete the old one
+            connectionIdsToDelete.push(conn.id);
+          } else {
+            // Create new connection with updated IDs
+            newConnectionBases.push({
+              parentId: newParentId,
+              childId: newChildId,
+              datasetId: main.dataset!.id,
+              label: conn.label,
+              tags: conn.tags,
+            });
+            connectionIdsToDelete.push(conn.id);
+          }
+        }
+
+        // Delete old connections
+        if (connectionIdsToDelete.length > 0) {
+          await this.annotationsAPI.deleteMultipleConnections(
+            connectionIdsToDelete,
+          );
+          this.deleteMultipleConnections(connectionIdsToDelete);
+        }
+
+        // Create new connections
+        if (newConnectionBases.length > 0) {
+          const newConnections =
+            await this.annotationsAPI.createMultipleConnections(
+              newConnectionBases,
+            );
+          if (newConnections) {
+            this.addMultipleConnections(newConnections);
+          }
+        }
+      }
+
+      // Step 3: Delete the second annotation
+      // (Property values are automatically cleaned up by the backend)
+      await this.deleteAnnotations([secondAnnotationId]);
+
+      return true;
+    } catch (error) {
+      logError(`Failed to combine annotations: ${(error as Error).message}`);
+      return false;
+    } finally {
+      sync.setSaving(false);
+    }
+  }
+
   @Action
   async fetchAnnotations() {
     this.setAnnotations([]);

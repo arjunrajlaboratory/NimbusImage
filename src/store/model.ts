@@ -65,7 +65,8 @@ export type TToolType =
   | "edit"
   | "segmentation"
   | "samAnnotation"
-  | "tagging";
+  | "tagging"
+  | "combine";
 
 export interface IToolTemplateInterface {
   id: string;
@@ -154,6 +155,15 @@ export interface IConnectionToolState {
   selectedAnnotationId: null | string;
 }
 
+export const CombineToolStateSymbol: unique symbol = Symbol("CombineToolState");
+
+export type TCombineToolStateSymbol = typeof CombineToolStateSymbol;
+
+export interface ICombineToolState {
+  type: TCombineToolStateSymbol;
+  selectedAnnotationId: null | string;
+}
+
 export interface IMouseState {
   isMouseMovePreviewState: boolean;
   mapEntry: IMapEntry;
@@ -174,6 +184,7 @@ export interface IErrorToolState {
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
   connection: IConnectionToolState;
+  combine: ICombineToolState;
 }
 
 type TFullToolStateMap = {

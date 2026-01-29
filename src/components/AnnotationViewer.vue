@@ -71,6 +71,7 @@ import {
   TSamPrompt,
   TToolState,
   ConnectionToolStateSymbol,
+  CombineToolStateSymbol,
   IGeoJSMouseState,
   TrackPositionType,
 } from "../store/model";
@@ -350,7 +351,8 @@ export default class AnnotationViewer extends Vue {
   get toolHighlightedAnnotationIds(): Set<string> {
     const state = this.selectedToolState;
     if (
-      state?.type === ConnectionToolStateSymbol &&
+      (state?.type === ConnectionToolStateSymbol ||
+        state?.type === CombineToolStateSymbol) &&
       state.selectedAnnotationId
     ) {
       return new Set([state.selectedAnnotationId]);
@@ -2103,6 +2105,73 @@ export default class AnnotationViewer extends Vue {
     this.interactionLayer.removeAnnotation(selectAnnotation);
   }
 
+  /**
+   * Handle the combine tool click interaction.
+   * First click selects an annotation, second click combines it with the first.
+   */
+  private async handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
+    if (!selectAnnotation || !this.selectedToolConfiguration) {
+      return;
+    }
+
+    // Get the annotation(s) that were clicked
+    const selectedAnnotations =
+      this.getSelectedAnnotationsFromAnnotation(selectAnnotation);
+
+    // Apply tool configuration filters (tags/layer restrictions)
+    const annotationTemplate =
+      this.selectedToolConfiguration.values?.annotation as IRestrictTagsAndLayer;
+    const filteredAnnotations = annotationTemplate
+      ? filterAnnotations(selectedAnnotations, annotationTemplate)
+      : selectedAnnotations;
+
+    // Only consider polygon/blob annotations for combining
+    const polygonAnnotations = filteredAnnotations.filter(
+      (a) => a.shape === AnnotationShape.Polygon,
+    );
+
+    const clickedAnnotation = polygonAnnotations[0];
+
+    // Handle the two-click pattern
+    if (
+      clickedAnnotation &&
+      this.selectedToolState?.type === CombineToolStateSymbol &&
+      this.selectedToolState.selectedAnnotationId
+    ) {
+      // Second click - combine the annotations
+      const firstAnnotationId = this.selectedToolState.selectedAnnotationId;
+      const secondAnnotationId = clickedAnnotation.id;
+
+      // Don't combine with itself
+      if (firstAnnotationId !== secondAnnotationId) {
+        const success = await this.annotationStore.combineAnnotations({
+          firstAnnotationId,
+          secondAnnotationId,
+        });
+
+        if (!success) {
+          logWarning("Failed to combine annotations");
+        }
+      }
+
+      // Reset the tool state after combining
+      Vue.set(this.selectedToolState, "selectedAnnotationId", null);
+    } else if (
+      clickedAnnotation &&
+      this.selectedToolState?.type === CombineToolStateSymbol
+    ) {
+      // First click - select the annotation
+      Vue.set(
+        this.selectedToolState,
+        "selectedAnnotationId",
+        clickedAnnotation.id,
+      );
+    }
+
+    // Remove the interaction annotation from the layer
+    this.interactionLayer.removeAnnotation(selectAnnotation);
+  }
+
   private async addAnnotationFromGeoJsAnnotation(annotation: IGeoJSAnnotation) {
     if (!annotation || !this.selectedToolConfiguration) {
       return;
@@ -2390,6 +2459,10 @@ export default class AnnotationViewer extends Vue {
           this.interactionLayer.mode("polygon");
         }
         break;
+      case "combine":
+        // Combine tool uses point mode for clicking on annotations
+        this.interactionLayer.mode("point");
+        break;
       case "select":
         const selectionType =
           this.selectedToolConfiguration.values.selectionType.value ===
@@ -2494,6 +2567,9 @@ export default class AnnotationViewer extends Vue {
             break;
           case "connection":
             this.handleAnnotationConnections(evt.annotation);
+            break;
+          case "combine":
+            this.handleAnnotationCombine(evt.annotation);
             break;
           case "edit":
             this.handleAnnotationEdits(evt.annotation);
