@@ -1,6 +1,7 @@
 <template>
   <v-switch
-    v-model="valueInternal"
+    :value="value"
+    @input="emit('input', $event)"
     :label="trueLabel"
     hide-details
     :id="id"
@@ -21,6 +22,7 @@
     </template>
   </v-switch>
 </template>
+
 <style>
 .v-input--selection-controls > .v-input__prepend-outer {
   white-space: nowrap;
@@ -30,32 +32,19 @@
   margin-top: 8px;
 }
 </style>
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
 
-@Component
-export default class SwitchToggle extends Vue {
-  @Prop()
-  id!: string;
-  @Prop()
-  value!: string;
-  @Prop()
-  trueLabel!: string;
-  @Prop()
-  trueValue!: string;
-  @Prop()
-  falseLabel!: string;
-  @Prop()
-  falseValue!: string;
-  @Prop()
-  label!: string;
+<script setup lang="ts">
+defineProps<{
+  id?: string;
+  value?: string;
+  trueLabel?: string;
+  trueValue?: string;
+  falseLabel?: string;
+  falseValue?: string;
+  label?: string;
+}>();
 
-  get valueInternal() {
-    return this.value;
-  }
-
-  set valueInternal(value: string) {
-    this.$emit("input", value);
-  }
-}
+const emit = defineEmits<{
+  (e: "input", value: string): void;
+}>();
 </script>

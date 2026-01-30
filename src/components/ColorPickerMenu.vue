@@ -7,28 +7,50 @@
     <template #activator="{ on }">
       <div
         v-on="on"
-        v-bind="{
-          class: $vnode.data && $vnode.data.staticClass,
-          style: $vnode.data && $vnode.data.staticStyle,
-        }"
-        style="cursor: pointer"
+        :class="parentClass"
+        :style="[{ cursor: 'pointer' }, parentStyle]"
         class="d-flex align-center"
       >
         <span class="subtitle-2 mr-2">Color</span>
         <span :style="{ backgroundColor: color }" class="color-bar"></span>
       </div>
     </template>
-    <v-color-picker v-model="color" />
+    <v-color-picker :value="color" @input="emit('input', $event)" />
   </v-menu>
 </template>
 
+<!-- Dual script blocks needed for inheritAttrs in Vue 2.7 -->
+<!-- In Vue 3.3+, can use defineOptions({ inheritAttrs: false }) instead -->
 <script lang="ts">
-import { Vue, Component, VModel } from "vue-property-decorator";
+export default {
+  inheritAttrs: false,
+};
+</script>
 
-@Component({ inheritAttrs: false })
-export default class ColorPickerMenu extends Vue {
-  @VModel({ type: String, default: "#FFFFFF" }) color!: string;
-}
+<script setup lang="ts">
+import { computed, getCurrentInstance } from "vue";
+
+defineProps<{
+  value?: string;
+}>();
+
+const emit = defineEmits<{
+  (e: "input", value: string): void;
+}>();
+
+const instance = getCurrentInstance();
+
+// Access the v-model value with fallback
+const color = computed(() => instance?.proxy?.$props?.value ?? "#FFFFFF");
+
+// Vue 2 specific: access parent-provided class/style from vnode
+// In Vue 3, these would be in useAttrs() instead
+const parentClass = computed(
+  () => (instance?.proxy as any)?.$vnode?.data?.staticClass,
+);
+const parentStyle = computed(
+  () => (instance?.proxy as any)?.$vnode?.data?.staticStyle,
+);
 </script>
 
 <style lang="scss" scoped>
