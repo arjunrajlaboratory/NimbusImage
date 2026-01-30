@@ -200,7 +200,60 @@
     <!-- Upload Choice Dialog -->
     <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
       <v-card>
-        <v-card-title class="headline">Create dataset</v-card-title>
+        <v-card-title class="headline d-flex align-center">
+          Create dataset
+          <v-btn
+            icon
+            small
+            class="ml-2"
+            @click="showUploadInfo = !showUploadInfo"
+          >
+            <v-icon small>mdi-information-outline</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <!-- Info Panel -->
+        <v-expand-transition>
+          <v-card
+            v-if="showUploadInfo"
+            flat
+            color="blue-grey lighten-5"
+            class="mx-4 mb-4"
+          >
+            <v-card-text class="text-body-2">
+              <div class="font-weight-bold mb-2">
+                Understanding Datasets and Collections
+              </div>
+              <p>
+                A <strong>dataset</strong> is a set of images you want to
+                visualize and analyze together. It can come from a single file
+                (like a multi-dimensional .nd2 file) or multiple files that
+                belong together.
+              </p>
+              <p>
+                By default, when you upload multiple files, they all become part
+                of <strong>one dataset</strong>. NimbusImage will automatically
+                parse dimensions like channels, Z-stacks, and timepoints from
+                file metadata or filenames.
+              </p>
+              <p>
+                If you want each file to be its own separate dataset, check the
+                "<strong
+                  >Upload each file as a separate dataset in a
+                  collection</strong
+                >" option. This creates a <strong>collection</strong> — a group
+                of datasets that share the same visualization settings and
+                tools.
+              </p>
+              <p class="mb-0">
+                Collections are useful when you have similar data from different
+                conditions or timepoints that you want to analyze with
+                consistent settings.
+              </p>
+            </v-card-text>
+          </v-card>
+        </v-expand-transition>
+
         <v-card-text>
           <v-text-field
             v-model="datasetName"
@@ -442,6 +495,7 @@ export default class Home extends Vue {
   isDragging: boolean = false;
   showZenodoImporter: boolean = false;
   showUploadDialog: boolean = false;
+  showUploadInfo: boolean = false;
   browseMode: "files" | "collections" | "projects" = "files";
   datasetsTab: number = 0;
   loadingProjects: boolean = false;
@@ -1059,6 +1113,7 @@ export default class Home extends Vue {
 
   closeUploadDialog() {
     this.showUploadDialog = false;
+    this.showUploadInfo = false;
     this.pendingFiles = [];
     this.datasetName = "";
     this.selectedLocation = null;
