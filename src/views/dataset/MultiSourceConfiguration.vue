@@ -1348,9 +1348,7 @@ export default class MultiSourceConfiguration extends Vue {
         borderColor: `${color}40`,
       };
     }
-    return {
-      "--slot-dimension-color": color,
-    };
+    return {};
   }
 
   /**
@@ -1366,13 +1364,6 @@ export default class MultiSourceConfiguration extends Vue {
       borderLeftColor: dimensionColor,
       backgroundColor: `${dimensionColor}15`,
     };
-  }
-
-  /**
-   * Get the assignment for a dimension (non-null access for template use)
-   */
-  getAssignment(dimension: TUpDim): IAssignment | null {
-    return this.assignments[dimension];
   }
 
   /**
@@ -1405,13 +1396,6 @@ export default class MultiSourceConfiguration extends Vue {
       default:
         return "";
     }
-  }
-
-  /**
-   * Get the guess of an assignment's value
-   */
-  getAssignmentGuess(dimension: TUpDim): TDimensions {
-    return this.assignments[dimension]?.value.guess ?? "XY";
   }
 
   /**
