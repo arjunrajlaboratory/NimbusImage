@@ -475,8 +475,9 @@ export default class ProjectInfo extends Vue {
   readonly projects = projects;
   readonly girderResources = girderResources;
 
+  // Note: alert uses 'any' due to Vue 2/3 Composition API type incompatibility during migration
   $refs!: {
-    alert: AlertDialog;
+    alert: any;
   };
 
   // Dialog state

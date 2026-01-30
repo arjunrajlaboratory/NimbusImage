@@ -196,9 +196,10 @@ export default class CustomFileManager extends Vue {
 
   formatDateString = formatDateString; // Import function from utils/date.ts for use in template
 
+  // Note: alert uses 'any' due to Vue 2/3 Composition API type incompatibility during migration
   $refs!: {
     fileInput: HTMLInputElement;
-    alert: AlertDialog;
+    alert: any;
   };
 
   async reloadItems() {

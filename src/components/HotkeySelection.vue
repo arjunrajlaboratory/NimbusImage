@@ -13,24 +13,34 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import Mousetrap from "mousetrap";
 
-@Component
-export default class HotkeySelection extends Vue {
-  @VModel({ type: String, default: null }) hotkey!: null | string;
-  isRecordingHotkey = false;
+const props = defineProps<{
+  value?: string | null;
+}>();
 
-  editHotkey() {
-    // The extensions of Mousetrap are loaded in main.ts
-    // but they don't update the types, hence the ts-ignore
-    this.isRecordingHotkey = true;
-    // @ts-ignore
-    Mousetrap.record((sequence: string[]) => {
-      this.hotkey = sequence.join(" ");
-      this.isRecordingHotkey = false;
-    });
-  }
+const emit = defineEmits<{
+  (e: "input", value: string | null): void;
+}>();
+
+// v-model binding (Vue 2 uses value/input)
+const hotkey = computed({
+  get: () => props.value ?? null,
+  set: (val: string | null) => emit("input", val),
+});
+
+const isRecordingHotkey = ref(false);
+
+function editHotkey() {
+  // The extensions of Mousetrap are loaded in main.ts
+  // but they don't update the types, hence the ts-ignore
+  isRecordingHotkey.value = true;
+  // @ts-ignore
+  Mousetrap.record((sequence: string[]) => {
+    hotkey.value = sequence.join(" ");
+    isRecordingHotkey.value = false;
+  });
 }
 </script>

@@ -198,8 +198,9 @@ export default class ConfigurationInfo extends Vue {
   readonly store = store;
   readonly girderResources = girderResources;
 
+  // Note: alert uses 'any' due to Vue 2/3 Composition API type incompatibility during migration
   readonly $refs!: {
-    alert: AlertDialog;
+    alert: any;
   };
 
   removeConfirm = false;
