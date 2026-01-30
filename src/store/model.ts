@@ -154,6 +154,15 @@ export interface IConnectionToolState {
   selectedAnnotationId: null | string;
 }
 
+export const CombineToolStateSymbol: unique symbol = Symbol("CombineToolState");
+
+export type TCombineToolStateSymbol = typeof CombineToolStateSymbol;
+
+export interface ICombineToolState {
+  type: TCombineToolStateSymbol;
+  selectedAnnotationId: null | string;
+}
+
 export interface IMouseState {
   isMouseMovePreviewState: boolean;
   mapEntry: IMapEntry;
@@ -174,6 +183,8 @@ export interface IErrorToolState {
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
   connection: IConnectionToolState;
+  // Edit tool can have CombineToolState when action is "combine_click"
+  edit: ICombineToolState | IBaseToolState;
 }
 
 type TFullToolStateMap = {

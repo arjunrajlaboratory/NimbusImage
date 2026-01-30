@@ -383,6 +383,24 @@
               "text": "Blob edit",
               "value": "blob_edit",
               "description": "Modify existing blob annotations"
+            },
+            {
+              "text": "Click to combine",
+              "value": "combine_click",
+              "description": "Click two blobs to merge them into one",
+              "meta": {
+                "interface": [
+                  {
+                    "name": "Tolerance (pixels)",
+                    "type": "text",
+                    "id": "tolerance",
+                    "meta": {
+                      "value": "2",
+                      "type": "number"
+                    }
+                  }
+                ]
+              }
             }
           ]
         }
