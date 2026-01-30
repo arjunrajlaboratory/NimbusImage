@@ -41,7 +41,51 @@
           </span>
         </div>
       </div>
-      <v-data-table :headers="headers" :items="items" item-key="key" />
+      <!-- Variable badges cloud -->
+      <div class="variable-badges-container">
+        <div
+          v-for="item in items"
+          :key="item.key"
+          class="variable-badge"
+          :class="{
+            'variable-badge--assigned': isVariableAssigned(item),
+          }"
+          :style="getVariableBadgeStyle(item)"
+        >
+          <div class="variable-badge__header">
+            <span class="variable-badge__name">{{ item.name }}</span>
+            <v-chip
+              x-small
+              :color="variableColors[item.guess]"
+              dark
+              class="variable-badge__guess"
+            >
+              {{ item.guess }}
+            </v-chip>
+          </div>
+          <div class="variable-badge__details">
+            <span class="variable-badge__values" :title="item.values">
+              {{ item.values || `${item.size} values` }}
+            </span>
+            <span class="variable-badge__source">
+              <v-icon x-small class="mr-1">{{
+                item.source === "filename" ? "mdi-file-document" : "mdi-image"
+              }}</v-icon>
+              {{ item.source }}
+            </span>
+          </div>
+          <div
+            v-if="isVariableAssigned(item)"
+            class="variable-badge__assigned-indicator"
+          >
+            <v-icon small color="white">mdi-check</v-icon>
+            <span>{{ getAssignedDimension(item) }}</span>
+          </div>
+        </div>
+        <div v-if="items.length === 0" class="variable-badges-empty">
+          No variables detected
+        </div>
+      </div>
       <v-checkbox
         v-if="isMultiBandRGBFile"
         v-model="splitRGBBands"
@@ -123,53 +167,136 @@
         </v-btn>
       </div>
       <v-divider class="my-2" />
-      <v-container>
-        <v-row
+      <div class="assignment-slots-container">
+        <div
           v-for="[dimension, dimensionName] in dimesionNamesEntries"
           :key="dimension"
+          class="assignment-slot-row"
         >
-          <v-col cols="2" class="body-1">
-            {{ dimensionName }} ({{ dimension }})
-          </v-col>
-          <v-col>
-            <v-combobox
-              v-model="assignments[dimension]"
-              :items="assignmentItems"
-              :search-input.sync="searchInput"
-              item-text="text"
-              item-value="value"
-              hide-selected
-              hide-details
-              dense
-              :disabled="assignmentDisabled(dimension)"
-            >
-              <template v-slot:selection="{ item }">
-                {{ item.text }}
+          <!-- Dimension label with color indicator -->
+          <div
+            class="assignment-slot__label"
+            :style="{ borderLeftColor: variableColors[dimension] }"
+          >
+            <span class="assignment-slot__dimension-name">{{
+              dimensionName
+            }}</span>
+            <span class="assignment-slot__dimension-code">{{ dimension }}</span>
+          </div>
+
+          <!-- The slot container -->
+          <div
+            class="assignment-slot"
+            :class="getSlotClasses(dimension)"
+            :style="getSlotStyle(dimension)"
+          >
+            <!-- Filled state: show badge -->
+            <template v-if="assignments[dimension]">
+              <div
+                class="assignment-slot__badge"
+                :style="getAssignmentBadgeStyle(dimension)"
+              >
+                <span class="assignment-slot__badge-name">
+                  {{ getAssignmentText(dimension) }}
+                </span>
+                <v-chip
+                  x-small
+                  :color="variableColors[getAssignmentGuess(dimension)]"
+                  dark
+                  class="assignment-slot__badge-guess ml-2"
+                >
+                  {{ getAssignmentGuess(dimension) }}
+                </v-chip>
                 <template v-if="shouldDoCompositing && dimension === 'XY'">
-                  (will be composited)
+                  <v-chip x-small outlined class="ml-2">composited</v-chip>
                 </template>
+                <!-- Lock icon for immutable -->
+                <v-tooltip
+                  v-if="isAssignmentImmutableForDimension(dimension)"
+                  bottom
+                >
+                  <template v-slot:activator="{ on, attrs }">
+                    <v-icon small class="ml-2" v-bind="attrs" v-on="on">
+                      mdi-lock
+                    </v-icon>
+                  </template>
+                  <span>This assignment is locked (from file metadata)</span>
+                </v-tooltip>
+              </div>
+            </template>
+
+            <!-- Empty state: dropdown trigger -->
+            <template v-else>
+              <v-menu offset-y :disabled="assignmentItems.length === 0">
+                <template v-slot:activator="{ on, attrs }">
+                  <div class="assignment-slot__empty" v-bind="attrs" v-on="on">
+                    <span class="assignment-slot__placeholder">
+                      {{
+                        assignmentItems.length > 0
+                          ? "Select variable..."
+                          : "No variables available"
+                      }}
+                    </span>
+                    <v-icon v-if="assignmentItems.length > 0" small
+                      >mdi-menu-down</v-icon
+                    >
+                  </div>
+                </template>
+                <v-list dense>
+                  <v-list-item
+                    v-for="item in assignmentItems"
+                    :key="item.value.id"
+                    @click="assignments[dimension] = item"
+                  >
+                    <v-list-item-content>
+                      <div class="d-flex align-center">
+                        <span>{{ item.text }}</span>
+                        <v-chip
+                          x-small
+                          :color="variableColors[item.value.guess]"
+                          dark
+                          class="ml-2"
+                        >
+                          {{ item.value.guess }}
+                        </v-chip>
+                      </div>
+                    </v-list-item-content>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+            </template>
+          </div>
+
+          <!-- Actions -->
+          <div class="assignment-slot__actions">
+            <v-tooltip
+              v-if="assignments[dimension] && !clearDisabled(dimension)"
+              bottom
+            >
+              <template v-slot:activator="{ on, attrs }">
+                <v-btn
+                  icon
+                  small
+                  v-bind="attrs"
+                  v-on="on"
+                  @click="assignments[dimension] = null"
+                >
+                  <v-icon small>mdi-close</v-icon>
+                </v-btn>
               </template>
-            </v-combobox>
-          </v-col>
-          <v-col v-if="canDoCompositing && dimension === 'XY'">
+              <span>Clear assignment</span>
+            </v-tooltip>
             <v-checkbox
+              v-if="canDoCompositing && dimension === 'XY'"
               dense
-              label="Composite positions into single image"
-              class="d-inline-flex"
+              hide-details
+              label="Composite"
+              class="mt-0 ml-4"
               v-model="enableCompositing"
             />
-          </v-col>
-          <v-col cols="2" class="d-flex">
-            <v-spacer />
-            <v-btn
-              :disabled="clearDisabled(dimension)"
-              @click="assignments[dimension] = null"
-            >
-              Clear
-            </v-btn>
-          </v-col>
-        </v-row>
-      </v-container>
+          </div>
+        </div>
+      </div>
     </v-card>
     <v-row>
       <v-col class="d-flex">
@@ -707,29 +834,6 @@ export default class MultiSourceConfiguration extends Vue {
 
   dimensions: TAssignmentOption[] = [];
 
-  headers = [
-    {
-      text: "Variable",
-      value: "name",
-    },
-    {
-      text: "Values",
-      value: "values",
-    },
-    {
-      text: "Guess",
-      value: "guess",
-    },
-    {
-      text: "Source",
-      value: "source",
-    },
-    {
-      text: "Size",
-      value: "size",
-    },
-  ];
-
   readonly dimensionNames: { [dim in TUpDim]: string } = {
     XY: "Positions",
     Z: "Z",
@@ -1174,6 +1278,119 @@ export default class MultiSourceConfiguration extends Vue {
   clearDisabled(dimension: TUpDim) {
     const currentAssignment = this.assignments[dimension];
     return !currentAssignment || this.isAssignmentImmutable(currentAssignment);
+  }
+
+  /**
+   * Check if a variable item is currently assigned to any dimension
+   */
+  isVariableAssigned(item: TAssignmentOption): boolean {
+    return Object.values(this.assignments).some(
+      (assignment) => assignment?.value.id === item.id,
+    );
+  }
+
+  /**
+   * Get the dimension that a variable is assigned to
+   */
+  getAssignedDimension(item: TAssignmentOption): string | null {
+    for (const [dim, assignment] of Object.entries(this.assignments)) {
+      if (assignment?.value.id === item.id) {
+        return dim;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get the style for a variable badge based on its guess
+   */
+  getVariableBadgeStyle(item: TAssignmentOption): Record<string, string> {
+    const color = this.variableColors[item.guess];
+    return {
+      "--badge-accent-color": color,
+      "--badge-accent-color-light": `${color}20`,
+    };
+  }
+
+  /**
+   * Get CSS classes for an assignment slot based on its state
+   */
+  getSlotClasses(dimension: TUpDim): Record<string, boolean> {
+    const hasAssignment = !!this.assignments[dimension];
+    const hasAvailableVariables = this.assignmentItems.length > 0;
+    const isImmutable =
+      hasAssignment && this.isAssignmentImmutable(this.assignments[dimension]!);
+
+    return {
+      "assignment-slot--filled": hasAssignment,
+      "assignment-slot--empty-available":
+        !hasAssignment && hasAvailableVariables,
+      "assignment-slot--empty-none": !hasAssignment && !hasAvailableVariables,
+      "assignment-slot--immutable": isImmutable,
+    };
+  }
+
+  /**
+   * Get style for an assignment slot (ghost color when empty and no variables)
+   */
+  getSlotStyle(dimension: TUpDim): Record<string, string> {
+    const color = this.variableColors[dimension];
+    const hasAssignment = !!this.assignments[dimension];
+    const hasAvailableVariables = this.assignmentItems.length > 0;
+
+    if (!hasAssignment && !hasAvailableVariables) {
+      // Ghost state: faded dimension color
+      return {
+        backgroundColor: `${color}15`,
+        borderColor: `${color}40`,
+      };
+    }
+    return {
+      "--slot-dimension-color": color,
+    };
+  }
+
+  /**
+   * Get style for the badge inside an assignment slot
+   */
+  getAssignmentBadgeStyle(dimension: TUpDim): Record<string, string> {
+    const assignment = this.assignments[dimension];
+    if (!assignment) return {};
+
+    const guessColor = this.variableColors[assignment.value.guess];
+    return {
+      borderLeftColor: guessColor,
+      backgroundColor: `${guessColor}15`,
+    };
+  }
+
+  /**
+   * Get the assignment for a dimension (non-null access for template use)
+   */
+  getAssignment(dimension: TUpDim): IAssignment | null {
+    return this.assignments[dimension];
+  }
+
+  /**
+   * Get the text of an assignment for a dimension
+   */
+  getAssignmentText(dimension: TUpDim): string {
+    return this.assignments[dimension]?.text ?? "";
+  }
+
+  /**
+   * Get the guess of an assignment's value
+   */
+  getAssignmentGuess(dimension: TUpDim): TDimensions {
+    return this.assignments[dimension]?.value.guess ?? "XY";
+  }
+
+  /**
+   * Check if an assignment for a dimension is immutable
+   */
+  isAssignmentImmutableForDimension(dimension: TUpDim): boolean {
+    const assignment = this.assignments[dimension];
+    return assignment ? this.isAssignmentImmutable(assignment) : false;
   }
 
   submitEnabled() {
@@ -1910,5 +2127,233 @@ export default class MultiSourceConfiguration extends Vue {
   height: 12px;
   border-radius: 2px;
   display: inline-block;
+}
+
+/* Variable Badges Container */
+.variable-badges-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.variable-badges-empty {
+  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+  padding: 16px;
+}
+
+/* Variable Badge */
+.variable-badge {
+  position: relative;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 3px solid var(--badge-accent-color);
+  border-radius: 6px;
+  padding: 10px 14px;
+  min-width: 180px;
+  max-width: 280px;
+  transition: all 0.2s ease;
+  cursor: default;
+}
+
+.variable-badge:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.variable-badge--assigned {
+  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.variable-badge--assigned::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 10px,
+    rgba(255, 255, 255, 0.02) 10px,
+    rgba(255, 255, 255, 0.02) 20px
+  );
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.variable-badge__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.variable-badge__name {
+  font-weight: 500;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.variable-badge__guess {
+  font-size: 10px !important;
+  height: 18px !important;
+}
+
+.variable-badge__details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.variable-badge__values {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.variable-badge__source {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  display: flex;
+  align-items: center;
+  text-transform: capitalize;
+}
+
+.variable-badge__assigned-indicator {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(76, 175, 80, 0.8);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: white;
+}
+
+/* Assignment Slots Container */
+.assignment-slots-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.assignment-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Dimension Label */
+.assignment-slot__label {
+  min-width: 100px;
+  padding: 8px 12px;
+  border-left: 4px solid;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 0 4px 4px 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.assignment-slot__dimension-name {
+  font-weight: 500;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.assignment-slot__dimension-code {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: monospace;
+}
+
+/* The Slot */
+.assignment-slot {
+  flex: 1;
+  min-height: 44px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s ease;
+}
+
+.assignment-slot--filled {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.assignment-slot--empty-available {
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.assignment-slot--empty-available:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.assignment-slot--empty-none {
+  border: 1px solid;
+  cursor: default;
+}
+
+.assignment-slot--immutable {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Badge inside slot */
+.assignment-slot__badge {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-left: 3px solid;
+  border-radius: 4px;
+  margin: 4px;
+  flex: 1;
+}
+
+.assignment-slot__badge-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.assignment-slot__badge-guess {
+  font-size: 10px !important;
+  height: 18px !important;
+}
+
+/* Empty slot content */
+.assignment-slot__empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.assignment-slot__placeholder {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+}
+
+/* Actions */
+.assignment-slot__actions {
+  display: flex;
+  align-items: center;
+  min-width: 80px;
 }
 </style>
