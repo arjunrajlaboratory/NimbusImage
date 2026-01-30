@@ -5,6 +5,27 @@
         >Variables</v-subheader
       >
       <v-divider class="my-2" />
+      <!-- Summary stats -->
+      <div class="variables-summary mb-4">
+        <div class="variables-summary__item">
+          <span class="variables-summary__value">{{ fileCount }}</span>
+          <span class="variables-summary__label">{{
+            fileCount === 1 ? "file" : "files"
+          }}</span>
+        </div>
+        <div class="variables-summary__divider">×</div>
+        <div class="variables-summary__item">
+          <span class="variables-summary__value">{{ framesPerFile }}</span>
+          <span class="variables-summary__label">{{
+            framesPerFile === 1 ? "frame/file" : "frames/file"
+          }}</span>
+        </div>
+        <div class="variables-summary__divider">=</div>
+        <div class="variables-summary__item variables-summary__item--total">
+          <span class="variables-summary__value">{{ datasetTotalFrames }}</span>
+          <span class="variables-summary__label">total frames</span>
+        </div>
+      </div>
       <div
         v-if="highlightedFilenameSegments.length > 0"
         class="filename-highlight-container mb-4 pa-3"
@@ -643,6 +664,34 @@ export default class MultiSourceConfiguration extends Vue {
 
   get shouldDoCompositing() {
     return this.canDoCompositing && this.enableCompositing;
+  }
+
+  /**
+   * Number of files in the dataset
+   */
+  get fileCount(): number {
+    return this.girderItems.length;
+  }
+
+  /**
+   * Maximum number of frames per file
+   */
+  get framesPerFile(): number {
+    if (!this.tilesMetadata) return 1;
+    return Math.max(
+      ...this.tilesMetadata.map((tile) => tile.frames?.length || 1),
+    );
+  }
+
+  /**
+   * Total number of frames across all files (for display in Variables summary)
+   */
+  get datasetTotalFrames(): number {
+    if (!this.tilesMetadata) return this.fileCount;
+    return this.tilesMetadata.reduce(
+      (sum, tile) => sum + (tile.frames?.length || 1),
+      0,
+    );
   }
 
   get items() {
@@ -2188,11 +2237,49 @@ export default class MultiSourceConfiguration extends Vue {
   display: inline-block;
 }
 
+/* Variables Summary */
+.variables-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.variables-summary__item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.variables-summary__item--total {
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.variables-summary__value {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.variables-summary__label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.variables-summary__divider {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.3);
+}
+
 /* Variable Badges Container */
 .variable-badges-container {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 16px;
   padding: 8px 0;
 }
 
@@ -2207,11 +2294,11 @@ export default class MultiSourceConfiguration extends Vue {
   position: relative;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-left: 3px solid var(--badge-accent-color);
-  border-radius: 6px;
-  padding: 10px 14px;
-  min-width: 180px;
-  max-width: 280px;
+  border-left: 4px solid var(--badge-accent-color);
+  border-radius: 8px;
+  padding: 14px 18px;
+  min-width: 200px;
+  max-width: 320px;
   transition: all 0.2s ease;
   cursor: default;
 }
@@ -2248,27 +2335,27 @@ export default class MultiSourceConfiguration extends Vue {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .variable-badge__name {
-  font-weight: 500;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .variable-badge__assignment-tag {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 3px;
+  padding: 3px 10px;
+  border-radius: 4px;
   color: white;
 }
 
 .variable-badge__values-prominent {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
-  margin-bottom: 4px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2278,11 +2365,11 @@ export default class MultiSourceConfiguration extends Vue {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
 }
 
 .variable-badge__source {
-  font-size: 11px;
+  font-size: 12px;
   color: rgba(255, 255, 255, 0.5);
   display: flex;
   align-items: center;
@@ -2290,9 +2377,9 @@ export default class MultiSourceConfiguration extends Vue {
 }
 
 .variable-badge__size {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
-  font-weight: 500;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
 }
 
 .variable-badge--unassigned {
