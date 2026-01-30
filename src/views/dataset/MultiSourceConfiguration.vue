@@ -49,37 +49,31 @@
           class="variable-badge"
           :class="{
             'variable-badge--assigned': isVariableAssigned(item),
+            'variable-badge--unassigned': !isVariableAssigned(item),
           }"
           :style="getVariableBadgeStyle(item)"
         >
           <div class="variable-badge__header">
             <span class="variable-badge__name">{{ item.name }}</span>
-            <v-chip
-              x-small
-              :color="variableColors[item.guess]"
-              dark
-              class="variable-badge__guess"
+            <!-- Show assignment dimension if assigned -->
+            <span
+              v-if="isVariableAssigned(item)"
+              class="variable-badge__assignment-tag"
+              :style="{
+                backgroundColor: getAssignedDimensionColor(item),
+              }"
             >
-              {{ item.guess }}
-            </v-chip>
-          </div>
-          <div class="variable-badge__details">
-            <span class="variable-badge__values" :title="item.values">
-              {{ item.values || `${item.size} values` }}
-            </span>
-            <span class="variable-badge__source">
-              <v-icon x-small class="mr-1">{{
-                item.source === "filename" ? "mdi-file-document" : "mdi-image"
-              }}</v-icon>
-              {{ item.source }}
+              {{ getAssignedDimension(item) }}
             </span>
           </div>
-          <div
-            v-if="isVariableAssigned(item)"
-            class="variable-badge__assigned-indicator"
-          >
-            <v-icon small color="white">mdi-check</v-icon>
-            <span>{{ getAssignedDimension(item) }}</span>
+          <div class="variable-badge__values-prominent">
+            {{ item.values || `${item.size} values` }}
+          </div>
+          <div class="variable-badge__source">
+            <v-icon x-small class="mr-1">{{
+              item.source === "filename" ? "mdi-file-document" : "mdi-image"
+            }}</v-icon>
+            {{ item.source }}
           </div>
         </div>
         <div v-if="items.length === 0" class="variable-badges-empty">
@@ -194,19 +188,14 @@
             <template v-if="assignments[dimension]">
               <div
                 class="assignment-slot__badge"
-                :style="getAssignmentBadgeStyle(dimension)"
+                :style="getAssignmentBadgeStyleForSlot(dimension)"
               >
                 <span class="assignment-slot__badge-name">
                   {{ getAssignmentText(dimension) }}
                 </span>
-                <v-chip
-                  x-small
-                  :color="variableColors[getAssignmentGuess(dimension)]"
-                  dark
-                  class="assignment-slot__badge-guess ml-2"
-                >
-                  {{ getAssignmentGuess(dimension) }}
-                </v-chip>
+                <span class="assignment-slot__badge-values">
+                  {{ getAssignmentValues(dimension) }}
+                </span>
                 <template v-if="shouldDoCompositing && dimension === 'XY'">
                   <v-chip x-small outlined class="ml-2">composited</v-chip>
                 </template>
@@ -249,16 +238,11 @@
                     @click="assignments[dimension] = item"
                   >
                     <v-list-item-content>
-                      <div class="d-flex align-center">
-                        <span>{{ item.text }}</span>
-                        <v-chip
-                          x-small
-                          :color="variableColors[item.value.guess]"
-                          dark
-                          class="ml-2"
-                        >
-                          {{ item.value.guess }}
-                        </v-chip>
+                      <div class="dropdown-item-content">
+                        <span class="dropdown-item-name">{{ item.text }}</span>
+                        <span class="dropdown-item-values">{{
+                          getItemValues(item.value)
+                        }}</span>
                       </div>
                     </v-list-item-content>
                   </v-list-item>
@@ -1302,13 +1286,32 @@ export default class MultiSourceConfiguration extends Vue {
   }
 
   /**
-   * Get the style for a variable badge based on its guess
+   * Get the color for the dimension a variable is assigned to
+   */
+  getAssignedDimensionColor(item: TAssignmentOption): string {
+    const dim = this.getAssignedDimension(item);
+    if (dim && dim in this.variableColors) {
+      return this.variableColors[dim as TUpDim];
+    }
+    return "rgba(255, 255, 255, 0.3)";
+  }
+
+  /**
+   * Get the style for a variable badge based on its assignment (not guess)
    */
   getVariableBadgeStyle(item: TAssignmentOption): Record<string, string> {
-    const color = this.variableColors[item.guess];
+    const assignedDim = this.getAssignedDimension(item);
+    if (assignedDim) {
+      const color = this.variableColors[assignedDim as TUpDim];
+      return {
+        "--badge-accent-color": color,
+        "--badge-accent-color-light": `${color}20`,
+      };
+    }
+    // Unassigned: use neutral gray
     return {
-      "--badge-accent-color": color,
-      "--badge-accent-color-light": `${color}20`,
+      "--badge-accent-color": "rgba(255, 255, 255, 0.3)",
+      "--badge-accent-color-light": "rgba(255, 255, 255, 0.05)",
     };
   }
 
@@ -1351,16 +1354,17 @@ export default class MultiSourceConfiguration extends Vue {
   }
 
   /**
-   * Get style for the badge inside an assignment slot
+   * Get style for the badge inside an assignment slot - uses slot's dimension color
    */
-  getAssignmentBadgeStyle(dimension: TUpDim): Record<string, string> {
+  getAssignmentBadgeStyleForSlot(dimension: TUpDim): Record<string, string> {
     const assignment = this.assignments[dimension];
     if (!assignment) return {};
 
-    const guessColor = this.variableColors[assignment.value.guess];
+    // Use the slot's dimension color, not the variable's guess color
+    const dimensionColor = this.variableColors[dimension];
     return {
-      borderLeftColor: guessColor,
-      backgroundColor: `${guessColor}15`,
+      borderLeftColor: dimensionColor,
+      backgroundColor: `${dimensionColor}15`,
     };
   }
 
@@ -1376,6 +1380,31 @@ export default class MultiSourceConfiguration extends Vue {
    */
   getAssignmentText(dimension: TUpDim): string {
     return this.assignments[dimension]?.text ?? "";
+  }
+
+  /**
+   * Get the values preview for an assignment
+   */
+  getAssignmentValues(dimension: TUpDim): string {
+    const assignment = this.assignments[dimension];
+    if (!assignment) return "";
+    return this.getItemValues(assignment.value);
+  }
+
+  /**
+   * Get values preview for a dimension option (for dropdown and badges)
+   */
+  getItemValues(item: TAssignmentOption): string {
+    switch (item.source) {
+      case Sources.Filename:
+        return this.sliceAndJoin((item.data as IFilenameSourceData).values, 24);
+      case Sources.File:
+        return "From metadata";
+      case Sources.Images:
+        return `${item.size} values`;
+      default:
+        return "";
+    }
   }
 
   /**
@@ -2189,7 +2218,7 @@ export default class MultiSourceConfiguration extends Vue {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .variable-badge__name {
@@ -2198,45 +2227,33 @@ export default class MultiSourceConfiguration extends Vue {
   color: rgba(255, 255, 255, 0.9);
 }
 
-.variable-badge__guess {
-  font-size: 10px !important;
-  height: 18px !important;
-}
-
-.variable-badge__details {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.variable-badge__values {
+.variable-badge__assignment-tag {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: white;
+}
+
+.variable-badge__values-prominent {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .variable-badge__source {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
   display: flex;
   align-items: center;
   text-transform: capitalize;
 }
 
-.variable-badge__assigned-indicator {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(76, 175, 80, 0.8);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 10px;
-  color: white;
+.variable-badge--unassigned {
+  border-left-color: rgba(255, 255, 255, 0.2);
 }
 
 /* Assignment Slots Container */
@@ -2325,13 +2342,17 @@ export default class MultiSourceConfiguration extends Vue {
 
 .assignment-slot__badge-name {
   font-weight: 500;
-  font-size: 13px;
+  font-size: 14px;
   color: rgba(255, 255, 255, 0.9);
 }
 
-.assignment-slot__badge-guess {
-  font-size: 10px !important;
-  height: 18px !important;
+.assignment-slot__badge-values {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-left: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Empty slot content */
@@ -2355,5 +2376,23 @@ export default class MultiSourceConfiguration extends Vue {
   display: flex;
   align-items: center;
   min-width: 80px;
+}
+
+/* Dropdown menu items */
+.dropdown-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dropdown-item-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.dropdown-item-values {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
 }
 </style>
