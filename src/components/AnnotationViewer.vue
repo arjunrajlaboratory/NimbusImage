@@ -2119,8 +2119,8 @@ export default class AnnotationViewer extends Vue {
       this.getSelectedAnnotationsFromAnnotation(selectAnnotation);
 
     // Apply tool configuration filters (tags/layer restrictions)
-    const annotationTemplate =
-      this.selectedToolConfiguration.values?.annotation as IRestrictTagsAndLayer;
+    const annotationTemplate = this.selectedToolConfiguration.values
+      ?.annotation as IRestrictTagsAndLayer;
     const filteredAnnotations = annotationTemplate
       ? filterAnnotations(selectedAnnotations, annotationTemplate)
       : selectedAnnotations;
@@ -2144,9 +2144,15 @@ export default class AnnotationViewer extends Vue {
 
       // Don't combine with itself
       if (firstAnnotationId !== secondAnnotationId) {
+        // Get tolerance from tool configuration (default to 2 if not specified)
+        const tolerance = parseFloat(
+          this.selectedToolConfiguration.values?.tolerance ?? "2",
+        );
+
         const success = await this.annotationStore.combineAnnotations({
           firstAnnotationId,
           secondAnnotationId,
+          tolerance: isNaN(tolerance) ? 2 : tolerance,
         });
 
         if (!success) {
@@ -2459,10 +2465,6 @@ export default class AnnotationViewer extends Vue {
           this.interactionLayer.mode("polygon");
         }
         break;
-      case "combine":
-        // Combine tool uses point mode for clicking on annotations
-        this.interactionLayer.mode("point");
-        break;
       case "select":
         const selectionType =
           this.selectedToolConfiguration.values.selectionType.value ===
@@ -2472,7 +2474,15 @@ export default class AnnotationViewer extends Vue {
         this.interactionLayer.mode(selectionType);
         break;
       case "edit":
-        this.interactionLayer.mode("line");
+        // combine_click action uses point mode, blob_edit uses line mode
+        if (
+          this.selectedToolConfiguration?.values?.action?.value ===
+          "combine_click"
+        ) {
+          this.interactionLayer.mode("point");
+        } else {
+          this.interactionLayer.mode("line");
+        }
         break;
       case "samAnnotation":
       case null:
@@ -2568,11 +2578,16 @@ export default class AnnotationViewer extends Vue {
           case "connection":
             this.handleAnnotationConnections(evt.annotation);
             break;
-          case "combine":
-            this.handleAnnotationCombine(evt.annotation);
-            break;
           case "edit":
-            this.handleAnnotationEdits(evt.annotation);
+            // Route combine_click action to handleAnnotationCombine
+            if (
+              this.selectedToolConfiguration?.values?.action?.value ===
+              "combine_click"
+            ) {
+              this.handleAnnotationCombine(evt.annotation);
+            } else {
+              this.handleAnnotationEdits(evt.annotation);
+            }
             break;
         }
       } else {

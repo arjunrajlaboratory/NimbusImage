@@ -1040,9 +1040,11 @@ export class Annotations extends VuexModule {
   public async combineAnnotations({
     firstAnnotationId,
     secondAnnotationId,
+    tolerance = 2.0,
   }: {
     firstAnnotationId: string;
     secondAnnotationId: string;
+    tolerance?: number;
   }): Promise<boolean> {
     if (!main.isLoggedIn || !main.dataset) {
       return false;
@@ -1057,16 +1059,22 @@ export class Annotations extends VuexModule {
     }
 
     // Import dynamically to avoid issues if polygon-clipping isn't available
-    const { computePolygonUnion } = await import("@/utils/polygonUnion");
+    const { computePolygonUnionWithTolerance } = await import(
+      "@/utils/polygonUnion"
+    );
 
-    // Compute the union of the two polygons
-    const unionCoordinates = computePolygonUnion(
+    // Compute the union of the two polygons with tolerance for adjacent polygons
+    const unionCoordinates = computePolygonUnionWithTolerance(
       firstAnnotation.coordinates,
       secondAnnotation.coordinates,
+      tolerance,
     );
 
     if (!unionCoordinates) {
-      logError("Failed to compute polygon union");
+      logError(
+        "Cannot combine: polygons are not overlapping and are beyond " +
+          "tolerance distance. Move them closer together or ensure they overlap.",
+      );
       return false;
     }
 

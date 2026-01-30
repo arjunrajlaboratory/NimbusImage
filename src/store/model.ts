@@ -65,8 +65,7 @@ export type TToolType =
   | "edit"
   | "segmentation"
   | "samAnnotation"
-  | "tagging"
-  | "combine";
+  | "tagging";
 
 export interface IToolTemplateInterface {
   id: string;
@@ -184,7 +183,8 @@ export interface IErrorToolState {
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
   connection: IConnectionToolState;
-  combine: ICombineToolState;
+  // Edit tool can have CombineToolState when action is "combine_click"
+  edit: ICombineToolState | IBaseToolState;
 }
 
 type TFullToolStateMap = {

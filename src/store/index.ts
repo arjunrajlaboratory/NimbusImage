@@ -649,11 +649,16 @@ export class Main extends VuexModule {
             selectedAnnotationId: null,
           };
           break;
-        case "combine":
-          state = {
-            type: CombineToolStateSymbol,
-            selectedAnnotationId: null,
-          };
+        case "edit":
+          // Edit tool with combine_click action needs CombineToolState
+          if (configuration.values?.action?.value === "combine_click") {
+            state = {
+              type: CombineToolStateSymbol,
+              selectedAnnotationId: null,
+            };
+          } else {
+            state = { type: BaseToolStateSymbol };
+          }
           break;
         default:
           state = { type: BaseToolStateSymbol };

@@ -383,42 +383,30 @@
               "text": "Blob edit",
               "value": "blob_edit",
               "description": "Modify existing blob annotations"
+            },
+            {
+              "text": "Click to combine",
+              "value": "combine_click",
+              "description": "Click two blobs to merge them into one",
+              "meta": {
+                "interface": [
+                  {
+                    "name": "Tolerance (pixels)",
+                    "type": "text",
+                    "id": "tolerance",
+                    "meta": {
+                      "value": "2",
+                      "type": "number"
+                    }
+                  }
+                ]
+              }
             }
           ]
         }
       },
       {
         "name": "Annotations to edit",
-        "id": "annotation",
-        "type": "restrictTagsAndLayer",
-        "meta": {
-          "inclusiveToggle": true
-        }
-      }
-    ]
-  },
-  {
-    "name": "Combine Annotations",
-    "type": "combine",
-    "shortName": "Combine",
-    "interface": [
-      {
-        "name": "Action",
-        "type": "select",
-        "id": "action",
-        "isSubmenu": true,
-        "meta": {
-          "items": [
-            {
-              "text": "Click to combine",
-              "value": "combine_click",
-              "description": "Click two blobs to merge them into one"
-            }
-          ]
-        }
-      },
-      {
-        "name": "Annotations to combine",
         "id": "annotation",
         "type": "restrictTagsAndLayer",
         "meta": {
