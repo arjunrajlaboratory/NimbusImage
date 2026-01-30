@@ -69,11 +69,16 @@
           <div class="variable-badge__values-prominent">
             {{ item.values || `${item.size} values` }}
           </div>
-          <div class="variable-badge__source">
-            <v-icon x-small class="mr-1">{{
-              item.source === "filename" ? "mdi-file-document" : "mdi-image"
-            }}</v-icon>
-            {{ item.source }}
+          <div class="variable-badge__meta">
+            <span class="variable-badge__source">
+              <v-icon x-small class="mr-1">{{
+                item.source === "filename" ? "mdi-file-document" : "mdi-image"
+              }}</v-icon>
+              {{ item.source }}
+            </span>
+            <span class="variable-badge__size">
+              {{ item.size }} {{ item.size === 1 ? "value" : "values" }}
+            </span>
           </div>
         </div>
         <div v-if="items.length === 0" class="variable-badges-empty">
@@ -195,6 +200,9 @@
                 </span>
                 <span class="assignment-slot__badge-values">
                   {{ getAssignmentValues(dimension) }}
+                </span>
+                <span class="assignment-slot__badge-size">
+                  ({{ getAssignmentSize(dimension) }})
                 </span>
                 <template v-if="shouldDoCompositing && dimension === 'XY'">
                   <v-chip x-small outlined class="ml-2">composited</v-chip>
@@ -649,7 +657,24 @@ export default class MultiSourceConfiguration extends Vue {
             );
             break;
           case Sources.File:
-            values = "From metadata";
+            // Try to extract actual values from file metadata (e.g., channel names)
+            const fileData = dim.data as IFileSourceData;
+            const allValues: string[] = [];
+            for (const itemIdx in fileData) {
+              const itemValues = fileData[itemIdx].values;
+              if (itemValues) {
+                itemValues.forEach((v) => {
+                  if (!allValues.includes(v)) allValues.push(v);
+                });
+              }
+            }
+            values =
+              allValues.length > 0
+                ? this.sliceAndJoin(allValues, 24)
+                : "From metadata";
+            break;
+          case Sources.Images:
+            values = "";
             break;
         }
         return {
@@ -1383,6 +1408,13 @@ export default class MultiSourceConfiguration extends Vue {
   }
 
   /**
+   * Get the size of an assignment
+   */
+  getAssignmentSize(dimension: TUpDim): number {
+    return this.assignments[dimension]?.value.size ?? 0;
+  }
+
+  /**
    * Get values preview for a dimension option (for dropdown and badges)
    */
   getItemValues(item: TAssignmentOption): string {
@@ -1390,7 +1422,21 @@ export default class MultiSourceConfiguration extends Vue {
       case Sources.Filename:
         return this.sliceAndJoin((item.data as IFilenameSourceData).values, 24);
       case Sources.File:
-        return "From metadata";
+        // Try to extract actual values from file metadata (e.g., channel names)
+        const fileData = item.data as IFileSourceData;
+        const allValues: string[] = [];
+        for (const itemIdx in fileData) {
+          const itemValues = fileData[itemIdx].values;
+          if (itemValues) {
+            itemValues.forEach((v) => {
+              if (!allValues.includes(v)) allValues.push(v);
+            });
+          }
+        }
+        if (allValues.length > 0) {
+          return this.sliceAndJoin(allValues, 24);
+        }
+        return `${item.size} values`;
       case Sources.Images:
         return `${item.size} values`;
       default:
@@ -2228,12 +2274,25 @@ export default class MultiSourceConfiguration extends Vue {
   white-space: nowrap;
 }
 
+.variable-badge__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .variable-badge__source {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.5);
   display: flex;
   align-items: center;
   text-transform: capitalize;
+}
+
+.variable-badge__size {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
 }
 
 .variable-badge--unassigned {
@@ -2337,6 +2396,13 @@ export default class MultiSourceConfiguration extends Vue {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.assignment-slot__badge-size {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-left: 8px;
+  font-weight: 500;
 }
 
 /* Empty slot content */
