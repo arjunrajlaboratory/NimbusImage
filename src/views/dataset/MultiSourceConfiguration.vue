@@ -62,47 +62,81 @@
           </span>
         </div>
       </div>
-      <!-- Variable badges cloud -->
-      <div class="variable-badges-container">
+      <!-- Variables list -->
+      <div class="variables-list">
         <div
           v-for="item in items"
           :key="item.key"
-          class="variable-badge"
+          class="variable-row"
           :class="{
-            'variable-badge--assigned': isVariableAssigned(item),
-            'variable-badge--unassigned': !isVariableAssigned(item),
+            'variable-row--assigned': isVariableAssigned(item),
           }"
-          :style="getVariableBadgeStyle(item)"
+          :style="{ '--row-accent-color': getAssignedDimensionColor(item) }"
         >
-          <div class="variable-badge__header">
-            <span class="variable-badge__name">{{ item.name }}</span>
-            <!-- Show assignment dimension if assigned -->
+          <div class="variable-row__accent"></div>
+          <div class="variable-row__name">{{ item.name }}</div>
+          <div class="variable-row__values">
+            <span>{{ item.values || `${item.size} values` }}</span>
+            <v-menu
+              v-if="item.allValues && item.allValues.length > 1"
+              offset-y
+              :close-on-content-click="false"
+              max-height="300"
+            >
+              <template v-slot:activator="{ on, attrs }">
+                <v-icon
+                  x-small
+                  class="variable-row__values-icon"
+                  v-bind="attrs"
+                  v-on="on"
+                >
+                  mdi-information-outline
+                </v-icon>
+              </template>
+              <v-card class="values-popover">
+                <v-card-title class="values-popover__title">
+                  {{ item.name }}
+                  <span class="values-popover__count"
+                    >({{ item.allValues.length }} values)</span
+                  >
+                </v-card-title>
+                <v-divider />
+                <div class="values-popover__list">
+                  <div
+                    v-for="(val, idx) in item.allValues"
+                    :key="idx"
+                    class="values-popover__item"
+                  >
+                    <span class="values-popover__index">{{ idx + 1 }}.</span>
+                    <span class="values-popover__value">{{ val }}</span>
+                  </div>
+                </div>
+              </v-card>
+            </v-menu>
+          </div>
+          <div class="variable-row__source">
+            <v-icon x-small class="mr-1">{{
+              item.source === "filename" ? "mdi-file-document" : "mdi-image"
+            }}</v-icon>
+            {{ item.source }}
+          </div>
+          <div class="variable-row__size">
+            {{ item.size }} {{ item.size === 1 ? "value" : "values" }}
+          </div>
+          <div class="variable-row__assignment">
             <span
               v-if="isVariableAssigned(item)"
-              class="variable-badge__assignment-tag"
+              class="variable-row__assignment-tag"
               :style="{
                 backgroundColor: getAssignedDimensionColor(item),
               }"
             >
               {{ getAssignedDimension(item) }}
             </span>
-          </div>
-          <div class="variable-badge__values-prominent">
-            {{ item.values || `${item.size} values` }}
-          </div>
-          <div class="variable-badge__meta">
-            <span class="variable-badge__source">
-              <v-icon x-small class="mr-1">{{
-                item.source === "filename" ? "mdi-file-document" : "mdi-image"
-              }}</v-icon>
-              {{ item.source }}
-            </span>
-            <span class="variable-badge__size">
-              {{ item.size }} {{ item.size === 1 ? "value" : "values" }}
-            </span>
+            <span v-else class="variable-row__unassigned">—</span>
           </div>
         </div>
-        <div v-if="items.length === 0" class="variable-badges-empty">
+        <div v-if="items.length === 0" class="variables-list-empty">
           No variables detected
         </div>
       </div>
@@ -699,16 +733,15 @@ export default class MultiSourceConfiguration extends Vue {
       .filter((dim) => dim.size > 0)
       .map((dim: TAssignmentOption) => {
         let values = "";
+        let allValues: string[] = [];
         switch (dim.source) {
           case Sources.Filename:
-            values = this.sliceAndJoin(
-              (dim.data as IFilenameSourceData).values,
-            );
+            allValues = (dim.data as IFilenameSourceData).values;
+            values = this.sliceAndJoin(allValues);
             break;
           case Sources.File:
             // Try to extract actual values from file metadata (e.g., channel names)
             const fileData = dim.data as IFileSourceData;
-            const allValues: string[] = [];
             for (const itemIdx in fileData) {
               const itemValues = fileData[itemIdx].values;
               if (itemValues) {
@@ -723,12 +756,15 @@ export default class MultiSourceConfiguration extends Vue {
                 : "From metadata";
             break;
           case Sources.Images:
+            // Generate numeric labels for images
+            allValues = Array.from({ length: dim.size }, (_, i) => `${i + 1}`);
             values = "";
             break;
         }
         return {
           ...dim,
           values,
+          allValues,
           key: `${dim.id}_${dim.guess}_${dim.source}`,
         };
       });
@@ -2275,115 +2311,111 @@ export default class MultiSourceConfiguration extends Vue {
   color: rgba(255, 255, 255, 0.3);
 }
 
-/* Variable Badges Container */
-.variable-badges-container {
+/* Variables List */
+.variables-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+  flex-direction: column;
+  gap: 2px;
   padding: 8px 0;
 }
 
-.variable-badges-empty {
+.variables-list-empty {
   color: rgba(255, 255, 255, 0.5);
   font-style: italic;
   padding: 16px;
 }
 
-/* Variable Badge */
-.variable-badge {
-  position: relative;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-left: 4px solid var(--badge-accent-color);
-  border-radius: 8px;
-  padding: 14px 18px;
-  min-width: 200px;
-  max-width: 320px;
-  transition: all 0.2s ease;
-  cursor: default;
-}
-
-.variable-badge:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.variable-badge--assigned {
-  opacity: 0.6;
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.variable-badge--assigned::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: repeating-linear-gradient(
-    45deg,
-    transparent,
-    transparent 10px,
-    rgba(255, 255, 255, 0.02) 10px,
-    rgba(255, 255, 255, 0.02) 20px
-  );
-  border-radius: 6px;
-  pointer-events: none;
-}
-
-.variable-badge__header {
+/* Variable Row */
+.variable-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
+  gap: 16px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+  transition: background 0.15s ease;
 }
 
-.variable-badge__name {
-  font-weight: 600;
+.variable-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.variable-row__accent {
+  width: 4px;
+  height: 28px;
+  border-radius: 2px;
+  background-color: var(--row-accent-color);
+  flex-shrink: 0;
+}
+
+.variable-row__name {
+  font-weight: 500;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.95);
+  color: rgba(255, 255, 255, 0.9);
+  min-width: 160px;
+  flex-shrink: 0;
 }
 
-.variable-badge__assignment-tag {
+.variable-row__values {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.variable-row__values-icon {
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.variable-row__values-icon:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.variable-row__source {
   font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  display: flex;
+  align-items: center;
+  text-transform: capitalize;
+  min-width: 90px;
+  flex-shrink: 0;
+}
+
+.variable-row__size {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+  min-width: 70px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.variable-row__assignment {
+  min-width: 50px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.variable-row__assignment-tag {
+  font-size: 11px;
   font-weight: 600;
   padding: 3px 10px;
   border-radius: 4px;
   color: white;
 }
 
-.variable-badge__values-prominent {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.75);
-  margin-bottom: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.variable-badge__meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.variable-badge__source {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
-  display: flex;
-  align-items: center;
-  text-transform: capitalize;
-}
-
-.variable-badge__size {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
-  font-weight: 600;
-}
-
-.variable-badge--unassigned {
-  border-left-color: rgba(255, 255, 255, 0.2);
+.variable-row__unassigned {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.25);
 }
 
 /* Assignment Slots Container */
@@ -2531,5 +2563,51 @@ export default class MultiSourceConfiguration extends Vue {
 .dropdown-item-values {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.5);
+}
+
+/* Values Popover */
+.values-popover {
+  min-width: 200px;
+  max-width: 350px;
+}
+
+.values-popover__title {
+  font-size: 14px !important;
+  font-weight: 500;
+  padding: 12px 16px !important;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.values-popover__count {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.values-popover__list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.values-popover__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+}
+
+.values-popover__index {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  min-width: 24px;
+  font-family: monospace;
+}
+
+.values-popover__value {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
 }
 </style>
