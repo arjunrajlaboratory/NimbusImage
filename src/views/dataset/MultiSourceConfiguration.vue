@@ -728,6 +728,22 @@ export default class MultiSourceConfiguration extends Vue {
     );
   }
 
+  /**
+   * Extract all unique values from file source data
+   */
+  private extractFileSourceValues(data: IFileSourceData): string[] {
+    const allValues: string[] = [];
+    for (const itemIdx in data) {
+      const itemValues = data[itemIdx].values;
+      if (itemValues) {
+        itemValues.forEach((v) => {
+          if (!allValues.includes(v)) allValues.push(v);
+        });
+      }
+    }
+    return allValues;
+  }
+
   get items() {
     return this.dimensions
       .filter((dim) => dim.size > 0)
@@ -740,16 +756,9 @@ export default class MultiSourceConfiguration extends Vue {
             values = this.sliceAndJoin(allValues);
             break;
           case Sources.File:
-            // Try to extract actual values from file metadata (e.g., channel names)
-            const fileData = dim.data as IFileSourceData;
-            for (const itemIdx in fileData) {
-              const itemValues = fileData[itemIdx].values;
-              if (itemValues) {
-                itemValues.forEach((v) => {
-                  if (!allValues.includes(v)) allValues.push(v);
-                });
-              }
-            }
+            allValues = this.extractFileSourceValues(
+              dim.data as IFileSourceData,
+            );
             values =
               allValues.length > 0
                 ? this.sliceAndJoin(allValues, 24)
@@ -1407,25 +1416,6 @@ export default class MultiSourceConfiguration extends Vue {
   }
 
   /**
-   * Get the style for a variable badge based on its assignment (not guess)
-   */
-  getVariableBadgeStyle(item: TAssignmentOption): Record<string, string> {
-    const assignedDim = this.getAssignedDimension(item);
-    if (assignedDim) {
-      const color = this.variableColors[assignedDim as TUpDim];
-      return {
-        "--badge-accent-color": color,
-        "--badge-accent-color-light": `${color}20`,
-      };
-    }
-    // Unassigned: use neutral gray
-    return {
-      "--badge-accent-color": "rgba(255, 255, 255, 0.3)",
-      "--badge-accent-color-light": "rgba(255, 255, 255, 0.05)",
-    };
-  }
-
-  /**
    * Get CSS classes for an assignment slot based on its state
    */
   getSlotClasses(dimension: TUpDim): Record<string, boolean> {
@@ -1507,17 +1497,9 @@ export default class MultiSourceConfiguration extends Vue {
       case Sources.Filename:
         return this.sliceAndJoin((item.data as IFilenameSourceData).values, 24);
       case Sources.File:
-        // Try to extract actual values from file metadata (e.g., channel names)
-        const fileData = item.data as IFileSourceData;
-        const allValues: string[] = [];
-        for (const itemIdx in fileData) {
-          const itemValues = fileData[itemIdx].values;
-          if (itemValues) {
-            itemValues.forEach((v) => {
-              if (!allValues.includes(v)) allValues.push(v);
-            });
-          }
-        }
+        const allValues = this.extractFileSourceValues(
+          item.data as IFileSourceData,
+        );
         if (allValues.length > 0) {
           return this.sliceAndJoin(allValues, 24);
         }
