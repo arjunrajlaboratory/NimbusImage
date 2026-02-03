@@ -57,12 +57,6 @@
         </v-row>
         <v-row>
           <v-col class="pa-1">
-            <collection-json-export block />
-          </v-col>
-          <v-col class="pa-1"> </v-col>
-        </v-row>
-        <v-row>
-          <v-col class="pa-1">
             <index-conversion-dialog block />
           </v-col>
           <v-col class="pa-1">
@@ -84,7 +78,6 @@ import filterStore from "@/store/filters";
 import AnnotationCsvDialog from "@/components/AnnotationBrowser/AnnotationCSVDialog.vue";
 import AnnotationExport from "@/components/AnnotationBrowser/AnnotationExport.vue";
 import AnnotationImport from "@/components/AnnotationBrowser/AnnotationImport.vue";
-import CollectionJsonExport from "@/components/AnnotationBrowser/CollectionJsonExport.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import IndexConversionDialog from "@/components/AnnotationBrowser/IndexConversionDialog.vue";
 
@@ -93,7 +86,6 @@ import IndexConversionDialog from "@/components/AnnotationBrowser/IndexConversio
     AnnotationCsvDialog,
     AnnotationExport,
     AnnotationImport,
-    CollectionJsonExport,
     DeleteConnections,
     IndexConversionDialog,
   },
