@@ -214,44 +214,40 @@
 
         <!-- Info Panel -->
         <v-expand-transition>
-          <v-card
+          <v-alert
             v-if="showUploadInfo"
-            flat
-            color="blue-grey lighten-5"
-            class="mx-4 mb-4"
+            type="info"
+            text
+            class="mx-4 mb-4 text-body-2"
           >
-            <v-card-text class="text-body-2">
-              <div class="font-weight-bold mb-2">
-                Understanding Datasets and Collections
-              </div>
-              <p>
-                A <strong>dataset</strong> is a set of images you want to
-                visualize and analyze together. It can come from a single file
-                (like a multi-dimensional .nd2 file) or multiple files that
-                belong together.
-              </p>
-              <p>
-                By default, when you upload multiple files, they all become part
-                of <strong>one dataset</strong>. NimbusImage will automatically
-                parse dimensions like channels, Z-stacks, and timepoints from
-                file metadata or filenames.
-              </p>
-              <p>
-                If you want each file to be its own separate dataset, check the
-                "<strong
-                  >Upload each file as a separate dataset in a
-                  collection</strong
-                >" option. This creates a <strong>collection</strong> — a group
-                of datasets that share the same visualization settings and
-                tools.
-              </p>
-              <p class="mb-0">
-                Collections are useful when you have similar data from different
-                conditions or timepoints that you want to analyze with
-                consistent settings.
-              </p>
-            </v-card-text>
-          </v-card>
+            <div class="font-weight-bold mb-2">
+              Understanding Datasets and Collections
+            </div>
+            <p>
+              A <strong>dataset</strong> is a set of images you want to
+              visualize and analyze together. It can come from a single file
+              (like a multi-dimensional .nd2 file) or multiple files that
+              belong together.
+            </p>
+            <p>
+              By default, when you upload multiple files, they all become part
+              of <strong>one dataset</strong>. NimbusImage will automatically
+              parse dimensions like channels, Z-stacks, and timepoints from
+              file metadata or filenames.
+            </p>
+            <p>
+              If you want each file to be its own separate dataset, check the
+              "<strong
+                >Upload each file as a separate dataset in a collection</strong
+              >" option. This creates a <strong>collection</strong> — a group of
+              datasets that share the same visualization settings and tools.
+            </p>
+            <p class="mb-0">
+              Collections are useful when you have similar data from different
+              conditions or timepoints that you want to analyze with consistent
+              settings.
+            </p>
+          </v-alert>
         </v-expand-transition>
 
         <v-card-text>
