@@ -80,8 +80,41 @@ export default class GirderAPI {
   private readonly histogramCache = new Map<string, Promise<ITileHistogram>>();
   private readonly resolvedHistogramCache = new Map<string, ITileHistogram>();
 
+  /**
+   * Current project context ID for permission masking.
+   * When set, API requests include X-Project-Id header.
+   */
+  private projectContextId: string | null = null;
+
   constructor(client: RestClientInstance) {
     this.client = client;
+  }
+
+  /**
+   * Set the project context for API requests.
+   *
+   * When a project context is set, all API requests will include the
+   * X-Project-Id header. The backend uses this to apply permission
+   * masking - users must have access to BOTH the project AND the
+   * individual resource to perform operations.
+   *
+   * @param projectId - The project ID to set as context, or null to clear
+   */
+  setProjectContext(projectId: string | null): void {
+    this.projectContextId = projectId;
+    if (projectId) {
+      this.client.defaults.headers.common["X-Project-Id"] = projectId;
+    } else {
+      delete this.client.defaults.headers.common["X-Project-Id"];
+    }
+  }
+
+  /**
+   * Get the current project context ID.
+   * @returns The current project context ID, or null if not set
+   */
+  getProjectContext(): string | null {
+    return this.projectContextId;
   }
 
   histogramsLoaded = 0;

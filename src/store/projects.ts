@@ -358,6 +358,11 @@ export class Projects extends VuexModule {
   @Action
   async setSelectedProject(projectId: string | null): Promise<void> {
     this.setCurrentProjectId(projectId);
+
+    // Set project context for API requests (permission masking)
+    // This adds X-Project-Id header to all subsequent API calls
+    main.api.setProjectContext(projectId);
+
     if (projectId && !this.getProjectById(projectId)) {
       await this.fetchProject(projectId);
     }

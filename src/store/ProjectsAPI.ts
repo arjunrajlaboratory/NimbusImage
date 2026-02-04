@@ -201,4 +201,129 @@ export default class ProjectsAPI {
     );
     return toProject(response.data);
   }
+
+  // =========================================================================
+  // Project-scoped access endpoints (permission masking)
+  // =========================================================================
+
+  /**
+   * List datasets in a project with permission masking.
+   *
+   * Only returns datasets where the user has READ access to both
+   * the project and the individual dataset.
+   */
+  async listProjectDatasets(
+    projectId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<any[]> {
+    const response = await this.client.get(`project/${projectId}/datasets`, {
+      params,
+    });
+    return response.data;
+  }
+
+  /**
+   * List collections in a project with permission masking.
+   *
+   * Only returns collections where the user has READ access to both
+   * the project and the individual collection.
+   */
+  async listProjectCollections(
+    projectId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<any[]> {
+    const response = await this.client.get(`project/${projectId}/collections`, {
+      params,
+    });
+    return response.data;
+  }
+
+  /**
+   * Get annotations for a dataset within project context.
+   *
+   * Applies permission masking - user must have access to both
+   * the project and the dataset.
+   */
+  async getProjectDatasetAnnotations(
+    projectId: string,
+    datasetId: string,
+    params?: {
+      shape?: string;
+      tags?: string[];
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<any[]> {
+    const response = await this.client.get(
+      `project/${projectId}/dataset/${datasetId}/annotations`,
+      { params },
+    );
+    return response.data;
+  }
+
+  // =========================================================================
+  // Access management endpoints
+  // =========================================================================
+
+  /**
+   * Get the access control list for a project.
+   * Requires ADMIN access to the project.
+   */
+  async getProjectAccess(projectId: string): Promise<{
+    users: Array<{
+      id: string;
+      login: string;
+      firstName: string;
+      lastName: string;
+      level: number;
+    }>;
+    groups: Array<{ id: string; name: string; level: number }>;
+  }> {
+    const response = await this.client.get(`project/${projectId}/access`);
+    return response.data;
+  }
+
+  /**
+   * Set access permissions for a project.
+   * Requires ADMIN access to the project.
+   *
+   * @param projectId - The project ID
+   * @param access - The access control list
+   * @param isPublic - Whether the project should be public
+   */
+  async setProjectAccess(
+    projectId: string,
+    access: {
+      users?: Array<{ id: string; level: number }>;
+      groups?: Array<{ id: string; level: number }>;
+    },
+    isPublic?: boolean,
+  ): Promise<IProject> {
+    const params: { public?: boolean } = {};
+    if (isPublic !== undefined) {
+      params.public = isPublic;
+    }
+    const response = await this.client.put(
+      `project/${projectId}/access`,
+      access,
+      { params },
+    );
+    return toProject(response.data);
+  }
+
+  /**
+   * Set whether a project is publicly visible.
+   * Requires ADMIN access to the project.
+   */
+  async setProjectPublic(
+    projectId: string,
+    isPublic: boolean,
+  ): Promise<IProject> {
+    const response = await this.client.put(
+      `project/${projectId}/public`,
+      null,
+      { params: { public: isPublic } },
+    );
+    return toProject(response.data);
+  }
 }

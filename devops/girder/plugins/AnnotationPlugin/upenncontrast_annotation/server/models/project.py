@@ -276,3 +276,120 @@ class Project(ProxiedModel):
         project['meta']['status'] = status
         project['updated'] = datetime.datetime.utcnow()
         return self.save(project)
+
+    # =========================================================================
+    # Access query helper methods for permission masking
+    # =========================================================================
+
+    def getEffectiveAccessLevel(self, project, user):
+        """
+        Get the effective access level a user has for a project.
+
+        Returns the highest access level the user has (through direct
+        access or group membership), or None if no access.
+
+        Args:
+            project: The project document
+            user: The user dict or None for anonymous users
+
+        Returns:
+            AccessType value (READ, WRITE, ADMIN) or None if no access
+        """
+        if user is None:
+            if project.get('public', False):
+                return AccessType.READ
+            return None
+
+        return self.getAccessLevel(project, user)
+
+    def getUsersWithAccess(self, project, level=AccessType.READ):
+        """
+        Get all users who have at least the specified access level.
+
+        Args:
+            project: The project document
+            level: Minimum required access level (default: READ)
+
+        Returns:
+            List of user IDs (ObjectId) with the specified access level
+        """
+        user_ids = []
+        for entry in project.get('access', {}).get('users', []):
+            if entry['level'] >= level:
+                user_ids.append(entry['id'])
+
+        return user_ids
+
+    def findProjectsForResource(self, resource_id, resource_type, user=None):
+        """
+        Find all projects that contain a given resource.
+
+        Args:
+            resource_id: The dataset or collection ID (string or ObjectId)
+            resource_type: 'dataset' or 'collection'
+            user: If provided, filter by projects the user can access
+
+        Returns:
+            Cursor of matching projects
+        """
+        resource_id_obj = (
+            ObjectId(resource_id) if isinstance(resource_id, str)
+            else resource_id
+        )
+
+        if resource_type == 'dataset':
+            query = {'meta.datasets.datasetId': resource_id_obj}
+        elif resource_type == 'collection':
+            query = {'meta.collections.collectionId': resource_id_obj}
+        else:
+            raise ValidationException(
+                f'Unknown resource type: {resource_type}'
+            )
+
+        if user:
+            return self.findWithPermissions(query, user=user)
+        return self.find(query)
+
+    def hasResourceAccess(self, project, resource_id, resource_type,
+                          user, level=AccessType.READ):
+        """
+        Check if a user can access a resource through a specific project.
+
+        This implements the permission masking logic: user must have
+        the required access level on BOTH the project AND the resource.
+
+        Args:
+            project: The project document
+            resource_id: The dataset or collection ID
+            resource_type: 'dataset' or 'collection'
+            user: The user to check access for
+            level: Required access level
+
+        Returns:
+            True if access is allowed, False otherwise
+        """
+        # Check project access
+        project_level = self.getEffectiveAccessLevel(project, user)
+        if project_level is None or project_level < level:
+            return False
+
+        # Verify resource is in the project
+        resource_id_obj = (
+            ObjectId(resource_id) if isinstance(resource_id, str)
+            else resource_id
+        )
+
+        if resource_type == 'dataset':
+            in_project = any(
+                d['datasetId'] == resource_id_obj
+                for d in project['meta'].get('datasets', [])
+            )
+        elif resource_type == 'collection':
+            in_project = any(
+                c['collectionId'] == resource_id_obj
+                for c in project['meta'].get('collections', [])
+            )
+        else:
+            return False
+
+        return in_project

@@ -7,6 +7,7 @@ __email__ = "adrien.boucaud@kitware.com"
 __version__ = "0.0.0"
 
 import logging
+import cherrypy
 
 
 from girder.plugin import GirderPlugin
@@ -14,6 +15,11 @@ from girder.plugin import GirderPlugin
 from girder.constants import TokenScope
 from girder.utility.model_importer import ModelImporter
 from girder.api.v1.resource import allowedDeleteTypes, allowedSearchTypes
+
+from .server.helpers.projectContext import (
+    set_project_context,
+    clear_project_context
+)
 
 from . import system
 from .server.models.annotation import Annotation as AnnotationModel
@@ -42,6 +48,37 @@ while logging.root.hasHandlers():
 
 class UPennContrastAnnotationAPIPlugin(GirderPlugin):
     DISPLAY_NAME = "UPennContrast Annotation Plugin"
+
+    def _register_project_context_tools(self):
+        """
+        Register CherryPy tools for project context management.
+
+        These tools handle extracting the X-Project-Id header from requests
+        and clearing the context after the request completes. This enables
+        project-based permission masking.
+        """
+        def _set_project_context_before():
+            """Extract X-Project-Id header and set context before request."""
+            project_id = cherrypy.request.headers.get('X-Project-Id')
+            set_project_context(project_id)
+
+        def _clear_project_context_after():
+            """Clear project context after request completes."""
+            clear_project_context()
+
+        # Register tools with CherryPy
+        cherrypy.tools.project_context_before = cherrypy.Tool(
+            'before_handler', _set_project_context_before, priority=10
+        )
+        cherrypy.tools.project_context_after = cherrypy.Tool(
+            'on_end_request', _clear_project_context_after, priority=80
+        )
+
+        # Enable tools globally via cherrypy config
+        cherrypy.config.update({
+            'tools.project_context_before.on': True,
+            'tools.project_context_after.on': True
+        })
 
     def load(self, info):
 
@@ -171,3 +208,8 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].export = Export()
         info["apiRoot"].project = Project()
         system.addSystemEndpoints(info["apiRoot"])
+
+        # Register CherryPy tools for project context management
+        # This extracts X-Project-Id header before each request and
+        # clears it after the request completes
+        self._register_project_context_tools()
