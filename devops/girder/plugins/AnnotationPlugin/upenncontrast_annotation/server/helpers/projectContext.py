@@ -14,11 +14,8 @@ The permission masking model works as follows:
 """
 
 import threading
-from functools import wraps
 
 from bson import ObjectId
-from girder.api.rest import getCurrentUser
-from girder.constants import AccessType
 from girder.exceptions import AccessException
 
 # Thread-local storage for project context
@@ -122,47 +119,3 @@ def check_project_access_for_resource(user, resource_id, resource_type, level):
         )
 
     return True
-
-
-def project_masked_access(resource_type, resource_id_param='datasetId',
-                          level=AccessType.READ):
-    """
-    Decorator that applies project permission masking to an endpoint.
-
-    When a request includes a project context (via X-Project-Id header),
-    this decorator ensures the user has the required access level on both
-    the project AND the resource. The most restrictive permission wins.
-
-    Args:
-        resource_type: 'dataset' or 'collection'
-        resource_id_param: Name of parameter containing the resource ID
-        level: Required access level (default: AccessType.READ)
-
-    Usage:
-        @project_masked_access('dataset', 'datasetId', AccessType.READ)
-        def find(self, params):
-            ...
-    """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            # Get resource ID from kwargs or params
-            resource_id = kwargs.get(resource_id_param)
-
-            # Check params dict if not in kwargs
-            if resource_id is None and 'params' in kwargs:
-                resource_id = kwargs['params'].get(resource_id_param)
-            if resource_id is None and args:
-                # Check first positional arg if it's a dict (params)
-                if isinstance(args[0], dict):
-                    resource_id = args[0].get(resource_id_param)
-
-            if resource_id:
-                user = getCurrentUser()
-                check_project_access_for_resource(
-                    user, resource_id, resource_type, level
-                )
-
-            return func(self, *args, **kwargs)
-        return wrapper
-    return decorator

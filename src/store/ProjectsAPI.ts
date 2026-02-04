@@ -1,5 +1,5 @@
-import { RestClientInstance } from "@/girder";
-import { IProject } from "./model";
+import { RestClientInstance, IGirderFolder, IUPennCollection } from "@/girder";
+import { IProject, IAnnotation } from "./model";
 
 /**
  * Extract string ID from MongoDB ObjectId (handles both {$oid: string} format and plain strings)
@@ -215,7 +215,7 @@ export default class ProjectsAPI {
   async listProjectDatasets(
     projectId: string,
     params?: { limit?: number; offset?: number },
-  ): Promise<any[]> {
+  ): Promise<IGirderFolder[]> {
     const response = await this.client.get(`project/${projectId}/datasets`, {
       params,
     });
@@ -231,7 +231,7 @@ export default class ProjectsAPI {
   async listProjectCollections(
     projectId: string,
     params?: { limit?: number; offset?: number },
-  ): Promise<any[]> {
+  ): Promise<IUPennCollection[]> {
     const response = await this.client.get(`project/${projectId}/collections`, {
       params,
     });
@@ -253,7 +253,7 @@ export default class ProjectsAPI {
       limit?: number;
       offset?: number;
     },
-  ): Promise<any[]> {
+  ): Promise<IAnnotation[]> {
     const response = await this.client.get(
       `project/${projectId}/dataset/${datasetId}/annotations`,
       { params },

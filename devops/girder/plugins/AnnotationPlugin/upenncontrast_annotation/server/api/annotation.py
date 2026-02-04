@@ -71,6 +71,23 @@ class Annotation(Resource):
         self.route("POST", ("multiple",), self.createMultiple)
         self.route("DELETE", ("multiple",), self.deleteMultiple)
 
+    def _check_project_dataset_access(self, dataset_id, level):
+        """
+        Check project permission masking for a dataset.
+
+        If a project context is set, verifies the user has the required
+        access level on both the project and the dataset.
+
+        Args:
+            dataset_id: The dataset ID to check access for
+            level: Required access level (AccessType.READ, WRITE, or ADMIN)
+        """
+        project_id = get_project_context()
+        if project_id:
+            check_project_access_for_resource(
+                self.getCurrentUser(), dataset_id, 'dataset', level
+            )
+
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
     # TODO: creation date, update date, creatorId
@@ -90,12 +107,9 @@ class Annotation(Resource):
     def create(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
 
-        # Apply project permission masking for write operations
-        project_id = get_project_context()
-        if project_id and 'datasetId' in bodyJson:
-            check_project_access_for_resource(
-                self.getCurrentUser(), bodyJson['datasetId'],
-                'dataset', AccessType.WRITE
+        if 'datasetId' in bodyJson:
+            self._check_project_dataset_access(
+                bodyJson['datasetId'], AccessType.WRITE
             )
 
         annotation = self._annotationModel.convertIdsToObjectIds(bodyJson)
@@ -114,12 +128,9 @@ class Annotation(Resource):
     def createMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
 
-        # Apply project permission masking for write operations
-        project_id = get_project_context()
-        if project_id and len(bodyJson) > 0 and 'datasetId' in bodyJson[0]:
-            check_project_access_for_resource(
-                self.getCurrentUser(), bodyJson[0]['datasetId'],
-                'dataset', AccessType.WRITE
+        if len(bodyJson) > 0 and 'datasetId' in bodyJson[0]:
+            self._check_project_dataset_access(
+                bodyJson[0]['datasetId'], AccessType.WRITE
             )
 
         annotations = self._annotationModel.convertIdsToObjectIds(bodyJson)
@@ -139,14 +150,9 @@ class Annotation(Resource):
     )
     @recordable("Delete an annotation", getDatasetIdFromLoadedAnnotation)
     def delete(self, upenn_annotation, params):
-        # Apply project permission masking for write operations
-        project_id = get_project_context()
-        if project_id:
-            check_project_access_for_resource(
-                self.getCurrentUser(), upenn_annotation['datasetId'],
-                'dataset', AccessType.WRITE
-            )
-
+        self._check_project_dataset_access(
+            upenn_annotation['datasetId'], AccessType.WRITE
+        )
         self._annotationModel.delete(upenn_annotation)
 
     @access.user
@@ -162,17 +168,14 @@ class Annotation(Resource):
     def deleteMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
 
-        # Apply project permission masking for write operations
-        project_id = get_project_context()
-        if project_id and len(bodyJson) > 0:
+        if len(bodyJson) > 0:
             # Get dataset ID from first annotation to check project access
             first_annotation = self._annotationModel.load(
                 ObjectId(bodyJson[0]), force=True
             )
             if first_annotation:
-                check_project_access_for_resource(
-                    self.getCurrentUser(), first_annotation['datasetId'],
-                    'dataset', AccessType.WRITE
+                self._check_project_dataset_access(
+                    first_annotation['datasetId'], AccessType.WRITE
                 )
 
         stringIds = [stringId for stringId in bodyJson]
@@ -199,14 +202,9 @@ class Annotation(Resource):
     @memoizeBodyJson
     @recordable("Update an annotation", getDatasetIdFromLoadedAnnotation)
     def update(self, upenn_annotation, params, *args, **kwargs):
-        # Apply project permission masking for write operations
-        project_id = get_project_context()
-        if project_id:
-            check_project_access_for_resource(
-                self.getCurrentUser(), upenn_annotation['datasetId'],
-                'dataset', AccessType.WRITE
-            )
-
+        self._check_project_dataset_access(
+            upenn_annotation['datasetId'], AccessType.WRITE
+        )
         bodyJson = kwargs["memoizedBodyJson"]
         upenn_annotation.update(bodyJson)
         self._annotationModel.save(upenn_annotation)
@@ -231,12 +229,9 @@ class Annotation(Resource):
     def updateMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
 
-        # Apply project permission masking for write operations
-        project_id = get_project_context()
-        if project_id and len(bodyJson) > 0 and 'datasetId' in bodyJson[0]:
-            check_project_access_for_resource(
-                self.getCurrentUser(), bodyJson[0]['datasetId'],
-                'dataset', AccessType.WRITE
+        if len(bodyJson) > 0 and 'datasetId' in bodyJson[0]:
+            self._check_project_dataset_access(
+                bodyJson[0]['datasetId'], AccessType.WRITE
             )
 
         self._annotationModel.updateMultiple(bodyJson, self.getCurrentUser())
@@ -276,12 +271,7 @@ class Annotation(Resource):
         )
 
         # Apply project permission masking if context is set
-        # This ensures user also has READ access on the project
-        project_id = get_project_context()
-        if project_id:
-            check_project_access_for_resource(
-                user, datasetId, 'dataset', AccessType.READ
-            )
+        self._check_project_dataset_access(datasetId, AccessType.READ)
 
         # Now query annotations directly without ACL filtering
         query = {"datasetId": datasetId}
@@ -341,14 +331,9 @@ class Annotation(Resource):
         level=AccessType.READ,
     )
     def get(self, upenn_annotation, params):
-        # Apply project permission masking for read operations
-        project_id = get_project_context()
-        if project_id:
-            check_project_access_for_resource(
-                self.getCurrentUser(), upenn_annotation['datasetId'],
-                'dataset', AccessType.READ
-            )
-
+        self._check_project_dataset_access(
+            upenn_annotation['datasetId'], AccessType.READ
+        )
         return upenn_annotation
 
     @access.user
@@ -370,12 +355,7 @@ class Annotation(Resource):
                 code=400, message="Missing datasetId parameter"
             )
 
-        # Apply project permission masking for compute operations (write)
-        project_id = get_project_context()
-        if project_id:
-            check_project_access_for_resource(
-                self.getCurrentUser(), datasetId, 'dataset', AccessType.WRITE
-            )
+        self._check_project_dataset_access(datasetId, AccessType.WRITE)
 
         return self._annotationModel.compute(
             datasetId, bodyJson, self.getCurrentUser()

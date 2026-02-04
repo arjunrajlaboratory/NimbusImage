@@ -141,49 +141,6 @@ if doc is None:
     raise RestException("Not found", 404)
 ```
 
-### Critical: `load()` vs `hasAccess()` Behavior
-
-**`exc=False` only affects "document not found" - NOT access denied!**
-
-When `load()` finds a document but user lacks permission, it **always raises AccessException**, regardless of `exc` parameter:
-
-```python
-# WRONG: This will RAISE AccessException, not return None
-doc = Model().load(id, user=user, level=AccessType.READ, exc=False)
-if doc is None:  # Never reached if access denied!
-    # handle no access
-
-# CORRECT: Use hasAccess() to check without exceptions
-doc = Model().load(id, force=True)  # Load without access check
-if not Model().hasAccess(doc, user, level):
-    # Handle no access gracefully
-```
-
-**When to use each pattern:**
-
-| Scenario | Use |
-|----------|-----|
-| User MUST have access (normal API) | `load(exc=True)` - let it raise |
-| Check access without exception | `load(force=True)` then `hasAccess()` |
-| Bypass access entirely (admin ops) | `load(force=True)` |
-
-### `getAccessLevel()` Returns -1 for No Access
-
-Girder's `getAccessLevel()` returns **-1** (not `None`) when a user has no access:
-
-```python
-# WRONG: Comparing to None
-level = Model().getAccessLevel(doc, user)
-if level is None:  # Never true! Returns -1 instead
-    return None
-
-# CORRECT: Check for negative value
-level = Model().getAccessLevel(doc, user)
-if level < 0:
-    return None  # User has no access
-return level
-```
-
 ### Model Parameters
 
 Use `@modelParam` for automatic loading with access checks:
@@ -376,48 +333,6 @@ Folder().setPublic(folder, False, save=True)  # Make private first
 # ... then test making it public
 ```
 
-**Testing access control - use `hasAccess()` instead of `load()`:**
-```python
-# WRONG: load() raises AccessException, test fails unexpectedly
-with pytest.raises(AccessException):
-    Model().load(doc_id, user=user, level=AccessType.READ)
-# If the doc doesn't exist, you get a different error than expected!
-
-# BETTER: Use hasAccess() to verify permissions without exceptions
-doc = Model().load(doc_id, force=True)  # Load without access check
-assert not Model().hasAccess(doc, user, AccessType.READ)
-
-# For testing that access IS granted:
-assert Model().hasAccess(doc, user, AccessType.READ)
-```
-
-**Testing permission masking (project context):**
-```python
-def test_permission_masking(self, admin, user):
-    # Setup: create resources with explicit permissions
-    dataset = create_dataset(admin)
-    Folder().setUserAccess(dataset, user, AccessType.READ, save=True)
-
-    project = create_project_with_dataset(admin, dataset)
-    # Note: user has NO project access initially
-
-    # Test: without context, direct access works
-    clear_project_context()
-    check_project_access_for_resource(
-        user, dataset['_id'], 'dataset', AccessType.READ
-    )  # Should pass
-
-    # Test: with context, project permissions are checked
-    set_project_context(str(project['_id']))
-    try:
-        with pytest.raises(AccessException, match='insufficient project'):
-            check_project_access_for_resource(
-                user, dataset['_id'], 'dataset', AccessType.READ
-            )
-    finally:
-        clear_project_context()  # Always clean up!
-```
-
 **Helper function pattern for creating test data:**
 ```python
 def createDatasetWithView(creator):
@@ -439,55 +354,6 @@ def createDatasetWithView(creator):
     })
 
     return dataset, config, view
-```
-
-## Thread-Local Context for Request State
-
-For request-scoped state (like project context), use Python's `threading.local()`:
-
-```python
-import threading
-from functools import wraps
-
-# Thread-local storage - each request gets its own isolated state
-_context = threading.local()
-
-def set_project_context(project_id):
-    """Set context for this request."""
-    if project_id:
-        _context.project_id = str(project_id)
-    else:
-        _context.project_id = None
-
-def get_project_context():
-    """Get context, or None if not set."""
-    return getattr(_context, 'project_id', None)
-
-def clear_project_context():
-    """Clear after request completes."""
-    _context.project_id = None
-```
-
-**Register CherryPy tools for automatic context management:**
-
-```python
-import cherrypy
-
-def _register_context_tools(self):
-    def _set_context_before():
-        project_id = cherrypy.request.headers.get('X-Project-Id')
-        set_project_context(project_id)
-
-    def _clear_context_after():
-        clear_project_context()
-
-    # Register as CherryPy tools
-    cherrypy.tools.project_context_before = cherrypy.Tool(
-        'before_handler', _set_context_before, priority=10
-    )
-    cherrypy.tools.project_context_after = cherrypy.Tool(
-        'on_end_request', _clear_context_after, priority=80
-    )
 ```
 
 ## Common Patterns
