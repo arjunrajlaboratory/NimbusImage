@@ -64,6 +64,7 @@ import {
   ICameraInfo,
   IDatasetLocation,
   ConnectionToolStateSymbol,
+  CombineToolStateSymbol,
   NotificationType,
   IDimensionStrategy,
 } from "./model";
@@ -242,8 +243,8 @@ export class Main extends VuexModule {
   showPixelScalebar: boolean = true;
   scalebarColor: string = "#ffffff";
 
-  scaleAnnotationsWithZoom: boolean = true;
-  annotationsRadius: number = 10;
+  scaleAnnotationsWithZoom: boolean = false;
+  annotationsRadius: number = 4;
   annotationOpacity: number = 0.5;
 
   compositionMode: TCompositionMode = "lighten";
@@ -647,6 +648,17 @@ export class Main extends VuexModule {
             type: ConnectionToolStateSymbol,
             selectedAnnotationId: null,
           };
+          break;
+        case "edit":
+          // Edit tool with combine_click action needs CombineToolState
+          if (configuration.values?.action?.value === "combine_click") {
+            state = {
+              type: CombineToolStateSymbol,
+              selectedAnnotationId: null,
+            };
+          } else {
+            state = { type: BaseToolStateSymbol };
+          }
           break;
         default:
           state = { type: BaseToolStateSymbol };

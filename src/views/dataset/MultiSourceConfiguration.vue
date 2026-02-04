@@ -5,7 +5,141 @@
         >Variables</v-subheader
       >
       <v-divider class="my-2" />
-      <v-data-table :headers="headers" :items="items" item-key="key" />
+      <!-- Summary stats -->
+      <div class="variables-summary mb-4">
+        <div class="variables-summary__item">
+          <span class="variables-summary__value">{{ fileCount }}</span>
+          <span class="variables-summary__label">{{
+            fileCount === 1 ? "file" : "files"
+          }}</span>
+        </div>
+        <div class="variables-summary__divider">×</div>
+        <div class="variables-summary__item">
+          <span class="variables-summary__value">{{ framesPerFile }}</span>
+          <span class="variables-summary__label">{{
+            framesPerFile === 1 ? "frame/file" : "frames/file"
+          }}</span>
+        </div>
+        <div class="variables-summary__divider">=</div>
+        <div class="variables-summary__item variables-summary__item--total">
+          <span class="variables-summary__value">{{ datasetTotalFrames }}</span>
+          <span class="variables-summary__label">total frames</span>
+        </div>
+      </div>
+      <div
+        v-if="highlightedFilenameSegments.length > 0"
+        class="filename-highlight-container mb-4 pa-3"
+      >
+        <div class="text-caption grey--text mb-1">
+          Example filename with extracted variables:
+        </div>
+        <div class="filename-highlight-text">
+          <span
+            v-for="(segment, idx) in highlightedFilenameSegments"
+            :key="idx"
+            :class="segment.class"
+            :style="segment.style"
+            :title="segment.title"
+            >{{ segment.text }}</span
+          >
+        </div>
+        <div class="filename-highlight-legend mt-2">
+          <span
+            v-for="(legend, idx) in filenameLegend"
+            :key="idx"
+            class="legend-item mr-4"
+          >
+            <span
+              class="legend-color"
+              :style="{ backgroundColor: legend.color }"
+            ></span>
+            <span class="text-caption">
+              {{ legend.label }}
+              <span v-if="legend.showGuess" class="grey--text text--darken-1">
+                (guessed: {{ legend.guess }})
+              </span>
+            </span>
+          </span>
+        </div>
+      </div>
+      <!-- Variables list -->
+      <div class="variables-list">
+        <div
+          v-for="item in items"
+          :key="item.key"
+          class="variable-row"
+          :class="{
+            'variable-row--assigned': isVariableAssigned(item),
+          }"
+          :style="{ '--row-accent-color': getAssignedDimensionColor(item) }"
+        >
+          <div class="variable-row__accent"></div>
+          <div class="variable-row__name">{{ item.name }}</div>
+          <div class="variable-row__values">
+            <span>{{ item.values || `${item.size} values` }}</span>
+            <v-menu
+              v-if="item.allValues && item.allValues.length > 1"
+              offset-y
+              :close-on-content-click="false"
+              max-height="300"
+            >
+              <template v-slot:activator="{ on, attrs }">
+                <v-icon
+                  x-small
+                  class="variable-row__values-icon"
+                  v-bind="attrs"
+                  v-on="on"
+                >
+                  mdi-information-outline
+                </v-icon>
+              </template>
+              <v-card class="values-popover">
+                <v-card-title class="values-popover__title">
+                  {{ item.name }}
+                  <span class="values-popover__count"
+                    >({{ item.allValues.length }} values)</span
+                  >
+                </v-card-title>
+                <v-divider />
+                <div class="values-popover__list">
+                  <div
+                    v-for="(val, idx) in item.allValues"
+                    :key="idx"
+                    class="values-popover__item"
+                  >
+                    <span class="values-popover__index">{{ idx + 1 }}.</span>
+                    <span class="values-popover__value">{{ val }}</span>
+                  </div>
+                </div>
+              </v-card>
+            </v-menu>
+          </div>
+          <div class="variable-row__source">
+            <v-icon x-small class="mr-1">{{
+              item.source === "filename" ? "mdi-file-document" : "mdi-image"
+            }}</v-icon>
+            {{ item.source }}
+          </div>
+          <div class="variable-row__size">
+            {{ item.size }} {{ item.size === 1 ? "value" : "values" }}
+          </div>
+          <div class="variable-row__assignment">
+            <span
+              v-if="isVariableAssigned(item)"
+              class="variable-row__assignment-tag"
+              :style="{
+                backgroundColor: getAssignedDimensionColor(item),
+              }"
+            >
+              {{ getAssignedDimension(item) }}
+            </span>
+            <span v-else class="variable-row__unassigned">—</span>
+          </div>
+        </div>
+        <div v-if="items.length === 0" class="variables-list-empty">
+          No variables detected
+        </div>
+      </div>
       <v-checkbox
         v-if="isMultiBandRGBFile"
         v-model="splitRGBBands"
@@ -87,53 +221,129 @@
         </v-btn>
       </div>
       <v-divider class="my-2" />
-      <v-container>
-        <v-row
+      <div class="assignment-slots-container">
+        <div
           v-for="[dimension, dimensionName] in dimesionNamesEntries"
           :key="dimension"
+          class="assignment-slot-row"
         >
-          <v-col cols="2" class="body-1">
-            {{ dimensionName }} ({{ dimension }})
-          </v-col>
-          <v-col>
-            <v-combobox
-              v-model="assignments[dimension]"
-              :items="assignmentItems"
-              :search-input.sync="searchInput"
-              item-text="text"
-              item-value="value"
-              hide-selected
-              hide-details
-              dense
-              :disabled="assignmentDisabled(dimension)"
-            >
-              <template v-slot:selection="{ item }">
-                {{ item.text }}
+          <!-- Dimension label with color indicator -->
+          <div
+            class="assignment-slot__label"
+            :style="{ borderLeftColor: variableColors[dimension] }"
+          >
+            <span class="assignment-slot__dimension-name">{{
+              dimensionName
+            }}</span>
+            <span class="assignment-slot__dimension-code">{{ dimension }}</span>
+          </div>
+
+          <!-- The slot container -->
+          <div
+            class="assignment-slot"
+            :class="getSlotClasses(dimension)"
+            :style="getSlotStyle(dimension)"
+          >
+            <!-- Filled state: show badge -->
+            <template v-if="assignments[dimension]">
+              <div
+                class="assignment-slot__badge"
+                :style="getAssignmentBadgeStyleForSlot(dimension)"
+              >
+                <span class="assignment-slot__badge-name">
+                  {{ getAssignmentText(dimension) }}
+                </span>
+                <span class="assignment-slot__badge-values">
+                  {{ getAssignmentValues(dimension) }}
+                </span>
+                <span class="assignment-slot__badge-size">
+                  ({{ getAssignmentSize(dimension) }})
+                </span>
                 <template v-if="shouldDoCompositing && dimension === 'XY'">
-                  (will be composited)
+                  <v-chip x-small outlined class="ml-2">composited</v-chip>
                 </template>
+                <!-- Lock icon for immutable -->
+                <v-tooltip
+                  v-if="isAssignmentImmutableForDimension(dimension)"
+                  bottom
+                >
+                  <template v-slot:activator="{ on, attrs }">
+                    <v-icon small class="ml-2" v-bind="attrs" v-on="on">
+                      mdi-lock
+                    </v-icon>
+                  </template>
+                  <span>This assignment is locked (from file metadata)</span>
+                </v-tooltip>
+              </div>
+            </template>
+
+            <!-- Empty state: dropdown trigger -->
+            <template v-else>
+              <v-menu offset-y :disabled="assignmentItems.length === 0">
+                <template v-slot:activator="{ on, attrs }">
+                  <div class="assignment-slot__empty" v-bind="attrs" v-on="on">
+                    <span class="assignment-slot__placeholder">
+                      {{
+                        assignmentItems.length > 0
+                          ? "Select variable..."
+                          : "No variables available"
+                      }}
+                    </span>
+                    <v-icon v-if="assignmentItems.length > 0" small
+                      >mdi-menu-down</v-icon
+                    >
+                  </div>
+                </template>
+                <v-list dense>
+                  <v-list-item
+                    v-for="item in assignmentItems"
+                    :key="item.value.id"
+                    @click="assignments[dimension] = item"
+                  >
+                    <v-list-item-content>
+                      <div class="dropdown-item-content">
+                        <span class="dropdown-item-name">{{ item.text }}</span>
+                        <span class="dropdown-item-values">{{
+                          getItemValues(item.value)
+                        }}</span>
+                      </div>
+                    </v-list-item-content>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+            </template>
+          </div>
+
+          <!-- Actions -->
+          <div class="assignment-slot__actions">
+            <v-tooltip
+              v-if="assignments[dimension] && !clearDisabled(dimension)"
+              bottom
+            >
+              <template v-slot:activator="{ on, attrs }">
+                <v-btn
+                  icon
+                  small
+                  v-bind="attrs"
+                  v-on="on"
+                  @click="assignments[dimension] = null"
+                >
+                  <v-icon small>mdi-close</v-icon>
+                </v-btn>
               </template>
-            </v-combobox>
-          </v-col>
-          <v-col v-if="canDoCompositing && dimension === 'XY'">
+              <span>Clear assignment</span>
+            </v-tooltip>
             <v-checkbox
+              v-if="canDoCompositing && dimension === 'XY'"
               dense
-              label="Composite positions into single image"
-              class="d-inline-flex"
+              hide-details
+              label="Composite"
+              class="mt-0 ml-4"
               v-model="enableCompositing"
             />
-          </v-col>
-          <v-col cols="2" class="d-flex">
-            <v-spacer />
-            <v-btn
-              :disabled="clearDisabled(dimension)"
-              @click="assignments[dimension] = null"
-            >
-              Clear
-            </v-btn>
-          </v-col>
-        </v-row>
-      </v-container>
+          </div>
+        </div>
+      </div>
     </v-card>
     <v-row>
       <v-col class="d-flex">
@@ -242,6 +452,7 @@ import store from "@/store";
 
 import {
   collectFilenameMetadata2,
+  filenameDelimiterPattern,
   IVariableGuess,
   TDimensions,
 } from "@/utils/parsing";
@@ -305,6 +516,14 @@ type TAssignmentOption =
 interface IAssignment {
   text: string;
   value: TAssignmentOption;
+}
+
+/** Represents a filename-sourced variable with its token position and assignment */
+interface IFilenameVariable {
+  dimension: TAssignmentOption;
+  tokenIndex: number;
+  value: string;
+  assignedTo: TUpDim | null;
 }
 
 type TUpDim = "XY" | "Z" | "T" | "C";
@@ -481,53 +700,242 @@ export default class MultiSourceConfiguration extends Vue {
     return this.canDoCompositing && this.enableCompositing;
   }
 
+  /**
+   * Number of files in the dataset
+   */
+  get fileCount(): number {
+    return this.girderItems.length;
+  }
+
+  /**
+   * Maximum number of frames per file
+   */
+  get framesPerFile(): number {
+    if (!this.tilesMetadata) return 1;
+    return Math.max(
+      ...this.tilesMetadata.map((tile) => tile.frames?.length || 1),
+    );
+  }
+
+  /**
+   * Total number of frames across all files (for display in Variables summary)
+   */
+  get datasetTotalFrames(): number {
+    if (!this.tilesMetadata) return this.fileCount;
+    return this.tilesMetadata.reduce(
+      (sum, tile) => sum + (tile.frames?.length || 1),
+      0,
+    );
+  }
+
+  /**
+   * Extract all unique values from file source data
+   */
+  private extractFileSourceValues(data: IFileSourceData): string[] {
+    const allValues: string[] = [];
+    for (const itemIdx in data) {
+      const itemValues = data[itemIdx].values;
+      if (itemValues) {
+        itemValues.forEach((v) => {
+          if (!allValues.includes(v)) allValues.push(v);
+        });
+      }
+    }
+    return allValues;
+  }
+
   get items() {
     return this.dimensions
       .filter((dim) => dim.size > 0)
       .map((dim: TAssignmentOption) => {
         let values = "";
+        let allValues: string[] = [];
         switch (dim.source) {
           case Sources.Filename:
-            values = this.sliceAndJoin(
-              (dim.data as IFilenameSourceData).values,
-            );
+            allValues = (dim.data as IFilenameSourceData).values;
+            values = this.sliceAndJoin(allValues);
             break;
           case Sources.File:
-            values = "From metadata";
+            allValues = this.extractFileSourceValues(
+              dim.data as IFileSourceData,
+            );
+            values =
+              allValues.length > 0
+                ? this.sliceAndJoin(allValues, 24)
+                : "From metadata";
+            break;
+          case Sources.Images:
+            // Generate numeric labels for images
+            allValues = Array.from({ length: dim.size }, (_, i) => `${i + 1}`);
+            values = "";
             break;
         }
         return {
           ...dim,
           values,
+          allValues,
           key: `${dim.id}_${dim.guess}_${dim.source}`,
         };
       });
   }
 
-  dimensions: TAssignmentOption[] = [];
+  // Colors for highlighting different variables in the filename
+  readonly variableColors: { [key in TDimensions]: string } = {
+    XY: "#4CAF50", // Green
+    Z: "#2196F3", // Blue
+    T: "#FF9800", // Orange
+    C: "#9C27B0", // Purple
+  };
 
-  headers = [
-    {
-      text: "Variable",
-      value: "name",
-    },
-    {
-      text: "Values",
-      value: "values",
-    },
-    {
-      text: "Guess",
-      value: "guess",
-    },
-    {
-      text: "Source",
-      value: "source",
-    },
-    {
-      text: "Size",
-      value: "size",
-    },
-  ];
+  /**
+   * Get the filename-sourced variables with their token positions and assignments
+   */
+  get filenameVariables(): IFilenameVariable[] {
+    if (!this.girderItems.length) return [];
+
+    const exampleFilename = this.girderItems[0].name;
+    const tokens = exampleFilename.split(filenameDelimiterPattern);
+
+    const result: IFilenameVariable[] = [];
+
+    // Find filename-sourced dimensions and their token positions
+    for (const dim of this.dimensions) {
+      if (dim.source !== Sources.Filename || dim.size === 0) continue;
+
+      const filenameData = dim.data as IFilenameSourceData;
+      const valueIdx = filenameData.valueIdxPerFilename[exampleFilename];
+      const value = filenameData.values[valueIdx];
+
+      // Find which token matches this value
+      // Note: If multiple tokens have the same value, highlights the first occurrence
+      const tokenIndex = tokens.findIndex((token) => token === value);
+      if (tokenIndex !== -1) {
+        // Find the actual assignment for this dimension
+        let assignedTo: TUpDim | null = null;
+        for (const [assignmentDim, assignment] of Object.entries(
+          this.assignments,
+        )) {
+          if (assignment?.value.id === dim.id) {
+            assignedTo = assignmentDim as TUpDim;
+            break;
+          }
+        }
+        result.push({ dimension: dim, tokenIndex, value, assignedTo });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Compute segments of the filename with highlighting information
+   */
+  get highlightedFilenameSegments(): {
+    text: string;
+    class: string;
+    style: { backgroundColor?: string; color?: string };
+    title: string;
+  }[] {
+    if (!this.girderItems.length || this.filenameVariables.length === 0) {
+      return [];
+    }
+
+    const exampleFilename = this.girderItems[0].name;
+    // Create a capturing version of the delimiter pattern to preserve delimiters in split
+    const capturingPattern = new RegExp(`(${filenameDelimiterPattern.source})`);
+    const parts = exampleFilename.split(capturingPattern);
+
+    // Build a map of token index to variable info
+    // Tokens are at even indices (0, 2, 4, ...), delimiters at odd indices
+    const tokenToVariable = new Map<
+      number,
+      { guess: TDimensions; assignedTo: TUpDim | null; name: string }
+    >();
+
+    let tokenCount = 0;
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 0) {
+        // This is a token (not a delimiter)
+        for (const varInfo of this.filenameVariables) {
+          if (varInfo.tokenIndex === tokenCount) {
+            tokenToVariable.set(i, {
+              guess: varInfo.dimension.guess,
+              assignedTo: varInfo.assignedTo,
+              name: varInfo.dimension.name,
+            });
+          }
+        }
+        tokenCount++;
+      }
+    }
+
+    // Build segments
+    return parts.map((part, idx) => {
+      const varInfo = tokenToVariable.get(idx);
+      if (varInfo) {
+        // Use assignment color if assigned, otherwise use guess color
+        const colorKey = varInfo.assignedTo || varInfo.guess;
+        const assignmentLabel = varInfo.assignedTo
+          ? this.dimensionNames[varInfo.assignedTo]
+          : "Unassigned";
+        return {
+          text: part,
+          class: "filename-variable",
+          style: {
+            backgroundColor: this.variableColors[colorKey],
+            color: "#ffffff",
+          },
+          title: `${varInfo.name} → ${assignmentLabel}`,
+        };
+      }
+      return {
+        text: part,
+        class: "",
+        style: {},
+        title: "",
+      };
+    });
+  }
+
+  /**
+   * Legend items for the highlighted variables, showing both guess and assignment
+   */
+  get filenameLegend(): {
+    label: string;
+    color: string;
+    guess: string;
+    showGuess: boolean;
+  }[] {
+    const legend: {
+      label: string;
+      color: string;
+      guess: string;
+      showGuess: boolean;
+    }[] = [];
+
+    for (const varInfo of this.filenameVariables) {
+      const guess = varInfo.dimension.guess;
+      const assignedTo = varInfo.assignedTo;
+      // Use assignment color if assigned, otherwise use guess color
+      const colorKey = assignedTo || guess;
+      const assignmentLabel = assignedTo
+        ? `${this.dimensionNames[assignedTo]} (${assignedTo})`
+        : "Unassigned";
+      const guessLabel = `${this.dimensionNames[guess]} (${guess})`;
+      const showGuess = assignedTo !== null && assignedTo !== guess;
+
+      legend.push({
+        label: assignmentLabel,
+        color: this.variableColors[colorKey],
+        guess: guessLabel,
+        showGuess,
+      });
+    }
+
+    return legend;
+  }
+
+  dimensions: TAssignmentOption[] = [];
 
   readonly dimensionNames: { [dim in TUpDim]: string } = {
     XY: "Positions",
@@ -973,6 +1381,142 @@ export default class MultiSourceConfiguration extends Vue {
   clearDisabled(dimension: TUpDim) {
     const currentAssignment = this.assignments[dimension];
     return !currentAssignment || this.isAssignmentImmutable(currentAssignment);
+  }
+
+  /**
+   * Check if a variable item is currently assigned to any dimension
+   */
+  isVariableAssigned(item: TAssignmentOption): boolean {
+    return Object.values(this.assignments).some(
+      (assignment) => assignment?.value.id === item.id,
+    );
+  }
+
+  /**
+   * Get the dimension that a variable is assigned to
+   */
+  getAssignedDimension(item: TAssignmentOption): string | null {
+    for (const [dim, assignment] of Object.entries(this.assignments)) {
+      if (assignment?.value.id === item.id) {
+        return dim;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get the color for the dimension a variable is assigned to
+   */
+  getAssignedDimensionColor(item: TAssignmentOption): string {
+    const dim = this.getAssignedDimension(item);
+    if (dim && dim in this.variableColors) {
+      return this.variableColors[dim as TUpDim];
+    }
+    return "rgba(255, 255, 255, 0.3)";
+  }
+
+  /**
+   * Get CSS classes for an assignment slot based on its state
+   */
+  getSlotClasses(dimension: TUpDim): Record<string, boolean> {
+    const hasAssignment = !!this.assignments[dimension];
+    const hasAvailableVariables = this.assignmentItems.length > 0;
+    const isImmutable =
+      hasAssignment && this.isAssignmentImmutable(this.assignments[dimension]!);
+
+    return {
+      "assignment-slot--filled": hasAssignment,
+      "assignment-slot--empty-available":
+        !hasAssignment && hasAvailableVariables,
+      "assignment-slot--empty-none": !hasAssignment && !hasAvailableVariables,
+      "assignment-slot--immutable": isImmutable,
+    };
+  }
+
+  /**
+   * Get style for an assignment slot (ghost color when empty and no variables)
+   */
+  getSlotStyle(dimension: TUpDim): Record<string, string> {
+    const color = this.variableColors[dimension];
+    const hasAssignment = !!this.assignments[dimension];
+    const hasAvailableVariables = this.assignmentItems.length > 0;
+
+    if (!hasAssignment && !hasAvailableVariables) {
+      // Ghost state: faded dimension color
+      return {
+        backgroundColor: `${color}15`,
+        borderColor: `${color}40`,
+      };
+    }
+    return {};
+  }
+
+  /**
+   * Get style for the badge inside an assignment slot - uses slot's dimension color
+   */
+  getAssignmentBadgeStyleForSlot(dimension: TUpDim): Record<string, string> {
+    const assignment = this.assignments[dimension];
+    if (!assignment) return {};
+
+    // Use the slot's dimension color, not the variable's guess color
+    const dimensionColor = this.variableColors[dimension];
+    return {
+      borderLeftColor: dimensionColor,
+      backgroundColor: `${dimensionColor}15`,
+    };
+  }
+
+  /**
+   * Get the text of an assignment for a dimension
+   */
+  getAssignmentText(dimension: TUpDim): string {
+    return this.assignments[dimension]?.text ?? "";
+  }
+
+  /**
+   * Get the values preview for an assignment
+   */
+  getAssignmentValues(dimension: TUpDim): string {
+    const assignment = this.assignments[dimension];
+    if (!assignment) return "";
+    return this.getItemValues(assignment.value);
+  }
+
+  /**
+   * Get the size of an assignment
+   */
+  getAssignmentSize(dimension: TUpDim): number {
+    return this.assignments[dimension]?.value.size ?? 0;
+  }
+
+  /**
+   * Get values preview for a dimension option (for dropdown and badges)
+   */
+  getItemValues(item: TAssignmentOption): string {
+    switch (item.source) {
+      case Sources.Filename:
+        return this.sliceAndJoin((item.data as IFilenameSourceData).values, 24);
+      case Sources.File:
+        const allValues = this.extractFileSourceValues(
+          item.data as IFileSourceData,
+        );
+        if (allValues.length > 0) {
+          return this.sliceAndJoin(allValues, 24);
+        }
+        return `${item.size} values`;
+      case Sources.Images:
+        return `${item.size} values`;
+      default:
+        return "";
+    }
+  }
+
+  /**
+   * Check if an assignment for a dimension is immutable
+   */
+  isAssignmentImmutableForDimension(dimension: TUpDim): boolean {
+    const assignment = this.assignments[dimension];
+    return assignment ? this.isAssignmentImmutable(assignment) : false;
   }
 
   submitEnabled() {
@@ -1667,6 +2211,385 @@ export default class MultiSourceConfiguration extends Vue {
   padding: 12px;
   border-radius: 4px;
   width: 100%;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.filename-highlight-container {
+  background-color: rgba(0, 0, 0, 0.03);
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.filename-highlight-text {
+  font-family: "Roboto Mono", "Consolas", "Monaco", monospace;
+  font-size: 14px;
+  padding: 8px 12px;
+  background-color: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.filename-variable {
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.filename-highlight-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Variables Summary */
+.variables-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.variables-summary__item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.variables-summary__item--total {
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.variables-summary__value {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.variables-summary__label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.variables-summary__divider {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* Variables List */
+.variables-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+}
+
+.variables-list-empty {
+  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+  padding: 16px;
+}
+
+/* Variable Row */
+.variable-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+
+.variable-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.variable-row__accent {
+  width: 4px;
+  height: 28px;
+  border-radius: 2px;
+  background-color: var(--row-accent-color);
+  flex-shrink: 0;
+}
+
+.variable-row__name {
+  font-weight: 500;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.9);
+  min-width: 160px;
+  flex-shrink: 0;
+}
+
+.variable-row__values {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.variable-row__values-icon {
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.variable-row__values-icon:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.variable-row__source {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  display: flex;
+  align-items: center;
+  text-transform: capitalize;
+  min-width: 90px;
+  flex-shrink: 0;
+}
+
+.variable-row__size {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+  min-width: 70px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.variable-row__assignment {
+  min-width: 50px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.variable-row__assignment-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 4px;
+  color: white;
+}
+
+.variable-row__unassigned {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.25);
+}
+
+/* Assignment Slots Container */
+.assignment-slots-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.assignment-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Dimension Label */
+.assignment-slot__label {
+  min-width: 100px;
+  padding: 8px 12px;
+  border-left: 4px solid;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 0 4px 4px 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.assignment-slot__dimension-name {
+  font-weight: 500;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.assignment-slot__dimension-code {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: monospace;
+}
+
+/* The Slot */
+.assignment-slot {
+  flex: 1;
+  min-height: 44px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s ease;
+}
+
+.assignment-slot--filled {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.assignment-slot--empty-available {
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.assignment-slot--empty-available:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.assignment-slot--empty-none {
+  border: 1px solid;
+  cursor: default;
+}
+
+.assignment-slot--immutable {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Badge inside slot */
+.assignment-slot__badge {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-left: 3px solid;
+  border-radius: 4px;
+  margin: 4px;
+  flex: 1;
+}
+
+.assignment-slot__badge-name {
+  font-weight: 500;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.assignment-slot__badge-values {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-left: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assignment-slot__badge-size {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+/* Empty slot content */
+.assignment-slot__empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.assignment-slot__placeholder {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+}
+
+/* Actions */
+.assignment-slot__actions {
+  display: flex;
+  align-items: center;
+  min-width: 80px;
+}
+
+/* Dropdown menu items */
+.dropdown-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dropdown-item-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.dropdown-item-values {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Values Popover */
+.values-popover {
+  min-width: 200px;
+  max-width: 350px;
+}
+
+.values-popover__title {
+  font-size: 14px !important;
+  font-weight: 500;
+  padding: 12px 16px !important;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.values-popover__count {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.values-popover__list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.values-popover__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+}
+
+.values-popover__index {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  min-width: 24px;
+  font-family: monospace;
+}
+
+.values-popover__value {
+  font-size: 13px;
   color: rgba(255, 255, 255, 0.85);
 }
 </style>
