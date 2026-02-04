@@ -84,12 +84,16 @@ def check_project_access_for_resource(user, resource_id, resource_type, level):
     from ..models.project import Project as ProjectModel
     project_model = ProjectModel()
 
-    # Load project with required access level
-    project = project_model.load(
-        project_id, user=user, level=level, exc=False
-    )
+    # Load project without access check first
+    project = project_model.load(project_id, force=True)
 
     if not project:
+        raise AccessException(
+            'Access denied: project not found'
+        )
+
+    # Check if user has required access level on the project
+    if not project_model.hasAccess(project, user, level):
         raise AccessException(
             'Access denied: insufficient project permissions'
         )

@@ -300,7 +300,11 @@ class Project(ProxiedModel):
                 return AccessType.READ
             return None
 
-        return self.getAccessLevel(project, user)
+        level = self.getAccessLevel(project, user)
+        # getAccessLevel returns -1 when user has no access
+        if level < 0:
+            return None
+        return level
 
     def getUsersWithAccess(self, project, level=AccessType.READ):
         """

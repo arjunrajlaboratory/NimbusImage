@@ -397,39 +397,36 @@ class TestPrivatePublicCombinations:
         Private dataset in public project stays private.
 
         User should NOT see the dataset even though project is public.
+        The project permission masking only checks project access - the
+        actual dataset access check happens separately.
         """
         project_model = Project()
 
-        # Private dataset (user has no access)
+        # Private dataset - explicitly set as non-public
         dataset = create_dataset(admin)
+        Folder().setPublic(dataset, False, save=True)
 
         # Public project with dataset
         project = create_project_with_dataset(admin, dataset)
-        project_model.setPublic(project, True, save=True)
+        project = project_model.setPublic(project, True, save=True)
 
-        # User can access project
-        loaded_project = project_model.load(
-            project['_id'], user=user, level=AccessType.READ
-        )
-        assert loaded_project is not None
+        # User can access public project (use hasAccess to verify)
+        assert project_model.hasAccess(project, user, AccessType.READ)
 
-        # But through project context, dataset access should fail
-        # (user has no dataset permissions)
+        # Through project context, the PROJECT check passes (project is public)
         set_project_context(str(project['_id']))
         try:
-            # The check passes for project but user lacks dataset access
-            # Since check_project_access_for_resource only checks project
-            # side, the actual dataset access check happens elsewhere
-            # This test verifies the project side passes
+            # check_project_access_for_resource only verifies:
+            # 1. User has project access (yes, project is public)
+            # 2. Dataset is in the project (yes)
+            # It does NOT check dataset permissions - that's separate
             check_project_access_for_resource(
                 user, dataset['_id'], 'dataset', AccessType.READ
             )
 
-            # The actual dataset load should fail
-            loaded_dataset = Folder().load(
-                dataset['_id'], user=user, level=AccessType.READ
-            )
-            assert loaded_dataset is None
+            # The actual dataset access check verifies user doesn't have
+            # direct dataset permissions
+            assert not Folder().hasAccess(dataset, user, AccessType.READ)
         finally:
             clear_project_context()
 
@@ -449,20 +446,17 @@ class TestPrivatePublicCombinations:
         # Private project (user has no access)
         project = create_project_with_dataset(admin, dataset)
 
-        # User cannot access project
-        loaded_project = project_model.load(
-            project['_id'], user=user, level=AccessType.READ
-        )
-        assert loaded_project is None
+        # User cannot access project (verify with hasAccess)
+        assert not project_model.hasAccess(project, user, AccessType.READ)
 
-        # Direct dataset access works
+        # Direct dataset access works (dataset is public)
         clear_project_context()
         loaded_dataset = Folder().load(
             dataset['_id'], user=user, level=AccessType.READ
         )
         assert loaded_dataset is not None
 
-        # Through project context - should fail
+        # Through project context - should fail (user lacks project access)
         set_project_context(str(project['_id']))
         try:
             with pytest.raises(AccessException):
