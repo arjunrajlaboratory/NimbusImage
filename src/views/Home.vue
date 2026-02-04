@@ -226,14 +226,14 @@
             <p>
               A <strong>dataset</strong> is a set of images you want to
               visualize and analyze together. It can come from a single file
-              (like a multi-dimensional .nd2 file) or multiple files that
-              belong together.
+              (like a multi-dimensional .nd2 file) or multiple files that belong
+              together.
             </p>
             <p>
               By default, when you upload multiple files, they all become part
               of <strong>one dataset</strong>. NimbusImage will automatically
-              parse dimensions like channels, Z-stacks, and timepoints from
-              file metadata or filenames.
+              parse dimensions like channels, Z-stacks, and timepoints from file
+              metadata or filenames.
             </p>
             <p>
               If you want each file to be its own separate dataset, check the
