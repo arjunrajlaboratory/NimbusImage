@@ -386,6 +386,71 @@ if prop is None:
 prop = PropertyModel().load(property_id, user=user, level=AccessType.READ, exc=True)
 ```
 
+### Girder Access Control Gotchas
+
+**Understanding `load()` vs `hasAccess()`:**
+
+Girder's `load()` method raises `AccessException` when the user doesn't have access - it does NOT return `None`. The `exc=False` parameter only affects what happens when the document is NOT FOUND, not when access is denied.
+
+**Bad - Expecting None on access denied:**
+```python
+# This will RAISE AccessException, not return None!
+doc = Model().load(id, user=user, level=AccessType.READ, exc=False)
+if doc is None:
+    # This branch only runs if doc doesn't exist, NOT if access denied
+    handle_no_access()
+```
+
+**Good - Separate load and access check:**
+```python
+# Load without access check, then check access separately
+doc = Model().load(id, force=True)
+if not doc:
+    raise RestException("Not found", 404)
+if not Model().hasAccess(doc, user, level):
+    raise AccessException("Access denied")
+```
+
+**Understanding `getAccessLevel()` return values:**
+- Returns the access level (0=READ, 1=WRITE, 2=ADMIN) if user has access
+- Returns `-1` (not `None`) when user has NO access
+- Check `level < 0` or `level == -1` to detect no access
+
+**Thread-local context for request-scoped state:**
+
+When implementing request-scoped features (like project context masking), use Python's `threading.local()`:
+
+```python
+import threading
+_context = threading.local()
+
+def set_context(value):
+    _context.value = value
+
+def get_context():
+    return getattr(_context, 'value', None)
+
+def clear_context():
+    _context.value = None
+```
+
+Register CherryPy tools to set/clear context automatically per request.
+
+### Project Permission Masking
+
+The project system implements permission masking where accessing resources through a project requires permissions on BOTH the project AND the individual resource.
+
+**Key files:**
+- `server/helpers/projectContext.py` - Thread-local context and access checking
+- `server/api/project.py` - Project-scoped endpoints
+- `server/models/project.py` - Access helper methods
+
+**How it works:**
+1. Frontend sets `X-Project-Id` header when project is selected
+2. CherryPy middleware extracts header into thread-local storage
+3. API endpoints check both project AND resource permissions
+4. Direct resource access (no header) uses only resource permissions
+
 ### Simplify Where Possible
 
 Look for opportunities to simplify code:
