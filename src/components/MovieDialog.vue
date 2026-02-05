@@ -56,7 +56,11 @@
                   :value="MovieFormat.GIF"
                 ></v-radio>
                 <v-radio
-                  label="Download movie"
+                  label="Download MP4"
+                  :value="MovieFormat.MP4"
+                ></v-radio>
+                <v-radio
+                  label="Download WebM"
                   :value="MovieFormat.WEBM"
                 ></v-radio>
               </v-radio-group>
