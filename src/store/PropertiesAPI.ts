@@ -124,6 +124,13 @@ export default class PropertiesAPI {
     );
   }
 
+  async getPropertyCount(configurationId: string): Promise<number> {
+    return this.client
+      .get("annotation_property/count", { params: { configurationId } })
+      .then((res) => res.data.count)
+      .catch(() => 0);
+  }
+
   fromPropertyConfiguration(item: IAnnotationPropertyConfiguration) {
     const { name, image, shape, tags, workerInterface } = item;
     return {

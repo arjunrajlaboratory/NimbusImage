@@ -22,6 +22,7 @@ class PropertyValues(Resource):
         self.route("POST", (), self.add)
         self.route("POST", ("multiple",), self.addMultiple)
         self.route("GET", (), self.find)
+        self.route("GET", ("count",), self.count)
         self.route("GET", ("histogram",), self.histogram)
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
@@ -147,6 +148,30 @@ class PropertyValues(Resource):
             limit=limit,
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
+
+    @access.public
+    @describeRoute(
+        Description("Get property value count for a dataset")
+        .param("datasetId", "Get count for this dataset", required=True)
+        .errorResponse()
+    )
+    def count(self, params):
+        if "datasetId" not in params:
+            raise RestException(code=400, message="Dataset ID is required")
+        datasetId = ObjectId(params["datasetId"])
+        dataset = Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.READ
+        )
+        if not dataset:
+            raise RestException(code=403, message="Access denied to dataset")
+
+        query = {"datasetId": datasetId}
+        return {
+            "count": (
+                self._annotationPropertyValuesModel.collection
+                .count_documents(query)
+            )
+        }
 
     @access.public
     @describeRoute(
