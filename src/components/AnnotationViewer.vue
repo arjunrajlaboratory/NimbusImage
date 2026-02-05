@@ -84,6 +84,7 @@ import {
   unrollIndexFromImages,
   geojsAnnotationFactory,
   tagFilterFunction,
+  circleToPolygonCoordinates,
 } from "@/utils/annotation";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
@@ -2183,14 +2184,30 @@ export default class AnnotationViewer extends Vue {
       return;
     }
 
-    const coordinates = annotation.coordinates();
+    let coordinates = annotation.coordinates();
     this.interactionLayer.removeAnnotation(annotation);
 
+    // Handle circle-to-polygon conversion
+    // Circles are drawn with geojs circle primitive but stored as polygons
+    let toolConfiguration = this.selectedToolConfiguration;
+    if (toolConfiguration.values.annotation?.shape === AnnotationShape.Circle) {
+      // Convert circle coordinates (bounding box corners) to polygon vertices
+      coordinates = circleToPolygonCoordinates(coordinates);
+      // Create a modified tool configuration with polygon shape for storage
+      toolConfiguration = {
+        ...toolConfiguration,
+        values: {
+          ...toolConfiguration.values,
+          annotation: {
+            ...toolConfiguration.values.annotation,
+            shape: AnnotationShape.Polygon,
+          },
+        },
+      };
+    }
+
     // Create the new annotation
-    await this.createAnnotationFromTool(
-      coordinates,
-      this.selectedToolConfiguration,
-    );
+    await this.createAnnotationFromTool(coordinates, toolConfiguration);
   }
 
   async addAnnotationFromSnapping(annotation: IGeoJSAnnotation) {
