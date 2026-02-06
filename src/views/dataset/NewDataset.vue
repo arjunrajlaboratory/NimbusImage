@@ -1293,8 +1293,12 @@ export default class NewDataset extends Vue {
       // but createConfigurationFromDataset needs the full tile/frame metadata
       await this.store.setSelectedDataset(this.dataset!.id);
 
-      // Create the collection using store action
-      await this.createCollection();
+      // Only create a new collection if one isn't already set in the workflow.
+      // When adding datasets to an existing collection, the collection is
+      // pre-set by AddDatasetToCollection before navigating here.
+      if (!this.store.uploadWorkflow.collection) {
+        await this.createCollection();
+      }
 
       if (this.pipelineError || !this.store.uploadWorkflow.collection) {
         logWarning("Failed to create collection");
