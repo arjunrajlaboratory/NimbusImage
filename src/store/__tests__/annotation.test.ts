@@ -1373,6 +1373,7 @@ describe("annotation store", () => {
       // With 100 annotations under maxHydrated (10000), should show shapes
       await store.updateVisibilityAndHydration({
         filteredIds: filteredIds.slice(0, 100),
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
       });
 
       // 100 is under maxHydrated (10000), so should be shapes
@@ -1391,6 +1392,7 @@ describe("annotation store", () => {
       const filteredIds = annotations.map((a) => a.id);
       await store.updateVisibilityAndHydration({
         filteredIds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
       });
 
       expect(store.visibleAnnotationIds).toHaveLength(50);
@@ -1406,6 +1408,7 @@ describe("annotation store", () => {
       const filteredIds = annotations.map((a) => a.id);
       await store.updateVisibilityAndHydration({
         filteredIds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
       });
 
       // Should have 100 visible but only 30 hydrated
@@ -1424,6 +1427,7 @@ describe("annotation store", () => {
       const filteredIds = annotations.map((a) => a.id);
       await store.updateVisibilityAndHydration({
         filteredIds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
       });
 
       expect(store.hydrationMode).toBe("dots");
@@ -1440,6 +1444,7 @@ describe("annotation store", () => {
       store.visibilityConfig.maxHydrated = 0;
       await store.updateVisibilityAndHydration({
         filteredIds: annotations.map((a) => a.id),
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
       });
 
       // Selected should be hydrated even when maxHydrated is 0
@@ -1450,6 +1455,191 @@ describe("annotation store", () => {
     it("visibilityConfig has expected defaults", () => {
       expect(store.visibilityConfig.maxVisible).toBe(20000);
       expect(store.visibilityConfig.maxHydrated).toBe(10000);
+    });
+
+    it("frame-based splitting: only current-frame annotations are visible", async () => {
+      // Create annotations on two different frames
+      const currentFrameAnns = Array.from({ length: 5 }, (_, i) =>
+        createMockAnnotation({
+          id: `current-${i}`,
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+      );
+      const otherFrameAnns = Array.from({ length: 5 }, (_, i) =>
+        createMockAnnotation({
+          id: `other-${i}`,
+          location: { XY: 0, Z: 1, Time: 0 },
+        }),
+      );
+      const allAnns = [...currentFrameAnns, ...otherFrameAnns];
+      store.setAnnotations(allAnns);
+
+      await store.updateVisibilityAndHydration({
+        filteredIds: allAnns.map((a) => a.id),
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+      });
+
+      // Only current-frame annotations should be visible
+      expect(store.visibleAnnotationIds).toHaveLength(5);
+      for (const ann of currentFrameAnns) {
+        expect(store.isVisible(ann.id)).toBe(true);
+      }
+      for (const ann of otherFrameAnns) {
+        expect(store.isVisible(ann.id)).toBe(false);
+      }
+    });
+
+    it("two-tier priority: viewport annotations filled first, then off-viewport", async () => {
+      // Create annotations: some in viewport, some out
+      const inViewportAnns = Array.from({ length: 3 }, (_, i) =>
+        createMockAnnotation({
+          id: `in-vp-${i}`,
+          coordinates: [{ x: 50, y: 50 }], // Inside viewport bounds
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+      );
+      const outOfViewportAnns = Array.from({ length: 3 }, (_, i) =>
+        createMockAnnotation({
+          id: `out-vp-${i}`,
+          coordinates: [{ x: 500, y: 500 }], // Outside viewport bounds
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+      );
+      const allAnns = [...inViewportAnns, ...outOfViewportAnns];
+      store.setAnnotations(allAnns);
+
+      // Set a small maxVisible to test priority
+      store.visibilityConfig.maxVisible = 4;
+
+      const gcsBounds = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      await store.updateVisibilityAndHydration({
+        filteredIds: allAnns.map((a) => a.id),
+        gcsBounds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+      });
+
+      // All 3 in-viewport should be visible
+      for (const ann of inViewportAnns) {
+        expect(store.isVisible(ann.id)).toBe(true);
+      }
+      // Only 1 of the 3 out-of-viewport should be visible (budget is 4 total)
+      const outVisible = outOfViewportAnns.filter((a) =>
+        store.isVisible(a.id),
+      );
+      expect(outVisible).toHaveLength(1);
+      expect(store.visibleAnnotationIds).toHaveLength(4);
+    });
+
+    it("frame change dehydrates old frame annotations", async () => {
+      // Set up annotations on frame Z=0
+      const frame0Anns = Array.from({ length: 5 }, (_, i) =>
+        createMockAnnotation({
+          id: `f0-${i}`,
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+      );
+      // Set up annotations on frame Z=1
+      const frame1Anns = Array.from({ length: 5 }, (_, i) =>
+        createMockAnnotation({
+          id: `f1-${i}`,
+          location: { XY: 0, Z: 1, Time: 0 },
+        }),
+      );
+      const allAnns = [...frame0Anns, ...frame1Anns];
+      store.setAnnotations(allAnns);
+
+      // First: view frame Z=0
+      await store.updateVisibilityAndHydration({
+        filteredIds: allAnns.map((a) => a.id),
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+      });
+
+      // Frame 0 annotations should be hydrated
+      for (const ann of frame0Anns) {
+        expect(store.hydratedAnnotations.has(ann.id)).toBe(true);
+      }
+
+      // Now switch to frame Z=1
+      await store.updateVisibilityAndHydration({
+        filteredIds: allAnns.map((a) => a.id),
+        currentFrameLocation: { XY: 0, Z: 1, Time: 0 },
+      });
+
+      // Frame 1 annotations should now be hydrated
+      for (const ann of frame1Anns) {
+        expect(store.hydratedAnnotations.has(ann.id)).toBe(true);
+      }
+      // Frame 0 annotations should be dehydrated
+      for (const ann of frame0Anns) {
+        expect(store.hydratedAnnotations.has(ann.id)).toBe(false);
+      }
+    });
+
+    it("selected annotations survive frame change", async () => {
+      // Set up annotations on two frames
+      const frame0Anns = Array.from({ length: 5 }, (_, i) =>
+        createMockAnnotation({
+          id: `f0-${i}`,
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+      );
+      const frame1Anns = Array.from({ length: 5 }, (_, i) =>
+        createMockAnnotation({
+          id: `f1-${i}`,
+          location: { XY: 0, Z: 1, Time: 0 },
+        }),
+      );
+      const allAnns = [...frame0Anns, ...frame1Anns];
+      store.setAnnotations(allAnns);
+
+      // Select an annotation from frame 0
+      store.setSelected([frame0Anns[2].id]);
+
+      // View frame Z=0 first to hydrate
+      await store.updateVisibilityAndHydration({
+        filteredIds: allAnns.map((a) => a.id),
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+      });
+      expect(store.hydratedAnnotations.has(frame0Anns[2].id)).toBe(true);
+
+      // Switch to frame Z=1
+      await store.updateVisibilityAndHydration({
+        filteredIds: allAnns.map((a) => a.id),
+        currentFrameLocation: { XY: 0, Z: 1, Time: 0 },
+      });
+
+      // Selected annotation from frame 0 should still be hydrated
+      expect(store.hydratedAnnotations.has(frame0Anns[2].id)).toBe(true);
+      // Frame 1 annotations should also be hydrated
+      for (const ann of frame1Anns) {
+        expect(store.hydratedAnnotations.has(ann.id)).toBe(true);
+      }
+    });
+
+    it("empty current frame: nothing visible or hydrated", async () => {
+      // All annotations on frame Z=1
+      const annotations = Array.from({ length: 5 }, (_, i) =>
+        createMockAnnotation({
+          id: `ann-${i}`,
+          location: { XY: 0, Z: 1, Time: 0 },
+        }),
+      );
+      store.setAnnotations(annotations);
+
+      await store.updateVisibilityAndHydration({
+        filteredIds: annotations.map((a) => a.id),
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+      });
+
+      // No annotations should be visible (none on current frame)
+      expect(store.visibleAnnotationIds).toHaveLength(0);
+      expect(store.hydrationMode).toBe("dots");
     });
   });
 });

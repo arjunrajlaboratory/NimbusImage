@@ -32,6 +32,7 @@ import {
   isHydratedAnnotation,
   THydrationMode,
   IVisibilityConfig,
+  IAnnotationLocation,
 } from "./model";
 
 import Vue, { markRaw } from "vue";
@@ -657,32 +658,51 @@ export class Annotations extends VuexModule {
   }
 
   /**
-   * Update visibility and hydration based on filtered annotations and viewport.
+   * Update visibility and hydration based on filtered annotations, viewport, and current frame.
    * This is the main entry point for the dynamic visibility system.
    *
-   * Strategy:
-   * 1. Filter by viewport bounds
-   * 2. Visibility: Select top `maxVisible` by hash rank (stable across pan/zoom)
-   * 3. Hydration: Sort visible by size (largest first), hydrate top `maxHydrated`
+   * Strategy (two-tier, frame-aware):
+   * 1. Split filteredIds by frame: current-frame vs other-frame
+   * 2. Split current-frame IDs by viewport: in-viewport vs out-of-viewport
+   * 3. Visibility: Fill budget with in-viewport first, then out-of-viewport (hash-ranked if over budget)
+   * 4. Hydration: Fill budget with in-viewport first (largest), then out-of-viewport (largest)
+   * 5. Dehydrate annotations not in the current hydration set (except selected)
    *
    * @param filteredIds - IDs of annotations that pass the current filters
    * @param gcsBounds - Optional viewport bounds (4 corner points) for spatial filtering
+   * @param currentFrameLocation - Current frame location (XY, Z, Time) for frame-aware prioritization
    */
   @Action
   updateVisibilityAndHydration(params: {
     filteredIds: string[];
     gcsBounds?: IGeoJSPosition[];
-    // TODO: Re-enable zoom-based thresholds if needed
-    // zoom: number;
-    // viewportDiagonal?: number;
+    currentFrameLocation: IAnnotationLocation;
   }) {
-    const { filteredIds, gcsBounds } = params;
+    const { filteredIds, gcsBounds, currentFrameLocation } = params;
     const { maxVisible, maxHydrated } = this.visibilityConfig;
 
-    // 1. Filter by viewport bounds if provided
-    let viewportFilteredIds = filteredIds;
+    // Step 1: Split filteredIds by frame
+    const currentFrameIds: string[] = [];
+    const otherFrameIds: string[] = [];
+    for (const id of filteredIds) {
+      const stub = this.annotationStubs.get(id);
+      if (
+        stub &&
+        stub.location.XY === currentFrameLocation.XY &&
+        stub.location.Z === currentFrameLocation.Z &&
+        stub.location.Time === currentFrameLocation.Time
+      ) {
+        currentFrameIds.push(id);
+      } else {
+        otherFrameIds.push(id);
+      }
+    }
+
+    // Step 2: Split current-frame IDs by viewport
+    let inViewportIds: string[] = currentFrameIds;
+    let outOfViewportIds: string[] = [];
+
     if (gcsBounds && gcsBounds.length === 4) {
-      // Compute axis-aligned bounding box from the 4 corners
       const xs = gcsBounds.map((p) => p.x);
       const ys = gcsBounds.map((p) => p.y);
       const minX = Math.min(...xs);
@@ -690,62 +710,92 @@ export class Annotations extends VuexModule {
       const minY = Math.min(...ys);
       const maxY = Math.max(...ys);
 
-      // Filter annotations whose centroid is within the viewport
-      viewportFilteredIds = filteredIds.filter((id) => {
+      inViewportIds = [];
+      outOfViewportIds = [];
+      for (const id of currentFrameIds) {
         const centroid = this.annotationCentroids[id];
-        if (!centroid) return false;
-        return (
+        if (
+          centroid &&
           centroid.x >= minX &&
           centroid.x <= maxX &&
           centroid.y >= minY &&
           centroid.y <= maxY
-        );
-      });
+        ) {
+          inViewportIds.push(id);
+        } else {
+          outOfViewportIds.push(id);
+        }
+      }
     }
 
-    // 2. Visibility: Select top `maxVisible` by hash rank
-    // Using hash-based ranking ensures stable visibility across pan/zoom
-    // (same annotations remain visible as viewport changes)
-    const visibleIds =
-      viewportFilteredIds.length <= maxVisible
-        ? viewportFilteredIds
-        : selectRandomSubset(viewportFilteredIds, maxVisible);
+    // Step 3: Fill visibility budget (two-tier: viewport first, then off-viewport)
+    const visibleIds: string[] = [];
+    let remainingVisible = maxVisible;
 
-    // 3. Hydration: Sort visible by size (largest first), hydrate top `maxHydrated`
-    // This ensures larger annotations (which benefit more from shape rendering) are prioritized
-    const idsWithSize = visibleIds.map((id) => {
-      const stub = this.annotationStubs.get(id);
-      return { id, size: stub?.estimatedRadius ?? 0 };
-    });
-    idsWithSize.sort((a, b) => b.size - a.size); // Descending by size
+    // Tier 1: in-viewport (hash-ranked if over budget)
+    if (inViewportIds.length <= remainingVisible) {
+      visibleIds.push(...inViewportIds);
+    } else {
+      visibleIds.push(...selectRandomSubset(inViewportIds, remainingVisible));
+    }
+    remainingVisible = maxVisible - visibleIds.length;
 
-    const idsToHydrate = idsWithSize.slice(0, maxHydrated).map((item) => item.id);
+    // Tier 2: out-of-viewport current-frame (hash-ranked if over remaining budget)
+    if (remainingVisible > 0 && outOfViewportIds.length > 0) {
+      if (outOfViewportIds.length <= remainingVisible) {
+        visibleIds.push(...outOfViewportIds);
+      } else {
+        visibleIds.push(
+          ...selectRandomSubset(outOfViewportIds, remainingVisible),
+        );
+      }
+    }
 
-    // 4. Apply visibility
+    // Step 4: Fill hydration budget (two-tier: viewport first by size, then off-viewport by size)
+    const sortBySize = (ids: string[]) => {
+      const idsWithSize = ids.map((id) => {
+        const stub = this.annotationStubs.get(id);
+        return { id, size: stub?.estimatedRadius ?? 0 };
+      });
+      idsWithSize.sort((a, b) => b.size - a.size);
+      return idsWithSize.map((item) => item.id);
+    };
+
+    const idsToHydrate: string[] = [];
+    let remainingHydrated = maxHydrated;
+
+    // Tier 1: in-viewport sorted by size (largest first)
+    const inViewportSorted = sortBySize(inViewportIds);
+    const inViewportHydrate = inViewportSorted.slice(0, remainingHydrated);
+    idsToHydrate.push(...inViewportHydrate);
+    remainingHydrated = maxHydrated - idsToHydrate.length;
+
+    // Tier 2: out-of-viewport sorted by size, fill remaining
+    if (remainingHydrated > 0 && outOfViewportIds.length > 0) {
+      const outOfViewportSorted = sortBySize(outOfViewportIds);
+      idsToHydrate.push(...outOfViewportSorted.slice(0, remainingHydrated));
+    }
+
+    // Step 5: Apply visibility
     this.setVisibleAnnotationIds(visibleIds);
 
-    // 5. Determine hydration mode and apply
-    // Mode is "shapes" if we have any hydrated annotations in viewport
+    // Step 6: Determine hydration mode and apply
     const hasHydratedInViewport = idsToHydrate.length > 0;
     this.setHydrationMode(hasHydratedInViewport ? "shapes" : "dots");
 
-    // 6. Hydrate the selected annotations (sorted by size)
+    // Step 7: Hydrate the selected annotations (sorted by size)
     if (idsToHydrate.length > 0) {
       this.hydrateFromBackend(idsToHydrate);
     }
 
-    // 7. Clear hydration for annotations no longer in the hydration list
+    // Step 8: Clear hydration for annotations no longer in the hydration list
     // (except selected annotations which are always hydrated)
     this.clearNonSelectedHydration(idsToHydrate);
 
-    // 8. Always hydrate selected annotations (they render as shapes)
+    // Step 9: Always hydrate selected annotations (they render as shapes)
     if (this.selectedAnnotationIds.length > 0) {
       this.hydrateFromBackend(this.selectedAnnotationIds);
     }
-
-    // TODO: Re-enable zoom-based adaptive thresholds if needed
-    // The previous implementation used median annotation radius vs viewport diagonal
-    // to determine when to switch between shapes and dots mode
   }
 
   @Mutation

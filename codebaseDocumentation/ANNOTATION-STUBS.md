@@ -352,19 +352,27 @@ annotationStubs (what exists - source of truth)
 filteredAnnotations (user filters applied)
        │
        ▼
-gcsBounds filtering (viewport spatial filter)
+frame split (current frame vs other frames)
+       │
+       ├── currentFrameIds ──► viewport split
+       │                          ├── inViewportIds
+       │                          └── outOfViewportIds
        │
        ▼
-hash-based ranking (stable visibility selection)
+two-tier visibility budget (max 20K)
+  Tier 1: inViewportIds (hash-ranked if over budget)
+  Tier 2: outOfViewportIds (hash-ranked, fill remaining)
        │
        ▼
 _visibleAnnotationIds (render budget, max 20K)
        │
        ▼
-size-based ranking (largest first)
+two-tier hydration budget (max 10K)
+  Tier 1: inViewportIds (largest first)
+  Tier 2: outOfViewportIds (largest first, fill remaining)
        │
        ▼
-hydratedAnnotations (top 10K by size)
+hydratedAnnotations (top 10K by size, viewport-first)
        │
        ▼
 GeoJS Renderer (dots for stubs, shapes for hydrated)
@@ -407,76 +415,58 @@ export interface IVisibilityConfig {
 
 #### 4.4 Core Action: `updateVisibilityAndHydration`
 
-The main entry point for the visibility system. Called on filter changes or viewport pan.
+The main entry point for the visibility system. Called on filter changes, viewport pan, or frame changes.
 
-**Strategy**:
-1. **Visibility**: Hash-based ranking ensures stable visibility across pan/zoom (same annotations remain visible)
-2. **Hydration**: Size-based ranking prioritizes larger annotations for shape rendering
+**Strategy** (two-tier, frame-aware):
+1. **Frame split**: Only current-frame annotations are candidates for visibility/hydration
+2. **Viewport split**: Current-frame annotations split into in-viewport and out-of-viewport
+3. **Visibility**: Two-tier budget filling — viewport first (hash-ranked), then off-viewport (hash-ranked)
+4. **Hydration**: Two-tier budget filling — viewport first (largest), then off-viewport (largest)
+5. **Dehydration**: Annotations from other frames are dehydrated (except selected)
+
+**Key behavioral properties**:
+- Off-viewport current-frame annotations ARE visible (as dots), so zooming out doesn't "pop in" annotations
+- Only current-frame annotations get hydrated — frame change dehydrates old frame
+- Selected annotations remain hydrated regardless of frame
 
 ```typescript
 @Action
 updateVisibilityAndHydration(params: {
   filteredIds: string[];
-  gcsBounds?: IGeoJSPosition[];  // Viewport corners for spatial filtering
-  // TODO: Re-enable zoom-based thresholds if needed
-  // zoom: number;
-  // viewportDiagonal?: number;
+  gcsBounds?: IGeoJSPosition[];
+  currentFrameLocation: IAnnotationLocation;  // { XY, Z, Time }
 }) {
-  const { filteredIds, gcsBounds } = params;
+  const { filteredIds, gcsBounds, currentFrameLocation } = params;
   const { maxVisible, maxHydrated } = this.visibilityConfig;
 
-  // 1. Filter by viewport bounds (spatial filtering)
-  let viewportFilteredIds = filteredIds;
-  if (gcsBounds && gcsBounds.length === 4) {
-    // Compute axis-aligned bounding box from 4 corners
-    const xs = gcsBounds.map((p) => p.x);
-    const ys = gcsBounds.map((p) => p.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
-
-    // Filter to annotations whose centroid is in viewport
-    viewportFilteredIds = filteredIds.filter((id) => {
-      const centroid = this.annotationCentroids[id];
-      if (!centroid) return false;
-      return centroid.x >= minX && centroid.x <= maxX &&
-             centroid.y >= minY && centroid.y <= maxY;
-    });
-  }
-
-  // 2. Visibility: Select top `maxVisible` by hash rank
-  // Using hash-based ranking ensures stable visibility across pan/zoom
-  const visibleIds = viewportFilteredIds.length <= maxVisible
-    ? viewportFilteredIds
-    : selectRandomSubset(viewportFilteredIds, maxVisible);
-
-  // 3. Hydration: Sort visible by size (largest first), hydrate top `maxHydrated`
-  const idsWithSize = visibleIds.map((id) => {
+  // Step 1: Split filteredIds by frame
+  const currentFrameIds: string[] = [];
+  for (const id of filteredIds) {
     const stub = this.annotationStubs.get(id);
-    return { id, size: stub?.estimatedRadius ?? 0 };
-  });
-  idsWithSize.sort((a, b) => b.size - a.size);  // Descending by size
-
-  const idsToHydrate = idsWithSize.slice(0, maxHydrated).map((item) => item.id);
-
-  // 4. Apply visibility
-  this.setVisibleAnnotationIds(visibleIds);
-
-  // 5. Determine hydration mode and apply
-  const hasHydratedInViewport = idsToHydrate.length > 0;
-  this.setHydrationMode(hasHydratedInViewport ? "shapes" : "dots");
-
-  // 6. Hydrate the selected annotations (sorted by size)
-  if (idsToHydrate.length > 0) {
-    this.hydrateFromBackend(idsToHydrate);
+    if (stub &&
+        stub.location.XY === currentFrameLocation.XY &&
+        stub.location.Z === currentFrameLocation.Z &&
+        stub.location.Time === currentFrameLocation.Time) {
+      currentFrameIds.push(id);
+    }
   }
 
-  // 7. Clear hydration for annotations no longer in the hydration list
-  this.clearNonSelectedHydration(idsToHydrate);
-
-  // 8. Always hydrate selected annotations (they render as shapes)
-  if (this.selectedAnnotationIds.length > 0) {
-    this.hydrateFromBackend(this.selectedAnnotationIds);
+  // Step 2: Split current-frame IDs by viewport
+  let inViewportIds = currentFrameIds;
+  let outOfViewportIds: string[] = [];
+  if (gcsBounds && gcsBounds.length === 4) {
+    // ... compute AABB, split into in/out of viewport
   }
+
+  // Step 3: Fill visibility budget (two-tier)
+  // Tier 1: inViewportIds (hash-ranked if over budget)
+  // Tier 2: outOfViewportIds (hash-ranked, fill remaining)
+
+  // Step 4: Fill hydration budget (two-tier)
+  // Tier 1: inViewportIds sorted by size (largest first)
+  // Tier 2: outOfViewportIds sorted by size, fill remaining
+
+  // Step 5-9: Apply visibility, hydration mode, hydrate, dehydrate, always hydrate selected
 }
 ```
 
@@ -518,12 +508,13 @@ get gcsBounds() {
 }
 ```
 
-**Added watcher with debouncing**:
+**Added watchers with debouncing** (including frame change watchers):
 ```typescript
 @Watch("filteredAnnotations")
 @Watch("gcsBounds")
-// TODO: Re-enable zoom watcher if zoom-based thresholds are re-enabled
-// @Watch("zoom")
+@Watch("xy")      // Frame change triggers re-evaluation
+@Watch("z")       // Frame change triggers re-evaluation
+@Watch("time")    // Frame change triggers re-evaluation
 onVisibilityInputsChanged() {
   this.updateVisibilityDebounced();
 }
@@ -533,11 +524,9 @@ updateVisibilityDebounced = debounce(() => {
   this.annotationStore.updateVisibilityAndHydration({
     filteredIds,
     gcsBounds: this.gcsBounds,
-    // TODO: Re-enable zoom-based thresholds if needed
-    // zoom: this.zoom,
-    // viewportDiagonal: computed from this.map?.size(),
+    currentFrameLocation: { XY: this.xy, Z: this.z, Time: this.time },
   });
-}, 100);
+}, 250);  // 250ms debounce to reduce churn during rapid pan/zoom/frame changes
 ```
 
 **Updated `layerAnnotations` getter**:
@@ -561,16 +550,25 @@ map.geoOn(geojs.event.zoom, synchronizationCallback);  // ADDED
 
 #### 4.8 Current Behavior
 
-The system now uses a two-tier approach:
-1. **Visibility**: Hash-based ranking selects up to 20K annotations for rendering (stable across pan/zoom)
-2. **Hydration**: Size-based ranking hydrates up to 10K of the largest visible annotations as shapes
+The system now uses a frame-aware, two-tier approach:
+1. **Frame filtering**: Only current-frame annotations (matching XY, Z, Time) are candidates
+2. **Visibility**: Two-tier budget — viewport annotations first, then off-viewport (all current-frame)
+3. **Hydration**: Two-tier budget — viewport annotations first (largest), then off-viewport (largest)
+4. **Frame change**: Dehydrates old frame annotations, hydrates new frame
 
-| Viewport Annotations | Visible | Hydrated | Mode |
-|---------------------|---------|----------|------|
-| < 20K | All | Top 10K by size | shapes (for hydrated) |
-| > 20K | 20K (hash-ranked) | Top 10K by size | mixed |
+| Current Frame Annotations | Visible | Hydrated | Mode |
+|--------------------------|---------|----------|------|
+| < 20K (all in viewport) | All | Top 10K by size | shapes (for hydrated) |
+| < 20K (mixed viewport/off-viewport) | All | Viewport first by size, then off-viewport | shapes |
+| > 20K | 20K (viewport first, hash-ranked) | Top 10K (viewport first, by size) | mixed |
 
-Selected annotations are always hydrated regardless of thresholds.
+Selected annotations are always hydrated regardless of thresholds or frame.
+
+**Key user-facing behaviors**:
+- Zooming out: annotations don't "pop in" — all current-frame annotations are visible (as dots if off-viewport)
+- Changing Z/Time: old frame annotations dehydrate, new frame annotations hydrate
+- Selected annotations: always visible and hydrated, even after frame change
+- Debounce: 250ms to reduce churn during rapid pan/zoom/frame navigation
 
 #### 4.9 Stub-Specific Styling (WIP)
 
@@ -757,10 +755,19 @@ The `medianAnnotationRadius` getter is still available if this feature is re-ena
 - [ ] Evaluate if size-based ranking is the right heuristic
 - [ ] Consider other ranking strategies (density, importance, user focus)
 
+**Frame-Aware Visibility**:
+- [x] Frame-based splitting (only current-frame annotations visible/hydrated)
+- [x] Two-tier visibility priority (viewport first, then off-viewport)
+- [x] Two-tier hydration priority (viewport first by size, then off-viewport by size)
+- [x] Frame change dehydration (switching frames dehydrates old frame)
+- [x] Frame change watchers (`@Watch("xy")`, `@Watch("z")`, `@Watch("time")`)
+- [x] Pass `currentFrameLocation` from AnnotationViewer to store
+- [x] Increased debounce from 100ms to 250ms
+
 **Performance Review**:
 - [ ] Profile `updateVisibilityAndHydration` with 100K+ annotations
 - [ ] Evaluate cost of viewport filtering (iterates all filtered annotations)
-- [ ] Review debounce timing (currently 100ms) - balance responsiveness vs CPU
+- [x] Review debounce timing (increased to 250ms to reduce churn)
 - [ ] Monitor memory usage during rapid pan/zoom
 - [ ] Test hydration/dehydration memory churn
 
@@ -1137,16 +1144,21 @@ Before completing Phase 4, the following items need manual review and adjustment
    - Verify selected annotations stand out in both modes
 
 2. **Threshold tuning**
-   - `maxVisible` (currently 10,000) - maximum annotations to render
-   - `hydrateThreshold` (currently 5,000) - max count to show as shapes
-   - `zoomThreshold` (currently 3) - minimum zoom level for shapes
+   - `maxVisible` (currently 20,000) - maximum annotations to render
+   - `maxHydrated` (currently 10,000) - max annotations to hydrate as shapes
    - Test with real datasets to find optimal values
 
 3. **Performance mechanism review**
    - Verify the chosen mechanisms don't have negative performance impacts
    - Review viewport filtering approach (currently linear scan of all filtered annotations)
-   - Evaluate debounce timing (100ms) for responsiveness vs CPU trade-off
-   - Check for unnecessary re-renders or state updates during pan/zoom
+   - Evaluate debounce timing (currently 250ms) for responsiveness vs CPU trade-off
+   - Check for unnecessary re-renders or state updates during pan/zoom/frame change
+
+4. **Frame-aware behavior review**
+   - Verify frame change dehydration works correctly with multi-Z/multi-T datasets
+   - Test behavior with `onlyCurrentFrame=false` filter (filteredIds includes all frames, but algorithm still prioritizes current frame)
+   - Test behavior in unroll/max-merge mode (other-frame annotations may display via unroll but only as dots)
+   - Verify selected annotations from a previous frame remain hydrated after frame change
 
 ---
 
@@ -1189,10 +1201,17 @@ Before completing Phase 4, the following items need manual review and adjustment
   - [x] 4.2 Hydration mode switching (shapes vs dots based on hydration count)
   - [x] 4.3 Viewport-based spatial filtering using `gcsBounds`
   - [x] 4.4 Zoom event listener fix in ImageViewer.vue
-  - [x] 4.5 Debounced visibility updates in AnnotationViewer.vue
+  - [x] 4.5 Debounced visibility updates in AnnotationViewer.vue (250ms)
   - [x] 4.6 Styling adjustments (stub-specific styling with thinner strokes)
   - [x] 4.10 Hash-based visibility selection (stable across pan/zoom)
   - [x] 4.11 Size-based hydration ranking (largest annotations first)
+  - [x] 4.13 Frame-aware visibility and hydration
+    - [x] Frame-based splitting (current frame vs other frames)
+    - [x] Two-tier visibility priority (viewport first, then off-viewport)
+    - [x] Two-tier hydration priority (viewport first by size, then off-viewport by size)
+    - [x] Frame change dehydration (old frame dehydrated, new frame hydrated)
+    - [x] Frame change watchers (xy, z, time)
+    - [x] Debounce increased from 100ms to 250ms
   - [~] 4.7 Threshold tuning (maxVisible=20K, maxHydrated=10K - may need adjustment)
   - [ ] 4.8 Performance review and optimization
   - [ ] 4.9 Selection updates for non-rendered annotations (if needed)
@@ -1244,6 +1263,7 @@ Before completing Phase 4, the following items need manual review and adjustment
 - Added `estimateAnnotationRadius()` - computes bbox diagonal / 2 for size estimation
 
 **`src/store/annotation.ts`**:
+- Added `IAnnotationLocation` import for frame-aware visibility
 - Added `_visibleAnnotationIds: { [id: string]: true }` for visibility tracking
 - Added `hydrationMode: THydrationMode` state
 - Added `visibilityConfig: IVisibilityConfig` with defaults: `maxVisible: 20000`, `maxHydrated: 10000`
@@ -1252,23 +1272,26 @@ Before completing Phase 4, the following items need manual review and adjustment
 - Added mutations: `setVisibleAnnotationIds`, `setHydrationMode`, `hydrateFromBackend`
 - Updated `clearNonSelectedHydration()` to accept optional `preserveIds` parameter
 - Added action: `updateVisibilityAndHydration` with:
-  - Viewport-based spatial filtering via `gcsBounds`
-  - Hash-based visibility selection via `selectRandomSubset()` (stable across pan/zoom)
-  - Size-based hydration ranking (largest annotations first)
+  - `currentFrameLocation` parameter for frame-aware filtering
+  - Frame-based splitting: only current-frame annotations are visibility/hydration candidates
+  - Two-tier visibility: viewport first (hash-ranked), then off-viewport (hash-ranked)
+  - Two-tier hydration: viewport first (largest), then off-viewport (largest)
+  - Frame change dehydration via `clearNonSelectedHydration`
+  - Selected annotations always hydrated regardless of frame
   - Zoom-based threshold logic commented out (deferred)
 - Updated stub creation in `addAnnotationImpl`, `setAnnotation`, `setAnnotations` to include `estimatedRadius`
 
 **`src/components/AnnotationViewer.vue`**:
 - Added `gcsBounds` getter for viewport bounds
-- Commented out `@Watch("zoom")` (zoom no longer triggers visibility updates)
-- Added `updateVisibilityDebounced` function (100ms debounce)
+- Added `@Watch("xy")`, `@Watch("z")`, `@Watch("time")` watchers for frame changes
+- Added `updateVisibilityDebounced` function (250ms debounce, increased from 100ms)
+- Passes `currentFrameLocation: { XY: this.xy, Z: this.z, Time: this.time }` to store action
 - Updated `layerAnnotations` to use `isVisible` and `getForRendering`
 - Added import for `getStubStyleFromBaseStyle`
 - Updated `getAnnotationStyle()` to accept `isStub` parameter and use stub-specific styling
 - Updated `createGeoJSAnnotation()` to pass `isStub` flag in options
 - Updated `restyleAnnotations()` to extract `isStub` from annotation options
 - Updated style update logic in `drawNewAnnotations()` to use `isStub`
-- Simplified `updateVisibilityDebounced()` to only pass `filteredIds` and `gcsBounds`
 
 **`src/components/ImageViewer.vue`**:
 - Added `geojs.event.zoom` listener to `synchronizationCallback` (bug fix - zoom changes now update `cameraInfo`)
@@ -1279,3 +1302,10 @@ Before completing Phase 4, the following items need manual review and adjustment
 - Added tests for `updateVisibilityAndHydration` action
 - Added mocks for `selectRandomSubset`, `estimateAnnotationRadius`, `hashString`, `hashToNormalizedValue`
 - Updated test expectations for new config structure (`maxHydrated` instead of `hydrateThreshold`)
+- Updated all `updateVisibilityAndHydration` calls to pass `currentFrameLocation`
+- Added frame-aware tests (92 tests total):
+  - Frame-based splitting (only current-frame visible)
+  - Two-tier viewport priority (viewport first, then off-viewport)
+  - Frame change dehydration (old frame dehydrated)
+  - Selected annotations survive frame change
+  - Empty current frame (nothing visible)
