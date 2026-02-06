@@ -14,6 +14,10 @@
           label="Upload new dataset and add to current collection"
           value="upload"
         />
+        <v-radio
+          label="Upload multiple files as separate datasets"
+          value="batch"
+        />
       </v-radio-group>
       <template v-if="option.type == 'add'">
         <custom-file-manager
@@ -98,6 +102,132 @@
           </div>
         </template>
       </template>
+      <template v-if="option.type == 'batch'">
+        <!-- File selection -->
+        <v-card
+          outlined
+          class="mb-4 batch-file-card"
+          @click="openBatchFileSelector"
+          @dragenter.prevent="batchDragging = true"
+          @dragleave.prevent="batchDragging = false"
+          @dragover.prevent
+          @drop.prevent="handleBatchDrop"
+        >
+          <v-card-text
+            class="d-flex flex-column align-center justify-center"
+            style="min-height: 120px"
+          >
+            <v-icon size="48" color="primary" class="mb-2">
+              {{ batchDragging ? "mdi-file-move" : "mdi-file-multiple" }}
+            </v-icon>
+            <div class="text-body-2">
+              {{
+                option.pendingFiles.length > 0
+                  ? option.pendingFiles.length +
+                    " file(s) selected - click to change"
+                  : "Click or drag files here to select"
+              }}
+            </div>
+          </v-card-text>
+        </v-card>
+        <input
+          type="file"
+          ref="batchFileInput"
+          multiple
+          style="display: none"
+          @change="handleBatchFileSelect"
+        />
+
+        <!-- Per-file dataset names -->
+        <v-card v-if="option.pendingFiles.length > 0" outlined class="mb-4">
+          <v-card-subtitle>
+            Each file will become a separate dataset ({{
+              option.pendingFiles.length
+            }}
+            files):
+            <v-progress-circular
+              v-if="option.validatingNames"
+              indeterminate
+              size="16"
+              width="2"
+              class="ml-2"
+            />
+          </v-card-subtitle>
+          <v-list dense>
+            <v-list-item v-for="(file, idx) in option.pendingFiles" :key="idx">
+              <v-list-item-icon>
+                <v-icon
+                  small
+                  :color="option.nameConflicts.includes(idx) ? 'error' : ''"
+                >
+                  {{
+                    option.nameConflicts.includes(idx)
+                      ? "mdi-alert-circle"
+                      : "mdi-file"
+                  }}
+                </v-icon>
+              </v-list-item-icon>
+              <v-list-item-content>
+                <v-text-field
+                  v-model="option.datasetNames[idx]"
+                  :error="option.nameConflicts.includes(idx)"
+                  :error-messages="getBatchNameError(idx)"
+                  dense
+                  hide-details="auto"
+                  @input="validateBatchNamesDebounced"
+                />
+                <v-list-item-subtitle class="text--secondary mt-1">
+                  {{ file.name }}
+                </v-list-item-subtitle>
+              </v-list-item-content>
+            </v-list-item>
+          </v-list>
+        </v-card>
+
+        <!-- Location chooser -->
+        <v-card v-if="option.pendingFiles.length > 0" class="mb-4">
+          <v-card-title class="text-subtitle-1 pa-3">
+            Upload location:
+          </v-card-title>
+          <v-card-text class="pt-0">
+            <girder-location-chooser
+              v-model="batchLocation"
+              :breadcrumb="true"
+              title="Select a folder for uploaded datasets"
+            />
+          </v-card-text>
+        </v-card>
+
+        <div
+          v-if="option.pendingFiles.length > 0"
+          class="mb-4 text-body-2 text--secondary"
+        >
+          {{ option.pendingFiles.length }}
+          {{ option.pendingFiles.length === 1 ? "file" : "files" }}
+          selected &rarr; {{ option.pendingFiles.length }} datasets
+        </div>
+
+        <!-- Action buttons -->
+        <v-card-actions v-if="option.pendingFiles.length > 0" class="ma-2">
+          <v-spacer />
+          <v-btn
+            outlined
+            color="primary"
+            :disabled="!canBatchUpload"
+            @click="startBatchUpload(false)"
+            class="mr-2"
+          >
+            Advanced Import
+          </v-btn>
+          <v-btn
+            color="primary"
+            :disabled="!canBatchUpload"
+            @click="startBatchUpload(true)"
+          >
+            Quick Import
+          </v-btn>
+        </v-card-actions>
+      </template>
     </v-card-text>
   </v-card>
 </template>
@@ -120,8 +250,16 @@ import { logError } from "@/utils/log";
 import { IGirderSelectAble, IGirderLocation } from "@/girder";
 
 import CustomFileManager from "@/components/CustomFileManager.vue";
+import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import MultiSourceConfiguration from "@/views/dataset/MultiSourceConfiguration.vue";
 import NewDataset from "@/views/dataset/NewDataset.vue";
+
+function basename(filename: string): string {
+  const components = filename.split(".");
+  return components.length > 1
+    ? components.slice(0, -1).join(".")
+    : components[0];
+}
 
 type TAddDatasetOption =
   | {
@@ -137,6 +275,13 @@ type TAddDatasetOption =
       warnings: string[];
       // Enable navigation in the component
       datasetSelectLocation: IGirderSelectAble | null;
+    }
+  | {
+      type: "batch";
+      pendingFiles: File[];
+      datasetNames: string[];
+      nameConflicts: number[];
+      validatingNames: boolean;
     };
 
 function defaultDatasetUploadOption(): TAddDatasetOption {
@@ -158,8 +303,23 @@ function defaultDatasetAddOption(): TAddDatasetOption {
   };
 }
 
+function defaultDatasetBatchOption(): TAddDatasetOption {
+  return {
+    type: "batch",
+    pendingFiles: [],
+    datasetNames: [],
+    nameConflicts: [],
+    validatingNames: false,
+  };
+}
+
 @Component({
-  components: { CustomFileManager, MultiSourceConfiguration, NewDataset },
+  components: {
+    CustomFileManager,
+    GirderLocationChooser,
+    MultiSourceConfiguration,
+    NewDataset,
+  },
 })
 export default class AddDatasetToCollection extends Vue {
   readonly girderResources = girderResources;
@@ -170,9 +330,13 @@ export default class AddDatasetToCollection extends Vue {
 
   option: TAddDatasetOption = defaultDatasetUploadOption();
   uploadLocation: IGirderLocation | null = null;
+  batchLocation: IGirderLocation | null = null;
+  batchDragging: boolean = false;
+  validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   $refs!: {
     configuration?: MultiSourceConfiguration;
+    batchFileInput?: HTMLInputElement;
   };
 
   async mounted() {
@@ -181,6 +345,7 @@ export default class AddDatasetToCollection extends Vue {
     } catch (error) {
       this.uploadLocation = this.store.girderUser;
     }
+    this.batchLocation = this.uploadLocation;
   }
 
   get addDatasetOptionType(): TAddDatasetOption["type"] {
@@ -195,6 +360,9 @@ export default class AddDatasetToCollection extends Vue {
       case "upload":
         this.option = defaultDatasetUploadOption();
         break;
+      case "batch":
+        this.option = defaultDatasetBatchOption();
+        break;
     }
   }
 
@@ -202,6 +370,8 @@ export default class AddDatasetToCollection extends Vue {
   async collectionUpdated() {
     this.option = defaultDatasetUploadOption();
   }
+
+  // --- "Add existing" option methods ---
 
   async selectAddDatasetFolder(selectedLocations: IGirderSelectAble[]) {
     const option = this.option;
@@ -282,8 +452,12 @@ export default class AddDatasetToCollection extends Vue {
         return this.option.datasets.length > 0;
       case "upload":
         return false;
+      case "batch":
+        return false;
     }
   }
+
+  // --- "Upload single" option methods ---
 
   async addDatasetToCollectionUploaded(datasetId: string) {
     if (this.option.type !== "upload") {
@@ -379,6 +553,159 @@ export default class AddDatasetToCollection extends Vue {
 
     this.option = defaultDatasetUploadOption();
   }
+
+  // --- "Batch upload" option methods ---
+
+  openBatchFileSelector() {
+    this.$refs.batchFileInput?.click();
+  }
+
+  handleBatchFileSelect(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files || []);
+    if (files.length > 0) {
+      this.setBatchFiles(files);
+    }
+    input.value = "";
+  }
+
+  handleBatchDrop(event: DragEvent) {
+    this.batchDragging = false;
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (files.length > 0) {
+      this.setBatchFiles(files);
+    }
+  }
+
+  setBatchFiles(files: File[]) {
+    if (this.option.type !== "batch") return;
+    this.option.pendingFiles = files;
+    this.option.datasetNames = files.map((f) => basename(f.name));
+    this.option.nameConflicts = [];
+    this.validateBatchNamesDebounced();
+  }
+
+  validateBatchNamesDebounced() {
+    if (this.validateNamesDebounceTimer) {
+      clearTimeout(this.validateNamesDebounceTimer);
+    }
+    this.validateNamesDebounceTimer = setTimeout(() => {
+      this.validateBatchNames();
+    }, 300);
+  }
+
+  async validateBatchNames() {
+    if (this.option.type !== "batch") return;
+    if (!this.batchLocation || !("_id" in this.batchLocation)) {
+      return;
+    }
+
+    this.option.validatingNames = true;
+    const conflicts: number[] = [];
+
+    try {
+      // Check for internal duplicates
+      const nameCounts = new Map<string, number[]>();
+      this.option.datasetNames.forEach((name, idx) => {
+        const lower = name.trim().toLowerCase();
+        if (!nameCounts.has(lower)) {
+          nameCounts.set(lower, []);
+        }
+        nameCounts.get(lower)!.push(idx);
+      });
+
+      nameCounts.forEach((indices) => {
+        if (indices.length > 1) {
+          indices.forEach((idx) => {
+            if (!conflicts.includes(idx)) {
+              conflicts.push(idx);
+            }
+          });
+        }
+      });
+
+      // Check each unique name against existing datasets
+      const uniqueNames = [
+        ...new Set(this.option.datasetNames.map((n) => n.trim())),
+      ];
+      for (const name of uniqueNames) {
+        if (!name) continue;
+        const exists = await this.store.api.checkDatasetNameExists(
+          name,
+          this.batchLocation,
+        );
+        if (exists) {
+          this.option.datasetNames.forEach((n, idx) => {
+            if (n.trim().toLowerCase() === name.toLowerCase()) {
+              if (!conflicts.includes(idx)) {
+                conflicts.push(idx);
+              }
+            }
+          });
+        }
+      }
+    } finally {
+      if (this.option.type === "batch") {
+        this.option.nameConflicts = conflicts;
+        this.option.validatingNames = false;
+      }
+    }
+  }
+
+  getBatchNameError(idx: number): string {
+    if (this.option.type !== "batch") return "";
+    if (!this.option.nameConflicts.includes(idx)) return "";
+    const name = this.option.datasetNames[idx]?.trim().toLowerCase();
+
+    const duplicateCount = this.option.datasetNames.filter(
+      (n) => n.trim().toLowerCase() === name,
+    ).length;
+
+    if (duplicateCount > 1) {
+      return "Duplicate name in batch";
+    }
+    return "Dataset already exists in this location";
+  }
+
+  get canBatchUpload(): boolean {
+    if (this.option.type !== "batch") return false;
+    return (
+      this.option.pendingFiles.length > 0 &&
+      this.option.datasetNames.every((n) => n?.trim().length > 0) &&
+      this.option.nameConflicts.length === 0 &&
+      !this.option.validatingNames &&
+      this.batchLocation !== null &&
+      (!("_id" in this.batchLocation) || true)
+    );
+  }
+
+  startBatchUpload(quickupload: boolean) {
+    if (this.option.type !== "batch" || !this.batchLocation) return;
+
+    const fileGroups = this.option.pendingFiles.map((f) => [f]);
+
+    this.store.initializeUploadWorkflow({
+      quickupload,
+      batchMode: true,
+      batchName: "",
+      fileGroups,
+      datasetNames: [...this.option.datasetNames],
+      initialUploadLocation: this.batchLocation,
+      initialName: "",
+      initialDescription: "",
+    });
+
+    // Pre-set the existing collection so NewDataset doesn't create a new one
+    this.store.setUploadCollection(this.collection);
+
+    this.$router.push({ name: "newdataset" });
+  }
+
+  beforeDestroy() {
+    if (this.validateNamesDebounceTimer) {
+      clearTimeout(this.validateNamesDebounceTimer);
+    }
+  }
 }
 </script>
 
@@ -389,5 +716,15 @@ export default class AddDatasetToCollection extends Vue {
   overflow: auto;
   min-height: 0;
   flex: 1;
+}
+
+.batch-file-card {
+  cursor: pointer;
+  border: 2px dashed rgba(255, 255, 255, 0.3) !important;
+  transition: border-color 0.2s ease;
+
+  &:hover {
+    border-color: rgba(255, 255, 255, 0.5) !important;
+  }
 }
 </style>
