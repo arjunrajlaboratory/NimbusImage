@@ -515,7 +515,7 @@ export class Properties extends VuexModule {
       "getAnnotationLocationFromTool",
       tool,
     );
-    const tile = { XY: main.xy, Z: main.z, Time: main.time };
+    const tile = { ...location };
     this.propertiesAPI
       .requestWorkerPreview(
         image,
