@@ -1245,7 +1245,7 @@ export class Annotations extends VuexModule {
 
     const { location, channel } =
       await this.getAnnotationLocationFromTool(tool);
-    const tile = { XY: main.xy, Z: main.z, Time: main.time };
+    const tile = { ...location };
     const response = await this.annotationsAPI.computeAnnotationWithWorker(
       tool,
       main.dataset,
