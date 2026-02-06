@@ -58,7 +58,13 @@ interface ISamDecoderContext {
 }
 
 const samModelsConfig = {
-  vit_b: {
+  sam2_hiera_tiny: {
+    maxWidth: 1024,
+    maxHeight: 1024,
+    meanPerChannel: [123.675, 116.28, 103.53],
+    stdPerChannel: [58.395, 57.12, 57.375],
+  },
+  sam2_hiera_small: {
     maxWidth: 1024,
     maxHeight: 1024,
     meanPerChannel: [123.675, 116.28, 103.53],
@@ -127,11 +133,13 @@ async function screenshot({ map, imageLayers }: IMapEntry) {
 }
 
 interface IProcessCanvasOutput {
-  encoderFeed: { input_image: TensorF32 };
+  encoderFeed: { image: TensorF32 };
   scaledWidth: number;
   scaledHeight: number;
   srcWidth: number;
   srcHeight: number;
+  maxWidth: number;
+  maxHeight: number;
 }
 
 function processCanvas(
@@ -183,17 +191,21 @@ function processCanvas(
 
   return {
     encoderFeed: {
-      input_image: new Tensor("float32", buffer, [1, 3, maxHeight, maxWidth]),
+      image: new Tensor("float32", buffer, [1, 3, maxHeight, maxWidth]),
     },
     srcWidth,
     srcHeight,
     scaledWidth,
     scaledHeight,
+    maxWidth,
+    maxHeight,
   };
 }
 
 interface IEncoderOutput {
-  image_embeddings: TensorF32;
+  image_embed: TensorF32;
+  high_res_feats_0: TensorF32;
+  high_res_feats_1: TensorF32;
 }
 
 async function runEncoder(
@@ -207,7 +219,6 @@ async function runEncoder(
 interface IProcessPromptOutput {
   point_coords: TensorF32;
   point_labels: TensorF32;
-  orig_im_size: TensorF32;
   mask_input: TensorF32;
   has_mask_input: TensorF32;
 }
@@ -289,17 +300,12 @@ function processPrompt(
   return {
     point_coords: new Tensor("float32", pointCoords, [1, nPromptPoints, 2]),
     point_labels: new Tensor("float32", pointLabels, [1, nPromptPoints]),
-    orig_im_size: new Tensor("float32", [
-      canvasInfo.srcHeight,
-      canvasInfo.srcWidth,
-    ]),
     ...context.feedConstant,
   };
 }
 
 interface IDecoderOutput {
   masks: TensorF32;
-  low_res_masks: TensorF32;
   iou_predictions: TensorF32;
 }
 
@@ -366,6 +372,28 @@ async function runItkPipeline({
     throw new Error("Pipeline didn't return a value");
   }
   return JSON.parse(textFile.data);
+}
+
+/**
+ * SAM2 decoder outputs masks at a fixed resolution (not the original image
+ * size like SAM1 did via orig_im_size). This rescales polygon coordinates
+ * from mask space back to display/source image space.
+ */
+function rescaleMaskToDisplayCoords(
+  coords: IGeoJSPosition[],
+  canvasInfo: IProcessCanvasOutput,
+  decoderOutput: IDecoderOutput,
+): IGeoJSPosition[] {
+  const maskWidth = decoderOutput.masks.dims[3];
+  const maskHeight = decoderOutput.masks.dims[2];
+  // mask space → encoder space → display space
+  const xScale =
+    (canvasInfo.maxWidth / maskWidth) *
+    (canvasInfo.srcWidth / canvasInfo.scaledWidth);
+  const yScale =
+    (canvasInfo.maxHeight / maskHeight) *
+    (canvasInfo.srcHeight / canvasInfo.scaledHeight);
+  return coords.map(({ x, y }) => ({ x: x * xScale, y: y * yScale }));
 }
 
 function displayToWorld(
@@ -467,9 +495,16 @@ function createSamPipelineDecoderNodes(
   // Convert the mask into a polygon
   const maskToPolygonNode = createComputeNode(runItkPipeline, [inferenceNode]);
 
+  // Rescale coordinates from mask space to display space
+  const rescaleNode = createComputeNode(rescaleMaskToDisplayCoords, [
+    maskToPolygonNode,
+    encoderNodes.preprocessNode,
+    inferenceNode,
+  ]);
+
   // Simplify the polygon
   const simplificationNode = createComputeNode(simplifyCoordinates, [
-    maskToPolygonNode,
+    rescaleNode,
     simplificationToleranceNode,
   ]);
 
@@ -486,6 +521,7 @@ function createSamPipelineDecoderNodes(
     processPromptNode,
     inferenceNode,
     maskToPolygonNode,
+    rescaleNode,
     simplificationNode,
     coordinatesConversionNode,
   };

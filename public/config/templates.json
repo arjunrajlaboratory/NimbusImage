@@ -267,9 +267,9 @@
     ]
   },
   {
-    "name": "Segment Anything Model (experimental, Chrome/WebGPU only)",
+    "name": "Segment Anything Model 2 (experimental, Chrome/WebGPU only)",
     "type": "samAnnotation",
-    "shortName": "SAM",
+    "shortName": "SAM2",
     "interface": [
       {
         "id": "model",
@@ -278,9 +278,14 @@
         "meta": {
           "items": [
             {
-              "text": "ViT-B",
-              "value": "vit_b",
-              "description": "Click or drag to segment objects with AI"
+              "text": "SAM2 Hiera Tiny",
+              "value": "sam2_hiera_tiny",
+              "description": "Fastest model, click or drag to segment objects with AI"
+            },
+            {
+              "text": "SAM2 Hiera Small",
+              "value": "sam2_hiera_small",
+              "description": "Better quality, click or drag to segment objects with AI"
             }
           ]
         }
