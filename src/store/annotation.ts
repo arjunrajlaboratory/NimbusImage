@@ -1420,7 +1420,7 @@ export class Annotations extends VuexModule {
 
       try {
         // Submit the job for this dataset
-        const job = await this.submitWorkerJobForDataset({
+        const result = await this.submitWorkerJobForDataset({
           tool,
           workerInterface,
           datasetId,
@@ -1431,11 +1431,12 @@ export class Annotations extends VuexModule {
           progressId: datasetProgressId,
         });
 
-        if (job) {
-          submittedJobs.push(job);
+        if (result) {
+          submittedJobs.push(result.job);
 
-          // Wait for the job to complete
-          const success = await jobs.getPromiseForJobId(job.jobId);
+          // Wait for the job to complete using the captured promise
+          // (avoids race condition where job finishes before we look it up)
+          const success = await result.completionPromise;
 
           if (isCancelled) {
             cancelled++;
@@ -1493,7 +1494,10 @@ export class Annotations extends VuexModule {
     onProgress: (info: IProgressInfo) => void;
     onError: (info: IErrorInfoList) => void;
     progressId: string;
-  }): Promise<IAnnotationComputeJob | null> {
+  }): Promise<{
+    job: IAnnotationComputeJob;
+    completionPromise: Promise<boolean>;
+  } | null> {
     if (!main.configuration || !main.isLoggedIn) {
       return null;
     }
@@ -1507,7 +1511,9 @@ export class Annotations extends VuexModule {
     const tile = { XY: main.xy, Z: main.z, Time: main.time };
 
     // Get the dataset to pass to the API
-    const datasetInfo = await main.api.batchResources({ folder: [datasetId] });
+    const datasetInfo = await main.api.batchResources({
+      folder: [datasetId],
+    });
     const datasetFolder = datasetInfo.folder?.[datasetId];
     if (!datasetFolder) {
       progress.complete(progressId);
@@ -1559,9 +1565,11 @@ export class Annotations extends VuexModule {
       },
     };
 
-    jobs.addJob(computeJob);
+    // Capture the completion promise before the job can finish and
+    // be removed from the job map (race condition fix)
+    const completionPromise = jobs.addJob(computeJob);
 
-    return computeJob;
+    return { job: computeJob, completionPromise };
   }
 
   @Action
