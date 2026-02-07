@@ -1,43 +1,112 @@
-# Segment Anything Tool
+# Segment Anything 2 Tool
 
-The segment anything tool is uses the [Segment Anything Model](https://github.com/facebookresearch/segment-anything) (SAM).
-This folder contains the ONNX files that represent the SAM and are used by the browser to compute segmentations.
+The segment anything tool uses [Segment Anything Model 2](https://github.com/facebookresearch/sam2) (SAM2).
+This folder contains the ONNX files that represent the SAM2 model and are used by the browser to compute segmentations.
 
 ## Get model checkpoint
 
-The SAM is [provided by Facebook](https://github.com/facebookresearch/segment-anything#model-checkpoints) in the form of a pytorch model: a `.pth` file.
-There are three types of model. They are, from the biggest to the smallest, `vit_h`, `vit_l` and `vit_b`.
-It is advised to use `vit_b` as it is smaller and faster, at the cost of a lower quality segmentation.
+SAM2 checkpoints are [provided by Facebook](https://github.com/facebookresearch/sam2#download-checkpoints).
+There are four model sizes: `sam2_hiera_tiny`, `sam2_hiera_small`, `sam2_hiera_base_plus`, and `sam2_hiera_large`.
+It is advised to use `sam2_hiera_tiny` or `sam2_hiera_small` for browser inference, as larger models will be too slow.
+
+Download checkpoints from:
+- Tiny: https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt
+- Small: https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt
 
 ## Convert to ONNX
 
-Facebook provides a script to convert the decoder to ONNX but not the encoder. The maintainers refuse to merge PRs adding this feature.
-You can use the script given in one of these PRs, but the chosen solution is to use the [samexporter](https://github.com/vietanhdev/samexporter).
+The conversion uses [samexporter](https://github.com/vietanhdev/samexporter), which supports exporting both the encoder and decoder for SAM2.
 
-- Create a folder that will contain the conversion script and the original `checkpoint.pth` model downloaded in the previous step.
+A convenience script `scripts/convert_sam2_to_onnx.sh` is provided. See below for manual steps.
+
+### Using the script
+
 ```sh
-mkdir temp
-cd temp
+# From the NimbusImage project root:
+./scripts/convert_sam2_to_onnx.sh
 ```
-- Clone the samexporter repo and the segment anything repo
+
+The script will:
+1. Create a temporary working directory
+2. Clone samexporter and sam2 repos
+3. Install dependencies
+4. Download the SAM2 Hiera Tiny checkpoint
+5. Export encoder and decoder to ONNX
+6. Copy the ONNX files to `public/onnx-models/sam/sam2_hiera_tiny/`
+
+To convert additional models (e.g., small), edit the script or run the commands manually.
+
+### Manual conversion
+
+- Create a working directory:
 ```sh
-git clone git@github.com:vietanhdev/samexporter.git
-git clone git@github.com:facebookresearch/segment-anything.git
+mkdir sam2_conversion && cd sam2_conversion
 ```
-- Install both segment anything using pip and the dependencies of the samexporter (tested with a virtual environnment with python 3.11.5)
+
+- Clone the required repos:
 ```sh
-pip install -e ./segment-anything
-pip install torchvision==0.16.1 onnx==1.15.0 onnxruntime==1.15.1 timm==0.9.12
+git clone https://github.com/vietanhdev/samexporter.git
+git clone https://github.com/facebookresearch/sam2.git
 ```
-- Go in the samexporter folder and run the commands to export the encoder and the decoder (do not use quantization)
+
+- Install dependencies (tested with Python 3.11):
+```sh
+pip install -e ./sam2
+pip install torchvision onnx onnxruntime timm onnxsim
+```
+
+- Download the checkpoint:
+```sh
+mkdir -p original_models
+wget -O original_models/sam2_hiera_tiny.pt \
+  https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt
+```
+
+- Export encoder and decoder (from inside the samexporter directory):
 ```sh
 cd samexporter
-python -m samexporter.export_encoder --checkpoint ../checkpoint.pth --output ../encoder.onnx --model-type vit_b
-python -m samexporter.export_decoder --checkpoint ../checkpoint.pth --output ../decoder.onnx --model-type vit_b --return-single-mask
+python -m samexporter.export_sam2 \
+  --checkpoint ../original_models/sam2_hiera_tiny.pt \
+  --output_encoder ../sam2_hiera_tiny.encoder.onnx \
+  --output_decoder ../sam2_hiera_tiny.decoder.onnx \
+  --model_type sam2_hiera_tiny
+cd ..
 ```
-- Copy the encoder and decoder at the right location in the project (for now, the only model available is `vit_b`)
+
+- Copy to the project:
 ```sh
-cd $NIMUS_IMAGE_DIR
-cp encoder.onnx public/onnx-models/sam/$MODEL_NAME
-cp decoder.onnx public/onnx-models/sam/$MODEL_NAME
+NIMBUS_DIR=/path/to/NimbusImage
+MODEL_DIR="$NIMBUS_DIR/public/onnx-models/sam/sam2_hiera_tiny"
+mkdir -p "$MODEL_DIR"
+cp sam2_hiera_tiny.encoder.onnx "$MODEL_DIR/encoder.onnx"
+cp sam2_hiera_tiny.decoder.onnx "$MODEL_DIR/decoder.onnx"
 ```
+
+## Model details
+
+### Encoder
+- **Input:** `image` — float32 tensor of shape `(1, 3, 1024, 1024)`
+- **Outputs:**
+  - `high_res_feats_0` — high-resolution features (level 0)
+  - `high_res_feats_1` — high-resolution features (level 1)
+  - `image_embed` — image embedding
+
+### Decoder
+- **Inputs:**
+  - `image_embed` — from encoder
+  - `high_res_feats_0` — from encoder
+  - `high_res_feats_1` — from encoder
+  - `point_coords` — float32, shape `(1, N, 2)` — prompt point coordinates
+  - `point_labels` — float32, shape `(1, N)` — prompt point labels (1=foreground, 0=background, 2=box top-left, 3=box bottom-right, -1=padding)
+  - `mask_input` — float32, shape `(1, 1, 256, 256)` — previous mask (zeros if none)
+  - `has_mask_input` — float32, shape `(1)` — 0 if no mask, 1 if mask provided
+- **Outputs:**
+  - `masks` — predicted segmentation mask
+  - `iou_predictions` — confidence scores
+
+### Key differences from SAM1
+- Encoder outputs 3 tensors (was 1): adds `high_res_feats_0` and `high_res_feats_1`
+- Encoder input name is `image` (was `input_image`)
+- Decoder no longer takes `orig_im_size` — mask is output at a fixed resolution
+- Decoder no longer outputs `low_res_masks`
+- Normalization is the same (ImageNet mean/std)
