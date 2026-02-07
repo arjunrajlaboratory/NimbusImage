@@ -333,16 +333,19 @@ class Project(ProxiedModel):
             dataset_views = list(DatasetViewModel().find(
                 {'$or': or_clauses}
             ))
-            # Gather config IDs from views not already
-            # in the project's direct collection list
-            for dv in dataset_views:
-                cfg_id = dv['configurationId']
-                if cfg_id not in collections_by_id:
-                    extra = CollectionModel().load(
-                        cfg_id, force=True
-                    )
-                    if extra:
-                        collections_by_id[cfg_id] = extra
+            # Bulk load extra configs from views not
+            # already in the project's collection list
+            extra_ids = {
+                dv['configurationId']
+                for dv in dataset_views
+                if dv['configurationId']
+                not in collections_by_id
+            }
+            if extra_ids:
+                for c in CollectionModel().find(
+                    {'_id': {'$in': list(extra_ids)}}
+                ):
+                    collections_by_id[c['_id']] = c
 
         return {
             'datasets': datasets,
@@ -440,3 +443,77 @@ class Project(ProxiedModel):
                 model.setUserAccess(
                     doc, target, level, save=True
                 )
+
+    def propagateAccessToDataset(self, project, dataset):
+        """Propagate project ACL to a dataset and its
+        associated views/configs.
+
+        :param project: The project document.
+        :param dataset: The dataset (Folder) document.
+        """
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+        from ..models.collection import (
+            Collection as CollectionModel
+        )
+
+        self.propagateAllUsersAccess(
+            project, dataset, Folder()
+        )
+        dvModel = DatasetViewModel()
+        dataset_views = list(dvModel.find(
+            {'datasetId': dataset['_id']}
+        ))
+        self.propagateAllUsersAccess(
+            project, dataset_views, dvModel
+        )
+        config_ids = {
+            dv['configurationId']
+            for dv in dataset_views
+        }
+        if config_ids:
+            collModel = CollectionModel()
+            configs = list(collModel.find(
+                {'_id': {'$in': list(config_ids)}}
+            ))
+            self.propagateAllUsersAccess(
+                project, configs, collModel
+            )
+
+    def propagateAccessToCollection(
+        self, project, collection
+    ):
+        """Propagate project ACL to a collection and its
+        associated views/datasets.
+
+        :param project: The project document.
+        :param collection: The Collection document.
+        """
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+        from ..models.collection import (
+            Collection as CollectionModel
+        )
+
+        self.propagateAllUsersAccess(
+            project, collection, CollectionModel()
+        )
+        dvModel = DatasetViewModel()
+        dataset_views = list(dvModel.find(
+            {'configurationId': collection['_id']}
+        ))
+        self.propagateAllUsersAccess(
+            project, dataset_views, dvModel
+        )
+        dataset_ids = {
+            dv['datasetId'] for dv in dataset_views
+        }
+        if dataset_ids:
+            datasets = list(Folder().find(
+                {'_id': {'$in': list(dataset_ids)}}
+            ))
+            self.propagateAllUsersAccess(
+                project, datasets, Folder()
+            )

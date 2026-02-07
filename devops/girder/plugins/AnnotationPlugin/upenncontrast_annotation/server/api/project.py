@@ -20,9 +20,6 @@ from upenncontrast_annotation.server.models.project import (
 from upenncontrast_annotation.server.models.collection import (
     Collection as CollectionModel
 )
-from upenncontrast_annotation.server.models.datasetView import (
-    DatasetView as DatasetViewModel
-)
 
 
 class Project(Resource):
@@ -165,30 +162,9 @@ class Project(Resource):
         result = self._projectModel.addDataset(
             project, dataset['_id']
         )
-        # Propagate project ACL to the newly added
-        # dataset and its associated views/configs
-        self._projectModel.propagateAllUsersAccess(
-            project, dataset, Folder()
+        self._projectModel.propagateAccessToDataset(
+            project, dataset
         )
-        dvModel = DatasetViewModel()
-        collModel = CollectionModel()
-        dataset_views = list(dvModel.find(
-            {'datasetId': dataset['_id']}
-        ))
-        self._projectModel.propagateAllUsersAccess(
-            project, dataset_views, dvModel
-        )
-        config_ids = {
-            dv['configurationId']
-            for dv in dataset_views
-        }
-        if config_ids:
-            configs = list(collModel.find(
-                {'_id': {'$in': list(config_ids)}}
-            ))
-            self._projectModel.propagateAllUsersAccess(
-                project, configs, collModel
-            )
         return result
 
     @access.user
@@ -221,29 +197,9 @@ class Project(Resource):
         result = self._projectModel.addCollection(
             project, collection['_id']
         )
-        # Propagate project ACL to the newly added
-        # collection and its associated views/datasets
-        collModel = CollectionModel()
-        self._projectModel.propagateAllUsersAccess(
-            project, collection, collModel
+        self._projectModel.propagateAccessToCollection(
+            project, collection
         )
-        dvModel = DatasetViewModel()
-        dataset_views = list(dvModel.find(
-            {'configurationId': collection['_id']}
-        ))
-        self._projectModel.propagateAllUsersAccess(
-            project, dataset_views, dvModel
-        )
-        dataset_ids = {
-            dv['datasetId'] for dv in dataset_views
-        }
-        if dataset_ids:
-            datasets = list(Folder().find(
-                {'_id': {'$in': list(dataset_ids)}}
-            ))
-            self._projectModel.propagateAllUsersAccess(
-                project, datasets, Folder()
-            )
         return result
 
     @access.user

@@ -627,27 +627,9 @@ class TestProjectPermissionPropagation:
         proj = project_model.addDataset(
             proj, str(dataset['_id'])
         )
-        project_model.propagateAllUsersAccess(
-            proj, dataset, Folder()
+        project_model.propagateAccessToDataset(
+            proj, dataset
         )
-        # Also sync views and configs
-        dvs = list(DatasetViewModel().find(
-            {'datasetId': dataset['_id']}
-        ))
-        project_model.propagateAllUsersAccess(
-            proj, dvs, DatasetViewModel()
-        )
-        cfg_ids = {
-            dv_item['configurationId']
-            for dv_item in dvs
-        }
-        if cfg_ids:
-            cfgs = list(Collection().find(
-                {'_id': {'$in': list(cfg_ids)}}
-            ))
-            project_model.propagateAllUsersAccess(
-                proj, cfgs, Collection()
-            )
 
         # User should now have READ access
         assert Folder().load(
