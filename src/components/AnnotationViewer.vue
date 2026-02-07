@@ -2433,24 +2433,33 @@ export default class AnnotationViewer extends Vue {
   }
 
   private cleanupCircleDrawing() {
-    if (this.circlePreviewAnnotation) {
+    if (this.circlePreviewAnnotation && this.interactionLayer) {
       this.interactionLayer.removeAnnotation(this.circlePreviewAnnotation);
-      this.circlePreviewAnnotation = null;
     }
+    this.circlePreviewAnnotation = null;
     this.isDrawingCircle = false;
     this.circleStartPosition = null;
-    this.interactionLayer.geoOff(
-      geojs.event.mousedown,
-      this.handleCircleDrawStart,
-    );
-    this.interactionLayer.geoOff(
-      geojs.event.mousemove,
-      this.handleCircleDrawMove,
-    );
-    this.interactionLayer.geoOff(geojs.event.mouseup, this.handleCircleDrawEnd);
+    if (this.interactionLayer) {
+      this.interactionLayer.geoOff(
+        geojs.event.mousedown,
+        this.handleCircleDrawStart,
+      );
+      this.interactionLayer.geoOff(
+        geojs.event.mousemove,
+        this.handleCircleDrawMove,
+      );
+      this.interactionLayer.geoOff(
+        geojs.event.mouseup,
+        this.handleCircleDrawEnd,
+      );
+    }
   }
 
   private setupCircleDrawingMode() {
+    if (!this.interactionLayer) {
+      return;
+    }
+
     // Set mode to null to prevent default geojs drawing behavior
     this.interactionLayer.mode(null);
 
@@ -2513,7 +2522,7 @@ export default class AnnotationViewer extends Vue {
   }
 
   private handleCircleDrawStart = (evt: any) => {
-    if (!evt?.geo || this.isDrawingCircle) {
+    if (!evt?.geo || this.isDrawingCircle || !this.interactionLayer) {
       return;
     }
 
