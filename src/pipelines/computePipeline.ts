@@ -206,9 +206,7 @@ export class ComputeNode<
         try {
           computedOutput = await this.fun(...params);
         } catch (e) {
-          logError(
-            `Computation of pipeline node failed [${this.fun.name}]`,
-          );
+          logError(`Computation of pipeline node failed [${this.fun.name}]`);
           if (e instanceof Error) {
             logError(e.message);
             logError(e.stack ?? "");
