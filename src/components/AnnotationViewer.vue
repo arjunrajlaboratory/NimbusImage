@@ -2466,12 +2466,58 @@ export default class AnnotationViewer extends Vue {
     this.interactionLayer.geoOn(geojs.event.mouseup, this.handleCircleDrawEnd);
   }
 
+  private get circleDrawMode(): "boundingBox" | "fromCenter" {
+    return (
+      this.selectedToolConfiguration?.values?.annotation?.circleDrawMode ??
+      "boundingBox"
+    );
+  }
+
+  /**
+   * Calculate circle center and radius based on draw mode
+   * - boundingBox: start and current define opposite corners, circle is inscribed
+   * - fromCenter: start is center, current defines radius
+   */
+  private calculateCircleFromPositions(
+    start: IGeoJSPosition,
+    current: IGeoJSPosition,
+  ): { center: IGeoJSPosition; radius: number } {
+    if (this.circleDrawMode === "fromCenter") {
+      // Start position is center, calculate radius to current position
+      const radius = Math.sqrt(
+        (current.x - start.x) ** 2 + (current.y - start.y) ** 2,
+      );
+      return { center: start, radius };
+    } else {
+      // Bounding box mode: start and current are opposite corners
+      // Circle is inscribed within the bounding box
+      const minX = Math.min(start.x, current.x);
+      const maxX = Math.max(start.x, current.x);
+      const minY = Math.min(start.y, current.y);
+      const maxY = Math.max(start.y, current.y);
+
+      const width = maxX - minX;
+      const height = maxY - minY;
+      // Use the smaller dimension for the inscribed circle
+      const diameter = Math.min(width, height);
+      const radius = diameter / 2;
+
+      // Center is at the center of the bounding box
+      const center = {
+        x: (minX + maxX) / 2,
+        y: (minY + maxY) / 2,
+      };
+
+      return { center, radius };
+    }
+  }
+
   private handleCircleDrawStart = (evt: any) => {
     if (!evt?.geo || this.isDrawingCircle) {
       return;
     }
 
-    // Start drawing circle from center
+    // Start drawing circle
     this.isDrawingCircle = true;
     this.circleStartPosition = evt.geo;
 
@@ -2498,11 +2544,9 @@ export default class AnnotationViewer extends Vue {
       return;
     }
 
-    // Calculate radius from center (start position) to current position
-    const center = this.circleStartPosition;
-    const current = evt.geo;
-    const radius = Math.sqrt(
-      (current.x - center.x) ** 2 + (current.y - center.y) ** 2,
+    const { center, radius } = this.calculateCircleFromPositions(
+      this.circleStartPosition,
+      evt.geo,
     );
 
     // Update circle preview using bounding box corners
@@ -2529,11 +2573,9 @@ export default class AnnotationViewer extends Vue {
       return;
     }
 
-    // Calculate final radius
-    const center = this.circleStartPosition;
-    const current = evt.geo;
-    const radius = Math.sqrt(
-      (current.x - center.x) ** 2 + (current.y - center.y) ** 2,
+    const { center, radius } = this.calculateCircleFromPositions(
+      this.circleStartPosition,
+      evt.geo,
     );
 
     // Don't create annotation if radius is too small (accidental click)

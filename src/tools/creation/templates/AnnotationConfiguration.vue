@@ -21,6 +21,19 @@
             {{ shape === null ? "nothing selected" : AnnotationNames[shape] }}
           </v-col>
         </v-row>
+        <!-- circle draw mode -->
+        <v-row class="my-0" v-if="shape === AnnotationShape.Circle">
+          <v-col class="py-0">
+            <v-select
+              label="Draw Mode"
+              :items="circleDrawModes"
+              v-model="circleDrawMode"
+              @change="changed"
+              dense
+            >
+            </v-select>
+          </v-col>
+        </v-row>
         <!-- layer location -->
         <v-row class="my-0" v-if="!hideLayer">
           <v-col class="py-0">
@@ -138,6 +151,7 @@ export interface IAnnotationSetup {
   };
   shape: AnnotationShape;
   color: string | undefined;
+  circleDrawMode?: "boundingBox" | "fromCenter";
 }
 
 function isSmallerThanRule(max: number) {
@@ -171,7 +185,12 @@ export default class AnnotationConfiguration extends Vue {
 
   availableShapes = store.availableToolShapes;
   AnnotationNames = AnnotationNames;
+  AnnotationShape = AnnotationShape;
   isSmallerThanRule = isSmallerThanRule;
+  circleDrawModes = [
+    { text: "Bounding Box (inscribed)", value: "boundingBox" },
+    { text: "From Center (drag radius)", value: "fromCenter" },
+  ];
 
   readonly coordinates: ["Z", "Time"] = ["Z", "Time"];
 
@@ -186,6 +205,7 @@ export default class AnnotationConfiguration extends Vue {
   useAutoTags: boolean = true;
   customColorEnabled: boolean = false;
   customColorValue: string = "#FFFFFF";
+  circleDrawMode: "boundingBox" | "fromCenter" = "boundingBox";
 
   get color() {
     return this.customColorEnabled ? this.customColorValue : undefined;
@@ -285,6 +305,7 @@ export default class AnnotationConfiguration extends Vue {
     this.shape = this.value.shape;
     this.tagsInternal = this.value.tags;
     this.color = this.value.color;
+    this.circleDrawMode = this.value.circleDrawMode ?? "boundingBox";
   }
 
   @Watch("defaultShape")
@@ -295,6 +316,7 @@ export default class AnnotationConfiguration extends Vue {
     this.tagsInternal = [];
     this.shape = this.defaultShape;
     this.color = undefined;
+    this.circleDrawMode = "boundingBox";
     this.changed();
   }
 
@@ -323,6 +345,7 @@ export default class AnnotationConfiguration extends Vue {
   @Watch("tags")
   @Watch("shape")
   @Watch("color")
+  @Watch("circleDrawMode")
   changed() {
     const form = this.$refs.form as VForm;
     if (!form?.validate()) {
@@ -338,6 +361,7 @@ export default class AnnotationConfiguration extends Vue {
       coordinateAssignments: this.coordinateAssignments,
       shape: this.shape,
       color: this.color,
+      circleDrawMode: this.circleDrawMode,
     };
     this.$emit("input", result);
     this.$emit("change");
