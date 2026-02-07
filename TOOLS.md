@@ -123,3 +123,156 @@ Tools can have optional descriptions that appear below the tool name in the sele
 3. **For docker worker tools**: The description comes from the `description` label in the worker's Docker image metadata.
 
 Descriptions should be brief (under 50 characters) and explain what the tool does in action-oriented language (e.g., "Click to select individual annotations" rather than "This tool selects annotations").
+
+## Interaction Layer and Visual Feedback
+
+The `interactionLayer` in `AnnotationViewer.vue` is a GeoJS annotation layer dedicated to handling user interactions and providing visual feedback during drawing operations. It's separate from the main `annotationLayer` which displays saved annotations.
+
+### Key Concepts
+
+**Annotation Modes:**
+The interaction layer supports several built-in drawing modes via `this.interactionLayer.mode(modeName)`:
+- `"point"` - Single point placement
+- `"line"` - Freehand line drawing
+- `"polygon"` - Freehand polygon drawing
+- `"rectangle"` - Rectangle drawing
+- `"circle"` - Circle drawing (native GeoJS, shows bounding box while drawing)
+- `null` - Disable drawing mode (for custom interactions)
+
+**Temporary Annotations:**
+For custom visual feedback, you can create temporary annotations on the interaction layer:
+
+```typescript
+// Create a temporary annotation
+const tempAnnotation = geojs.createAnnotation("circle");
+tempAnnotation.layer(this.interactionLayer);
+this.interactionLayer.addAnnotation(tempAnnotation);
+
+// Update it on mouse events
+tempAnnotation._coordinates(newCorners);
+tempAnnotation.draw();
+
+// Clean up when done
+this.interactionLayer.removeAnnotation(tempAnnotation);
+```
+
+### Visual Feedback Patterns
+
+The codebase uses several patterns for visual feedback:
+
+**1. Cursor Annotation (Snap Tools)**
+Used by "Snap circle to dot" to show the snap radius around the cursor:
+- Created via `geojs.createAnnotation("circle")`
+- Updates on `mousemove` and `zoom` events
+- Styled with semi-transparent fill
+
+```typescript
+// In addCursorAnnotation()
+this.cursorAnnotation = geojs.createAnnotation("circle");
+this.cursorAnnotation.style({
+  fill: true,
+  fillColor: "white",
+  fillOpacity: 0.2,
+  strokeWidth: 3,
+  strokeColor: "black",
+});
+```
+
+**2. Circle Preview Annotation (Circle Tool)**
+Shows a live circle preview while drawing:
+- Created on `mousedown`, updated on `mousemove`, finalized on `mouseup`
+- Supports two draw modes: "boundingBox" (inscribed) and "fromCenter"
+- Converts to polygon coordinates before saving
+
+**3. Drag Ghost Annotation**
+Shows a semi-transparent copy when dragging annotations:
+- Created using `geojsAnnotationFactory()` with the annotation's shape
+- Styled with reduced opacity and different color
+- Removed after drag completes
+
+**4. Selection/Lasso Preview**
+Shows the selection path while drawing a lasso:
+- Uses `geojs.annotation.lineAnnotation()` with `closed: true`
+- Updates as user draws the selection area
+
+### Custom Drawing Mode Example: Circle Tool
+
+The circle tool demonstrates how to bypass GeoJS's native drawing mode for custom behavior:
+
+```typescript
+private setupCircleDrawingMode() {
+  // Disable native mode to prevent default behavior
+  this.interactionLayer.mode(null);
+
+  // Bind custom mouse handlers
+  this.interactionLayer.geoOn(geojs.event.mousedown, this.handleCircleDrawStart);
+  this.interactionLayer.geoOn(geojs.event.mousemove, this.handleCircleDrawMove);
+  this.interactionLayer.geoOn(geojs.event.mouseup, this.handleCircleDrawEnd);
+}
+
+private handleCircleDrawStart = (evt: any) => {
+  // Record start position
+  this.circleStartPosition = evt.geo;
+
+  // Create preview annotation
+  this.circlePreviewAnnotation = geojs.createAnnotation("circle");
+  this.circlePreviewAnnotation.layer(this.interactionLayer);
+  this.circlePreviewAnnotation.style({ /* ... */ });
+  this.interactionLayer.addAnnotation(this.circlePreviewAnnotation);
+};
+
+private handleCircleDrawMove = (evt: any) => {
+  // Calculate center and radius based on draw mode
+  const { center, radius } = this.calculateCircleFromPositions(
+    this.circleStartPosition,
+    evt.geo,
+  );
+
+  // Update preview with bounding box corners
+  const corners = [
+    { x: center.x - radius, y: center.y - radius },
+    { x: center.x + radius, y: center.y - radius },
+    { x: center.x + radius, y: center.y + radius },
+    { x: center.x - radius, y: center.y + radius },
+  ];
+  this.circlePreviewAnnotation._coordinates(corners);
+  this.circlePreviewAnnotation.draw();
+};
+
+private handleCircleDrawEnd = async (evt: any) => {
+  // Convert to polygon and save
+  const polygonCoordinates = circleToPolygonCoordinates(corners);
+  await this.createAnnotationFromTool(polygonCoordinates, toolConfiguration);
+
+  // Clean up and re-enable for next circle
+  this.interactionLayer.removeAnnotation(this.circlePreviewAnnotation);
+  this.setupCircleDrawingMode();
+};
+```
+
+### Cleanup Pattern
+
+Always clean up temporary annotations and event handlers when the tool changes:
+
+```typescript
+clearAnnotationMode() {
+  // Remove temporary annotations
+  if (this.cursorAnnotation) {
+    this.interactionLayer.removeAnnotation(this.cursorAnnotation);
+    this.cursorAnnotation = null;
+  }
+
+  // Unbind event handlers
+  this.interactionLayer.geoOff(geojs.event.mousemove, this.handleMove);
+}
+```
+
+### GeoJS Events
+
+Common events for interaction handling:
+- `geojs.event.mousedown` - Mouse button pressed
+- `geojs.event.mousemove` - Mouse moved
+- `geojs.event.mouseup` - Mouse button released
+- `geojs.event.mouseclick` - Click completed
+- `geojs.event.zoom` - Map zoom changed (update radius-based previews)
+- `geojs.event.annotation.state` - Annotation drawing completed (native modes)

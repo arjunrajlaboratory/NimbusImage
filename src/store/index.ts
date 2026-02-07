@@ -296,6 +296,11 @@ export class Main extends VuexModule {
       value: AnnotationShape.Rectangle,
       description: "Draw rectangular regions by dragging",
     },
+    {
+      text: AnnotationNames[AnnotationShape.Circle],
+      value: AnnotationShape.Circle,
+      description: "Draw circular regions by dragging",
+    },
   ];
 
   get tools() {
