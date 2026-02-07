@@ -206,8 +206,15 @@ export class ComputeNode<
         try {
           computedOutput = await this.fun(...params);
         } catch (e) {
-          logError("Computation of pipeline node failed");
-          logError(e as string);
+          logError(
+            `Computation of pipeline node failed [${this.fun.name}]`,
+          );
+          if (e instanceof Error) {
+            logError(e.message);
+            logError(e.stack ?? "");
+          } else {
+            logError("Raw error value: " + JSON.stringify(e));
+          }
         }
       }
       // Recompute if the parameters changed

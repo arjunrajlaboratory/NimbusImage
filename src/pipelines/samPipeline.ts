@@ -44,6 +44,7 @@ interface ISamConfiguration {
 }
 
 interface ISamEncoderContext {
+  model: TSamModel;
   configuration: ISamConfiguration;
   canvas: HTMLCanvasElement; // Keep this canvas at the encoder input dimensions
   context: CanvasRenderingContext2D; // The corresponding context
@@ -58,13 +59,19 @@ interface ISamDecoderContext {
 }
 
 const samModelsConfig = {
-  sam2_hiera_tiny: {
+  vit_b: {
     maxWidth: 1024,
     maxHeight: 1024,
     meanPerChannel: [123.675, 116.28, 103.53],
     stdPerChannel: [58.395, 57.12, 57.375],
   },
-  sam2_hiera_small: {
+  sam2_hiera_base_plus: {
+    maxWidth: 1024,
+    maxHeight: 1024,
+    meanPerChannel: [123.675, 116.28, 103.53],
+    stdPerChannel: [58.395, 57.12, 57.375],
+  },
+  sam2_hiera_large: {
     maxWidth: 1024,
     maxHeight: 1024,
     meanPerChannel: [123.675, 116.28, 103.53],
@@ -73,6 +80,10 @@ const samModelsConfig = {
 } satisfies Record<string, ISamConfiguration>;
 
 export type TSamModel = keyof typeof samModelsConfig;
+
+function isSam2Model(model: TSamModel): boolean {
+  return model.startsWith("sam2_");
+}
 
 function createEncoderContext(model: TSamModel): ISamEncoderContext {
   const configuration = samModelsConfig[model];
@@ -92,6 +103,7 @@ function createEncoderContext(model: TSamModel): ISamEncoderContext {
   const nChannels = 3;
   const buffer = new Float32Array(nPixels * nChannels);
   return {
+    model,
     configuration,
     buffer,
     canvas,
@@ -100,8 +112,11 @@ function createEncoderContext(model: TSamModel): ISamEncoderContext {
 }
 
 function createEncoderSession(model: TSamModel): Promise<InferenceSession> {
-  const encoderPath = `/onnx-models/sam/${model}/encoder.onnx`;
-  const encoderOptions = { executionProviders: ["webgpu"] };
+  const ext = isSam2Model(model) ? "ort" : "onnx";
+  const encoderPath = `/onnx-models/sam/${model}/encoder.${ext}`;
+  const encoderOptions: InferenceSession.SessionOptions = {
+    executionProviders: ["webgpu"],
+  };
   return createOnnxInferenceSession(encoderPath, encoderOptions);
 }
 
@@ -133,7 +148,8 @@ async function screenshot({ map, imageLayers }: IMapEntry) {
 }
 
 interface IProcessCanvasOutput {
-  encoderFeed: { image: TensorF32 };
+  model: TSamModel;
+  encoderFeed: Record<string, TensorF32>;
   scaledWidth: number;
   scaledHeight: number;
   srcWidth: number;
@@ -189,9 +205,12 @@ function processCanvas(
     }
   }
 
+  const { model } = samContext;
+  const tensorKey = isSam2Model(model) ? "image" : "input_image";
   return {
+    model,
     encoderFeed: {
-      image: new Tensor("float32", buffer, [1, 3, maxHeight, maxWidth]),
+      [tensorKey]: new Tensor("float32", buffer, [1, 3, maxHeight, maxWidth]),
     },
     srcWidth,
     srcHeight,
@@ -202,11 +221,7 @@ function processCanvas(
   };
 }
 
-interface IEncoderOutput {
-  image_embed: TensorF32;
-  high_res_feats_0: TensorF32;
-  high_res_feats_1: TensorF32;
-}
+type IEncoderOutput = Record<string, TensorF32>;
 
 async function runEncoder(
   encoderSession: InferenceSession,
@@ -216,12 +231,7 @@ async function runEncoder(
   return encoderOutput as unknown as IEncoderOutput;
 }
 
-interface IProcessPromptOutput {
-  point_coords: TensorF32;
-  point_labels: TensorF32;
-  mask_input: TensorF32;
-  has_mask_input: TensorF32;
-}
+type IProcessPromptOutput = Record<string, TensorF32>;
 
 function processPrompt(
   prompts: TSamPrompt[],
@@ -297,11 +307,19 @@ function processPrompt(
     pushPointToPrompt({ x: 0, y: 0 }, -1, false);
   }
 
-  return {
+  const result: IProcessPromptOutput = {
     point_coords: new Tensor("float32", pointCoords, [1, nPromptPoints, 2]),
     point_labels: new Tensor("float32", pointLabels, [1, nPromptPoints]),
     ...context.feedConstant,
   };
+  // SAM1 needs orig_im_size to resize the mask to the original image dimensions
+  if (!isSam2Model(canvasInfo.model)) {
+    result.orig_im_size = new Tensor("float32", [
+      canvasInfo.srcHeight,
+      canvasInfo.srcWidth,
+    ]);
+  }
+  return result;
 }
 
 interface IDecoderOutput {
@@ -313,7 +331,7 @@ async function runDecoder(
   decoderSession: InferenceSession,
   prompt: IProcessPromptOutput,
   encoderOutput: IEncoderOutput,
-) {
+): Promise<IDecoderOutput> {
   const decoderOutput = await decoderSession.run({
     ...encoderOutput,
     ...prompt,
@@ -459,6 +477,7 @@ function createSamPipelineEncoderNodes(
 }
 
 function createSamPipelineDecoderNodes(
+  model: TSamModel,
   modelNameNode: ManualInputNode<TSamModel>,
   simplificationToleranceNode: ManualInputNode<number>,
   encoderNodes: ReturnType<typeof createSamPipelineEncoderNodes>,
@@ -495,18 +514,26 @@ function createSamPipelineDecoderNodes(
   // Convert the mask into a polygon
   const maskToPolygonNode = createComputeNode(runItkPipeline, [inferenceNode]);
 
-  // Rescale coordinates from mask space to display space
-  const rescaleNode = createComputeNode(rescaleMaskToDisplayCoords, [
-    maskToPolygonNode,
-    encoderNodes.preprocessNode,
-    inferenceNode,
-  ]);
-
-  // Simplify the polygon
-  const simplificationNode = createComputeNode(simplifyCoordinates, [
-    rescaleNode,
-    simplificationToleranceNode,
-  ]);
+  // SAM1 masks are already in display coordinates (via orig_im_size),
+  // SAM2 masks need rescaling from fixed mask space to display space.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let simplificationNode: ComputeNode<any, any>;
+  if (isSam2Model(model)) {
+    const rescaleNode = createComputeNode(rescaleMaskToDisplayCoords, [
+      maskToPolygonNode,
+      encoderNodes.preprocessNode,
+      inferenceNode,
+    ]);
+    simplificationNode = createComputeNode(simplifyCoordinates, [
+      rescaleNode,
+      simplificationToleranceNode,
+    ]);
+  } else {
+    simplificationNode = createComputeNode(simplifyCoordinates, [
+      maskToPolygonNode,
+      simplificationToleranceNode,
+    ]);
+  }
 
   // Convert coordinates from display to world
   const coordinatesConversionNode = createComputeNode(displayToWorld, [
@@ -521,7 +548,6 @@ function createSamPipelineDecoderNodes(
     processPromptNode,
     inferenceNode,
     maskToPolygonNode,
-    rescaleNode,
     simplificationNode,
     coordinatesConversionNode,
   };
@@ -537,11 +563,13 @@ function createSamPipeline(model: TSamModel) {
   const simplificationToleranceNode = new ManualInputNode(0);
   const encoderNodes = createSamPipelineEncoderNodes(modelNameNode);
   const decoderNodes = createSamPipelineDecoderNodes(
+    model,
     modelNameNode,
     simplificationToleranceNode,
     encoderNodes,
   );
   const previewNodes = createSamPipelineDecoderNodes(
+    model,
     modelNameNode,
     simplificationToleranceNode,
     encoderNodes,
