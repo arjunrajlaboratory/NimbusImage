@@ -440,6 +440,13 @@ export interface IDatasetAccessList {
   configurations: IDatasetAccessConfiguration[];
 }
 
+export interface IProjectAccessList {
+  projectId: string;
+  public: boolean;
+  users: IDatasetAccessUser[];
+  groups: unknown[];
+}
+
 export interface IProjectDatasetReference {
   datasetId: string;
   addedDate: string;

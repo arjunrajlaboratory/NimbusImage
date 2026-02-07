@@ -1,5 +1,6 @@
+import { isAxiosError } from "axios";
 import { RestClientInstance } from "@/girder";
-import { IProject } from "./model";
+import { IProject, IProjectAccessList } from "./model";
 
 /**
  * Extract string ID from MongoDB ObjectId (handles both {$oid: string} format and plain strings)
@@ -200,5 +201,57 @@ export default class ProjectsAPI {
       },
     );
     return toProject(response.data);
+  }
+
+  /**
+   * Share or revoke access to a project and all its resources.
+   */
+  async shareProject(
+    projectId: string,
+    userMailOrUsername: string,
+    accessType: number,
+  ): Promise<boolean | string> {
+    try {
+      const response = await this.client.post(
+        `project/${projectId}/share`,
+        null,
+        {
+          params: { userMailOrUsername, accessType },
+        },
+      );
+      return response.data as boolean;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.data?.message) {
+        return error.response.data.message;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get the current access list for a project.
+   * Requires ADMIN access to the project.
+   */
+  async getProjectAccess(projectId: string): Promise<IProjectAccessList> {
+    const response = await this.client.get(`project/${projectId}/access`);
+    return response.data;
+  }
+
+  /**
+   * Make a project and all its resources public or private.
+   * Requires ADMIN access to the project.
+   */
+  async setProjectPublic(
+    projectId: string,
+    isPublic: boolean,
+  ): Promise<{ projectId: string; public: boolean }> {
+    const response = await this.client.post(
+      `project/${projectId}/set_public`,
+      null,
+      {
+        params: { public: isPublic },
+      },
+    );
+    return response.data;
   }
 }

@@ -4,9 +4,13 @@ import random
 from upenncontrast_annotation.server.models.project import Project
 from upenncontrast_annotation.server.models import project
 from upenncontrast_annotation.server.models.collection import Collection
+from upenncontrast_annotation.server.models.datasetView import (
+    DatasetView as DatasetViewModel
+)
 
 from girder.constants import AccessType
 from girder.exceptions import ValidationException, AccessException
+from girder.models.folder import Folder
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -410,3 +414,286 @@ class TestProject:
             config["_id"], user=user, level=AccessType.WRITE
         )
         assert loaded is not None
+
+
+def createDatasetWithView(creator):
+    """Create a dataset folder, configuration, and
+    dataset view for testing."""
+    unique_name = f"test_dataset_{random.random()}"
+    dataset = utilities.createFolder(
+        creator, unique_name,
+        upenn_utilities.datasetMetadata
+    )
+
+    config_meta = {
+        "subtype": "contrastDataset",
+        "compatibility": {},
+        "layers": [],
+        "tools": [],
+        "propertyIds": [],
+        "snapshots": [],
+        "scales": {}
+    }
+    config_name = f"test_config_{random.random()}"
+    config = Collection().createCollection(
+        name=config_name,
+        creator=creator,
+        folder=dataset,
+        metadata=config_meta,
+        description="Test configuration"
+    )
+
+    datasetView = DatasetViewModel().create(
+        creator,
+        {
+            "datasetId": dataset["_id"],
+            "configurationId": config["_id"],
+            "lastLocation": {
+                "xy": 0, "z": 0, "time": 0
+            },
+            "layerContrasts": {}
+        }
+    )
+
+    return dataset, config, datasetView
+
+
+@pytest.mark.usefixtures(
+    "unbindLargeImage", "unbindAnnotation"
+)
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestProjectPermissionPropagation:
+
+    def test_share_project_propagates_to_dataset(
+        self, admin, user
+    ):
+        """Sharing a project gives the user access
+        to all datasets in the project."""
+        project_model = Project()
+
+        dataset, config, dv = createDatasetWithView(
+            admin
+        )
+        proj = project_model.createProject(
+            name="Share Propagation Test",
+            creator=admin
+        )
+        proj = project_model.addDataset(
+            proj, str(dataset['_id'])
+        )
+
+        # User should not have access yet
+        with pytest.raises(AccessException):
+            Folder().load(
+                dataset['_id'], user=user,
+                level=AccessType.READ
+            )
+
+        # Share project with user at READ level
+        project_model.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+        project_model.propagateUserAccess(
+            proj, user, AccessType.READ
+        )
+
+        # User should now have READ access to
+        # dataset, config, and view
+        assert Folder().load(
+            dataset['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+        assert Collection().load(
+            config['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+        assert DatasetViewModel().load(
+            dv['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+
+    def test_share_project_propagates_to_collection(
+        self, admin, user
+    ):
+        """Sharing a project gives the user access
+        to all collections in the project."""
+        project_model = Project()
+
+        dataset, config, dv = createDatasetWithView(
+            admin
+        )
+        proj = project_model.createProject(
+            name="Collection Share Test",
+            creator=admin
+        )
+        proj = project_model.addCollection(
+            proj, str(config['_id'])
+        )
+
+        # User should not have access yet
+        with pytest.raises(AccessException):
+            Collection().load(
+                config['_id'], user=user,
+                level=AccessType.READ
+            )
+
+        # Share project
+        project_model.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+        project_model.propagateUserAccess(
+            proj, user, AccessType.READ
+        )
+
+        # User should now have READ access
+        assert Collection().load(
+            config['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+
+    def test_revoke_project_access_revokes_resources(
+        self, admin, user
+    ):
+        """Revoking project access removes user from
+        all resources."""
+        project_model = Project()
+
+        dataset, config, dv = createDatasetWithView(
+            admin
+        )
+        proj = project_model.createProject(
+            name="Revoke Test", creator=admin
+        )
+        proj = project_model.addDataset(
+            proj, str(dataset['_id'])
+        )
+
+        # Grant then revoke
+        project_model.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+        project_model.propagateUserAccess(
+            proj, user, AccessType.READ
+        )
+
+        # Verify access was granted
+        assert Folder().load(
+            dataset['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+
+        # Revoke (-1)
+        project_model.setUserAccess(
+            proj, user, -1, save=True
+        )
+        project_model.propagateUserAccess(
+            proj, user, -1
+        )
+
+        # User should no longer have access
+        with pytest.raises(AccessException):
+            Folder().load(
+                dataset['_id'], user=user,
+                level=AccessType.READ
+            )
+
+    def test_add_dataset_syncs_existing_acl(
+        self, admin, user
+    ):
+        """When a dataset is added to an already-shared
+        project, the dataset gets the project's ACL."""
+        project_model = Project()
+
+        # Create project and share with user
+        proj = project_model.createProject(
+            name="Add Dataset Sync Test",
+            creator=admin
+        )
+        project_model.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+
+        # Create a dataset (user has no access)
+        dataset, config, dv = createDatasetWithView(
+            admin
+        )
+        with pytest.raises(AccessException):
+            Folder().load(
+                dataset['_id'], user=user,
+                level=AccessType.READ
+            )
+
+        # Add dataset to project -- sync should happen
+        proj = project_model.addDataset(
+            proj, str(dataset['_id'])
+        )
+        project_model.propagateAllUsersAccess(
+            proj, dataset, Folder()
+        )
+        # Also sync views and configs
+        dvs = list(DatasetViewModel().find(
+            {'datasetId': dataset['_id']}
+        ))
+        project_model.propagateAllUsersAccess(
+            proj, dvs, DatasetViewModel()
+        )
+        cfg_ids = {
+            dv_item['configurationId']
+            for dv_item in dvs
+        }
+        if cfg_ids:
+            cfgs = list(Collection().find(
+                {'_id': {'$in': list(cfg_ids)}}
+            ))
+            project_model.propagateAllUsersAccess(
+                proj, cfgs, Collection()
+            )
+
+        # User should now have READ access
+        assert Folder().load(
+            dataset['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+
+    def test_propagate_public(self, admin):
+        """Making a project public makes all its
+        resources public."""
+        project_model = Project()
+
+        dataset, config, dv = createDatasetWithView(
+            admin
+        )
+        proj = project_model.createProject(
+            name="Public Test", creator=admin
+        )
+        proj = project_model.addDataset(
+            proj, str(dataset['_id'])
+        )
+
+        # Make public
+        project_model.setPublic(
+            proj, True, save=True
+        )
+        project_model.propagatePublic(proj, True)
+
+        # Verify resources are public
+        assert Folder().load(
+            dataset['_id'], user=None,
+            level=AccessType.READ
+        ) is not None
+        assert DatasetViewModel().load(
+            dv['_id'], user=None,
+            level=AccessType.READ
+        ) is not None
+
+        # Make private
+        project_model.setPublic(
+            proj, False, save=True
+        )
+        project_model.propagatePublic(proj, False)
+
+        # Verify resources are no longer public
+        assert Folder().load(
+            dataset['_id'], user=None,
+            level=AccessType.READ
+        ) is None

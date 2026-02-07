@@ -12,6 +12,8 @@ import fastjsonschema
 from bson import ObjectId
 from girder.constants import AccessType
 from girder.models.item import Item
+from girder.models.folder import Folder
+from girder.models.user import User
 from girder.exceptions import ValidationException, GirderException
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
@@ -276,3 +278,165 @@ class Project(ProxiedModel):
         project['meta']['status'] = status
         project['updated'] = datetime.datetime.utcnow()
         return self.save(project)
+
+    def _gatherAllResources(self, project):
+        """Bulk-load all resources referenced by a project.
+
+        Returns a dict with keys:
+        - datasets: list of Folder documents
+        - collections: list of Collection documents
+        - datasetViews: list of DatasetView documents
+        """
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+        from ..models.collection import (
+            Collection as CollectionModel
+        )
+
+        dataset_ids = [
+            d['datasetId']
+            for d in project['meta']['datasets']
+        ]
+        collection_ids = [
+            c['collectionId']
+            for c in project['meta']['collections']
+        ]
+
+        # Bulk load datasets (Folders)
+        datasets = list(Folder().find(
+            {'_id': {'$in': dataset_ids}}
+        )) if dataset_ids else []
+
+        # Bulk load directly-referenced collections
+        collections_by_id = {}
+        if collection_ids:
+            for c in CollectionModel().find(
+                {'_id': {'$in': collection_ids}}
+            ):
+                collections_by_id[c['_id']] = c
+
+        # Find all DatasetViews linked to project
+        # datasets or project collections
+        or_clauses = []
+        if dataset_ids:
+            or_clauses.append(
+                {'datasetId': {'$in': dataset_ids}}
+            )
+        if collection_ids:
+            or_clauses.append(
+                {'configurationId': {'$in': collection_ids}}
+            )
+
+        dataset_views = []
+        if or_clauses:
+            dataset_views = list(DatasetViewModel().find(
+                {'$or': or_clauses}
+            ))
+            # Gather config IDs from views not already
+            # in the project's direct collection list
+            for dv in dataset_views:
+                cfg_id = dv['configurationId']
+                if cfg_id not in collections_by_id:
+                    extra = CollectionModel().load(
+                        cfg_id, force=True
+                    )
+                    if extra:
+                        collections_by_id[cfg_id] = extra
+
+        return {
+            'datasets': datasets,
+            'collections': list(
+                collections_by_id.values()
+            ),
+            'datasetViews': dataset_views,
+        }
+
+    def propagateUserAccess(
+        self, project, targetUser, level
+    ):
+        """Propagate a single user's access level to all
+        project resources.
+
+        :param project: The project document.
+        :param targetUser: The Girder user document.
+        :param level: AccessType level (0, 1, 2) or -1
+                      to remove access.
+        """
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+        from ..models.collection import (
+            Collection as CollectionModel
+        )
+
+        resources = self._gatherAllResources(project)
+
+        for ds in resources['datasets']:
+            Folder().setUserAccess(
+                ds, targetUser, level, save=True
+            )
+        for coll in resources['collections']:
+            CollectionModel().setUserAccess(
+                coll, targetUser, level, save=True
+            )
+        for dv in resources['datasetViews']:
+            DatasetViewModel().setUserAccess(
+                dv, targetUser, level, save=True
+            )
+
+    def propagatePublic(self, project, public):
+        """Set public/private on all project resources.
+
+        :param project: The project document.
+        :param public: Boolean, True to make public.
+        """
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+        from ..models.collection import (
+            Collection as CollectionModel
+        )
+
+        resources = self._gatherAllResources(project)
+
+        for ds in resources['datasets']:
+            Folder().setPublic(ds, public, save=True)
+        for coll in resources['collections']:
+            CollectionModel().setPublic(
+                coll, public, save=True
+            )
+        for dv in resources['datasetViews']:
+            DatasetViewModel().setPublic(
+                dv, public, save=True
+            )
+
+    def propagateAllUsersAccess(
+        self, project, documents, model
+    ):
+        """Apply the project's full user access list to
+        one or more documents of a given model.
+
+        :param project: The project document.
+        :param documents: List of documents to update
+                          (or a single document).
+        :param model: The Girder model instance.
+        """
+        if not isinstance(documents, list):
+            documents = [documents]
+
+        project_users = project.get(
+            'access', {}
+        ).get('users', [])
+
+        for user_entry in project_users:
+            target = User().load(
+                user_entry['id'], force=True
+            )
+            if not target:
+                continue
+            level = user_entry['level']
+            for doc in documents:
+                model.setUserAccess(
+                    doc, target, level, save=True
+                )

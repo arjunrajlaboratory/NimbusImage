@@ -15,6 +15,10 @@
         {{ formatSize(totalProjectSize) }} total
       </v-chip>
       <v-spacer />
+      <v-btn color="primary" class="mr-2" @click="shareDialog = true">
+        <v-icon left>mdi-share-variant</v-icon>
+        Share Project
+      </v-btn>
       <!-- TODO: Export workflow buttons - not yet implemented
            Uncomment when Zenodo export integration is ready
       <v-btn
@@ -419,6 +423,9 @@
         @done="addCollectionDialog = false"
       />
     </v-dialog>
+
+    <!-- Share Project Dialog -->
+    <share-project v-model="shareDialog" :project="project" />
   </v-container>
 
   <v-container v-else class="text-center">
@@ -442,6 +449,7 @@ import { IGirderFolder, IGirderItem } from "@/girder";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vue";
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
+import ShareProject from "@/components/ShareProject.vue";
 import { formatSize } from "@/utils/conversion";
 
 interface IProjectMetadataForm {
@@ -468,6 +476,7 @@ interface IUnifiedDatasetItem {
     AlertDialog,
     AddDatasetToProjectDialog,
     AddCollectionToProjectFilterDialog,
+    ShareProject,
   },
 })
 export default class ProjectInfo extends Vue {
@@ -485,6 +494,7 @@ export default class ProjectInfo extends Vue {
   removeCollectionConfirm = false;
   addDatasetDialog = false;
   addCollectionDialog = false;
+  shareDialog = false;
 
   // Edit state
   nameInput = "";
