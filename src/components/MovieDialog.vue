@@ -58,10 +58,12 @@
                 <v-radio
                   label="Download MP4"
                   :value="MovieFormat.MP4"
+                  :disabled="!mp4Supported"
                 ></v-radio>
                 <v-radio
                   label="Download WebM"
                   :value="MovieFormat.WEBM"
+                  :disabled="!webmSupported"
                 ></v-radio>
               </v-radio-group>
             </v-col>
@@ -155,6 +157,25 @@ export default class MovieDialog extends Vue {
   dataset!: IDataset;
 
   MovieFormat = MovieFormat; // Make enum available in template
+
+  get mp4Supported(): boolean {
+    return (
+      typeof MediaRecorder !== "undefined" &&
+      (MediaRecorder.isTypeSupported("video/mp4") ||
+        MediaRecorder.isTypeSupported(
+          'video/mp4; codecs="avc1.42E01E,mp4a.40.2"',
+        ))
+    );
+  }
+
+  get webmSupported(): boolean {
+    return (
+      typeof MediaRecorder !== "undefined" &&
+      (MediaRecorder.isTypeSupported("video/webm") ||
+        MediaRecorder.isTypeSupported('video/webm; codecs="vp9,opus"') ||
+        MediaRecorder.isTypeSupported('video/webm; codecs="vp8,opus"'))
+    );
+  }
 
   startTime: number = 0;
   endTime: number = 0;

@@ -583,10 +583,7 @@ function getSupportedVideoMimeType(preferMp4: boolean): string | null {
     "video/webm",
   ];
 
-  const types = preferMp4
-    ? [...mp4Types, ...webmTypes]
-    : [...webmTypes, ...mp4Types];
-
+  const types = preferMp4 ? mp4Types : webmTypes;
   return types.find((type) => MediaRecorder.isTypeSupported(type)) || null;
 }
 
@@ -2279,6 +2276,8 @@ export default class Snapshots extends Vue {
         default:
           logError("Unknown format:", params.format);
       }
+    } catch (error) {
+      logError("Movie download failed:", error);
     } finally {
       this.downloading = false;
     }
