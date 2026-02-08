@@ -215,7 +215,7 @@ export default class AnnotationsAPI {
 
   async computeAnnotationWithWorker(
     tool: IToolConfiguration,
-    dataset: IDataset,
+    dataset: Pick<IDataset, "id">,
     metadata: {
       channel: Number;
       location: IAnnotationLocation;
