@@ -1448,9 +1448,11 @@ export class Annotations extends VuexModule {
         } else {
           failed++;
         }
+        progress.complete(datasetProgressId);
       } catch (error) {
         logError(`Failed to process dataset ${datasetName}: ${error}`);
         failed++;
+        progress.complete(datasetProgressId);
       }
 
       // Update batch progress
@@ -1470,6 +1472,21 @@ export class Annotations extends VuexModule {
 
     // Complete batch progress
     progress.complete(batchProgressId);
+
+    // Refresh annotations for the currently viewed dataset
+    this.fetchAnnotations();
+
+    // Handle any new large images created by the worker
+    const currentDatasetId = main.dataset?.id;
+    if (currentDatasetId) {
+      const newLargeImage = await main.loadLargeImages(true);
+      if (newLargeImage) {
+        main.scheduleTileFramesComputation(currentDatasetId);
+        main.scheduleMaxMergeCache(currentDatasetId);
+        main.scheduleHistogramCache(currentDatasetId);
+      }
+    }
+
     onComplete({ succeeded: completed, failed, cancelled });
 
     return { cancel, jobs: submittedJobs };
@@ -1508,27 +1525,11 @@ export class Annotations extends VuexModule {
     // Get location and channel from tool configuration
     const { location, channel } =
       await this.getAnnotationLocationFromTool(tool);
-    const tile = { XY: main.xy, Z: main.z, Time: main.time };
-
-    // Get the dataset to pass to the API
-    const datasetInfo = await main.api.batchResources({
-      folder: [datasetId],
-    });
-    const datasetFolder = datasetInfo.folder?.[datasetId];
-    if (!datasetFolder) {
-      progress.complete(progressId);
-      return null;
-    }
-
-    // Create a minimal dataset object for the API call
-    const dataset = {
-      id: datasetId,
-      ...datasetFolder,
-    };
+    const tile = { ...location };
 
     const response = await this.annotationsAPI.computeAnnotationWithWorker(
       tool,
-      dataset as any,
+      { id: datasetId },
       {
         location,
         channel,

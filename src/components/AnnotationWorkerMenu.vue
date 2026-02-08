@@ -305,10 +305,13 @@ export default class AnnotationWorkerMenu extends Vue {
 
   get batchDisabledReason(): string | null {
     if (!this.store.selectedConfigurationId) {
-      return "No collection selected";
+      return null;
+    }
+    if (this.loadingDatasetCount) {
+      return null;
     }
     if (this.collectionDatasetCount <= 1) {
-      return "Collection has only one dataset";
+      return null;
     }
     if (this.collectionDatasetCount > this.BATCH_DATASET_LIMIT) {
       return `Collection has more than ${this.BATCH_DATASET_LIMIT} datasets`;
@@ -341,6 +344,11 @@ export default class AnnotationWorkerMenu extends Vue {
     }
     // Return local log when no current job (job completed)
     return this.localJobLog;
+  }
+
+  @Watch("store.selectedConfigurationId")
+  onConfigurationChanged() {
+    this.fetchCollectionDatasetCount();
   }
 
   @Watch("interfaceValues", { deep: true })
