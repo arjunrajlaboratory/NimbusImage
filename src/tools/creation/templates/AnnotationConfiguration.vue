@@ -171,7 +171,6 @@ export default class AnnotationConfiguration extends Vue {
 
   availableShapes = store.availableToolShapes;
   AnnotationNames = AnnotationNames;
-  AnnotationShape = AnnotationShape;
   isSmallerThanRule = isSmallerThanRule;
 
   readonly coordinates: ["Z", "Time"] = ["Z", "Time"];
@@ -187,6 +186,7 @@ export default class AnnotationConfiguration extends Vue {
   useAutoTags: boolean = true;
   customColorEnabled: boolean = false;
   customColorValue: string = "#FFFFFF";
+
   get color() {
     return this.customColorEnabled ? this.customColorValue : undefined;
   }
