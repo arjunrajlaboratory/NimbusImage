@@ -230,50 +230,9 @@ export function tagCloudFilterFunction(
 }
 
 /**
- * Convert circle bounding box coordinates to polygon vertices.
- * GeoJS circle annotations store coordinates as bounding box corners.
- * This function samples the circle uniformly and returns polygon vertices.
- *
- * @param corners - The 4 bounding box corners from a circle annotation
- * @param numSamples - Number of vertices to generate (default 64 for smooth circles)
- * @returns Array of polygon vertices approximating the circle
- */
-export function circleToPolygonCoordinates(
-  corners: IGeoJSPosition[],
-  numSamples: number = 64,
-): IGeoJSPosition[] {
-  if (corners.length < 2) {
-    logError("Circle annotation requires at least 2 corner coordinates");
-    return corners;
-  }
-
-  // Calculate center from corners (average of all corners)
-  const center = simpleCentroid(corners);
-
-  // Calculate radius as distance from center to first corner
-  const radius = pointDistance(center, corners[0]);
-
-  // Generate polygon vertices around the circle
-  const vertices: IGeoJSPosition[] = [];
-  for (let i = 0; i < numSamples; i++) {
-    const angle = (2 * Math.PI * i) / numSamples;
-    const vertex: IGeoJSPosition = {
-      x: center.x + radius * Math.cos(angle),
-      y: center.y + radius * Math.sin(angle),
-    };
-    if (center.z !== undefined) {
-      vertex.z = center.z;
-    }
-    vertices.push(vertex);
-  }
-
-  return vertices;
-}
-
-/**
  * Convert ellipse bounding box coordinates to polygon vertices.
- * Unlike circleToPolygonCoordinates which uses a single radius,
- * this uses separate semi-axes to fill the full bounding box.
+ * Uses separate semi-axes to fill the full bounding box.
+ * Also handles circles: pass a square bounding box for equal semi-axes.
  *
  * @param corners - The bounding box corners from an ellipse annotation
  * @param numSamples - Number of vertices to generate (default 64)

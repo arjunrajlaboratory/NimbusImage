@@ -203,26 +203,18 @@ The circle and ellipse tools are good examples of how to add shapes that GeoJS d
 
 3. **Completion** (`handleInteractionAnnotationChange`): When the user releases the mouse, GeoJS fires `geo_annotation_state`. This routes to `addAnnotationFromGeoJsAnnotation()`, which detects the tool shape and runs the appropriate conversion:
 
-   **For Circle:**
-   a. `calculateCircleFromCoordinates(coordinates)` takes the ellipse's bounding box coordinates and computes a `center` and `radius`. The circle is inscribed in the drag rectangle (diameter = min(width, height)).
+   **For Circle:** The bounding box is first squared (inscribed: diameter = min(width, height)), then passed to `ellipseToPolygonCoordinates()`.
 
-   b. Four cardinal points on the circle are constructed (not bounding box corners, because `circleToPolygonCoordinates` uses `pointDistance(center, corners[0])` as the radius).
+   **For Ellipse:** The bounding box coordinates are passed directly to `ellipseToPolygonCoordinates()`.
 
-   c. `circleToPolygonCoordinates(cardinalPoints)` generates 64 polygon vertices around the circle.
-
-   **For Ellipse:**
-   a. `ellipseToPolygonCoordinates(coordinates)` takes the bounding box coordinates directly, computes the center and two semi-axes (semiX = half-width, semiY = half-height), and generates 64 polygon vertices using `x = center.x + semiX * cos(angle)`, `y = center.y + semiY * sin(angle)`.
-
-   **Both:** The tool configuration's shape is changed to `Polygon` before saving, so the annotation is stored as a polygon.
+   **Both:** `ellipseToPolygonCoordinates()` computes center and semi-axes from the bounding box and generates 64 polygon vertices. The tool configuration's shape is changed to `Polygon` before saving.
 
 **Why not a custom drawing mode?** Earlier iterations tried using `mode(null)` with custom `geoOn` mouse handlers, but this broke the cursor change (no crosshair) and event routing (map layer intercepted clicks for panning). Using a native GeoJS mode follows the same pattern as every other annotation tool and gets all the standard interaction behavior for free.
 
 **Code locations:**
 - `setupCircleDrawingMode()` - Sets `mode("ellipse")` (used by both circle and ellipse tools)
 - `addAnnotationFromGeoJsAnnotation()` - Circle/ellipse-to-polygon conversion
-- `calculateCircleFromCoordinates()` - Center/radius math (circle only)
-- `circleToPolygonCoordinates()` - 64-vertex circle generation (`src/utils/annotation.ts`)
-- `ellipseToPolygonCoordinates()` - 64-vertex ellipse generation (`src/utils/annotation.ts`)
+- `ellipseToPolygonCoordinates()` - 64-vertex polygon generation (`src/utils/annotation.ts`)
 
 ### Cleanup Pattern
 

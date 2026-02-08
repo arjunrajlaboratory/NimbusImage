@@ -84,7 +84,6 @@ import {
   unrollIndexFromImages,
   geojsAnnotationFactory,
   tagFilterFunction,
-  circleToPolygonCoordinates,
   ellipseToPolygonCoordinates,
 } from "@/utils/annotation";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
@@ -2188,35 +2187,28 @@ export default class AnnotationViewer extends Vue {
     let coordinates = annotation.coordinates();
     this.interactionLayer.removeAnnotation(annotation);
 
-    // Handle circle-to-polygon conversion
+    // Handle circle/ellipse-to-polygon conversion
     let toolConfiguration = this.selectedToolConfiguration;
-    if (toolConfiguration.values.annotation?.shape === AnnotationShape.Circle) {
-      const { center, radius } =
-        this.calculateCircleFromCoordinates(coordinates);
-      // Pass cardinal points (on the circle, not bounding box corners)
-      // because circleToPolygonCoordinates uses pointDistance(center, corner[0])
-      // as the radius.
-      const cardinalPoints = [
-        { x: center.x + radius, y: center.y },
-        { x: center.x, y: center.y + radius },
-        { x: center.x - radius, y: center.y },
-        { x: center.x, y: center.y - radius },
-      ];
-      coordinates = circleToPolygonCoordinates(cardinalPoints);
-      toolConfiguration = {
-        ...toolConfiguration,
-        values: {
-          ...toolConfiguration.values,
-          annotation: {
-            ...toolConfiguration.values.annotation,
-            shape: AnnotationShape.Polygon,
-          },
-        },
-      };
-    } else if (
-      toolConfiguration.values.annotation?.shape === AnnotationShape.Ellipse
-    ) {
-      // Ellipse fills the full bounding box (unlike circle which inscribes)
+    const shape = toolConfiguration.values.annotation?.shape;
+    if (shape === AnnotationShape.Circle || shape === AnnotationShape.Ellipse) {
+      if (shape === AnnotationShape.Circle) {
+        // Inscribe circle in bounding box: build a square from the center
+        const xs = coordinates.map((c) => c.x);
+        const ys = coordinates.map((c) => c.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const r = Math.min(maxX - minX, maxY - minY) / 2;
+        coordinates = [
+          { x: cx - r, y: cy - r },
+          { x: cx + r, y: cy - r },
+          { x: cx + r, y: cy + r },
+          { x: cx - r, y: cy + r },
+        ];
+      }
       coordinates = ellipseToPolygonCoordinates(coordinates);
       toolConfiguration = {
         ...toolConfiguration,
@@ -2455,27 +2447,6 @@ export default class AnnotationViewer extends Vue {
     // Use native ellipse mode — gives us crosshair cursor and drag events.
     // The annotation is converted to a circle/ellipse polygon on completion.
     this.interactionLayer.mode("ellipse");
-  }
-
-  /**
-   * Calculate circle center and radius from bounding box coordinates.
-   * The circle is inscribed in the bounding box (diameter = min(width, height)).
-   */
-  private calculateCircleFromCoordinates(coords: IGeoJSPosition[]): {
-    center: IGeoJSPosition;
-    radius: number;
-  } {
-    const xs = coords.map((c) => c.x);
-    const ys = coords.map((c) => c.y);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const diameter = Math.min(maxX - minX, maxY - minY);
-    return {
-      center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
-      radius: diameter / 2,
-    };
   }
 
   setNewAnnotationMode() {
