@@ -85,6 +85,7 @@ import {
   geojsAnnotationFactory,
   tagFilterFunction,
   circleToPolygonCoordinates,
+  ellipseToPolygonCoordinates,
 } from "@/utils/annotation";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
@@ -168,11 +169,6 @@ export default class AnnotationViewer extends Vue {
   private draggedAnnotation: IAnnotation | null = null;
   private dragGhostAnnotation: IGeoJSAnnotation | null = null;
   private dragOriginalCoordinates: IGeoJSPosition[] | null = null;
-
-  // Circle drawing state
-  private isDrawingCircle = false;
-  private circleStartPosition: IGeoJSPosition | null = null;
-  private circlePreviewAnnotation: IGeoJSAnnotation | null = null;
 
   // Compute the centroid of each annotation, taking unrolling into account
   get unrolledCentroidCoordinates() {
@@ -2193,24 +2189,35 @@ export default class AnnotationViewer extends Vue {
     this.interactionLayer.removeAnnotation(annotation);
 
     // Handle circle-to-polygon conversion
-    // Circles are drawn with geojs circle primitive but stored as polygons
     let toolConfiguration = this.selectedToolConfiguration;
     if (toolConfiguration.values.annotation?.shape === AnnotationShape.Circle) {
-      // Calculate the actual circle based on draw mode
       const { center, radius } =
         this.calculateCircleFromCoordinates(coordinates);
-
-      // Generate circle corners for conversion
-      const circleCorners = [
-        { x: center.x - radius, y: center.y - radius },
-        { x: center.x + radius, y: center.y - radius },
-        { x: center.x + radius, y: center.y + radius },
-        { x: center.x - radius, y: center.y + radius },
+      // Pass cardinal points (on the circle, not bounding box corners)
+      // because circleToPolygonCoordinates uses pointDistance(center, corner[0])
+      // as the radius.
+      const cardinalPoints = [
+        { x: center.x + radius, y: center.y },
+        { x: center.x, y: center.y + radius },
+        { x: center.x - radius, y: center.y },
+        { x: center.x, y: center.y - radius },
       ];
-
-      // Convert circle coordinates to polygon vertices
-      coordinates = circleToPolygonCoordinates(circleCorners);
-      // Create a modified tool configuration with polygon shape for storage
+      coordinates = circleToPolygonCoordinates(cardinalPoints);
+      toolConfiguration = {
+        ...toolConfiguration,
+        values: {
+          ...toolConfiguration.values,
+          annotation: {
+            ...toolConfiguration.values.annotation,
+            shape: AnnotationShape.Polygon,
+          },
+        },
+      };
+    } else if (
+      toolConfiguration.values.annotation?.shape === AnnotationShape.Ellipse
+    ) {
+      // Ellipse fills the full bounding box (unlike circle which inscribes)
+      coordinates = ellipseToPolygonCoordinates(coordinates);
       toolConfiguration = {
         ...toolConfiguration,
         values: {
@@ -2223,7 +2230,6 @@ export default class AnnotationViewer extends Vue {
       };
     }
 
-    // Create the new annotation
     await this.createAnnotationFromTool(coordinates, toolConfiguration);
   }
 
@@ -2440,122 +2446,36 @@ export default class AnnotationViewer extends Vue {
       );
       this.cursorAnnotation = null;
     }
-    // Clean up circle drawing state
-    this.cleanupCircleDrawing();
-  }
-
-  private cleanupCircleDrawing() {
-    if (this.circlePreviewAnnotation && this.interactionLayer) {
-      this.interactionLayer.removeAnnotation(this.circlePreviewAnnotation);
-    }
-    this.circlePreviewAnnotation = null;
-    this.isDrawingCircle = false;
-    this.circleStartPosition = null;
   }
 
   private setupCircleDrawingMode() {
     if (!this.interactionLayer) {
       return;
     }
-
-    // Use the native circle mode - GeoJS will handle mouse events
-    // We'll intercept the annotation.update events to show our preview
-    this.interactionLayer.mode("circle");
-  }
-
-  /**
-   * Called when an annotation is being updated during drawing.
-   * For circle mode, we intercept this to show a proper circle preview.
-   */
-  private handleCircleAnnotationUpdate(annotation: IGeoJSAnnotation) {
-    if (!this.interactionLayer) {
-      return;
-    }
-
-    const coords = annotation.coordinates();
-    if (!coords || coords.length < 2) {
-      return;
-    }
-
-    // Get the bounding box from the native annotation
-    const { center, radius } = this.calculateCircleFromCoordinates(coords);
-
-    if (radius < 1) {
-      // Too small, don't show preview
-      if (this.circlePreviewAnnotation) {
-        this.interactionLayer.removeAnnotation(this.circlePreviewAnnotation);
-        this.circlePreviewAnnotation = null;
-      }
-      return;
-    }
-
-    // Create or update circle preview
-    if (!this.circlePreviewAnnotation) {
-      this.circlePreviewAnnotation = geojs.createAnnotation("circle");
-      this.circlePreviewAnnotation.layer(this.interactionLayer);
-      this.circlePreviewAnnotation.style({
-        fill: true,
-        fillColor: "white",
-        fillOpacity: 0.3,
-        strokeWidth: 2,
-        strokeColor: "black",
-      });
-      this.interactionLayer.addAnnotation(this.circlePreviewAnnotation);
-    }
-
-    // Update preview with calculated circle
-    const corners = [
-      { x: center.x - radius, y: center.y - radius },
-      { x: center.x + radius, y: center.y - radius },
-      { x: center.x + radius, y: center.y + radius },
-      { x: center.x - radius, y: center.y + radius },
-    ];
-    this.circlePreviewAnnotation._coordinates(corners);
-    this.circlePreviewAnnotation.draw();
-  }
-
-  private get circleDrawMode(): "boundingBox" | "fromCenter" {
-    return (
-      this.selectedToolConfiguration?.values?.annotation?.circleDrawMode ??
-      "boundingBox"
-    );
+    // Use native ellipse mode — gives us crosshair cursor and drag events.
+    // The annotation is converted to a circle/ellipse polygon on completion.
+    this.interactionLayer.mode("ellipse");
   }
 
   /**
    * Calculate circle center and radius from bounding box coordinates.
-   * Uses the configured draw mode to interpret the coordinates.
+   * The circle is inscribed in the bounding box (diameter = min(width, height)).
    */
   private calculateCircleFromCoordinates(coords: IGeoJSPosition[]): {
     center: IGeoJSPosition;
     radius: number;
   } {
-    // GeoJS circle annotations provide corner coordinates
-    // Find bounding box
     const xs = coords.map((c) => c.x);
     const ys = coords.map((c) => c.y);
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
-
-    const width = maxX - minX;
-    const height = maxY - minY;
-
-    if (this.circleDrawMode === "fromCenter") {
-      // The first coordinate is treated as center, radius extends to edge
-      const center = coords[0];
-      const radius = Math.max(width, height) / 2;
-      return { center, radius };
-    } else {
-      // Bounding box mode: inscribe circle in the box
-      const diameter = Math.min(width, height);
-      const radius = diameter / 2;
-      const center = {
-        x: (minX + maxX) / 2,
-        y: (minY + maxY) / 2,
-      };
-      return { center, radius };
-    }
+    const diameter = Math.min(maxX - minX, maxY - minY);
+    return {
+      center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
+      radius: diameter / 2,
+    };
   }
 
   setNewAnnotationMode() {
@@ -2575,8 +2495,11 @@ export default class AnnotationViewer extends Vue {
     switch (this.selectedToolConfiguration?.type) {
       case "create":
         const annotation = this.selectedToolConfiguration.values.annotation;
-        if (annotation?.shape === AnnotationShape.Circle) {
-          // Use custom circle drawing with live preview
+        if (
+          annotation?.shape === AnnotationShape.Circle ||
+          annotation?.shape === AnnotationShape.Ellipse
+        ) {
+          // Use native ellipse mode for both circle and ellipse tools
           this.setupCircleDrawingMode();
         } else {
           this.interactionLayer.mode(annotation?.shape);
@@ -2712,32 +2635,10 @@ export default class AnnotationViewer extends Vue {
       return;
     }
 
-    // Handle circle preview updates during drawing
-    if (
-      evt.event === "geo_annotation_update" &&
-      evt.annotation?.layer() === this.interactionLayer &&
-      this.selectedToolConfiguration?.type === "create" &&
-      this.selectedToolConfiguration?.values?.annotation?.shape ===
-        AnnotationShape.Circle
-    ) {
-      this.handleCircleAnnotationUpdate(evt.annotation);
-      return;
-    }
-
     if (
       evt.event === "geo_annotation_state" &&
       evt.annotation?.layer() === this.interactionLayer
     ) {
-      // Clean up circle preview when annotation is complete
-      if (
-        this.circlePreviewAnnotation &&
-        this.selectedToolConfiguration?.values?.annotation?.shape ===
-          AnnotationShape.Circle
-      ) {
-        this.interactionLayer.removeAnnotation(this.circlePreviewAnnotation);
-        this.circlePreviewAnnotation = null;
-      }
-
       if (this.selectedToolConfiguration) {
         switch (this.selectedToolConfiguration.type) {
           case "create":
