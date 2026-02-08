@@ -402,6 +402,16 @@ Look for opportunities to simplify code:
 - Run with `pnpm test`
 
 ### Backend Tests (Girder Plugin)
+- Tests use pytest with Girder fixtures
+- Test files: `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/test/`
+- Run with tox from the plugin directory:
+```bash
+cd devops/girder/plugins/AnnotationPlugin
+tox        # Run all tests
+tox -r     # Recreate environment (after dependency changes)
+```
+
+### Backend Tests (Girder Plugin)
 The AnnotationPlugin has Python tests using pytest via tox:
 
 ```bash
