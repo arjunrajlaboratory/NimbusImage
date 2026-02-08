@@ -178,20 +178,9 @@ class AnnotationProperty(Resource):
         configId = params["configurationId"]
         user = self.getCurrentUser()
 
-        # Check access to configuration
-        try:
-            config = CollectionModel().load(
-                ObjectId(configId), user=user, level=AccessType.READ
-            )
-        except InvalidId as exc:
-            raise RestException(
-                code=400, message="Invalid configuration ID"
-            ) from exc
-
-        if not config:
-            raise RestException(
-                code=403, message="Access denied to configuration"
-            )
+        config = CollectionModel().load(
+            configId, user=user, level=AccessType.READ, exc=True
+        )
 
         # Count properties in this configuration
         count = 0

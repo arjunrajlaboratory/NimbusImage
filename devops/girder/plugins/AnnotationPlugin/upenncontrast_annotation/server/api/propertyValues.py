@@ -159,11 +159,10 @@ class PropertyValues(Resource):
         if "datasetId" not in params:
             raise RestException(code=400, message="Dataset ID is required")
         datasetId = ObjectId(params["datasetId"])
-        dataset = Folder().load(
-            datasetId, user=self.getCurrentUser(), level=AccessType.READ
+        Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.READ,
+            exc=True
         )
-        if not dataset:
-            raise RestException(code=403, message="Access denied to dataset")
 
         query = {"datasetId": datasetId}
         return {

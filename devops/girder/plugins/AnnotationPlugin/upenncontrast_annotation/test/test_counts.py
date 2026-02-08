@@ -165,6 +165,16 @@ class TestConnectionCount:
         assertStatusOk(resp)
         assert resp.json["count"] == 3
 
+    def testConnectionCountInvalidDataset(self, admin, server):
+        """Test connection count with invalid dataset ID returns error"""
+        resp = server.request(
+            path="/annotation_connection/count",
+            method="GET",
+            user=admin,
+            params={"datasetId": "012345678901234567890123"},
+        )
+        assertStatus(resp, 400)
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
@@ -212,6 +222,16 @@ class TestPropertyValuesCount:
         )
         assertStatusOk(resp)
         assert resp.json["count"] == 4
+
+    def testPropertyValuesCountInvalidDataset(self, admin, server):
+        """Test property values count with invalid dataset ID returns error"""
+        resp = server.request(
+            path="/annotation_property_values/count",
+            method="GET",
+            user=admin,
+            params={"datasetId": "012345678901234567890123"},
+        )
+        assertStatus(resp, 400)
 
 
 def getDefaultConfigMetadata():
@@ -283,5 +303,5 @@ class TestPropertyCount:
             user=admin,
             params={"configurationId": "012345678901234567890123"},
         )
-        # Should return 403 (access denied to non-existent config)
-        assertStatus(resp, 403)
+        # Should return 400 (ValidationException from exc=True)
+        assertStatus(resp, 400)
