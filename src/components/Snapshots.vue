@@ -565,6 +565,35 @@ export enum MovieFormat {
   ZIP = "zip",
   GIF = "gif",
   WEBM = "webm",
+  MP4 = "mp4",
+}
+
+/**
+ * Get the best supported video MIME type for the current browser.
+ * Prioritizes MP4 (H.264) for broad compatibility, falls back to WebM for Firefox.
+ */
+function getSupportedVideoMimeType(preferMp4: boolean): string | null {
+  const mp4Types = [
+    'video/mp4; codecs="avc1.42E01E,mp4a.40.2"', // H.264 Baseline + AAC
+    "video/mp4", // Let browser choose MP4 codecs
+  ];
+  const webmTypes = [
+    'video/webm; codecs="vp9,opus"', // WebM with VP9
+    'video/webm; codecs="vp8,opus"', // Older WebM fallback
+    "video/webm",
+  ];
+
+  const types = preferMp4 ? mp4Types : webmTypes;
+  return types.find((type) => MediaRecorder.isTypeSupported(type)) || null;
+}
+
+/**
+ * Get file extension from MIME type.
+ */
+function getVideoFileExtension(mimeType: string): string {
+  if (mimeType.includes("mp4")) return "mp4";
+  if (mimeType.includes("webm")) return "webm";
+  return "video";
 }
 
 export enum PixelSizeMode {
@@ -2238,12 +2267,17 @@ export default class Snapshots extends Vue {
         case MovieFormat.GIF:
           await this.downloadMovieAsGif(params, urls);
           break;
+        case MovieFormat.MP4:
+          await this.downloadMovieAsVideo(params, urls, true);
+          break;
         case MovieFormat.WEBM:
-          await this.downloadMovieAsWebm(params, urls);
+          await this.downloadMovieAsVideo(params, urls, false);
           break;
         default:
           logError("Unknown format:", params.format);
       }
+    } catch (error) {
+      logError("Movie download failed:", error);
     } finally {
       this.downloading = false;
     }
@@ -2524,7 +2558,7 @@ export default class Snapshots extends Vue {
     }
   }
 
-  async downloadMovieAsWebm(
+  async downloadMovieAsVideo(
     params: {
       startTime: number;
       endTime: number;
@@ -2535,10 +2569,19 @@ export default class Snapshots extends Vue {
       timeStampUnits: string;
     },
     urls: URL[] | string[],
+    preferMp4: boolean,
   ) {
+    // Detect supported MIME type
+    const mimeType = getSupportedVideoMimeType(preferMp4);
+    if (!mimeType) {
+      throw new Error("No supported video format found in this browser");
+    }
+    const fileExtension = getVideoFileExtension(mimeType);
+    const formatLabel = fileExtension.toUpperCase();
+
     const progressId = await this.progress.create({
       type: ProgressType.MOVIE_GENERATION,
-      title: "Generating WebM video",
+      title: `Generating ${formatLabel} video`,
     });
 
     try {
@@ -2584,7 +2627,7 @@ export default class Snapshots extends Vue {
 
       const stream = canvas.captureStream(params.fps);
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: "video/webm",
+        mimeType,
         videoBitsPerSecond: 8000000, // 8Mbps
       });
 
@@ -2661,7 +2704,7 @@ export default class Snapshots extends Vue {
       // Wait for recording to complete
       const videoBlob = await new Promise<Blob>((resolve) => {
         mediaRecorder.onstop = () => {
-          const blob = new Blob(chunks, { type: "video/webm" });
+          const blob = new Blob(chunks, { type: mimeType });
           resolve(blob);
         };
         processNextFrame();
@@ -2674,7 +2717,7 @@ export default class Snapshots extends Vue {
       const url = URL.createObjectURL(videoBlob);
       downloadToClient({
         href: url,
-        download: `timelapse_${params.startTime}_${params.endTime}.webm`,
+        download: `timelapse_${params.startTime}_${params.endTime}.${fileExtension}`,
       });
       URL.revokeObjectURL(url);
     } finally {

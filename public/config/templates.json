@@ -137,11 +137,13 @@
           "items": [
             {
               "text": "Pointer",
-              "value": "pointer"
+              "value": "pointer",
+              "description": "Click to select individual annotations"
             },
             {
               "text": "Lasso",
-              "value": "lasso"
+              "value": "lasso",
+              "description": "Draw to select multiple annotations at once"
             }
           ]
         }
@@ -277,7 +279,8 @@
           "items": [
             {
               "text": "ViT-B",
-              "value": "vit_b"
+              "value": "vit_b",
+              "description": "Click or drag to segment objects with AI"
             }
           ]
         }
@@ -325,19 +328,23 @@
           "items": [
             {
               "text": "Lasso connect",
-              "value": "add_lasso"
+              "value": "add_lasso",
+              "description": "Draw to connect multiple annotations"
             },
             {
               "text": "Click connect",
-              "value": "add_click"
+              "value": "add_click",
+              "description": "Click two annotations to connect them"
             },
             {
               "text": "Lasso disconnect",
-              "value": "delete_lasso"
+              "value": "delete_lasso",
+              "description": "Draw to disconnect multiple annotations"
             },
             {
               "text": "Click disconnect",
-              "value": "delete_click"
+              "value": "delete_click",
+              "description": "Click two annotations to disconnect them"
             }
           ]
         }
@@ -374,7 +381,26 @@
           "items": [
             {
               "text": "Blob edit",
-              "value": "blob_edit"
+              "value": "blob_edit",
+              "description": "Modify existing blob annotations"
+            },
+            {
+              "text": "Click to combine",
+              "value": "combine_click",
+              "description": "Click two blobs to merge them into one",
+              "meta": {
+                "interface": [
+                  {
+                    "name": "Tolerance (pixels)",
+                    "type": "text",
+                    "id": "tolerance",
+                    "meta": {
+                      "value": "2",
+                      "type": "number"
+                    }
+                  }
+                ]
+              }
             }
           ]
         }
@@ -404,6 +430,7 @@
             {
               "text": "Click to tag",
               "value": "tag_click",
+              "description": "Click annotations to add tags",
               "meta": {
                 "interface": [
                   {
@@ -426,6 +453,7 @@
             {
               "text": "Lasso to tag",
               "value": "tag_lasso",
+              "description": "Draw to tag multiple annotations at once",
               "meta": {
                 "interface": [
                   {
@@ -448,6 +476,7 @@
             {
               "text": "Click to remove tag",
               "value": "untag_click",
+              "description": "Click annotations to remove tags",
               "meta": {
                 "interface": [
                   {
@@ -461,6 +490,7 @@
             {
               "text": "Lasso to remove tag",
               "value": "untag_lasso",
+              "description": "Draw to remove tags from multiple annotations",
               "meta": {
                 "interface": [
                   {

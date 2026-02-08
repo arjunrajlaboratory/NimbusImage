@@ -154,6 +154,15 @@ export interface IConnectionToolState {
   selectedAnnotationId: null | string;
 }
 
+export const CombineToolStateSymbol: unique symbol = Symbol("CombineToolState");
+
+export type TCombineToolStateSymbol = typeof CombineToolStateSymbol;
+
+export interface ICombineToolState {
+  type: TCombineToolStateSymbol;
+  selectedAnnotationId: null | string;
+}
+
 export interface IMouseState {
   isMouseMovePreviewState: boolean;
   mapEntry: IMapEntry;
@@ -174,6 +183,8 @@ export interface IErrorToolState {
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
   connection: IConnectionToolState;
+  // Edit tool can have CombineToolState when action is "combine_click"
+  edit: ICombineToolState | IBaseToolState;
 }
 
 type TFullToolStateMap = {
@@ -404,6 +415,83 @@ export interface IDatasetViewBase {
 
 export interface IDatasetView extends IDatasetViewBase {
   readonly id: string;
+}
+
+// Access control types for sharing datasets
+export interface IDatasetAccessUser {
+  id: string;
+  login: string;
+  name: string;
+  email: string;
+  level: 0 | 1 | 2; // READ=0, WRITE=1, ADMIN=2
+}
+
+export interface IDatasetAccessConfiguration {
+  id: string;
+  name: string;
+  public: boolean;
+}
+
+export interface IDatasetAccessList {
+  datasetId: string;
+  public: boolean;
+  users: IDatasetAccessUser[];
+  groups: unknown[]; // Future use
+  configurations: IDatasetAccessConfiguration[];
+}
+
+export interface IProjectDatasetReference {
+  datasetId: string;
+  addedDate: string;
+}
+
+export interface IProjectCollectionReference {
+  collectionId: string;
+  addedDate: string;
+}
+
+export interface IProjectMetadata {
+  title: string;
+  description: string;
+  license: string;
+  keywords: string[];
+  authors?: string;
+  doi?: string;
+  publicationDate?: string;
+  funding?: string;
+}
+
+export type TProjectStatus = "draft" | "exporting" | "exported";
+
+/**
+ * Get display color for project status
+ */
+export function getProjectStatusColor(
+  status: TProjectStatus | undefined,
+): string {
+  switch (status) {
+    case "exported":
+      return "success";
+    case "exporting":
+      return "warning";
+    default:
+      return "grey";
+  }
+}
+
+export interface IProject {
+  id: string;
+  name: string;
+  description: string;
+  creatorId: string;
+  created: string;
+  updated: string;
+  meta: {
+    datasets: IProjectDatasetReference[];
+    collections: IProjectCollectionReference[];
+    metadata: IProjectMetadata;
+    status: TProjectStatus;
+  };
 }
 
 export type TDisplaySliceType = "current" | "max-merge" | "constant" | "offset";

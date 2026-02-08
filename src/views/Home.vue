@@ -70,6 +70,7 @@
             <section class="mb-4 home-section">
               <v-tabs v-model="datasetsTab">
                 <v-tab>Recent Datasets</v-tab>
+                <v-tab>Recent Projects</v-tab>
                 <v-tab
                   v-if="Boolean(zenodoCommunityId)"
                   id="try-sample-dataset-tourstep"
@@ -85,6 +86,15 @@
                     :get-user-display-name="getUserDisplayName"
                     :format-date-number="formatDateNumber"
                     @dataset-clicked="navigateToDatasetView"
+                    class="fill-height"
+                  />
+                </v-tab-item>
+                <v-tab-item class="fill-height">
+                  <recent-projects
+                    :projects="recentProjects"
+                    :loading="loadingProjects"
+                    :get-user-display-name="getUserDisplayName"
+                    @project-clicked="handleProjectClicked"
                     class="fill-height"
                   />
                 </v-tab-item>
@@ -125,6 +135,10 @@
                     <v-icon left small>mdi-file-tree</v-icon>
                     Collections
                   </v-btn>
+                  <v-btn value="projects" small>
+                    <v-icon left small>mdi-folder-star</v-icon>
+                    Projects
+                  </v-btn>
                 </v-btn-toggle>
               </div>
               <div class="scrollable">
@@ -164,6 +178,9 @@
 
                 <!-- Collections View -->
                 <collection-list v-else-if="browseMode === 'collections'" />
+
+                <!-- Projects View -->
+                <project-list v-else-if="browseMode === 'projects'" />
               </div>
             </section>
           </v-col>
@@ -183,7 +200,56 @@
     <!-- Upload Choice Dialog -->
     <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
       <v-card>
-        <v-card-title class="headline">Create dataset</v-card-title>
+        <v-card-title class="headline d-flex align-center">
+          Create dataset
+          <v-btn
+            icon
+            small
+            class="ml-2"
+            @click="showUploadInfo = !showUploadInfo"
+          >
+            <v-icon small>mdi-information-outline</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <!-- Info Panel -->
+        <v-expand-transition>
+          <v-alert
+            v-if="showUploadInfo"
+            type="info"
+            text
+            class="mx-4 mb-4 text-body-2"
+          >
+            <div class="font-weight-bold mb-2">
+              Understanding Datasets and Collections
+            </div>
+            <p>
+              A <strong>dataset</strong> is a set of images you want to
+              visualize and analyze together. It can come from a single file
+              (like a multi-dimensional .nd2 file) or multiple files that belong
+              together.
+            </p>
+            <p>
+              By default, when you upload multiple files, they all become part
+              of <strong>one dataset</strong>. NimbusImage will automatically
+              parse dimensions like channels, Z-stacks, and timepoints from file
+              metadata or filenames.
+            </p>
+            <p>
+              If you want each file to be its own separate dataset, check the
+              "<strong
+                >Upload each file as a separate dataset in a collection</strong
+              >" option. This creates a <strong>collection</strong> — a group of
+              datasets that share the same visualization settings and tools.
+            </p>
+            <p class="mb-0">
+              Collections are useful when you have similar data from different
+              conditions or timepoints that you want to analyze with consistent
+              settings.
+            </p>
+          </v-alert>
+        </v-expand-transition>
+
         <v-card-text>
           <v-text-field
             v-model="datasetName"
@@ -321,6 +387,9 @@ import { Upload as GirderUpload } from "@/girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import CollectionList from "@/components/CollectionList.vue";
+import ProjectList from "@/components/ProjectList.vue";
+import RecentProjects from "@/components/RecentProjects.vue";
+import projects from "@/store/projects";
 import ZenodoImporter from "@/components/ZenodoImporter.vue";
 import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import RecentDatasets from "@/components/RecentDatasets.vue";
@@ -391,6 +460,8 @@ function findCommonPrefix(strings: string[]): string {
     GirderLocationChooser,
     CustomFileManager,
     CollectionList,
+    ProjectList,
+    RecentProjects,
     ZenodoImporter,
     ZenodoCommunityDisplay,
     RecentDatasets,
@@ -399,6 +470,7 @@ function findCommonPrefix(strings: string[]): string {
 export default class Home extends Vue {
   readonly store = store;
   readonly girderResources = girderResources;
+  readonly projectsStore = projects;
   readonly isDatasetFolder = isDatasetFolder;
   // Normally, this environment variable would be set:
   // export VITE_ZENODO_SAMPLES="nimbusimagesampledatasets"
@@ -419,8 +491,10 @@ export default class Home extends Vue {
   isDragging: boolean = false;
   showZenodoImporter: boolean = false;
   showUploadDialog: boolean = false;
-  browseMode: "files" | "collections" = "files";
+  showUploadInfo: boolean = false;
+  browseMode: "files" | "collections" | "projects" = "files";
   datasetsTab: number = 0;
+  loadingProjects: boolean = false;
 
   pendingFiles: File[] = [];
   datasetName: string = "";
@@ -618,6 +692,10 @@ export default class Home extends Vue {
     return result;
   }
 
+  get recentProjects() {
+    return this.projectsStore.recentProjects;
+  }
+
   get datasetInfo() {
     const infos: {
       [datasetId: string]: IGirderFolder | null;
@@ -750,6 +828,7 @@ export default class Home extends Vue {
     this.initializeRecentViews();
     this.refreshRecentDatasetDetails();
     this.initializeWelcomeTour();
+    this.fetchRecentProjects();
     this.isNavigating = false; // Reset navigation state on mount
   }
 
@@ -758,6 +837,8 @@ export default class Home extends Vue {
     if (isLoggedIn) {
       // User has just logged in, try initializing the tour
       this.initializeWelcomeTour();
+      // Fetch recent projects
+      this.fetchRecentProjects();
     }
   }
 
@@ -867,6 +948,17 @@ export default class Home extends Vue {
       await this.store.fetchRecentDatasetViews();
     } catch (error) {
       logError("Failed to initialize recent views:", error);
+    }
+  }
+
+  private async fetchRecentProjects() {
+    this.loadingProjects = true;
+    try {
+      await this.projectsStore.fetchProjects();
+    } catch (error) {
+      logError("Failed to fetch recent projects:", error);
+    } finally {
+      this.loadingProjects = false;
     }
   }
 
@@ -1017,6 +1109,7 @@ export default class Home extends Vue {
 
   closeUploadDialog() {
     this.showUploadDialog = false;
+    this.showUploadInfo = false;
     this.pendingFiles = [];
     this.datasetName = "";
     this.selectedLocation = null;
@@ -1048,6 +1141,11 @@ export default class Home extends Vue {
   handleSampleDatasetSelected(dataset: any) {
     this.selectedZenodoDataset = dataset;
     this.showZenodoImporter = true;
+  }
+
+  handleProjectClicked() {
+    // Switch to Projects browse mode when clicking a project
+    this.browseMode = "projects";
   }
 
   selectedZenodoDataset: any = null;

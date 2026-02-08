@@ -70,7 +70,23 @@
           </v-data-table>
         </template>
 
-        <template v-if="text && text.length">
+        <template v-if="isTooLargeForPreview">
+          <v-alert type="info" text class="mb-4">
+            Preview is not available for more than
+            {{ PREVIEW_ANNOTATION_LIMIT }} annotations ({{ annotations.length }}
+            annotations selected). Download will export all annotations using
+            the server.
+          </v-alert>
+          <v-textarea
+            v-model="filename"
+            class="my-2"
+            label="File name"
+            rows="1"
+            no-resize
+            hide-details
+          />
+        </template>
+        <template v-else-if="text && text.length">
           <v-textarea ref="fieldToCopy" v-model="displayText" readonly>
             {{ displayText }}
             <template v-slot:append>
@@ -109,7 +125,22 @@
       <v-card-actions>
         <v-spacer></v-spacer>
         <v-btn @click="dialog = false" text>Close</v-btn>
-        <v-btn @click="download" :enabled="text && text.length" color="success">
+        <v-btn
+          @click="download"
+          :disabled="!store.dataset || isDownloading"
+          :loading="isDownloading"
+          color="success"
+          :min-width="isDownloading ? 260 : undefined"
+        >
+          <template v-slot:loader>
+            <v-progress-circular
+              indeterminate
+              size="18"
+              width="2"
+              class="mr-2"
+            ></v-progress-circular>
+            Preparing download...
+          </template>
           <v-icon> mdi-save </v-icon>
           Download
         </v-btn>
@@ -128,7 +159,6 @@ import filterStore from "@/store/filters";
 import Papa from "papaparse";
 
 import { IAnnotation } from "@/store/model";
-import { downloadToClient } from "@/utils/download";
 import { getValueFromObjectAndPath } from "@/utils/paths";
 
 interface PropertyPathItem {
@@ -146,7 +176,13 @@ export default class AnnotationCsvDialog extends Vue {
   readonly propertyStore = propertyStore;
   readonly filterStore = filterStore;
 
+  readonly PREVIEW_ANNOTATION_LIMIT = 1000;
+
   filename: string = "";
+
+  get isTooLargeForPreview() {
+    return this.annotations.length > this.PREVIEW_ANNOTATION_LIMIT;
+  }
 
   get canUseClipboard() {
     return !!navigator || !!(navigator as Navigator)?.clipboard;
@@ -221,6 +257,7 @@ export default class AnnotationCsvDialog extends Vue {
 
   processingProgress: number = 0;
   isProcessing: boolean = false;
+  isDownloading: boolean = false;
 
   async generateCSVStringForAnnotations() {
     this.isProcessing = true;
@@ -310,6 +347,14 @@ export default class AnnotationCsvDialog extends Vue {
   @Watch("dialog")
   updateText() {
     if (this.dialog) {
+      // Skip preview generation for large datasets
+      if (this.isTooLargeForPreview) {
+        this.text = "";
+        this.displayText = "";
+        this.processingProgress = 1;
+        return;
+      }
+
       this.generateCSVStringForAnnotations().then((text: string) => {
         this.text = text;
         this.displayText =
@@ -323,12 +368,41 @@ export default class AnnotationCsvDialog extends Vue {
     }
   }
 
-  download() {
-    const params = {
-      href: "data:text/plain;charset=utf-8," + encodeURIComponent(this.text),
-      download: this.filename || "upenn_annotation_export.csv",
-    };
-    downloadToClient(params);
+  /**
+   * Get the property paths to include based on the current export mode.
+   */
+  getIncludedPropertyPaths(): string[][] {
+    return this.propertyPaths.filter((path) => {
+      const pathName = this.propertyStore.getFullNameFromPath(path);
+      return pathName && this.shouldIncludePropertyPath(path);
+    });
+  }
+
+  /**
+   * Get the undefined value string for the current handling mode.
+   */
+  getUndefinedValueString(): "" | "NA" | "NaN" {
+    return AnnotationCsvDialog.UNDEFINED_VALUE_MAP[this.undefinedHandling];
+  }
+
+  async download() {
+    if (!this.store.dataset) {
+      return;
+    }
+
+    this.isDownloading = true;
+    try {
+      // Always use backend endpoint for downloads (handles large datasets)
+      await this.store.exportAPI.exportCsv({
+        datasetId: this.store.dataset.id,
+        propertyPaths: this.getIncludedPropertyPaths(),
+        annotationIds: this.annotations.map((a) => a.id),
+        undefinedValue: this.getUndefinedValueString(),
+        filename: this.filename || "upenn_annotation_export.csv",
+      });
+    } finally {
+      this.isDownloading = false;
+    }
   }
 
   get displayedPropertyPaths() {

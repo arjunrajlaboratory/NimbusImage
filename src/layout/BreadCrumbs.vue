@@ -40,6 +40,15 @@
             <router-link :to="item.to">
               <v-icon>mdi-information</v-icon>
             </router-link>
+            <v-btn
+              v-if="item.title === 'Dataset:' && showExternalLink"
+              icon
+              x-small
+              title="Open in Girder"
+              @click="openGirderFolder"
+            >
+              <v-icon small>mdi-open-in-new</v-icon>
+            </v-btn>
           </template>
           <!-- Otherwise, simply make the item clickable -->
           <template v-else>
@@ -51,6 +60,15 @@
             <span class="px-2" v-else>
               {{ item.text }}
             </span>
+            <v-btn
+              v-if="item.title === 'Dataset:' && showExternalLink"
+              icon
+              x-small
+              title="Open in Girder"
+              @click="openGirderFolder"
+            >
+              <v-icon small>mdi-open-in-new</v-icon>
+            </v-btn>
           </template>
         </v-breadcrumbs-item>
       </template>
@@ -76,7 +94,7 @@
 
 <script lang="ts">
 import { Vue, Component, Watch } from "vue-property-decorator";
-import store from "@/store";
+import store, { girderUrlFromApiRoot } from "@/store";
 import girderResources from "@/store/girderResources";
 import { Location } from "vue-router";
 import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
@@ -390,6 +408,24 @@ export default class BreadCrumbs extends Vue {
       this.currentDatasetId,
       "folder",
     );
+  }
+
+  get showExternalLink(): boolean {
+    return this.store.isAdmin && this.currentDatasetId !== null;
+  }
+
+  get girderDatasetUrl(): string | null {
+    if (!this.currentDatasetId || !this.datasetResource?.creatorId) {
+      return null;
+    }
+    const baseUrl = girderUrlFromApiRoot(this.store.girderRest.apiRoot);
+    return `${baseUrl}/#user/${this.datasetResource.creatorId}/folder/${this.currentDatasetId}`;
+  }
+
+  openGirderFolder() {
+    if (this.girderDatasetUrl) {
+      window.open(this.girderDatasetUrl, "_blank");
+    }
   }
 
   getCurrentViewItem(subitems: IBreadCrumbItem["subItems"]) {

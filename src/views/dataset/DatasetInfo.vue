@@ -28,6 +28,17 @@
               </tbody>
             </v-simple-table>
             <div class="text-right mt-4 mr-2">
+              <v-btn
+                color="primary"
+                small
+                outlined
+                class="mr-2"
+                @click="showAddToProjectDialog = true"
+                :disabled="!dataset"
+              >
+                <v-icon left>mdi-folder-star</v-icon>
+                Add Dataset to Project...
+              </v-btn>
               <v-dialog v-model="removeDatasetConfirm" max-width="33vw">
                 <template #activator="{ on }">
                   <v-btn color="error" small outlined v-on="on">
@@ -302,6 +313,15 @@
         </v-card>
       </v-col>
     </v-row>
+
+    <!-- Add to Project Dialog -->
+    <add-to-project-dialog
+      v-if="dataset"
+      v-model="showAddToProjectDialog"
+      :dataset-id="dataset.id"
+      :dataset-name="datasetName"
+      @added="onAddedToProject"
+    />
   </v-container>
 </template>
 <script lang="ts">
@@ -317,6 +337,8 @@ import datasetMetadataImport from "@/store/datasetMetadataImport";
   components: {
     GirderLocationChooser: () =>
       import("@/components/GirderLocationChooser.vue").then((mod) => mod),
+    AddToProjectDialog: () =>
+      import("@/components/AddToProjectDialog.vue").then((mod) => mod.default),
   },
 })
 export default class DatasetInfo extends Vue {
@@ -336,6 +358,7 @@ export default class DatasetInfo extends Vue {
 
   showNewCollectionDialog = false;
   showNewCollectionNameDialog = false;
+  showAddToProjectDialog = false;
   newCollectionName: string = "";
   selectedFolderId: string | null = null;
   datasetParentId: string | null = null;
@@ -767,6 +790,10 @@ export default class DatasetInfo extends Vue {
       this.showNewCollectionNameDialog = false;
       this.selectedFolderId = null;
     }
+  }
+
+  onAddedToProject() {
+    this.showAddToProjectDialog = false;
   }
 
   get nameRules() {

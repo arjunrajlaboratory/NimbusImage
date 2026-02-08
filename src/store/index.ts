@@ -24,6 +24,8 @@ import AnnotationsAPI from "./AnnotationsAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ChatAPI from "./ChatAPI";
 import GirderAPI from "./GirderAPI";
+import ExportAPI from "./ExportAPI";
+import ProjectsAPI from "./ProjectsAPI";
 import girderResources from "./girderResources";
 
 import { getLayerImages, getLayerSliceIndexes } from "./images";
@@ -62,6 +64,7 @@ import {
   ICameraInfo,
   IDatasetLocation,
   ConnectionToolStateSymbol,
+  CombineToolStateSymbol,
   NotificationType,
   IDimensionStrategy,
 } from "./model";
@@ -119,12 +122,15 @@ export class Main extends VuexModule {
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   chatAPI = new ChatAPI(this.girderRestProxy);
+  exportAPI = new ExportAPI(this.girderRestProxy);
+  projectsAPI = new ProjectsAPI(this.girderRestProxy);
 
   readonly girderResources = girderResources;
 
   girderUser: IGirderUser | null = this.girderRest.user as IGirderUser | null;
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
+  hasUserLoggedOut: boolean = false;
 
   history: IHistoryEntry[] = [];
 
@@ -237,8 +243,8 @@ export class Main extends VuexModule {
   showPixelScalebar: boolean = true;
   scalebarColor: string = "#ffffff";
 
-  scaleAnnotationsWithZoom: boolean = true;
-  annotationsRadius: number = 10;
+  scaleAnnotationsWithZoom: boolean = false;
+  annotationsRadius: number = 4;
   annotationOpacity: number = 0.5;
 
   compositionMode: TCompositionMode = "lighten";
@@ -265,22 +271,30 @@ export class Main extends VuexModule {
 
   toolTemplateList: any[] = [];
   selectedTool: IActiveTool | null = null;
-  readonly availableToolShapes: { value: string; text: string }[] = [
+  readonly availableToolShapes: {
+    value: string;
+    text: string;
+    description?: string;
+  }[] = [
     {
       text: AnnotationNames[AnnotationShape.Point],
       value: AnnotationShape.Point,
+      description: "Click to place point markers on the image",
     },
     {
       text: AnnotationNames[AnnotationShape.Polygon],
       value: AnnotationShape.Polygon,
+      description: "Draw freeform shapes by dragging",
     },
     {
       text: AnnotationNames[AnnotationShape.Line],
       value: AnnotationShape.Line,
+      description: "Draw freeform lines by dragging",
     },
     {
       text: AnnotationNames[AnnotationShape.Rectangle],
       value: AnnotationShape.Rectangle,
+      description: "Draw rectangular regions by dragging",
     },
   ];
 
@@ -320,6 +334,10 @@ export class Main extends VuexModule {
 
   get isLoggedIn() {
     return this.girderUser != null;
+  }
+
+  get isAdmin() {
+    return this.girderUser?.admin === true;
   }
 
   get userChannelColors() {
@@ -631,6 +649,17 @@ export class Main extends VuexModule {
             selectedAnnotationId: null,
           };
           break;
+        case "edit":
+          // Edit tool with combine_click action needs CombineToolState
+          if (configuration.values?.action?.value === "combine_click") {
+            state = {
+              type: CombineToolStateSymbol,
+              selectedAnnotationId: null,
+            };
+          } else {
+            state = { type: BaseToolStateSymbol };
+          }
+          break;
         default:
           state = { type: BaseToolStateSymbol };
           break;
@@ -758,6 +787,7 @@ export class Main extends VuexModule {
     this.dataset = null;
     this.selectedConfigurationId = null;
     this.configuration = null;
+    this.hasUserLoggedOut = true;
   }
 
   @Mutation

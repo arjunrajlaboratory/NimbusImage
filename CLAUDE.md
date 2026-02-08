@@ -218,11 +218,239 @@ Workers run in Docker containers via Girder Worker:
 - Jobs tracked in `src/store/jobs.ts`
 - Progress monitoring via SSE events
 
+## Code Review Guidelines
+
+### Avoid Looped Database Calls
+
+Never iterate and make individual API calls in a loop. This hammers the backend and causes performance issues. Use batch/aggregated endpoints instead.
+
+**Bad - Looped calls:**
+```typescript
+// DON'T DO THIS
+for (const annotation of annotations) {
+  await api.createAnnotation(annotation);
+}
+
+for (const id of annotationIds) {
+  await api.deleteAnnotation(id);
+}
+```
+
+**Good - Batch calls:**
+```typescript
+// USE BATCH ENDPOINTS
+await api.createMultipleAnnotations(annotations);
+await api.deleteMultipleAnnotations(annotationIds);
+```
+
+**Available batch endpoints** (see `annotation_client/annotations.py`):
+- `createMultipleAnnotations(annotations)` - Create annotations in bulk
+- `deleteMultipleAnnotations(annotationIds)` - Delete annotations in bulk
+- `createMultipleConnections(connections)` - Create connections in bulk
+- `deleteMultipleConnections(connectionIds)` - Delete connections in bulk
+- `addMultipleAnnotationPropertyValues(entries)` - Add property values in bulk (auto-batches at 10K)
+
+### Avoid Unnecessary Temporary Variables
+
+Don't create intermediate variables that are only used once immediately after assignment.
+
+**Bad:**
+```typescript
+const newAnnotations = await api.getAnnotations();
+this.setAnnotations(newAnnotations);
+
+const filtered = annotations.filter(a => a.tags.includes(tag));
+return filtered;
+```
+
+**Good:**
+```typescript
+this.setAnnotations(await api.getAnnotations());
+
+return annotations.filter(a => a.tags.includes(tag));
+```
+
+Exception: Keep temporaries when they improve readability for complex expressions or when the variable name documents intent.
+
+### Backend Security and Access Control
+
+When editing backend code, always maintain the existing security and access control patterns:
+
+- Use `AccessType` decorators consistently (`READ`, `WRITE`, `ADMIN`)
+- Check user permissions before data operations
+- Validate that users have access to the dataset/resource being modified
+- Never bypass access checks, even for "convenience"
+- Follow existing patterns in the plugin for permission validation
+
+### Flag Repeated Frontend Calls
+
+When editing frontend code, identify patterns where multiple backend calls could be consolidated. Flag these for discussion:
+
+```typescript
+// FLAG THIS: Multiple calls that could be a single batch endpoint
+await Promise.all(items.map(item => api.updateItem(item)));
+// Could this be a batch endpoint on the backend?
+```
+
+When you see such patterns, note them and suggest whether a new batch endpoint should be created.
+
+### Code Factorization
+
+- Look for repeated code patterns that should be extracted into utility functions
+- If you notice a pattern that looks like it should be handled by an existing package, mention it so we can search for appropriate libraries
+- Prefer composition over duplication
+- Extract common API patterns into reusable methods
+
+### Code Organization and Placement
+
+Place code in appropriate locations:
+
+- **API methods** should live in their respective API files (`GirderAPI.ts`, `AnnotationsAPI.ts`, etc.), not in Vue components
+- **Store state** should be organized into focused modules. `src/store/index.ts` is already large (2000+ lines); consider creating new store modules for distinct feature areas when implementing new categories of features.
+- **Utility functions** shared across components should go in `src/utils/`. Search for existing utility functions before creating new ones.
+
+**Bad:**
+```typescript
+// In a Vue component
+async checkDatasetNameExists(name: string) {
+  const response = await this.girderRest.get(`dataset/name/${name}`);
+  return response.data.exists;
+}
+```
+
+**Good:**
+```typescript
+// In GirderAPI.ts
+async checkDatasetNameExists(name: string): Promise<boolean> {
+  const response = await this.client.get(`dataset/name/${name}`);
+  return response.data.exists;
+}
+```
+
+### Naming Clarity
+
+Use clear, descriptive names that reflect current functionality:
+
+- Rename functions when their signature changes (e.g., if a function no longer uses `params`, remove it from the name)
+- Use specific variable names instead of generic ones (`propertyId` instead of `id` or `item`)
+- Boolean variables should indicate their purpose: prefer `isPublicSelected` or `canBePublic` over ambiguous names like `makePublic`
+
+**Bad:**
+```typescript
+function getPropertyFromParams(params: any) {  // params is no longer used
+  return this.getPropertyById(this.currentPropertyId);
+}
+
+const id = request.params.id;  // Which ID? Be specific
+```
+
+**Good:**
+```typescript
+function getProperty() {
+  return this.getPropertyById(this.currentPropertyId);
+}
+
+const propertyId = request.params.id;
+```
+
+### Avoid Redundant Checks and Code
+
+Don't add checks or code that duplicate existing behavior:
+
+- **Don't add validation** that will happen anyway (e.g., checking if an ID is valid before converting to ObjectId, when the conversion itself throws on invalid IDs)
+
+**Bad:**
+```python
+// Backend - redundant validation
+if not is_valid_object_id(id):
+    raise ValidationException("Invalid ID")
+obj_id = ObjectId(id)  # This already throws on invalid ID
+```
+
+### Backend Python Patterns
+
+When working with Girder/Python backend code:
+
+- Use `exc=True` when loading models to automatically raise exceptions if not found, rather than manual null checks
+- Be mindful of ObjectId conversions - some values are stored as strings in metadata but need conversion for queries
+
+**Bad:**
+```python
+prop = PropertyModel().load(property_id, user=user, level=AccessType.READ)
+if prop is None:
+    raise RestException("Property not found", 404)
+```
+
+**Good:**
+```python
+prop = PropertyModel().load(property_id, user=user, level=AccessType.READ, exc=True)
+```
+
+### Simplify Where Possible
+
+Look for opportunities to simplify code:
+
+- Replace verbose null checks with concise equivalents: `if (value === null || value === undefined)` can become `if (value == null)`
+- Consider whether streaming/complex implementations are necessary for typical use cases
+- Question whether custom implementations can be replaced with library functions (e.g., `orjson.dumps()` instead of manual JSON streaming)
+
 ## Testing
 
+### Frontend Tests
 - Unit tests use Vitest
 - Test files: `*.test.ts` alongside source
 - Run with `pnpm test`
+
+### Backend Tests (Girder Plugin)
+The AnnotationPlugin has Python tests using pytest via tox:
+
+```bash
+# Navigate to the plugin directory
+cd devops/girder/plugins/AnnotationPlugin
+
+# Run all tests
+tox
+
+# Recreate tox environment (after dependency changes)
+tox -r
+```
+
+**Test Structure:**
+- Tests location: `upenncontrast_annotation/test/`
+- `test_annotations.py` - Annotation model and API tests
+- `test_connections.py` - Connection model and helper tests
+- `test_export.py` - JSON and CSV export endpoint tests
+- `conftest.py` - Pytest fixtures
+- `girder_utilities.py` - Test helper for creating folders
+- `upenn_testing_utilities.py` - Sample data generators
+
+**Writing Backend Tests:**
+```python
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestMyFeature:
+    def testSomething(self, admin):
+        # admin fixture provides authenticated admin user
+        folder = utilities.createFolder(admin, "name", datasetMetadata)
+        # ... test logic
+```
+
+### Backend Linting
+
+The backend uses flake8 for Python linting with the default max line length of 79 characters:
+
+```bash
+# Install flake8 (macOS)
+brew install flake8
+
+# Run flake8 on backend code (uses default 79 char limit)
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation
+
+# Run flake8 on a specific file
+flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py
+```
+
+Note: Linting is also run as part of tox tests, so `tox` will catch linting errors.
 
 ## Important Notes
 
@@ -238,3 +466,23 @@ The chat system (`src/store/chat.ts`) integrates Claude for image analysis:
 - Chat history stored in browser IndexedDB
 - API key configured via `ANTHROPIC_API_KEY` environment variable
 - Chat UI in `ChatComponent.vue`
+
+## Allowed Tools
+
+The following commands are pre-approved for Claude Code to run without confirmation:
+
+```
+# Docker commands for backend development
+Bash(docker compose build:*)
+Bash(docker compose:*)
+Bash(curl:*)
+
+# Testing
+Bash(tox)
+Bash(tox:*)
+
+# Git operations
+Bash(git add:*)
+Bash(git commit:*)
+Bash(git push:*)
+```

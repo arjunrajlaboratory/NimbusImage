@@ -87,3 +87,39 @@ The tool demonstrates how to:
 - Reuse existing components (TagPicker)
 - Handle mouse interactions directly when appropriate
 - Follow existing patterns while simplifying them for simpler use cases
+
+## Featured Tools Configuration
+
+The file `public/config/featuredTools.json` configures which tools appear in the "Featured" section at the top of the tool selection dialog.
+
+```json
+{
+  "featuredTools": ["Blob", "Cellpose-SAM", "Piscis spot detection"]
+}
+```
+
+- Tools are displayed in the order listed in the array
+- Tool names must match exactly the `text` property of the tool in `templates.json` or the `interfaceName` label from docker workers
+- Invalid or duplicate names will produce console warnings in the browser developer tools
+- If the file doesn't exist or fails to load, no featured section is shown
+
+## Tool Descriptions
+
+Tools can have optional descriptions that appear below the tool name in the selection dialog. To add a description to a tool:
+
+1. **For submenu items in `templates.json`**: Add a `description` field to items in a `select` interface element:
+
+```json
+{
+  "text": "Click to tag",
+  "value": "tag_click",
+  "description": "Click annotations to add tags",
+  "meta": { ... }
+}
+```
+
+2. **For manual annotation tools**: Descriptions are defined in `src/store/index.ts` in the `availableToolShapes` array.
+
+3. **For docker worker tools**: The description comes from the `description` label in the worker's Docker image metadata.
+
+Descriptions should be brief (under 50 characters) and explain what the tool does in action-oriented language (e.g., "Click to select individual annotations" rather than "This tool selects annotations").

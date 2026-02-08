@@ -25,6 +25,7 @@ export interface IGirderUser extends IGirderBase {
   email: string;
   firstName: string;
   lastName: string;
+  admin?: boolean;
   meta?: {
     channelColors?: { [key: string]: string };
     [key: string]: any;
@@ -48,6 +49,7 @@ export interface IGirderFolder extends IGirderBase {
   parentId?: string;
   public?: boolean;
   notPublic?: boolean;
+  size?: number;
 }
 
 export interface IGirderFile extends IGirderBase {
