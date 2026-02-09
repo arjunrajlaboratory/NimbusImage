@@ -1617,6 +1617,16 @@ export class Main extends VuexModule {
   }
 
   @Action
+  async getCollectionDatasetCount(): Promise<number> {
+    const configurationId = this.selectedConfigurationId;
+    if (!configurationId) {
+      return 0;
+    }
+    const views = await this.api.findDatasetViews({ configurationId });
+    return new Set(views.map((v: IDatasetView) => v.datasetId)).size;
+  }
+
+  @Action
   @Debounce(100, { leading: false, trailing: true })
   async fetchHistory() {
     const datasetId = this.dataset?.id;

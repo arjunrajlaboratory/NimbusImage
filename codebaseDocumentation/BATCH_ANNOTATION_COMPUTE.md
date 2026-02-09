@@ -39,6 +39,8 @@ AnnotationWorkerMenu.compute()
 
 ### Cancellation
 
+The cancel function is provided to the caller via an `onCancel` callback that fires immediately when the batch action starts (before the dataset loop). This ensures the "Cancel All" button is wired up right away, avoiding a timing issue where `await`ing the full batch would delay setting the cancel function until after the batch finishes. The same pattern is used in `computePropertyBatch`.
+
 When the user clicks "Cancel All" during batch processing:
 1. The `isCancelled` flag is set to `true`.
 2. All already-submitted jobs are cancelled via `api.cancelJob()`.

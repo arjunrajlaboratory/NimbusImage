@@ -1313,6 +1313,7 @@ export class Annotations extends VuexModule {
     onBatchProgress,
     onJobProgress,
     onJobError,
+    onCancel,
     onComplete,
   }: {
     tool: IToolConfiguration;
@@ -1327,6 +1328,10 @@ export class Annotations extends VuexModule {
     }) => void;
     onJobProgress: (datasetId: string, progressInfo: IProgressInfo) => void;
     onJobError: (datasetId: string, errorInfo: IErrorInfoList) => void;
+    // Called immediately with the cancel function so the caller can wire up
+    // cancellation UI before the batch loop starts (avoids timing issue where
+    // awaiting the full batch would delay setting the cancel function).
+    onCancel: (cancel: () => void) => void;
     onComplete: (results: {
       succeeded: number;
       failed: number;
@@ -1339,7 +1344,7 @@ export class Annotations extends VuexModule {
     const submittedJobs: IAnnotationComputeJob[] = [];
     let isCancelled = false;
 
-    // Create the cancel function
+    // Create the cancel function and notify the caller immediately
     const cancel = () => {
       isCancelled = true;
       // Cancel all running jobs
@@ -1347,6 +1352,7 @@ export class Annotations extends VuexModule {
         main.api.cancelJob(job.jobId);
       }
     };
+    onCancel(cancel);
 
     // Get all dataset views for this configuration
     const datasetViews: IDatasetView[] = await main.api.findDatasetViews({

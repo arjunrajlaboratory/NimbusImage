@@ -200,7 +200,6 @@ import {
   IWorkerInterfaceValues,
   IErrorInfoList,
   MessageType,
-  IDatasetView,
 } from "@/store/model";
 import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
 import LayerSelect from "@/components/LayerSelect.vue";
@@ -402,37 +401,36 @@ export default class AnnotationWorkerMenu extends Vue {
       currentDatasetName: "Starting...",
     };
 
-    const { cancel } =
-      await this.annotationsStore.computeAnnotationsWithWorkerBatch({
-        tool: this.tool,
-        workerInterface: this.interfaceValues,
-        configurationId,
-        onBatchProgress: (status) => {
-          this.batchProgress = status;
-        },
-        onJobProgress: (_datasetId, progressInfo) => {
-          // Update progress info for current job display
-          Object.assign(this.progressInfo, progressInfo);
-        },
-        onJobError: (_datasetId, errorInfo) => {
-          // Accumulate errors from all jobs
-          this.errorInfo.errors.push(...errorInfo.errors);
-        },
-        onComplete: (results) => {
-          this.running = false;
-          this.batchCancelFunction = null;
-          // Consider it a success if at least one succeeded and none failed
-          this.previousRunStatus =
-            results.succeeded > 0 && results.failed === 0;
-          this.progressInfo = {};
-          // Keep batch progress visible for a moment so user can see final state
-          setTimeout(() => {
-            this.batchProgress = null;
-          }, 3000);
-        },
-      });
-
-    this.batchCancelFunction = cancel;
+    await this.annotationsStore.computeAnnotationsWithWorkerBatch({
+      tool: this.tool,
+      workerInterface: this.interfaceValues,
+      configurationId,
+      onBatchProgress: (status) => {
+        this.batchProgress = status;
+      },
+      onJobProgress: (_datasetId, progressInfo) => {
+        // Update progress info for current job display
+        Object.assign(this.progressInfo, progressInfo);
+      },
+      onJobError: (_datasetId, errorInfo) => {
+        // Accumulate errors from all jobs
+        this.errorInfo.errors.push(...errorInfo.errors);
+      },
+      onCancel: (cancel) => {
+        this.batchCancelFunction = cancel;
+      },
+      onComplete: (results) => {
+        this.running = false;
+        this.batchCancelFunction = null;
+        // Consider it a success if at least one succeeded and none failed
+        this.previousRunStatus = results.succeeded > 0 && results.failed === 0;
+        this.progressInfo = {};
+        // Keep batch progress visible for a moment so user can see final state
+        setTimeout(() => {
+          this.batchProgress = null;
+        }, 3000);
+      },
+    });
   }
 
   cancel() {
@@ -467,20 +465,10 @@ export default class AnnotationWorkerMenu extends Vue {
   }
 
   async fetchCollectionDatasetCount() {
-    const configurationId = this.store.selectedConfigurationId;
-    if (!configurationId) {
-      this.collectionDatasetCount = 0;
-      return;
-    }
-
     this.loadingDatasetCount = true;
     try {
-      const views: IDatasetView[] = await this.store.api.findDatasetViews({
-        configurationId,
-      });
-      // Get unique dataset IDs
-      const uniqueDatasetIds = new Set(views.map((v) => v.datasetId));
-      this.collectionDatasetCount = uniqueDatasetIds.size;
+      this.collectionDatasetCount =
+        await this.store.getCollectionDatasetCount();
     } catch (error) {
       logError("Failed to fetch collection dataset count:", error);
       this.collectionDatasetCount = 0;
