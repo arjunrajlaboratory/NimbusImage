@@ -1161,6 +1161,7 @@ function asDatasetView(data: AxiosResponse["data"]): IDatasetView {
     scales: data.scales || {},
     lastViewed: data.lastViewed,
     lastLocation: data.lastLocation || { xy: 0, z: 0, time: 0 },
+    _accessLevel: data._accessLevel,
   };
 }
 

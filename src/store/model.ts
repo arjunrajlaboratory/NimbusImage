@@ -415,6 +415,7 @@ export interface IDatasetViewBase {
 
 export interface IDatasetView extends IDatasetViewBase {
   readonly id: string;
+  readonly _accessLevel?: number;
 }
 
 // Access control types for sharing datasets

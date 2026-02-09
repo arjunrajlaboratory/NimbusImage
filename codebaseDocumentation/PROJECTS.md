@@ -385,6 +385,9 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 | DELETE | `/project/:id/collection/:collectionId` | Remove collection from project |
 | PUT | `/project/:id/status` | Update project status |
 | PUT | `/project/:id/metadata` | Update publication metadata |
+| POST | `/project/:id/share` | Share project with user (propagates to all resources) |
+| POST | `/project/:id/set_public` | Make project and all resources public/private |
+| GET | `/project/:id/access` | Get access list for a project (requires ADMIN) |
 
 ---
 
@@ -455,6 +458,107 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 
 ---
 
+## Permission Propagation
+
+### Overview
+
+When a project is shared with a user or made public, permissions must propagate to all
+resources the project references: datasets (folders), collections (configurations),
+and dataset views. This is handled by the model-layer propagation methods in
+`project.py`.
+
+### How It Works
+
+**Sharing with a user (`POST /project/:id/share`):**
+1. Caller must have ADMIN access on the project.
+2. Looks up the target user by email or username.
+3. Calls `setUserAccess(project, targetUser, level)` on the project itself.
+4. Calls `propagateUserAccess(project, targetUser, level)` which:
+   - Bulk-loads all datasets, collections, and dataset views via `_gatherAllResources()`
+   - Calls `setUserAccess()` on each resource with the same access level
+5. Level `-1` revokes access (removes user from ACLs on all resources).
+
+**Making public/private (`POST /project/:id/set_public`):**
+1. Caller must have ADMIN access on the project.
+2. Calls `setPublic(project, public)` on the project itself.
+3. Calls `propagatePublic(project, public)` which:
+   - Bulk-loads all resources via `_gatherAllResources()`
+   - Calls `setPublic()` on each dataset, collection, and dataset view
+
+**Adding a resource to an already-shared project:**
+- `addDataset` → calls `propagateAccessToDataset()` which applies the project's full
+  user ACL to the new dataset, its dataset views, and their configurations.
+- `addCollection` → calls `propagateAccessToCollection()` similarly.
+
+### Resource Discovery (`_gatherAllResources`)
+
+The `_gatherAllResources()` method on the Project model uses bulk `$in` queries to
+efficiently load all referenced resources:
+
+1. Collects dataset IDs and collection IDs from `project.meta`
+2. Bulk-loads datasets (Folders) and collections (CollectionModel)
+3. Finds all DatasetViews linked to those datasets or collections via `$or` query
+4. Discovers additional configurations from DatasetViews not already in the project's
+   collection list (e.g., a dataset may have views with configurations not directly
+   added to the project)
+
+### Public vs Shared Access and Dataset Views
+
+**Important distinction:** `setPublic()` grants READ-only access. `setUserAccess()`
+grants whatever level is specified (READ, WRITE, or ADMIN).
+
+This matters for dataset views because the `PUT /dataset_view/:id` endpoint (used to
+save lastViewed, lastLocation, contrast overrides, etc.) requires **WRITE** access.
+
+**How different access paths interact with dataset view updates:**
+
+| Access Path | Access Level | Can view dataset? | Can update dataset view? |
+|---|---|---|---|
+| Anonymous (public dataset) | READ | Yes | No (skipped: `isLoggedIn` is false) |
+| Logged-in via `set_public` only | READ | Yes | No (skipped: `canEditDatasetView` is false) |
+| Logged-in via `share` at READ | READ | Yes | No (skipped: `canEditDatasetView` is false) |
+| Logged-in via `share` at WRITE | WRITE | Yes | Yes |
+| Owner / ADMIN | ADMIN | Yes | Yes |
+
+The frontend guards all `updateDatasetView()` calls with `canEditDatasetView`, which
+checks both `isLoggedIn` and `_accessLevel >= 1` (WRITE). This extends the existing
+anonymous-user pattern to also cover logged-in users who only have READ access. Without
+this guard, every logged-in read-only user would hit a 403 on the PUT call.
+
+**Why the dataset-level `set_public` never hit this problem:** In practice, logged-in
+users who accessed public datasets were typically also explicitly shared via the
+`share` endpoint (which grants WRITE). The `set_public` endpoint was primarily used
+for anonymous/unauthenticated access, where the `isLoggedIn` guard already skipped
+the PUT. Project-level `set_public` is the first case where a logged-in user may have
+only READ access without an explicit share.
+
+### Key Files
+
+| File | Role |
+|------|------|
+| `server/models/project.py` | `propagateUserAccess()`, `propagatePublic()`, `propagateAccessToDataset()`, `propagateAccessToCollection()`, `_gatherAllResources()` |
+| `server/api/project.py` | `share()`, `setPublic()`, `getAccess()` endpoints |
+| `src/store/index.ts` | `canEditDatasetView` getter, guards on `updateDatasetView()` calls |
+| `src/store/model.ts` | `_accessLevel` field on `IDatasetView` |
+| `src/store/GirderAPI.ts` | `asDatasetView()` preserves `_accessLevel` from API response |
+
+### Backend Tests
+
+Permission propagation is tested in `test_project.py` under `TestProjectPermissionPropagation`:
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_share_project_propagates_to_dataset` | Sharing a project grants access to its datasets, configs, and views |
+| `test_share_project_propagates_to_collection` | Sharing a project grants access to its collections |
+| `test_revoke_project_access_revokes_resources` | Revoking project access removes access from all resources |
+| `test_add_dataset_syncs_existing_acl` | Adding a dataset to an already-shared project syncs the project's ACL |
+| `test_propagate_public` | Making a project public/private propagates to all resources |
+
+Note: Tests use `createPrivateFolder()` (not `createFolder()`) so datasets start with
+restricted access and permission checks are meaningful.
+
+---
+
 ## Future Work
 
 - [x] Project detail view (`/project/:projectId`)
@@ -466,5 +570,5 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 - [x] Dataset/collection filtering (search bars)
 - [x] Unified dataset view (show collection datasets with indicator chips)
 - [ ] Zenodo export integration
-- [ ] Project sharing/permissions
+- [x] Project sharing/permissions (share, set_public, access list endpoints + propagation)
 - [ ] Bulk operations (add multiple datasets/collections at once)
