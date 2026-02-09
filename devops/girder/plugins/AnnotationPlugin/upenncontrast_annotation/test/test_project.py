@@ -418,9 +418,13 @@ class TestProject:
 
 def createDatasetWithView(creator):
     """Create a dataset folder, configuration, and
-    dataset view for testing."""
+    dataset view for testing.
+
+    Uses a private parent folder so that only the creator
+    has access by default.
+    """
     unique_name = f"test_dataset_{random.random()}"
-    dataset = utilities.createFolder(
+    dataset = utilities.createPrivateFolder(
         creator, unique_name,
         upenn_utilities.datasetMetadata
     )
@@ -675,7 +679,8 @@ class TestProjectPermissionPropagation:
         project_model.propagatePublic(proj, False)
 
         # Verify resources are no longer public
-        assert Folder().load(
-            dataset['_id'], user=None,
-            level=AccessType.READ
-        ) is None
+        with pytest.raises(AccessException):
+            Folder().load(
+                dataset['_id'], user=None,
+                level=AccessType.READ
+            )
