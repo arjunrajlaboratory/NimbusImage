@@ -39,7 +39,7 @@
                 :disabled="publicLoading"
                 hide-details
                 dense
-                @change="togglePublic"
+                @change="confirmTogglePublic"
               />
             </v-col>
           </v-row>
@@ -89,7 +89,7 @@
                           hide-details
                           :loading="userLoading === user.id"
                           :disabled="userLoading === user.id"
-                          @change="updateUserAccess(user, $event)"
+                          @change="confirmUpdateUserAccess(user, $event)"
                         />
                       </td>
                       <td class="text-center">
@@ -158,7 +158,7 @@
                     color="primary"
                     :loading="addUserLoading"
                     :disabled="!newUserEmail || addUserLoading"
-                    @click="addUser"
+                    @click="confirmAddUser"
                   >
                     <v-icon left small>mdi-plus</v-icon>
                     Add
@@ -175,20 +175,28 @@
       </v-card-actions>
     </v-card>
 
-    <!-- Confirmation Dialog for Remove User -->
-    <v-dialog v-model="confirmDialog" max-width="400px">
+    <!-- Confirmation Dialog -->
+    <v-dialog v-model="confirmDialog" max-width="450px">
       <v-card>
-        <v-card-title class="text-h6">Remove Access</v-card-title>
+        <v-card-title class="text-h6">{{ confirmTitle }}</v-card-title>
         <v-card-text>
-          Are you sure you want to remove access for
-          <strong>{{ userToRemove?.name || userToRemove?.login }}</strong
-          >? This will also remove their access to all datasets and collections
-          in this project.
+          <div>{{ confirmMessage }}</div>
+          <div class="mt-3 text-body-2">
+            This will affect
+            <strong>{{ datasetCount }}</strong>
+            {{ datasetCount === 1 ? "dataset" : "datasets" }}
+            and
+            <strong>{{ collectionCount }}</strong>
+            {{ collectionCount === 1 ? "collection" : "collections" }}
+            in this project, along with all associated configurations and views.
+          </div>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn text @click="confirmDialog = false">Cancel</v-btn>
-          <v-btn color="error" text @click="removeUser">Remove</v-btn>
+          <v-btn :color="confirmColor" text @click="executeConfirmedAction">
+            {{ confirmActionLabel }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -224,12 +232,23 @@ export default class ShareProject extends Vue {
   newUserAccessLevel = 0;
 
   confirmDialog = false;
+  confirmTitle = "";
+  confirmMessage = "";
+  confirmColor = "primary";
+  confirmActionLabel = "Confirm";
+  pendingAction: (() => Promise<void>) | null = null;
+
   userToRemove: IDatasetAccessUser | null = null;
 
   readonly accessLevelItems = [
     { text: "Read", value: 0 },
     { text: "Write", value: 1 },
   ];
+
+  readonly accessLevelLabels: Record<number, string> = {
+    0: "Read",
+    1: "Write",
+  };
 
   @Watch("value")
   onValueChanged(val: boolean) {
@@ -274,8 +293,67 @@ export default class ShareProject extends Vue {
     }
   }
 
+  get datasetCount(): number {
+    return this.project?.meta.datasets.length ?? 0;
+  }
+
+  get collectionCount(): number {
+    return this.project?.meta.collections.length ?? 0;
+  }
+
   close() {
     this.dialog = false;
+  }
+
+  // --- Confirmation helpers ---
+
+  showConfirm(
+    title: string,
+    message: string,
+    actionLabel: string,
+    color: string,
+    action: () => Promise<void>,
+  ) {
+    this.confirmTitle = title;
+    this.confirmMessage = message;
+    this.confirmActionLabel = actionLabel;
+    this.confirmColor = color;
+    this.pendingAction = action;
+    this.confirmDialog = true;
+  }
+
+  async executeConfirmedAction() {
+    this.confirmDialog = false;
+    if (this.pendingAction) {
+      await this.pendingAction();
+      this.pendingAction = null;
+    }
+  }
+
+  // --- Public toggle ---
+
+  confirmTogglePublic(newValue: boolean) {
+    if (newValue) {
+      this.showConfirm(
+        "Make Project Public",
+        "This will grant read-only access to everyone, including " +
+          "anonymous users who are not logged in.",
+        "Make Public",
+        "primary",
+        () => this.togglePublic(true),
+      );
+    } else {
+      this.showConfirm(
+        "Make Project Private",
+        "This will remove public access. Only users explicitly shared " +
+          "on this project will retain access.",
+        "Make Private",
+        "warning",
+        () => this.togglePublic(false),
+      );
+    }
+    // Revert the checkbox until confirmed
+    this.isPublic = !newValue;
   }
 
   async togglePublic(newValue: boolean) {
@@ -289,10 +367,23 @@ export default class ShareProject extends Vue {
       logError("Failed to toggle public access", error);
       this.errorString = "Failed to update public access";
       this.showError = true;
-      this.isPublic = !newValue;
     } finally {
       this.publicLoading = false;
     }
+  }
+
+  // --- Update user access level ---
+
+  confirmUpdateUserAccess(user: IDatasetAccessUser, newLevel: number) {
+    const levelLabel = this.accessLevelLabels[newLevel] ?? "Unknown";
+    this.showConfirm(
+      "Change Access Level",
+      `Change access for ${user.name || user.login} to ${levelLabel}? ` +
+        "This will update their permissions on all resources in this project.",
+      "Change",
+      "primary",
+      () => this.updateUserAccess(user, newLevel),
+    );
   }
 
   async updateUserAccess(user: IDatasetAccessUser, newLevel: number) {
@@ -326,15 +417,24 @@ export default class ShareProject extends Vue {
     }
   }
 
+  // --- Remove user ---
+
   confirmRemoveUser(user: IDatasetAccessUser) {
     this.userToRemove = user;
-    this.confirmDialog = true;
+    this.showConfirm(
+      "Remove Access",
+      `Remove access for ${user.name || user.login}? ` +
+        "This will also remove their access to all datasets and " +
+        "collections in this project.",
+      "Remove",
+      "error",
+      () => this.removeUser(),
+    );
   }
 
   async removeUser() {
     if (!this.userToRemove || !this.project) return;
     const user = this.userToRemove;
-    this.confirmDialog = false;
     this.userLoading = user.id;
     this.showError = false;
     try {
@@ -360,6 +460,23 @@ export default class ShareProject extends Vue {
       this.userLoading = null;
       this.userToRemove = null;
     }
+  }
+
+  // --- Add user ---
+
+  confirmAddUser() {
+    if (!this.newUserEmail) return;
+    const levelLabel =
+      this.accessLevelLabels[this.newUserAccessLevel] ?? "Unknown";
+    this.showConfirm(
+      "Share Project",
+      `Grant ${levelLabel} access to "${this.newUserEmail}"? ` +
+        "This will give them access to all datasets and collections " +
+        "in this project.",
+      "Share",
+      "primary",
+      () => this.addUser(),
+    );
   }
 
   async addUser() {

@@ -325,6 +325,7 @@ get allDatasetItems(): IUnifiedDatasetItem[] {
 | `src/components/AddCollectionToProjectDialog.vue` | Add collection from ConfigurationInfo |
 | `src/components/AddDatasetToProjectDialog.vue` | File browser to add datasets (in ProjectInfo) |
 | `src/components/AddCollectionToProjectFilterDialog.vue` | Filterable list to add collections (in ProjectInfo) |
+| `src/components/ShareProject.vue` | Share project dialog with confirmation dialogs |
 
 ### Frontend - Integration Points
 
@@ -455,6 +456,33 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 ### Add to Project (from other pages)
 - DatasetInfo: "Add Dataset to Project..." button → dialog to select/create project
 - ConfigurationInfo: "Add Collection to Project..." button → dialog to select/create project
+
+### Share Project Dialog (`ShareProject.vue`)
+
+Opened from ProjectInfo. Allows the project owner to manage access:
+
+- **Public toggle**: Checkbox to make public (read-only for everyone including anonymous)
+- **Current access table**: Lists users with access level (Read/Write) and remove button
+  - Owner shown as "Admin (Owner)" with a lock icon (cannot be removed)
+  - Access level can be changed via dropdown
+- **Add user form**: Username/email field + access level selector + Add button
+
+**Confirmation dialogs**: Every sharing action shows a confirmation dialog before
+executing, because all actions propagate to every dataset, collection, configuration,
+and dataset view in the project. The dialog displays:
+- Action-specific message explaining what will happen
+- Resource counts: "This will affect X datasets and Y collections..."
+
+The confirmation is implemented with a single reusable `v-dialog` driven by a
+`showConfirm()` helper that stores a pending action callback, executed on confirm.
+
+| Action | Confirm Title | Button Color |
+|--------|--------------|--------------|
+| Add user | "Share Project" | primary |
+| Change access level | "Change Access Level" | primary |
+| Remove user | "Remove Access" | error |
+| Make public | "Make Project Public" | primary |
+| Make private | "Make Project Private" | warning |
 
 ---
 
