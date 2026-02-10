@@ -409,6 +409,8 @@
       <add-dataset-to-project-dialog
         v-if="project"
         :project="project"
+        :is-shared="isProjectShared"
+        :is-public="isProjectPublic"
         @added="onDatasetAdded"
         @done="addDatasetDialog = false"
       />
@@ -419,6 +421,8 @@
       <add-collection-to-project-filter-dialog
         v-if="project"
         :project="project"
+        :is-shared="isProjectShared"
+        :is-public="isProjectPublic"
         @added="onCollectionAdded"
         @done="addCollectionDialog = false"
       />
@@ -436,11 +440,14 @@
 
 <script lang="ts">
 import { Vue, Component, Watch } from "vue-property-decorator";
+import { isAxiosError } from "axios";
 import store from "@/store";
 import projects from "@/store/projects";
 import girderResources from "@/store/girderResources";
+import { logError } from "@/utils/log";
 import {
   IProject,
+  IProjectAccessList,
   IDatasetView,
   TProjectStatus,
   getProjectStatusColor,
@@ -513,6 +520,9 @@ export default class ProjectInfo extends Vue {
   datasetFilter = "";
   collectionFilter = "";
 
+  // Access info
+  projectAccessInfo: IProjectAccessList | null = null;
+
   // Caches
   datasetInfoCache: { [datasetId: string]: IGirderFolder } = {};
   collectionInfoCache: { [collectionId: string]: IGirderItem } = {};
@@ -554,6 +564,16 @@ export default class ProjectInfo extends Vue {
 
   get project(): IProject | null {
     return this.projects.currentProject;
+  }
+
+  get isProjectPublic(): boolean {
+    return this.projectAccessInfo?.public ?? false;
+  }
+
+  get isProjectShared(): boolean {
+    if (!this.projectAccessInfo) return false;
+    // Shared if there are more than 1 user (the owner)
+    return this.projectAccessInfo.users.length > 1;
   }
 
   get statusColor(): string {
@@ -718,6 +738,13 @@ export default class ProjectInfo extends Vue {
     this.initializeFromProject();
   }
 
+  @Watch("shareDialog")
+  onShareDialogChange(open: boolean) {
+    if (!open) {
+      this.fetchAccessInfo();
+    }
+  }
+
   initializeFromProject() {
     if (this.project) {
       this.nameInput = this.project.name;
@@ -725,6 +752,23 @@ export default class ProjectInfo extends Vue {
       this.initializeMetadata();
       this.fetchDatasetInfo();
       this.fetchCollectionInfo();
+      this.fetchAccessInfo();
+    }
+  }
+
+  async fetchAccessInfo() {
+    if (!this.project) return;
+    try {
+      this.projectAccessInfo = await this.store.projectsAPI.getProjectAccess(
+        this.project.id,
+      );
+    } catch (error) {
+      this.projectAccessInfo = null;
+      if (isAxiosError(error) && error.response?.status === 403) {
+        // User doesn't have ADMIN access; expected
+        return;
+      }
+      logError("Failed to fetch project access info", error);
     }
   }
 

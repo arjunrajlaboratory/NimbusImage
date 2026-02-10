@@ -1,4 +1,3 @@
-import { isAxiosError } from "axios";
 import { RestClientInstance } from "@/girder";
 import { IProject, IProjectAccessList } from "./model";
 
@@ -210,22 +209,15 @@ export default class ProjectsAPI {
     projectId: string,
     userMailOrUsername: string,
     accessType: number,
-  ): Promise<boolean | string> {
-    try {
-      const response = await this.client.post(
-        `project/${projectId}/share`,
-        null,
-        {
-          params: { userMailOrUsername, accessType },
-        },
-      );
-      return response.data as boolean;
-    } catch (error) {
-      if (isAxiosError(error) && error.response?.data?.message) {
-        return error.response.data.message;
-      }
-      throw error;
-    }
+  ): Promise<boolean> {
+    const response = await this.client.post(
+      `project/${projectId}/share`,
+      null,
+      {
+        params: { userMailOrUsername, accessType },
+      },
+    );
+    return response.data;
   }
 
   /**

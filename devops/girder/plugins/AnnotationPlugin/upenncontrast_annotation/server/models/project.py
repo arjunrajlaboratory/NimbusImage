@@ -444,6 +444,62 @@ class Project(ProxiedModel):
                     doc, target, level, save=True
                 )
 
+    def _gatherDatasetResources(self, dataset):
+        """Load a dataset's associated views and configs.
+
+        Returns (dataset_views, configs) where:
+        - dataset_views: list of DatasetView documents
+        - configs: list of Collection documents
+        """
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+        from ..models.collection import (
+            Collection as CollectionModel
+        )
+
+        dvModel = DatasetViewModel()
+        dataset_views = list(dvModel.find(
+            {'datasetId': dataset['_id']}
+        ))
+        config_ids = {
+            dv['configurationId']
+            for dv in dataset_views
+        }
+        configs = []
+        if config_ids:
+            collModel = CollectionModel()
+            configs = list(collModel.find(
+                {'_id': {'$in': list(config_ids)}}
+            ))
+        return dataset_views, configs
+
+    def _gatherCollectionResources(self, collection):
+        """Load a collection's associated views and
+        datasets.
+
+        Returns (dataset_views, datasets) where:
+        - dataset_views: list of DatasetView documents
+        - datasets: list of Folder documents
+        """
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+
+        dvModel = DatasetViewModel()
+        dataset_views = list(dvModel.find(
+            {'configurationId': collection['_id']}
+        ))
+        dataset_ids = {
+            dv['datasetId'] for dv in dataset_views
+        }
+        datasets = []
+        if dataset_ids:
+            datasets = list(Folder().find(
+                {'_id': {'$in': list(dataset_ids)}}
+            ))
+        return dataset_views, datasets
+
     def propagateAccessToDataset(self, project, dataset):
         """Propagate project ACL to a dataset and its
         associated views/configs.
@@ -458,28 +514,18 @@ class Project(ProxiedModel):
             Collection as CollectionModel
         )
 
+        dataset_views, configs = (
+            self._gatherDatasetResources(dataset)
+        )
         self.propagateAllUsersAccess(
             project, dataset, Folder()
         )
-        dvModel = DatasetViewModel()
-        dataset_views = list(dvModel.find(
-            {'datasetId': dataset['_id']}
-        ))
         self.propagateAllUsersAccess(
-            project, dataset_views, dvModel
+            project, dataset_views, DatasetViewModel()
         )
-        config_ids = {
-            dv['configurationId']
-            for dv in dataset_views
-        }
-        if config_ids:
-            collModel = CollectionModel()
-            configs = list(collModel.find(
-                {'_id': {'$in': list(config_ids)}}
-            ))
-            self.propagateAllUsersAccess(
-                project, configs, collModel
-            )
+        self.propagateAllUsersAccess(
+            project, configs, CollectionModel()
+        )
 
     def propagateAccessToCollection(
         self, project, collection
@@ -497,23 +543,75 @@ class Project(ProxiedModel):
             Collection as CollectionModel
         )
 
+        dataset_views, datasets = (
+            self._gatherCollectionResources(collection)
+        )
         self.propagateAllUsersAccess(
             project, collection, CollectionModel()
         )
-        dvModel = DatasetViewModel()
-        dataset_views = list(dvModel.find(
-            {'configurationId': collection['_id']}
-        ))
         self.propagateAllUsersAccess(
-            project, dataset_views, dvModel
+            project, dataset_views, DatasetViewModel()
         )
-        dataset_ids = {
-            dv['datasetId'] for dv in dataset_views
-        }
-        if dataset_ids:
-            datasets = list(Folder().find(
-                {'_id': {'$in': list(dataset_ids)}}
-            ))
-            self.propagateAllUsersAccess(
-                project, datasets, Folder()
-            )
+        self.propagateAllUsersAccess(
+            project, datasets, Folder()
+        )
+
+    def propagatePublicToDataset(self, project, dataset):
+        """Propagate project public flag to a dataset and
+        its associated views/configs.
+
+        :param project: The project document.
+        :param dataset: The dataset (Folder) document.
+        """
+        if not project.get('public', False):
+            return
+
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+        from ..models.collection import (
+            Collection as CollectionModel
+        )
+
+        dataset_views, configs = (
+            self._gatherDatasetResources(dataset)
+        )
+        Folder().setPublic(dataset, True, save=True)
+        dvModel = DatasetViewModel()
+        for dv in dataset_views:
+            dvModel.setPublic(dv, True, save=True)
+        collModel = CollectionModel()
+        for c in configs:
+            collModel.setPublic(c, True, save=True)
+
+    def propagatePublicToCollection(
+        self, project, collection
+    ):
+        """Propagate project public flag to a collection
+        and its associated views/datasets.
+
+        :param project: The project document.
+        :param collection: The Collection document.
+        """
+        if not project.get('public', False):
+            return
+
+        from ..models.datasetView import (
+            DatasetView as DatasetViewModel
+        )
+        from ..models.collection import (
+            Collection as CollectionModel
+        )
+
+        dataset_views, datasets = (
+            self._gatherCollectionResources(collection)
+        )
+        CollectionModel().setPublic(
+            collection, True, save=True
+        )
+        dvModel = DatasetViewModel()
+        for dv in dataset_views:
+            dvModel.setPublic(dv, True, save=True)
+        folderModel = Folder()
+        for ds in datasets:
+            folderModel.setPublic(ds, True, save=True)

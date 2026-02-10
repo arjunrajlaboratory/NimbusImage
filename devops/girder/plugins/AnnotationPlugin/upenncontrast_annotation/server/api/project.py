@@ -165,6 +165,9 @@ class Project(Resource):
         self._projectModel.propagateAccessToDataset(
             project, dataset
         )
+        self._projectModel.propagatePublicToDataset(
+            project, dataset
+        )
         return result
 
     @access.user
@@ -198,6 +201,9 @@ class Project(Resource):
             project, collection['_id']
         )
         self._projectModel.propagateAccessToCollection(
+            project, collection
+        )
+        self._projectModel.propagatePublicToCollection(
             project, collection
         )
         return result

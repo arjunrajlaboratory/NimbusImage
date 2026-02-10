@@ -205,6 +205,7 @@
 
 <script lang="ts">
 import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+import { isAxiosError } from "axios";
 import store from "@/store";
 import { logError } from "@/utils/log";
 import { IDatasetAccessUser, IProject } from "@/store/model";
@@ -330,6 +331,16 @@ export default class ShareProject extends Vue {
     }
   }
 
+  shareErrorMessage(error: unknown): string {
+    if (
+      isAxiosError(error) &&
+      error.response?.data?.message === "badEmailOrUsername"
+    ) {
+      return "Unknown user. Please check the username or email.";
+    }
+    return "An error occurred while updating sharing";
+  }
+
   // --- Public toggle ---
 
   confirmTogglePublic(newValue: boolean) {
@@ -391,26 +402,18 @@ export default class ShareProject extends Vue {
     this.userLoading = user.id;
     this.showError = false;
     try {
-      const response = await this.store.projectsAPI.shareProject(
+      await this.store.projectsAPI.shareProject(
         this.project.id,
         user.login,
         newLevel,
       );
-      if (typeof response === "string") {
-        this.errorString =
-          response === "badEmailOrUsername"
-            ? "User not found"
-            : "An error occurred";
-        this.showError = true;
-      } else {
-        const userIndex = this.users.findIndex((u) => u.id === user.id);
-        if (userIndex >= 0) {
-          this.users[userIndex].level = newLevel as 0 | 1 | 2;
-        }
+      const userIndex = this.users.findIndex((u) => u.id === user.id);
+      if (userIndex >= 0) {
+        this.users[userIndex].level = newLevel as 0 | 1 | 2;
       }
     } catch (error) {
       logError("Failed to update user access", error);
-      this.errorString = "Failed to update user access";
+      this.errorString = this.shareErrorMessage(error);
       this.showError = true;
     } finally {
       this.userLoading = null;
@@ -438,23 +441,15 @@ export default class ShareProject extends Vue {
     this.userLoading = user.id;
     this.showError = false;
     try {
-      const response = await this.store.projectsAPI.shareProject(
+      await this.store.projectsAPI.shareProject(
         this.project.id,
         user.login,
         -1,
       );
-      if (typeof response === "string") {
-        this.errorString =
-          response === "badEmailOrUsername"
-            ? "User not found"
-            : "An error occurred";
-        this.showError = true;
-      } else {
-        this.users = this.users.filter((u) => u.id !== user.id);
-      }
+      this.users = this.users.filter((u) => u.id !== user.id);
     } catch (error) {
       logError("Failed to remove user access", error);
-      this.errorString = "Failed to remove user access";
+      this.errorString = this.shareErrorMessage(error);
       this.showError = true;
     } finally {
       this.userLoading = null;
@@ -484,27 +479,17 @@ export default class ShareProject extends Vue {
     this.addUserLoading = true;
     this.showError = false;
     try {
-      const response = await this.store.projectsAPI.shareProject(
+      await this.store.projectsAPI.shareProject(
         this.project.id,
         this.newUserEmail,
         this.newUserAccessLevel,
       );
-      if (typeof response === "string") {
-        this.errorString =
-          response === "badEmailOrUsername"
-            ? "Unknown user. Please check the username or email."
-            : "An error occurred";
-        this.showError = true;
-      } else {
-        if (this.project) {
-          await this.fetchAccessInfo(this.project.id);
-        }
-        this.newUserEmail = "";
-        this.newUserAccessLevel = 0;
-      }
+      await this.fetchAccessInfo(this.project.id);
+      this.newUserEmail = "";
+      this.newUserAccessLevel = 0;
     } catch (error) {
       logError("Failed to add user", error);
-      this.errorString = "Failed to add user";
+      this.errorString = this.shareErrorMessage(error);
       this.showError = true;
     } finally {
       this.addUserLoading = false;

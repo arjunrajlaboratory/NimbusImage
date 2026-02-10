@@ -684,3 +684,130 @@ class TestProjectPermissionPropagation:
                 dataset['_id'], user=None,
                 level=AccessType.READ
             )
+
+    def test_add_dataset_to_public_project(
+        self, admin
+    ):
+        """Adding a dataset to a public project makes
+        the dataset and its views/configs public."""
+        project_model = Project()
+
+        # Create a public project
+        proj = project_model.createProject(
+            name="Add DS to Public", creator=admin
+        )
+        project_model.setPublic(
+            proj, True, save=True
+        )
+
+        # Create a private dataset with view
+        dataset, config, dv = createDatasetWithView(
+            admin
+        )
+
+        # Dataset should not be publicly accessible
+        with pytest.raises(AccessException):
+            Folder().load(
+                dataset['_id'], user=None,
+                level=AccessType.READ
+            )
+
+        # Add dataset to the public project
+        proj = project_model.addDataset(
+            proj, str(dataset['_id'])
+        )
+        project_model.propagatePublicToDataset(
+            proj, dataset
+        )
+
+        # Dataset, view, and config should now be public
+        assert Folder().load(
+            dataset['_id'], user=None,
+            level=AccessType.READ
+        ) is not None
+        assert DatasetViewModel().load(
+            dv['_id'], user=None,
+            level=AccessType.READ
+        ) is not None
+        assert Collection().load(
+            config['_id'], user=None,
+            level=AccessType.READ
+        ) is not None
+
+    def test_add_collection_to_public_project(
+        self, admin
+    ):
+        """Adding a collection to a public project makes
+        the collection and its views/datasets public."""
+        project_model = Project()
+
+        # Create a public project
+        proj = project_model.createProject(
+            name="Add Coll to Public", creator=admin
+        )
+        project_model.setPublic(
+            proj, True, save=True
+        )
+
+        # Create a private dataset with view
+        dataset, config, dv = createDatasetWithView(
+            admin
+        )
+
+        # Collection should not be publicly accessible
+        with pytest.raises(AccessException):
+            Collection().load(
+                config['_id'], user=None,
+                level=AccessType.READ
+            )
+
+        # Add collection to the public project
+        proj = project_model.addCollection(
+            proj, str(config['_id'])
+        )
+        project_model.propagatePublicToCollection(
+            proj, config
+        )
+
+        # Collection, view, and dataset should be public
+        assert Collection().load(
+            config['_id'], user=None,
+            level=AccessType.READ
+        ) is not None
+        assert DatasetViewModel().load(
+            dv['_id'], user=None,
+            level=AccessType.READ
+        ) is not None
+        assert Folder().load(
+            dataset['_id'], user=None,
+            level=AccessType.READ
+        ) is not None
+
+    def test_add_dataset_to_private_project_no_op(
+        self, admin
+    ):
+        """Adding a dataset to a private project does
+        not change its public flag."""
+        project_model = Project()
+
+        proj = project_model.createProject(
+            name="Add DS to Private", creator=admin
+        )
+
+        dataset, config, dv = createDatasetWithView(
+            admin
+        )
+
+        proj = project_model.addDataset(
+            proj, str(dataset['_id'])
+        )
+        project_model.propagatePublicToDataset(
+            proj, dataset
+        )
+
+        # Dataset should still not be public
+        with pytest.raises(AccessException):
+            Folder().load(
+                dataset['_id'], user=None,
+                level=AccessType.READ
+            )
