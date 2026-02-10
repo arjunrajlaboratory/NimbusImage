@@ -32,6 +32,9 @@ class DatasetView(Resource):
         self.route("POST", ("share",), self.share)
         self.route("POST", ("set_public",), self.setDatasetPublic)
         self.route("GET", ("access", ":datasetId"), self.getDatasetAccess)
+        self.route(
+            "GET", ("configuration_access", ":configurationId"),
+            self.getConfigurationAccess)
         # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
         self.route("POST", ("map",), self.map)
 
@@ -412,6 +415,99 @@ class DatasetView(Resource):
             ],
             'groups': accessList.get('groups', []),
             'configurations': configurations
+        }
+
+    @access.user
+    @autoDescribeRoute(
+        Description(
+            "Get access list for a configuration and its "
+            "associated datasets"
+        )
+        .notes("""
+            Returns the current access list for a configuration,
+            including:
+            - List of users with their access levels
+            - Public status of the configuration
+            - Associated datasets with their public status
+
+            Requires ADMIN access to the configuration.
+        """)
+        .modelParam(
+            'configurationId',
+            'The configuration ID',
+            model=CollectionModel,
+            level=AccessType.ADMIN,
+            destName='configuration',
+            paramType='path',
+        )
+        .errorResponse('ID was invalid.')
+        .errorResponse(
+            'Admin access was denied for the configuration.',
+            403,
+        )
+    )
+    def getConfigurationAccess(self, configuration):
+        """Return the access list for a configuration and its
+        datasets."""
+        accessList = CollectionModel().getFullAccessList(
+            configuration
+        )
+
+        # Bulk fetch emails for all users
+        userIds = [
+            u['id'] for u in accessList.get('users', [])
+        ]
+        userEmails = {}
+        if userIds:
+            users = list(User().find(
+                {'_id': {'$in': userIds}},
+                fields=['email']
+            ))
+            userEmails = {
+                u['_id']: u.get('email', '')
+                for u in users
+            }
+
+        # Find all DatasetViews for this configuration
+        datasetViews = list(self._datasetViewModel.find({
+            'configurationId': configuration['_id']
+        }))
+
+        # Get unique dataset IDs
+        datasetIds = {
+            dv['datasetId'] for dv in datasetViews
+        }
+
+        # Bulk load all datasets at once
+        datasets = []
+        if datasetIds:
+            folders = list(Folder().find({
+                '_id': {'$in': list(datasetIds)}
+            }))
+            datasets = [
+                {
+                    'id': str(f['_id']),
+                    'name': f.get('name', ''),
+                    'public': f.get('public', False),
+                }
+                for f in folders
+            ]
+
+        return {
+            'configurationId': str(configuration['_id']),
+            'public': configuration.get('public', False),
+            'users': [
+                {
+                    'id': str(u['id']),
+                    'login': u.get('login', ''),
+                    'name': u.get('name', ''),
+                    'email': userEmails.get(u['id'], ''),
+                    'level': u['level'],
+                }
+                for u in accessList.get('users', [])
+            ],
+            'groups': accessList.get('groups', []),
+            'datasets': datasets,
         }
 
     @access.public

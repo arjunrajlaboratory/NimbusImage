@@ -38,6 +38,11 @@
       @keyup.enter="onNameEnter"
     />
     <v-textarea :value="description" label="Description" readonly />
+    <sharing-status-display
+      :loading="sharingLoading"
+      :is-public="sharingIsPublic"
+      :access-users="sharingUsers"
+    />
     <v-card class="mb-4">
       <v-card-title> Datasets </v-card-title>
       <v-card-text>
@@ -65,8 +70,16 @@
         <v-list>
           <v-list-item v-for="d in datasetViewItems" :key="d.datasetView.id">
             <v-list-item-content>
-              <v-list-item-title>
+              <v-list-item-title class="d-flex align-center">
                 {{ d.datasetInfo ? d.datasetInfo.name : "Unnamed dataset" }}
+                <sharing-status-icon
+                  v-if="getDatasetSharingInfo(d.datasetView.datasetId)"
+                  :is-public="
+                    getDatasetSharingInfo(d.datasetView.datasetId)?.public ??
+                    false
+                  "
+                  :users="sharingUsers || []"
+                />
               </v-list-item-title>
               <v-list-item-subtitle>
                 {{
@@ -178,13 +191,21 @@ import { Vue, Component, Watch } from "vue-property-decorator";
 import isEqual from "lodash/isEqual";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IDatasetView, IDisplaySlice, areCompatibles } from "@/store/model";
+import {
+  IDatasetView,
+  IDisplaySlice,
+  areCompatibles,
+  IDatasetAccessUser,
+  IConfigurationAccessDataset,
+} from "@/store/model";
 import { getDatasetCompatibility } from "@/store/GirderAPI";
 import { IGirderFolder } from "@/girder";
 import ScaleSettings from "@/components/ScaleSettings.vue";
 import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddCollectionToProjectDialog from "@/components/AddCollectionToProjectDialog.vue";
+import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
+import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
 
 @Component({
   components: {
@@ -192,6 +213,8 @@ import AddCollectionToProjectDialog from "@/components/AddCollectionToProjectDia
     AddDatasetToCollection,
     AlertDialog,
     ScaleSettings,
+    SharingStatusDisplay,
+    SharingStatusIcon,
   },
 })
 export default class ConfigurationInfo extends Vue {
@@ -213,6 +236,12 @@ export default class ConfigurationInfo extends Vue {
 
   addDatasetDialog: boolean = false;
   showAddToProjectDialog: boolean = false;
+
+  // Sharing state
+  sharingLoading = false;
+  sharingIsPublic = false;
+  sharingUsers: IDatasetAccessUser[] | null = null;
+  sharingDatasets: IConfigurationAccessDataset[] = [];
 
   nameInput: string = "";
 
@@ -238,6 +267,7 @@ export default class ConfigurationInfo extends Vue {
   mounted() {
     this.updateConfigurationViews();
     this.nameInput = this.name;
+    this.fetchSharingInfo();
   }
 
   openAlert(alert: IAlert) {
@@ -260,6 +290,36 @@ export default class ConfigurationInfo extends Vue {
       this.datasetViews = [];
     }
     return this.datasetViews;
+  }
+
+  @Watch("configuration")
+  async fetchSharingInfo() {
+    if (!this.configuration) {
+      this.sharingUsers = null;
+      this.sharingDatasets = [];
+      return;
+    }
+    this.sharingLoading = true;
+    try {
+      const accessList = await this.store.api.getConfigurationAccess(
+        this.configuration.id,
+      );
+      this.sharingIsPublic = accessList.public;
+      this.sharingUsers = accessList.users;
+      this.sharingDatasets = accessList.datasets;
+    } catch {
+      // Non-admin users won't have access; silently degrade
+      this.sharingUsers = null;
+      this.sharingDatasets = [];
+    } finally {
+      this.sharingLoading = false;
+    }
+  }
+
+  getDatasetSharingInfo(
+    datasetId: string,
+  ): IConfigurationAccessDataset | undefined {
+    return this.sharingDatasets.find((d) => d.id === datasetId);
   }
 
   @Watch("name")

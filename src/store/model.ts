@@ -444,6 +444,20 @@ export interface IDatasetAccessList {
   configurations: IDatasetAccessConfiguration[];
 }
 
+export interface IConfigurationAccessDataset {
+  id: string;
+  name: string;
+  public: boolean;
+}
+
+export interface IConfigurationAccessList {
+  configurationId: string;
+  public: boolean;
+  users: IDatasetAccessUser[];
+  groups: unknown[];
+  datasets: IConfigurationAccessDataset[];
+}
+
 export interface IProjectDatasetReference {
   datasetId: string;
   addedDate: string;
