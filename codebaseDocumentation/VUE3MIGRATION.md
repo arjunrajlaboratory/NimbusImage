@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 108 | 6 already migrated to `<script setup>` |
+| Class components (`@Component`) | 108 | 16 already migrated to `<script setup>` |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -96,6 +96,20 @@ Once most components use Composition API and Vuetify wrappers are in place:
 | `HotkeySelection.vue` | 85 | Computed get/set for v-model, external lib (Mousetrap) |
 | `NimbusTooltip.vue` | 40 | `withDefaults()` for prop defaults |
 
+### Batch 3 — Mixed Leaf & Store-Connected Components
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `ToolIcon.vue` | 47 | `defineProps`, `computed()` for icon mapping |
+| `AnnotationActionPanel.vue` | 65 | `defineProps`, `defineEmits`, `ref()`, clipboard API |
+| `UISettings.vue` | 37 | `getCurrentInstance()` for `$vuetify.theme.dark` |
+| `PixelScaleBarSetting.vue` | 27 | `computed({ get, set })` for store binding |
+| `UserProfileSettings.vue` | 32 | `getCurrentInstance()` for `$router`, store import |
+| `TagSelectionDialog.vue` | 81 | Computed get/set for `.sync` dialog, `ref()` local state, `defineExpose()` |
+| `ColorSelectionDialog.vue` | 62 | Same dialog `.sync` pattern, radio group state |
+| `ChannelSelect.vue` | 54 | `@VModel` → computed get/set + `emit("input")`, `withDefaults()` |
+| `ChannelCheckboxGroup.vue` | 75 | Bidirectional `watch()` for nested v-model mutation, top-level init |
+| `CircleToDotMenu.vue` | 40 | `watch()` + `onMounted()` replacing `@Watch` + `mounted()` |
+
 ## Next Candidates
 
 Good candidates for the next migration batch, ordered by complexity:
@@ -177,6 +191,27 @@ vi.mock("mousetrap", () => ({
   },
 }));
 ```
+
+**Mocking Vuex store modules** (for components that import store singletons):
+
+```typescript
+vi.mock("@/store", () => ({
+  default: {
+    dataset: {
+      channels: [0, 1, 2],
+      channelNames: new Map([[0, "DAPI"], [1, "GFP"]]),
+    },
+  },
+}));
+
+vi.mock("@/store/annotation", () => ({
+  default: { selectedAnnotationIds: ["id1", "id2"] },
+}));
+```
+
+**Important:** `vi.mock` factories are hoisted — do not reference variables declared outside the factory. Use `vi.fn()` directly inside the factory instead.
+
+**Transitive store imports:** Even when stubbing child components (e.g., `stubs: { TagPicker: true }`), the child's module-level imports still execute. Mock any stores imported transitively by the child component.
 
 ### Known Test Warnings
 
