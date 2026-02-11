@@ -127,18 +127,32 @@ docs = model.findWithPermissions(
 
 ## Loading Documents
 
-### Use exc=True
+### Use exc=True for Access/Existence Checks
 
-When loading a document that must exist, use `exc=True` to auto-raise:
+When loading a document to verify it exists and the user has access, always use `exc=True`. This is Girder's built-in mechanism: `load()` with `exc=True` raises a `ValidationException` (HTTP 400) if the document doesn't exist or the user lacks access. Do not write manual null checks or try/except blocks around `load()` for this purpose.
 
 ```python
-# Good - automatically raises if not found
-doc = Model().load(id, user=user, level=AccessType.READ, exc=True)
+# Good - exc=True handles not-found and access denial automatically
+Folder().load(datasetId, user=user, level=AccessType.READ, exc=True)
 
-# Bad - redundant null check
+# Good - load() also handles ObjectId conversion internally,
+# so you don't need to wrap the ID in ObjectId()
+config = CollectionModel().load(
+    configId, user=user, level=AccessType.READ, exc=True
+)
+
+# Bad - redundant null check (use exc=True instead)
 doc = Model().load(id, user=user, level=AccessType.READ)
-if doc is None:
+if not doc:
     raise RestException("Not found", 404)
+
+# Bad - redundant try/except for invalid IDs (load handles this)
+try:
+    doc = Model().load(ObjectId(id), user=user, level=AccessType.READ)
+except InvalidId:
+    raise RestException("Invalid ID", 400)
+if not doc:
+    raise RestException("Access denied", 403)
 ```
 
 ### Model Parameters

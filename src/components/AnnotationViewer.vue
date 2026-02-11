@@ -71,6 +71,7 @@ import {
   TSamPrompt,
   TToolState,
   ConnectionToolStateSymbol,
+  CombineToolStateSymbol,
   IGeoJSMouseState,
   TrackPositionType,
 } from "../store/model";
@@ -83,6 +84,7 @@ import {
   unrollIndexFromImages,
   geojsAnnotationFactory,
   tagFilterFunction,
+  ellipseToPolygonCoordinates,
 } from "@/utils/annotation";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
@@ -350,7 +352,8 @@ export default class AnnotationViewer extends Vue {
   get toolHighlightedAnnotationIds(): Set<string> {
     const state = this.selectedToolState;
     if (
-      state?.type === ConnectionToolStateSymbol &&
+      (state?.type === ConnectionToolStateSymbol ||
+        state?.type === CombineToolStateSymbol) &&
       state.selectedAnnotationId
     ) {
       return new Set([state.selectedAnnotationId]);
@@ -2103,19 +2106,123 @@ export default class AnnotationViewer extends Vue {
     this.interactionLayer.removeAnnotation(selectAnnotation);
   }
 
+  /**
+   * Handle the combine tool click interaction.
+   * First click selects an annotation, second click combines it with the first.
+   */
+  private async handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
+    if (!selectAnnotation || !this.selectedToolConfiguration) {
+      return;
+    }
+
+    // Get the annotation(s) that were clicked
+    const selectedAnnotations =
+      this.getSelectedAnnotationsFromAnnotation(selectAnnotation);
+
+    // Apply tool configuration filters (tags/layer restrictions)
+    const annotationTemplate = this.selectedToolConfiguration.values
+      ?.annotation as IRestrictTagsAndLayer;
+    const filteredAnnotations = annotationTemplate
+      ? filterAnnotations(selectedAnnotations, annotationTemplate)
+      : selectedAnnotations;
+
+    // Only consider polygon/blob annotations for combining
+    const polygonAnnotations = filteredAnnotations.filter(
+      (a) => a.shape === AnnotationShape.Polygon,
+    );
+
+    const clickedAnnotation = polygonAnnotations[0];
+
+    // Handle the two-click pattern
+    if (
+      clickedAnnotation &&
+      this.selectedToolState?.type === CombineToolStateSymbol &&
+      this.selectedToolState.selectedAnnotationId
+    ) {
+      // Second click - combine the annotations
+      const firstAnnotationId = this.selectedToolState.selectedAnnotationId;
+      const secondAnnotationId = clickedAnnotation.id;
+
+      // Don't combine with itself
+      if (firstAnnotationId !== secondAnnotationId) {
+        // Get tolerance from tool configuration (default to 2 if not specified)
+        const tolerance = parseFloat(
+          this.selectedToolConfiguration.values?.tolerance ?? "2",
+        );
+
+        const success = await this.annotationStore.combineAnnotations({
+          firstAnnotationId,
+          secondAnnotationId,
+          tolerance: isNaN(tolerance) ? 2 : tolerance,
+        });
+
+        if (!success) {
+          logWarning("Failed to combine annotations");
+        }
+      }
+
+      // Reset the tool state after combining
+      Vue.set(this.selectedToolState, "selectedAnnotationId", null);
+    } else if (
+      clickedAnnotation &&
+      this.selectedToolState?.type === CombineToolStateSymbol
+    ) {
+      // First click - select the annotation
+      Vue.set(
+        this.selectedToolState,
+        "selectedAnnotationId",
+        clickedAnnotation.id,
+      );
+    }
+
+    // Remove the interaction annotation from the layer
+    this.interactionLayer.removeAnnotation(selectAnnotation);
+  }
+
   private async addAnnotationFromGeoJsAnnotation(annotation: IGeoJSAnnotation) {
     if (!annotation || !this.selectedToolConfiguration) {
       return;
     }
 
-    const coordinates = annotation.coordinates();
+    let coordinates = annotation.coordinates();
     this.interactionLayer.removeAnnotation(annotation);
 
-    // Create the new annotation
-    await this.createAnnotationFromTool(
-      coordinates,
-      this.selectedToolConfiguration,
-    );
+    // Handle circle/ellipse-to-polygon conversion
+    let toolConfiguration = this.selectedToolConfiguration;
+    const shape = toolConfiguration.values.annotation?.shape;
+    if (shape === AnnotationShape.Circle || shape === AnnotationShape.Ellipse) {
+      if (shape === AnnotationShape.Circle) {
+        // Inscribe circle in bounding box: build a square from the center
+        const xs = coordinates.map((c) => c.x);
+        const ys = coordinates.map((c) => c.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const r = Math.min(maxX - minX, maxY - minY) / 2;
+        coordinates = [
+          { x: cx - r, y: cy - r },
+          { x: cx + r, y: cy - r },
+          { x: cx + r, y: cy + r },
+          { x: cx - r, y: cy + r },
+        ];
+      }
+      coordinates = ellipseToPolygonCoordinates(coordinates);
+      toolConfiguration = {
+        ...toolConfiguration,
+        values: {
+          ...toolConfiguration.values,
+          annotation: {
+            ...toolConfiguration.values.annotation,
+            shape: AnnotationShape.Polygon,
+          },
+        },
+      };
+    }
+
+    await this.createAnnotationFromTool(coordinates, toolConfiguration);
   }
 
   async addAnnotationFromSnapping(annotation: IGeoJSAnnotation) {
@@ -2333,6 +2440,15 @@ export default class AnnotationViewer extends Vue {
     }
   }
 
+  private setupCircleDrawingMode() {
+    if (!this.interactionLayer) {
+      return;
+    }
+    // Use native ellipse mode — gives us crosshair cursor and drag events.
+    // The annotation is converted to a circle/ellipse polygon on completion.
+    this.interactionLayer.mode("ellipse");
+  }
+
   setNewAnnotationMode() {
     if (this.unrolling) {
       this.interactionLayer.mode(null);
@@ -2350,7 +2466,15 @@ export default class AnnotationViewer extends Vue {
     switch (this.selectedToolConfiguration?.type) {
       case "create":
         const annotation = this.selectedToolConfiguration.values.annotation;
-        this.interactionLayer.mode(annotation?.shape);
+        if (
+          annotation?.shape === AnnotationShape.Circle ||
+          annotation?.shape === AnnotationShape.Ellipse
+        ) {
+          // Use native ellipse mode for both circle and ellipse tools
+          this.setupCircleDrawingMode();
+        } else {
+          this.interactionLayer.mode(annotation?.shape);
+        }
         break;
       case "tagging":
         if (
@@ -2399,7 +2523,15 @@ export default class AnnotationViewer extends Vue {
         this.interactionLayer.mode(selectionType);
         break;
       case "edit":
-        this.interactionLayer.mode("line");
+        // combine_click action uses point mode, blob_edit uses line mode
+        if (
+          this.selectedToolConfiguration?.values?.action?.value ===
+          "combine_click"
+        ) {
+          this.interactionLayer.mode("point");
+        } else {
+          this.interactionLayer.mode("line");
+        }
         break;
       case "samAnnotation":
       case null:
@@ -2496,7 +2628,15 @@ export default class AnnotationViewer extends Vue {
             this.handleAnnotationConnections(evt.annotation);
             break;
           case "edit":
-            this.handleAnnotationEdits(evt.annotation);
+            // Route combine_click action to handleAnnotationCombine
+            if (
+              this.selectedToolConfiguration?.values?.action?.value ===
+              "combine_click"
+            ) {
+              this.handleAnnotationCombine(evt.annotation);
+            } else {
+              this.handleAnnotationEdits(evt.annotation);
+            }
             break;
         }
       } else {

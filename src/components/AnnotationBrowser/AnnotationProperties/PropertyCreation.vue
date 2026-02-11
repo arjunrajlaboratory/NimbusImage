@@ -111,7 +111,7 @@
   </v-card>
 </template>
 <script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+import { Vue, Component, Watch, Prop } from "vue-property-decorator";
 import store from "@/store";
 import propertiesStore from "@/store/properties";
 import annotationStore from "@/store/annotation";
@@ -165,6 +165,9 @@ export default class PropertyCreation extends Vue {
   readonly store = store;
   readonly propertyStore = propertiesStore;
   readonly annotationStore = annotationStore;
+
+  @Prop({ type: Boolean, default: false })
+  readonly applyToAllDatasets!: boolean;
 
   availableShapes = this.store.availableToolShapes;
 
@@ -302,10 +305,14 @@ export default class PropertyCreation extends Vue {
       .then((property) => {
         this.propertyStore.togglePropertyPathVisibility([property.id]);
         if (this.computeUponCreation) {
-          this.propertyStore.computeProperty({
-            property,
-            errorInfo: { errors: [] },
-          });
+          if (this.applyToAllDatasets) {
+            this.$emit("compute-property-batch", property);
+          } else {
+            this.propertyStore.computeProperty({
+              property,
+              errorInfo: { errors: [] },
+            });
+          }
         }
       });
     this.reset();

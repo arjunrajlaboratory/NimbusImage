@@ -154,6 +154,15 @@ export interface IConnectionToolState {
   selectedAnnotationId: null | string;
 }
 
+export const CombineToolStateSymbol: unique symbol = Symbol("CombineToolState");
+
+export type TCombineToolStateSymbol = typeof CombineToolStateSymbol;
+
+export interface ICombineToolState {
+  type: TCombineToolStateSymbol;
+  selectedAnnotationId: null | string;
+}
+
 export interface IMouseState {
   isMouseMovePreviewState: boolean;
   mapEntry: IMapEntry;
@@ -174,6 +183,8 @@ export interface IErrorToolState {
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
   connection: IConnectionToolState;
+  // Edit tool can have CombineToolState when action is "combine_click"
+  edit: ICombineToolState | IBaseToolState;
 }
 
 type TFullToolStateMap = {
@@ -194,10 +205,12 @@ export enum ProgressType {
   ANNOTATION_SAVE = "ANNOTATION_SAVE",
   ANNOTATION_DELETE = "ANNOTATION_DELETE",
   ANNOTATION_COMPUTE = "ANNOTATION_COMPUTE",
+  BATCH_ANNOTATION_COMPUTE = "BATCH_ANNOTATION_COMPUTE",
   ANNOTATION_UNDO = "ANNOTATION_UNDO",
   ANNOTATION_REDO = "ANNOTATION_REDO",
   PROPERTY_FETCH = "PROPERTY_FETCH",
   PROPERTY_COMPUTE = "PROPERTY_COMPUTE",
+  BATCH_PROPERTY_COMPUTE = "BATCH_PROPERTY_COMPUTE",
   CONNECTION_FETCH = "CONNECTION_FETCH",
   CONNECTION_SAVE = "CONNECTION_SAVE",
   CONNECTION_DELETE = "CONNECTION_DELETE",
@@ -234,21 +247,23 @@ export const PROGRESS_TYPE_ORDER = new Map<ProgressType, number>([
   [ProgressType.ANNOTATION_SAVE, 1],
   [ProgressType.ANNOTATION_DELETE, 2],
   [ProgressType.ANNOTATION_COMPUTE, 3],
-  [ProgressType.PROPERTY_FETCH, 4],
-  [ProgressType.PROPERTY_COMPUTE, 5],
-  [ProgressType.CONNECTION_FETCH, 6],
-  [ProgressType.CONNECTION_SAVE, 7],
-  [ProgressType.CONNECTION_DELETE, 8],
-  [ProgressType.VIEW_FETCH, 9],
-  [ProgressType.LAYER_CACHE, 10],
-  [ProgressType.QUADTILE_CACHE, 11],
-  [ProgressType.MAXMERGE_SCHEDULE, 12],
-  [ProgressType.MAXMERGE_CACHE, 13],
-  [ProgressType.HISTOGRAM_SCHEDULE, 14],
-  [ProgressType.HISTOGRAM_CACHE, 15],
-  [ProgressType.MOVIE_GENERATION, 16],
-  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 17],
-  [ProgressType.GENERIC, 18],
+  [ProgressType.BATCH_ANNOTATION_COMPUTE, 4],
+  [ProgressType.PROPERTY_FETCH, 5],
+  [ProgressType.PROPERTY_COMPUTE, 6],
+  [ProgressType.BATCH_PROPERTY_COMPUTE, 7],
+  [ProgressType.CONNECTION_FETCH, 8],
+  [ProgressType.CONNECTION_SAVE, 9],
+  [ProgressType.CONNECTION_DELETE, 10],
+  [ProgressType.VIEW_FETCH, 11],
+  [ProgressType.LAYER_CACHE, 12],
+  [ProgressType.QUADTILE_CACHE, 13],
+  [ProgressType.MAXMERGE_SCHEDULE, 14],
+  [ProgressType.MAXMERGE_CACHE, 15],
+  [ProgressType.HISTOGRAM_SCHEDULE, 16],
+  [ProgressType.HISTOGRAM_CACHE, 17],
+  [ProgressType.MOVIE_GENERATION, 18],
+  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 19],
+  [ProgressType.GENERIC, 20],
 ]);
 
 export interface IProgress {
@@ -1264,6 +1279,8 @@ export enum AnnotationShape {
   Line = "line",
   Polygon = "polygon",
   Rectangle = "rectangle",
+  Circle = "circle",
+  Ellipse = "ellipse",
   Any = "any",
 }
 
@@ -1279,6 +1296,8 @@ export const AnnotationNames = {
   [AnnotationShape.Line]: "Line",
   [AnnotationShape.Polygon]: "Blob",
   [AnnotationShape.Rectangle]: "Rectangle",
+  [AnnotationShape.Circle]: "Circle",
+  [AnnotationShape.Ellipse]: "Ellipse",
   [AnnotationShape.Any]: "Any", // This was added to support the "Any" shape
 };
 

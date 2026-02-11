@@ -64,6 +64,7 @@ import {
   ICameraInfo,
   IDatasetLocation,
   ConnectionToolStateSymbol,
+  CombineToolStateSymbol,
   NotificationType,
   IDimensionStrategy,
 } from "./model";
@@ -294,6 +295,16 @@ export class Main extends VuexModule {
       text: AnnotationNames[AnnotationShape.Rectangle],
       value: AnnotationShape.Rectangle,
       description: "Draw rectangular regions by dragging",
+    },
+    {
+      text: AnnotationNames[AnnotationShape.Circle],
+      value: AnnotationShape.Circle,
+      description: "Draw circular regions by dragging",
+    },
+    {
+      text: AnnotationNames[AnnotationShape.Ellipse],
+      value: AnnotationShape.Ellipse,
+      description: "Draw elliptical regions by dragging",
     },
   ];
 
@@ -647,6 +658,17 @@ export class Main extends VuexModule {
             type: ConnectionToolStateSymbol,
             selectedAnnotationId: null,
           };
+          break;
+        case "edit":
+          // Edit tool with combine_click action needs CombineToolState
+          if (configuration.values?.action?.value === "combine_click") {
+            state = {
+              type: CombineToolStateSymbol,
+              selectedAnnotationId: null,
+            };
+          } else {
+            state = { type: BaseToolStateSymbol };
+          }
           break;
         default:
           state = { type: BaseToolStateSymbol };
@@ -1592,6 +1614,16 @@ export class Main extends VuexModule {
     } catch (error) {
       sync.setSaving(error as Error);
     }
+  }
+
+  @Action
+  async getCollectionDatasetCount(): Promise<number> {
+    const configurationId = this.selectedConfigurationId;
+    if (!configurationId) {
+      return 0;
+    }
+    const views = await this.api.findDatasetViews({ configurationId });
+    return new Set(views.map((v: IDatasetView) => v.datasetId)).size;
   }
 
   @Action
