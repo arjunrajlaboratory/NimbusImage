@@ -579,7 +579,7 @@ export default class GirderAPI {
   /**
    * Get the current access list for a dataset.
    * Returns users with their access levels and associated configurations.
-   * Requires ADMIN access to the dataset.
+   * Requires READ access to the dataset.
    */
   async getDatasetAccess(datasetId: string): Promise<IDatasetAccessList> {
     const response = await this.client.get(`dataset_view/access/${datasetId}`);
@@ -589,7 +589,7 @@ export default class GirderAPI {
   /**
    * Get the current access list for a configuration.
    * Returns users with their access levels and associated datasets.
-   * Requires ADMIN access to the configuration.
+   * Requires READ access to the configuration.
    */
   async getConfigurationAccess(
     configurationId: string,

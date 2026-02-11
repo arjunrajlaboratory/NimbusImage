@@ -77,6 +77,7 @@
 <script lang="ts">
 import { Vue, Component, Prop } from "vue-property-decorator";
 import { IDatasetAccessUser } from "@/store/model";
+import { accessLevelLabel, accessLevelColor } from "@/utils/accessLevel";
 
 @Component
 export default class SharingStatusIcon extends Vue {
@@ -85,6 +86,9 @@ export default class SharingStatusIcon extends Vue {
   @Prop({ default: false }) readonly loading!: boolean;
 
   readonly maxDisplayUsers = 5;
+
+  accessLevelLabel = accessLevelLabel;
+  accessLevelColor = accessLevelColor;
 
   get iconName(): string {
     if (this.isPublic) return "mdi-earth";
@@ -100,32 +104,6 @@ export default class SharingStatusIcon extends Vue {
 
   get displayedUsers(): IDatasetAccessUser[] {
     return this.users.slice(0, this.maxDisplayUsers);
-  }
-
-  accessLevelLabel(level: number): string {
-    switch (level) {
-      case 0:
-        return "Read";
-      case 1:
-        return "Write";
-      case 2:
-        return "Admin";
-      default:
-        return "Unknown";
-    }
-  }
-
-  accessLevelColor(level: number): string {
-    switch (level) {
-      case 0:
-        return "blue";
-      case 1:
-        return "orange";
-      case 2:
-        return "red darken-1";
-      default:
-        return "grey";
-    }
   }
 }
 </script>

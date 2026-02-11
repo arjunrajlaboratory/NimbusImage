@@ -18,7 +18,7 @@
 
       <!-- Error / Unavailable State -->
       <div v-else-if="!accessUsers" class="text-body-2 grey--text">
-        Sharing info unavailable (requires admin access).
+        Sharing info unavailable.
       </div>
 
       <!-- Access Info -->
@@ -81,6 +81,7 @@
 <script lang="ts">
 import { Vue, Component, Prop } from "vue-property-decorator";
 import { IDatasetAccessUser } from "@/store/model";
+import { accessLevelLabel, accessLevelColor } from "@/utils/accessLevel";
 
 @Component
 export default class SharingStatusDisplay extends Vue {
@@ -88,31 +89,8 @@ export default class SharingStatusDisplay extends Vue {
   @Prop({ default: false }) readonly isPublic!: boolean;
   @Prop({ default: null }) readonly accessUsers!: IDatasetAccessUser[] | null;
 
-  accessLevelLabel(level: number): string {
-    switch (level) {
-      case 0:
-        return "Read";
-      case 1:
-        return "Write";
-      case 2:
-        return "Admin";
-      default:
-        return "Unknown";
-    }
-  }
-
-  accessLevelColor(level: number): string {
-    switch (level) {
-      case 0:
-        return "blue";
-      case 1:
-        return "orange";
-      case 2:
-        return "red darken-1";
-      default:
-        return "grey";
-    }
-  }
+  accessLevelLabel = accessLevelLabel;
+  accessLevelColor = accessLevelColor;
 }
 </script>
 

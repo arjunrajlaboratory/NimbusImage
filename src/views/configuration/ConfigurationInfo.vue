@@ -206,6 +206,7 @@ import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddCollectionToProjectDialog from "@/components/AddCollectionToProjectDialog.vue";
 import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
 import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
+import { fetchSharingInfo } from "@/utils/sharingInfo";
 
 @Component({
   components: {
@@ -300,20 +301,13 @@ export default class ConfigurationInfo extends Vue {
       return;
     }
     this.sharingLoading = true;
-    try {
-      const accessList = await this.store.api.getConfigurationAccess(
-        this.configuration.id,
-      );
-      this.sharingIsPublic = accessList.public;
-      this.sharingUsers = accessList.users;
-      this.sharingDatasets = accessList.datasets;
-    } catch {
-      // Non-admin users won't have access; silently degrade
-      this.sharingUsers = null;
-      this.sharingDatasets = [];
-    } finally {
-      this.sharingLoading = false;
-    }
+    const result = await fetchSharingInfo(() =>
+      this.store.api.getConfigurationAccess(this.configuration!.id),
+    );
+    this.sharingIsPublic = result?.public ?? false;
+    this.sharingUsers = result?.users ?? null;
+    this.sharingDatasets = result?.datasets ?? [];
+    this.sharingLoading = false;
   }
 
   getDatasetSharingInfo(

@@ -350,6 +350,7 @@ import {
 } from "@/store/model";
 import { IGirderItem, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
+import { fetchSharingInfo } from "@/utils/sharingInfo";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
 import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
 import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
@@ -536,18 +537,13 @@ export default class DatasetInfo extends Vue {
       return;
     }
     this.sharingLoading = true;
-    try {
-      const accessList = await this.store.api.getDatasetAccess(this.dataset.id);
-      this.sharingIsPublic = accessList.public;
-      this.sharingUsers = accessList.users;
-      this.sharingConfigurations = accessList.configurations;
-    } catch {
-      // Non-admin users won't have access; silently degrade
-      this.sharingUsers = null;
-      this.sharingConfigurations = [];
-    } finally {
-      this.sharingLoading = false;
-    }
+    const result = await fetchSharingInfo(() =>
+      this.store.api.getDatasetAccess(this.dataset!.id),
+    );
+    this.sharingIsPublic = result?.public ?? false;
+    this.sharingUsers = result?.users ?? null;
+    this.sharingConfigurations = result?.configurations ?? [];
+    this.sharingLoading = false;
   }
 
   getConfigSharingInfo(

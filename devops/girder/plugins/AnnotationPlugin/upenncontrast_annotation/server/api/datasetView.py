@@ -343,22 +343,17 @@ class DatasetView(Resource):
             - Public status of the dataset
             - Associated configurations with their public status
 
-            Requires ADMIN access to the dataset folder.
+            Requires READ access to the dataset folder.
         """)
         .modelParam('datasetId', 'The dataset folder ID', model=Folder,
-                    level=AccessType.ADMIN, destName='dataset',
+                    level=AccessType.READ, destName='dataset',
                     paramType='path')
         .errorResponse('ID was invalid.')
-        .errorResponse('Admin access was denied for the dataset.', 403)
+        .errorResponse('Read access was denied for the dataset.', 403)
     )
     def getDatasetAccess(self, dataset):
-        """Return the full access list for a dataset and its configurations.
-
-        TODO: Consider allowing READ access users to view (but not modify) the
-        access list. Currently requires ADMIN, which means only the owner can
-        see who has access. Some systems allow viewing access lists at lower
-        permission levels.
-        """
+        """Return the full access list for a dataset and its
+        configurations."""
         # Get full access list from the dataset folder
         # getFullAccessList returns users/groups with login and name populated
         # but NOT email, so we need to fetch emails separately
@@ -430,19 +425,19 @@ class DatasetView(Resource):
             - Public status of the configuration
             - Associated datasets with their public status
 
-            Requires ADMIN access to the configuration.
+            Requires READ access to the configuration.
         """)
         .modelParam(
             'configurationId',
             'The configuration ID',
             model=CollectionModel,
-            level=AccessType.ADMIN,
+            level=AccessType.READ,
             destName='configuration',
             paramType='path',
         )
         .errorResponse('ID was invalid.')
         .errorResponse(
-            'Admin access was denied for the configuration.',
+            'Read access was denied for the configuration.',
             403,
         )
     )
