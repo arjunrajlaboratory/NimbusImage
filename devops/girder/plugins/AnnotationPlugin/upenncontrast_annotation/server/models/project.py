@@ -111,7 +111,7 @@ class Project(ProxiedModel):
 
         self.exposeFields(level=AccessType.READ, fields=(
             '_id', 'name', 'description', 'created', 'updated',
-            'creatorId', 'meta', 'lowerName'
+            'creatorId', 'meta', 'lowerName', 'public'
         ))
 
     def validate(self, document):

@@ -349,6 +349,8 @@ interface IProject {
   creatorId: string;
   created: string;
   updated: string;
+  public?: boolean;        // Exposed at READ level from backend
+  _accessLevel?: number;   // Injected by Girder's @filtermodel (0=READ, 1=WRITE, 2=ADMIN)
   meta: {
     datasets: Array<{ datasetId: string; addedDate: string }>;
     collections: Array<{ collectionId: string; addedDate: string }>;
@@ -377,7 +379,7 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 |--------|----------|-------------|
 | POST | `/project` | Create a new project |
 | GET | `/project` | List projects (filterable by creatorId, status) |
-| GET | `/project/:id` | Get project by ID |
+| GET | `/project/:id` | Get project by ID (includes `public` and `_accessLevel`) |
 | PUT | `/project/:id` | Update project name/description |
 | DELETE | `/project/:id` | Delete project |
 | POST | `/project/:id/dataset` | Add dataset to project |
@@ -584,6 +586,39 @@ Permission propagation is tested in `test_project.py` under `TestProjectPermissi
 
 Note: Tests use `createPrivateFolder()` (not `createFolder()`) so datasets start with
 restricted access and permission checks are meaningful.
+
+### Detecting Shared/Public State for Confirmation Dialogs
+
+When a user adds a dataset or collection to a project, the Add dialogs
+(`AddDatasetToProjectDialog`, `AddCollectionToProjectFilterDialog`) show a
+confirmation dialog if the project is shared or public, warning that permissions
+will propagate to the new resource. The detection works differently depending on
+the user's access level:
+
+**`isProjectPublic`** — reads `project.public` directly from the project object.
+The backend exposes `public` at `AccessType.READ` level in the project model's
+`exposeFields`, so any user with READ+ access can see it. No additional API call
+required.
+
+**`isProjectShared`** — uses a two-tier approach:
+1. **ADMIN users**: `fetchAccessInfo()` calls `GET /project/:id/access` and sets
+   `projectAccessInfo`. If available, shared = `users.length > 1`.
+2. **Non-ADMIN users**: The access endpoint returns 403 and `projectAccessInfo`
+   stays `null`. Instead, the frontend checks `_accessLevel`: if the user has
+   WRITE access (`_accessLevel >= 1`) but not ADMIN (`_accessLevel < 2`), they
+   were explicitly added to the project, which means it is shared by definition.
+
+This avoids the previous bug where WRITE-level users silently bypassed the
+confirmation dialog because the ADMIN-only `getProjectAccess` call failed and
+both flags defaulted to `false`.
+
+**Key files for this detection:**
+| File | Role |
+|------|------|
+| `server/models/project.py` | `exposeFields` includes `public` at READ level |
+| `src/store/ProjectsAPI.ts` | `toProject()` maps `public` and `_accessLevel` |
+| `src/store/model.ts` | `IProject` includes `public?` and `_accessLevel?` |
+| `src/views/project/ProjectInfo.vue` | `isProjectPublic` / `isProjectShared` computed properties |
 
 ---
 

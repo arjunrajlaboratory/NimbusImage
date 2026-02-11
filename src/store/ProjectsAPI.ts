@@ -22,6 +22,8 @@ function toProject(data: any): IProject {
     creatorId: data.creatorId,
     created: data.created,
     updated: data.updated,
+    public: data.public,
+    _accessLevel: data._accessLevel,
     meta: {
       datasets: (data.meta?.datasets || []).map((d: any) => ({
         datasetId: toStringId(d.datasetId),

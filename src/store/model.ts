@@ -494,6 +494,8 @@ export interface IProject {
   creatorId: string;
   created: string;
   updated: string;
+  public?: boolean;
+  _accessLevel?: number;
   meta: {
     datasets: IProjectDatasetReference[];
     collections: IProjectCollectionReference[];

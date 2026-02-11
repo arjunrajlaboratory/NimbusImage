@@ -567,13 +567,18 @@ export default class ProjectInfo extends Vue {
   }
 
   get isProjectPublic(): boolean {
-    return this.projectAccessInfo?.public ?? false;
+    return this.project?.public ?? false;
   }
 
   get isProjectShared(): boolean {
-    if (!this.projectAccessInfo) return false;
-    // Shared if there are more than 1 user (the owner)
-    return this.projectAccessInfo.users.length > 1;
+    if (this.projectAccessInfo) {
+      // ADMIN: use the full access list
+      return this.projectAccessInfo.users.length > 1;
+    }
+    // Non-ADMIN with WRITE access: they were explicitly added, so
+    // the project is shared by definition.
+    const level = this.project?._accessLevel ?? -1;
+    return level >= 1 && level < 2;
   }
 
   get statusColor(): string {
