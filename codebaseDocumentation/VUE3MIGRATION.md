@@ -125,6 +125,65 @@ Pair each migration batch with tests:
 
 Framework: Vitest (already configured). Run with `pnpm test`.
 
+### Component Test Setup
+
+**Dependencies:** `@vue/test-utils@1` (v1 for Vue 2, v2 for Vue 3), `jsdom` environment.
+
+**Vitest config** (`vitest.config.js`): Uses `environment: "jsdom"` for DOM-based component tests. The `db/**` directory is excluded to avoid permission errors from MongoDB data files.
+
+**Mounting pattern for Vuetify components:**
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { mount } from "@vue/test-utils";
+import Vue from "vue";
+import Vuetify from "vuetify";
+import MyComponent from "./MyComponent.vue";
+
+// Use global Vue.use — do NOT use createLocalVue (causes "multiple instances" errors)
+Vue.use(Vuetify);
+
+function mountComponent(props = {}) {
+  return mount(MyComponent, {
+    vuetify: new Vuetify(),
+    propsData: { ...props },
+  });
+}
+```
+
+**Vuetify dialogs** (`v-dialog`) require a `[data-app]` element and `attachTo`:
+
+```typescript
+function mountComponent() {
+  const app = document.createElement("div");
+  app.setAttribute("data-app", "true");
+  document.body.appendChild(app);
+  return mount(MyDialogComponent, {
+    vuetify: new Vuetify(),
+    attachTo: app,
+  });
+}
+// Call wrapper.destroy() in each test to clean up
+```
+
+**`<script setup>` components** only expose what's in `defineExpose()` on `wrapper.vm`. Internal `ref()` and `computed()` values are not accessible — test via DOM output or exposed methods instead.
+
+**Mocking external libraries** (e.g., Mousetrap):
+
+```typescript
+vi.mock("mousetrap", () => ({
+  default: {
+    record: vi.fn((callback) => callback(["ctrl+s"])),
+  },
+}));
+```
+
+### Known Test Warnings
+
+- **"Multiple instances of Vue detected"**: Vuetify warning in test environments. Harmless; caused by module resolution in vitest. Using global `Vue.use(Vuetify)` instead of `createLocalVue` minimizes this.
+- **"Invalid prop type: null is not a constructor"**: Vue 2.7 quirk with union types like `Element | string` in `defineProps`. Resolves with Vue 3.
+- **"Unable to locate target [data-app]"**: Vuetify dialog warning. Use the `attachTo` pattern above to fix.
+
 ## Risk Areas
 
 - **AnnotationViewer.vue** (3,160 lines): Most complex component. Break into composables before full migration.
