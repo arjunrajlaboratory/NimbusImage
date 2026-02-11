@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 108 | 16 already migrated to `<script setup>` |
+| Class components (`@Component`) | 108 | 26 already migrated to `<script setup>` |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -110,14 +110,26 @@ Once most components use Composition API and Vuetify wrappers are in place:
 | `ChannelCheckboxGroup.vue` | 75 | Bidirectional `watch()` for nested v-model mutation, top-level init |
 | `CircleToDotMenu.vue` | 40 | `watch()` + `onMounted()` replacing `@Watch` + `mounted()` |
 
+### Batch 4 — Store-Connected & Props-Heavy Components
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `ServerStatus.vue` | 103 | Store getters → `computed()`, `@/store/sync` import |
+| `HelpPanel.vue` | 105 | Map-based grouping computeds, utility imports |
+| `RecentDatasets.vue` | 90 | `defineProps` with function props, `defineEmits` |
+| `RecentProjects.vue` | 125 | `withDefaults`, helper methods become plain functions |
+| `CollectionItemRow.vue` | 107 | `getCurrentInstance()` for `$router.push`, local interface |
+| `FileItemRow.vue` | 99 | `ref()` for local state, `withDefaults`, auto-registered child |
+| `LayerInfoGrid.vue` | 109 | 6 store-delegating methods become plain functions |
+| `AnalyzePanel.vue` | 84 | `withDefaults`, event relay in template |
+| `DisplaySlice.vue` | 158 | 5 props, complex validation logic, removed unused store import |
+| `DisplayLayerGroup.vue` | 148 | Template ref array (`ref<T[]>([])`), computed get/set, `vuedraggable` |
+
 ## Next Candidates
 
 Good candidates for the next migration batch, ordered by complexity:
 
 **Small UI components:**
 - `FileDropzone.vue` (~61 lines)
-- `HelpPanel.vue` (~105 lines)
-- `RecentProjects.vue` (~125 lines)
 
 **Medium components with store access:**
 - `AnnotationFilterDialog.vue`

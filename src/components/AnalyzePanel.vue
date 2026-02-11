@@ -21,21 +21,18 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
 import PropertyList from "@/components/AnnotationBrowser/AnnotationProperties/PropertyList.vue";
 import PropertyCreation from "@/components/AnnotationBrowser/AnnotationProperties/PropertyCreation.vue";
 
-@Component({
-  components: {
-    PropertyCreation,
-    PropertyList,
+withDefaults(
+  defineProps<{
+    applyToAllDatasets?: boolean;
+  }>(),
+  {
+    applyToAllDatasets: false,
   },
-})
-export default class AnalyzeAnnotations extends Vue {
-  @Prop({ type: Boolean, default: false })
-  readonly applyToAllDatasets!: boolean;
-}
+);
 </script>
 
 <style scoped>

@@ -54,23 +54,19 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+defineProps<{
+  datasetViewItems: any[];
+  getUserDisplayName: (creatorId: string) => string;
+  formatDateNumber: (date: number) => string;
+}>();
 
-@Component
-export default class RecentDatasets extends Vue {
-  @Prop({ type: Array, required: true })
-  readonly datasetViewItems!: any[];
+const emit = defineEmits<{
+  (e: "dataset-clicked", datasetViewId: string): void;
+}>();
 
-  @Prop({ type: Function, required: true })
-  readonly getUserDisplayName!: (creatorId: string) => string;
-
-  @Prop({ type: Function, required: true })
-  readonly formatDateNumber!: (date: number) => string;
-
-  handleDatasetClick(datasetViewId: string) {
-    this.$emit("dataset-clicked", datasetViewId);
-  }
+function handleDatasetClick(datasetViewId: string) {
+  emit("dataset-clicked", datasetViewId);
 }
 </script>
 

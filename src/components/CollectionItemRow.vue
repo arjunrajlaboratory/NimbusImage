@@ -56,8 +56,8 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { getCurrentInstance } from "vue";
 import { IUPennCollection } from "@/girder";
 import { formatDateString } from "@/utils/date";
 import { RawLocation } from "vue-router";
@@ -68,25 +68,21 @@ interface IChipAttrs {
   to?: RawLocation;
 }
 
-@Component
-export default class CollectionItemRow extends Vue {
-  @Prop({ required: true })
-  collection!: IUPennCollection;
+defineProps<{
+  collection: IUPennCollection;
+  debouncedChipsPerItemId: { [itemId: string]: any };
+  computedChipsIds: Set<string>;
+}>();
 
-  @Prop({ required: true })
-  debouncedChipsPerItemId!: { [itemId: string]: any };
+const instance = getCurrentInstance();
 
-  @Prop({ required: true })
-  computedChipsIds!: Set<string>;
-
-  formatDateString = formatDateString;
-
-  navigateToChip(chipItem: IChipAttrs) {
-    if (chipItem.to) {
-      this.$router.push(chipItem.to);
-    }
+function navigateToChip(chipItem: IChipAttrs) {
+  if (chipItem.to) {
+    instance?.proxy?.$router.push(chipItem.to);
   }
 }
+
+defineExpose({ navigateToChip });
 </script>
 
 <style lang="scss" scoped>

@@ -45,48 +45,44 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import { boundKeys } from "@/utils/v-mousetrap";
 import { IFeatureDescription, descriptions } from "@/utils/v-description";
 
-@Component({})
-export default class HelpPanel extends Vue {
-  readonly boundKeys = boundKeys;
-  readonly descriptions = descriptions;
-
-  get hotkeyItems() {
-    const sections: Map<string, { key: string; description: string }[]> =
-      new Map();
-    for (const [key, data] of Object.entries(this.boundKeys)) {
-      if (!sections.has(data.section)) {
-        sections.set(data.section, []);
-      }
-      const section = sections.get(data.section);
-      section!.push({
-        key,
-        description: data.description,
-      });
+const hotkeyItems = computed(() => {
+  const sections: Map<string, { key: string; description: string }[]> =
+    new Map();
+  for (const [key, data] of Object.entries(boundKeys)) {
+    if (!sections.has(data.section)) {
+      sections.set(data.section, []);
     }
-    const items = [...sections.entries()];
-    items.sort();
-    return items;
+    const section = sections.get(data.section);
+    section!.push({
+      key,
+      description: data.description,
+    });
   }
+  const items = [...sections.entries()];
+  items.sort();
+  return items;
+});
 
-  get featureItems() {
-    const sections: Map<string, IFeatureDescription[]> = new Map();
-    for (const desc of Object.values(this.descriptions)) {
-      if (!sections.has(desc.section)) {
-        sections.set(desc.section, []);
-      }
-      const section = sections.get(desc.section);
-      section!.push(desc);
+const featureItems = computed(() => {
+  const sections: Map<string, IFeatureDescription[]> = new Map();
+  for (const desc of Object.values(descriptions)) {
+    if (!sections.has(desc.section)) {
+      sections.set(desc.section, []);
     }
-    const items = [...sections.entries()];
-    items.sort();
-    return items;
+    const section = sections.get(desc.section);
+    section!.push(desc);
   }
-}
+  const items = [...sections.entries()];
+  items.sort();
+  return items;
+});
+
+defineExpose({ hotkeyItems, featureItems });
 </script>
 
 <style lang="scss" scoped>

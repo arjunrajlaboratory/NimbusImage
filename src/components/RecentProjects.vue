@@ -64,41 +64,45 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
 import { IProject } from "@/store/model";
 import { formatDateString } from "@/utils/date";
 
-@Component
-export default class RecentProjects extends Vue {
-  @Prop({ type: Array, required: true })
-  readonly projects!: IProject[];
+withDefaults(
+  defineProps<{
+    projects: IProject[];
+    loading?: boolean;
+    getUserDisplayName: (creatorId: string) => string;
+  }>(),
+  {
+    loading: false,
+  },
+);
 
-  @Prop({ type: Boolean, default: false })
-  readonly loading!: boolean;
+const emit = defineEmits<{
+  (e: "project-clicked", project: IProject): void;
+}>();
 
-  @Prop({ type: Function, required: true })
-  readonly getUserDisplayName!: (creatorId: string) => string;
+function formatDate(dateStr: string): string {
+  return formatDateString(dateStr);
+}
 
-  formatDate(dateStr: string): string {
-    return formatDateString(dateStr);
-  }
-
-  getStatusColor(status: string): string {
-    switch (status) {
-      case "exported":
-        return "success";
-      case "exporting":
-        return "warning";
-      default:
-        return "grey";
-    }
-  }
-
-  handleProjectClick(project: IProject) {
-    this.$emit("project-clicked", project);
+function getStatusColor(status: string): string {
+  switch (status) {
+    case "exported":
+      return "success";
+    case "exporting":
+      return "warning";
+    default:
+      return "grey";
   }
 }
+
+function handleProjectClick(project: IProject) {
+  emit("project-clicked", project);
+}
+
+defineExpose({ getStatusColor });
 </script>
 
 <style scoped>

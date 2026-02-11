@@ -40,65 +40,66 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
-import { IDisplayLayer, IContrast } from "../store/model";
-import store from "../store";
+<script setup lang="ts">
+import { IDisplayLayer, IContrast } from "@/store/model";
+import store from "@/store";
 import ContrastHistogram from "./ContrastHistogram.vue";
 import ColorPickerMenu from "./ColorPickerMenu.vue";
 
-@Component({
-  components: {
-    ContrastHistogram,
-    ColorPickerMenu,
-  },
-})
-export default class LayerInfoGrid extends Vue {
-  @Prop({ required: true }) readonly layers!: IDisplayLayer[];
+defineProps<{
+  layers: IDisplayLayer[];
+}>();
 
-  toggleVisibility(layerId: string) {
-    store.toggleLayerVisibility(layerId);
+function toggleVisibility(layerId: string) {
+  store.toggleLayerVisibility(layerId);
+}
+
+function getConfigurationContrast(layerId: string) {
+  if (!store.configuration) {
+    return null;
   }
-
-  getConfigurationContrast(layerId: string) {
-    const configuration = store.configuration;
-    if (!configuration) {
-      return null;
-    }
-    const configurationLayer = store.getConfigurationLayerFromId(layerId);
-    if (!configurationLayer) {
-      return null;
-    }
-    return configurationLayer.contrast;
+  const configurationLayer = store.getConfigurationLayerFromId(layerId);
+  if (!configurationLayer) {
+    return null;
   }
+  return configurationLayer.contrast;
+}
 
-  getLayerHistogram(layer: IDisplayLayer) {
-    return store.getLayerHistogram(layer);
-  }
+function getLayerHistogram(layer: IDisplayLayer) {
+  return store.getLayerHistogram(layer);
+}
 
-  changeContrast(
-    layerId: string,
-    contrast: IContrast,
-    syncConfiguration: boolean,
-  ) {
-    if (syncConfiguration) {
-      store.saveContrastInConfiguration({ layerId, contrast });
-    } else {
-      store.saveContrastInView({ layerId, contrast });
-    }
-  }
-
-  resetContrastInView(layerId: string) {
-    store.resetContrastInView(layerId);
-  }
-
-  changeLayerColor(layerId: string, color: string) {
-    store.changeLayer({
-      layerId,
-      delta: { color },
-    });
+function changeContrast(
+  layerId: string,
+  contrast: IContrast,
+  syncConfiguration: boolean,
+) {
+  if (syncConfiguration) {
+    store.saveContrastInConfiguration({ layerId, contrast });
+  } else {
+    store.saveContrastInView({ layerId, contrast });
   }
 }
+
+function resetContrastInView(layerId: string) {
+  store.resetContrastInView(layerId);
+}
+
+function changeLayerColor(layerId: string, color: string) {
+  store.changeLayer({
+    layerId,
+    delta: { color },
+  });
+}
+
+defineExpose({
+  toggleVisibility,
+  getConfigurationContrast,
+  getLayerHistogram,
+  changeContrast,
+  resetContrastInView,
+  changeLayerColor,
+});
 </script>
 
 <style lang="scss" scoped>

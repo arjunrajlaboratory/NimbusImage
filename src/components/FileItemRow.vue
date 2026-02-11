@@ -68,32 +68,25 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref } from "vue";
 import { IGirderSelectAble } from "@/girder";
 import { formatDateString } from "@/utils/date";
 import ShareDataset from "./ShareDataset.vue";
 
-@Component({
-  components: {
-    ShareDataset,
+withDefaults(
+  defineProps<{
+    item: IGirderSelectAble;
+    debouncedChipsPerItemId: { [itemId: string]: any };
+    computedChipsIds: Set<string>;
+    showIcon?: boolean;
+  }>(),
+  {
+    showIcon: true,
   },
-})
-export default class ItemRow extends Vue {
-  @Prop({ required: true })
-  item!: IGirderSelectAble;
+);
 
-  @Prop({ required: true })
-  debouncedChipsPerItemId!: { [itemId: string]: any };
+const shareDialogVisible = ref(false);
 
-  @Prop({ required: true })
-  computedChipsIds!: Set<string>;
-
-  @Prop({ default: true })
-  showIcon!: boolean;
-
-  shareDialogVisible = false;
-
-  formatDateString = formatDateString;
-}
+defineExpose({ shareDialogVisible });
 </script>
