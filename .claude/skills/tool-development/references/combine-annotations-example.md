@@ -62,11 +62,11 @@ case "combine_click":
 
 In `src/components/AnnotationViewer.vue`:
 
-**Set annotation mode** in `refreshAnnotationMode()`:
+**Set annotation mode** in `setNewAnnotationMode()`:
 ```typescript
-case "annotationEdit":
+case "edit":
   if (actionValue === "combine_click") {
-    this.geoJSAnnotationMode = "point";
+    this.interactionLayer.mode("point");
   }
   break;
 ```

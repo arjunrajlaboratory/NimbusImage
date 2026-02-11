@@ -2,62 +2,60 @@
 
 ## GeoJS Interaction Layer
 
-`AnnotationViewer.vue` manages a GeoJS annotation layer that handles user interactions. The annotation mode determines what happens on mouse events.
+`AnnotationViewer.vue` manages a GeoJS interaction layer (`this.interactionLayer`) that handles user interactions. The layer's `mode()` method determines what happens on mouse events.
 
-### Annotation Modes
+### Setting Annotation Modes
 
-Set in `refreshAnnotationMode()` based on the active tool type:
+Set in `setNewAnnotationMode()` based on the active tool's `type` field:
 
 ```typescript
-// Standard GeoJS annotation modes
-this.geoJSAnnotationMode = "point";     // Single click
-this.geoJSAnnotationMode = "line";      // Draw line
-this.geoJSAnnotationMode = "polygon";   // Draw polygon
-this.geoJSAnnotationMode = "rectangle"; // Draw rectangle
-this.geoJSAnnotationMode = null;        // Custom handling (bind events manually)
+// Standard GeoJS annotation modes (set via interactionLayer.mode())
+this.interactionLayer.mode("point");     // Single click
+this.interactionLayer.mode("line");      // Draw line
+this.interactionLayer.mode("polygon");   // Draw polygon
+this.interactionLayer.mode("rectangle"); // Draw rectangle
+this.interactionLayer.mode(null);        // No built-in mode (for custom handling)
 ```
 
 ### Custom Mouse Handling (null mode)
 
-For tools that don't use GeoJS's built-in annotation creation:
+For tools that don't use GeoJS's built-in annotation creation, set mode to `null` and bind events with `geoOn`:
 
 ```typescript
 case "myTool":
-  this.geoJSAnnotationMode = null;
-  // Bind custom click handler
-  this.annotationLayer.bindEvent(
-    "mouseclick", this.handleMyToolClick
+  this.interactionLayer.mode(null);
+  // Bind custom click handler using geoOn
+  this.annotationLayer.geoOn(
+    geojs.event.mouseclick, this.handleMyToolClick
   );
   break;
 ```
 
 ### Cleanup Pattern
 
-Always unbind custom events when switching tools:
+Always unbind custom events with `geoOff` when the component is destroyed or when switching tools:
 
 ```typescript
-// In refreshAnnotationMode(), before setting new mode:
-this.annotationLayer.bindEvent("mouseclick", null);
-this.annotationLayer.bindEvent("mousemove", null);
+// In beforeDestroy() or when switching away from the tool:
+this.annotationLayer.geoOff(geojs.event.mouseclick, this.handleMyToolClick);
+this.annotationLayer.geoOff(geojs.event.mousemove, this.handleMyToolMove);
 ```
 
-## Temporary Annotations
+## Tool Type Mapping
 
-For visual feedback during multi-click interactions:
+The `setNewAnnotationMode()` switch uses the tool configuration's `type`, not the template `type` directly. Common cases:
 
 ```typescript
-// Create temporary visual annotation
-const tempAnnotation = this.annotationLayer.createAnnotation("polygon", {
-  coordinates: previewCoords,
-  style: {
-    strokeColor: "yellow",
-    strokeWidth: 2,
-    fill: false,
-  },
-});
-
-// Remove after interaction completes
-this.annotationLayer.removeAnnotation(tempAnnotation);
+switch (this.selectedToolConfiguration?.type) {
+  case "create":       // Annotation creation tools
+  case "tagging":      // Tag/untag click tools
+  case "snap":         // Snap-to tools (e.g., circleToDot)
+  case "connection":   // Connection tools (click or polygon)
+  case "select":       // Selection tools (pointer or polygon)
+  case "edit":         // Annotation edit tools (combine_click, blob_edit)
+  case "samAnnotation": // SAM tools (mode null, custom pipeline)
+  case "segmentation": // Worker segmentation (mode null)
+}
 ```
 
 ## Hit Testing
@@ -125,16 +123,24 @@ get toolHighlightedAnnotationIds(): Set<string> {
 
 ## GeoJS Events Reference
 
-Common events available on the annotation layer:
+Events are accessed via `geojs.event.*` constants and bound with `geoOn`/`geoOff`:
 
-| Event | Trigger |
+```typescript
+import geojs from "geojs";
+
+// Binding
+this.annotationLayer.geoOn(geojs.event.mouseclick, handler);
+// Unbinding
+this.annotationLayer.geoOff(geojs.event.mouseclick, handler);
+```
+
+| Event constant | Trigger |
 |-------|---------|
-| `mouseclick` | Single click on map |
-| `mousemove` | Mouse movement |
-| `mousedown` | Mouse button pressed |
-| `mouseup` | Mouse button released |
-| `geojs.annotation.state` | Annotation state change |
-| `geojs.annotation.add_before` | Before annotation added |
+| `geojs.event.mouseclick` | Single click on map |
+| `geojs.event.mousemove` | Mouse movement |
+| `geojs.event.mousedown` | Mouse button pressed |
+| `geojs.event.mouseup` | Mouse button released |
+| `geojs.event.zoom` | Zoom level change |
 
 ## Updating Annotations After Tool Action
 

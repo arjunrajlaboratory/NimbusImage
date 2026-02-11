@@ -89,16 +89,18 @@ Making resources public/private affects the entire chain:
 @access.user
 @autoDescribeRoute(
     Description("Set dataset public/private")
-    .param('datasetId', 'The dataset folder ID')
-    .param('public', 'Whether to make public', dataType='boolean')
+    .modelParam('datasetId', 'The dataset folder ID', model=Folder,
+                level=AccessType.ADMIN, destName='dataset')
+    .param('public', 'Whether to make public', dataType='boolean',
+           required=True)
 )
-def setPublic(self, params):
+def setDatasetPublic(self, dataset, public):
     # Set public on: dataset folder + all DatasetViews + all Configurations
-    Folder().setPublic(folder, params['public'], save=True)
+    Folder().setPublic(dataset, public, save=True)
     for view in datasetViews:
-        DatasetViewModel().setPublic(view, params['public'], save=True)
+        DatasetViewModel().setPublic(view, public, save=True)
     for config in configurations:
-        Collection().setPublic(config, params['public'], save=True)
+        Collection().setPublic(config, public, save=True)
 ```
 
 ### Access Check: Owner Protection

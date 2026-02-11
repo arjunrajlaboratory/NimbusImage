@@ -99,10 +99,10 @@ export type TToolType =
 
 In `src/components/AnnotationViewer.vue`:
 
-**Set annotation mode** in `refreshAnnotationMode()`:
+**Set annotation mode** in `setNewAnnotationMode()`:
 ```typescript
 case "myTool":
-  this.geoJSAnnotationMode = "point"; // or null for custom handling
+  this.interactionLayer.mode("point"); // or null for custom handling
   break;
 ```
 
@@ -155,8 +155,8 @@ For tools that don't create visible annotations during interaction:
 
 ```typescript
 case "myTool":
-  this.geoJSAnnotationMode = null;
-  this.annotationLayer.bindEvent("mouseclick", this.handleMyToolClick);
+  this.interactionLayer.mode(null);
+  this.annotationLayer.geoOn(geojs.event.mouseclick, this.handleMyToolClick);
   break;
 ```
 
