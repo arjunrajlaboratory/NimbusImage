@@ -13,39 +13,28 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
-import store from "@/store";
-import annotationsStore from "@/store/annotation";
-import propertiesStore from "@/store/properties";
+<script setup lang="ts">
+import { ref, watch, onMounted } from "vue";
 import { IToolConfiguration } from "@/store/model";
-// Popup for new tool configuration
-@Component({
-  components: {},
-})
-export default class circleToDotMenu extends Vue {
-  readonly store = store;
-  readonly annotationsStore = annotationsStore;
-  readonly propertyStore = propertiesStore;
 
-  @Prop()
-  readonly tool!: IToolConfiguration;
+const props = defineProps<{
+  tool: IToolConfiguration;
+}>();
 
-  show: boolean = true;
-  radius: number = 0;
+const radius = ref(0);
 
-  mounted() {
-    this.toolChanged();
-  }
-
-  @Watch("tool")
-  toolChanged() {
-    this.radius = this.tool.values.radius;
-  }
-
-  @Watch("radius")
-  updateRadius() {
-    this.tool.values.radius = this.radius;
-  }
+function syncRadiusFromTool() {
+  radius.value = props.tool.values.radius;
 }
+
+onMounted(syncRadiusFromTool);
+
+watch(() => props.tool, syncRadiusFromTool);
+
+watch(radius, (val) => {
+  // eslint-disable-next-line vue/no-mutating-props
+  props.tool.values.radius = val;
+});
+
+defineExpose({ radius });
 </script>

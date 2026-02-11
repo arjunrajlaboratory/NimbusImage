@@ -28,43 +28,57 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import TagPicker from "@/components/TagPicker.vue";
 
-@Component({
-  components: { TagPicker },
-})
-export default class TagSelectionDialog extends Vue {
-  @Prop({ type: Boolean, required: true })
-  show!: boolean;
+const props = defineProps<{
+  show: boolean;
+}>();
 
-  localTags: string[] = [];
-  localAddOrRemove: "add" | "remove" = "add";
-  localReplaceExisting: boolean = false;
+const emit = defineEmits<{
+  (e: "update:show", value: boolean): void;
+  (
+    e: "submit",
+    payload: {
+      tags: string[];
+      addOrRemove: "add" | "remove";
+      replaceExisting: boolean;
+    },
+  ): void;
+}>();
 
-  get showDialog() {
-    return this.show;
-  }
+const localTags = ref<string[]>([]);
+const localAddOrRemove = ref<"add" | "remove">("add");
+const localReplaceExisting = ref(false);
 
-  set showDialog(value: boolean) {
-    this.$emit("update:show", value);
-  }
+const showDialog = computed({
+  get: () => props.show,
+  set: (value: boolean) => emit("update:show", value),
+});
 
-  clearTags() {
-    this.localTags = [];
-  }
-
-  submit() {
-    this.$emit("submit", {
-      tags: this.localTags,
-      addOrRemove: this.localAddOrRemove,
-      replaceExisting: this.localReplaceExisting,
-    });
-    this.clearTags();
-    this.localAddOrRemove = "add";
-    this.localReplaceExisting = false;
-    this.showDialog = false;
-  }
+function clearTags() {
+  localTags.value = [];
 }
+
+function submit() {
+  emit("submit", {
+    tags: localTags.value,
+    addOrRemove: localAddOrRemove.value,
+    replaceExisting: localReplaceExisting.value,
+  });
+  clearTags();
+  localAddOrRemove.value = "add";
+  localReplaceExisting.value = false;
+  showDialog.value = false;
+}
+
+defineExpose({
+  localTags,
+  localAddOrRemove,
+  localReplaceExisting,
+  showDialog,
+  clearTags,
+  submit,
+});
 </script>

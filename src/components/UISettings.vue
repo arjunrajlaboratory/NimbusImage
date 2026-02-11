@@ -19,20 +19,19 @@
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
-import store from "@/store/index";
+<script setup lang="ts">
+import { computed, getCurrentInstance } from "vue";
 
-@Component
-export default class UISettings extends Vue {
-  readonly store = store;
+const vuetify = getCurrentInstance()?.proxy?.$vuetify;
 
-  get darkMode() {
-    return this.$vuetify.theme.dark;
-  }
+const darkMode = computed({
+  get: () => vuetify?.theme.dark ?? false,
+  set: (value: boolean) => {
+    if (vuetify) {
+      vuetify.theme.dark = value;
+    }
+  },
+});
 
-  set darkMode(value) {
-    this.$vuetify.theme.dark = value;
-  }
-}
+defineExpose({ darkMode });
 </script>

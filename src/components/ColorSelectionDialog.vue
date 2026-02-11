@@ -22,37 +22,44 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 
-@Component({
-  components: { ColorPickerMenu },
-})
-export default class ColorSelectionDialog extends Vue {
-  @Prop({ type: Boolean, required: true })
-  show!: boolean;
+const props = defineProps<{
+  show: boolean;
+}>();
 
-  colorOption: string = "layer";
-  localCustomColor: string = "#FFFFFF";
+const emit = defineEmits<{
+  (e: "update:show", value: boolean): void;
+  (
+    e: "submit",
+    payload: {
+      useColorFromLayer: boolean;
+      color: string;
+      randomize: boolean;
+    },
+  ): void;
+}>();
 
-  get showDialog() {
-    return this.show;
-  }
+const colorOption = ref("layer");
+const localCustomColor = ref("#FFFFFF");
 
-  set showDialog(value: boolean) {
-    this.$emit("update:show", value);
-  }
+const showDialog = computed({
+  get: () => props.show,
+  set: (value: boolean) => emit("update:show", value),
+});
 
-  submit() {
-    this.$emit("submit", {
-      useColorFromLayer: this.colorOption === "layer",
-      color: this.localCustomColor,
-      randomize: this.colorOption === "random",
-    });
-    this.colorOption = "layer";
-    this.localCustomColor = "#FFFFFF";
-    this.showDialog = false;
-  }
+function submit() {
+  emit("submit", {
+    useColorFromLayer: colorOption.value === "layer",
+    color: localCustomColor.value,
+    randomize: colorOption.value === "random",
+  });
+  colorOption.value = "layer";
+  localCustomColor.value = "#FFFFFF";
+  showDialog.value = false;
 }
+
+defineExpose({ colorOption, localCustomColor, showDialog, submit });
 </script>

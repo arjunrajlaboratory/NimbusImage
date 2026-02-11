@@ -9,40 +9,46 @@
   />
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import store from "@/store";
 
-// Interface element selecting a channel
-@Component({})
-export default class ChannelSelect extends Vue {
-  readonly store = store;
+const props = withDefaults(
+  defineProps<{
+    value?: number | null;
+    any?: boolean;
+    label?: string;
+  }>(),
+  {
+    any: false,
+    label: "",
+  },
+);
 
-  // Adds an "Any" selection choice
-  @Prop({ default: false })
-  readonly any!: boolean;
+const emit = defineEmits<{
+  (e: "input", value: number | null): void;
+}>();
 
-  @Prop({ default: "" })
-  readonly label!: string;
+const channel = computed({
+  get: () => props.value ?? null,
+  set: (value: number | null) => emit("input", value),
+});
 
-  @VModel({ type: Number }) channel!: Number;
-
-  get channelItems() {
-    const res = [];
-    if (this.any) {
-      res.push({ text: "Any", value: null });
-    }
-    if (this.store.dataset) {
-      for (const channel of this.store.dataset.channels) {
-        res.push({
-          text:
-            this.store.dataset.channelNames.get(channel) ||
-            `Channel ${channel}`,
-          value: channel,
-        });
-      }
-    }
-    return res;
+const channelItems = computed(() => {
+  const res: { text: string; value: number | null }[] = [];
+  if (props.any) {
+    res.push({ text: "Any", value: null });
   }
-}
+  if (store.dataset) {
+    for (const ch of store.dataset.channels) {
+      res.push({
+        text: store.dataset.channelNames.get(ch) || `Channel ${ch}`,
+        value: ch,
+      });
+    }
+  }
+  return res;
+});
+
+defineExpose({ channelItems });
 </script>

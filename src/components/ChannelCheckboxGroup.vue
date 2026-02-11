@@ -17,44 +17,59 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import store from "@/store";
 
-@Component({})
-export default class ChannelCheckboxGroup extends Vue {
-  readonly store = store;
+const props = withDefaults(
+  defineProps<{
+    value?: Record<number, boolean>;
+    label?: string;
+  }>(),
+  {
+    value: () => ({}),
+    label: "",
+  },
+);
 
-  @Prop({ default: "" })
-  readonly label!: string;
+const emit = defineEmits<{
+  (e: "input", value: Record<number, boolean>): void;
+}>();
 
-  @VModel({ type: Object, default: () => ({}) })
-  selectedChannels!: { [key: number]: boolean };
+const selectedChannels = ref<Record<number, boolean>>({});
 
-  get channelItems() {
-    if (!this.store.dataset) return [];
+watch(
+  () => props.value,
+  (val) => {
+    selectedChannels.value = val ?? {};
+  },
+  { immediate: true, deep: true },
+);
 
-    return this.store.dataset.channels.map((channel: number) => ({
-      text:
-        this.store.dataset?.channelNames?.get(channel) || `Channel ${channel}`,
-      value: channel,
-    }));
-  }
+watch(
+  selectedChannels,
+  (val) => {
+    emit("input", { ...val });
+  },
+  { deep: true },
+);
 
-  created() {
-    // Initialize selectedChannels with an empty object if undefined
-    this.selectedChannels = this.selectedChannels || {};
+const channelItems = computed(() => {
+  if (!store.dataset) return [];
+  return store.dataset.channels.map((channel: number) => ({
+    text: store.dataset?.channelNames?.get(channel) || `Channel ${channel}`,
+    value: channel,
+  }));
+});
 
-    // Then add any missing channels
-    if (this.store.dataset?.channels) {
-      const updatedChannels = { ...this.selectedChannels };
-      for (const channel of this.store.dataset.channels) {
-        if (!(channel in updatedChannels)) {
-          updatedChannels[channel] = false;
-        }
-      }
-      this.selectedChannels = updatedChannels;
+// Initialize missing channels (equivalent to created() hook)
+if (store.dataset?.channels) {
+  const updatedChannels = { ...props.value };
+  for (const channel of store.dataset.channels) {
+    if (!(channel in updatedChannels)) {
+      updatedChannels[channel] = false;
     }
   }
+  selectedChannels.value = updatedChannels;
 }
 </script>

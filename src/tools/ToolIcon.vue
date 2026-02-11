@@ -2,8 +2,8 @@
   <v-icon v-if="tool">{{ iconName }}</v-icon>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import { IToolConfiguration } from "@/store/model";
 
 const toolTypeToIcon = {
@@ -23,23 +23,24 @@ const createShapeToIcon = {
 
 type toolType = keyof typeof toolTypeToIcon;
 type shape = keyof typeof createShapeToIcon;
-@Component({})
-export default class ToolIcon extends Vue {
-  @Prop()
-  readonly tool: IToolConfiguration | undefined;
 
-  get iconName() {
-    if (this.tool) {
-      if (this.tool.type === "create") {
-        const shape = this.tool.values?.annotation?.shape as shape;
-        if (shape) {
-          return createShapeToIcon[shape];
-        }
+const props = defineProps<{
+  tool?: IToolConfiguration;
+}>();
+
+const iconName = computed(() => {
+  if (props.tool) {
+    if (props.tool.type === "create") {
+      const s = props.tool.values?.annotation?.shape as shape;
+      if (s) {
+        return createShapeToIcon[s];
       }
-      const type = this.tool.type as toolType;
-      return toolTypeToIcon[type];
     }
-    return "";
+    const type = props.tool.type as toolType;
+    return toolTypeToIcon[type];
   }
-}
+  return "";
+});
+
+defineExpose({ iconName });
 </script>

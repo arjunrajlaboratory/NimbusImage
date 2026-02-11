@@ -19,18 +19,14 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { getCurrentInstance } from "vue";
 import store, { girderUrlFromApiRoot } from "@/store";
 
-@Component
-export default class UserProfileSettings extends Vue {
-  readonly store = store;
-  readonly girderUrlFromApiRoot = girderUrlFromApiRoot;
+const router = getCurrentInstance()?.proxy?.$router;
 
-  async logout() {
-    await this.store.logout();
-    this.$router.push({ name: "root" });
-  }
+async function logout() {
+  await store.logout();
+  router?.push({ name: "root" });
 }
 </script>

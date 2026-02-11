@@ -30,32 +30,36 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref } from "vue";
 import { logError } from "@/utils/log";
 import annotationStore from "@/store/annotation";
 
-@Component
-export default class AnnotationActionPanel extends Vue {
-  readonly annotationStore = annotationStore;
+defineProps<{
+  selectedCount: number;
+}>();
 
-  @Prop({ required: true })
-  selectedCount!: number;
+defineEmits<{
+  (e: "delete-selected"): void;
+  (e: "delete-unselected"): void;
+  (e: "tag-selected"): void;
+  (e: "color-selected"): void;
+  (e: "deselect-all"): void;
+}>();
 
-  copySuccess = false;
+const copySuccess = ref(false);
 
-  async copyAnnotationIds() {
-    try {
-      await navigator.clipboard.writeText(
-        this.annotationStore.selectedAnnotationIds.join("\n"),
-      );
-      this.copySuccess = true;
-      setTimeout(() => {
-        this.copySuccess = false;
-      }, 1000);
-    } catch (err) {
-      logError("Failed to copy annotation IDs:", err);
-    }
+async function copyAnnotationIds() {
+  try {
+    await navigator.clipboard.writeText(
+      annotationStore.selectedAnnotationIds.join("\n"),
+    );
+    copySuccess.value = true;
+    setTimeout(() => {
+      copySuccess.value = false;
+    }, 1000);
+  } catch (err) {
+    logError("Failed to copy annotation IDs:", err);
   }
 }
 </script>
