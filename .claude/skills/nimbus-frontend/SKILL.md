@@ -1,6 +1,6 @@
 ---
 name: nimbus-frontend
-description: Guidelines for frontend development in the NimbusImage application including Vue 2, Vuetify, Vuex patterns, theming, and component structure.
+description: "Use when writing or modifying Vue 2 components, Vuex store modules, TypeScript interfaces, or Vuetify UI in the src/ directory. Covers: vue-property-decorator class components, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 2 theming (light/dark mode), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button loading states, and style guidelines."
 allowed-tools:
   - Bash
   - Read
@@ -15,21 +15,9 @@ user-invocable: true
 
 # Nimbus Frontend Development
 
-Guidelines for frontend development in the NimbusImage application.
-
-## Technology Stack
-
-- **Vue 2.7** with TypeScript
-- **Vuetify 2** for UI components
-- **Vuex** with `vuex-module-decorators` for state management
-- **vue-property-decorator** for class-style components
-- **Vite** for build tooling
-
 ## Component Patterns
 
 ### Class-Style Components
-
-Components use `vue-property-decorator`:
 
 ```typescript
 import { Vue, Component, Prop, Watch } from "vue-property-decorator";
@@ -57,8 +45,6 @@ export default class MyComponent extends Vue {
 
 ### Store Access
 
-Access Vuex stores directly:
-
 ```typescript
 import store from "@/store";
 import annotationStore from "@/store/annotation";
@@ -71,12 +57,13 @@ readonly annotationStore = annotationStore;
 this.store.someAction();
 ```
 
+For advanced store patterns (routeMapper, form change detection, caching with batch loading): read `references/store-module-patterns.md`
+
 ## Light/Dark Mode Theming
 
 ### Checking Theme State
 
 ```typescript
-// In component
 get isDarkMode() {
   return this.$vuetify.theme.dark;
 }
@@ -85,16 +72,14 @@ get isDarkMode() {
 ### Theme-Aware Styling
 
 **Option 1: Vuetify Components** (preferred)
-Use Vuetify components like `v-card`, `v-dialog`, `v-btn` - they automatically inherit the theme.
+Use `v-card`, `v-dialog`, `v-btn` - they automatically inherit the theme.
 
 **Option 2: Theme Classes in SCSS**
 
 ```scss
-// For styles on elements that have the theme class directly
 .my-component.theme--dark {
   background: rgba(255, 255, 255, 0.05);
 }
-
 .my-component.theme--light {
   background: rgba(0, 0, 0, 0.05);
 }
@@ -117,21 +102,13 @@ Use Vuetify components like `v-card`, `v-dialog`, `v-btn` - they automatically i
 
 ### Theme Persistence
 
-Theme preference is stored in localStorage via `Persister`:
-
 ```typescript
 import { Persister } from "@/store/Persister";
-
-// Get theme
 const isDark = Persister.get("theme", "dark") === "dark";
-
-// Set theme (usually done through $vuetify.theme.dark)
 this.$vuetify.theme.dark = true;
 ```
 
 ## Dialogs
-
-Use Vuetify's `v-dialog` with `max-width` for consistent sizing:
 
 ```vue
 <v-dialog v-model="dialogOpen" max-width="600px">
@@ -146,53 +123,23 @@ Use Vuetify's `v-dialog` with `max-width` for consistent sizing:
 </v-dialog>
 ```
 
-## File Organization
-
-- `src/components/` - Reusable UI components
-- `src/views/` - Route-level page components
-- `src/tools/` - Tool creation and configuration UI
-- `src/layout/` - App layout components
-- `src/utils/` - Utility functions
-- `src/store/` - Vuex store modules
-
-## Common Patterns
-
-### API Calls
+## API Calls
 
 Use the API classes from store:
 
 ```typescript
 import { api } from "@/store/GirderAPI";
-
-// In component or store action
 const result = await api.someMethod();
-```
-
-### Emitting Events
-
-```typescript
-this.$emit("eventName", payload);
-```
-
-### Refs
-
-```typescript
-@Ref() readonly myElement!: HTMLElement;
 ```
 
 ## Logging
 
-**Never use `console.log`, `console.warn`, or `console.error` directly** - eslint will reject them.
-
-Use the logging utilities from `@/utils/log`:
+**Never use `console.log`, `console.warn`, or `console.error`** - eslint will reject them.
 
 ```typescript
 import { logWarning, logError } from "@/utils/log";
 
-// Instead of console.warn()
 logWarning("Something unexpected happened");
-
-// Instead of console.error()
 logError("An error occurred", error);
 ```
 
@@ -200,7 +147,7 @@ logError("An error occurred", error);
 
 ### Button Loading States
 
-When using `:loading` on `v-btn`, the default slot content is replaced with just a spinner. To show custom loading content (e.g., text + spinner), use the `loader` slot:
+When using `:loading` on `v-btn`, the default slot content is replaced with just a spinner. To show custom loading content, use the `loader` slot:
 
 ```vue
 <v-btn
@@ -223,7 +170,7 @@ When using `:loading` on `v-btn`, the default slot content is replaced with just
 </v-btn>
 ```
 
-Note: Use `:min-width` to ensure the button expands to fit longer loading text.
+Use `:min-width` to ensure the button expands to fit longer loading text.
 
 ## Style Guidelines
 
@@ -231,3 +178,10 @@ Note: Use `:min-width` to ensure the button expands to fit longer loading text.
 - Prefer Vuetify components over custom HTML
 - Use `!important` sparingly - only when overriding Vuetify internals
 - Keep custom colors as SCSS variables at the top of style blocks
+
+## Codebase Documentation References
+
+- When working on batch processing: read `references/batch-processing-patterns.md`
+- When working on projects feature: read `codebaseDocumentation/PROJECTS.md`
+- When working on sharing UI: read `codebaseDocumentation/SHARING.md`
+- When working on annotation combining: read `codebaseDocumentation/COMBINE_ANNOTATIONS.md`

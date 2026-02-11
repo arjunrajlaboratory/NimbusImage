@@ -1,6 +1,6 @@
 ---
 name: tool-development
-description: Guidelines for creating and modifying tools in the NimbusImage application including template structure, interface elements, and implementation patterns.
+description: "Use when creating a new annotation tool, modifying tool templates in public/config/templates.json, adding tool types to TToolType in model.ts, implementing tool interaction logic in AnnotationViewer.vue, or working with the tool selection UI. Covers: template JSON structure, interface element types (annotation, select, checkbox, radio, tags, dockerImage), submenu patterns, tool type registration, GeoJS interaction layer, mouse event handling, hit testing, and worker-based tool configuration."
 allowed-tools:
   - Bash
   - Read
@@ -15,23 +15,9 @@ user-invocable: true
 
 # NimbusImage Tool Development
 
-Guidelines for creating and modifying tools in the NimbusImage application.
-
-## Overview
-
-Tools in NimbusImage are configured through JSON templates and implemented in Vue components. The system supports manual annotation tools, selection tools, AI-powered tools, worker-based tools, and more.
-
-## Key Files
-
-- `public/config/templates.json` - Tool template definitions
-- `src/tools/creation/ToolTypeSelection.vue` - Tool selection dialog
-- `src/tools/creation/ToolConfiguration.vue` - Tool configuration form
-- `src/components/AnnotationViewer.vue` - Tool interaction logic
-- `src/store/model.ts` - TypeScript types including `TToolType`
+Tools are configured through JSON templates (`public/config/templates.json`) and implemented in Vue components. The system supports manual annotation, selection, AI-powered, worker-based, and custom interaction tools.
 
 ## Template Structure
-
-Each tool template in `templates.json` has:
 
 ```json
 {
@@ -65,7 +51,7 @@ Each tool template in `templates.json` has:
 
 ### Submenu Interface
 
-One interface element should have `isSubmenu: true`. This creates the tool variants shown in the selection dialog. For `select` type submenus, each item in `meta.items` becomes a separate tool option.
+One interface element should have `isSubmenu: true`. This creates tool variants in the selection dialog. For `select` type submenus, each item in `meta.items` becomes a separate tool option.
 
 ## Adding a New Tool
 
@@ -128,8 +114,6 @@ case "myTool":
 ```
 
 ## Tool Descriptions
-
-Add descriptions to make tools more discoverable:
 
 ```json
 {
@@ -195,8 +179,14 @@ await annotationStore.updateAnnotationsPerId({
 
 ## Category Colors
 
-Tools are color-coded by category in the selection dialog. To add a new category color, edit `ToolTypeSelection.vue`:
+Tools are color-coded by category. To add a new category color, edit `ToolTypeSelection.vue`:
 
 1. Add SCSS variable: `$color-mycategory: #hexcolor;`
 2. Add to `categoryClassMap`: `"My Category": "category-mycategory"`
 3. Add class: `.category-mycategory { @include category-colors($color-mycategory); }`
+
+## References
+
+- For detailed GeoJS interaction patterns: read `references/tool-interaction-patterns.md`
+- For a complete worked example (combine annotations tool): read `references/combine-annotations-example.md`
+- For SAM tool architecture: read `codebaseDocumentation/SAM2_MIGRATION.md`
