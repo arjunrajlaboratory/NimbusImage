@@ -79,9 +79,14 @@
             <v-icon v-if="previousRunStatus === true">mdi-check</v-icon>
             <span>Compute</span>
           </v-btn>
-          <v-btn v-else @click="cancel" color="orange" :disabled="!currentJob">
+          <v-btn
+            v-else
+            @click="cancel"
+            color="orange"
+            :disabled="!currentJob && !batchCancelFunction"
+          >
             <v-progress-circular size="16" indeterminate />
-            <span>Cancel</span>
+            <span>Cancel{{ batchCancelFunction ? " All" : "" }}</span>
           </v-btn>
         </v-row>
         <v-row>
@@ -90,6 +95,55 @@
             v-model="displayWorkerPreview"
             label="Display Previews"
           ></v-checkbox>
+        </v-row>
+        <!-- Batch processing checkbox -->
+        <v-row v-if="canApplyToAllDatasets || batchDisabledReason">
+          <v-tooltip bottom :disabled="!batchDisabledReason">
+            <template v-slot:activator="{ on, attrs }">
+              <div v-bind="attrs" v-on="on" style="width: 100%">
+                <v-checkbox
+                  v-model="applyToAllDatasets"
+                  :disabled="!canApplyToAllDatasets || running"
+                  :label="`Apply to all datasets in collection (${collectionDatasetCount})`"
+                  class="mt-0"
+                ></v-checkbox>
+              </div>
+            </template>
+            <span>{{ batchDisabledReason }}</span>
+          </v-tooltip>
+        </v-row>
+        <!-- Batch progress display -->
+        <v-row v-if="batchProgress">
+          <v-col cols="12" class="pa-0">
+            <div class="batch-progress-header mb-2">
+              <strong>Batch Progress:</strong>
+              {{
+                batchProgress.completed +
+                batchProgress.failed +
+                batchProgress.cancelled
+              }}
+              / {{ batchProgress.total }} datasets
+              <span v-if="batchProgress.failed > 0" class="error--text">
+                ({{ batchProgress.failed }} failed)
+              </span>
+              <span v-if="batchProgress.cancelled > 0" class="warning--text">
+                ({{ batchProgress.cancelled }} cancelled)
+              </span>
+            </div>
+            <v-progress-linear
+              :value="batchProgressPercent"
+              color="primary"
+              height="20"
+              striped
+            >
+              <template v-slot:default>
+                <strong>{{ Math.round(batchProgressPercent) }}%</strong>
+              </template>
+            </v-progress-linear>
+            <div class="batch-current-dataset mt-1">
+              <small>Current: {{ batchProgress.currentDatasetName }}</small>
+            </div>
+          </v-col>
         </v-row>
       </v-container>
     </v-card-text>
@@ -185,6 +239,22 @@ export default class AnnotationWorkerMenu extends Vue {
   localJobLog: string = "";
   showCopySnackbar: boolean = false;
 
+  // Batch processing state
+  applyToAllDatasets: boolean = false;
+  batchProgress: {
+    total: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    currentDatasetName: string;
+  } | null = null;
+  batchCancelFunction: (() => void) | null = null;
+  collectionDatasetCount: number = 0;
+  loadingDatasetCount: boolean = false;
+
+  // TODO: This limit can be increased or removed once batch processing is proven stable
+  readonly BATCH_DATASET_LIMIT = 10;
+
   beforeDestroy() {
     // Cancel any pending debounced calls
     this.debouncedEditTool.cancel();
@@ -222,6 +292,40 @@ export default class AnnotationWorkerMenu extends Vue {
     return this.tool ? this.jobsStore.jobIdForToolId[this.tool.id] : null;
   }
 
+  get canApplyToAllDatasets(): boolean {
+    // Only show checkbox if there's a configuration and dataset count is loaded
+    // and within the limit
+    return (
+      this.store.selectedConfigurationId !== null &&
+      this.collectionDatasetCount > 1 &&
+      this.collectionDatasetCount <= this.BATCH_DATASET_LIMIT
+    );
+  }
+
+  get batchDisabledReason(): string | null {
+    if (!this.store.selectedConfigurationId) {
+      return null;
+    }
+    if (this.loadingDatasetCount) {
+      return null;
+    }
+    if (this.collectionDatasetCount <= 1) {
+      return null;
+    }
+    if (this.collectionDatasetCount > this.BATCH_DATASET_LIMIT) {
+      return `Collection has more than ${this.BATCH_DATASET_LIMIT} datasets`;
+    }
+    return null;
+  }
+
+  get batchProgressPercent(): number {
+    if (!this.batchProgress || this.batchProgress.total === 0) {
+      return 0;
+    }
+    const { completed, failed, cancelled, total } = this.batchProgress;
+    return ((completed + failed + cancelled) / total) * 100;
+  }
+
   get jobLog() {
     if (this.currentJobId) {
       // Update local log from store when a job is running
@@ -241,6 +345,11 @@ export default class AnnotationWorkerMenu extends Vue {
     return this.localJobLog;
   }
 
+  @Watch("store.selectedConfigurationId")
+  onConfigurationChanged() {
+    this.fetchCollectionDatasetCount();
+  }
+
   @Watch("interfaceValues", { deep: true })
   onInterfaceValuesChanged() {
     let tool = this.tool; // Copy the tool object because it's a readonly prop
@@ -256,20 +365,82 @@ export default class AnnotationWorkerMenu extends Vue {
     this.running = true;
     this.currentJob = null;
     this.previousRunStatus = null;
-    this.currentJob = await this.annotationsStore.computeAnnotationsWithWorker({
+
+    if (this.applyToAllDatasets && this.store.selectedConfigurationId) {
+      // Batch mode
+      await this.computeBatch();
+    } else {
+      // Single dataset mode
+      this.currentJob =
+        await this.annotationsStore.computeAnnotationsWithWorker({
+          tool: this.tool,
+          workerInterface: this.interfaceValues,
+          progress: this.progressInfo,
+          error: this.errorInfo,
+          callback: (success) => {
+            this.running = false;
+            this.previousRunStatus = success;
+            this.progressInfo = {};
+          },
+        });
+    }
+  }
+
+  async computeBatch() {
+    const configurationId = this.store.selectedConfigurationId;
+    if (!configurationId) {
+      this.running = false;
+      return;
+    }
+
+    this.batchProgress = {
+      total: this.collectionDatasetCount,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      currentDatasetName: "Starting...",
+    };
+
+    await this.annotationsStore.computeAnnotationsWithWorkerBatch({
       tool: this.tool,
       workerInterface: this.interfaceValues,
-      progress: this.progressInfo,
-      error: this.errorInfo,
-      callback: (success) => {
+      configurationId,
+      onBatchProgress: (status) => {
+        this.batchProgress = status;
+      },
+      onJobProgress: (_datasetId, progressInfo) => {
+        // Update progress info for current job display
+        Object.assign(this.progressInfo, progressInfo);
+      },
+      onJobError: (_datasetId, errorInfo) => {
+        // Accumulate errors from all jobs
+        this.errorInfo.errors.push(...errorInfo.errors);
+      },
+      onCancel: (cancel) => {
+        this.batchCancelFunction = cancel;
+      },
+      onComplete: (results) => {
         this.running = false;
-        this.previousRunStatus = success;
+        this.batchCancelFunction = null;
+        // Consider it a success if at least one succeeded and none failed
+        this.previousRunStatus = results.succeeded > 0 && results.failed === 0;
         this.progressInfo = {};
+        // Keep batch progress visible for a moment so user can see final state
+        setTimeout(() => {
+          this.batchProgress = null;
+        }, 3000);
       },
     });
   }
 
   cancel() {
+    // Handle batch cancellation
+    if (this.batchCancelFunction) {
+      this.batchCancelFunction();
+      return;
+    }
+
+    // Handle single job cancellation
     const jobId = this.currentJob?.jobId;
     if (!jobId) {
       return;
@@ -290,6 +461,20 @@ export default class AnnotationWorkerMenu extends Vue {
       this.interfaceValues = this.tool.values.workerInterfaceValues;
     }
     this.updateInterface();
+    this.fetchCollectionDatasetCount();
+  }
+
+  async fetchCollectionDatasetCount() {
+    this.loadingDatasetCount = true;
+    try {
+      this.collectionDatasetCount =
+        await this.store.getCollectionDatasetCount();
+    } catch (error) {
+      logError("Failed to fetch collection dataset count:", error);
+      this.collectionDatasetCount = 0;
+    } finally {
+      this.loadingDatasetCount = false;
+    }
   }
 
   resetInterfaceValues() {
@@ -442,5 +627,13 @@ export default class AnnotationWorkerMenu extends Vue {
   border-radius: 4px;
   width: 100%;
   color: rgba(255, 255, 255, 0.85);
+}
+
+.batch-progress-header {
+  font-size: 0.875em;
+}
+
+.batch-current-dataset {
+  opacity: 0.7;
 }
 </style>

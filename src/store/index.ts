@@ -296,6 +296,16 @@ export class Main extends VuexModule {
       value: AnnotationShape.Rectangle,
       description: "Draw rectangular regions by dragging",
     },
+    {
+      text: AnnotationNames[AnnotationShape.Circle],
+      value: AnnotationShape.Circle,
+      description: "Draw circular regions by dragging",
+    },
+    {
+      text: AnnotationNames[AnnotationShape.Ellipse],
+      value: AnnotationShape.Ellipse,
+      description: "Draw elliptical regions by dragging",
+    },
   ];
 
   get tools() {
@@ -1604,6 +1614,16 @@ export class Main extends VuexModule {
     } catch (error) {
       sync.setSaving(error as Error);
     }
+  }
+
+  @Action
+  async getCollectionDatasetCount(): Promise<number> {
+    const configurationId = this.selectedConfigurationId;
+    if (!configurationId) {
+      return 0;
+    }
+    const views = await this.api.findDatasetViews({ configurationId });
+    return new Set(views.map((v: IDatasetView) => v.datasetId)).size;
   }
 
   @Action

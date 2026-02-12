@@ -330,3 +330,44 @@ export function estimateAnnotationRadius(
 
   return Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2) / 2;
 }
+
+/**
+ * Convert ellipse bounding box coordinates to polygon vertices.
+ * Uses separate semi-axes to fill the full bounding box.
+ * Also handles circles: pass a square bounding box for equal semi-axes.
+ *
+ * @param corners - The bounding box corners from an ellipse annotation
+ * @param numSamples - Number of vertices to generate (default 64)
+ * @returns Array of polygon vertices approximating the ellipse
+ */
+export function ellipseToPolygonCoordinates(
+  corners: IGeoJSPosition[],
+  numSamples: number = 64,
+): IGeoJSPosition[] {
+  if (corners.length < 2) {
+    logError("Ellipse annotation requires at least 2 corner coordinates");
+    return corners;
+  }
+
+  const center = simpleCentroid(corners);
+
+  const xs = corners.map((c) => c.x);
+  const ys = corners.map((c) => c.y);
+  const semiX = (Math.max(...xs) - Math.min(...xs)) / 2;
+  const semiY = (Math.max(...ys) - Math.min(...ys)) / 2;
+
+  const vertices: IGeoJSPosition[] = [];
+  for (let i = 0; i < numSamples; i++) {
+    const angle = (2 * Math.PI * i) / numSamples;
+    const vertex: IGeoJSPosition = {
+      x: center.x + semiX * Math.cos(angle),
+      y: center.y + semiY * Math.sin(angle),
+    };
+    if (center.z !== undefined) {
+      vertex.z = center.z;
+    }
+    vertices.push(vertex);
+  }
+
+  return vertices;
+}

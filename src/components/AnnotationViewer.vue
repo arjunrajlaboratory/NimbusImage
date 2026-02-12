@@ -87,6 +87,7 @@ import {
   unrollIndexFromImages,
   geojsAnnotationFactory,
   tagFilterFunction,
+  ellipseToPolygonCoordinates,
 } from "@/utils/annotation";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
@@ -2242,14 +2243,45 @@ export default class AnnotationViewer extends Vue {
       return;
     }
 
-    const coordinates = annotation.coordinates();
+    let coordinates = annotation.coordinates();
     this.interactionLayer.removeAnnotation(annotation);
 
-    // Create the new annotation
-    await this.createAnnotationFromTool(
-      coordinates,
-      this.selectedToolConfiguration,
-    );
+    // Handle circle/ellipse-to-polygon conversion
+    let toolConfiguration = this.selectedToolConfiguration;
+    const shape = toolConfiguration.values.annotation?.shape;
+    if (shape === AnnotationShape.Circle || shape === AnnotationShape.Ellipse) {
+      if (shape === AnnotationShape.Circle) {
+        // Inscribe circle in bounding box: build a square from the center
+        const xs = coordinates.map((c) => c.x);
+        const ys = coordinates.map((c) => c.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const r = Math.min(maxX - minX, maxY - minY) / 2;
+        coordinates = [
+          { x: cx - r, y: cy - r },
+          { x: cx + r, y: cy - r },
+          { x: cx + r, y: cy + r },
+          { x: cx - r, y: cy + r },
+        ];
+      }
+      coordinates = ellipseToPolygonCoordinates(coordinates);
+      toolConfiguration = {
+        ...toolConfiguration,
+        values: {
+          ...toolConfiguration.values,
+          annotation: {
+            ...toolConfiguration.values.annotation,
+            shape: AnnotationShape.Polygon,
+          },
+        },
+      };
+    }
+
+    await this.createAnnotationFromTool(coordinates, toolConfiguration);
   }
 
   async addAnnotationFromSnapping(annotation: IGeoJSAnnotation) {
@@ -2467,6 +2499,15 @@ export default class AnnotationViewer extends Vue {
     }
   }
 
+  private setupCircleDrawingMode() {
+    if (!this.interactionLayer) {
+      return;
+    }
+    // Use native ellipse mode — gives us crosshair cursor and drag events.
+    // The annotation is converted to a circle/ellipse polygon on completion.
+    this.interactionLayer.mode("ellipse");
+  }
+
   setNewAnnotationMode() {
     if (this.unrolling) {
       this.interactionLayer.mode(null);
@@ -2484,7 +2525,15 @@ export default class AnnotationViewer extends Vue {
     switch (this.selectedToolConfiguration?.type) {
       case "create":
         const annotation = this.selectedToolConfiguration.values.annotation;
-        this.interactionLayer.mode(annotation?.shape);
+        if (
+          annotation?.shape === AnnotationShape.Circle ||
+          annotation?.shape === AnnotationShape.Ellipse
+        ) {
+          // Use native ellipse mode for both circle and ellipse tools
+          this.setupCircleDrawingMode();
+        } else {
+          this.interactionLayer.mode(annotation?.shape);
+        }
         break;
       case "tagging":
         if (

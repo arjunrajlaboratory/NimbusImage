@@ -46,7 +46,11 @@
           :key="`${property.id} ${index}`"
         >
           <v-expansion-panel-header>
-            <annotation-property :property="property" />
+            <annotation-property
+              :property="property"
+              :applyToAllDatasets="applyToAllDatasets"
+              @compute-property-batch="$emit('compute-property-batch', $event)"
+            />
           </v-expansion-panel-header>
           <v-expansion-panel-content>
             <annotation-property-body :property="property" />
@@ -58,7 +62,7 @@
 </template>
 
 <script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+import { Vue, Component, Prop } from "vue-property-decorator";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
@@ -79,6 +83,9 @@ export default class PropertyList extends Vue {
   readonly store = store;
   readonly propertyStore = propertyStore;
   readonly filterStore = filterStore;
+
+  @Prop({ type: Boolean, default: false })
+  readonly applyToAllDatasets!: boolean;
 
   get properties() {
     return propertyStore.properties;
@@ -108,6 +115,10 @@ export default class PropertyList extends Vue {
   }
 
   computeUncomputedProperties() {
+    if (this.applyToAllDatasets) {
+      this.$emit("compute-properties-batch", this.uncomputedProperties);
+      return;
+    }
     for (const property of this.uncomputedProperties) {
       this.propertyStore.computeProperty({
         property,

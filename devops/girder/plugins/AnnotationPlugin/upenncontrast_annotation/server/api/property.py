@@ -19,6 +19,7 @@ class AnnotationProperty(Resource):
         self.route("DELETE", (":id",), self.delete)
         self.route("GET", (":id",), self.get)
         self.route("GET", (), self.getAllProperties)
+        self.route("GET", ("count",), self.count)
         self.route("POST", (), self.create)
         self.route("PUT", (":id",), self.update)
         self.route(
@@ -97,7 +98,9 @@ class AnnotationProperty(Resource):
         Description("Update an existing property")
         .param("id", "The ID of the property.", paramType="path")
         .param(
-            "body", "A JSON object containing the property.", paramType="body"
+            "body",
+            "A JSON object containing the property.",
+            paramType="body"
         )
         .errorResponse("Write access was denied for the item.", 403)
         .errorResponse("Invalid JSON passed in request body.")
@@ -155,6 +158,36 @@ class AnnotationProperty(Resource):
             limit=limit,
             offset=offset,
         )
+
+    @access.public
+    @describeRoute(
+        Description("Get property count for a configuration")
+        .param(
+            "configurationId",
+            "Get count for this configuration",
+            required=True
+        )
+        .errorResponse()
+    )
+    def count(self, params):
+        if "configurationId" not in params:
+            raise RestException(
+                code=400, message="Configuration ID is required"
+            )
+
+        configId = params["configurationId"]
+        user = self.getCurrentUser()
+
+        config = CollectionModel().load(
+            configId, user=user, level=AccessType.READ, exc=True
+        )
+
+        # Count properties in this configuration
+        count = 0
+        if 'meta' in config and 'propertyIds' in config['meta']:
+            count = len(config['meta']['propertyIds'])
+
+        return {"count": count}
 
     @access.public
     @describeRoute(

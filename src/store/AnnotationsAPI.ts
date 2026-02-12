@@ -215,7 +215,7 @@ export default class AnnotationsAPI {
 
   async computeAnnotationWithWorker(
     tool: IToolConfiguration,
-    dataset: IDataset,
+    dataset: Pick<IDataset, "id">,
     metadata: {
       channel: Number;
       location: IAnnotationLocation;
@@ -280,4 +280,27 @@ export default class AnnotationsAPI {
       datasetId,
     };
   };
+
+  // Count endpoints
+
+  async getAnnotationCount(datasetId: string): Promise<number> {
+    return this.client
+      .get("upenn_annotation/count", { params: { datasetId } })
+      .then((res) => res.data.count)
+      .catch(() => 0);
+  }
+
+  async getConnectionCount(datasetId: string): Promise<number> {
+    return this.client
+      .get("annotation_connection/count", { params: { datasetId } })
+      .then((res) => res.data.count)
+      .catch(() => 0);
+  }
+
+  async getPropertyValueCount(datasetId: string): Promise<number> {
+    return this.client
+      .get("annotation_property_values/count", { params: { datasetId } })
+      .then((res) => res.data.count)
+      .catch(() => 0);
+  }
 }
