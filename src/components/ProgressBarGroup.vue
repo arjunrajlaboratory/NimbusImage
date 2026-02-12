@@ -77,96 +77,77 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import progressStore from "@/store/progress";
 import { ProgressType, IProgress, IProgressGroup } from "@/store/model";
 
-@Component({})
-export default class ProgressBarGroup extends Vue {
-  readonly progressStore = progressStore;
+const activeProgresses = computed(() => progressStore.activeProgresses);
+const activeNotifications = computed(() => progressStore.activeNotifications);
+const hasActiveProgresses = computed(() => progressStore.hasActiveProgresses);
+const hasNotifications = computed(() => activeNotifications.value.length > 0);
 
-  get activeProgresses() {
-    return this.progressStore.activeProgresses;
-  }
+function dismissNotification(id: string) {
+  progressStore.dismissNotification(id);
+}
 
-  get activeNotifications() {
-    return this.progressStore.activeNotifications;
-  }
+const progressGroups = computed<IProgressGroup[]>(() => {
+  const groupedByType = new Map<ProgressType, IProgress[]>();
 
-  get hasActiveProgresses() {
-    return this.progressStore.hasActiveProgresses;
-  }
-
-  get hasNotifications() {
-    return this.activeNotifications.length > 0;
-  }
-
-  dismissNotification(id: string) {
-    this.progressStore.dismissNotification(id);
-  }
-
-  get progressGroups(): IProgressGroup[] {
-    // Group progresses by type
-    const groupedByType = new Map<ProgressType, IProgress[]>();
-
-    for (const progress of this.activeProgresses) {
-      if (!groupedByType.has(progress.type)) {
-        groupedByType.set(progress.type, []);
-      }
-      groupedByType.get(progress.type)!.push(progress);
+  for (const progress of activeProgresses.value) {
+    if (!groupedByType.has(progress.type)) {
+      groupedByType.set(progress.type, []);
     }
+    groupedByType.get(progress.type)!.push(progress);
+  }
 
-    return Array.from(groupedByType.entries()).map(([type, items]) => {
-      // Single progress case
-      if (items.length === 1) {
-        const progress = items[0];
-        const isIndeterminate = progress.total === 0;
-        return {
-          type,
-          display: "single",
-          title: progress.title,
-          indeterminate: isIndeterminate,
-          // Only set total and progress if we actually have a total.
-          ...(isIndeterminate
-            ? {}
-            : {
-                progress: progress.progress,
-                total: progress.total,
-                value: (100 * progress.progress) / progress.total,
-              }),
-          count: 1,
-          items,
-        };
-      }
-
-      // Check if all items are indeterminate and have the same title
-      const allIndeterminate = items.every((p) => p.total === 0);
-      const allSameTitle = items.every((p) => p.title === items[0].title);
-
-      if (allIndeterminate && allSameTitle) {
-        return {
-          type,
-          display: "single",
-          title: items[0].title,
-          indeterminate: true,
-          count: items.length,
-          items,
-        };
-      }
-
-      // Multiple different progresses case
+  return Array.from(groupedByType.entries()).map(([type, items]) => {
+    if (items.length === 1) {
+      const progress = items[0];
+      const isIndeterminate = progress.total === 0;
       return {
         type,
-        display: "stacked",
-        title: "", // Not used in stacked display
-        indeterminate: false,
+        display: "single",
+        title: progress.title,
+        indeterminate: isIndeterminate,
+        ...(isIndeterminate
+          ? {}
+          : {
+              progress: progress.progress,
+              total: progress.total,
+              value: (100 * progress.progress) / progress.total,
+            }),
+        count: 1,
+        items,
+      };
+    }
+
+    const allIndeterminate = items.every((p) => p.total === 0);
+    const allSameTitle = items.every((p) => p.title === items[0].title);
+
+    if (allIndeterminate && allSameTitle) {
+      return {
+        type,
+        display: "single",
+        title: items[0].title,
+        indeterminate: true,
         count: items.length,
         items,
       };
-    });
-  }
-}
+    }
+
+    return {
+      type,
+      display: "stacked",
+      title: "",
+      indeterminate: false,
+      count: items.length,
+      items,
+    };
+  });
+});
+
+defineExpose({ hasNotifications, dismissNotification, progressGroups });
 </script>
 
 <style lang="scss" scoped>

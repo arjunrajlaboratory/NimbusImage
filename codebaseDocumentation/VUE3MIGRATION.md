@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 108 | 37 already migrated to `<script setup>` |
+| Class components (`@Component`) | 108 | 52 already migrated to `<script setup>` |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -144,12 +144,36 @@ Once most components use Composition API and Vuetify wrappers are in place:
 - `TagPicker.vue`: Removed unused `get layers()` getter
 - `AnnotationFilters.vue`: Removed unused `tagSearchInput` and `show` local state
 
+### Batch 6 — Dialog Components, Store-Connected & Parent Components
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `SettingsPanel.vue` | 24 | Options API `data()` → `ref()`, trivial wrapper |
+| `FileDropzone.vue` | 69 | `@VModel` → `defineProps`+`defineEmits`+computed get/set |
+| `PropertyWorkerMenu.vue` | 51 | `@VModel` → computed get/set, removed 3 unused locals |
+| `DockerImageSelect.vue` | 81 | `@VModel` → computed get/set, `onMounted()` for fetch |
+| `AnnotationToggles.vue` | 137 | 6 computed get/set proxying store, module-level const |
+| `ProgressBarGroup.vue` | 149 | Store getters → `computed()`, complex grouping logic preserved |
+| `LargeImageDropdown.vue` | 153 | `@Watch` + `mounted` → `watch()` + `onMounted()`, computed get/set |
+| `ValueSlider.vue` | 199 | 7 `@Prop` → `withDefaults`, `getCurrentInstance()` for emit |
+| `DeleteConnections.vue` | 129 | Dialog, `as const satisfies` preserved, async submit |
+| `GirderLocationChooser.vue` | 107 | Async imports → synchronous, `getCurrentInstance()` for emit |
+| `IndexConversionDialog.vue` | 240 | `@Watch` → `watch()`, CSV generation, dialog pattern |
+| `AnnotationExport.vue` | 293 | 3 `@Watch` → 3 `watch()`, `onMounted()`, bulk export |
+| `AnnotationImport.vue` | 274 | `@Watch` → `watch()`, JSON file parsing, import options |
+| `JobsLogs.vue` | 375 | Consolidated duplicate imports, removed wrapper method |
+| `AnnotationActions.vue` | 145 | 4 stores, 5 children, undo/redo, removed unused `propertyIds` |
+
+**Key cleanups in this batch:**
+- `PropertyWorkerMenu.vue`: Removed 3 unused locals (`show`, `running`, `previousRunStatus`) and unused store imports
+- `JobsLogs.vue`: Consolidated duplicate store imports (`store` and `main`), removed `formatDateString` wrapper method
+- `GirderLocationChooser.vue`: Converted async component imports to regular synchronous imports
+- `AnnotationActions.vue`: Removed unused `propertyIds` computed
+
 ## Next Candidates
 
 Good candidates for the next migration batch, ordered by complexity:
 
 **Small UI components:**
-- `FileDropzone.vue` (~61 lines)
 - `ConfigurationSelect.vue` — requires converting `routeMapper` mixin to composable first
 
 **Medium components with store access:**
@@ -251,6 +275,93 @@ vi.mock("@/store/annotation", () => ({
 - **"Multiple instances of Vue detected"**: Vuetify warning in test environments. Harmless; caused by module resolution in vitest. Using global `Vue.use(Vuetify)` instead of `createLocalVue` minimizes this.
 - **"Invalid prop type: null is not a constructor"**: Vue 2.7 quirk with union types like `Element | string` in `defineProps`. Resolves with Vue 3.
 - **"Unable to locate target [data-app]"**: Vuetify dialog warning. Use the `attachTo` pattern above to fix.
+
+## Migration Patterns & Gotchas
+
+Patterns and pitfalls discovered during Batches 1–6. Follow these when migrating remaining components.
+
+### `defineExpose` is required for test access
+
+In `<script setup>`, internal `ref()`, `computed()`, and functions are **not** accessible via `wrapper.vm` unless explicitly exposed. Every migrated component must include `defineExpose` for any property or method that tests access.
+
+```typescript
+// At the end of <script setup>
+defineExpose({ myRef, myComputed, myMethod });
+```
+
+**Props ARE still accessible** on `wrapper.vm` without `defineExpose` — Vue 2.7 puts them on the instance automatically. Only script-internal bindings need exposing.
+
+### `@VModel` → defineProps + defineEmits + computed get/set
+
+```typescript
+// Class style
+@VModel({ type: String }) image!: string;
+
+// Composition API
+const props = defineProps<{ value: string }>();
+const emit = defineEmits<{ (e: "input", value: string): void }>();
+const image = computed({
+  get: () => props.value,
+  set: (val: string) => emit("input", val),
+});
+```
+
+### `getCurrentInstance()` for non-standard emits
+
+For components that emit events not declared in `defineEmits` (e.g., `update:dialog` for `.sync` props, or `input` emitted outside a computed setter):
+
+```typescript
+const vm = getCurrentInstance()!.proxy;
+vm.$emit("update:dialog", value);
+vm.$emit("input", selected.value);
+```
+
+### Async component imports → synchronous in Vue 2.7
+
+Vue 2.7 does **not** have `defineAsyncComponent`. Convert `() => import(...)` patterns to regular synchronous imports during migration.
+
+### `@Watch` → `watch()`
+
+```typescript
+// Class: @Watch("value", { immediate: true })
+// Composition:
+watch(() => props.value, (newVal) => { ... }, { immediate: true });
+```
+
+### `vi.mock` hoisting — never reference outer variables
+
+`vi.mock()` factories are hoisted above all `const`/`let` declarations. Referencing variables from outside the factory causes `ReferenceError`.
+
+```typescript
+// BAD — ReferenceError
+const mockStore = { dataset: null };
+vi.mock("@/store", () => ({ default: mockStore }));
+
+// GOOD — inline data, import after mock
+vi.mock("@/store", () => ({
+  default: { dataset: null },
+}));
+import store from "@/store"; // import AFTER vi.mock to get mocked reference
+```
+
+### Custom directives must be registered in tests
+
+Components using `v-description` (or other custom directives) need the directive registered before mounting:
+
+```typescript
+Vue.directive("description", {});
+```
+
+### Test-first migration cycle
+
+Follow this order for each component:
+
+1. Write `*.test.ts` alongside the component
+2. Run tests against current (class-style) code — verify pass
+3. Migrate component to `<script setup>`
+4. Add `defineExpose` for all test-accessed internals
+5. Re-run tests — verify pass
+6. After full batch: `pnpm tsc && pnpm lint && pnpm build`
 
 ## Risk Areas
 

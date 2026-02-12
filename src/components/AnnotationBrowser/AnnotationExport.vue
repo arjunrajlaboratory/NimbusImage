@@ -124,176 +124,170 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import { IBulkJsonExportDataset } from "@/store/ExportAPI";
 import { IDatasetView } from "@/store/model";
 
-@Component({})
-export default class AnnotationExport extends Vue {
-  readonly store = store;
+const dialog = ref(false);
+const loadingDatasets = ref(false);
+const exporting = ref(false);
+const exportProgress = ref(0);
 
-  dialog = false;
-  loadingDatasets = false;
-  exporting = false;
-  exportProgress = 0;
+const exportScope = ref<"current" | "all">("current");
+const exportAnnotations = ref(true);
+const exportConnections = ref(true);
+const exportProperties = ref(true);
+const exportValues = ref(true);
+const propertyScope = ref<"all" | "current">("all");
 
-  exportScope: "current" | "all" = "current";
-  exportAnnotations = true;
-  exportConnections = true;
-  exportProperties = true;
-  exportValues = true;
-  propertyScope: "all" | "current" = "all";
+const filename = ref("");
+const collectionDatasets = ref<IBulkJsonExportDataset[]>([]);
 
-  filename: string = "";
-  collectionDatasets: IBulkJsonExportDataset[] = [];
+const dataset = computed(() => store.dataset);
+const configuration = computed(() => store.configuration);
+const canExport = computed(() => !!store.dataset);
 
-  get dataset() {
-    return this.store.dataset;
+const canSubmit = computed(() => {
+  if (exporting.value) return false;
+  if (exportScope.value === "current") {
+    return !!dataset.value;
   }
+  return collectionDatasets.value.length > 0 && !loadingDatasets.value;
+});
 
-  get configuration() {
-    return this.store.configuration;
+const allDatasetsLabel = computed(() => {
+  if (loadingDatasets.value) {
+    return "All datasets in collection (loading...)";
   }
-
-  get canExport() {
-    return !!this.store.dataset;
+  if (collectionDatasets.value.length > 0) {
+    return `All datasets in collection (${collectionDatasets.value.length})`;
   }
+  return "All datasets in collection";
+});
 
-  get canSubmit() {
-    if (this.exporting) return false;
-    if (this.exportScope === "current") {
-      return !!this.dataset;
-    } else {
-      return this.collectionDatasets.length > 0 && !this.loadingDatasets;
-    }
+const submitButtonText = computed(() => {
+  if (exportScope.value === "current") {
+    return "Export";
   }
+  const count = collectionDatasets.value.length;
+  return `Export ${count} dataset${count === 1 ? "" : "s"}`;
+});
 
-  get allDatasetsLabel() {
-    if (this.loadingDatasets) {
-      return "All datasets in collection (loading...)";
-    }
-    if (this.collectionDatasets.length > 0) {
-      return `All datasets in collection (${this.collectionDatasets.length})`;
-    }
-    return "All datasets in collection";
+function resetFilename() {
+  filename.value = (dataset.value?.name ?? "unknown") + ".json";
+}
+
+onMounted(resetFilename);
+
+watch(dataset, resetFilename);
+
+watch(dialog, (open) => {
+  if (open && exportScope.value === "all") {
+    loadCollectionDatasets();
   }
+});
 
-  get submitButtonText() {
-    if (this.exportScope === "current") {
-      return "Export";
-    }
-    const count = this.collectionDatasets.length;
-    return `Export ${count} dataset${count === 1 ? "" : "s"}`;
+watch(exportScope, (scope) => {
+  if (
+    scope === "all" &&
+    dialog.value &&
+    collectionDatasets.value.length === 0
+  ) {
+    loadCollectionDatasets();
   }
+});
 
-  mounted() {
-    this.resetFilename();
-  }
+async function loadCollectionDatasets() {
+  if (!configuration.value) return;
 
-  @Watch("dataset")
-  resetFilename() {
-    this.filename = (this.dataset?.name ?? "unknown") + ".json";
-  }
+  loadingDatasets.value = true;
+  collectionDatasets.value = [];
 
-  @Watch("dialog")
-  onDialogChange(open: boolean) {
-    if (open && this.exportScope === "all") {
-      this.loadCollectionDatasets();
-    }
-  }
-
-  @Watch("exportScope")
-  onExportScopeChange(scope: "current" | "all") {
-    if (
-      scope === "all" &&
-      this.dialog &&
-      this.collectionDatasets.length === 0
-    ) {
-      this.loadCollectionDatasets();
-    }
-  }
-
-  async loadCollectionDatasets() {
-    if (!this.configuration) return;
-
-    this.loadingDatasets = true;
-    this.collectionDatasets = [];
-
-    try {
-      const datasetViews = await this.store.api.findDatasetViews({
-        configurationId: this.configuration.id,
-      });
-
-      const datasetIds = datasetViews.map((dv: IDatasetView) => dv.datasetId);
-
-      if (datasetIds.length > 0) {
-        await this.store.girderResources.batchFetchResources({
-          folderIds: datasetIds,
-        });
-
-        this.collectionDatasets = datasetViews.map((dv: IDatasetView) => {
-          const folder = this.store.girderResources.watchFolder(dv.datasetId);
-          return {
-            datasetId: dv.datasetId,
-            datasetName: folder?.name || dv.datasetId,
-          };
-        });
-      }
-    } finally {
-      this.loadingDatasets = false;
-    }
-  }
-
-  async submit() {
-    if (this.exportScope === "current") {
-      this.submitSingleDataset();
-    } else {
-      await this.submitAllDatasets();
-    }
-  }
-
-  submitSingleDataset() {
-    this.store.exportAPI.exportJson({
-      datasetId: this.dataset!.id,
-      configurationId:
-        this.propertyScope === "current"
-          ? this.store.configuration?.id
-          : undefined,
-      includeAnnotations: this.exportAnnotations,
-      includeConnections: this.exportConnections,
-      includeProperties: this.exportProperties,
-      includePropertyValues: this.exportValues,
-      filename: this.filename,
+  try {
+    const datasetViews = await store.api.findDatasetViews({
+      configurationId: configuration.value.id,
     });
-    this.dialog = false;
-  }
 
-  async submitAllDatasets() {
-    if (this.collectionDatasets.length === 0) return;
+    const datasetIds = datasetViews.map((dv: IDatasetView) => dv.datasetId);
 
-    this.exporting = true;
-    this.exportProgress = 0;
-
-    try {
-      await this.store.exportAPI.exportBulkJson({
-        datasets: this.collectionDatasets,
-        configurationId:
-          this.propertyScope === "current" ? this.configuration?.id : undefined,
-        includeAnnotations: this.exportAnnotations,
-        includeConnections: this.exportConnections,
-        includeProperties: this.exportProperties,
-        includePropertyValues: this.exportValues,
-        onProgress: (completed) => {
-          this.exportProgress = completed;
-        },
+    if (datasetIds.length > 0) {
+      await store.girderResources.batchFetchResources({
+        folderIds: datasetIds,
       });
 
-      this.dialog = false;
-    } finally {
-      this.exporting = false;
+      collectionDatasets.value = datasetViews.map((dv: IDatasetView) => {
+        const folder = store.girderResources.watchFolder(dv.datasetId);
+        return {
+          datasetId: dv.datasetId,
+          datasetName: folder?.name || dv.datasetId,
+        };
+      });
     }
+  } finally {
+    loadingDatasets.value = false;
   }
 }
+
+async function submit() {
+  if (exportScope.value === "current") {
+    submitSingleDataset();
+  } else {
+    await submitAllDatasets();
+  }
+}
+
+function submitSingleDataset() {
+  store.exportAPI.exportJson({
+    datasetId: dataset.value!.id,
+    configurationId:
+      propertyScope.value === "current" ? store.configuration?.id : undefined,
+    includeAnnotations: exportAnnotations.value,
+    includeConnections: exportConnections.value,
+    includeProperties: exportProperties.value,
+    includePropertyValues: exportValues.value,
+    filename: filename.value,
+  });
+  dialog.value = false;
+}
+
+async function submitAllDatasets() {
+  if (collectionDatasets.value.length === 0) return;
+
+  exporting.value = true;
+  exportProgress.value = 0;
+
+  try {
+    await store.exportAPI.exportBulkJson({
+      datasets: collectionDatasets.value,
+      configurationId:
+        propertyScope.value === "current" ? configuration.value?.id : undefined,
+      includeAnnotations: exportAnnotations.value,
+      includeConnections: exportConnections.value,
+      includeProperties: exportProperties.value,
+      includePropertyValues: exportValues.value,
+      onProgress: (completed) => {
+        exportProgress.value = completed;
+      },
+    });
+
+    dialog.value = false;
+  } finally {
+    exporting.value = false;
+  }
+}
+
+defineExpose({
+  canExport,
+  exportScope,
+  exporting,
+  filename,
+  resetFilename,
+  canSubmit,
+  submitSingleDataset,
+  collectionDatasets,
+  submitAllDatasets,
+  submitButtonText,
+});
 </script>

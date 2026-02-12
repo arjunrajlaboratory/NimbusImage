@@ -24,41 +24,29 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, VModel } from "vue-property-decorator";
-import store from "@/store";
-import annotationsStore from "@/store/annotation";
+<script setup lang="ts">
+import { computed } from "vue";
 import { IWorkerInterfaceValues } from "@/store/model";
-import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
-import LayerSelect from "@/components/LayerSelect.vue";
 import propertiesStore from "@/store/properties";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
-// Popup for new tool configuration
-@Component({
-  components: {
-    LayerSelect,
-    TagFilterEditor,
-    WorkerInterfaceValues,
-  },
-})
-export default class PropertyWorkerMenu extends Vue {
-  readonly store = store;
-  readonly annotationsStore = annotationsStore;
-  readonly propertyStore = propertiesStore;
 
-  @VModel({ type: Object }) interfaceValues!: IWorkerInterfaceValues;
+const props = defineProps<{
+  value: IWorkerInterfaceValues;
+  image: string | null;
+}>();
 
-  show: boolean = true;
-  running: boolean = false;
-  previousRunStatus: boolean | null = null;
+const emit = defineEmits<{
+  (e: "input", value: IWorkerInterfaceValues): void;
+}>();
 
-  @Prop()
-  readonly image!: string | null;
+const interfaceValues = computed({
+  get: () => props.value,
+  set: (val: IWorkerInterfaceValues) => emit("input", val),
+});
 
-  get workerInterface() {
-    return this.image !== null
-      ? this.propertyStore.getWorkerInterface(this.image)
-      : null;
-  }
-}
+const workerInterface = computed(() =>
+  props.image !== null ? propertiesStore.getWorkerInterface(props.image) : null,
+);
+
+defineExpose({ workerInterface, interfaceValues });
 </script>

@@ -18,9 +18,8 @@
   </v-select>
 </template>
 
-<script lang="ts">
-import { Vue, Component, VModel, Prop } from "vue-property-decorator";
-import store from "@/store";
+<script setup lang="ts">
+import { computed, onMounted } from "vue";
 import propertiesStore from "@/store/properties";
 import { IWorkerLabels } from "@/store/model";
 
@@ -30,54 +29,54 @@ interface IDockerImageSelectEntry {
   description: string | undefined;
 }
 
-// Interface element selecting an image
-@Component({
-  components: {},
-})
-export default class DockerImageSelect extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertiesStore;
+const props = defineProps<{
+  value: string;
+  imageFilter: (labels: IWorkerLabels) => boolean;
+}>();
 
-  @VModel({ type: String }) image!: String;
+const emit = defineEmits<{
+  (e: "input", value: string): void;
+}>();
 
-  @Prop()
-  readonly imageFilter!: { (labels: IWorkerLabels): boolean };
+const image = computed({
+  get: () => props.value,
+  set: (val: string) => emit("input", val),
+});
 
-  get images() {
-    return this.propertyStore.workerImageList;
-  }
+const images = computed(() => propertiesStore.workerImageList);
 
-  get items() {
-    const imagesPerCategory: {
-      [category: string]: IDockerImageSelectEntry[];
-    } = {};
-    for (const image in this.images) {
-      const labels = this.images[image];
-      if (this.imageFilter(labels)) {
-        const category = labels.interfaceCategory || "No category";
-        if (!imagesPerCategory[category]) {
-          imagesPerCategory[category] = [];
-        }
-        imagesPerCategory[category].push({
-          text: labels.interfaceName || image,
-          value: image,
-          description: labels.description,
-        });
+const items = computed(() => {
+  const imagesPerCategory: {
+    [category: string]: IDockerImageSelectEntry[];
+  } = {};
+  for (const img in images.value) {
+    const labels = images.value[img];
+    if (props.imageFilter(labels)) {
+      const category = labels.interfaceCategory || "No category";
+      if (!imagesPerCategory[category]) {
+        imagesPerCategory[category] = [];
       }
+      imagesPerCategory[category].push({
+        text: labels.interfaceName || img,
+        value: img,
+        description: labels.description,
+      });
     }
-    const items = [];
-    for (const category in imagesPerCategory) {
-      items.push(
-        { divider: true },
-        { header: category },
-        ...imagesPerCategory[category],
-      );
-    }
-    return items;
   }
+  const result = [];
+  for (const category in imagesPerCategory) {
+    result.push(
+      { divider: true },
+      { header: category },
+      ...imagesPerCategory[category],
+    );
+  }
+  return result;
+});
 
-  mounted() {
-    this.propertyStore.fetchWorkerImageList();
-  }
-}
+onMounted(() => {
+  propertiesStore.fetchWorkerImageList();
+});
+
+defineExpose({ images, items });
 </script>

@@ -72,85 +72,66 @@
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import store from "@/store";
-
 import {
   AnnotationSelectionTypes,
   AnnotationSelectionTypesNames,
 } from "../../store/model";
 
-@Component({
-  components: {},
-})
-export default class AnnotationToggles extends Vue {
-  readonly store = store;
+const annotationsSelectionTypeItems = [
+  {
+    text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.ADD],
+    value: AnnotationSelectionTypes.ADD,
+  },
+  {
+    text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.TOGGLE],
+    value: AnnotationSelectionTypes.TOGGLE,
+  },
+  {
+    text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.REMOVE],
+    value: AnnotationSelectionTypes.REMOVE,
+  },
+];
 
-  annotationsSelectionTypeItems: {
-    value: string;
-    text: string;
-  }[] = [
-    {
-      text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.ADD],
-      value: AnnotationSelectionTypes.ADD,
-    },
-    {
-      text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.TOGGLE],
-      value: AnnotationSelectionTypes.TOGGLE,
-    },
-    {
-      text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.REMOVE],
-      value: AnnotationSelectionTypes.REMOVE,
-    },
-  ];
+const annotationSelectionType = computed({
+  get: () => store.annotationSelectionType,
+  set: (value) => store.setAnnotationSelectionType(value),
+});
 
-  get annotationSelectionType() {
-    return this.store.annotationSelectionType;
-  }
+const drawAnnotations = computed({
+  get: () => store.drawAnnotations,
+  set: (value: boolean) => store.setDrawAnnotations(value),
+});
 
-  set annotationSelectionType(value) {
-    this.store.setAnnotationSelectionType(value);
-  }
+const showTooltips = computed({
+  get: () => store.showTooltips,
+  set: (value: boolean) => store.setShowTooltips(value),
+});
 
-  get drawAnnotations() {
-    return this.store.drawAnnotations;
-  }
+const filteredAnnotationTooltips = computed({
+  get: () => store.filteredAnnotationTooltips,
+  set: (value: boolean) => store.setFilteredAnnotationTooltips(value),
+});
 
-  set drawAnnotations(value: boolean) {
-    this.store.setDrawAnnotations(value);
-  }
+const filteredDraw = computed({
+  get: () => store.filteredDraw,
+  set: (value: boolean) => store.setFilteredDraw(value),
+});
 
-  get showTooltips() {
-    return this.store.showTooltips;
-  }
+const drawConnections = computed({
+  get: () => store.drawAnnotationConnections,
+  set: (value: boolean) => store.setDrawAnnotationConnections(value),
+});
 
-  set showTooltips(value: boolean) {
-    this.store.setShowTooltips(value);
-  }
-
-  get filteredAnnotationTooltips() {
-    return this.store.filteredAnnotationTooltips;
-  }
-
-  set filteredAnnotationTooltips(value: boolean) {
-    this.store.setFilteredAnnotationTooltips(value);
-  }
-
-  get filteredDraw() {
-    return this.store.filteredDraw;
-  }
-
-  set filteredDraw(value: boolean) {
-    this.store.setFilteredDraw(value);
-  }
-
-  get drawConnections() {
-    return this.store.drawAnnotationConnections;
-  }
-
-  set drawConnections(value: boolean) {
-    this.store.setDrawAnnotationConnections(value);
-  }
-}
+defineExpose({
+  annotationSelectionType,
+  drawAnnotations,
+  showTooltips,
+  filteredAnnotationTooltips,
+  filteredDraw,
+  drawConnections,
+  annotationsSelectionTypeItems,
+});
 </script>

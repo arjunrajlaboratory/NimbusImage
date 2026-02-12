@@ -32,32 +32,42 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed, ref } from "vue";
 
-@Component({ components: {} })
-export default class FileDropzone extends Vue {
-  @VModel({ type: Array, default: () => [] })
-  files!: File[];
+const props = withDefaults(
+  defineProps<{
+    value?: File[];
+    message?: string;
+    multiple?: boolean;
+    accept?: string;
+  }>(),
+  {
+    value: () => [],
+    message: "",
+    multiple: true,
+    accept: undefined,
+  },
+);
 
-  @Prop({ default: "" })
-  readonly message!: string;
+const emit = defineEmits<{
+  (e: "input", files: File[]): void;
+}>();
 
-  @Prop({ default: true })
-  readonly multiple!: boolean;
+const files = computed({
+  get: () => props.value,
+  set: (val: File[]) => emit("input", val),
+});
 
-  @Prop({ default: undefined })
-  readonly accept: string | undefined;
+const dropzoneClass = ref<string | null>(null);
 
-  dropzoneClass: string | null = null;
-
-  onChange(event: Event) {
-    const inputElem = event.target as HTMLInputElement | null;
-    const files = inputElem?.files || [];
-    const fileArray = [...files];
-    this.files = fileArray;
-  }
+function onChange(event: Event) {
+  const inputElem = event.target as HTMLInputElement | null;
+  const fileList = inputElem?.files || [];
+  files.value = [...fileList];
 }
+
+defineExpose({ dropzoneClass });
 </script>
 
 <style lang="scss" scoped>

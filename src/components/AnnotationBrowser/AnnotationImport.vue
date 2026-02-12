@@ -132,8 +132,8 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
@@ -141,7 +141,6 @@ import {
   importAnnotationsFromData,
   ImportOptions,
 } from "@/utils/annotationImport";
-
 import {
   IAnnotation,
   IAnnotationConnection,
@@ -151,126 +150,128 @@ import {
 } from "@/store/model";
 import { logError } from "@/utils/log";
 
-@Component({})
-export default class AnnotationImport extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
-  readonly propertyStore = propertyStore;
+const importDialog = ref(false);
 
-  importDialog = false;
+const jsonFile = ref<File | null>(null);
+const isLoadingFile = ref(false);
+const isJsonLoaded = ref(false);
+const isImporting = ref(false);
 
-  jsonFile: File | null = null;
-  isLoadingFile = false;
-  isJsonLoaded = false;
-  isImporting = false;
+const annotations = ref<IAnnotation[]>([]);
+const connections = ref<IAnnotationConnection[]>([]);
+const properties = ref<IAnnotationProperty[]>([]);
+const values = ref<IAnnotationPropertyValues>({});
 
-  annotations: IAnnotation[] = [];
-  connections: IAnnotationConnection[] = [];
-  properties: IAnnotationProperty[] = [];
-  values: IAnnotationPropertyValues = {};
+const importAnnotations = ref(true);
+const importConnections = ref(true);
+const importProperties = ref(true);
+const importValues = ref(true);
 
-  importAnnotations = true;
-  importConnections = true;
-  importProperties = true;
-  importValues = true;
+const overwriteAnnotations = ref(false);
+const overwriteAnnotationsDialog = ref(false);
 
-  overwriteAnnotations = false;
-  overwriteAnnotationsDialog = false;
+const overwriteProperties = ref(false);
+const overwritePropertiesDialog = ref(false);
 
-  overwriteProperties = false;
-  overwritePropertiesDialog = false;
+const canImport = computed(() => !!store.dataset);
+const isLoggedIn = computed(() => store.isLoggedIn);
 
-  get canImport() {
-    return !!store.dataset;
+watch(jsonFile, () => {
+  isJsonLoaded.value = false;
+  annotations.value = [];
+  connections.value = [];
+  properties.value = [];
+  values.value = {};
+  if (!jsonFile.value) {
+    return;
+  }
+  isLoadingFile.value = true;
+  jsonFile.value
+    .text()
+    .then((jsonText) => {
+      const parsed = JSON.parse(jsonText) as ISerializedData;
+      annotations.value = parsed.annotations;
+      connections.value = parsed.annotationConnections;
+      properties.value = parsed.annotationProperties;
+      values.value = parsed.annotationPropertyValues;
+      isJsonLoaded.value = true;
+    })
+    .catch(() => {
+      jsonFile.value = null;
+    })
+    .finally(() => (isLoadingFile.value = false));
+});
+
+function reset() {
+  importDialog.value = false;
+  overwriteAnnotationsDialog.value = false;
+
+  jsonFile.value = null;
+  isLoadingFile.value = false;
+  isJsonLoaded.value = false;
+  isImporting.value = false;
+
+  annotations.value = [];
+  connections.value = [];
+  properties.value = [];
+  values.value = {};
+
+  importAnnotations.value = true;
+  importConnections.value = true;
+  importProperties.value = true;
+  importValues.value = true;
+  overwriteAnnotations.value = false;
+}
+
+async function submit() {
+  if (!isJsonLoaded.value || !store.dataset) {
+    return;
   }
 
-  get isLoggedIn() {
-    return this.store.isLoggedIn;
-  }
+  const serializedData: ISerializedData = {
+    annotations: annotations.value,
+    annotationConnections: connections.value,
+    annotationProperties: properties.value,
+    annotationPropertyValues: values.value,
+  };
 
-  @Watch("jsonFile")
-  getJsonContent() {
-    this.isJsonLoaded = false;
-    this.annotations = [];
-    this.connections = [];
-    this.properties = [];
-    this.values = {};
-    if (!this.jsonFile) {
-      return;
-    }
-    this.isLoadingFile = true;
-    this.jsonFile
-      .text()
-      .then((jsonText) => {
-        ({
-          annotations: this.annotations,
-          annotationConnections: this.connections,
-          annotationProperties: this.properties,
-          annotationPropertyValues: this.values,
-        } = JSON.parse(jsonText) as ISerializedData);
-        this.isJsonLoaded = true;
-      })
-      .catch(() => {
-        this.jsonFile = null;
-      })
-      .finally(() => (this.isLoadingFile = false));
-  }
+  const options: ImportOptions = {
+    importAnnotations: importAnnotations.value,
+    importConnections: importConnections.value,
+    importProperties: importProperties.value,
+    importValues: importValues.value,
+    overwriteAnnotations: overwriteAnnotations.value,
+    overwriteProperties: overwriteProperties.value,
+  };
 
-  reset() {
-    this.importDialog = false;
-    this.overwriteAnnotationsDialog = false;
+  isImporting.value = true;
 
-    this.jsonFile = null;
-    this.isLoadingFile = false;
-    this.isJsonLoaded = false;
-    this.isImporting = false;
-
-    this.annotations = [];
-    this.connections = [];
-    this.properties = [];
-    this.values = {};
-
-    this.importAnnotations = true;
-    this.importConnections = true;
-    this.importProperties = true;
-    this.importValues = true;
-    this.overwriteAnnotations = false;
-  }
-
-  async submit() {
-    if (!this.isJsonLoaded || !this.store.dataset) {
-      return;
-    }
-
-    // Prepare the serialized data
-    const serializedData: ISerializedData = {
-      annotations: this.annotations,
-      annotationConnections: this.connections,
-      annotationProperties: this.properties,
-      annotationPropertyValues: this.values,
-    };
-
-    // Prepare the import options
-    const options: ImportOptions = {
-      importAnnotations: this.importAnnotations,
-      importConnections: this.importConnections,
-      importProperties: this.importProperties,
-      importValues: this.importValues,
-      overwriteAnnotations: this.overwriteAnnotations,
-      overwriteProperties: this.overwriteProperties,
-    };
-
-    this.isImporting = true;
-
-    try {
-      // Use the extracted import logic
-      await importAnnotationsFromData(serializedData, options);
-      this.reset();
-    } catch (error) {
-      logError("Error importing annotations:", error);
-    } finally {
-      this.isImporting = false;
-    }
+  try {
+    await importAnnotationsFromData(serializedData, options);
+    reset();
+  } catch (error) {
+    logError("Error importing annotations:", error);
+  } finally {
+    isImporting.value = false;
   }
 }
+
+defineExpose({
+  isLoggedIn,
+  canImport,
+  importAnnotations,
+  importConnections,
+  importProperties,
+  importValues,
+  overwriteAnnotations,
+  overwriteProperties,
+  importDialog,
+  isJsonLoaded,
+  reset,
+  annotations,
+  connections,
+  properties,
+  values,
+  submit,
+});
 </script>

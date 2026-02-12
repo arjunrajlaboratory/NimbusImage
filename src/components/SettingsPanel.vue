@@ -12,22 +12,14 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref } from "vue";
 import AnnotationToggles from "@/components/AnnotationBrowser/AnnotationToggles.vue";
 import ViewerSettings from "@/components/ViewerSettings.vue";
 import UiSettings from "@/components/UISettings.vue";
 import JobsLogs from "@/components/JobsLogs.vue";
 
-@Component({
-  components: {
-    AnnotationToggles,
-    ViewerSettings,
-    UiSettings,
-    JobsLogs,
-  },
-})
-export default class AnnotationsSettings extends Vue {
-  panels: number[] = [0, 1, 2, 3];
-}
+const panels = ref<number[]>([0, 1, 2, 3]);
+
+defineExpose({ panels });
 </script>

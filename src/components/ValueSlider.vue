@@ -122,91 +122,80 @@
 }
 </style>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, getCurrentInstance } from "vue";
 
-@Component
-export default class ValueSlider extends Vue {
-  @Prop({ required: true })
-  readonly value!: number;
-  @Prop({ required: true })
-  readonly min!: number;
-  @Prop({ required: true })
-  readonly max!: number;
-  @Prop({ required: true })
-  readonly label!: string;
-  @Prop({ default: 0 })
-  readonly offset!: number;
-  @Prop({ default: null })
-  readonly valueLabel!: string | null;
-  @Prop({ default: false })
-  readonly isUnrolled!: boolean;
+const props = withDefaults(
+  defineProps<{
+    value: number;
+    min: number;
+    max: number;
+    label: string;
+    offset?: number;
+    valueLabel?: string | null;
+    isUnrolled?: boolean;
+  }>(),
+  {
+    offset: 0,
+    valueLabel: null,
+    isUnrolled: false,
+  },
+);
 
-  // Will be immediatiely updated by watchValue()
-  private internalValue = 0;
+const vm = getCurrentInstance()!.proxy;
 
-  get slider() {
-    return this.internalValue;
-  }
+const internalValue = ref(0);
 
-  set slider(value: number) {
+const slider = computed({
+  get: () => internalValue.value,
+  set: (value: number) => {
     const numberValue = typeof value === "number" ? value : parseInt(value);
-    if (numberValue === this.internalValue) {
+    if (numberValue === internalValue.value) {
       return;
     }
-    this.internalValue = numberValue;
-    this.$emit("input", numberValue - this.offset);
+    internalValue.value = numberValue;
+    vm.$emit("input", numberValue - props.offset);
+  },
+});
+
+const displayValue = computed(
+  () => props.valueLabel || (props.value + props.offset).toString(),
+);
+
+const unrolledMessage = computed(() => `${props.label} is unrolled`);
+
+function updateInternalValue() {
+  internalValue.value = props.value + props.offset;
+}
+
+watch(() => props.value, updateInternalValue, { immediate: true });
+
+function handleInput(value: string) {
+  const numValue = parseInt(value);
+  if (!isNaN(numValue)) {
+    slider.value = numValue;
+    return;
   }
-
-  get displayValue() {
-    return this.valueLabel || (this.value + this.offset).toString();
-  }
-
-  get unrolledMessage() {
-    return `${this.label} is unrolled`;
-  }
-
-  private updateInternalValue() {
-    this.internalValue = this.value + this.offset;
-  }
-
-  @Watch("value", { immediate: true })
-  watchValue() {
-    this.updateInternalValue();
-  }
-
-  handleInput(value: string) {
-    // Try to parse as number first
-    const numValue = parseInt(value);
-    if (!isNaN(numValue)) {
-      this.slider = numValue;
-      return;
-    }
-
-    // If not a number, check if the input matches the current value label
-    // (If the user types the same label that's already displayed, do nothing)
-    if (this.valueLabel && value === this.valueLabel) {
-      return;
-    }
-    // Otherwise, if input is not a number and doesn't match the label, do nothing
-    // (The display will be corrected on blur via handleBlur)
-  }
-
-  handleBlur() {
-    // On blur, ensure we show the correct value
-    this.updateInternalValue();
-  }
-
-  increment() {
-    if (this.value < this.max) {
-      this.$emit("input", this.value + 1);
-    }
-  }
-
-  decrement() {
-    if (this.value > this.min) {
-      this.$emit("input", this.value - 1);
-    }
+  if (props.valueLabel && value === props.valueLabel) {
+    return;
   }
 }
+
+function handleBlur() {
+  updateInternalValue();
+}
+
+function increment() {
+  if (props.value < props.max) {
+    vm.$emit("input", props.value + 1);
+  }
+}
+
+function decrement() {
+  if (props.value > props.min) {
+    vm.$emit("input", props.value - 1);
+  }
+}
+
+defineExpose({ slider, displayValue, unrolledMessage, increment, decrement });
 </script>

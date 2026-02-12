@@ -60,112 +60,97 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import { IGirderLargeImage } from "@/girder";
 import { DEFAULT_LARGE_IMAGE_SOURCE } from "@/girder/index";
 import { logError } from "@/utils/log";
 
-@Component
-export default class LargeImageDropdown extends Vue {
-  readonly store = store;
-  readonly DEFAULT_LARGE_IMAGE_SOURCE = DEFAULT_LARGE_IMAGE_SOURCE;
-  deletingImageId: string | null = null;
+const deletingImageId = ref<string | null>(null);
+const previousNumberOfImages = ref(0);
+const showNewImageIndicator = ref(false);
 
-  previousNumberOfImages = 0;
-  showNewImageIndicator = false;
+const largeImages = computed(() => store.allLargeImages);
+const numberOfLargeImages = computed(() => largeImages.value.length);
 
-  mounted() {
-    this.previousNumberOfImages = this.numberOfLargeImages;
+onMounted(() => {
+  previousNumberOfImages.value = numberOfLargeImages.value;
+});
+
+watch(numberOfLargeImages, (newValue) => {
+  if (
+    newValue > previousNumberOfImages.value &&
+    previousNumberOfImages.value > 0
+  ) {
+    showNewImageIndicator.value = true;
+    setTimeout(() => {
+      showNewImageIndicator.value = false;
+    }, 1500);
   }
+  previousNumberOfImages.value = newValue;
+});
 
-  get largeImages() {
-    return this.store.allLargeImages;
+const formattedLargeImages = computed(() =>
+  largeImages.value.map((img: IGirderLargeImage) => ({
+    ...img,
+    displayName: formatName(img.name),
+  })),
+);
+
+function formatName(name: string): string {
+  if (name === DEFAULT_LARGE_IMAGE_SOURCE) {
+    return "Original image";
   }
+  return name.replace(/^(.+)\.[^.\s(]+(.*)$/, "$1$2");
+}
 
-  get numberOfLargeImages() {
-    return this.largeImages.length;
+function formatMeta(meta: Record<string, any>): string {
+  const pairs: string[] = [];
+  if (meta.tool) {
+    pairs.push(`tool: ${meta.tool}`);
   }
+  Object.entries(meta)
+    .filter(([key]) => key !== "tool")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([key, value]) => {
+      pairs.push(`${key}: ${value}`);
+    });
+  return pairs.join("; ");
+}
 
-  @Watch("numberOfLargeImages")
-  onNumberOfLargeImagesChange(newValue: number) {
-    if (
-      newValue > this.previousNumberOfImages &&
-      this.previousNumberOfImages > 0
-    ) {
-      this.showNewImageIndicator = true;
-      setTimeout(() => {
-        this.showNewImageIndicator = false;
-      }, 1500); // Hide after 1.5 seconds
-    }
-    this.previousNumberOfImages = newValue;
+async function deleteImage(image: IGirderLargeImage) {
+  deletingImageId.value = image._id;
+  try {
+    await store.deleteLargeImage(image);
+  } finally {
+    deletingImageId.value = null;
   }
+}
 
-  get formattedLargeImages() {
-    return this.largeImages.map((img: IGirderLargeImage) => ({
-      ...img,
-      displayName: this.formatName(img.name),
-    }));
-  }
-
-  formatName(name: string): string {
-    if (name === DEFAULT_LARGE_IMAGE_SOURCE) {
-      return "Original image";
-    }
-    // Handle cases like "output.tiff (1)" -> "output (1)"
-    const baseName = name.replace(/^(.+)\.[^.\s(]+(.*)$/, "$1$2");
-    return baseName;
-  }
-
-  formatMeta(meta: Record<string, any>): string {
-    const pairs: string[] = [];
-
-    // Add tool first if it exists
-    if (meta.tool) {
-      pairs.push(`tool: ${meta.tool}`);
-    }
-
-    // Add remaining keys in alphabetical order
-    Object.entries(meta)
-      .filter(([key]) => key !== "tool")
-      .sort(([a], [b]) => a.localeCompare(b))
-      .forEach(([key, value]) => {
-        pairs.push(`${key}: ${value}`);
-      });
-
-    return pairs.join("; ");
-  }
-
-  async deleteImage(image: IGirderLargeImage) {
-    this.deletingImageId = image._id;
-    try {
-      await this.store.deleteLargeImage(image);
-    } finally {
-      this.deletingImageId = null;
-    }
-  }
-
-  get currentLargeImage() {
-    return this.store.currentLargeImage?._id || null;
-  }
-
-  set currentLargeImage(imageId: string | null) {
+const currentLargeImage = computed({
+  get: () => store.currentLargeImage?._id || null,
+  set: (imageId: string | null) => {
     if (imageId) {
-      // Find the full image object from the ID
-      const image = this.largeImages.find(
+      const image = largeImages.value.find(
         (img: IGirderLargeImage) => img._id === imageId,
       );
       if (image) {
-        this.store.updateCurrentLargeImage(image);
+        store.updateCurrentLargeImage(image);
       } else {
         logError("LargeImageDropdown", "Current large image not found");
       }
     }
-  }
+  },
+});
 
-  get shouldShow(): boolean {
-    return this.largeImages.length > 1;
-  }
-}
+const shouldShow = computed(() => largeImages.value.length > 1);
+
+defineExpose({
+  shouldShow,
+  formatName,
+  currentLargeImage,
+  formatMeta,
+  previousNumberOfImages,
+});
 </script>

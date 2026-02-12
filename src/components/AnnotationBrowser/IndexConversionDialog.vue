@@ -115,151 +115,123 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import store from "@/store";
 import Papa from "papaparse";
 import { downloadToClient } from "@/utils/download";
 import { logError } from "@/utils/log";
 
-@Component({})
-export default class IndexConversionDialog extends Vue {
-  readonly store = store;
+const dialog = ref(false);
+const dimensionLabels = ref<{
+  xy: string[] | null;
+  z: string[] | null;
+  t: string[] | null;
+} | null>(null);
 
-  dialog: boolean = false;
+const dataset = computed(() => store.dataset);
 
-  dimensionLabels: {
-    xy: string[] | null;
-    z: string[] | null;
-    t: string[] | null;
-  } | null = null;
+watch(dialog, async (open) => {
+  if (open) {
+    await loadDimensionLabels();
+  }
+});
 
-  get dataset() {
-    return this.store.dataset;
+async function loadDimensionLabels() {
+  if (!store.selectedDatasetId) {
+    dimensionLabels.value = null;
+    return;
   }
 
-  @Watch("dialog")
-  async onDialogOpen() {
-    if (this.dialog) {
-      await this.loadDimensionLabels();
+  try {
+    const folder = await store.girderResources.getFolder(
+      store.selectedDatasetId,
+    );
+    if (folder && folder.meta && folder.meta.dimensionLabels) {
+      dimensionLabels.value = folder.meta.dimensionLabels;
+    } else {
+      dimensionLabels.value = null;
     }
-  }
-
-  async loadDimensionLabels() {
-    if (!this.store.selectedDatasetId) {
-      this.dimensionLabels = null;
-      return;
-    }
-
-    try {
-      const folder = await this.store.girderResources.getFolder(
-        this.store.selectedDatasetId,
-      );
-      if (folder && folder.meta && folder.meta.dimensionLabels) {
-        this.dimensionLabels = folder.meta.dimensionLabels;
-      } else {
-        this.dimensionLabels = null;
-      }
-    } catch (error) {
-      logError("Failed to load dimension labels:", error);
-      this.dimensionLabels = null;
-    }
-  }
-
-  get xyCount() {
-    return this.dataset?.xy.length ?? 0;
-  }
-
-  get zCount() {
-    return this.dataset?.z.length ?? 0;
-  }
-
-  get timeCount() {
-    return this.dataset?.time.length ?? 0;
-  }
-
-  get hasXYDimension() {
-    return this.xyCount > 1;
-  }
-
-  get hasZDimension() {
-    return this.zCount > 1;
-  }
-
-  get hasTimeDimension() {
-    return this.timeCount > 1;
-  }
-
-  get hasAnyDimension() {
-    return this.hasXYDimension || this.hasZDimension || this.hasTimeDimension;
-  }
-
-  get hasXYLabels() {
-    return (
-      this.dimensionLabels?.xy &&
-      this.dimensionLabels.xy.length === this.xyCount
-    );
-  }
-
-  get hasZLabels() {
-    return (
-      this.dimensionLabels?.z && this.dimensionLabels.z.length === this.zCount
-    );
-  }
-
-  get hasTimeLabels() {
-    return (
-      this.dimensionLabels?.t &&
-      this.dimensionLabels.t.length === this.timeCount
-    );
-  }
-
-  generateCSV(count: number, labels: string[] | null): string {
-    const fields = ["UI Index", "JSON Index", "Label"];
-    const data: (string | number)[][] = [];
-
-    for (let i = 0; i < count; i++) {
-      const uiIndex = i + 1;
-      const jsonIndex = i;
-      const label = labels && labels[i] ? labels[i] : "";
-      data.push([uiIndex, jsonIndex, label]);
-    }
-
-    return Papa.unparse({ fields, data }, { quotes: [false, false, true] });
-  }
-
-  private downloadDimension(
-    suffix: string,
-    count: number,
-    labels: string[] | null,
-  ) {
-    const csv = this.generateCSV(count, labels);
-    const datasetName = this.dataset?.name ?? "dataset";
-    const params = {
-      href: "data:text/csv;charset=utf-8," + encodeURIComponent(csv),
-      download: `${datasetName}_${suffix}_index_conversion.csv`,
-    };
-    downloadToClient(params);
-  }
-
-  downloadXY() {
-    this.downloadDimension(
-      "xy",
-      this.xyCount,
-      this.dimensionLabels?.xy ?? null,
-    );
-  }
-
-  downloadZ() {
-    this.downloadDimension("z", this.zCount, this.dimensionLabels?.z ?? null);
-  }
-
-  downloadTime() {
-    this.downloadDimension(
-      "time",
-      this.timeCount,
-      this.dimensionLabels?.t ?? null,
-    );
+  } catch (error) {
+    logError("Failed to load dimension labels:", error);
+    dimensionLabels.value = null;
   }
 }
+
+const xyCount = computed(() => dataset.value?.xy.length ?? 0);
+const zCount = computed(() => dataset.value?.z.length ?? 0);
+const timeCount = computed(() => dataset.value?.time.length ?? 0);
+
+const hasXYDimension = computed(() => xyCount.value > 1);
+const hasZDimension = computed(() => zCount.value > 1);
+const hasTimeDimension = computed(() => timeCount.value > 1);
+const hasAnyDimension = computed(
+  () => hasXYDimension.value || hasZDimension.value || hasTimeDimension.value,
+);
+
+const hasXYLabels = computed(
+  () =>
+    dimensionLabels.value?.xy &&
+    dimensionLabels.value.xy.length === xyCount.value,
+);
+const hasZLabels = computed(
+  () =>
+    dimensionLabels.value?.z && dimensionLabels.value.z.length === zCount.value,
+);
+const hasTimeLabels = computed(
+  () =>
+    dimensionLabels.value?.t &&
+    dimensionLabels.value.t.length === timeCount.value,
+);
+
+function generateCSV(count: number, labels: string[] | null): string {
+  const fields = ["UI Index", "JSON Index", "Label"];
+  const data: (string | number)[][] = [];
+
+  for (let i = 0; i < count; i++) {
+    const uiIndex = i + 1;
+    const jsonIndex = i;
+    const label = labels && labels[i] ? labels[i] : "";
+    data.push([uiIndex, jsonIndex, label]);
+  }
+
+  return Papa.unparse({ fields, data }, { quotes: [false, false, true] });
+}
+
+function downloadDimension(
+  suffix: string,
+  count: number,
+  labels: string[] | null,
+) {
+  const csv = generateCSV(count, labels);
+  const datasetName = dataset.value?.name ?? "dataset";
+  downloadToClient({
+    href: "data:text/csv;charset=utf-8," + encodeURIComponent(csv),
+    download: `${datasetName}_${suffix}_index_conversion.csv`,
+  });
+}
+
+function downloadXY() {
+  downloadDimension("xy", xyCount.value, dimensionLabels.value?.xy ?? null);
+}
+
+function downloadZ() {
+  downloadDimension("z", zCount.value, dimensionLabels.value?.z ?? null);
+}
+
+function downloadTime() {
+  downloadDimension("time", timeCount.value, dimensionLabels.value?.t ?? null);
+}
+
+defineExpose({
+  dataset,
+  xyCount,
+  zCount,
+  timeCount,
+  hasXYDimension,
+  generateCSV,
+  dimensionLabels,
+  downloadXY,
+  dialog,
+});
 </script>

@@ -44,8 +44,8 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import { IAnnotationConnection } from "@/store/model";
@@ -61,69 +61,69 @@ const deleteOptions = [
 
 type TDeleteOptions = (typeof deleteOptions)[number]["value"];
 
-@Component
-export default class DeleteConnections extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
-  readonly deleteOptions = deleteOptions;
+const dialog = ref(false);
+const deleting = ref(false);
+const selectedDeleteOption = ref<TDeleteOptions>(deleteOptions[0].value);
 
-  dialog = false;
-  deleting = false;
-  selectedDeleteOption: TDeleteOptions = deleteOptions[0].value;
+const isLoggedIn = computed(() => store.isLoggedIn);
 
-  get isLoggedIn() {
-    return this.store.isLoggedIn;
-  }
-
-  cancel() {
-    this.dialog = false;
-  }
-
-  async submit() {
-    this.deleting = true;
-    const allConnections = this.annotationStore.annotationConnections;
-    let connectionsToDelete: IAnnotationConnection[] = [];
-    switch (this.selectedDeleteOption) {
-      case "dataset":
-        connectionsToDelete = allConnections;
-        break;
-      case "location":
-        const currentLocation = this.store.currentLocation;
-        const currentLocationAnnotationIds = new Set(
-          this.annotationStore.annotations
-            .filter(
-              ({ location }) =>
-                location.Time === currentLocation.time &&
-                location.XY === currentLocation.xy &&
-                location.Z === currentLocation.z,
-            )
-            .map(({ id }) => id),
-        );
-        connectionsToDelete = allConnections.filter(
-          ({ childId, parentId }) =>
-            currentLocationAnnotationIds.has(childId) ||
-            currentLocationAnnotationIds.has(parentId),
-        );
-        break;
-      case "selected":
-        const selectedAnnotationIds = new Set(
-          this.annotationStore.selectedAnnotationIds,
-        );
-        connectionsToDelete = allConnections.filter(
-          ({ childId, parentId }) =>
-            selectedAnnotationIds.has(childId) ||
-            selectedAnnotationIds.has(parentId),
-        );
-        break;
-    }
-    if (connectionsToDelete.length > 0) {
-      await this.annotationStore.deleteConnections(
-        connectionsToDelete.map(({ id }) => id),
-      );
-    }
-    this.deleting = false;
-    this.dialog = false;
-    this.selectedDeleteOption = deleteOptions[0].value;
-  }
+function cancel() {
+  dialog.value = false;
 }
+
+async function submit() {
+  deleting.value = true;
+  const allConnections = annotationStore.annotationConnections;
+  let connectionsToDelete: IAnnotationConnection[] = [];
+  switch (selectedDeleteOption.value) {
+    case "dataset":
+      connectionsToDelete = allConnections;
+      break;
+    case "location":
+      const currentLocation = store.currentLocation;
+      const currentLocationAnnotationIds = new Set(
+        annotationStore.annotations
+          .filter(
+            ({ location }) =>
+              location.Time === currentLocation.time &&
+              location.XY === currentLocation.xy &&
+              location.Z === currentLocation.z,
+          )
+          .map(({ id }) => id),
+      );
+      connectionsToDelete = allConnections.filter(
+        ({ childId, parentId }) =>
+          currentLocationAnnotationIds.has(childId) ||
+          currentLocationAnnotationIds.has(parentId),
+      );
+      break;
+    case "selected":
+      const selectedAnnotationIds = new Set(
+        annotationStore.selectedAnnotationIds,
+      );
+      connectionsToDelete = allConnections.filter(
+        ({ childId, parentId }) =>
+          selectedAnnotationIds.has(childId) ||
+          selectedAnnotationIds.has(parentId),
+      );
+      break;
+  }
+  if (connectionsToDelete.length > 0) {
+    await annotationStore.deleteConnections(
+      connectionsToDelete.map(({ id }) => id),
+    );
+  }
+  deleting.value = false;
+  dialog.value = false;
+  selectedDeleteOption.value = deleteOptions[0].value;
+}
+
+defineExpose({
+  isLoggedIn,
+  dialog,
+  cancel,
+  selectedDeleteOption,
+  submit,
+  deleting,
+});
 </script>
