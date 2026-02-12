@@ -72,11 +72,31 @@
         color="primary"
         :disabled="selectedCollections.length === 0"
         :loading="adding"
-        @click="addCollections"
+        @click="confirmAdd"
       >
         Add {{ selectedCollections.length }} Collection(s)
       </v-btn>
     </v-card-actions>
+
+    <!-- Permission propagation confirmation -->
+    <v-dialog v-model="showPermissionConfirm" max-width="500" persistent>
+      <v-card>
+        <v-card-title>Update collection permissions?</v-card-title>
+        <v-card-text>
+          This project is
+          <template v-if="isPublic">
+            <strong>public</strong>
+          </template>
+          <template v-else> <strong>shared with other users</strong> </template
+          >. Adding {{ selectedCollections.length }} collection(s) will update
+          their permissions to match the project's access settings.
+        </v-card-text>
+        <v-card-actions class="justify-end" style="gap: 8px">
+          <v-btn text @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn color="primary" @click="addCollections">Continue</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-card>
 </template>
 
@@ -94,9 +114,16 @@ export default class AddCollectionToProjectFilterDialog extends Vue {
   @Prop({ required: true })
   project!: IProject;
 
+  @Prop({ default: false })
+  isShared!: boolean;
+
+  @Prop({ default: false })
+  isPublic!: boolean;
+
   searchQuery = "";
   loading = false;
   adding = false;
+  showPermissionConfirm = false;
   allCollections: IDatasetConfiguration[] = [];
   selectedIndices: number[] = [];
 
@@ -144,7 +171,17 @@ export default class AddCollectionToProjectFilterDialog extends Vue {
     }
   }
 
+  confirmAdd() {
+    if (this.selectedCollections.length === 0) return;
+    if (this.isShared || this.isPublic) {
+      this.showPermissionConfirm = true;
+    } else {
+      this.addCollections();
+    }
+  }
+
   async addCollections() {
+    this.showPermissionConfirm = false;
     if (this.selectedCollections.length === 0) return;
 
     this.adding = true;

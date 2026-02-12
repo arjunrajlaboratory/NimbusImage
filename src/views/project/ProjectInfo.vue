@@ -15,6 +15,10 @@
         {{ formatSize(totalProjectSize) }} total
       </v-chip>
       <v-spacer />
+      <v-btn color="primary" class="mr-2" @click="shareDialog = true">
+        <v-icon left>mdi-share-variant</v-icon>
+        Share Project
+      </v-btn>
       <!-- TODO: Export workflow buttons - not yet implemented
            Uncomment when Zenodo export integration is ready
       <v-btn
@@ -405,6 +409,8 @@
       <add-dataset-to-project-dialog
         v-if="project"
         :project="project"
+        :is-shared="isProjectShared"
+        :is-public="isProjectPublic"
         @added="onDatasetAdded"
         @done="addDatasetDialog = false"
       />
@@ -415,10 +421,15 @@
       <add-collection-to-project-filter-dialog
         v-if="project"
         :project="project"
+        :is-shared="isProjectShared"
+        :is-public="isProjectPublic"
         @added="onCollectionAdded"
         @done="addCollectionDialog = false"
       />
     </v-dialog>
+
+    <!-- Share Project Dialog -->
+    <share-project v-model="shareDialog" :project="project" />
   </v-container>
 
   <v-container v-else class="text-center">
@@ -429,11 +440,14 @@
 
 <script lang="ts">
 import { Vue, Component, Watch } from "vue-property-decorator";
+import { isAxiosError } from "axios";
 import store from "@/store";
 import projects from "@/store/projects";
 import girderResources from "@/store/girderResources";
+import { logError } from "@/utils/log";
 import {
   IProject,
+  IProjectAccessList,
   IDatasetView,
   TProjectStatus,
   getProjectStatusColor,
@@ -442,6 +456,7 @@ import { IGirderFolder, IGirderItem } from "@/girder";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vue";
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
+import ShareProject from "@/components/ShareProject.vue";
 import { formatSize } from "@/utils/conversion";
 
 interface IProjectMetadataForm {
@@ -468,6 +483,7 @@ interface IUnifiedDatasetItem {
     AlertDialog,
     AddDatasetToProjectDialog,
     AddCollectionToProjectFilterDialog,
+    ShareProject,
   },
 })
 export default class ProjectInfo extends Vue {
@@ -485,6 +501,7 @@ export default class ProjectInfo extends Vue {
   removeCollectionConfirm = false;
   addDatasetDialog = false;
   addCollectionDialog = false;
+  shareDialog = false;
 
   // Edit state
   nameInput = "";
@@ -502,6 +519,9 @@ export default class ProjectInfo extends Vue {
   // Filter state
   datasetFilter = "";
   collectionFilter = "";
+
+  // Access info
+  projectAccessInfo: IProjectAccessList | null = null;
 
   // Caches
   datasetInfoCache: { [datasetId: string]: IGirderFolder } = {};
@@ -544,6 +564,21 @@ export default class ProjectInfo extends Vue {
 
   get project(): IProject | null {
     return this.projects.currentProject;
+  }
+
+  get isProjectPublic(): boolean {
+    return this.project?.public ?? false;
+  }
+
+  get isProjectShared(): boolean {
+    if (this.projectAccessInfo) {
+      // ADMIN: use the full access list
+      return this.projectAccessInfo.users.length > 1;
+    }
+    // Non-ADMIN with WRITE access: they were explicitly added, so
+    // the project is shared by definition.
+    const level = this.project?._accessLevel ?? -1;
+    return level >= 1 && level < 2;
   }
 
   get statusColor(): string {
@@ -708,6 +743,13 @@ export default class ProjectInfo extends Vue {
     this.initializeFromProject();
   }
 
+  @Watch("shareDialog")
+  onShareDialogChange(open: boolean) {
+    if (!open) {
+      this.fetchAccessInfo();
+    }
+  }
+
   initializeFromProject() {
     if (this.project) {
       this.nameInput = this.project.name;
@@ -715,6 +757,23 @@ export default class ProjectInfo extends Vue {
       this.initializeMetadata();
       this.fetchDatasetInfo();
       this.fetchCollectionInfo();
+      this.fetchAccessInfo();
+    }
+  }
+
+  async fetchAccessInfo() {
+    if (!this.project) return;
+    try {
+      this.projectAccessInfo = await this.store.projectsAPI.getProjectAccess(
+        this.project.id,
+      );
+    } catch (error) {
+      this.projectAccessInfo = null;
+      if (isAxiosError(error) && error.response?.status === 403) {
+        // User doesn't have ADMIN access; expected
+        return;
+      }
+      logError("Failed to fetch project access info", error);
     }
   }
 

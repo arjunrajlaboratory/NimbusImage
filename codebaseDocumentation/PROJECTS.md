@@ -325,6 +325,7 @@ get allDatasetItems(): IUnifiedDatasetItem[] {
 | `src/components/AddCollectionToProjectDialog.vue` | Add collection from ConfigurationInfo |
 | `src/components/AddDatasetToProjectDialog.vue` | File browser to add datasets (in ProjectInfo) |
 | `src/components/AddCollectionToProjectFilterDialog.vue` | Filterable list to add collections (in ProjectInfo) |
+| `src/components/ShareProject.vue` | Share project dialog with confirmation dialogs |
 
 ### Frontend - Integration Points
 
@@ -348,6 +349,8 @@ interface IProject {
   creatorId: string;
   created: string;
   updated: string;
+  public?: boolean;        // Exposed at READ level from backend
+  _accessLevel?: number;   // Injected by Girder's @filtermodel (0=READ, 1=WRITE, 2=ADMIN)
   meta: {
     datasets: Array<{ datasetId: string; addedDate: string }>;
     collections: Array<{ collectionId: string; addedDate: string }>;
@@ -376,7 +379,7 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 |--------|----------|-------------|
 | POST | `/project` | Create a new project |
 | GET | `/project` | List projects (filterable by creatorId, status) |
-| GET | `/project/:id` | Get project by ID |
+| GET | `/project/:id` | Get project by ID (includes `public` and `_accessLevel`) |
 | PUT | `/project/:id` | Update project name/description |
 | DELETE | `/project/:id` | Delete project |
 | POST | `/project/:id/dataset` | Add dataset to project |
@@ -385,6 +388,9 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 | DELETE | `/project/:id/collection/:collectionId` | Remove collection from project |
 | PUT | `/project/:id/status` | Update project status |
 | PUT | `/project/:id/metadata` | Update publication metadata |
+| POST | `/project/:id/share` | Share project with user (propagates to all resources) |
+| POST | `/project/:id/set_public` | Make project and all resources public/private |
+| GET | `/project/:id/access` | Get access list for a project (requires ADMIN) |
 
 ---
 
@@ -453,6 +459,167 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 - DatasetInfo: "Add Dataset to Project..." button → dialog to select/create project
 - ConfigurationInfo: "Add Collection to Project..." button → dialog to select/create project
 
+### Share Project Dialog (`ShareProject.vue`)
+
+Opened from ProjectInfo. Allows the project owner to manage access:
+
+- **Public toggle**: Checkbox to make public (read-only for everyone including anonymous)
+- **Current access table**: Lists users with access level (Read/Write) and remove button
+  - Owner shown as "Admin (Owner)" with a lock icon (cannot be removed)
+  - Access level can be changed via dropdown
+- **Add user form**: Username/email field + access level selector + Add button
+
+**Confirmation dialogs**: Every sharing action shows a confirmation dialog before
+executing, because all actions propagate to every dataset, collection, configuration,
+and dataset view in the project. The dialog displays:
+- Action-specific message explaining what will happen
+- Resource counts: "This will affect X datasets and Y collections..."
+
+The confirmation is implemented with a single reusable `v-dialog` driven by a
+`showConfirm()` helper that stores a pending action callback, executed on confirm.
+
+| Action | Confirm Title | Button Color |
+|--------|--------------|--------------|
+| Add user | "Share Project" | primary |
+| Change access level | "Change Access Level" | primary |
+| Remove user | "Remove Access" | error |
+| Make public | "Make Project Public" | primary |
+| Make private | "Make Project Private" | warning |
+
+---
+
+## Permission Propagation
+
+### Overview
+
+When a project is shared with a user or made public, permissions must propagate to all
+resources the project references: datasets (folders), collections (configurations),
+and dataset views. This is handled by the model-layer propagation methods in
+`project.py`.
+
+### How It Works
+
+**Sharing with a user (`POST /project/:id/share`):**
+1. Caller must have ADMIN access on the project.
+2. Looks up the target user by email or username.
+3. Calls `setUserAccess(project, targetUser, level)` on the project itself.
+4. Calls `propagateUserAccess(project, targetUser, level)` which:
+   - Bulk-loads all datasets, collections, and dataset views via `_gatherAllResources()`
+   - Calls `setUserAccess()` on each resource with the same access level
+5. Level `-1` revokes access (removes user from ACLs on all resources).
+
+**Making public/private (`POST /project/:id/set_public`):**
+1. Caller must have ADMIN access on the project.
+2. Calls `setPublic(project, public)` on the project itself.
+3. Calls `propagatePublic(project, public)` which:
+   - Bulk-loads all resources via `_gatherAllResources()`
+   - Calls `setPublic()` on each dataset, collection, and dataset view
+
+**Adding a resource to an already-shared project:**
+- `addDataset` → calls `propagateAccessToDataset()` which applies the project's full
+  user ACL to the new dataset, its dataset views, and their configurations.
+- `addCollection` → calls `propagateAccessToCollection()` similarly.
+
+### Resource Discovery (`_gatherAllResources`)
+
+The `_gatherAllResources()` method on the Project model uses bulk `$in` queries to
+efficiently load all referenced resources:
+
+1. Collects dataset IDs and collection IDs from `project.meta`
+2. Bulk-loads datasets (Folders) and collections (CollectionModel)
+3. Finds all DatasetViews linked to those datasets or collections via `$or` query
+4. Discovers additional configurations from DatasetViews not already in the project's
+   collection list (e.g., a dataset may have views with configurations not directly
+   added to the project)
+
+### Public vs Shared Access and Dataset Views
+
+**Important distinction:** `setPublic()` grants READ-only access. `setUserAccess()`
+grants whatever level is specified (READ, WRITE, or ADMIN).
+
+This matters for dataset views because the `PUT /dataset_view/:id` endpoint (used to
+save lastViewed, lastLocation, contrast overrides, etc.) requires **WRITE** access.
+
+**How different access paths interact with dataset view updates:**
+
+| Access Path | Access Level | Can view dataset? | Can update dataset view? |
+|---|---|---|---|
+| Anonymous (public dataset) | READ | Yes | No (skipped: `isLoggedIn` is false) |
+| Logged-in via `set_public` only | READ | Yes | No (skipped: `canEditDatasetView` is false) |
+| Logged-in via `share` at READ | READ | Yes | No (skipped: `canEditDatasetView` is false) |
+| Logged-in via `share` at WRITE | WRITE | Yes | Yes |
+| Owner / ADMIN | ADMIN | Yes | Yes |
+
+The frontend guards all `updateDatasetView()` calls with `canEditDatasetView`, which
+checks both `isLoggedIn` and `_accessLevel >= 1` (WRITE). This extends the existing
+anonymous-user pattern to also cover logged-in users who only have READ access. Without
+this guard, every logged-in read-only user would hit a 403 on the PUT call.
+
+**Why the dataset-level `set_public` never hit this problem:** In practice, logged-in
+users who accessed public datasets were typically also explicitly shared via the
+`share` endpoint (which grants WRITE). The `set_public` endpoint was primarily used
+for anonymous/unauthenticated access, where the `isLoggedIn` guard already skipped
+the PUT. Project-level `set_public` is the first case where a logged-in user may have
+only READ access without an explicit share.
+
+### Key Files
+
+| File | Role |
+|------|------|
+| `server/models/project.py` | `propagateUserAccess()`, `propagatePublic()`, `propagateAccessToDataset()`, `propagateAccessToCollection()`, `_gatherAllResources()` |
+| `server/api/project.py` | `share()`, `setPublic()`, `getAccess()` endpoints |
+| `src/store/index.ts` | `canEditDatasetView` getter, guards on `updateDatasetView()` calls |
+| `src/store/model.ts` | `_accessLevel` field on `IDatasetView` |
+| `src/store/GirderAPI.ts` | `asDatasetView()` preserves `_accessLevel` from API response |
+
+### Backend Tests
+
+Permission propagation is tested in `test_project.py` under `TestProjectPermissionPropagation`:
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_share_project_propagates_to_dataset` | Sharing a project grants access to its datasets, configs, and views |
+| `test_share_project_propagates_to_collection` | Sharing a project grants access to its collections |
+| `test_revoke_project_access_revokes_resources` | Revoking project access removes access from all resources |
+| `test_add_dataset_syncs_existing_acl` | Adding a dataset to an already-shared project syncs the project's ACL |
+| `test_propagate_public` | Making a project public/private propagates to all resources |
+
+Note: Tests use `createPrivateFolder()` (not `createFolder()`) so datasets start with
+restricted access and permission checks are meaningful.
+
+### Detecting Shared/Public State for Confirmation Dialogs
+
+When a user adds a dataset or collection to a project, the Add dialogs
+(`AddDatasetToProjectDialog`, `AddCollectionToProjectFilterDialog`) show a
+confirmation dialog if the project is shared or public, warning that permissions
+will propagate to the new resource. The detection works differently depending on
+the user's access level:
+
+**`isProjectPublic`** — reads `project.public` directly from the project object.
+The backend exposes `public` at `AccessType.READ` level in the project model's
+`exposeFields`, so any user with READ+ access can see it. No additional API call
+required.
+
+**`isProjectShared`** — uses a two-tier approach:
+1. **ADMIN users**: `fetchAccessInfo()` calls `GET /project/:id/access` and sets
+   `projectAccessInfo`. If available, shared = `users.length > 1`.
+2. **Non-ADMIN users**: The access endpoint returns 403 and `projectAccessInfo`
+   stays `null`. Instead, the frontend checks `_accessLevel`: if the user has
+   WRITE access (`_accessLevel >= 1`) but not ADMIN (`_accessLevel < 2`), they
+   were explicitly added to the project, which means it is shared by definition.
+
+This avoids the previous bug where WRITE-level users silently bypassed the
+confirmation dialog because the ADMIN-only `getProjectAccess` call failed and
+both flags defaulted to `false`.
+
+**Key files for this detection:**
+| File | Role |
+|------|------|
+| `server/models/project.py` | `exposeFields` includes `public` at READ level |
+| `src/store/ProjectsAPI.ts` | `toProject()` maps `public` and `_accessLevel` |
+| `src/store/model.ts` | `IProject` includes `public?` and `_accessLevel?` |
+| `src/views/project/ProjectInfo.vue` | `isProjectPublic` / `isProjectShared` computed properties |
+
 ---
 
 ## Future Work
@@ -466,5 +633,5 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 - [x] Dataset/collection filtering (search bars)
 - [x] Unified dataset view (show collection datasets with indicator chips)
 - [ ] Zenodo export integration
-- [ ] Project sharing/permissions
+- [x] Project sharing/permissions (share, set_public, access list endpoints + propagation)
 - [ ] Bulk operations (add multiple datasets/collections at once)

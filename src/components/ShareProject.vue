@@ -1,0 +1,499 @@
+<template>
+  <v-dialog v-model="dialog" max-width="750px">
+    <v-card>
+      <v-card-title>
+        Share Project: {{ project ? project.name : "" }}
+      </v-card-title>
+      <v-card-text>
+        <!-- Error Alert -->
+        <v-alert
+          v-model="showError"
+          type="error"
+          dense
+          dismissible
+          class="mb-4"
+        >
+          {{ errorString }}
+        </v-alert>
+
+        <!-- Info Alert -->
+        <v-alert type="info" dense class="mb-4">
+          Sharing this project will grant access to all datasets and collections
+          within it.
+        </v-alert>
+
+        <!-- Loading State -->
+        <div v-if="loading" class="text-center py-4">
+          <v-progress-circular indeterminate color="primary" />
+          <div class="mt-2">Loading access information...</div>
+        </div>
+
+        <v-container v-else>
+          <!-- Public Access Toggle -->
+          <v-row>
+            <v-col cols="12">
+              <v-checkbox
+                v-model="isPublic"
+                label="Make Public (read-only access for everyone)"
+                :loading="publicLoading"
+                :disabled="publicLoading"
+                hide-details
+                dense
+                @change="confirmTogglePublic"
+              />
+            </v-col>
+          </v-row>
+
+          <v-divider class="my-4" />
+
+          <!-- Current Access List -->
+          <v-row>
+            <v-col cols="12">
+              <div class="subtitle-2 mb-2">Current Access:</div>
+              <div v-if="users.length === 0" class="text-body-2 grey--text">
+                No users have been granted access yet.
+              </div>
+              <v-simple-table v-else dense>
+                <template #default>
+                  <thead>
+                    <tr>
+                      <th class="text-left">User</th>
+                      <th class="text-left" style="width: 150px">
+                        Access Level
+                      </th>
+                      <th class="text-center" style="width: 80px">Remove</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="user in users" :key="user.id">
+                      <td class="text-left">
+                        <div class="font-weight-medium">
+                          {{ user.name || user.login }}
+                        </div>
+                        <div class="text-caption grey--text text-left">
+                          {{ user.email || user.login }}
+                        </div>
+                      </td>
+                      <td>
+                        <span
+                          v-if="user.level === 2"
+                          class="font-weight-medium"
+                        >
+                          Admin (Owner)
+                        </span>
+                        <v-select
+                          v-else
+                          :value="user.level"
+                          :items="accessLevelItems"
+                          dense
+                          hide-details
+                          :loading="userLoading === user.id"
+                          :disabled="userLoading === user.id"
+                          @change="confirmUpdateUserAccess(user, $event)"
+                        />
+                      </td>
+                      <td class="text-center">
+                        <v-btn
+                          v-if="user.level !== 2"
+                          icon
+                          small
+                          color="error"
+                          :loading="userLoading === user.id"
+                          :disabled="userLoading === user.id"
+                          @click="confirmRemoveUser(user)"
+                        >
+                          <v-icon small>mdi-close</v-icon>
+                        </v-btn>
+                        <v-tooltip v-else bottom>
+                          <template #activator="{ on, attrs }">
+                            <v-icon
+                              small
+                              color="grey lighten-1"
+                              v-bind="attrs"
+                              v-on="on"
+                            >
+                              mdi-lock
+                            </v-icon>
+                          </template>
+                          <span>Cannot remove project owner</span>
+                        </v-tooltip>
+                      </td>
+                    </tr>
+                  </tbody>
+                </template>
+              </v-simple-table>
+            </v-col>
+          </v-row>
+
+          <v-divider class="my-4" />
+
+          <!-- Add User Form -->
+          <v-row>
+            <v-col cols="12">
+              <div class="subtitle-2 mb-2">Add User:</div>
+              <v-row dense align="center">
+                <v-col cols="5">
+                  <v-text-field
+                    v-model="newUserEmail"
+                    label="Username or Email"
+                    dense
+                    outlined
+                    hide-details
+                    :disabled="addUserLoading"
+                  />
+                </v-col>
+                <v-col cols="4">
+                  <v-select
+                    v-model="newUserAccessLevel"
+                    :items="accessLevelItems"
+                    label="Access"
+                    dense
+                    outlined
+                    hide-details
+                    :disabled="addUserLoading"
+                  />
+                </v-col>
+                <v-col cols="3">
+                  <v-btn
+                    color="primary"
+                    :loading="addUserLoading"
+                    :disabled="!newUserEmail || addUserLoading"
+                    @click="confirmAddUser"
+                  >
+                    <v-icon left small>mdi-plus</v-icon>
+                    Add
+                  </v-btn>
+                </v-col>
+              </v-row>
+            </v-col>
+          </v-row>
+        </v-container>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn color="primary" text @click="close">Done</v-btn>
+      </v-card-actions>
+    </v-card>
+
+    <!-- Confirmation Dialog -->
+    <v-dialog v-model="confirmDialog" max-width="450px">
+      <v-card>
+        <v-card-title class="text-h6">{{ confirmTitle }}</v-card-title>
+        <v-card-text>
+          <div>{{ confirmMessage }}</div>
+          <div class="mt-3 text-body-2">
+            This will affect
+            <strong>{{ datasetCount }}</strong>
+            {{ datasetCount === 1 ? "dataset" : "datasets" }}
+            and
+            <strong>{{ collectionCount }}</strong>
+            {{ collectionCount === 1 ? "collection" : "collections" }}
+            in this project, along with all associated configurations and views.
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text @click="confirmDialog = false">Cancel</v-btn>
+          <v-btn :color="confirmColor" text @click="executeConfirmedAction">
+            {{ confirmActionLabel }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </v-dialog>
+</template>
+
+<script lang="ts">
+import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+import { isAxiosError } from "axios";
+import store from "@/store";
+import { logError } from "@/utils/log";
+import { IDatasetAccessUser, IProject } from "@/store/model";
+
+@Component
+export default class ShareProject extends Vue {
+  readonly store = store;
+
+  @Prop({ required: true }) readonly project!: IProject | null;
+  @Prop({ default: false }) readonly value!: boolean;
+
+  dialog = false;
+  loading = false;
+  showError = false;
+  errorString = "";
+
+  isPublic = false;
+  users: IDatasetAccessUser[] = [];
+
+  publicLoading = false;
+  userLoading: string | null = null;
+  addUserLoading = false;
+
+  newUserEmail = "";
+  newUserAccessLevel = 0;
+
+  confirmDialog = false;
+  confirmTitle = "";
+  confirmMessage = "";
+  confirmColor = "primary";
+  confirmActionLabel = "Confirm";
+  pendingAction: (() => Promise<void>) | null = null;
+
+  userToRemove: IDatasetAccessUser | null = null;
+
+  readonly accessLevelItems = [
+    { text: "Read", value: 0 },
+    { text: "Write", value: 1 },
+  ];
+
+  readonly accessLevelLabels: Record<number, string> = {
+    0: "Read",
+    1: "Write",
+  };
+
+  @Watch("value")
+  onValueChanged(val: boolean) {
+    this.dialog = val;
+    if (val && this.project) {
+      this.fetchAccessInfo(this.project.id);
+    } else {
+      this.resetState();
+    }
+  }
+
+  @Watch("dialog")
+  onDialogChanged(val: boolean) {
+    this.$emit("input", val);
+  }
+
+  resetState() {
+    this.loading = false;
+    this.showError = false;
+    this.errorString = "";
+    this.isPublic = false;
+    this.users = [];
+    this.newUserEmail = "";
+    this.newUserAccessLevel = 0;
+    this.userToRemove = null;
+  }
+
+  async fetchAccessInfo(projectId: string) {
+    this.loading = true;
+    this.showError = false;
+    try {
+      const accessList =
+        await this.store.projectsAPI.getProjectAccess(projectId);
+      this.isPublic = accessList.public;
+      this.users = accessList.users;
+    } catch (error) {
+      logError(`Failed to fetch access info for project ${projectId}`, error);
+      this.errorString = "Failed to load access information";
+      this.showError = true;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  get datasetCount(): number {
+    return this.project?.meta.datasets.length ?? 0;
+  }
+
+  get collectionCount(): number {
+    return this.project?.meta.collections.length ?? 0;
+  }
+
+  close() {
+    this.dialog = false;
+  }
+
+  // --- Confirmation helpers ---
+
+  showConfirm(
+    title: string,
+    message: string,
+    actionLabel: string,
+    color: string,
+    action: () => Promise<void>,
+  ) {
+    this.confirmTitle = title;
+    this.confirmMessage = message;
+    this.confirmActionLabel = actionLabel;
+    this.confirmColor = color;
+    this.pendingAction = action;
+    this.confirmDialog = true;
+  }
+
+  async executeConfirmedAction() {
+    this.confirmDialog = false;
+    if (this.pendingAction) {
+      await this.pendingAction();
+      this.pendingAction = null;
+    }
+  }
+
+  shareErrorMessage(error: unknown): string {
+    if (
+      isAxiosError(error) &&
+      error.response?.data?.message === "badEmailOrUsername"
+    ) {
+      return "Unknown user. Please check the username or email.";
+    }
+    return "An error occurred while updating sharing";
+  }
+
+  // --- Public toggle ---
+
+  confirmTogglePublic(newValue: boolean) {
+    if (newValue) {
+      this.showConfirm(
+        "Make Project Public",
+        "This will grant read-only access to everyone, including " +
+          "anonymous users who are not logged in.",
+        "Make Public",
+        "primary",
+        () => this.togglePublic(true),
+      );
+    } else {
+      this.showConfirm(
+        "Make Project Private",
+        "This will remove public access. Only users explicitly shared " +
+          "on this project will retain access.",
+        "Make Private",
+        "warning",
+        () => this.togglePublic(false),
+      );
+    }
+    // Revert the checkbox until confirmed
+    this.isPublic = !newValue;
+  }
+
+  async togglePublic(newValue: boolean) {
+    if (!this.project) return;
+    this.publicLoading = true;
+    this.showError = false;
+    try {
+      await this.store.projectsAPI.setProjectPublic(this.project.id, newValue);
+      this.isPublic = newValue;
+    } catch (error) {
+      logError("Failed to toggle public access", error);
+      this.errorString = "Failed to update public access";
+      this.showError = true;
+    } finally {
+      this.publicLoading = false;
+    }
+  }
+
+  // --- Update user access level ---
+
+  confirmUpdateUserAccess(user: IDatasetAccessUser, newLevel: number) {
+    const levelLabel = this.accessLevelLabels[newLevel] ?? "Unknown";
+    this.showConfirm(
+      "Change Access Level",
+      `Change access for ${user.name || user.login} to ${levelLabel}? ` +
+        "This will update their permissions on all resources in this project.",
+      "Change",
+      "primary",
+      () => this.updateUserAccess(user, newLevel),
+    );
+  }
+
+  async updateUserAccess(user: IDatasetAccessUser, newLevel: number) {
+    if (!this.project) return;
+    this.userLoading = user.id;
+    this.showError = false;
+    try {
+      await this.store.projectsAPI.shareProject(
+        this.project.id,
+        user.login,
+        newLevel,
+      );
+      const userIndex = this.users.findIndex((u) => u.id === user.id);
+      if (userIndex >= 0) {
+        this.users[userIndex].level = newLevel as 0 | 1 | 2;
+      }
+    } catch (error) {
+      logError("Failed to update user access", error);
+      this.errorString = this.shareErrorMessage(error);
+      this.showError = true;
+    } finally {
+      this.userLoading = null;
+    }
+  }
+
+  // --- Remove user ---
+
+  confirmRemoveUser(user: IDatasetAccessUser) {
+    this.userToRemove = user;
+    this.showConfirm(
+      "Remove Access",
+      `Remove access for ${user.name || user.login}? ` +
+        "This will also remove their access to all datasets and " +
+        "collections in this project.",
+      "Remove",
+      "error",
+      () => this.removeUser(),
+    );
+  }
+
+  async removeUser() {
+    if (!this.userToRemove || !this.project) return;
+    const user = this.userToRemove;
+    this.userLoading = user.id;
+    this.showError = false;
+    try {
+      await this.store.projectsAPI.shareProject(
+        this.project.id,
+        user.login,
+        -1,
+      );
+      this.users = this.users.filter((u) => u.id !== user.id);
+    } catch (error) {
+      logError("Failed to remove user access", error);
+      this.errorString = this.shareErrorMessage(error);
+      this.showError = true;
+    } finally {
+      this.userLoading = null;
+      this.userToRemove = null;
+    }
+  }
+
+  // --- Add user ---
+
+  confirmAddUser() {
+    if (!this.newUserEmail) return;
+    const levelLabel =
+      this.accessLevelLabels[this.newUserAccessLevel] ?? "Unknown";
+    this.showConfirm(
+      "Share Project",
+      `Grant ${levelLabel} access to "${this.newUserEmail}"? ` +
+        "This will give them access to all datasets and collections " +
+        "in this project.",
+      "Share",
+      "primary",
+      () => this.addUser(),
+    );
+  }
+
+  async addUser() {
+    if (!this.newUserEmail || !this.project) return;
+    this.addUserLoading = true;
+    this.showError = false;
+    try {
+      await this.store.projectsAPI.shareProject(
+        this.project.id,
+        this.newUserEmail,
+        this.newUserAccessLevel,
+      );
+      await this.fetchAccessInfo(this.project.id);
+      this.newUserEmail = "";
+      this.newUserAccessLevel = 0;
+    } catch (error) {
+      logError("Failed to add user", error);
+      this.errorString = this.shareErrorMessage(error);
+      this.showError = true;
+    } finally {
+      this.addUserLoading = false;
+    }
+  }
+}
+</script>

@@ -10,8 +10,9 @@ from girder.api import access
 from girder.api.rest import Resource, filtermodel, loadmodel
 from girder.api.describe import Description, autoDescribeRoute
 from girder.constants import AccessType
-
+from girder.exceptions import RestException
 from girder.models.folder import Folder
+from girder.models.user import User
 
 from upenncontrast_annotation.server.models.project import (
     Project as ProjectModel
@@ -52,6 +53,15 @@ class Project(Resource):
         # Metadata management
         self.route("PUT", (":id", "metadata"), self.updateMetadata)
         self.route("PUT", (":id", "status"), self.updateStatus)
+
+        # Sharing / access control
+        self.route("POST", (":id", "share"), self.share)
+        self.route(
+            "POST", (":id", "set_public"), self.setPublic
+        )
+        self.route(
+            "GET", (":id", "access"), self.getAccess
+        )
 
     @access.user
     @filtermodel(model=ProjectModel)
@@ -148,8 +158,17 @@ class Project(Resource):
         .errorResponse('Write access denied.', 403)
     )
     def addDataset(self, project, dataset):
-        """Add dataset to project (WRITE permission enforced on both)."""
-        return self._projectModel.addDataset(project, dataset['_id'])
+        """Add dataset to project, then sync permissions."""
+        result = self._projectModel.addDataset(
+            project, dataset['_id']
+        )
+        self._projectModel.propagateAccessToDataset(
+            project, dataset
+        )
+        self._projectModel.propagatePublicToDataset(
+            project, dataset
+        )
+        return result
 
     @access.user
     @filtermodel(model=ProjectModel)
@@ -177,8 +196,17 @@ class Project(Resource):
         .errorResponse('Write access denied.', 403)
     )
     def addCollection(self, project, collection):
-        """Add collection to project (WRITE permission enforced on both)."""
-        return self._projectModel.addCollection(project, collection['_id'])
+        """Add collection to project, then sync permissions."""
+        result = self._projectModel.addCollection(
+            project, collection['_id']
+        )
+        self._projectModel.propagateAccessToCollection(
+            project, collection
+        )
+        self._projectModel.propagatePublicToCollection(
+            project, collection
+        )
+        return result
 
     @access.user
     @filtermodel(model=ProjectModel)
@@ -220,3 +248,159 @@ class Project(Resource):
     )
     def updateStatus(self, upenn_project, status):
         return self._projectModel.updateStatus(upenn_project, status)
+
+    @access.user
+    @autoDescribeRoute(
+        Description('Share a project with another user.')
+        .notes("""
+            Grants or revokes access to the project AND
+            all its contained resources (datasets,
+            collections, dataset views).
+
+            Set accessType to:
+            - 0 (READ) for view-only access
+            - 1 (WRITE) for edit access
+            - -1 to remove user's access entirely
+        """)
+        .modelParam(
+            'id', model=ProjectModel,
+            level=AccessType.ADMIN,
+            destName='project'
+        )
+        .param(
+            'userMailOrUsername',
+            'Email or username of the target user.',
+            required=True
+        )
+        .param(
+            'accessType',
+            'Access level: -1 (remove), 0 (READ), '
+            '1 (WRITE).',
+            dataType='integer', required=True
+        )
+        .errorResponse()
+        .errorResponse('Admin access denied.', 403)
+    )
+    def share(self, project, userMailOrUsername,
+              accessType):
+        accessType = AccessType().validate(accessType)
+
+        targetUser = User().findOne(
+            {"$or": [
+                {"login": userMailOrUsername},
+                {"email": userMailOrUsername},
+            ]}
+        )
+        if not targetUser:
+            raise RestException("badEmailOrUsername")
+
+        self._projectModel.setUserAccess(
+            project, targetUser, accessType, save=True
+        )
+        self._projectModel.propagateUserAccess(
+            project, targetUser, accessType
+        )
+
+        return True
+
+    @access.user
+    @autoDescribeRoute(
+        Description(
+            'Get access list for a project.'
+        )
+        .notes("""
+            Returns the current access list for a
+            project, including users with their access
+            levels and the public status.
+
+            Requires ADMIN access to the project.
+        """)
+        .modelParam(
+            'id', model=ProjectModel,
+            level=AccessType.ADMIN,
+            destName='project'
+        )
+        .errorResponse('ID was invalid.')
+        .errorResponse(
+            'Admin access was denied.', 403
+        )
+    )
+    def getAccess(self, project):
+        accessList = (
+            self._projectModel.getFullAccessList(
+                project
+            )
+        )
+
+        userIds = [
+            u['id']
+            for u in accessList.get('users', [])
+        ]
+        userEmails = {}
+        if userIds:
+            users = list(User().find(
+                {'_id': {'$in': userIds}},
+                fields=['email']
+            ))
+            userEmails = {
+                u['_id']: u.get('email', '')
+                for u in users
+            }
+
+        return {
+            'projectId': str(project['_id']),
+            'public': project.get('public', False),
+            'users': [
+                {
+                    'id': str(u['id']),
+                    'login': u.get('login', ''),
+                    'name': u.get('name', ''),
+                    'email': userEmails.get(
+                        u['id'], ''
+                    ),
+                    'level': u['level'],
+                }
+                for u in accessList.get('users', [])
+            ],
+            'groups': accessList.get('groups', []),
+        }
+
+    @access.user
+    @autoDescribeRoute(
+        Description(
+            'Make a project and all its resources '
+            'public or private.'
+        )
+        .notes("""
+            Sets public READ access on:
+            - The project itself
+            - All datasets (folders) in the project
+            - All collections in the project
+            - All dataset views linking them
+        """)
+        .modelParam(
+            'id', model=ProjectModel,
+            level=AccessType.ADMIN,
+            destName='project'
+        )
+        .param(
+            'public',
+            'True to make public, False to '
+            'make private.',
+            dataType='boolean', required=True
+        )
+        .errorResponse()
+        .errorResponse('Admin access denied.', 403)
+    )
+    def setPublic(self, project, public):
+        self._projectModel.setPublic(
+            project, public, save=True
+        )
+        self._projectModel.propagatePublic(
+            project, public
+        )
+
+        return {
+            'projectId': str(project['_id']),
+            'public': public,
+        }
