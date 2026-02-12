@@ -55,6 +55,8 @@ describe("AnalyzePanel", () => {
   it("renders property-creation and property-list stubs", () => {
     const wrapper = mountComponent();
     expect(wrapper.find("propertycreation-stub").exists()).toBe(true);
-    expect(wrapper.find("propertylist-stub").exists()).toBe(true);
+    // PropertyList is a <script setup> component, so shallowMount renders
+    // it as anonymous-stub. Verify it renders inside property-list-scroll.
+    expect(wrapper.find(".property-list-scroll").exists()).toBe(true);
   });
 });

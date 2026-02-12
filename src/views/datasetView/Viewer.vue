@@ -1,8 +1,8 @@
+<!-- eslint-disable vue/multi-word-component-names -->
 <template>
   <div class="viewer">
     <aside class="side">
       <viewer-toolbar class="toolbar" @image-changed="handleImageChanged">
-        <!-- <contrast-panels /> -->
         <display-layers />
       </viewer-toolbar>
     </aside>
@@ -13,70 +13,58 @@
     />
   </div>
 </template>
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import ViewerToolbar from "@/components/ViewerToolbar.vue";
 import DisplayLayers from "@/components/DisplayLayers.vue";
 import ImageViewer from "@/components/ImageViewer.vue";
-import ContrastPanels from "@/components/ContrastPanels.vue";
 
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 
-@Component({
-  components: {
-    ViewerToolbar,
-    DisplayLayers,
-    ImageViewer,
-    ContrastPanels,
-  },
-})
-export default class Viewer extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
-  readonly propertyStore = propertiesStore;
+const shouldResetMaps = ref(false);
 
-  shouldResetMaps = false;
+const dataset = computed(() => store.dataset);
+const configuration = computed(() => store.configuration);
 
-  mounted() {
-    this.datasetChanged();
-    this.configurationChanged();
-  }
+function datasetChanged() {
+  annotationStore.fetchAnnotations();
+  propertiesStore.fetchPropertyValues();
 
-  get dataset() {
-    return this.store.dataset;
-  }
-
-  get configuration() {
-    return this.store.configuration;
-  }
-
-  // Fetch annotations for the current dataset
-  @Watch("dataset")
-  datasetChanged() {
-    this.annotationStore.fetchAnnotations();
-    this.propertyStore.fetchPropertyValues();
-
-    // Disable timelapse mode if dataset doesn't support it
-    if (this.dataset && this.dataset.time.length <= 1) {
-      this.store.setShowTimelapseMode(false);
-    }
-  }
-
-  @Watch("configuration")
-  configurationChanged() {
-    this.propertyStore.fetchProperties();
-  }
-
-  handleImageChanged() {
-    this.shouldResetMaps = true;
-  }
-
-  handleResetComplete() {
-    this.shouldResetMaps = false;
+  if (dataset.value && dataset.value.time.length <= 1) {
+    store.setShowTimelapseMode(false);
   }
 }
+
+function configurationChanged() {
+  propertiesStore.fetchProperties();
+}
+
+function handleImageChanged() {
+  shouldResetMaps.value = true;
+}
+
+function handleResetComplete() {
+  shouldResetMaps.value = false;
+}
+
+watch(dataset, datasetChanged);
+watch(configuration, configurationChanged);
+
+onMounted(() => {
+  datasetChanged();
+  configurationChanged();
+});
+
+defineExpose({
+  shouldResetMaps,
+  dataset,
+  configuration,
+  handleImageChanged,
+  handleResetComplete,
+});
 </script>
 
 <style lang="scss" scoped>

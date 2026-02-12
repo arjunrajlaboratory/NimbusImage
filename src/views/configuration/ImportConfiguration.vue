@@ -24,8 +24,9 @@
     />
   </v-container>
 </template>
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import ConfigurationSelect from "@/components/ConfigurationSelect.vue";
@@ -33,97 +34,94 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import { IDatasetConfiguration } from "@/store/model";
 import { IGirderSelectAble } from "@/girder";
 
-@Component({
-  components: { ConfigurationSelect, GirderLocationChooser },
-})
-export default class ImportConfiguration extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
+const vm = getCurrentInstance()!.proxy;
 
-  selectedFolder: IGirderSelectAble | null = null;
-  currentFolderName: string = "";
+const selectedFolder = ref<IGirderSelectAble | null>(null);
+const currentFolderName = ref("");
 
-  get datasetName() {
-    return this.store.dataset?.name || "";
+const datasetName = computed(() => store.dataset?.name || "");
+
+const folderId = computed((): string | undefined => {
+  if (selectedFolder.value && selectedFolder.value._modelType === "folder") {
+    return selectedFolder.value._id;
   }
-
-  get folderId(): string | undefined {
-    if (this.selectedFolder && this.selectedFolder._modelType === "folder") {
-      return this.selectedFolder._id;
-    }
-    // Fallback to route query if folder not yet loaded
-    const folderId = this.$route.query.folderId;
-    if (Array.isArray(folderId)) {
-      return folderId[0] || undefined;
-    }
-    if (folderId === null) {
-      return undefined;
-    }
-    return folderId;
+  // Fallback to route query if folder not yet loaded
+  const folderIdQuery = vm.$route.query.folderId;
+  if (Array.isArray(folderIdQuery)) {
+    return folderIdQuery[0] || undefined;
   }
-
-  @Watch("selectedFolder")
-  async updateFolderName() {
-    if (this.selectedFolder && this.selectedFolder._modelType === "folder") {
-      const folder = await this.girderResources.getFolder(
-        this.selectedFolder._id,
-      );
-      this.currentFolderName = folder?.name || "Unknown folder";
-    } else {
-      this.currentFolderName = "";
-    }
+  if (folderIdQuery === null) {
+    return undefined;
   }
+  return folderIdQuery;
+});
 
-  async mounted() {
-    // Initialize selectedFolder from route query
-    const folderId = this.$route.query.folderId;
-    const targetFolderId = Array.isArray(folderId) ? folderId[0] : folderId;
-    if (targetFolderId) {
-      const folder = await this.girderResources.getFolder(targetFolderId);
-      if (folder) {
-        this.selectedFolder = folder;
-        this.currentFolderName = folder.name;
-      }
-    } else {
-      // If no folderId in query, try to get dataset's parent folder
-      if (this.store.dataset) {
-        const datasetFolder = await this.girderResources.getFolder(
-          this.store.dataset.id,
+watch(selectedFolder, async () => {
+  if (selectedFolder.value && selectedFolder.value._modelType === "folder") {
+    const folder = await girderResources.getFolder(selectedFolder.value._id);
+    currentFolderName.value = folder?.name || "Unknown folder";
+  } else {
+    currentFolderName.value = "";
+  }
+});
+
+onMounted(async () => {
+  // Initialize selectedFolder from route query
+  const folderIdQuery = vm.$route.query.folderId;
+  const targetFolderId = Array.isArray(folderIdQuery)
+    ? folderIdQuery[0]
+    : folderIdQuery;
+  if (targetFolderId) {
+    const folder = await girderResources.getFolder(targetFolderId);
+    if (folder) {
+      selectedFolder.value = folder;
+      currentFolderName.value = folder.name;
+    }
+  } else {
+    // If no folderId in query, try to get dataset's parent folder
+    if (store.dataset) {
+      const datasetFolder = await girderResources.getFolder(store.dataset.id);
+      if (datasetFolder?.parentId) {
+        const parentFolder = await girderResources.getFolder(
+          datasetFolder.parentId,
         );
-        if (datasetFolder?.parentId) {
-          const parentFolder = await this.girderResources.getFolder(
-            datasetFolder.parentId,
-          );
-          if (parentFolder) {
-            this.selectedFolder = parentFolder;
-            this.currentFolderName = parentFolder.name;
-          }
+        if (parentFolder) {
+          selectedFolder.value = parentFolder;
+          currentFolderName.value = parentFolder.name;
         }
       }
     }
   }
+});
 
-  async submit(configurations: IDatasetConfiguration[]) {
-    const dataset = this.store.dataset;
-    if (!dataset) {
-      return;
-    }
-
-    // Create a view for each configuration
-    await Promise.all(
-      configurations.map((configuration) =>
-        this.store.createDatasetView({
-          configurationId: configuration.id,
-          datasetId: dataset.id,
-        }),
-      ),
-    );
-
-    this.$router.back();
+async function submit(configurations: IDatasetConfiguration[]) {
+  const dataset = store.dataset;
+  if (!dataset) {
+    return;
   }
 
-  cancel() {
-    this.$router.back();
-  }
+  await Promise.all(
+    configurations.map((configuration) =>
+      store.createDatasetView({
+        configurationId: configuration.id,
+        datasetId: dataset.id,
+      }),
+    ),
+  );
+
+  vm.$router.back();
 }
+
+function cancel() {
+  vm.$router.back();
+}
+
+defineExpose({
+  selectedFolder,
+  currentFolderName,
+  datasetName,
+  folderId,
+  submit,
+  cancel,
+});
 </script>

@@ -33,9 +33,8 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
-import store from "@/store";
+<script setup lang="ts">
+import { computed } from "vue";
 // Manually import those vuetify components that might be used procedurally
 import { VSelect, VCheckbox, VTextField, VRadioGroup } from "vuetify/lib";
 import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
@@ -64,43 +63,29 @@ interface IItem {
   values?: any;
 }
 
-@Component({
-  components: {
-    AnnotationConfiguration,
-    TagAndLayerRestriction,
-    VSelect,
-    VCheckbox,
-    VTextField,
-    VRadioGroup,
-    DockerImage,
-    TagPicker,
+const props = defineProps<{
+  item: IItem;
+  value: any;
+  advanced?: boolean;
+}>();
+
+const emit = defineEmits<{
+  (e: "input", value: any): void;
+  (e: "change"): void;
+}>();
+
+const componentValue = computed({
+  get() {
+    return props.value;
   },
-})
-// Creates a tool configuration interface based on the current selected template.
-export default class ToolConfigurationItem extends Vue {
-  readonly store = store;
-  readonly typeToComponentName = typeToComponentName;
+  set(newValue: any) {
+    emit("input", newValue);
+  },
+});
 
-  @Prop()
-  readonly item!: IItem;
-
-  // Pass from custom component to ToolConfiguration
-  @Prop()
-  readonly value!: any;
-
-  @Prop()
-  readonly advanced!: boolean;
-
-  get componentValue() {
-    return this.value;
-  }
-
-  set componentValue(newValue) {
-    this.$emit("input", newValue);
-  }
-
-  changed() {
-    this.$emit("change");
-  }
+function changed() {
+  emit("change");
 }
+
+defineExpose({ componentValue, typeToComponentName, changed });
 </script>

@@ -53,61 +53,65 @@
   </v-list-item>
 </template>
 
-<script lang="ts">
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import { IToolConfiguration } from "@/store/model";
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
 import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 
-@Component({
-  components: { ToolIcon, ToolEdition },
-})
-export default class Toolset extends Vue {
-  readonly store = store;
-  @Prop()
-  tool!: IToolConfiguration;
+const props = defineProps<{
+  tool: IToolConfiguration;
+}>();
 
-  getTourStepId = getTourStepId;
-  getTourTriggerId = getTourTriggerId;
+const isHovering = ref(false);
+const editDialog = ref(false);
+const statusIcon = ref<string | null>(null);
 
-  isHovering = false;
-  editDialog = false;
-  statusIcon: null | string = null;
-
-  toggleTool() {
-    if (this.isToolSelected) {
-      this.store.setSelectedToolId(null);
-    } else {
-      this.store.setSelectedToolId(this.tool.id);
-    }
-  }
-
-  get isToolSelected() {
-    return this.store.selectedTool?.configuration.id === this.tool.id;
-  }
-
-  get isToolLoading() {
-    return !this.isToolSelected && !!this.jobId;
-  }
-
-  get jobId(): string | null {
-    const jobId = jobs.jobIdForToolId[this.tool.id];
-    return jobId ?? null;
-  }
-
-  @Watch("jobId")
-  onJobChanged() {
-    if (!this.jobId) {
-      return;
-    }
-    jobs
-      .getPromiseForJobId(this.jobId)
-      .then(
-        (success) => (this.statusIcon = success ? "mdi-check" : "mdi-close"),
-      );
+function toggleTool() {
+  if (isToolSelected.value) {
+    store.setSelectedToolId(null);
+  } else {
+    store.setSelectedToolId(props.tool.id);
   }
 }
+
+const isToolSelected = computed(() => {
+  return store.selectedTool?.configuration.id === props.tool.id;
+});
+
+const isToolLoading = computed(() => {
+  return !isToolSelected.value && !!jobId.value;
+});
+
+const jobId = computed((): string | null => {
+  return jobs.jobIdForToolId[props.tool.id] ?? null;
+});
+
+function onJobChanged() {
+  if (!jobId.value) {
+    return;
+  }
+  jobs
+    .getPromiseForJobId(jobId.value)
+    .then(
+      (success: boolean) =>
+        (statusIcon.value = success ? "mdi-check" : "mdi-close"),
+    );
+}
+
+watch(jobId, onJobChanged);
+
+defineExpose({
+  isHovering,
+  editDialog,
+  statusIcon,
+  toggleTool,
+  isToolSelected,
+  isToolLoading,
+  jobId,
+  onJobChanged,
+});
 </script>

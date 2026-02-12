@@ -14,7 +14,7 @@
         :template="tool.template"
         :defaultValues="tool.values"
         v-model="toolValues"
-        ref="toolConfiguration"
+        ref="toolConfigurationRef"
       />
       <div class="ma-6 mb-0">
         <div class="title white--text">Tool Hotkey</div>
@@ -39,65 +39,72 @@
   </v-card>
 </template>
 
-<script lang="ts">
+<script setup lang="ts">
+import { ref, watch, onMounted } from "vue";
 import { IToolConfiguration } from "@/store/model";
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
-
 import ToolConfiguration from "@/tools/creation/ToolConfiguration.vue";
 import HotkeySelection from "@/components/HotkeySelection.vue";
 
-@Component({
-  components: { ToolConfiguration, HotkeySelection },
-})
-export default class ToolEdition extends Vue {
-  readonly store = store;
-  @Prop()
-  tool!: IToolConfiguration;
+const props = defineProps<{
+  tool: IToolConfiguration;
+}>();
 
-  readonly $refs!: {
-    toolConfiguration?: ToolConfiguration;
-  };
+const emit = defineEmits<{
+  (e: "close"): void;
+}>();
 
-  toolValues: any = {};
-  toolName: string = "";
-  toolHotkey: string | null = null;
+const toolConfigurationRef = ref<InstanceType<typeof ToolConfiguration> | null>(
+  null,
+);
+const toolValues = ref<any>({});
+const toolName = ref("");
+const toolHotkey = ref<string | null>(null);
 
-  mounted() {
-    this.reset();
-  }
+function reset() {
+  toolName.value = props.tool.name;
+  toolHotkey.value = props.tool.hotkey;
 
-  @Watch("tool")
-  reset() {
-    this.toolName = this.tool.name;
-    this.toolHotkey = this.tool.hotkey;
-
-    const toolConfiguration = this.$refs.toolConfiguration;
-    if (toolConfiguration) {
-      // Should reset toolValues
-      toolConfiguration.reset();
-    }
-  }
-
-  submit() {
-    const newTool: IToolConfiguration = {
-      ...this.tool,
-      name: this.toolName,
-      hotkey: this.toolHotkey,
-      values: this.toolValues,
-    };
-    this.store.editToolInConfiguration(newTool);
-    this.$emit("close");
-  }
-
-  cancel() {
-    this.reset();
-    this.$emit("close");
-  }
-
-  removeTool() {
-    this.store.removeToolFromConfiguration(this.tool.id);
-    this.$emit("close");
+  const tc = toolConfigurationRef.value;
+  if (tc) {
+    tc.reset();
   }
 }
+
+function submit() {
+  const newTool: IToolConfiguration = {
+    ...props.tool,
+    name: toolName.value,
+    hotkey: toolHotkey.value,
+    values: toolValues.value,
+  };
+  store.editToolInConfiguration(newTool);
+  emit("close");
+}
+
+function cancel() {
+  reset();
+  emit("close");
+}
+
+function removeTool() {
+  store.removeToolFromConfiguration(props.tool.id);
+  emit("close");
+}
+
+watch(() => props.tool, reset);
+
+onMounted(() => {
+  reset();
+});
+
+defineExpose({
+  toolValues,
+  toolName,
+  toolHotkey,
+  reset,
+  submit,
+  cancel,
+  removeTool,
+});
 </script>

@@ -103,94 +103,109 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref } from "vue";
 import store from "@/store";
 
-@Component
-export default class UserMenuLoginForm extends Vue {
-  readonly store = store;
+const props = defineProps<{
+  domain: string;
+  value: boolean;
+}>();
 
-  @Prop({ required: true })
-  domain!: string;
+const emit = defineEmits<{
+  (e: "input", value: boolean): void;
+}>();
 
-  // Controls the display of UserMenu
-  @Prop({ required: true })
-  value!: boolean;
+const username = ref(import.meta.env.VITE_DEFAULT_USER || "");
+const password = ref(import.meta.env.VITE_DEFAULT_PASSWORD || "");
 
-  username = import.meta.env.VITE_DEFAULT_USER || "";
-  password = import.meta.env.VITE_DEFAULT_PASSWORD || "";
+const errorMessage = ref("");
+const successMessage = ref("");
 
-  errorMessage = "";
-  successMessage = "";
+const signUpMode = ref(false);
+const signupUsername = ref("");
+const signupEmail = ref("");
+const signupFirstName = ref("");
+const signupLastName = ref("");
+const signupPassword = ref("");
+const signupPasswordVerification = ref("");
 
-  signUpMode: boolean = false;
-  signupUsername: string = "";
-  signupEmail: string = "";
-  signupFirstName: string = "";
-  signupLastName: string = "";
-  signupPassword: string = "";
-  signupPasswordVerification: string = "";
+async function signUp() {
+  errorMessage.value = "";
+  successMessage.value = "";
 
-  async signUp() {
-    this.errorMessage = "";
-    this.successMessage = "";
-
-    try {
-      await store.signUp({
-        domain: this.domain,
-        login: this.signupUsername,
-        email: this.signupEmail,
-        firstName: this.signupFirstName,
-        lastName: this.signupLastName,
-        password: this.signupPassword,
-        admin: false,
-      });
-      // Handle successful signup
-      this.signUpMode = false;
-      this.clearSignupFields();
-      this.successMessage =
-        "Sign-up successful! Please verify your email before logging in.";
-    } catch (error) {
-      this.errorMessage = (error as Error).message;
-    }
-  }
-
-  switchToSignUp() {
-    this.signUpMode = true;
-    this.errorMessage = "";
-    this.successMessage = "";
-  }
-
-  switchToLogin() {
-    this.signUpMode = false;
-    this.errorMessage = "";
-    this.successMessage = "";
-  }
-
-  clearSignupFields() {
-    this.signupUsername = "";
-    this.signupEmail = "";
-    this.signupFirstName = "";
-    this.signupLastName = "";
-    this.signupPassword = "";
-  }
-
-  async login() {
-    this.errorMessage = "";
-    this.successMessage = "";
-    try {
-      const result = await store.login({
-        domain: this.domain,
-        username: this.username,
-        password: this.password,
-      });
-      if (result) {
-        this.errorMessage = result;
-      }
-    } finally {
-      this.password = "";
-    }
+  try {
+    await store.signUp({
+      domain: props.domain,
+      login: signupUsername.value,
+      email: signupEmail.value,
+      firstName: signupFirstName.value,
+      lastName: signupLastName.value,
+      password: signupPassword.value,
+      admin: false,
+    });
+    signUpMode.value = false;
+    clearSignupFields();
+    successMessage.value =
+      "Sign-up successful! Please verify your email before logging in.";
+  } catch (error) {
+    errorMessage.value = (error as Error).message;
   }
 }
+
+function switchToSignUp() {
+  signUpMode.value = true;
+  errorMessage.value = "";
+  successMessage.value = "";
+}
+
+function switchToLogin() {
+  signUpMode.value = false;
+  errorMessage.value = "";
+  successMessage.value = "";
+}
+
+function clearSignupFields() {
+  signupUsername.value = "";
+  signupEmail.value = "";
+  signupFirstName.value = "";
+  signupLastName.value = "";
+  signupPassword.value = "";
+}
+
+async function login() {
+  errorMessage.value = "";
+  successMessage.value = "";
+  try {
+    const result = await store.login({
+      domain: props.domain,
+      username: username.value,
+      password: password.value,
+    });
+    if (result) {
+      errorMessage.value = result;
+    }
+  } finally {
+    password.value = "";
+  }
+}
+
+defineExpose({
+  username,
+  password,
+  errorMessage,
+  successMessage,
+  signUpMode,
+  signupUsername,
+  signupEmail,
+  signupFirstName,
+  signupLastName,
+  signupPassword,
+  signupPasswordVerification,
+  login,
+  signUp,
+  switchToSignUp,
+  switchToLogin,
+  clearSignupFields,
+});
 </script>

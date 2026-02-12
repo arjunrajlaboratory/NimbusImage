@@ -31,8 +31,8 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import { IToolConfiguration } from "@/store/model";
 import LayerSelect from "@/components/LayerSelect.vue";
@@ -44,93 +44,92 @@ interface IRestrictionSetup {
   tagsInclusive?: boolean;
 }
 
-// Tool creation interface element for picking tags and layers for connections
-@Component({
-  components: {
-    LayerSelect,
-    TagPicker,
+const props = withDefaults(
+  defineProps<{
+    value?: IRestrictionSetup;
+    inclusiveToggle?: boolean;
+    template?: any;
+    tagsLabel?: string;
+    layerLabel?: string;
+  }>(),
+  {
+    inclusiveToggle: true,
   },
-})
-export default class TagAndLayerRestriction extends Vue {
-  readonly store = store;
+);
 
-  newTags: string[] = [];
-  areTagsInclusive: boolean = true;
-  selectedLayer: string | null = null;
+const emit = defineEmits<{
+  (e: "input", value: IRestrictionSetup): void;
+  (e: "change"): void;
+}>();
 
-  @Prop()
-  readonly value?: IRestrictionSetup;
+const newTags = ref<string[]>([]);
+const areTagsInclusive = ref(true);
+const selectedLayer = ref<string | null>(null);
 
-  @Prop({ default: true })
-  readonly inclusiveToggle!: boolean;
-
-  mounted() {
-    this.updateFromValue();
+function updateFromValue() {
+  if (!props.value) {
+    reset();
+    return;
   }
-
-  @Watch("value")
-  updateFromValue() {
-    if (!this.value) {
-      this.reset();
-      return;
-    }
-    this.newTags = this.value.tags;
-    this.areTagsInclusive = !!this.value.tagsInclusive;
-    this.selectedLayer = this.value.layer;
-  }
-
-  reset() {
-    this.newTags = [];
-    this.areTagsInclusive = true;
-    this.selectedLayer = null;
-    this.changed();
-  }
-
-  get dataset() {
-    return this.store.dataset;
-  }
-
-  // list of existing tags for autocomplete
-  get tagList(): string[] {
-    return this.store.tools
-      .filter(
-        (tool: IToolConfiguration) =>
-          (tool.type === "create" || tool.type === "snap") &&
-          tool.values.annotation,
-      )
-      .map((tool: IToolConfiguration) => tool.values.annotation.tags)
-      .flat();
-  }
-
-  tagSearchInput: string = "";
-
-  @Prop()
-  readonly template!: any;
-
-  @Prop()
-  readonly tagsLabel!: string;
-
-  @Prop()
-  readonly layerLabel!: string;
-
-  get layerLabelWithDefault() {
-    return this.layerLabel || "Filter by layer";
-  }
-
-  @Watch("newTags")
-  @Watch("selectedLayer")
-  @Watch("areTagsInclusive")
-  changed() {
-    this.tagSearchInput = "";
-    const result: IRestrictionSetup = {
-      tags: this.newTags,
-      layer: this.selectedLayer,
-    };
-    if (this.inclusiveToggle) {
-      result.tagsInclusive = this.areTagsInclusive;
-    }
-    this.$emit("input", result);
-    this.$emit("change");
-  }
+  newTags.value = props.value.tags;
+  areTagsInclusive.value = !!props.value.tagsInclusive;
+  selectedLayer.value = props.value.layer;
 }
+
+function reset() {
+  newTags.value = [];
+  areTagsInclusive.value = true;
+  selectedLayer.value = null;
+  changed();
+}
+
+const dataset = computed(() => store.dataset);
+
+const tagList = computed((): string[] => {
+  return store.tools
+    .filter(
+      (tool: IToolConfiguration) =>
+        (tool.type === "create" || tool.type === "snap") &&
+        tool.values.annotation,
+    )
+    .map((tool: IToolConfiguration) => tool.values.annotation.tags)
+    .flat();
+});
+
+const layerLabelWithDefault = computed(() => {
+  return props.layerLabel || "Filter by layer";
+});
+
+function changed() {
+  const result: IRestrictionSetup = {
+    tags: newTags.value,
+    layer: selectedLayer.value,
+  };
+  if (props.inclusiveToggle) {
+    result.tagsInclusive = areTagsInclusive.value;
+  }
+  emit("input", result);
+  emit("change");
+}
+
+watch(newTags, changed);
+watch(selectedLayer, changed);
+watch(areTagsInclusive, changed);
+watch(() => props.value, updateFromValue);
+
+onMounted(() => {
+  updateFromValue();
+});
+
+defineExpose({
+  newTags,
+  areTagsInclusive,
+  selectedLayer,
+  updateFromValue,
+  reset,
+  dataset,
+  tagList,
+  layerLabelWithDefault,
+  changed,
+});
 </script>

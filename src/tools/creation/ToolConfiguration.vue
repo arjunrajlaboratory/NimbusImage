@@ -199,7 +199,7 @@ export default class ToolConfiguration extends Vue {
                 break;
 
               case "restrictTagsAndLayer":
-                const restricts = innerComponents as TagAndLayerRestriction[];
+                const restricts = innerComponents as any[];
                 if (restricts.length) {
                   setItemValue({});
                   restricts.forEach((restrict) => restrict.reset());
@@ -207,7 +207,7 @@ export default class ToolConfiguration extends Vue {
                 break;
 
               case "dockerImage":
-                const dockerImages = innerComponents as DockerImage[];
+                const dockerImages = innerComponents as any[];
                 if (dockerImages.length) {
                   setItemValue(null);
                   dockerImages.forEach((dockerImage) => dockerImage.reset());

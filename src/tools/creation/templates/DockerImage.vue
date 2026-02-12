@@ -11,9 +11,8 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch, Prop } from "vue-property-decorator";
-import store from "@/store";
+<script setup lang="ts">
+import { ref, watch, onMounted } from "vue";
 import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import { IWorkerLabels } from "@/store/model";
 
@@ -21,49 +20,52 @@ interface IImageSetup {
   image: string | null;
 }
 
-// Tool creation interface element for choosing a docker image among available ones
-@Component({
-  components: {
-    DockerImageSelect,
-  },
-})
-export default class DockerImage extends Vue {
-  readonly store = store;
+const props = defineProps<{
+  value?: IImageSetup;
+  template?: any;
+}>();
 
-  image: string | null = null;
+const emit = defineEmits<{
+  (e: "input", value: IImageSetup): void;
+  (e: "change"): void;
+}>();
 
-  annotationImageFilter(labels: IWorkerLabels) {
-    return labels.isAnnotationWorker !== undefined;
-  }
+const image = ref<string | null>(null);
 
-  @Prop()
-  readonly value?: IImageSetup;
-
-  mounted() {
-    this.updateFromValue();
-  }
-
-  updateFromValue() {
-    if (!this.value) {
-      this.reset();
-      return;
-    }
-    this.image = this.value.image;
-  }
-
-  reset() {
-    this.image = null;
-    this.changed();
-  }
-
-  @Prop()
-  readonly template!: any;
-
-  @Watch("image")
-  changed() {
-    const result: IImageSetup = { image: this.image };
-    this.$emit("input", result);
-    this.$emit("change");
-  }
+function annotationImageFilter(labels: IWorkerLabels) {
+  return labels.isAnnotationWorker !== undefined;
 }
+
+function updateFromValue() {
+  if (!props.value) {
+    reset();
+    return;
+  }
+  image.value = props.value.image;
+}
+
+function reset() {
+  image.value = null;
+  changed();
+}
+
+function changed() {
+  const result: IImageSetup = { image: image.value };
+  emit("input", result);
+  emit("change");
+}
+
+watch(image, changed);
+
+onMounted(() => {
+  updateFromValue();
+});
+
+defineExpose({
+  image,
+  annotationImageFilter,
+  updateFromValue,
+  reset,
+  changed,
+});
 </script>

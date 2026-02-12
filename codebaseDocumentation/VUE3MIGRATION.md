@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 108 | 52 already migrated to `<script setup>` |
+| Class components (`@Component`) | 108 | 66 already migrated to `<script setup>` |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -169,14 +169,45 @@ Once most components use Composition API and Vuetify wrappers are in place:
 - `GirderLocationChooser.vue`: Converted async component imports to regular synchronous imports
 - `AnnotationActions.vue`: Removed unused `propertyIds` computed
 
+### Batch 7 — Tool System, Views, Layout & Annotation Properties
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `DockerImage.vue` | 69 | `@Prop` → `defineProps`, `@Watch` → `watch()`, `$emit` → `defineEmits` |
+| `ToolEdition.vue` | 103 | Template ref for child component, `watch(() => props.tool, reset)` |
+| `TagAndLayerRestriction.vue` | 136 | 3× `@Watch` → 3 `watch()` calls, removed unused `tagSearchInput` |
+| `ToolConfigurationItem.vue` | 106 | Dynamic `<component :is>` with auto-registered imports, computed get/set |
+| `ToolItem.vue` | 113 | Custom directives `v-mousetrap`/`v-tour-trigger`, `$attrs`/`$listeners`, jobs store |
+| `Dataset.vue` | 88 | `getCurrentInstance()` for `$route`, `watch(() => vm.$route, ...)` |
+| `ImportDataset.vue` | 95 | `getCurrentInstance()` for `$router.push()`, async store API |
+| `DuplicateImportConfiguration.vue` | 101 | `getCurrentInstance()` for `$router.back()`, girderResources store |
+| `ImportConfiguration.vue` | 129 | `$route.query` fallback for computed, girderResources store |
+| `Viewer.vue` | 114 | 3 stores, removed unused `ContrastPanels` import |
+| `UserMenuLoginForm.vue` | 196 | VModel pattern → `defineProps`+`defineEmits`+computed, `import.meta.env` |
+| `UserMenu.vue` | 109 | `getCurrentInstance()` for `$route.name` init, 2× `watch()` on same handler |
+| `Property.vue` | 186 | Kept `Vue.set()` for Vuex mutation (Phase 2), removed unused imports |
+| `PropertyList.vue` | 145 | Removed unused `store`, `filterStore`, `TagFilterEditor` imports |
+
+**Key cleanups in this batch:**
+- `TagAndLayerRestriction.vue`: Removed unused `tagSearchInput` local state
+- `Viewer.vue`: Removed unused `ContrastPanels` import
+- `Property.vue`: Removed unused `TagFilterEditor` and `LayerSelect` imports/registrations
+- `PropertyList.vue`: Removed unused `store`, `filterStore`, `TagFilterEditor` imports
+
+**Key patterns in this batch:**
+- Route-dependent views use `getCurrentInstance()!.proxy` for `$route`/`$router` access
+- `ToolConfigurationItem` dynamic `<component :is>` works with auto-registered imports in `<script setup>`
+- `ToolItem` preserves `v-on="$listeners"` and `v-bind="$attrs"` (still valid in Vue 2.7 `<script setup>`)
+- `Property.vue` retains `Vue.set()` calls for Vuex store mutations — Phase 2 cleanup
+
 ## Next Candidates
 
 Good candidates for the next migration batch, ordered by complexity:
 
-**Small UI components:**
-- `ConfigurationSelect.vue` — requires converting `routeMapper` mixin to composable first
+**Blocked on mixin conversion:**
+- `ConfigurationSelect.vue`, `NewConfiguration.vue` — require converting `routeMapper` mixin to composable first
 
 **Medium components with store access:**
+- `ToolConfiguration.vue` — dynamic interface builder, `Vue.set()` usage
 - `AnnotationFilterDialog.vue`
 - `AnnotationCSVDialog.vue`
 - `ExportDialog.vue`

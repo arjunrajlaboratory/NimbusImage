@@ -1,3 +1,4 @@
+<!-- eslint-disable vue/multi-word-component-names -->
 <template>
   <v-container class="ma-0 pa-0">
     <v-row class="mr-4">
@@ -55,13 +56,9 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
-import LayerSelect from "@/components/LayerSelect.vue";
-
-import { Vue, Component, Prop } from "vue-property-decorator";
-import store from "@/store";
-import annotationStore from "@/store/annotation";
+<script setup lang="ts">
+import Vue from "vue";
+import { computed } from "vue";
 import propertyStore, { IPropertyStatus } from "@/store/properties";
 import {
   IAnnotationProperty,
@@ -69,82 +66,81 @@ import {
   MessageType,
 } from "@/store/model";
 
-@Component({
-  components: {
-    TagFilterEditor,
-    LayerSelect,
+const props = withDefaults(
+  defineProps<{
+    property: IAnnotationProperty;
+    applyToAllDatasets?: boolean;
+  }>(),
+  {
+    applyToAllDatasets: false,
   },
-})
-export default class AnnotationProperty extends Vue {
-  readonly propertyStore = propertyStore;
-  readonly annotationStore = annotationStore;
-  readonly store = store;
-  @Prop()
-  readonly property!: IAnnotationProperty;
+);
 
-  @Prop({ type: Boolean, default: false })
-  readonly applyToAllDatasets!: boolean;
+const emit = defineEmits<{
+  (e: "compute-property-batch", property: IAnnotationProperty): void;
+}>();
 
-  get status(): IPropertyStatus {
-    return this.propertyStore.getStatus(this.property.id);
+const status = computed((): IPropertyStatus => {
+  return propertyStore.getStatus(props.property.id);
+});
+
+const uncomputed = computed(() => {
+  return propertyStore.uncomputedAnnotationsPerProperty;
+});
+
+const filteredErrors = computed(() => {
+  return (
+    status.value.errorInfo?.errors.filter(
+      (error) => error.error && error.type === MessageType.ERROR,
+    ) || []
+  );
+});
+
+const filteredWarnings = computed(() => {
+  return (
+    status.value.errorInfo?.errors.filter(
+      (error) => error.warning && error.type === MessageType.WARNING,
+    ) || []
+  );
+});
+
+function compute() {
+  if (status.value.running) {
+    return;
   }
 
-  get uncomputed() {
-    return this.propertyStore.uncomputedAnnotationsPerProperty;
+  if (props.applyToAllDatasets) {
+    emit("compute-property-batch", props.property);
+    return;
   }
 
-  get filteredErrors() {
-    return (
-      this.status.errorInfo?.errors.filter(
-        (error) => error.error && error.type === MessageType.ERROR,
-      ) || []
-    );
-  }
+  // Create a new error info object for this computation
+  const errorInfo: IErrorInfoList = { errors: [] };
 
-  get filteredWarnings() {
-    return (
-      this.status.errorInfo?.errors.filter(
-        (error) => error.warning && error.type === MessageType.WARNING,
-      ) || []
-    );
-  }
-
-  compute() {
-    if (this.status.running) {
-      return;
-    }
-
-    if (this.applyToAllDatasets) {
-      this.$emit("compute-property-batch", this.property);
-      return;
-    }
-
-    // Create a new error info object for this computation
-    const errorInfo: IErrorInfoList = { errors: [] };
-
-    // Ensure the property status exists
-    if (!this.propertyStore.propertyStatuses[this.property.id]) {
-      Vue.set(this.propertyStore.propertyStatuses, this.property.id, {
-        running: false,
-        previousRun: null,
-        progressInfo: {},
-        errorInfo: { errors: [] },
-      });
-    }
-
-    // Update the status with the new error info
-    Vue.set(
-      this.propertyStore.propertyStatuses[this.property.id],
-      "errorInfo",
-      errorInfo,
-    );
-
-    this.propertyStore.computeProperty({
-      property: this.property,
-      errorInfo,
+  // Ensure the property status exists
+  if (!propertyStore.propertyStatuses[props.property.id]) {
+    Vue.set(propertyStore.propertyStatuses, props.property.id, {
+      running: false,
+      previousRun: null,
+      progressInfo: {},
+      errorInfo: { errors: [] },
     });
   }
+
+  // Update the status with the new error info
+  Vue.set(
+    propertyStore.propertyStatuses[props.property.id],
+    "errorInfo",
+    errorInfo,
+  );
+
+  propertyStore.computeProperty({
+    property: props.property,
+    errorInfo,
+  });
 }
+
+defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
 </script>
 
 <style lang="scss">

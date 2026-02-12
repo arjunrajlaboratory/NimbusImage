@@ -61,72 +61,70 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
-import store from "@/store";
+<script setup lang="ts">
+import { computed } from "vue";
 import propertyStore from "@/store/properties";
-import filterStore from "@/store/filters";
-
-import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
 import AnnotationProperty from "@/components/AnnotationBrowser/AnnotationProperties/Property.vue";
 import AnnotationPropertyBody from "@/components/AnnotationBrowser/AnnotationProperties/PropertyBody.vue";
 import { IAnnotationProperty } from "@/store/model";
 
-@Component({
-  components: {
-    TagFilterEditor,
-    AnnotationProperty,
-    AnnotationPropertyBody,
+const props = withDefaults(
+  defineProps<{
+    applyToAllDatasets?: boolean;
+  }>(),
+  {
+    applyToAllDatasets: false,
   },
-})
-export default class PropertyList extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertyStore;
-  readonly filterStore = filterStore;
+);
 
-  @Prop({ type: Boolean, default: false })
-  readonly applyToAllDatasets!: boolean;
+const emit = defineEmits<{
+  (e: "compute-properties-batch", properties: IAnnotationProperty[]): void;
+  (e: "compute-property-batch", property: IAnnotationProperty): void;
+}>();
 
-  get properties() {
-    return propertyStore.properties;
+const properties = computed(() => propertyStore.properties);
+
+const uncomputedProperties = computed(() => {
+  const res: IAnnotationProperty[] = [];
+  for (const property of propertyStore.properties) {
+    if (
+      propertyStore.uncomputedAnnotationsPerProperty[property.id].length > 0
+    ) {
+      res.push(property);
+    }
   }
+  return res;
+});
 
-  get uncomputedProperties() {
-    const res: IAnnotationProperty[] = [];
-    for (const property of this.propertyStore.properties) {
-      if (
-        this.propertyStore.uncomputedAnnotationsPerProperty[property.id]
-          .length > 0
-      ) {
-        res.push(property);
-      }
+const uncomputedRunning = computed(() => {
+  let value = 0;
+  for (const property of uncomputedProperties.value) {
+    if (propertyStore.propertyStatuses[property.id]?.running) {
+      value++;
     }
-    return res;
   }
+  return value;
+});
 
-  get uncomputedRunning() {
-    let value = 0;
-    for (const property of this.uncomputedProperties) {
-      if (this.propertyStore.propertyStatuses[property.id]?.running) {
-        value++;
-      }
-    }
-    return value;
+function computeUncomputedProperties() {
+  if (props.applyToAllDatasets) {
+    emit("compute-properties-batch", uncomputedProperties.value);
+    return;
   }
-
-  computeUncomputedProperties() {
-    if (this.applyToAllDatasets) {
-      this.$emit("compute-properties-batch", this.uncomputedProperties);
-      return;
-    }
-    for (const property of this.uncomputedProperties) {
-      this.propertyStore.computeProperty({
-        property,
-        errorInfo: { errors: [] },
-      });
-    }
+  for (const property of uncomputedProperties.value) {
+    propertyStore.computeProperty({
+      property,
+      errorInfo: { errors: [] },
+    });
   }
 }
+
+defineExpose({
+  properties,
+  uncomputedProperties,
+  uncomputedRunning,
+  computeUncomputedProperties,
+});
 </script>
 
 <style scoped>
