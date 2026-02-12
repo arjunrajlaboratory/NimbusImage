@@ -67,8 +67,8 @@
   </v-list>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import store from "@/store/index";
 import {
   IScaleInformation,
@@ -90,140 +90,145 @@ interface IScaleItem {
   unit: "time" | "length";
 }
 
-@Component({ components: { PixelScaleBarSetting } })
-export default class ScaleSettings extends Vue {
-  readonly store = store;
-  readonly unitLengthOptions = unitLengthOptions;
-  readonly unitTimeOptions = unitTimeOptions;
+const props = withDefaults(
+  defineProps<{
+    configurationOnly?: boolean;
+  }>(),
+  { configurationOnly: false },
+);
 
-  @Prop({ default: false })
-  configurationOnly!: boolean;
+const configuration = computed(() => store.configuration);
 
-  get configuration() {
-    return this.store.configuration;
+const viewScales = computed(() => store.viewScales);
+
+const scales = computed(() => {
+  if (props.configurationOnly) {
+    return store.configurationScales;
   }
+  return { ...store.configurationScales, ...viewScales.value };
+});
 
-  get viewScales() {
-    return this.store.viewScales;
-  }
+const scaleItems = computed<IScaleItem[]>(() => {
+  const items: IScaleItem[] = [];
+  items.push({
+    text: "Pixel size",
+    key: "pixelSize",
+    unit: "length",
+  });
+  items.push({
+    text: "Z step",
+    key: "zStep",
+    unit: "length",
+  });
+  items.push({
+    text: "Time step",
+    key: "tStep",
+    unit: "time",
+  });
+  return items;
+});
 
-  get scales() {
-    if (this.configurationOnly) {
-      return this.store.configurationScales;
-    }
-    return { ...this.store.configurationScales, ...this.viewScales };
-  }
+const scalebarColor = computed({
+  get: () => store.scalebarColor,
+  set: (color: string) => {
+    store.setScalebarColor(color);
+  },
+});
 
-  get scaleItems(): IScaleItem[] {
-    const items: IScaleItem[] = [];
-    items.push({
-      text: "Pixel size",
-      key: "pixelSize",
-      unit: "length",
-    });
-    items.push({
-      text: "Z step",
-      key: "zStep",
-      unit: "length",
-    });
-    items.push({
-      text: "Time step",
-      key: "tStep",
-      unit: "time",
-    });
-    return items;
-  }
-
-  get scalebarColor() {
-    return this.store.scalebarColor;
-  }
-
-  set scalebarColor(color: string) {
-    this.store.setScalebarColor(color);
-  }
-
-  defaultSaveScale(
-    key: keyof IScales,
-    scale: IScaleInformation<TUnitLength | TUnitTime>,
-  ) {
-    if (this.configurationOnly) {
-      this.store.saveScaleInConfiguration({ itemId: key, scale });
-    } else {
-      this.store.saveScalesInView({ itemId: key, scale });
-    }
-  }
-
-  saveInCollection(key: keyof IScales) {
-    this.store.saveScaleInConfiguration({
-      itemId: key,
-      scale: this.scales[key],
-    });
-    this.revertToCollection(key);
-  }
-
-  revertToCollection(key: keyof IScales) {
-    this.store.resetScalesInView(key);
-  }
-
-  resetFromDataset(key: keyof IScales) {
-    const dataset = this.store.dataset;
-    if (!dataset) {
-      return;
-    }
-    const datasetScales = getDatasetScales(dataset);
-    this.defaultSaveScale(key, datasetScales[key]);
-  }
-
-  setScaleValueForItem(item: IScaleItem, value: string | number) {
-    const newValue = Number(value);
-    if (isNaN(newValue)) {
-      return;
-    }
-    this.defaultSaveScale(item.key, {
-      value: newValue,
-      unit: this.scales[item.key].unit,
-    });
-  }
-
-  setUnitValueForItem(item: IScaleItem, newUnit: string) {
-    if (!newUnit) {
-      return;
-    }
-    const scales = this.scales;
-    const oldValue = scales[item.key].value;
-    const oldUnit = scales[item.key].unit;
-    let newValue: number;
-    switch (item.unit) {
-      case "length":
-        newValue = convertLength(
-          oldValue,
-          oldUnit as TUnitLength,
-          newUnit as TUnitLength,
-        );
-        break;
-      case "time":
-        newValue = convertTime(
-          oldValue,
-          oldUnit as TUnitTime,
-          newUnit as TUnitTime,
-        );
-        break;
-    }
-    this.defaultSaveScale(item.key, {
-      value: newValue,
-      unit: newUnit as any,
-    });
-  }
-
-  getUnitValues(unit: IScaleItem["unit"]) {
-    switch (unit) {
-      case "length":
-        return this.unitLengthOptions;
-      case "time":
-        return this.unitTimeOptions;
-    }
+function defaultSaveScale(
+  key: keyof IScales,
+  scale: IScaleInformation<TUnitLength | TUnitTime>,
+) {
+  if (props.configurationOnly) {
+    store.saveScaleInConfiguration({ itemId: key, scale });
+  } else {
+    store.saveScalesInView({ itemId: key, scale });
   }
 }
+
+function saveInCollection(key: keyof IScales) {
+  store.saveScaleInConfiguration({
+    itemId: key,
+    scale: scales.value[key],
+  });
+  revertToCollection(key);
+}
+
+function revertToCollection(key: keyof IScales) {
+  store.resetScalesInView(key);
+}
+
+function resetFromDataset(key: keyof IScales) {
+  const dataset = store.dataset;
+  if (!dataset) {
+    return;
+  }
+  const datasetScales = getDatasetScales(dataset);
+  defaultSaveScale(key, datasetScales[key]);
+}
+
+function setScaleValueForItem(item: IScaleItem, value: string | number) {
+  const newValue = Number(value);
+  if (isNaN(newValue)) {
+    return;
+  }
+  defaultSaveScale(item.key, {
+    value: newValue,
+    unit: scales.value[item.key].unit,
+  });
+}
+
+function setUnitValueForItem(item: IScaleItem, newUnit: string) {
+  if (!newUnit) {
+    return;
+  }
+  const currentScales = scales.value;
+  const oldValue = currentScales[item.key].value;
+  const oldUnit = currentScales[item.key].unit;
+  let newValue: number;
+  switch (item.unit) {
+    case "length":
+      newValue = convertLength(
+        oldValue,
+        oldUnit as TUnitLength,
+        newUnit as TUnitLength,
+      );
+      break;
+    case "time":
+      newValue = convertTime(
+        oldValue,
+        oldUnit as TUnitTime,
+        newUnit as TUnitTime,
+      );
+      break;
+  }
+  defaultSaveScale(item.key, {
+    value: newValue!,
+    unit: newUnit as any,
+  });
+}
+
+function getUnitValues(unit: IScaleItem["unit"]) {
+  switch (unit) {
+    case "length":
+      return unitLengthOptions;
+    case "time":
+      return unitTimeOptions;
+  }
+}
+
+defineExpose({
+  scales,
+  scaleItems,
+  scalebarColor,
+  defaultSaveScale,
+  saveInCollection,
+  revertToCollection,
+  resetFromDataset,
+  setScaleValueForItem,
+  setUnitValueForItem,
+  getUnitValues,
+});
 </script>
 
 <style lang="scss" scoped>

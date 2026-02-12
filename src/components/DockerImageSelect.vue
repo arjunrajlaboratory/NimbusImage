@@ -30,17 +30,17 @@ interface IDockerImageSelectEntry {
 }
 
 const props = defineProps<{
-  value: string;
+  value: string | null;
   imageFilter: (labels: IWorkerLabels) => boolean;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: string): void;
+  (e: "input", value: string | null): void;
 }>();
 
 const image = computed({
   get: () => props.value,
-  set: (val: string) => emit("input", val),
+  set: (val: string | null) => emit("input", val),
 });
 
 const images = computed(() => propertiesStore.workerImageList);

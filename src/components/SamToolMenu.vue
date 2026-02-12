@@ -82,8 +82,9 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
+import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import {
@@ -92,169 +93,191 @@ import {
   TSamPrompt,
 } from "@/store/model";
 import { NoOutput } from "@/pipelines/computePipeline";
-import { Debounce } from "@/utils/debounce";
 
-@Component({ components: {} })
-export default class SamToolMenu extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
+const props = defineProps<{
+  toolConfiguration: IToolConfiguration;
+}>();
 
-  @Prop({ required: true })
-  readonly toolConfiguration!: IToolConfiguration;
+// The first element is the oldest
+const promptHistory = ref<TSamPrompt[]>([]);
+const turboMode = ref<boolean>(true);
 
-  // The first element is the oldest
-  promptHistory: TSamPrompt[] = [];
+const toolState = computed(() => {
+  return store.selectedTool?.state;
+});
 
-  turboMode: boolean = true;
+const errorState = computed(() => {
+  const state = toolState.value;
+  return state && "error" in state ? state : null;
+});
 
-  mounted() {
-    this.turboMode = this.toolConfiguration.values.turboMode;
-    this.simplificationTolerance = Number(
-      this.toolConfiguration.values.simplificationTolerance,
-    );
-  }
+const samState = computed(() => {
+  const state = toolState.value;
+  return state?.type === SamAnnotationToolStateSymbol ? state : null;
+});
 
-  @Watch("turboMode")
-  turboModeChanged() {
-    // When the turbo mode changes, reset the prompts
-    this.resetPrompts();
-  }
+const loadingMessages = computed(() => {
+  return samState.value?.loadingMessages ?? [];
+});
 
-  @Watch("turboMode")
-  @Watch("simplificationTolerance")
-  @Debounce(1000, { leading: false, trailing: true })
-  toolValuesChanged() {
-    const changedValues = {
-      turboMode: this.turboMode,
-      simplificationTolerance: this.simplificationTolerance,
-    };
-    const originalValues = this.toolConfiguration.values;
-    let modified = false;
-    for (const [key, value] of Object.entries(changedValues)) {
-      if (originalValues[key] !== value) {
-        modified = true;
-        break;
-      }
-    }
-    if (!modified) {
-      return;
-    }
-    const newToolValues = { ...originalValues, ...changedValues };
-    const newTool = {
-      ...this.toolConfiguration,
-      values: newToolValues,
-    };
-    this.store.editToolInConfiguration(newTool);
-  }
+const simplificationToleranceNode = computed(() => {
+  return samState.value?.nodes.input.simplificationTolerance ?? null;
+});
 
-  get toolState() {
-    return this.store.selectedTool?.state;
-  }
-
-  get errorState() {
-    const state = this.toolState;
-    return state && "error" in state ? state : null;
-  }
-
-  get samState() {
-    const state = this.toolState;
-    return state?.type === SamAnnotationToolStateSymbol ? state : null;
-  }
-
-  get loadingMessages() {
-    return this.samState?.loadingMessages ?? [];
-  }
-
-  get simplificationToleranceNode() {
-    return this.samState?.nodes.input.simplificationTolerance ?? null;
-  }
-
-  get simplificationTolerance() {
-    const value = this.simplificationToleranceNode?.output;
+const simplificationTolerance = computed({
+  get: () => {
+    const value = simplificationToleranceNode.value?.output;
     return value == null || value === NoOutput ? -1 : value;
-  }
+  },
+  set: (tolerance: number) => {
+    simplificationToleranceNode.value?.setValue(tolerance);
+  },
+});
 
-  set simplificationTolerance(tolerance: number) {
-    this.simplificationToleranceNode?.setValue(tolerance);
-  }
+const promptNode = computed(() => {
+  return samState.value?.nodes.input.mainPrompt ?? null;
+});
 
-  get promptNode() {
-    return this.samState?.nodes.input.mainPrompt ?? null;
-  }
+const prompts = computed({
+  get: () => {
+    const promptsVal = promptNode.value?.output;
+    return promptsVal && promptsVal !== NoOutput ? promptsVal : [];
+  },
+  set: (promptsVal: TSamPrompt[]) => {
+    promptNode.value?.setValue(promptsVal.length === 0 ? NoOutput : promptsVal);
+  },
+});
 
-  get prompts() {
-    const prompts = this.promptNode?.output;
-    return prompts && prompts !== NoOutput ? prompts : [];
-  }
+const outputCoordinates = computed(() => {
+  return samState.value?.output ?? null;
+});
 
-  set prompts(prompts: TSamPrompt[]) {
-    this.promptNode?.setValue(prompts.length === 0 ? NoOutput : prompts);
-  }
+const datasetId = computed(() => {
+  return store.dataset?.id ?? null;
+});
 
-  get outputCoordinates() {
-    return this.samState?.output ?? null;
-  }
+function turboModeChanged() {
+  // When the turbo mode changes, reset the prompts
+  resetPrompts();
+}
 
-  undo() {
-    const removedPrompt = this.prompts.pop();
-    if (!removedPrompt) {
-      return;
+const toolValuesChangedImpl = () => {
+  const changedValues = {
+    turboMode: turboMode.value,
+    simplificationTolerance: simplificationTolerance.value,
+  };
+  const originalValues = props.toolConfiguration.values;
+  let modified = false;
+  for (const [key, value] of Object.entries(changedValues)) {
+    if (originalValues[key] !== value) {
+      modified = true;
+      break;
     }
-    this.promptHistory.push(removedPrompt);
-    // Update the prompts in the pipeline (call setValue)
-    this.prompts = this.prompts;
   }
-
-  redo() {
-    const newPrompt = this.promptHistory.pop();
-    if (!newPrompt) {
-      return;
-    }
-    this.prompts.push(newPrompt);
-    this.prompts = this.prompts;
-    // Update the prompts in the pipeline (call setValue)
-    this.prompts = this.prompts;
+  if (!modified) {
+    return;
   }
+  const newToolValues = { ...originalValues, ...changedValues };
+  const newTool = {
+    ...props.toolConfiguration,
+    values: newToolValues,
+  };
+  store.editToolInConfiguration(newTool);
+};
+const toolValuesChanged = debounce(toolValuesChangedImpl, 1000, {
+  leading: false,
+  trailing: true,
+});
 
-  @Watch("toolConfiguration")
-  toolChanged(
-    newToolConfig: IToolConfiguration,
-    oldToolConfig: IToolConfiguration,
-  ) {
+watch(turboMode, () => {
+  turboModeChanged();
+  toolValuesChanged();
+});
+
+watch(simplificationTolerance, () => {
+  toolValuesChanged();
+});
+
+watch(
+  () => props.toolConfiguration,
+  (newToolConfig: IToolConfiguration, oldToolConfig: IToolConfiguration) => {
     // Reset when the configuration changes but not when the configuration settings change
     if (newToolConfig.id !== oldToolConfig.id) {
-      this.resetPrompts();
+      resetPrompts();
     }
-  }
+  },
+);
 
-  resetPrompts() {
-    this.promptHistory = [];
-    this.prompts = [];
+watch(outputCoordinates, () => {
+  if (turboMode.value) {
+    submit();
   }
+});
 
-  get datasetId() {
-    return this.store.dataset?.id ?? null;
+function undo() {
+  const removedPrompt = prompts.value.pop();
+  if (!removedPrompt) {
+    return;
   }
-
-  @Watch("outputCoordinates")
-  onOutputChanged() {
-    if (this.turboMode) {
-      this.submit();
-    }
-  }
-
-  submit() {
-    const coordinates = this.outputCoordinates;
-    const datasetId = this.datasetId;
-    const toolConfiguration = this.toolConfiguration;
-    if (coordinates && datasetId) {
-      this.annotationStore.addAnnotationFromTool({
-        coordinates,
-        datasetId,
-        toolConfiguration,
-      });
-    }
-    this.resetPrompts();
-  }
+  promptHistory.value.push(removedPrompt);
+  // Update the prompts in the pipeline (call setValue)
+  prompts.value = prompts.value;
 }
+
+function redo() {
+  const newPrompt = promptHistory.value.pop();
+  if (!newPrompt) {
+    return;
+  }
+  prompts.value.push(newPrompt);
+  prompts.value = prompts.value;
+  // Update the prompts in the pipeline (call setValue)
+  prompts.value = prompts.value;
+}
+
+function resetPrompts() {
+  promptHistory.value = [];
+  prompts.value = [];
+}
+
+function submit() {
+  const coordinates = outputCoordinates.value;
+  const dsId = datasetId.value;
+  const toolConfiguration = props.toolConfiguration;
+  if (coordinates && dsId) {
+    annotationStore.addAnnotationFromTool({
+      coordinates,
+      datasetId: dsId,
+      toolConfiguration,
+    });
+  }
+  resetPrompts();
+}
+
+onMounted(() => {
+  turboMode.value = props.toolConfiguration.values.turboMode;
+  simplificationTolerance.value = Number(
+    props.toolConfiguration.values.simplificationTolerance,
+  );
+});
+
+defineExpose({
+  promptHistory,
+  turboMode,
+  toolState,
+  errorState,
+  samState,
+  loadingMessages,
+  simplificationToleranceNode,
+  simplificationTolerance,
+  promptNode,
+  prompts,
+  outputCoordinates,
+  datasetId,
+  undo,
+  redo,
+  resetPrompts,
+  submit,
+  toolValuesChanged,
+});
 </script>

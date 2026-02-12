@@ -106,21 +106,6 @@
 </template>
 
 <script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
-import store from "@/store";
-import LayerSelect from "@/components/LayerSelect.vue";
-import TagPicker from "@/components/TagPicker.vue";
-import Persister from "@/store/Persister";
-import {
-  AnnotationNames,
-  AnnotationShape,
-  WelcomeTourTypes,
-  WelcomeTourStatus,
-  WelcomeTourNames,
-} from "@/store/model";
-
-type VForm = Vue & { validate: () => boolean };
-
 export interface IAnnotationSetup {
   tags: string[];
   coordinateAssignments: {
@@ -136,211 +121,257 @@ export interface IAnnotationSetup {
       max: number;
     };
   };
-  shape: AnnotationShape;
+  shape: import("@/store/model").AnnotationShape;
   color: string | undefined;
 }
+</script>
+
+<script setup lang="ts">
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  getCurrentInstance,
+  nextTick,
+} from "vue";
+import Vue from "vue";
+import store from "@/store";
+import LayerSelect from "@/components/LayerSelect.vue";
+import TagPicker from "@/components/TagPicker.vue";
+import Persister from "@/store/Persister";
+import {
+  AnnotationNames,
+  AnnotationShape,
+  WelcomeTourTypes,
+  WelcomeTourStatus,
+  WelcomeTourNames,
+} from "@/store/model";
+
+type VForm = Vue & { validate: () => boolean };
 
 function isSmallerThanRule(max: number) {
   return (val: string) => Number.parseInt(val) < max;
 }
 
-// Interface element for configuring an annotation creation tool
-@Component({
-  components: {
-    LayerSelect,
-    TagPicker,
+const props = withDefaults(
+  defineProps<{
+    hideShape?: string | boolean;
+    hideLayer?: boolean;
+    defaultShape?: AnnotationShape;
+    advanced?: boolean;
+    value?: IAnnotationSetup;
+  }>(),
+  {
+    hideShape: false,
+    hideLayer: false,
+    defaultShape: AnnotationShape.Point,
+    advanced: false,
   },
-})
-export default class AnnotationConfiguration extends Vue {
-  readonly store = store;
+);
 
-  @Prop({ default: false })
-  readonly hideShape!: string;
+const emit = defineEmits<{
+  (e: "input", value: IAnnotationSetup): void;
+  (e: "change"): void;
+}>();
 
-  @Prop({ default: false })
-  readonly hideLayer!: boolean;
+const availableShapes = store.availableToolShapes;
+const coordinates: ["Z", "Time"] = ["Z", "Time"];
 
-  @Prop({ default: AnnotationShape.Point })
-  readonly defaultShape!: AnnotationShape;
+const maxZ = computed(() => {
+  // 1 indexing
+  return (store.dataset?.z.length || 0) + 1;
+});
 
-  @Prop({ default: false })
-  readonly advanced!: boolean;
+const maxTime = computed(() => {
+  // 1 indexing
+  return (store.dataset?.time.length || 0) + 1;
+});
 
-  @Prop()
-  readonly value?: IAnnotationSetup;
+const coordinateAssignments = ref<IAnnotationSetup["coordinateAssignments"]>({
+  layer: undefined, // Setting layer to undefined will reset the layer in layer-select
+  Z: { type: "layer", value: 1, max: maxZ.value },
+  Time: { type: "layer", value: 1, max: maxTime.value },
+});
+const shape = ref<AnnotationShape>(AnnotationShape.Point);
+const tagsInternal = ref<string[]>([]);
+const useAutoTags = ref<boolean>(true);
+const customColorEnabled = ref<boolean>(false);
+const customColorValue = ref<string>("#FFFFFF");
 
-  availableShapes = store.availableToolShapes;
-  AnnotationNames = AnnotationNames;
-  isSmallerThanRule = isSmallerThanRule;
+const form = ref<VForm>();
 
-  readonly coordinates: ["Z", "Time"] = ["Z", "Time"];
-
-  // These could also be set in the updateFromValue() method called in the mounted() hook
-  coordinateAssignments: IAnnotationSetup["coordinateAssignments"] = {
-    layer: undefined, // Setting layer to undefined will reset the layer in layer-select
-    Z: { type: "layer", value: 1, max: this.maxZ },
-    Time: { type: "layer", value: 1, max: this.maxTime },
-  };
-  shape: AnnotationShape = AnnotationShape.Point;
-  tagsInternal: string[] = [];
-  useAutoTags: boolean = true;
-  customColorEnabled: boolean = false;
-  customColorValue: string = "#FFFFFF";
-
-  get color() {
-    return this.customColorEnabled ? this.customColorValue : undefined;
-  }
-
-  set color(color: string | undefined) {
-    if (color === undefined) {
-      this.customColorEnabled = false;
+const color = computed({
+  get: () => {
+    return customColorEnabled.value ? customColorValue.value : undefined;
+  },
+  set: (colorVal: string | undefined) => {
+    if (colorVal === undefined) {
+      customColorEnabled.value = false;
     } else {
-      this.customColorEnabled = true;
-      this.customColorValue = color;
+      customColorEnabled.value = true;
+      customColorValue.value = colorVal;
     }
-  }
+  },
+});
 
-  get layer() {
-    return this.coordinateAssignments.layer;
-  }
+const layer = computed({
+  get: (): string | null => {
+    return coordinateAssignments.value.layer ?? null;
+  },
+  set: (value) => {
+    Vue.set(coordinateAssignments.value, "layer", value);
+  },
+});
 
-  set layer(value) {
-    Vue.set(this.coordinateAssignments, "layer", value);
-  }
-
-  get tags() {
-    if (this.useAutoTags) {
-      return this.autoTags;
+const tags = computed({
+  get: () => {
+    if (useAutoTags.value) {
+      return autoTags.value;
     }
-    return this.tagsInternal;
+    return tagsInternal.value;
+  },
+  set: (value: string[]) => {
+    tagsInternal.value = value;
+  },
+});
+
+const autoTags = computed(() => {
+  const layerId = layer.value;
+  const layerName = layerId ? store.getLayerFromId(layerId)?.name || "" : "";
+  const shapeName = AnnotationNames[shape.value].toLowerCase();
+  return [`${layerName} ${shapeName}`];
+});
+
+function isMaxMerge(axis: string, layerId?: string) {
+  const layerObj = store.getLayerFromId(layerId);
+  if (!layerObj) {
+    return false;
   }
+  const key = axis === "Z" ? "z" : "time";
+  return layerObj[key].type === "max-merge";
+}
 
-  set tags(value: string[]) {
-    this.tagsInternal = value;
+function updateFromValue() {
+  if (!props.value) {
+    reset();
+    return;
   }
+  updateCoordinateAssignement(props.value.coordinateAssignments);
+  shape.value = props.value.shape;
+  tagsInternal.value = props.value.tags;
+  color.value = props.value.color;
+}
 
-  get autoTags() {
-    const layerId = this.layer;
-    const layerName = layerId ? store.getLayerFromId(layerId)?.name || "" : "";
-    const shapeName = AnnotationNames[this.shape].toLowerCase();
-    return [`${layerName} ${shapeName}`];
-  }
+function reset() {
+  // Set internal values to the current input, or defaults
+  updateCoordinateAssignement();
+  useAutoTags.value = !props.advanced;
+  tagsInternal.value = [];
+  shape.value = props.defaultShape;
+  color.value = undefined;
+  changed();
+}
 
-  get maxZ() {
-    // 1 indexing
-    return (this.store.dataset?.z.length || 0) + 1;
-  }
+// Update or reset the coordinateAssignments
+// Don't update the layer if the new layer is falsy
+function updateCoordinateAssignement(
+  val?: IAnnotationSetup["coordinateAssignments"],
+) {
+  const oldLayer = layer.value;
 
-  get maxTime() {
-    // 1 indexing
-    return (this.store.dataset?.time.length || 0) + 1;
-  }
+  coordinateAssignments.value = val ?? {
+    layer: undefined, // Setting layer to undefined will reset the layer in layer-select
+    Z: { type: "layer", value: 1, max: maxZ.value },
+    Time: { type: "layer", value: 1, max: maxTime.value },
+  };
 
-  isMaxMerge(axis: string, layerId?: string) {
-    const layer = this.store.getLayerFromId(layerId);
-    if (!layer) {
-      return false;
-    }
-    const key = axis === "Z" ? "z" : "time";
-    return layer[key].type === "max-merge";
-  }
-
-  mounted() {
-    if (this.value?.tags) {
-      this.useAutoTags = false;
-    }
-    this.updateFromValue();
-
-    // Tour logic to show the "Working with tags" tour
-    // if the user has not seen it yet
-    // Note for the future: somehow, this component gets mounted twice.
-    // Hence, if you just run the tour here, it will run twice, causing problems.
-    // Given that we only want to show the tour once and we gate that by the
-    // Persister state, this code will just run the one time and it should be fine.
-    // However, this does hide the underlying, but as yet unsolved, problem of the
-    // component getting mounted twice.
-    const tourStatus = Persister.get(
-      WelcomeTourTypes.WORKING_WITH_TAGS,
-      WelcomeTourStatus.NOT_YET_RUN,
-    );
-
-    if (!(this.$isTourActive && this.$isTourActive())) {
-      if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
-        Persister.set(
-          WelcomeTourTypes.WORKING_WITH_TAGS,
-          WelcomeTourStatus.ALREADY_RUN,
-        );
-        this.$startTour(WelcomeTourNames[WelcomeTourTypes.WORKING_WITH_TAGS]);
-      }
-    }
-  }
-
-  @Watch("value")
-  updateFromValue() {
-    if (!this.value) {
-      this.reset();
-      return;
-    }
-    this.updateCoordinateAssignement(this.value.coordinateAssignments);
-    this.shape = this.value.shape;
-    this.tagsInternal = this.value.tags;
-    this.color = this.value.color;
-  }
-
-  @Watch("defaultShape")
-  reset() {
-    // Set internal values to the current input, or defaults
-    this.updateCoordinateAssignement();
-    this.useAutoTags = !this.advanced;
-    this.tagsInternal = [];
-    this.shape = this.defaultShape;
-    this.color = undefined;
-    this.changed();
-  }
-
-  // Update or reset the coordinateAssignments
-  // Don't update the layer if the new layer is falsy
-  updateCoordinateAssignement(val?: IAnnotationSetup["coordinateAssignments"]) {
-    const oldLayer = this.layer;
-
-    this.coordinateAssignments = val ?? {
-      layer: undefined, // Setting layer to undefined will reset the layer in layer-select
-      Z: { type: "layer", value: 1, max: this.maxZ },
-      Time: { type: "layer", value: 1, max: this.maxTime },
-    };
-
-    const newLayer = this.layer;
-    if (!newLayer && newLayer !== oldLayer) {
-      // Wait for next tick before setting the layer
-      // Otherwise, the layer-select component may not register the change
-      this.layer = oldLayer;
-      this.$nextTick().then(() => (this.layer = newLayer));
-    }
-  }
-
-  @Watch("coordinateAssignments", { deep: true })
-  @Watch("layer")
-  @Watch("tags")
-  @Watch("shape")
-  @Watch("color")
-  changed() {
-    const form = this.$refs.form as VForm;
-    if (!form?.validate()) {
-      if (this.coordinateAssignments.Z.value > this.maxZ) {
-        this.coordinateAssignments.Z.value = this.maxZ;
-      }
-      if (this.coordinateAssignments.Time.value > this.maxTime) {
-        this.coordinateAssignments.Time.value = this.maxTime;
-      }
-    }
-    const result: IAnnotationSetup = {
-      tags: this.tags,
-      coordinateAssignments: this.coordinateAssignments,
-      shape: this.shape,
-      color: this.color,
-    };
-    this.$emit("input", result);
-    this.$emit("change");
+  const newLayer = layer.value;
+  if (!newLayer && newLayer !== oldLayer) {
+    // Wait for next tick before setting the layer
+    // Otherwise, the layer-select component may not register the change
+    layer.value = oldLayer;
+    nextTick().then(() => (layer.value = newLayer));
   }
 }
+
+function changed() {
+  const formEl = form.value as VForm;
+  if (!formEl?.validate()) {
+    if (coordinateAssignments.value.Z.value > maxZ.value) {
+      coordinateAssignments.value.Z.value = maxZ.value;
+    }
+    if (coordinateAssignments.value.Time.value > maxTime.value) {
+      coordinateAssignments.value.Time.value = maxTime.value;
+    }
+  }
+  const result: IAnnotationSetup = {
+    tags: tags.value,
+    coordinateAssignments: coordinateAssignments.value,
+    shape: shape.value,
+    color: color.value,
+  };
+  emit("input", result);
+  emit("change");
+}
+
+// Watches
+watch(() => props.value, updateFromValue);
+watch(() => props.defaultShape, reset);
+watch(coordinateAssignments, changed, { deep: true });
+watch(layer, changed);
+watch(tags, changed);
+watch(shape, changed);
+watch(color, changed);
+
+onMounted(() => {
+  if (props.value?.tags) {
+    useAutoTags.value = false;
+  }
+  updateFromValue();
+
+  // Tour logic to show the "Working with tags" tour
+  // if the user has not seen it yet
+  const instance = getCurrentInstance()!.proxy;
+  const tourStatus = Persister.get(
+    WelcomeTourTypes.WORKING_WITH_TAGS,
+    WelcomeTourStatus.NOT_YET_RUN,
+  );
+
+  if (!((instance as any).$isTourActive && (instance as any).$isTourActive())) {
+    if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
+      Persister.set(
+        WelcomeTourTypes.WORKING_WITH_TAGS,
+        WelcomeTourStatus.ALREADY_RUN,
+      );
+      (instance as any).$startTour(
+        WelcomeTourNames[WelcomeTourTypes.WORKING_WITH_TAGS],
+      );
+    }
+  }
+});
+
+defineExpose({
+  coordinateAssignments,
+  shape,
+  tagsInternal,
+  useAutoTags,
+  customColorEnabled,
+  customColorValue,
+  color,
+  layer,
+  tags,
+  autoTags,
+  maxZ,
+  maxTime,
+  form,
+  updateFromValue,
+  reset,
+  changed,
+  updateCoordinateAssignement,
+  isMaxMerge,
+  availableShapes,
+  AnnotationNames,
+  isSmallerThanRule,
+});
 </script>

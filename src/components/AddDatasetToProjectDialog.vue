@@ -59,8 +59,8 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import { IDataset, IProject } from "@/store/model";
 import girderResources from "@/store/girderResources";
 import projects from "@/store/projects";
@@ -68,93 +68,101 @@ import { isDatasetFolder } from "@/utils/girderSelectable";
 import { IGirderSelectAble } from "@/girder";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 
-@Component({
-  components: { CustomFileManager },
-})
-export default class AddDatasetToProjectDialog extends Vue {
-  readonly girderResources = girderResources;
-  readonly projects = projects;
+const props = defineProps<{
+  project: IProject;
+}>();
 
-  @Prop({ required: true })
-  project!: IProject;
+const emit = defineEmits<{
+  (e: "done"): void;
+  (e: "added", datasetIds: string[]): void;
+}>();
 
-  selectLocation: IGirderSelectAble | null = null;
-  selectedDatasets: IDataset[] = [];
-  warnings: string[] = [];
-  adding = false;
+const selectLocation = ref<IGirderSelectAble | null>(null);
+const selectedDatasets = ref<IDataset[]>([]);
+const warnings = ref<string[]>([]);
+const adding = ref(false);
 
-  get existingDatasetIds(): Set<string> {
-    return new Set(this.project.meta.datasets.map((d) => d.datasetId));
+const existingDatasetIds = computed<Set<string>>(() => {
+  return new Set(props.project.meta.datasets.map((d) => d.datasetId));
+});
+
+async function onSelectDataset(selectedLocations: IGirderSelectAble[]) {
+  if (selectedLocations.length === 0) {
+    selectedDatasets.value = [];
+    warnings.value = [];
+    return;
   }
 
-  async onSelectDataset(selectedLocations: IGirderSelectAble[]) {
-    if (selectedLocations.length === 0) {
-      this.selectedDatasets = [];
-      this.warnings = [];
-      return;
-    }
+  const currentWarnings: string[] = [];
+  const newSelectedDatasets: IDataset[] = [];
 
-    const currentWarnings: string[] = [];
-    const selectedDatasets: IDataset[] = [];
-
-    // Process selected locations
-    await Promise.all(
-      selectedLocations.map(async (location) => {
-        if (!isDatasetFolder(location)) {
-          return;
-        }
-        const dataset = await this.girderResources.getDataset({
-          id: location._id,
-        });
-        if (!dataset) {
-          return;
-        }
-        // Check if already in project
-        if (this.existingDatasetIds.has(dataset.id)) {
-          currentWarnings.push(`"${dataset.name}" is already in this project`);
-          return;
-        }
-        selectedDatasets.push(dataset);
-      }),
-    );
-
-    // Count non-dataset selections
-    const nonDatasetCount =
-      selectedLocations.length -
-      selectedDatasets.length -
-      currentWarnings.length;
-    if (nonDatasetCount > 0) {
-      currentWarnings.push(
-        `${nonDatasetCount} selected item(s) are not datasets`,
-      );
-    }
-
-    this.selectedDatasets = selectedDatasets;
-    this.warnings = currentWarnings;
-  }
-
-  async addDatasets() {
-    if (this.selectedDatasets.length === 0) return;
-
-    this.adding = true;
-    try {
-      for (const dataset of this.selectedDatasets) {
-        await this.projects.addDatasetToProject({
-          projectId: this.project.id,
-          datasetId: dataset.id,
-        });
+  // Process selected locations
+  await Promise.all(
+    selectedLocations.map(async (location) => {
+      if (!isDatasetFolder(location)) {
+        return;
       }
-      this.$emit(
-        "added",
-        this.selectedDatasets.map((d) => d.id),
-      );
-      this.selectedDatasets = [];
-      this.warnings = [];
-    } finally {
-      this.adding = false;
+      const dataset = await girderResources.getDataset({
+        id: location._id,
+      });
+      if (!dataset) {
+        return;
+      }
+      // Check if already in project
+      if (existingDatasetIds.value.has(dataset.id)) {
+        currentWarnings.push(`"${dataset.name}" is already in this project`);
+        return;
+      }
+      newSelectedDatasets.push(dataset);
+    }),
+  );
+
+  // Count non-dataset selections
+  const nonDatasetCount =
+    selectedLocations.length -
+    newSelectedDatasets.length -
+    currentWarnings.length;
+  if (nonDatasetCount > 0) {
+    currentWarnings.push(
+      `${nonDatasetCount} selected item(s) are not datasets`,
+    );
+  }
+
+  selectedDatasets.value = newSelectedDatasets;
+  warnings.value = currentWarnings;
+}
+
+async function addDatasets() {
+  if (selectedDatasets.value.length === 0) return;
+
+  adding.value = true;
+  try {
+    for (const dataset of selectedDatasets.value) {
+      await projects.addDatasetToProject({
+        projectId: props.project.id,
+        datasetId: dataset.id,
+      });
     }
+    emit(
+      "added",
+      selectedDatasets.value.map((d) => d.id),
+    );
+    selectedDatasets.value = [];
+    warnings.value = [];
+  } finally {
+    adding.value = false;
   }
 }
+
+defineExpose({
+  selectLocation,
+  selectedDatasets,
+  warnings,
+  adding,
+  existingDatasetIds,
+  onSelectDataset,
+  addDatasets,
+});
 </script>
 
 <style lang="scss" scoped>

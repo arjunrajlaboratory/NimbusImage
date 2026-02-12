@@ -104,7 +104,7 @@
             hide-details
             label="Compositing mode"
             v-model="compositionMode"
-            :items="compositionItems"
+            :items="compositionItemsList"
           >
             <template #item="{ item }">
               <div style="width: 100%">
@@ -144,8 +144,9 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
+import { debounce } from "lodash";
 import store from "@/store/index";
 import {
   TCompositionMode,
@@ -154,127 +155,130 @@ import {
 } from "@/utils/compositionModes";
 import PixelScaleBarSetting from "@/components/PixelScaleBarSetting.vue";
 import UserColorSettings from "@/components/UserColorSettings.vue";
-import { Debounce } from "@/utils/debounce";
 
-@Component({ components: { PixelScaleBarSetting, UserColorSettings } })
-export default class ViewerSettings extends Vue {
-  readonly store = store;
-  showColorDialog = false;
+const showColorDialog = ref(false);
 
-  readonly compositionItems = [
-    { header: "Base Composition Modes" },
-    ...compositionItems,
-    { header: "Advanced Composition Modes" },
-    ...advancedCompositionItems,
-  ];
-  readonly backgroundItems = [
-    { value: "white", text: "White" },
-    { value: "black", text: "Black" },
-  ];
+const compositionItemsList = [
+  { header: "Base Composition Modes" },
+  ...compositionItems,
+  { header: "Advanced Composition Modes" },
+  ...advancedCompositionItems,
+];
+const backgroundItems = [
+  { value: "white", text: "White" },
+  { value: "black", text: "Black" },
+];
 
-  get valueOnHover() {
-    return this.store.valueOnHover;
-  }
+const valueOnHover = computed({
+  get: () => store.valueOnHover,
+  set: (value: boolean) => {
+    store.setValueOnHover(value);
+  },
+});
 
-  set valueOnHover(value) {
-    this.store.setValueOnHover(value);
-  }
+const overview = computed({
+  get: () => store.overview,
+  set: (value: boolean) => {
+    store.setOverview(value);
+  },
+});
 
-  get overview() {
-    return this.store.overview;
-  }
+const showScalebar = computed({
+  get: () => store.showScalebar,
+  set: (value: boolean) => {
+    store.setShowScalebar(value);
+  },
+});
 
-  set overview(value) {
-    this.store.setOverview(value);
-  }
+const scalebarColor = computed({
+  get: () => store.scalebarColor,
+  set: (color: string) => {
+    store.setScalebarColor(color);
+  },
+});
 
-  get showScalebar() {
-    return this.store.showScalebar;
-  }
+const scaleAnnotationsWithZoom = computed({
+  get: () => store.scaleAnnotationsWithZoom,
+  set: (value: boolean) => {
+    store.setScaleAnnotationsWithZoom(value);
+  },
+});
 
-  set showScalebar(value) {
-    this.store.setShowScalebar(value);
-  }
-
-  get scalebarColor() {
-    return this.store.scalebarColor;
-  }
-
-  set scalebarColor(color: string) {
-    this.store.setScalebarColor(color);
-  }
-
-  get scaleAnnotationsWithZoom() {
-    return this.store.scaleAnnotationsWithZoom;
-  }
-
-  set scaleAnnotationsWithZoom(value: boolean) {
-    this.store.setScaleAnnotationsWithZoom(value);
-  }
-
-  get annotationOpacity() {
-    return this.store.annotationOpacity;
-  }
-
-  set annotationOpacity(value: number) {
-    this.setOpacityDebounced(value);
-  }
-
-  @Debounce(250, { leading: false, trailing: true })
-  private setOpacityDebounced(value: number) {
+const setOpacityDebounced = debounce(
+  (value: number) => {
     const opacity = typeof value === "string" ? parseFloat(value) : value;
-    this.store.setAnnotationOpacity(opacity);
-  }
+    store.setAnnotationOpacity(opacity);
+  },
+  250,
+  { leading: false, trailing: true },
+);
 
-  get annotationsRadius() {
-    return this.store.annotationsRadius;
-  }
+const annotationOpacity = computed({
+  get: () => store.annotationOpacity,
+  set: (value: number) => {
+    setOpacityDebounced(value);
+  },
+});
 
-  set annotationsRadius(value: number) {
+const annotationsRadius = computed({
+  get: () => store.annotationsRadius,
+  set: (value: number) => {
     const zoom = typeof value === "string" ? parseFloat(value) : value;
-    this.store.setAnnotationsRadius(zoom);
-  }
+    store.setAnnotationsRadius(zoom);
+  },
+});
 
-  get compositionMode() {
-    return this.store.compositionMode;
-  }
+const compositionMode = computed({
+  get: () => store.compositionMode,
+  set: (value: TCompositionMode) => {
+    store.setCompositionMode(value);
+  },
+});
 
-  set compositionMode(value: TCompositionMode) {
-    this.store.setCompositionMode(value);
-  }
+const backgroundColor = computed({
+  get: () => store.backgroundColor,
+  set: (value: string) => {
+    store.setBackgroundColor(value);
+  },
+});
 
-  get backgroundColor() {
-    return this.store.backgroundColor;
-  }
+const showXYLabels = computed({
+  get: () => store.showXYLabels,
+  set: (value: boolean) => {
+    store.setShowXYLabels(value);
+  },
+});
 
-  set backgroundColor(value: string) {
-    this.store.setBackgroundColor(value);
-  }
+const showZLabels = computed({
+  get: () => store.showZLabels,
+  set: (value: boolean) => {
+    store.setShowZLabels(value);
+  },
+});
 
-  get showXYLabels() {
-    return this.store.showXYLabels;
-  }
+const showTimeLabels = computed({
+  get: () => store.showTimeLabels,
+  set: (value: boolean) => {
+    store.setShowTimeLabels(value);
+  },
+});
 
-  set showXYLabels(value: boolean) {
-    this.store.setShowXYLabels(value);
-  }
-
-  get showZLabels() {
-    return this.store.showZLabels;
-  }
-
-  set showZLabels(value: boolean) {
-    this.store.setShowZLabels(value);
-  }
-
-  get showTimeLabels() {
-    return this.store.showTimeLabels;
-  }
-
-  set showTimeLabels(value: boolean) {
-    this.store.setShowTimeLabels(value);
-  }
-}
+defineExpose({
+  showColorDialog,
+  valueOnHover,
+  overview,
+  showScalebar,
+  scalebarColor,
+  scaleAnnotationsWithZoom,
+  annotationOpacity,
+  annotationsRadius,
+  compositionMode,
+  backgroundColor,
+  showXYLabels,
+  showZLabels,
+  showTimeLabels,
+  setOpacityDebounced,
+});
 </script>
 
 <style lang="scss">

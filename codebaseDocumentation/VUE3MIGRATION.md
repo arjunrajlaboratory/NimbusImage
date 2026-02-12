@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 108 | 66 already migrated to `<script setup>` |
+| Class components (`@Component`) | 108 | 81 already migrated to `<script setup>` |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -315,6 +315,39 @@ These `markRaw()` additions can be done:
 - `ToolItem` preserves `v-on="$listeners"` and `v-bind="$attrs"` (still valid in Vue 2.7 `<script setup>`)
 - `Property.vue` retains `Vue.set()` calls for Vuex store mutations — Phase 2 cleanup
 
+### Batch 8 — Dialogs, Settings, Tool System & Annotation Properties
+
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `MovieDialog.vue` | 280 | v-model dialog pattern, computed get/set, `MovieFormat` enum in template scope |
+| `AddCollectionToProjectFilterDialog.vue` | 176 | `@Watch` → `watch()`, `onMounted` for async fetch |
+| `AddToProjectDialog.vue` | 239 | `withDefaults(defineProps)`, dialog v-model, tabs |
+| `AddCollectionToProjectDialog.vue` | 245 | Nearly identical to AddToProjectDialog but for collections |
+| `AddDatasetToProjectDialog.vue` | 194 | `.sync` binding retained (Phase 2), `Promise.all` async |
+| `AnnotationContextMenu.vue` | 201 | 4 `@Prop` → `defineProps`, computed get/set for showMenu |
+| `PropertyBody.vue` | 217 | Refactored side effect out of computed into `watch()` |
+| `ScaleSettings.vue` | 235 | Computed get/set pairs, unit conversion, `withDefaults` |
+| `ZenodoCommunityDisplay.vue` | 241 | `withDefaults`, `onMounted` async, ZenodoAPI, tour helpers |
+| `ViewerSettings.vue` | 278 | `@Debounce` → lodash `debounce()`, 12 computed get/set pairs |
+| `SamToolMenu.vue` | 260 | `@Debounce` → lodash `debounce()`, 4 `watch()` calls |
+| `AnnotationConfiguration.vue` | 346 | Dual `<script>` for `IAnnotationSetup` export, `Vue.set()`, `getCurrentInstance()` for tour, 5 `watch()` |
+| `ToolTypeSelection.vue` | 605 | Dual `<script>` for `TReturnType` export, `nextTick()`, `onMounted` fetch |
+| `ToolConfiguration.vue` | 255 | Dynamic `$refs` → function ref pattern `getRefSetter()`, `Vue.set()` retained |
+| `PropertyCreation.vue` | 342 | 5 `@Watch` → 5 `watch()` calls, 3 stores, name deduplication |
+
+**Key patterns in this batch:**
+- `@Debounce` decorator → lodash `debounce()` directly (ViewerSettings, SamToolMenu)
+- Dynamic `$refs[item.id]` → `:ref="getRefSetter(item.id)"` with curried function (ToolConfiguration)
+- Dual `<script>` blocks for named type/interface exports (AnnotationConfiguration, ToolTypeSelection)
+- Tour plugin methods via `getCurrentInstance()!.proxy.$isTourActive()` / `$startTour()` (AnnotationConfiguration)
+- `Vue.set()` retained for nested reactive mutations (AnnotationConfiguration, ToolConfiguration) — Phase 2 cleanup
+- `DockerImageSelect` value prop updated to accept `string | null`
+- `PropertyBody` refactored: side effect in computed moved to separate `watch()`
+
+**Also fixed:**
+- `ToolCreation.vue` (not migrated): Updated `$refs.toolConfiguration` cast for `<script setup>` component type
+- `AnalyzePanel.test.ts`: Updated stub selector for `<script setup>` PropertyCreation
+
 ## Next Candidates
 
 Good candidates for the next migration batch, ordered by complexity:
@@ -323,7 +356,6 @@ Good candidates for the next migration batch, ordered by complexity:
 - `ConfigurationSelect.vue`, `NewConfiguration.vue` — require converting `routeMapper` mixin to composable first
 
 **Medium components with store access:**
-- `ToolConfiguration.vue` — dynamic interface builder, `Vue.set()` usage
 - `AnnotationFilterDialog.vue`
 - `AnnotationCSVDialog.vue`
 - `ExportDialog.vue`

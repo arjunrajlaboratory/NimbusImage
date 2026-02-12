@@ -114,133 +114,157 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import store from "@/store";
 import projects from "@/store/projects";
 import { IProject } from "@/store/model";
 
-@Component
-export default class AddCollectionToProjectDialog extends Vue {
-  @Prop({ type: Boolean, default: false }) value!: boolean;
-  @Prop({ type: String, required: true }) collectionId!: string;
-  @Prop({ type: String, default: "" }) collectionName!: string;
+const props = withDefaults(
+  defineProps<{
+    value?: boolean;
+    collectionId: string;
+    collectionName?: string;
+  }>(),
+  {
+    value: false,
+    collectionName: "",
+  },
+);
 
-  readonly store = store;
-  readonly projects = projects;
+const emit = defineEmits<{
+  (e: "input", value: boolean): void;
+  (e: "added", projectId: string): void;
+}>();
 
-  tab = 0;
-  loadingProjects = false;
-  selectedProjectIndex: number | null = null;
-  newProjectName = "";
-  newProjectDescription = "";
-  adding = false;
+const tab = ref(0);
+const loadingProjects = ref(false);
+const selectedProjectIndex = ref<number | null>(null);
+const newProjectName = ref("");
+const newProjectDescription = ref("");
+const adding = ref(false);
 
-  get dialogModel(): boolean {
-    return this.value;
+const dialogModel = computed({
+  get: () => props.value,
+  set: (val: boolean) => emit("input", val),
+});
+
+const availableProjects = computed<IProject[]>(() => {
+  return projects.projects;
+});
+
+const selectedProject = computed<IProject | null>(() => {
+  if (
+    selectedProjectIndex.value === null ||
+    selectedProjectIndex.value === undefined
+  ) {
+    return null;
   }
+  return availableProjects.value[selectedProjectIndex.value] || null;
+});
 
-  set dialogModel(val: boolean) {
-    this.$emit("input", val);
-  }
-
-  get availableProjects(): IProject[] {
-    return this.projects.projects;
-  }
-
-  get selectedProject(): IProject | null {
-    if (
-      this.selectedProjectIndex === null ||
-      this.selectedProjectIndex === undefined
-    ) {
-      return null;
-    }
-    return this.availableProjects[this.selectedProjectIndex] || null;
-  }
-
-  get canAdd(): boolean {
-    if (this.tab === 0) {
-      // Existing project tab
-      return (
-        this.selectedProject !== null &&
-        !this.isCollectionInProject(this.selectedProject)
-      );
-    } else {
-      // New project tab
-      return this.newProjectName.trim().length > 0;
-    }
-  }
-
-  @Watch("value")
-  onValueChange(newVal: boolean) {
-    if (newVal) {
-      this.loadProjects();
-      this.reset();
-    }
-  }
-
-  isCollectionInProject(project: IProject): boolean {
-    return project.meta.collections.some(
-      (c) => c.collectionId === this.collectionId,
+const canAdd = computed<boolean>(() => {
+  if (tab.value === 0) {
+    // Existing project tab
+    return (
+      selectedProject.value !== null &&
+      !isCollectionInProject(selectedProject.value)
     );
+  } else {
+    // New project tab
+    return newProjectName.value.trim().length > 0;
   }
+});
 
-  async loadProjects() {
-    this.loadingProjects = true;
-    try {
-      await this.projects.fetchProjects();
-    } finally {
-      this.loadingProjects = false;
-    }
-  }
+function isCollectionInProject(project: IProject): boolean {
+  return project.meta.collections.some(
+    (c) => c.collectionId === props.collectionId,
+  );
+}
 
-  reset() {
-    this.tab = 0;
-    this.selectedProjectIndex = null;
-    this.newProjectName = "";
-    this.newProjectDescription = "";
-  }
-
-  cancel() {
-    this.dialogModel = false;
-  }
-
-  async addToProject() {
-    if (!this.canAdd) return;
-
-    this.adding = true;
-    try {
-      let projectId: string;
-
-      if (this.tab === 0) {
-        // Use existing project
-        if (!this.selectedProject) return;
-        projectId = this.selectedProject.id;
-      } else {
-        // Create new project first
-        const newProject = await this.projects.createProject({
-          name: this.newProjectName.trim(),
-          description: this.newProjectDescription.trim(),
-        });
-        if (!newProject) {
-          return;
-        }
-        projectId = newProject.id;
-      }
-
-      // Add collection to project
-      await this.projects.addCollectionToProject({
-        projectId,
-        collectionId: this.collectionId,
-      });
-
-      this.$emit("added", projectId);
-      this.dialogModel = false;
-    } finally {
-      this.adding = false;
-    }
+async function loadProjects() {
+  loadingProjects.value = true;
+  try {
+    await projects.fetchProjects();
+  } finally {
+    loadingProjects.value = false;
   }
 }
+
+function reset() {
+  tab.value = 0;
+  selectedProjectIndex.value = null;
+  newProjectName.value = "";
+  newProjectDescription.value = "";
+}
+
+function cancel() {
+  dialogModel.value = false;
+}
+
+async function addToProject() {
+  if (!canAdd.value) return;
+
+  adding.value = true;
+  try {
+    let projectId: string;
+
+    if (tab.value === 0) {
+      // Use existing project
+      if (!selectedProject.value) return;
+      projectId = selectedProject.value.id;
+    } else {
+      // Create new project first
+      const newProject = await projects.createProject({
+        name: newProjectName.value.trim(),
+        description: newProjectDescription.value.trim(),
+      });
+      if (!newProject) {
+        return;
+      }
+      projectId = newProject.id;
+    }
+
+    // Add collection to project
+    await projects.addCollectionToProject({
+      projectId,
+      collectionId: props.collectionId,
+    });
+
+    emit("added", projectId);
+    dialogModel.value = false;
+  } finally {
+    adding.value = false;
+  }
+}
+
+watch(
+  () => props.value,
+  (newVal: boolean) => {
+    if (newVal) {
+      loadProjects();
+      reset();
+    }
+  },
+);
+
+defineExpose({
+  dialogModel,
+  tab,
+  loadingProjects,
+  selectedProjectIndex,
+  newProjectName,
+  newProjectDescription,
+  adding,
+  availableProjects,
+  selectedProject,
+  canAdd,
+  isCollectionInProject,
+  loadProjects,
+  reset,
+  cancel,
+  addToProject,
+});
 </script>
 
 <style lang="scss" scoped>

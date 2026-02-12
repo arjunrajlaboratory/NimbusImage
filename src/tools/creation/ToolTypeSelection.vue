@@ -72,13 +72,7 @@
 </template>
 
 <script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
-import propertiesStore from "@/store/properties";
-import store from "@/store";
-import { AnnotationShape, IToolTemplate } from "@/store/model";
-import { getTourStepId, getTourTriggerId } from "@/utils/strings";
-import { logWarning } from "@/utils/log";
-import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
+import { IToolTemplate } from "@/store/model";
 
 interface Item {
   text: string;
@@ -105,6 +99,16 @@ export interface TReturnType {
   defaultValues: any;
   selectedItem: AugmentedItem | null;
 }
+</script>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, nextTick } from "vue";
+import propertiesStore from "@/store/properties";
+import store from "@/store";
+import { AnnotationShape } from "@/store/model";
+import { getTourStepId, getTourTriggerId } from "@/utils/strings";
+import { logWarning } from "@/utils/log";
+import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
 
 interface FeaturedToolsConfig {
   featuredTools: string[];
@@ -128,145 +132,85 @@ const hiddenToolTexts = new Set<string>([
   "Annotation edit tools",
 ]);
 
-@Component
-export default class ToolTypeSelection extends Vue {
-  readonly propertyStore = propertiesStore;
-  readonly store = store;
+const emit = defineEmits<{
+  (e: "selected", value: TReturnType): void;
+}>();
 
-  selectedItem: AugmentedItem | null = null;
-  computedTemplate: IToolTemplate | null = null;
-  defaultToolValues: any = {};
-  featuredToolNames: string[] = [];
+const selectedItem = ref<AugmentedItem | null>(null);
+const computedTemplate = ref<IToolTemplate | null>(null);
+const defaultToolValues = ref<any>({});
+const featuredToolNames = ref<string[]>([]);
 
-  getTourStepId = getTourStepId;
-  getTourTriggerId = getTourTriggerId;
+function getCategoryClass(categoryName: string): string {
+  return categoryClassMap[categoryName] || "category-other";
+}
 
-  getCategoryClass(categoryName: string): string {
-    return categoryClassMap[categoryName] || "category-other";
-  }
+const featuredItems = computed((): AugmentedItem[] => {
+  if (featuredToolNames.value.length === 0) return [];
 
-  /**
-   * Collects featured tools from all submenus into a single list
-   */
-  get featuredItems(): AugmentedItem[] {
-    if (this.featuredToolNames.length === 0) return [];
+  const featuredSet = new Set(featuredToolNames.value);
+  const items: AugmentedItem[] = [];
 
-    const featuredSet = new Set(this.featuredToolNames);
-    const items: AugmentedItem[] = [];
-
-    for (const submenu of this.submenus) {
-      for (const item of submenu.items) {
-        if (featuredSet.has(item.text)) {
-          items.push({ ...item, submenu });
-        }
+  for (const submenu of submenus.value) {
+    for (const item of submenu.items) {
+      if (featuredSet.has(item.text)) {
+        items.push({ ...item, submenu });
       }
     }
-
-    // Sort to match the order in featuredToolNames
-    items.sort((a, b) => {
-      const aIndex = this.featuredToolNames.indexOf(a.text);
-      const bIndex = this.featuredToolNames.indexOf(b.text);
-      return aIndex - bIndex;
-    });
-
-    return items;
   }
 
-  get submenus(): Submenu[] {
-    return this.templates
-      .filter((template) => !hiddenToolTexts.has(template.name))
-      .flatMap((template) => {
-        const submenuInterfaceIdx = template.interface.findIndex(
-          (elem: any) => elem.isSubmenu,
-        );
-        const submenuInterface = template.interface[submenuInterfaceIdx] || {};
-        let items: Omit<Item, "key">[] = [];
+  // Sort to match the order in featuredToolNames
+  items.sort((a, b) => {
+    const aIndex = featuredToolNames.value.indexOf(a.text);
+    const bIndex = featuredToolNames.value.indexOf(b.text);
+    return aIndex - bIndex;
+  });
 
-        if (submenuInterface.type === "dockerImage") {
-          return this.createDockerImageSubmenus(
-            template,
-            submenuInterface,
-            submenuInterfaceIdx,
-          );
-        }
+  return items;
+});
 
-        switch (submenuInterface.type) {
-          case "annotation":
-            items = this.store.availableToolShapes;
-            break;
-          case "select":
-            items = submenuInterface.meta.items.map((item: any) => ({
-              ...item,
-              value: { [submenuInterface.id]: item },
-            }));
-            break;
-          default:
-            items.push({
-              text: template.name || "No Submenu",
-              value: { [submenuInterface.id]: "defaultSubmenu" },
-            });
-            break;
-        }
+const submenus = computed((): Submenu[] => {
+  return templates.value
+    .filter((template) => !hiddenToolTexts.has(template.name))
+    .flatMap((template) => {
+      const submenuInterfaceIdx = template.interface.findIndex(
+        (elem: any) => elem.isSubmenu,
+      );
+      const submenuInterface = template.interface[submenuInterfaceIdx] || {};
+      let items: Omit<Item, "key">[] = [];
 
-        const keydItems: Item[] = items
-          .filter((item) => !hiddenToolTexts.has(item.text))
-          .map(
-            (item, itemIdx) =>
-              ({
-                key: template.type + "#" + itemIdx,
-                ...item,
-              }) as Item,
-          );
-
-        return {
+      if (submenuInterface.type === "dockerImage") {
+        return createDockerImageSubmenus(
           template,
           submenuInterface,
           submenuInterfaceIdx,
-          items: keydItems,
-        };
-      });
-  }
-
-  createDockerImageSubmenus(
-    template: any,
-    submenuInterface: any,
-    submenuInterfaceIdx: number,
-  ): Submenu[] {
-    const itemsByCategory: { [category: string]: Omit<Item, "key">[] } = {};
-    const annotationInterface = template.interface.find(
-      (elem: any) => elem.type === "annotation",
-    );
-
-    for (const image in this.propertyStore.workerImageList) {
-      const labels = this.propertyStore.workerImageList[image];
-      if (labels.isAnnotationWorker !== undefined) {
-        const category = labels.interfaceCategory || "Other Automated Tools";
-        if (!itemsByCategory[category]) {
-          itemsByCategory[category] = [];
-        }
-        const annotationSetupDefault: Partial<IAnnotationSetup> = {
-          shape: labels.annotationShape ?? AnnotationShape.Point,
-        };
-        itemsByCategory[category].push({
-          text: labels.interfaceName || image,
-          description: labels.description || "",
-          value: {
-            [submenuInterface.id]: { image },
-            [annotationInterface.id]: annotationSetupDefault,
-          },
-        });
+        );
       }
-    }
 
-    const categories = Object.keys(itemsByCategory).sort();
-    return categories.map((category) => {
-      const items = itemsByCategory[category];
+      switch (submenuInterface.type) {
+        case "annotation":
+          items = store.availableToolShapes;
+          break;
+        case "select":
+          items = submenuInterface.meta.items.map((item: any) => ({
+            ...item,
+            value: { [submenuInterface.id]: item },
+          }));
+          break;
+        default:
+          items.push({
+            text: template.name || "No Submenu",
+            value: { [submenuInterface.id]: "defaultSubmenu" },
+          });
+          break;
+      }
+
       const keydItems: Item[] = items
         .filter((item) => !hiddenToolTexts.has(item.text))
         .map(
           (item, itemIdx) =>
             ({
-              key: `${template.type}-${category}#${itemIdx}`,
+              key: template.type + "#" + itemIdx,
               ...item,
             }) as Item,
         );
@@ -276,123 +220,190 @@ export default class ToolTypeSelection extends Vue {
         submenuInterface,
         submenuInterfaceIdx,
         items: keydItems,
-        displayName: category,
       };
     });
-  }
+});
 
-  selectItem(item: AugmentedItem) {
-    this.selectedItem = item;
-    const submenu = item.submenu;
-    const { template, submenuInterface, submenuInterfaceIdx } = submenu;
+function createDockerImageSubmenus(
+  template: any,
+  submenuInterface: any,
+  submenuInterfaceIdx: number,
+): Submenu[] {
+  const itemsByCategory: { [category: string]: Omit<Item, "key">[] } = {};
+  const annotationInterface = template.interface.find(
+    (elem: any) => elem.type === "annotation",
+  );
 
-    let computedTemplate = template;
-    let defaultToolValues: any = {};
-
-    switch (submenuInterface.type) {
-      case "select":
-      case "dockerImage":
-        computedTemplate = {
-          ...template,
-          interface: [
-            ...template.interface.slice(0, submenuInterfaceIdx),
-            ...template.interface.slice(submenuInterfaceIdx + 1),
-          ],
-        };
-        defaultToolValues = item.value;
-        break;
-      case "annotation":
-        computedTemplate = {
-          ...template,
-          interface: template.interface.slice(),
-        };
-        const computedAnnotationInterface = {
-          ...template.interface[submenuInterfaceIdx],
-        };
-        if (!computedAnnotationInterface.meta) {
-          computedAnnotationInterface.meta = {};
-        }
-        computedAnnotationInterface.meta.hideShape = true;
-        computedAnnotationInterface.meta.defaultShape = item.value;
-        computedTemplate.interface[submenuInterfaceIdx] =
-          computedAnnotationInterface;
-        break;
-      default:
-        break;
-    }
-
-    this.computedTemplate = computedTemplate;
-    this.defaultToolValues = defaultToolValues;
-
-    const returnValue: TReturnType = {
-      template: this.computedTemplate,
-      defaultValues: this.defaultToolValues,
-      selectedItem: item,
-    };
-
-    this.$emit("selected", returnValue);
-  }
-
-  get templates(): IToolTemplate[] {
-    return this.store.toolTemplateList;
-  }
-
-  async mounted() {
-    this.refreshWorkers();
-    await this.loadFeaturedTools();
-  }
-
-  async loadFeaturedTools() {
-    try {
-      const response = await fetch("/config/featuredTools.json");
-      if (response.ok) {
-        const config: FeaturedToolsConfig = await response.json();
-        this.featuredToolNames = config.featuredTools || [];
-        this.validateFeaturedTools();
+  for (const image in propertiesStore.workerImageList) {
+    const labels = propertiesStore.workerImageList[image];
+    if (labels.isAnnotationWorker !== undefined) {
+      const category = labels.interfaceCategory || "Other Automated Tools";
+      if (!itemsByCategory[category]) {
+        itemsByCategory[category] = [];
       }
-    } catch {
-      // If config doesn't exist or fails to load, use empty array
-      this.featuredToolNames = [];
+      const annotationSetupDefault: Partial<IAnnotationSetup> = {
+        shape: labels.annotationShape ?? AnnotationShape.Point,
+      };
+      itemsByCategory[category].push({
+        text: labels.interfaceName || image,
+        description: labels.description || "",
+        value: {
+          [submenuInterface.id]: { image },
+          [annotationInterface.id]: annotationSetupDefault,
+        },
+      });
     }
   }
 
-  /**
-   * Validates featured tools configuration and logs warnings for issues
-   */
-  validateFeaturedTools() {
-    // Check for duplicates
-    const seen = new Set<string>();
-    for (const name of this.featuredToolNames) {
-      if (seen.has(name)) {
-        logWarning(`[ToolTypeSelection] Duplicate featured tool: "${name}"`);
-      }
-      seen.add(name);
-    }
-
-    // Check for non-matching names (after submenus are computed)
-    this.$nextTick(() => {
-      const allToolNames = new Set(
-        this.submenus.flatMap((s) => s.items.map((i) => i.text)),
+  const categories = Object.keys(itemsByCategory).sort();
+  return categories.map((category) => {
+    const items = itemsByCategory[category];
+    const keydItems: Item[] = items
+      .filter((item) => !hiddenToolTexts.has(item.text))
+      .map(
+        (item, itemIdx) =>
+          ({
+            key: `${template.type}-${category}#${itemIdx}`,
+            ...item,
+          }) as Item,
       );
-      for (const name of this.featuredToolNames) {
-        if (!allToolNames.has(name)) {
-          logWarning(`[ToolTypeSelection] Featured tool not found: "${name}"`);
-        }
+
+    return {
+      template,
+      submenuInterface,
+      submenuInterfaceIdx,
+      items: keydItems,
+      displayName: category,
+    };
+  });
+}
+
+function selectItem(item: AugmentedItem) {
+  selectedItem.value = item;
+  const submenu = item.submenu;
+  const { template, submenuInterface, submenuInterfaceIdx } = submenu;
+
+  let newComputedTemplate = template;
+  let newDefaultToolValues: any = {};
+
+  switch (submenuInterface.type) {
+    case "select":
+    case "dockerImage":
+      newComputedTemplate = {
+        ...template,
+        interface: [
+          ...template.interface.slice(0, submenuInterfaceIdx),
+          ...template.interface.slice(submenuInterfaceIdx + 1),
+        ],
+      };
+      newDefaultToolValues = item.value;
+      break;
+    case "annotation":
+      newComputedTemplate = {
+        ...template,
+        interface: template.interface.slice(),
+      };
+      const computedAnnotationInterface = {
+        ...template.interface[submenuInterfaceIdx],
+      };
+      if (!computedAnnotationInterface.meta) {
+        computedAnnotationInterface.meta = {};
       }
-    });
+      computedAnnotationInterface.meta.hideShape = true;
+      computedAnnotationInterface.meta.defaultShape = item.value;
+      newComputedTemplate.interface[submenuInterfaceIdx] =
+        computedAnnotationInterface;
+      break;
+    default:
+      break;
   }
 
-  refreshWorkers() {
-    this.propertyStore.fetchWorkerImageList();
-  }
+  computedTemplate.value = newComputedTemplate;
+  defaultToolValues.value = newDefaultToolValues;
 
-  reset() {
-    this.selectedItem = null;
-    this.computedTemplate = null;
-    this.defaultToolValues = {};
-    this.refreshWorkers();
+  const returnValue: TReturnType = {
+    template: computedTemplate.value,
+    defaultValues: defaultToolValues.value,
+    selectedItem: item,
+  };
+
+  emit("selected", returnValue);
+}
+
+const templates = computed((): IToolTemplate[] => {
+  return store.toolTemplateList;
+});
+
+async function loadFeaturedTools() {
+  try {
+    const response = await fetch("/config/featuredTools.json");
+    if (response.ok) {
+      const config: FeaturedToolsConfig = await response.json();
+      featuredToolNames.value = config.featuredTools || [];
+      validateFeaturedTools();
+    }
+  } catch {
+    // If config doesn't exist or fails to load, use empty array
+    featuredToolNames.value = [];
   }
 }
+
+/**
+ * Validates featured tools configuration and logs warnings for issues
+ */
+function validateFeaturedTools() {
+  // Check for duplicates
+  const seen = new Set<string>();
+  for (const name of featuredToolNames.value) {
+    if (seen.has(name)) {
+      logWarning(`[ToolTypeSelection] Duplicate featured tool: "${name}"`);
+    }
+    seen.add(name);
+  }
+
+  // Check for non-matching names (after submenus are computed)
+  nextTick(() => {
+    const allToolNames = new Set(
+      submenus.value.flatMap((s) => s.items.map((i) => i.text)),
+    );
+    for (const name of featuredToolNames.value) {
+      if (!allToolNames.has(name)) {
+        logWarning(`[ToolTypeSelection] Featured tool not found: "${name}"`);
+      }
+    }
+  });
+}
+
+function refreshWorkers() {
+  propertiesStore.fetchWorkerImageList();
+}
+
+function reset() {
+  selectedItem.value = null;
+  computedTemplate.value = null;
+  defaultToolValues.value = {};
+  refreshWorkers();
+}
+
+onMounted(async () => {
+  refreshWorkers();
+  await loadFeaturedTools();
+});
+
+defineExpose({
+  selectedItem,
+  computedTemplate,
+  defaultToolValues,
+  featuredToolNames,
+  featuredItems,
+  submenus,
+  templates,
+  selectItem,
+  reset,
+  getCategoryClass,
+  getTourStepId,
+  getTourTriggerId,
+});
 </script>
 
 <style lang="scss" scoped>

@@ -226,7 +226,7 @@ export default class ToolCreation extends Vue {
       return;
     }
 
-    const toolConfiguration = this.$refs.toolConfiguration as ToolConfiguration;
+    const toolConfiguration = this.$refs.toolConfiguration as any;
     if (toolConfiguration) {
       toolConfiguration.reset();
     }

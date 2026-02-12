@@ -52,152 +52,152 @@
   </v-menu>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import { IAnnotation } from "@/store/model";
-import store from "@/store";
 import annotationStore from "@/store/annotation";
 import { tagFilterFunction } from "@/utils/annotation";
 import { logError } from "@/utils/log";
 
-@Component({
-  components: { ColorPickerMenu, TagPicker },
-})
-export default class AnnotationContextMenu extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
+const props = defineProps<{
+  show: boolean;
+  x: number;
+  y: number;
+  annotation: IAnnotation | null;
+}>();
 
-  @Prop({ required: true })
-  readonly show!: boolean;
+const emit = defineEmits<{
+  (e: "cancel"): void;
+}>();
 
-  @Prop({ required: true })
-  readonly x!: number;
+const selectedColor = ref("#FFFFFF");
+const selectedTags = ref<string[]>([]);
+const colorOption = ref("layer");
+const applyToSameTags = ref(false);
+const copySuccess = ref(false);
 
-  @Prop({ required: true })
-  readonly y!: number;
-
-  @Prop({ required: true })
-  readonly annotation!: IAnnotation | null;
-
-  selectedColor = "#FFFFFF";
-  selectedTags: string[] = [];
-  colorOption = "layer";
-  applyToSameTags = false;
-  copySuccess = false;
-
-  get showMenu() {
-    return this.show;
-  }
-
-  set showMenu(value: boolean) {
+const showMenu = computed({
+  get: () => props.show,
+  set: (value: boolean) => {
     if (!value) {
-      this.$emit("cancel");
+      emit("cancel");
     }
+  },
+});
+
+watch(
+  () => props.annotation,
+  () => {
+    if (props.annotation) {
+      colorOption.value = props.annotation.color === null ? "layer" : "defined";
+      selectedColor.value = props.annotation.color || "#FFFFFF";
+      selectedTags.value = [...props.annotation.tags];
+      applyToSameTags.value = false;
+    }
+  },
+  { immediate: true },
+);
+
+function cancel() {
+  emit("cancel");
+}
+
+function save() {
+  if (!props.annotation) {
+    return;
   }
 
-  @Watch("annotation", { immediate: true })
-  onAnnotationChange() {
-    if (this.annotation) {
-      this.colorOption = this.annotation.color === null ? "layer" : "defined";
-      this.selectedColor = this.annotation.color || "#FFFFFF";
-      this.selectedTags = [...this.annotation.tags];
-      this.applyToSameTags = false;
-    }
-  }
+  // Determine color based on selected option
+  const isRandomColor = colorOption.value === "random";
+  const newColor = colorOption.value === "layer" ? null : selectedColor.value;
+  const tagsChanged = !areTagsEqual(props.annotation.tags, selectedTags.value);
 
-  cancel() {
-    this.$emit("cancel");
-  }
-
-  save() {
-    if (!this.annotation) {
-      return;
-    }
-
-    // Determine color based on selected option
-    const isRandomColor = this.colorOption === "random";
-    const newColor = this.colorOption === "layer" ? null : this.selectedColor;
-    const tagsChanged = !this.areTagsEqual(
-      this.annotation.tags,
-      this.selectedTags,
+  if (applyToSameTags.value) {
+    // Get all annotations with the same original tags
+    const annotationsWithSameTags = annotationStore.annotations.filter(
+      (annotation: IAnnotation) =>
+        props.annotation &&
+        annotation.tags.length === props.annotation.tags.length &&
+        annotation.tags.every((tag) => props.annotation!.tags.includes(tag)),
     );
+    const annotationIds = annotationsWithSameTags.map((a: IAnnotation) => a.id);
 
-    if (this.applyToSameTags) {
-      // Get all annotations with the same original tags
-      const annotationsWithSameTags = this.annotationStore.annotations.filter(
-        (annotation: IAnnotation) =>
-          this.annotation &&
-          annotation.tags.length === this.annotation.tags.length &&
-          annotation.tags.every((tag) => this.annotation!.tags.includes(tag)),
-      );
-      const annotationIds = annotationsWithSameTags.map(
-        (a: IAnnotation) => a.id,
-      );
-
-      // Update colors if changed
-      if (this.annotation.color !== newColor || isRandomColor) {
-        this.annotationStore.colorAnnotationIds({
-          annotationIds,
-          color: newColor,
-          randomize: isRandomColor,
-        });
-      }
-
-      // Update tags if changed
-      if (tagsChanged) {
-        this.annotationStore.replaceTagsByAnnotationIds({
-          annotationIds,
-          tags: this.selectedTags,
-        });
-      }
-    } else {
-      // Single annotation updates
-      if (this.annotation.color !== newColor || isRandomColor) {
-        this.annotationStore.colorAnnotationIds({
-          annotationIds: [this.annotation.id],
-          color: newColor,
-          randomize: isRandomColor,
-        });
-      }
-
-      if (tagsChanged) {
-        this.annotationStore.replaceTagsByAnnotationIds({
-          annotationIds: [this.annotation.id],
-          tags: this.selectedTags,
-        });
-      }
+    // Update colors if changed
+    if (props.annotation.color !== newColor || isRandomColor) {
+      annotationStore.colorAnnotationIds({
+        annotationIds,
+        color: newColor,
+        randomize: isRandomColor,
+      });
     }
 
-    this.$emit("cancel"); // Close the menu
-  }
-
-  deleteAnnotation() {
-    if (this.annotation) {
-      this.annotationStore.deleteAnnotations([this.annotation.id]);
+    // Update tags if changed
+    if (tagsChanged) {
+      annotationStore.replaceTagsByAnnotationIds({
+        annotationIds,
+        tags: selectedTags.value,
+      });
     }
-    this.$emit("cancel"); // Close the menu
+  } else {
+    // Single annotation updates
+    if (props.annotation.color !== newColor || isRandomColor) {
+      annotationStore.colorAnnotationIds({
+        annotationIds: [props.annotation.id],
+        color: newColor,
+        randomize: isRandomColor,
+      });
+    }
+
+    if (tagsChanged) {
+      annotationStore.replaceTagsByAnnotationIds({
+        annotationIds: [props.annotation.id],
+        tags: selectedTags.value,
+      });
+    }
   }
 
-  private areTagsEqual(tags1: string[], tags2: string[]): boolean {
-    return tagFilterFunction(tags1, tags2, true);
-  }
+  emit("cancel"); // Close the menu
+}
 
-  async copyAnnotationId() {
-    if (this.annotation) {
-      try {
-        await navigator.clipboard.writeText(this.annotation.id);
-        this.copySuccess = true;
-        setTimeout(() => {
-          this.copySuccess = false;
-        }, 2000);
-      } catch (err) {
-        logError("Failed to copy annotation ID:", err);
-      }
+function deleteAnnotation() {
+  if (props.annotation) {
+    annotationStore.deleteAnnotations([props.annotation.id]);
+  }
+  emit("cancel"); // Close the menu
+}
+
+function areTagsEqual(tags1: string[], tags2: string[]): boolean {
+  return tagFilterFunction(tags1, tags2, true);
+}
+
+async function copyAnnotationId() {
+  if (props.annotation) {
+    try {
+      await navigator.clipboard.writeText(props.annotation.id);
+      copySuccess.value = true;
+      setTimeout(() => {
+        copySuccess.value = false;
+      }, 2000);
+    } catch (err) {
+      logError("Failed to copy annotation ID:", err);
     }
   }
 }
+
+defineExpose({
+  showMenu,
+  selectedColor,
+  selectedTags,
+  colorOption,
+  applyToSameTags,
+  copySuccess,
+  cancel,
+  save,
+  deleteAnnotation,
+  copyAnnotationId,
+});
 </script>
 <style>
 .v-card {

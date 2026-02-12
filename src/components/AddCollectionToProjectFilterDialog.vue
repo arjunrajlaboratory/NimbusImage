@@ -80,91 +80,107 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import { IProject, IDatasetConfiguration } from "@/store/model";
 import store from "@/store";
 import projects from "@/store/projects";
 
-@Component
-export default class AddCollectionToProjectFilterDialog extends Vue {
-  readonly store = store;
-  readonly projects = projects;
+const props = defineProps<{
+  project: IProject;
+}>();
 
-  @Prop({ required: true })
-  project!: IProject;
+const emit = defineEmits<{
+  (e: "done"): void;
+  (e: "added", collectionIds: string[]): void;
+}>();
 
-  searchQuery = "";
-  loading = false;
-  adding = false;
-  allCollections: IDatasetConfiguration[] = [];
-  selectedIndices: number[] = [];
+const searchQuery = ref("");
+const loading = ref(false);
+const adding = ref(false);
+const allCollections = ref<IDatasetConfiguration[]>([]);
+const selectedIndices = ref<number[]>([]);
 
-  get existingCollectionIds(): Set<string> {
-    return new Set(this.project.meta.collections.map((c) => c.collectionId));
+const existingCollectionIds = computed<Set<string>>(() => {
+  return new Set(props.project.meta.collections.map((c) => c.collectionId));
+});
+
+const filteredCollections = computed<IDatasetConfiguration[]>(() => {
+  if (!searchQuery.value) {
+    return allCollections.value;
   }
+  const query = searchQuery.value.toLowerCase();
+  return allCollections.value.filter(
+    (c) =>
+      c.name.toLowerCase().includes(query) ||
+      (c.description && c.description.toLowerCase().includes(query)),
+  );
+});
 
-  get filteredCollections(): IDatasetConfiguration[] {
-    if (!this.searchQuery) {
-      return this.allCollections;
-    }
-    const query = this.searchQuery.toLowerCase();
-    return this.allCollections.filter(
-      (c) =>
-        c.name.toLowerCase().includes(query) ||
-        (c.description && c.description.toLowerCase().includes(query)),
-    );
-  }
+const selectedCollections = computed<IDatasetConfiguration[]>(() => {
+  return selectedIndices.value
+    .map((index) => filteredCollections.value[index])
+    .filter((c) => c && !isInProject(c.id));
+});
 
-  get selectedCollections(): IDatasetConfiguration[] {
-    return this.selectedIndices
-      .map((index) => this.filteredCollections[index])
-      .filter((c) => c && !this.isInProject(c.id));
-  }
+function isInProject(collectionId: string): boolean {
+  return existingCollectionIds.value.has(collectionId);
+}
 
-  mounted() {
-    this.fetchCollections();
-  }
-
-  @Watch("project")
-  onProjectChange() {
-    this.selectedIndices = [];
-  }
-
-  isInProject(collectionId: string): boolean {
-    return this.existingCollectionIds.has(collectionId);
-  }
-
-  async fetchCollections() {
-    this.loading = true;
-    try {
-      this.allCollections = await this.store.api.getAllConfigurations();
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  async addCollections() {
-    if (this.selectedCollections.length === 0) return;
-
-    this.adding = true;
-    try {
-      for (const collection of this.selectedCollections) {
-        await this.projects.addCollectionToProject({
-          projectId: this.project.id,
-          collectionId: collection.id,
-        });
-      }
-      this.$emit(
-        "added",
-        this.selectedCollections.map((c) => c.id),
-      );
-      this.selectedIndices = [];
-    } finally {
-      this.adding = false;
-    }
+async function fetchCollections() {
+  loading.value = true;
+  try {
+    allCollections.value = await store.api.getAllConfigurations();
+  } finally {
+    loading.value = false;
   }
 }
+
+async function addCollections() {
+  if (selectedCollections.value.length === 0) return;
+
+  adding.value = true;
+  try {
+    for (const collection of selectedCollections.value) {
+      await projects.addCollectionToProject({
+        projectId: props.project.id,
+        collectionId: collection.id,
+      });
+    }
+    emit(
+      "added",
+      selectedCollections.value.map((c) => c.id),
+    );
+    selectedIndices.value = [];
+  } finally {
+    adding.value = false;
+  }
+}
+
+watch(
+  () => props.project,
+  () => {
+    selectedIndices.value = [];
+  },
+);
+
+onMounted(() => {
+  fetchCollections();
+});
+
+defineExpose({
+  searchQuery,
+  loading,
+  adding,
+  allCollections,
+  selectedIndices,
+  existingCollectionIds,
+  filteredCollections,
+  selectedCollections,
+  isInProject,
+  fetchCollections,
+  addCollections,
+});
 </script>
 
 <style lang="scss" scoped>
