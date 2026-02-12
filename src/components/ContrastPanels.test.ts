@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { shallowMount } from "@vue/test-utils";
 import Vue from "vue";
 import Vuetify from "vuetify";
 
@@ -25,21 +25,15 @@ import ContrastPanels from "./ContrastPanels.vue";
 Vue.use(Vuetify);
 
 function mountComponent() {
-  return mount(ContrastPanels, {
+  return shallowMount(ContrastPanels, {
     vuetify: new Vuetify(),
-    stubs: {
-      DisplayLayer: {
-        template: '<div class="stub-display-layer"></div>',
-        props: ["value"],
-      },
-    },
   });
 }
 
 describe("ContrastPanels", () => {
   it("renders an expansion panel for each layer", () => {
     const wrapper = mountComponent();
-    expect(wrapper.findAll(".stub-display-layer")).toHaveLength(2);
+    expect(wrapper.findAll("v-expansion-panel-stub")).toHaveLength(2);
   });
 
   it("renders layers computed from store", () => {

@@ -91,203 +91,199 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
-import girderResources from "@/store/girderResources";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
-import { IGirderLocation } from "@/girder";
+import { IGirderLocation, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
 import ZenodoAPI, { IZenodoRecord, IZenodoFile } from "@/store/ZenodoAPI";
 import { stripHtml } from "@/utils/strings";
 
-@Component({
-  components: {
-    GirderLocationChooser,
+const props = withDefaults(
+  defineProps<{
+    dataset?: IZenodoRecord | null;
+  }>(),
+  {
+    dataset: null,
   },
-})
-export default class ZenodoImporter extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
-  readonly datasetMetadataImport = datasetMetadataImport;
-  private zenodoApi = new ZenodoAPI(store.girderRestProxy);
+);
 
-  @Prop({ type: Object, default: null })
-  readonly dataset!: IZenodoRecord | null;
+defineEmits<{
+  (e: "close"): void;
+}>();
 
-  // Selected dataset
-  selectedDataset: IZenodoRecord | null = null;
-  private _path: IGirderLocation | null = null;
+const instance = getCurrentInstance();
+const zenodoApi = new ZenodoAPI(store.girderRestProxy);
 
-  // Import progress
-  importing = false;
-  importProgress = 0;
-  currentFile = "";
-  error = "";
+// Reactive state
+const selectedDataset = ref<IZenodoRecord | null>(null);
+const _path = ref<IGirderSelectAble | null>(null);
+const importing = ref(false);
+const importProgress = ref(0);
+const currentFile = ref("");
+const error = ref("");
 
-  get path(): IGirderLocation | null {
-    return this._path;
-  }
-
-  set path(value: IGirderLocation | null) {
-    this._path = value;
+// Computed get/set for path
+const path = computed({
+  get: () => _path.value,
+  set: (value: IGirderSelectAble | null) => {
+    _path.value = value;
     if (value) {
-      this.store.setFolderLocation(value);
+      store.setFolderLocation(value as IGirderLocation);
     }
+  },
+});
+
+const filteredFiles = computed<IZenodoFile[]>(() => {
+  if (!selectedDataset.value) return [];
+  return zenodoApi.filterImageFiles(selectedDataset.value.files);
+});
+
+const canImport = computed<boolean>(() => {
+  return (
+    !!selectedDataset.value &&
+    filteredFiles.value.length > 0 &&
+    !!path.value &&
+    !importing.value
+  );
+});
+
+onMounted(() => {
+  // Initialize path from store's folder location
+  _path.value = store.folderLocation as IGirderSelectAble | null;
+
+  // Set the selected dataset from the prop
+  if (props.dataset) {
+    selectedDataset.value = props.dataset;
   }
+});
 
-  get filteredFiles(): IZenodoFile[] {
-    if (!this.selectedDataset) return [];
-    return this.zenodoApi.filterImageFiles(this.selectedDataset.files);
-  }
-
-  get canImport(): boolean {
-    return (
-      !!this.selectedDataset &&
-      this.filteredFiles.length > 0 &&
-      !!this.path &&
-      !this.importing
-    );
-  }
-
-  mounted() {
-    // Initialize path from store's folder location
-    this._path = this.store.folderLocation;
-
-    // Set the selected dataset from the prop
-    if (this.dataset) {
-      this.selectedDataset = this.dataset;
-    }
-  }
-
-  @Watch("dataset")
-  onDatasetChanged(val: IZenodoRecord | null) {
+watch(
+  () => props.dataset,
+  (val: IZenodoRecord | null) => {
     if (val) {
-      this.selectedDataset = val;
-      this.error = "";
+      selectedDataset.value = val;
+      error.value = "";
     }
-  }
+  },
+);
 
-  async importSelectedDataset(): Promise<void> {
-    if (!this.canImport || !this.path || !this.selectedDataset) return;
+async function downloadFile(
+  file: IZenodoFile,
+  fileIndex: number,
+  totalFiles: number,
+): Promise<File> {
+  currentFile.value = `Downloading ${file.key}...`;
+  importProgress.value = (fileIndex / totalFiles) * 100;
 
-    this.importing = true;
-    this.error = "";
-    this.importProgress = 0;
+  const blob = await zenodoApi.downloadFile(
+    file.links.self,
+    (loaded, total) => {
+      const completedProgress = (fileIndex / totalFiles) * 100;
+      const currentFileProgress = (loaded / total / totalFiles) * 100;
+      importProgress.value = completedProgress + currentFileProgress;
+      currentFile.value = `Downloading ${file.key}... (${Math.round(loaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB)`;
+    },
+  );
 
-    try {
-      // Get only the image files from Zenodo
-      const imageFiles = this.filteredFiles;
-      const downloadedImageFiles: File[] = [];
+  return new File([blob], file.key);
+}
 
-      const nonImageFiles = this.selectedDataset.files.filter(
-        (file) => !this.filteredFiles.includes(file),
-      );
+async function importSelectedDataset(): Promise<void> {
+  if (!canImport.value || !path.value || !selectedDataset.value) return;
 
-      const downloadedNonImageFiles: File[] = [];
+  importing.value = true;
+  error.value = "";
+  importProgress.value = 0;
 
-      // Download each file from Zenodo
-      for (let i = 0; i < imageFiles.length; i++) {
-        const file = imageFiles[i];
-        const downloadedImageFile = await this.downloadFile(
-          file,
-          i,
-          imageFiles.length,
-        );
-        downloadedImageFiles.push(downloadedImageFile);
-      }
+  try {
+    // Get only the image files from Zenodo
+    const imageFiles = filteredFiles.value;
+    const downloadedImageFiles: File[] = [];
 
-      // Download non-image files
-      for (let i = 0; i < nonImageFiles.length; i++) {
-        const file = nonImageFiles[i];
-        const downloadedNonImageFile = await this.downloadFile(
-          file,
-          i,
-          nonImageFiles.length,
-        );
-        downloadedNonImageFiles.push(downloadedNonImageFile);
-
-        if (file.key.endsWith("annotations.json")) {
-          await this.datasetMetadataImport.storeAnnotationFile(
-            downloadedNonImageFile,
-          );
-        } else if (file.key.endsWith("collection.json")) {
-          await this.datasetMetadataImport.storeCollectionFile(
-            downloadedNonImageFile,
-          );
-        } else {
-          logError("unknown file type", file.key);
-        }
-      }
-
-      // All files downloaded successfully
-      this.currentFile = "Preparing upload...";
-      this.importProgress = 100;
-
-      // Pass the downloaded files to NewDataset.vue using the same approach as Home.vue
-      this.$router.push({
-        name: "newdataset",
-        params: {
-          quickupload: true, // Use quickupload for automatic processing
-          defaultFiles: downloadedImageFiles,
-          initialUploadLocation: this.path,
-          initialName: this.selectedDataset.title,
-          initialDescription: stripHtml(
-            this.selectedDataset.metadata.description || "",
-          ),
-        } as any,
-      });
-    } catch (err) {
-      this.error = "Failed to download files from Zenodo. Please try again.";
-      logError("Zenodo download error", err);
-      this.importing = false;
-    }
-  }
-
-  formatSize(bytes: number): string {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
-    if (bytes < 1024 * 1024 * 1024)
-      return (bytes / (1024 * 1024)).toFixed(2) + " MB";
-    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
-  }
-
-  /**
-   * Downloads a file from Zenodo with progress tracking
-   * @param file The Zenodo file to download
-   * @param fileIndex Current index of the file in the download sequence
-   * @param totalFiles Total number of files to download
-   * @returns A Promise that resolves to the downloaded file as a File object
-   */
-  private async downloadFile(
-    file: IZenodoFile,
-    fileIndex: number,
-    totalFiles: number,
-  ): Promise<File> {
-    this.currentFile = `Downloading ${file.key}...`;
-
-    // Set initial progress for this file
-    this.importProgress = (fileIndex / totalFiles) * 100;
-
-    const blob = await this.zenodoApi.downloadFile(
-      file.links.self,
-      (loaded, total) => {
-        // Calculate overall progress:
-        // - Completed files: (fileIndex / totalFiles) * 100
-        // - Current file: (loaded / total) / totalFiles * 100
-        const completedProgress = (fileIndex / totalFiles) * 100;
-        const currentFileProgress = (loaded / total / totalFiles) * 100;
-        this.importProgress = completedProgress + currentFileProgress;
-
-        // Update status message
-        this.currentFile = `Downloading ${file.key}... (${Math.round(loaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB)`;
-      },
+    const nonImageFiles = selectedDataset.value.files.filter(
+      (file) => !filteredFiles.value.includes(file),
     );
 
-    return new File([blob], file.key);
+    const downloadedNonImageFiles: File[] = [];
+
+    // Download each file from Zenodo
+    for (let i = 0; i < imageFiles.length; i++) {
+      const file = imageFiles[i];
+      const downloadedImageFile = await downloadFile(
+        file,
+        i,
+        imageFiles.length,
+      );
+      downloadedImageFiles.push(downloadedImageFile);
+    }
+
+    // Download non-image files
+    for (let i = 0; i < nonImageFiles.length; i++) {
+      const file = nonImageFiles[i];
+      const downloadedNonImageFile = await downloadFile(
+        file,
+        i,
+        nonImageFiles.length,
+      );
+      downloadedNonImageFiles.push(downloadedNonImageFile);
+
+      if (file.key.endsWith("annotations.json")) {
+        await datasetMetadataImport.storeAnnotationFile(downloadedNonImageFile);
+      } else if (file.key.endsWith("collection.json")) {
+        await datasetMetadataImport.storeCollectionFile(downloadedNonImageFile);
+      } else {
+        logError("unknown file type", file.key);
+      }
+    }
+
+    // All files downloaded successfully
+    currentFile.value = "Preparing upload...";
+    importProgress.value = 100;
+
+    // Pass the downloaded files to NewDataset.vue using the same approach as Home.vue
+    instance?.proxy?.$router.push({
+      name: "newdataset",
+      params: {
+        quickupload: true,
+        defaultFiles: downloadedImageFiles,
+        initialUploadLocation: path.value,
+        initialName: selectedDataset.value.title,
+        initialDescription: stripHtml(
+          selectedDataset.value.metadata.description || "",
+        ),
+      } as any,
+    });
+  } catch (err) {
+    error.value = "Failed to download files from Zenodo. Please try again.";
+    logError("Zenodo download error", err);
+    importing.value = false;
   }
 }
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
+  if (bytes < 1024 * 1024 * 1024)
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+}
+
+defineExpose({
+  selectedDataset,
+  path,
+  importing,
+  importProgress,
+  currentFile,
+  error,
+  filteredFiles,
+  canImport,
+  importSelectedDataset,
+  formatSize,
+  downloadFile,
+});
 </script>
 
 <style scoped>

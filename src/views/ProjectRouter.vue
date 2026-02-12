@@ -1,11 +1,11 @@
 <template>
   <router-view></router-view>
 </template>
-<script lang="ts">
+<script setup lang="ts">
 import projects from "@/store/projects";
-import routeMapper from "@/utils/routeMapper";
+import { useRouteMapper } from "@/utils/useRouteMapper";
 
-export default routeMapper({
+useRouteMapper({
   projectId: {
     parse: String,
     get: () => projects.currentProjectId,

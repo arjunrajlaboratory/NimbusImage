@@ -8,14 +8,14 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 108 | 81 already migrated to `<script setup>` |
+| Class components (`@Component`) | 108 | 96 already migrated to `<script setup>` |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
 | `v-data-table` usages | 15 | Vuetify 3 API changes significantly |
 | `v-dialog` usages | 129 | Event/prop API changes in Vuetify 3 |
 | `$refs` usages | 62 | Typing changes between Class → Composition |
-| Mixins | 0 | None to migrate |
+| Mixins | 0 | `routeMapper` mixin converted to `useRouteMapper` composable (Batch 9) |
 
 ## Migration Strategy
 
@@ -348,12 +348,38 @@ These `markRaw()` additions can be done:
 - `ToolCreation.vue` (not migrated): Updated `$refs.toolConfiguration` cast for `<script setup>` component type
 - `AnalyzePanel.test.ts`: Updated stub selector for `<script setup>` PropertyCreation
 
+### Batch 9 — routeMapper Composable + Route Components + Standalone Components
+
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `useRouteMapper.ts` (NEW) | ~80 | Composable replacing `routeMapper` mixin; `onMounted` + `watch($route)` instead of `beforeRouteEnter`/`beforeRouteUpdate` |
+| `Configuration.vue` | 15 | `useRouteMapper` only, `<router-view>` wrapper |
+| `Project.vue` | 15 | `useRouteMapper` only, `<router-view>` wrapper |
+| `ProjectRouter.vue` | 15 | `useRouteMapper` only, `<router-view>` wrapper |
+| `DatasetAndConfigurationRouter.vue` | 24 | `useRouteMapper` with both params and query mappers |
+| `DatasetView.vue` | 60 | `useRouteMapper` with 1 param + 7 query mappers |
+| `ConfigurationSelect.vue` | 142 | `useRouteMapper`, `@Prop` → `defineProps`, `@Watch` → `watch()` |
+| `NewConfiguration.vue` | 111 | `useRouteMapper`, `$router.push` → `getCurrentInstance()!.proxy.$router` |
+| `ToolCreation.vue` | 240 | 4 `@Watch` → 4 `watch()`, `$refs` → template ref, `$emit` → `defineEmits` |
+| `Toolset.vue` | 295 | `$refs` array → function ref, `$nextTick` → `nextTick()`, vuedraggable |
+| `ZenodoImporter.vue` | 297 | ZenodoAPI, `$router.push`, `IGirderSelectAble` type for location chooser |
+| `DisplayLayers.vue` | 361 | vuedraggable, computed get/set, v-mousetrap hotkeys |
+| `DisplayLayer.vue` | 376 | 16 computed, `@Watch` → `watch()`, v-mousetrap, operator precedence fix |
+| `ProjectList.vue` | 374 | `$router.push` → `getCurrentInstance()!.proxy.$router`, 3 dialogs, CRUD |
+| `AddDatasetToCollection.vue` | 393 | `$refs` → template ref, `Vue.nextTick()` → `nextTick()`, 4 emits |
+
+**Key patterns in this batch:**
+- **routeMapper mixin → `useRouteMapper` composable:** Uses `onMounted()` + `watch(() => vm.$route)` to replace `beforeRouteEnter`/`beforeRouteUpdate` hooks (Vue Router 4 composables not available in Vue 2.7). Module-level `currentRouteChanges` counter for loop prevention.
+- **Deleted `src/utils/routeMapper.ts`** (old mixin) and **`src/plugins/router.ts`** (registered class-component route hooks). Moved `Vue.use(VueRouter)` to `main.ts`.
+- **Operator precedence bug fix** in DisplayLayer: `zSlice.value.type === "max-merge" === value` → `(zSlice.value.type === "max-merge") === value`
+- **Type fix** in ZenodoImporter: `IGirderLocation` → `IGirderSelectAble` for location chooser `value` prop compatibility with `<script setup>` stricter checking
+- **Test stub fix:** `shallowMount` needed for parent tests (ContrastPanels, Viewer) after child components migrated to `<script setup>` — `@vue/test-utils` v1 stub matching differs for `<script setup>` components
+
+**After this batch:** 96 of ~108 components migrated to `<script setup>` (~89%).
+
 ## Next Candidates
 
 Good candidates for the next migration batch, ordered by complexity:
-
-**Blocked on mixin conversion:**
-- `ConfigurationSelect.vue`, `NewConfiguration.vue` — require converting `routeMapper` mixin to composable first
 
 **Medium components with store access:**
 - `AnnotationFilterDialog.vue`

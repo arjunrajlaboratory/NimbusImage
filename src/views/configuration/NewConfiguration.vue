@@ -18,15 +18,17 @@
     </v-form>
   </v-container>
 </template>
-<script lang="ts">
-import { Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import routeMapper from "@/utils/routeMapper";
+import { useRouteMapper } from "@/utils/useRouteMapper";
 import { IGirderSelectAble } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 
-const Mapper = routeMapper(
+const vm = getCurrentInstance()!.proxy;
+
+useRouteMapper(
   {},
   {
     datasetId: {
@@ -37,75 +39,76 @@ const Mapper = routeMapper(
   },
 );
 
-@Component({ components: { GirderLocationChooser } })
-export default class NewConfiguration extends Mapper {
-  readonly store = store;
-  readonly girderResources = girderResources;
+const valid = ref(false);
+const name = ref("");
+const description = ref("");
+const path = ref<IGirderSelectAble | null>(null);
 
-  valid = false;
-  name = "";
-  description = "";
-  path: IGirderSelectAble | null = null;
+const dataset = computed(() => store.dataset);
 
-  get dataset() {
-    return this.store.dataset;
-  }
+const rules = computed(() => [
+  (v: string) => v.trim().length > 0 || `value is required`,
+]);
 
-  mounted() {
-    this.fetchDefaultPath();
-  }
-
-  @Watch("dataset")
-  async fetchDefaultPath() {
-    const datasetId = this.store.dataset?.id;
-    if (datasetId) {
-      const datasetFolder = await this.girderResources.getFolder(datasetId);
-      const parentId = datasetFolder?.parentId;
-      if (parentId) {
-        const parentFolder = await this.girderResources.getFolder(parentId);
-        this.path = parentFolder;
-        return;
-      }
-    }
-    this.path = this.store.girderUser;
-  }
-
-  get rules() {
-    return [(v: string) => v.trim().length > 0 || `value is required`];
-  }
-
-  submit() {
-    const folderId = this.path?._id;
-    if (!this.valid || !folderId) {
+async function fetchDefaultPath() {
+  const datasetId = store.dataset?.id;
+  if (datasetId) {
+    const datasetFolder = await girderResources.getFolder(datasetId);
+    const parentId = datasetFolder?.parentId;
+    if (parentId) {
+      const parentFolder = await girderResources.getFolder(parentId);
+      path.value = parentFolder;
       return;
     }
-
-    this.store
-      .createConfiguration({
-        name: this.name,
-        description: this.description,
-        folderId,
-      })
-      .then((config) => {
-        if (!config) {
-          return;
-        }
-        if (this.store.dataset) {
-          this.store.createDatasetView({
-            configurationId: config.id,
-            datasetId: this.store.dataset.id,
-          });
-        }
-        this.$router.push({
-          name: "configuration",
-          params: Object.assign(
-            {
-              configurationId: config.id,
-            },
-            this.$route.params,
-          ),
-        });
-      });
   }
+  path.value = store.girderUser;
 }
+
+function submit() {
+  const folderId = path.value?._id;
+  if (!valid.value || !folderId) {
+    return;
+  }
+
+  store
+    .createConfiguration({
+      name: name.value,
+      description: description.value,
+      folderId,
+    })
+    .then((config) => {
+      if (!config) {
+        return;
+      }
+      if (store.dataset) {
+        store.createDatasetView({
+          configurationId: config.id,
+          datasetId: store.dataset.id,
+        });
+      }
+      vm.$router.push({
+        name: "configuration",
+        params: Object.assign(
+          {
+            configurationId: config.id,
+          },
+          vm.$route.params,
+        ),
+      });
+    });
+}
+
+watch(dataset, () => fetchDefaultPath());
+onMounted(() => fetchDefaultPath());
+
+defineExpose({
+  valid,
+  name,
+  description,
+  path,
+  dataset,
+  rules,
+  fetchDefaultPath,
+  submit,
+});
 </script>

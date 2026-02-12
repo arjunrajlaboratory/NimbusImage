@@ -119,8 +119,8 @@
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import { IDisplayLayer, IContrast, IDisplaySlice } from "../store/model";
 import DisplaySlice from "./DisplaySlice.vue";
 import ContrastHistogram from "./ContrastHistogram.vue";
@@ -128,212 +128,196 @@ import ColorPickerMenu from "./ColorPickerMenu.vue";
 import store from "../store";
 import { IHotkey } from "@/utils/v-mousetrap";
 
-@Component({
-  components: {
-    DisplaySlice,
-    ContrastHistogram,
-    ColorPickerMenu,
+const props = defineProps<{
+  value: IDisplayLayer;
+}>();
+
+const alternativeZSlice = ref<IDisplaySlice>({ type: "current", value: null });
+
+onMounted(() => {
+  alternativeZSlice.value =
+    props.value.z.type === "max-merge"
+      ? { type: "current", value: null }
+      : { ...props.value.z };
+});
+
+const index = computed(() => store.getLayerIndexFromId(props.value.id)!);
+
+const hoverValue = computed(() => {
+  const layerId = props.value.id;
+  return store.hoverValue?.[layerId]?.join(", ") ?? null;
+});
+
+const histogram = computed(() => store.getLayerHistogram(props.value));
+
+const channels = computed(() => (store.dataset ? store.dataset.channels : []));
+
+const configurationContrast = computed(() => {
+  const layerId = props.value.id;
+  const configuration = store.configuration;
+  if (!configuration) {
+    return null;
+  }
+  const configurationLayer = store.getConfigurationLayerFromId(layerId);
+  if (!configurationLayer) {
+    return null;
+  }
+  return configurationLayer.contrast;
+});
+
+const currentContrast = computed(() => props.value.contrast);
+
+function channelName(channel: number): string {
+  let result = channel.toString();
+  if (store.dataset) {
+    result = store.dataset.channelNames.get(channel) || result;
+  }
+  return result;
+}
+
+const visible = computed({
+  get: () => props.value.visible,
+  set: (value: boolean) => {
+    if (props.value.visible === value) {
+      return;
+    }
+    store.toggleLayerVisibility(props.value.id);
   },
-})
-export default class DisplayLayer extends Vue {
-  readonly store = store;
+});
 
-  @Prop({ required: true })
-  readonly value!: IDisplayLayer;
+const zMaxMergeBinding = computed(() => `shift+${index.value + 1}`);
 
-  alternativeZSlice: IDisplaySlice = { type: "current", value: null };
+const zSlice = computed(() => props.value.z);
 
-  mounted() {
-    this.alternativeZSlice =
-      this.value.z.type === "max-merge"
-        ? { type: "current", value: null }
-        : { ...this.value.z };
-  }
-
-  get index() {
-    return this.store.getLayerIndexFromId(this.value.id)!;
-  }
-
-  get hoverValue() {
-    const layerId = this.value.id;
-    return this.store.hoverValue?.[layerId]?.join(", ") ?? null;
-  }
-
-  get histogram() {
-    return this.store.getLayerHistogram(this.value);
-  }
-
-  get channels() {
-    return this.store.dataset ? this.store.dataset.channels : [];
-  }
-
-  get configurationContrast() {
-    const layerId = this.value.id;
-    const configuration = this.store.configuration;
-    if (!configuration) {
-      return null;
-    }
-    const configurationLayer = this.store.getConfigurationLayerFromId(layerId);
-    if (!configurationLayer) {
-      return null;
-    }
-    return configurationLayer.contrast;
-  }
-
-  get currentContrast() {
-    return this.value.contrast;
-  }
-
-  channelName(channel: number): string {
-    let result = channel.toString();
-    if (this.store.dataset) {
-      result = this.store.dataset.channelNames.get(channel) || result;
-    }
-    return result;
-  }
-
-  get visible() {
-    return this.value.visible;
-  }
-
-  get zMaxMergeBinding() {
-    return `shift+${this.index + 1}`;
-  }
-
-  get zMaxMergeHotkey(): IHotkey {
-    return {
-      bind: this.zMaxMergeBinding,
-      handler: () => (this.isZMaxMerge = !this.isZMaxMerge),
-      data: {
-        section: "Layer control",
-        description: `Toggle Z max-merge for layer: ${this.value.name}`,
-      },
-    };
-  }
-
-  get visibilityHotkey(): IHotkey {
-    return {
-      bind: `${this.index + 1}`,
-      handler: () => store.toggleLayerVisibility(this.value.id),
-      data: {
-        section: "Layer control",
-        description: `Show/hide layer: ${this.value.name}`,
-      },
-    };
-  }
-
-  get isZMaxMerge() {
-    return this.zSlice.type === "max-merge";
-  }
-
-  set isZMaxMerge(value: boolean) {
-    if (this.isZMaxMerge === value) {
+const isZMaxMerge = computed({
+  get: () => zSlice.value.type === "max-merge",
+  set: (value: boolean) => {
+    if ((zSlice.value.type === "max-merge") === value) {
       return;
     }
     const newZSlice = value
-      ? {
-          type: "max-merge",
-          value: null,
-        }
-      : this.alternativeZSlice;
-    this.changeProp("z", newZSlice);
-  }
+      ? { type: "max-merge" as const, value: null }
+      : alternativeZSlice.value;
+    changeProp("z", newZSlice);
+  },
+});
 
-  get zSlice() {
-    return this.value.z;
-  }
+const zMaxMergeHotkey = computed<IHotkey>(() => ({
+  bind: zMaxMergeBinding.value,
+  handler: () => (isZMaxMerge.value = !isZMaxMerge.value),
+  data: {
+    section: "Layer control",
+    description: `Toggle Z max-merge for layer: ${props.value.name}`,
+  },
+}));
 
-  @Watch("zSlice")
-  zSliceChanged() {
-    if (!this.isZMaxMerge) {
-      this.alternativeZSlice = { ...this.zSlice };
-    }
-  }
+const visibilityHotkey = computed<IHotkey>(() => ({
+  bind: `${index.value + 1}`,
+  handler: () => store.toggleLayerVisibility(props.value.id),
+  data: {
+    section: "Layer control",
+    description: `Show/hide layer: ${props.value.name}`,
+  },
+}));
 
-  set visible(value: boolean) {
-    if (this.visible === value) {
-      return;
-    }
-    this.store.toggleLayerVisibility(this.value.id);
+watch(zSlice, () => {
+  if (!isZMaxMerge.value) {
+    alternativeZSlice.value = { ...zSlice.value };
   }
+});
 
-  get channel() {
-    return this.value.channel;
-  }
-
-  set channel(value: number) {
+const channel = computed({
+  get: () => props.value.channel,
+  set: (value: number) => {
     // value can be undefined when going to another route:
     // routeMapper sets datasetId = null -> channels becomes [] -> channel = undefined
     if (value !== undefined) {
-      this.changeProp("channel", value);
+      changeProp("channel", value);
     }
-  }
+  },
+});
 
-  get maxXY() {
-    return this.store.dataset
-      ? this.store.dataset.xy.length - 1
-      : this.value.xy.value || 0;
-  }
+const maxXY = computed(() =>
+  store.dataset ? store.dataset.xy.length - 1 : props.value.xy.value || 0,
+);
 
-  get maxZ() {
-    return this.store.dataset
-      ? this.store.dataset.z.length - 1
-      : this.value.z.value || 0;
-  }
+const maxZ = computed(() =>
+  store.dataset ? store.dataset.z.length - 1 : props.value.z.value || 0,
+);
 
-  get maxTime() {
-    return this.store.dataset
-      ? this.store.dataset.time.length - 1
-      : this.value.time.value || 0;
-  }
+const maxTime = computed(() =>
+  store.dataset ? store.dataset.time.length - 1 : props.value.time.value || 0,
+);
 
-  get displayXY() {
-    return this.store.xy;
-  }
+const displayXY = computed(() => store.xy);
 
-  get displayZ() {
-    return this.store.z;
-  }
+const displayZ = computed(() => store.z);
 
-  get hasMultipleZ() {
-    return this.store.dataset && this.store.dataset.z.length > 1;
-  }
+const hasMultipleZ = computed(
+  () => store.dataset && store.dataset.z.length > 1,
+);
 
-  get displayTime() {
-    return this.store.time;
-  }
+const displayTime = computed(() => store.time);
 
-  changeProp(prop: keyof IDisplayLayer, value: any) {
-    if (this.value[prop] === value) {
-      return;
-    }
-    this.store.changeLayer({
-      layerId: this.value.id,
-      delta: {
-        [prop]: value,
-      },
+function changeProp(prop: keyof IDisplayLayer, value: any) {
+  if (props.value[prop] === value) {
+    return;
+  }
+  store.changeLayer({
+    layerId: props.value.id,
+    delta: {
+      [prop]: value,
+    },
+  });
+}
+
+function changeContrast(contrast: IContrast, syncConfiguration: boolean) {
+  if (syncConfiguration) {
+    store.saveContrastInConfiguration({
+      layerId: props.value.id,
+      contrast,
     });
-  }
-
-  changeContrast(contrast: IContrast, syncConfiguration: boolean) {
-    if (syncConfiguration) {
-      this.store.saveContrastInConfiguration({
-        layerId: this.value.id,
-        contrast,
-      });
-    } else {
-      this.store.saveContrastInView({ layerId: this.value.id, contrast });
-    }
-  }
-
-  resetContrastInView() {
-    this.store.resetContrastInView(this.value.id);
-  }
-
-  removeLayer() {
-    this.store.removeLayer(this.value.id);
+  } else {
+    store.saveContrastInView({ layerId: props.value.id, contrast });
   }
 }
+
+function resetContrastInView() {
+  store.resetContrastInView(props.value.id);
+}
+
+function removeLayer() {
+  store.removeLayer(props.value.id);
+}
+
+defineExpose({
+  alternativeZSlice,
+  index,
+  hoverValue,
+  histogram,
+  channels,
+  configurationContrast,
+  currentContrast,
+  channelName,
+  visible,
+  zMaxMergeBinding,
+  zMaxMergeHotkey,
+  visibilityHotkey,
+  isZMaxMerge,
+  zSlice,
+  channel,
+  maxXY,
+  maxZ,
+  maxTime,
+  displayXY,
+  displayZ,
+  hasMultipleZ,
+  displayTime,
+  changeProp,
+  changeContrast,
+  resetContrastInView,
+  removeLayer,
+});
 </script>
 
 <style lang="scss" scoped>

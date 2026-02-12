@@ -41,15 +41,15 @@
     </div>
   </v-container>
 </template>
-<script lang="ts">
-import { Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import { IDatasetConfiguration, areCompatibles } from "@/store/model";
 import { getDatasetCompatibility } from "@/store/GirderAPI";
-import routeMapper from "@/utils/routeMapper";
+import { useRouteMapper } from "@/utils/useRouteMapper";
 import { logError } from "@/utils/log";
 
-const Mapper = routeMapper(
+useRouteMapper(
   {},
   {
     datasetId: {
@@ -60,83 +60,94 @@ const Mapper = routeMapper(
   },
 );
 
-@Component
-export default class ConfigurationSelect extends Mapper {
-  readonly store = store;
+const props = withDefaults(
+  defineProps<{
+    title?: string;
+    folderId?: string;
+  }>(),
+  {
+    title: "Select collections",
+  },
+);
 
-  @Prop({ default: "Select collections" })
-  title!: string;
+const emit = defineEmits<{
+  (e: "submit", configurations: IDatasetConfiguration[]): void;
+  (e: "cancel"): void;
+}>();
 
-  @Prop()
-  folderId?: string;
+const compatibleConfigurations = ref<IDatasetConfiguration[]>([]);
+const selectedConfigurations = ref<IDatasetConfiguration[]>([]);
+const loading = ref(false);
+const search = ref("");
 
-  compatibleConfigurations: IDatasetConfiguration[] = [];
-  selectedConfigurations: IDatasetConfiguration[] = [];
-  loading: boolean = false;
-  search: string = "";
+const headers = [
+  { text: "Collection Name", value: "name" },
+  { text: "Collection Description", value: "description" },
+];
 
-  readonly headers = [
-    { text: "Collection Name", value: "name" },
-    { text: "Collection Description", value: "description" },
-  ];
+const dataset = computed(() => store.dataset);
 
-  get dataset() {
-    return this.store.dataset;
+async function updateCompatibleConfigurations() {
+  if (!dataset.value) {
+    compatibleConfigurations.value = [];
+    return;
   }
+  loading.value = true;
+  try {
+    // Find all configurations that can be linked to the dataset but are not linked yet
+    const views = await store.api.findDatasetViews({
+      datasetId: dataset.value.id,
+    });
+    const linkedConfigurationIds = new Set(
+      views.map((v: any) => v.configurationId),
+    );
 
-  @Watch("dataset")
-  @Watch("folderId")
-  async updateCompatibleConfigurations() {
-    if (!this.dataset) {
-      this.compatibleConfigurations = [];
-      return;
-    }
-    this.loading = true;
-    try {
-      // Find all configurations that can be linked to the dataset but are not linked yet
-      const views = await this.store.api.findDatasetViews({
-        datasetId: this.dataset.id,
-      });
-      const linkedConfigurationIds = new Set(
-        views.map((v: any) => v.configurationId),
-      );
+    // Get all collections using the new endpoint (like CollectionList.vue does)
+    // Use folderId if provided, otherwise defaults to user's private folder
+    const allConfigurations = await store.api.getAllConfigurations(
+      props.folderId,
+    );
 
-      // Get all collections using the new endpoint (like CollectionList.vue does)
-      // Use folderId if provided, otherwise defaults to user's private folder
-      const allConfigurations = await this.store.api.getAllConfigurations(
-        this.folderId,
-      );
-
-      // Filter for compatible configurations using client-side logic
-      const datasetCompatibility = getDatasetCompatibility(this.dataset);
-      const compatibleConfigurations = allConfigurations.filter((conf) => {
-        // Skip if already linked
-        if (linkedConfigurationIds.has(conf.id)) {
-          return false;
-        }
-        // Check compatibility using the same logic as AddDatasetToCollection
-        return areCompatibles(conf.compatibility, datasetCompatibility);
-      });
-
-      this.compatibleConfigurations = compatibleConfigurations;
-    } catch (error) {
-      logError("Failed to fetch compatible configurations:", error);
-      this.compatibleConfigurations = [];
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  mounted() {
-    this.updateCompatibleConfigurations();
-  }
-
-  submit() {
-    this.$emit("submit", this.selectedConfigurations);
-  }
-
-  cancel() {
-    this.$emit("cancel");
+    // Filter for compatible configurations using client-side logic
+    const datasetCompatibility = getDatasetCompatibility(dataset.value);
+    compatibleConfigurations.value = allConfigurations.filter((conf) => {
+      // Skip if already linked
+      if (linkedConfigurationIds.has(conf.id)) {
+        return false;
+      }
+      // Check compatibility using the same logic as AddDatasetToCollection
+      return areCompatibles(conf.compatibility, datasetCompatibility);
+    });
+  } catch (error) {
+    logError("Failed to fetch compatible configurations:", error);
+    compatibleConfigurations.value = [];
+  } finally {
+    loading.value = false;
   }
 }
+
+watch(dataset, updateCompatibleConfigurations);
+watch(() => props.folderId, updateCompatibleConfigurations);
+
+onMounted(updateCompatibleConfigurations);
+
+function submit() {
+  emit("submit", selectedConfigurations.value);
+}
+
+function cancel() {
+  emit("cancel");
+}
+
+defineExpose({
+  compatibleConfigurations,
+  selectedConfigurations,
+  loading,
+  search,
+  headers,
+  dataset,
+  updateCompatibleConfigurations,
+  submit,
+  cancel,
+});
 </script>

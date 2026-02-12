@@ -82,7 +82,7 @@
         </div>
         <template v-if="option.configuring">
           <multi-source-configuration
-            ref="configuration"
+            ref="configurationRef"
             :datasetId="option.uploadedDatasetId"
             :autoDatasetRoute="false"
             @log="option.configurationLogs = $event"
@@ -102,8 +102,8 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 
 import { getDatasetCompatibility } from "@/store/GirderAPI";
 import {
@@ -135,7 +135,6 @@ type TAddDatasetOption =
       type: "add";
       datasets: IDataset[];
       warnings: string[];
-      // Enable navigation in the component
       datasetSelectLocation: IGirderSelectAble | null;
     };
 
@@ -158,228 +157,231 @@ function defaultDatasetAddOption(): TAddDatasetOption {
   };
 }
 
-@Component({
-  components: { CustomFileManager, MultiSourceConfiguration, NewDataset },
-})
-export default class AddDatasetToCollection extends Vue {
-  readonly girderResources = girderResources;
-  readonly store = store;
+const props = defineProps<{
+  collection: IDatasetConfiguration;
+}>();
 
-  @Prop({ required: true })
-  collection!: IDatasetConfiguration;
+const emit = defineEmits<{
+  (e: "error", msg: string): void;
+  (e: "done"): void;
+  (e: "warning", msg: string): void;
+  (e: "addedDatasets", datasetIds: string[], datasetViews: any[]): void;
+}>();
 
-  option: TAddDatasetOption = defaultDatasetUploadOption();
-  uploadLocation: IGirderLocation | null = null;
+const option = ref<TAddDatasetOption>(defaultDatasetUploadOption());
+const uploadLocation = ref<IGirderLocation | null>(null);
+const configurationRef = ref<InstanceType<
+  typeof MultiSourceConfiguration
+> | null>(null);
 
-  $refs!: {
-    configuration?: MultiSourceConfiguration;
-  };
-
-  async mounted() {
-    try {
-      this.uploadLocation = await this.store.api.getUserPrivateFolder();
-    } catch (error) {
-      this.uploadLocation = this.store.girderUser;
-    }
+onMounted(async () => {
+  try {
+    uploadLocation.value = await store.api.getUserPrivateFolder();
+  } catch (error) {
+    uploadLocation.value = store.girderUser;
   }
+});
 
-  get addDatasetOptionType(): TAddDatasetOption["type"] {
-    return this.option.type;
-  }
-
-  set addDatasetOptionType(type: TAddDatasetOption["type"]) {
+const addDatasetOptionType = computed({
+  get: (): TAddDatasetOption["type"] => option.value.type,
+  set: (type: TAddDatasetOption["type"]) => {
     switch (type) {
       case "add":
-        this.option = defaultDatasetAddOption();
+        option.value = defaultDatasetAddOption();
         break;
       case "upload":
-        this.option = defaultDatasetUploadOption();
+        option.value = defaultDatasetUploadOption();
         break;
     }
+  },
+});
+
+watch(
+  () => props.collection,
+  () => {
+    option.value = defaultDatasetUploadOption();
+  },
+);
+
+async function selectAddDatasetFolder(selectedLocations: IGirderSelectAble[]) {
+  const opt = option.value;
+  if (opt.type !== "add") {
+    return;
+  }
+  if (selectedLocations.length === 0 || !props.collection) {
+    opt.datasets = [];
+    opt.warnings = [];
+    return;
   }
 
-  @Watch("collection")
-  async collectionUpdated() {
-    this.option = defaultDatasetUploadOption();
-  }
+  const currentWarnings: string[] = [];
 
-  async selectAddDatasetFolder(selectedLocations: IGirderSelectAble[]) {
-    const option = this.option;
-    if (option.type !== "add") {
-      return;
-    }
-    if (selectedLocations.length === 0 || !this.collection) {
-      option.datasets = [];
-      option.warnings = [];
-      return;
-    }
-
-    const currentWarnings: string[] = [];
-
-    // Find selected items that are datasets
-    const selectedDatasets: IDataset[] = [];
-    await Promise.all(
-      selectedLocations.map(async (location) => {
-        if (!isDatasetFolder(location)) {
-          return;
-        }
-        const dataset = await this.girderResources.getDataset({
-          id: location._id,
-        });
-        if (!dataset) {
-          return;
-        }
-        selectedDatasets.push(dataset);
-      }),
-    );
-
-    if (selectedDatasets.length !== selectedLocations.length) {
-      const nNotDataset = selectedLocations.length - selectedDatasets.length;
-      currentWarnings.push(nNotDataset + " selected items are not datasests");
-    }
-
-    // Early return if no selected dataset
-    if (selectedDatasets.length === 0) {
-      option.datasets = [];
-      option.warnings = currentWarnings;
-      return;
-    }
-
-    // Filter compatible datasets
-    const configCompat = this.collection.compatibility;
-    const configViews = await this.store.api.findDatasetViews({
-      configurationId: this.collection.id,
-    });
-    const excludeDatasetIds = new Set(
-      configViews.map((view: IDatasetView) => view.datasetId),
-    );
-    const compatibleDatasets = selectedDatasets.filter(
-      (dataset) =>
-        !excludeDatasetIds.has(dataset.id) &&
-        areCompatibles(configCompat, getDatasetCompatibility(dataset)),
-    );
-
-    if (compatibleDatasets.length !== selectedDatasets.length) {
-      const nNotCompatible =
-        selectedDatasets.length - compatibleDatasets.length;
-      currentWarnings.push(
-        nNotCompatible +
-          " selected items are not compatible with the current configuration",
-      );
-    }
-
-    // Return the dataset and warnings
-    option.datasets = compatibleDatasets;
-    option.warnings = currentWarnings;
-  }
-
-  get canAddDatasetToCollection(): boolean {
-    if (this.collection === null) {
-      return false;
-    }
-    switch (this.option.type) {
-      case "add":
-        return this.option.datasets.length > 0;
-      case "upload":
-        return false;
-    }
-  }
-
-  async addDatasetToCollectionUploaded(datasetId: string) {
-    if (this.option.type !== "upload") {
-      return;
-    }
-    this.option.uploadedDatasetId = datasetId;
-    this.option.configurationLogs = "";
-    this.option.configuring = true;
-
-    // Automatic generation of the JSON
-    if (!this.option.editVariables) {
-      await Vue.nextTick();
-      const config = this.$refs.configuration;
-      if (!config) {
-        logError(
-          "MultiSourceConfiguration component not mounted during configuration of new dataset",
-        );
-        this.option.editVariables = true;
+  const selectedDatasets: IDataset[] = [];
+  await Promise.all(
+    selectedLocations.map(async (location) => {
+      if (!isDatasetFolder(location)) {
         return;
       }
-      // Ensure that the component is initialized
-      await (config.initialized || config.initialize());
-      await config.submit();
-    }
+      const dataset = await girderResources.getDataset({
+        id: location._id,
+      });
+      if (!dataset) {
+        return;
+      }
+      selectedDatasets.push(dataset);
+    }),
+  );
+
+  if (selectedDatasets.length !== selectedLocations.length) {
+    const nNotDataset = selectedLocations.length - selectedDatasets.length;
+    currentWarnings.push(nNotDataset + " selected items are not datasests");
   }
 
-  async addDatasetConfigurationDone(jsonId: string | null) {
-    if (this.option.type !== "upload" || !this.option.uploadedDatasetId) {
-      return;
-    }
-    this.option.configuring = false;
-    const datasetId = this.option.uploadedDatasetId;
-    if (!jsonId) {
-      logError("Failed to generate JSON during configuration of new dataset");
-      this.option.editVariables = true;
-      return;
-    }
-    // Check if dataset is compatible with configuration
-    const configCompat = this.collection?.compatibility;
-    if (!configCompat) {
-      this.$emit(
-        "error",
-        "DatasetConfiguration missing after multi source configuration of dataset",
-      );
-      this.$emit("done");
-      return;
-    }
-    const dataset = await this.girderResources.getDataset({ id: datasetId });
-    if (!dataset) {
-      this.$emit(
-        "error",
-        "Dataset missing after multi source configuration of dataset",
-      );
-      this.$emit("done");
-      return;
-    }
-    const datasetCompat = getDatasetCompatibility(dataset);
-    if (!areCompatibles(configCompat, datasetCompat)) {
-      this.$emit("warning", "Incompatible dataset uploaded");
-      this.$emit("done");
-      return;
-    }
-    // Set the dataset now that multi-source is available
-    await this.store.setSelectedDataset(datasetId);
-    this.addDatasetToCollection();
+  if (selectedDatasets.length === 0) {
+    opt.datasets = [];
+    opt.warnings = currentWarnings;
+    return;
   }
 
-  async addDatasetToCollection() {
-    if (!this.collection) {
-      return;
-    }
-    const configurationId = this.collection.id;
-    const datasetIds: string[] = [];
+  const configCompat = props.collection.compatibility;
+  const configViews = await store.api.findDatasetViews({
+    configurationId: props.collection.id,
+  });
+  const excludeDatasetIds = new Set(
+    configViews.map((view: IDatasetView) => view.datasetId),
+  );
+  const compatibleDatasets = selectedDatasets.filter(
+    (dataset) =>
+      !excludeDatasetIds.has(dataset.id) &&
+      areCompatibles(configCompat, getDatasetCompatibility(dataset)),
+  );
 
-    switch (this.option.type) {
-      case "add":
-        this.option.datasets.forEach((d) => datasetIds.push(d.id));
-        break;
-      case "upload":
-        datasetIds.push(this.option.uploadedDatasetId!);
-        break;
-    }
-
-    const promises = datasetIds.map((datasetId) =>
-      this.store.createDatasetView({
-        datasetId,
-        configurationId,
-      }),
+  if (compatibleDatasets.length !== selectedDatasets.length) {
+    const nNotCompatible = selectedDatasets.length - compatibleDatasets.length;
+    currentWarnings.push(
+      nNotCompatible +
+        " selected items are not compatible with the current configuration",
     );
-    const datasetViews = await Promise.all(promises);
+  }
 
-    this.$emit("addedDatasets", datasetIds, datasetViews);
+  opt.datasets = compatibleDatasets;
+  opt.warnings = currentWarnings;
+}
 
-    this.option = defaultDatasetUploadOption();
+const canAddDatasetToCollection = computed<boolean>(() => {
+  if (props.collection === null) {
+    return false;
+  }
+  switch (option.value.type) {
+    case "add":
+      return option.value.datasets.length > 0;
+    case "upload":
+      return false;
+  }
+});
+
+async function addDatasetToCollectionUploaded(datasetId: string) {
+  if (option.value.type !== "upload") {
+    return;
+  }
+  option.value.uploadedDatasetId = datasetId;
+  option.value.configurationLogs = "";
+  option.value.configuring = true;
+
+  if (!option.value.editVariables) {
+    await nextTick();
+    const config = configurationRef.value;
+    if (!config) {
+      logError(
+        "MultiSourceConfiguration component not mounted during configuration of new dataset",
+      );
+      option.value.editVariables = true;
+      return;
+    }
+    await (config.initialized || config.initialize());
+    await config.submit();
   }
 }
+
+async function addDatasetConfigurationDone(jsonId: string | null) {
+  if (option.value.type !== "upload" || !option.value.uploadedDatasetId) {
+    return;
+  }
+  option.value.configuring = false;
+  const datasetId = option.value.uploadedDatasetId;
+  if (!jsonId) {
+    logError("Failed to generate JSON during configuration of new dataset");
+    option.value.editVariables = true;
+    return;
+  }
+  const configCompat = props.collection?.compatibility;
+  if (!configCompat) {
+    emit(
+      "error",
+      "DatasetConfiguration missing after multi source configuration of dataset",
+    );
+    emit("done");
+    return;
+  }
+  const dataset = await girderResources.getDataset({ id: datasetId });
+  if (!dataset) {
+    emit(
+      "error",
+      "Dataset missing after multi source configuration of dataset",
+    );
+    emit("done");
+    return;
+  }
+  const datasetCompat = getDatasetCompatibility(dataset);
+  if (!areCompatibles(configCompat, datasetCompat)) {
+    emit("warning", "Incompatible dataset uploaded");
+    emit("done");
+    return;
+  }
+  await store.setSelectedDataset(datasetId);
+  addDatasetToCollection();
+}
+
+async function addDatasetToCollection() {
+  if (!props.collection) {
+    return;
+  }
+  const configurationId = props.collection.id;
+  const datasetIds: string[] = [];
+
+  switch (option.value.type) {
+    case "add":
+      option.value.datasets.forEach((d) => datasetIds.push(d.id));
+      break;
+    case "upload":
+      datasetIds.push(option.value.uploadedDatasetId!);
+      break;
+  }
+
+  const promises = datasetIds.map((datasetId) =>
+    store.createDatasetView({
+      datasetId,
+      configurationId,
+    }),
+  );
+  const datasetViews = await Promise.all(promises);
+
+  emit("addedDatasets", datasetIds, datasetViews);
+
+  option.value = defaultDatasetUploadOption();
+}
+
+defineExpose({
+  option,
+  uploadLocation,
+  configurationRef,
+  addDatasetOptionType,
+  canAddDatasetToCollection,
+  selectAddDatasetFolder,
+  addDatasetToCollectionUploaded,
+  addDatasetConfigurationDone,
+  addDatasetToCollection,
+});
 </script>
 
 <style lang="scss">

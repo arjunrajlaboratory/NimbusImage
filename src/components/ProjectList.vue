@@ -206,133 +206,151 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 import projects from "@/store/projects";
 import { IProject, getProjectStatusColor } from "@/store/model";
 import { formatDateString } from "@/utils/date";
 
-@Component
-export default class ProjectList extends Vue {
-  readonly store = store;
-  readonly projects = projects;
+const loading = ref(true);
+const searchQuery = ref("");
 
-  loading = true;
-  searchQuery = "";
+const showCreateDialog = ref(false);
+const newProjectName = ref("");
+const newProjectDescription = ref("");
+const creating = ref(false);
 
-  showCreateDialog = false;
-  newProjectName = "";
-  newProjectDescription = "";
-  creating = false;
+const showEditDialog = ref(false);
+const editingProject = ref<IProject | null>(null);
+const editProjectName = ref("");
+const editProjectDescription = ref("");
+const saving = ref(false);
 
-  showEditDialog = false;
-  editingProject: IProject | null = null;
-  editProjectName = "";
-  editProjectDescription = "";
-  saving = false;
+const showDeleteDialog = ref(false);
+const projectToDelete = ref<IProject | null>(null);
+const deleting = ref(false);
 
-  showDeleteDialog = false;
-  projectToDelete: IProject | null = null;
-  deleting = false;
+const vm = getCurrentInstance()!.proxy;
 
-  formatDateString = formatDateString;
-  getProjectStatusColor = getProjectStatusColor;
-
-  async mounted() {
-    await this.fetchProjects();
+const filteredProjects = computed<IProject[]>(() => {
+  const allProjects = projects.projects;
+  if (!searchQuery.value) {
+    return allProjects;
   }
 
-  get filteredProjects(): IProject[] {
-    const allProjects = this.projects.projects;
-    if (!this.searchQuery) {
-      return allProjects;
-    }
+  const query = searchQuery.value.toLowerCase();
+  return allProjects.filter(
+    (project) =>
+      project.name.toLowerCase().includes(query) ||
+      (project.description &&
+        project.description.toLowerCase().includes(query)),
+  );
+});
 
-    const query = this.searchQuery.toLowerCase();
-    return allProjects.filter(
-      (project) =>
-        project.name.toLowerCase().includes(query) ||
-        (project.description &&
-          project.description.toLowerCase().includes(query)),
-    );
-  }
-
-  async fetchProjects() {
-    this.loading = true;
-    try {
-      await this.projects.fetchProjects();
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  async createProject() {
-    if (!this.newProjectName.trim()) return;
-
-    this.creating = true;
-    try {
-      await this.projects.createProject({
-        name: this.newProjectName.trim(),
-        description: this.newProjectDescription.trim(),
-      });
-      this.showCreateDialog = false;
-      this.newProjectName = "";
-      this.newProjectDescription = "";
-    } finally {
-      this.creating = false;
-    }
-  }
-
-  editProject(project: IProject) {
-    this.editingProject = project;
-    this.editProjectName = project.name;
-    this.editProjectDescription = project.description;
-    this.showEditDialog = true;
-  }
-
-  async saveProject() {
-    if (!this.editingProject || !this.editProjectName.trim()) return;
-
-    this.saving = true;
-    try {
-      await this.projects.updateProject({
-        projectId: this.editingProject.id,
-        name: this.editProjectName.trim(),
-        description: this.editProjectDescription.trim(),
-      });
-      this.showEditDialog = false;
-      this.editingProject = null;
-    } finally {
-      this.saving = false;
-    }
-  }
-
-  confirmDeleteProject(project: IProject) {
-    this.projectToDelete = project;
-    this.showDeleteDialog = true;
-  }
-
-  async deleteProject() {
-    if (!this.projectToDelete) return;
-
-    this.deleting = true;
-    try {
-      await this.projects.deleteProject(this.projectToDelete.id);
-      this.showDeleteDialog = false;
-      this.projectToDelete = null;
-    } finally {
-      this.deleting = false;
-    }
-  }
-
-  navigateToProject(project: IProject) {
-    this.$router.push({
-      name: "project",
-      params: { projectId: project.id },
-    });
+async function fetchProjects() {
+  loading.value = true;
+  try {
+    await projects.fetchProjects();
+  } finally {
+    loading.value = false;
   }
 }
+
+async function createProject() {
+  if (!newProjectName.value.trim()) return;
+
+  creating.value = true;
+  try {
+    await projects.createProject({
+      name: newProjectName.value.trim(),
+      description: newProjectDescription.value.trim(),
+    });
+    showCreateDialog.value = false;
+    newProjectName.value = "";
+    newProjectDescription.value = "";
+  } finally {
+    creating.value = false;
+  }
+}
+
+function editProject(project: IProject) {
+  editingProject.value = project;
+  editProjectName.value = project.name;
+  editProjectDescription.value = project.description;
+  showEditDialog.value = true;
+}
+
+async function saveProject() {
+  if (!editingProject.value || !editProjectName.value.trim()) return;
+
+  saving.value = true;
+  try {
+    await projects.updateProject({
+      projectId: editingProject.value.id,
+      name: editProjectName.value.trim(),
+      description: editProjectDescription.value.trim(),
+    });
+    showEditDialog.value = false;
+    editingProject.value = null;
+  } finally {
+    saving.value = false;
+  }
+}
+
+function confirmDeleteProject(project: IProject) {
+  projectToDelete.value = project;
+  showDeleteDialog.value = true;
+}
+
+async function deleteProject() {
+  if (!projectToDelete.value) return;
+
+  deleting.value = true;
+  try {
+    await projects.deleteProject(projectToDelete.value.id);
+    showDeleteDialog.value = false;
+    projectToDelete.value = null;
+  } finally {
+    deleting.value = false;
+  }
+}
+
+function navigateToProject(project: IProject) {
+  vm.$router.push({
+    name: "project",
+    params: { projectId: project.id },
+  });
+}
+
+onMounted(async () => {
+  await fetchProjects();
+});
+
+defineExpose({
+  loading,
+  searchQuery,
+  showCreateDialog,
+  newProjectName,
+  newProjectDescription,
+  creating,
+  showEditDialog,
+  editingProject,
+  editProjectName,
+  editProjectDescription,
+  saving,
+  showDeleteDialog,
+  projectToDelete,
+  deleting,
+  filteredProjects,
+  fetchProjects,
+  createProject,
+  editProject,
+  saveProject,
+  confirmDeleteProject,
+  deleteProject,
+  navigateToProject,
+});
 </script>
 
 <style lang="scss" scoped>

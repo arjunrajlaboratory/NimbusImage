@@ -6,8 +6,10 @@ import "reflect-metadata";
 import "./registerServiceWorker";
 import vuetify from "./plugins/vuetify";
 import VueAsyncComputed from "vue-async-computed";
-import "./plugins/router";
+import VueRouter from "vue-router";
 import "./plugins/resize";
+
+Vue.use(VueRouter);
 
 import main, { store } from "./store";
 
@@ -15,7 +17,6 @@ import routes from "./views";
 import App from "./App.vue";
 
 import "./style.scss";
-import VueRouter from "vue-router";
 
 // Mousetrap is configured for further imports (no need to import record plugin again)
 import "mousetrap";

@@ -134,8 +134,8 @@
   </v-expansion-panels>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, nextTick, getCurrentInstance } from "vue";
 import draggable from "vuedraggable";
 import store from "@/store";
 import {
@@ -152,141 +152,133 @@ import ToolTypeSelection from "@/tools/creation/ToolTypeSelection.vue";
 import ToolItem from "./ToolItem.vue";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
-@Component({
-  components: {
-    ToolCreation,
-    ToolTypeSelection,
-    ToolItem,
-    AnnotationWorkerMenu,
-    SamToolMenu,
-    CircleToDotMenu,
-    draggable,
-  },
-})
-export default class Toolset extends Vue {
-  readonly store = store;
 
-  panels: number = 0;
+const vm = getCurrentInstance()!.proxy;
 
-  get selectedToolId() {
-    return this.store.selectedTool?.configuration.id || null;
-  }
+const panels = ref<number>(0);
 
-  set selectedToolId(id: string | null) {
-    this.store.setSelectedToolId(id || null);
-  }
+const selectedToolId = computed({
+  get: () => store.selectedTool?.configuration.id || null,
+  set: (id: string | null) => store.setSelectedToolId(id || null),
+});
 
-  get tools() {
-    return this.store.tools;
-  }
+const tools = computed(() => store.tools);
 
-  get toolsetTools() {
-    return this.configuration?.tools || [];
-  }
+const configuration = computed(() => store.configuration);
 
-  get configuration() {
-    return this.store.configuration;
-  }
+const toolsetTools = computed(() => configuration.value?.tools || []);
 
-  get selectedTool(): IToolConfiguration | null {
-    return this.store.selectedTool?.configuration ?? null;
-  }
+const selectedTool = computed<IToolConfiguration | null>(
+  () => store.selectedTool?.configuration ?? null,
+);
 
-  get isLoggedIn() {
-    return this.store.isLoggedIn;
-  }
+const isLoggedIn = computed(() => store.isLoggedIn);
 
-  toolCreationDialogOpen: boolean = false;
-  toolTypeDialogOpen: boolean = false;
-  selectedToolType: any = null;
+const toolCreationDialogOpen = ref(false);
+const toolTypeDialogOpen = ref(false);
+const selectedToolType = ref<any>(null);
 
-  onToolCreationDone() {
-    // The child emitted "done" meaning the dialog is closing/cancelled/finished
-    this.toolCreationDialogOpen = false;
-    this.selectedToolType = null; // Now is the right time to clear it
-  }
+function onToolCreationDone() {
+  // The child emitted "done" meaning the dialog is closing/cancelled/finished
+  toolCreationDialogOpen.value = false;
+  selectedToolType.value = null; // Now is the right time to clear it
+}
 
-  onToolCreationDialogInput(newVal: boolean) {
-    this.toolCreationDialogOpen = newVal;
-    if (!newVal) {
-      // The dialog was just closed by clicking outside or ESC
-      this.selectedToolType = null;
-    }
-  }
-
-  handleToolTypeSelected(toolType: any) {
-    this.selectedToolType = toolType;
-    this.toolTypeDialogOpen = false;
-    this.toolCreationDialogOpen = true;
-  }
-
-  getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
-    const propDesc: string[][] = [["Name", tool.name]];
-
-    if (tool.values) {
-      const { values } = tool;
-
-      if (values.selectionType && values.selectionType.text) {
-        propDesc.push(["Selection type", values.selectionType.text]);
-      }
-
-      if (values.annotation) {
-        propDesc.push([
-          "Shape",
-          AnnotationNames[values.annotation.shape as AnnotationShape],
-        ]);
-        if (values.annotation.tags && values.annotation.tags.length) {
-          propDesc.push(["Tag(s)", values.annotation.tags.join(", ")]);
-        }
-      }
-      if (
-        values.connectTo &&
-        values.connectTo.tags &&
-        values.connectTo.tags.length
-      ) {
-        propDesc.push(["Connect to tags", values.connectTo.tags.join(", ")]);
-        const layerId = values.connectTo.layer;
-        const layer = this.store.getLayerFromId(layerId);
-        if (layer) {
-          propDesc.push(["Connect only on layer", layer.name]);
-        }
-      }
-    }
-
-    if (tool.hotkey !== null) {
-      propDesc.push(["Hotkey", tool.hotkey]);
-    }
-
-    return propDesc;
-  }
-
-  onWorkerMenuLoaded() {
-    this.$nextTick(() => {
-      // Access the menu component with the ref and cast it to any
-      const menuRef = this.$refs.annotationMenu as any;
-
-      // Handle case where ref is an array (multiple components with same ref)
-      // Note: in my own testing, I found that there were two components, and
-      // the first one was the one that needed to be updated.
-      if (Array.isArray(menuRef)) {
-        menuRef.forEach((menuItem) => {
-          if (menuItem) {
-            if (typeof menuItem.updateDimensions === "function") {
-              menuItem.updateDimensions();
-            }
-          }
-        });
-      }
-      // Handle case where ref is a single component
-      else if (menuRef) {
-        // Try updateDimensions first
-        if (typeof menuRef.updateDimensions === "function") {
-          menuRef.updateDimensions();
-        }
-      }
-    });
+function onToolCreationDialogInput(newVal: boolean) {
+  toolCreationDialogOpen.value = newVal;
+  if (!newVal) {
+    // The dialog was just closed by clicking outside or ESC
+    selectedToolType.value = null;
   }
 }
+
+function handleToolTypeSelected(toolType: any) {
+  selectedToolType.value = toolType;
+  toolTypeDialogOpen.value = false;
+  toolCreationDialogOpen.value = true;
+}
+
+function getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
+  const propDesc: string[][] = [["Name", tool.name]];
+
+  if (tool.values) {
+    const { values } = tool;
+
+    if (values.selectionType && values.selectionType.text) {
+      propDesc.push(["Selection type", values.selectionType.text]);
+    }
+
+    if (values.annotation) {
+      propDesc.push([
+        "Shape",
+        AnnotationNames[values.annotation.shape as AnnotationShape],
+      ]);
+      if (values.annotation.tags && values.annotation.tags.length) {
+        propDesc.push(["Tag(s)", values.annotation.tags.join(", ")]);
+      }
+    }
+    if (
+      values.connectTo &&
+      values.connectTo.tags &&
+      values.connectTo.tags.length
+    ) {
+      propDesc.push(["Connect to tags", values.connectTo.tags.join(", ")]);
+      const layerId = values.connectTo.layer;
+      const layer = store.getLayerFromId(layerId);
+      if (layer) {
+        propDesc.push(["Connect only on layer", layer.name]);
+      }
+    }
+  }
+
+  if (tool.hotkey !== null) {
+    propDesc.push(["Hotkey", tool.hotkey]);
+  }
+
+  return propDesc;
+}
+
+function onWorkerMenuLoaded() {
+  nextTick(() => {
+    // Access the menu component with the ref and cast it to any
+    const menuRef = vm.$refs.annotationMenu as any;
+
+    // Handle case where ref is an array (multiple components with same ref)
+    if (Array.isArray(menuRef)) {
+      menuRef.forEach((menuItem: any) => {
+        if (menuItem) {
+          if (typeof menuItem.updateDimensions === "function") {
+            menuItem.updateDimensions();
+          }
+        }
+      });
+    }
+    // Handle case where ref is a single component
+    else if (menuRef) {
+      if (typeof menuRef.updateDimensions === "function") {
+        menuRef.updateDimensions();
+      }
+    }
+  });
+}
+
+defineExpose({
+  panels,
+  selectedToolId,
+  tools,
+  toolsetTools,
+  configuration,
+  selectedTool,
+  isLoggedIn,
+  toolCreationDialogOpen,
+  toolTypeDialogOpen,
+  selectedToolType,
+  onToolCreationDone,
+  onToolCreationDialogInput,
+  handleToolTypeSelected,
+  getToolPropertiesDescription,
+  onWorkerMenuLoaded,
+});
 </script>
 <style scoped>
 .tight-list .v-list-item {

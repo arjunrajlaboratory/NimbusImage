@@ -8,7 +8,7 @@
           :template="selectedTemplate"
           :defaultValues="selectedDefaultValues"
           v-model="toolValues"
-          ref="toolConfiguration"
+          ref="toolConfigurationRef"
         />
         <v-container v-if="selectedTemplate" class="pa-4">
           <!-- Tool name with autofill -->
@@ -61,8 +61,9 @@
     </v-card>
   </div>
 </template>
-<script lang="ts">
-import { Vue, Component, Watch, Prop } from "vue-property-decorator";
+
+<script setup lang="ts">
+import { ref, watch, computed } from "vue";
 import store from "@/store";
 import propertiesStore from "@/store/properties";
 import { IToolConfiguration, IToolTemplate } from "@/store/model";
@@ -79,162 +80,171 @@ const defaultValues = {
   description: "",
 };
 
-// Popup for new tool configuration
-@Component({
-  components: {
-    ToolConfiguration,
-    ToolTypeSelection,
-    HotkeySelection,
+const props = withDefaults(
+  defineProps<{
+    open?: boolean;
+    initialSelectedTool?: TToolTypeSelectionValue | null;
+  }>(),
+  {
+    open: false,
+    initialSelectedTool: null,
   },
-})
-export default class ToolCreation extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertiesStore;
+);
 
-  toolValues: Record<string, any> = { ...defaultValues };
+const emit = defineEmits<{
+  (e: "done"): void;
+}>();
 
-  selectedTemplate: IToolTemplate | null = null;
-  selectedDefaultValues: any | null = null;
+const toolValues = ref<Record<string, any>>({ ...defaultValues });
+const selectedTemplate = ref<IToolTemplate | null>(null);
+const selectedDefaultValues = ref<any | null>(null);
+const userToolName = ref(false);
+const toolName = ref("New Tool");
+const hotkey = ref<string | null>(null);
+const _selectedTool = ref<TToolTypeSelectionValue | null>(null);
+const toolConfigurationRef = ref<InstanceType<typeof ToolConfiguration> | null>(
+  null,
+);
 
-  errorMessages: string[] = [];
-  successMessages: string[] = [];
+// Computed getter/setter for selectedTool
+const selectedTool = computed({
+  get: (): TToolTypeSelectionValue | null => {
+    return selectedTemplate.value ? _selectedTool.value : null;
+  },
+  set: (value: TToolTypeSelectionValue | null) => {
+    _selectedTool.value = value;
+    selectedTemplate.value = value?.template ?? null;
+    selectedDefaultValues.value = value?.defaultValues ?? null;
+  },
+});
 
-  userToolName = false;
-  toolName = "New Tool";
-
-  hotkey: string | null = null;
-
-  @Prop({ default: false })
-  readonly open!: boolean;
-
-  @Prop({ default: null })
-  readonly initialSelectedTool!: TToolTypeSelectionValue | null;
-
-  private _selectedTool: TToolTypeSelectionValue | null = null;
-
-  @Watch("initialSelectedTool", { immediate: true })
-  onInitialSelectedToolChange(newVal: TToolTypeSelectionValue | null) {
-    this.selectedTool = newVal;
+function createTool() {
+  if (selectedTemplate.value === null) {
+    return;
   }
 
-  createTool() {
-    if (this.selectedTemplate === null) {
-      return;
-    }
+  const tool: IToolConfiguration = {
+    id: uuidv4(),
+    name: toolName.value || "Unnamed Tool",
+    template: selectedTemplate.value,
+    values: toolValues.value,
+    type: selectedTemplate.value.type,
+    hotkey: hotkey.value,
+  };
 
-    const tool: IToolConfiguration = {
-      id: uuidv4(),
-      name: this.toolName || "Unnamed Tool",
-      template: this.selectedTemplate,
-      values: this.toolValues,
-      type: this.selectedTemplate.type,
-      hotkey: this.hotkey,
-    };
+  // Add this tool to the current toolset
+  store.addToolToConfiguration(tool);
 
-    // Add this tool to the current toolset
-    this.store.addToolToConfiguration(tool);
-
-    this.close();
-  }
-
-  set selectedTool(value) {
-    this._selectedTool = value;
-    this.selectedTemplate = value?.template ?? null;
-    this.selectedDefaultValues = value?.defaultValues ?? null;
-  }
-
-  get selectedTool(): TToolTypeSelectionValue | null {
-    return this.selectedTemplate ? this._selectedTool : null;
-  }
-
-  @Watch("selectedTemplate")
-  @Watch("toolValues", { deep: true })
-  @Watch("userToolName")
-  updateAutoToolName() {
-    if (this.userToolName) {
-      return;
-    }
-    const toolNameStrings: string[] = [];
-    const dockerImage = this.toolValues?.image?.image;
-    if (dockerImage) {
-      const defaultToolName = this.propertyStore.defaultToolName(dockerImage);
-      if (defaultToolName) {
-        toolNameStrings.push(defaultToolName);
-      }
-    }
-    if (this.toolValues?.annotation?.tags) {
-      toolNameStrings.push(this.toolValues.annotation.tags.join(", "));
-    }
-    if (this.toolValues?.model) {
-      toolNameStrings.push(this.toolValues.model.text);
-    }
-    // AR: I removed the shortName from the tool name because I thought it made the tool name cluttered,
-    // but I'm keeping it here in case we ever want to use it again.
-    // if (this.selectedTemplate?.shortName) {
-    //   toolNameStrings.push(`(${this.selectedTemplate.shortName})`);
-    // }
-    if (this.toolValues?.action) {
-      toolNameStrings.push(this.toolValues.action.text);
-    }
-    if (this.selectedTemplate?.type === "tagging" && this.toolValues?.tags) {
-      toolNameStrings.push(this.toolValues.tags.join(", "));
-    }
-    if (this.toolValues?.parentAnnotation && this.toolValues?.childAnnotation) {
-      const parentValues = this.toolValues.parentAnnotation;
-      const childValues = this.toolValues.childAnnotation;
-      const newString =
-        (parentValues.tags.join(", ") ||
-          (parentValues.tagsInclusive ? "All" : "No tag")) +
-        " to " +
-        (childValues.tags.join(", ") ||
-          (childValues.tagsInclusive ? "All" : "No tag"));
-      toolNameStrings.push(newString);
-    }
-    if (toolNameStrings.length > 0) {
-      this.toolName = toolNameStrings.join(" ");
-      return;
-    }
-    if (this._selectedTool?.selectedItem?.text) {
-      toolNameStrings.push(this._selectedTool?.selectedItem?.text);
-    }
-    if (this.selectedTemplate) {
-      toolNameStrings.push(this.selectedTemplate.name);
-    }
-    if (toolNameStrings.length > 0) {
-      this.toolName = toolNameStrings.join(" ");
-      return;
-    }
-    this.toolName = "New Tool";
-  }
-
-  @Watch("open")
-  onOpenChange(newValue: boolean) {
-    if (!newValue) {
-      // Only reset when closing
-      this.reset();
-    }
-  }
-
-  reset() {
-    this.userToolName = false;
-    this.toolName = "New Tool";
-    this.selectedTemplate = null;
-    this.selectedDefaultValues = null;
-    this.hotkey = null;
-
-    if (!this.$refs.toolConfiguration) {
-      return;
-    }
-
-    const toolConfiguration = this.$refs.toolConfiguration as any;
-    if (toolConfiguration) {
-      toolConfiguration.reset();
-    }
-  }
-
-  close() {
-    this.reset();
-    this.$emit("done");
-  }
+  close();
 }
+
+function updateAutoToolName() {
+  if (userToolName.value) {
+    return;
+  }
+  const toolNameStrings: string[] = [];
+  const dockerImage = toolValues.value?.image?.image;
+  if (dockerImage) {
+    const defaultToolName = propertiesStore.defaultToolName(dockerImage);
+    if (defaultToolName) {
+      toolNameStrings.push(defaultToolName);
+    }
+  }
+  if (toolValues.value?.annotation?.tags) {
+    toolNameStrings.push(toolValues.value.annotation.tags.join(", "));
+  }
+  if (toolValues.value?.model) {
+    toolNameStrings.push(toolValues.value.model.text);
+  }
+  if (toolValues.value?.action) {
+    toolNameStrings.push(toolValues.value.action.text);
+  }
+  if (selectedTemplate.value?.type === "tagging" && toolValues.value?.tags) {
+    toolNameStrings.push(toolValues.value.tags.join(", "));
+  }
+  if (toolValues.value?.parentAnnotation && toolValues.value?.childAnnotation) {
+    const parentValues = toolValues.value.parentAnnotation;
+    const childValues = toolValues.value.childAnnotation;
+    const newString =
+      (parentValues.tags.join(", ") ||
+        (parentValues.tagsInclusive ? "All" : "No tag")) +
+      " to " +
+      (childValues.tags.join(", ") ||
+        (childValues.tagsInclusive ? "All" : "No tag"));
+    toolNameStrings.push(newString);
+  }
+  if (toolNameStrings.length > 0) {
+    toolName.value = toolNameStrings.join(" ");
+    return;
+  }
+  if (_selectedTool.value?.selectedItem?.text) {
+    toolNameStrings.push(_selectedTool.value?.selectedItem?.text);
+  }
+  if (selectedTemplate.value) {
+    toolNameStrings.push(selectedTemplate.value.name);
+  }
+  if (toolNameStrings.length > 0) {
+    toolName.value = toolNameStrings.join(" ");
+    return;
+  }
+  toolName.value = "New Tool";
+}
+
+function reset() {
+  userToolName.value = false;
+  toolName.value = "New Tool";
+  selectedTemplate.value = null;
+  selectedDefaultValues.value = null;
+  hotkey.value = null;
+
+  if (!toolConfigurationRef.value) {
+    return;
+  }
+
+  toolConfigurationRef.value.reset();
+}
+
+function close() {
+  reset();
+  emit("done");
+}
+
+// Watch initialSelectedTool prop (immediate)
+watch(
+  () => props.initialSelectedTool,
+  (newVal) => {
+    selectedTool.value = newVal;
+  },
+  { immediate: true },
+);
+
+// Watch selectedTemplate, toolValues (deep), userToolName -> updateAutoToolName
+watch(selectedTemplate, updateAutoToolName);
+watch(toolValues, updateAutoToolName, { deep: true });
+watch(userToolName, updateAutoToolName);
+
+// Watch open prop -> reset when closing
+watch(
+  () => props.open,
+  (newValue) => {
+    if (!newValue) {
+      reset();
+    }
+  },
+);
+
+defineExpose({
+  toolValues,
+  selectedTemplate,
+  selectedDefaultValues,
+  userToolName,
+  toolName,
+  hotkey,
+  selectedTool,
+  toolConfigurationRef,
+  createTool,
+  updateAutoToolName,
+  reset,
+  close,
+});
 </script>

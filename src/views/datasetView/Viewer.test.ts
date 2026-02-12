@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
+import { shallowMount } from "@vue/test-utils";
 import Vue from "vue";
 import Vuetify from "vuetify";
 
@@ -36,14 +36,8 @@ import Viewer from "./Viewer.vue";
 Vue.use(Vuetify);
 
 function mountComponent() {
-  return mount(Viewer, {
+  return shallowMount(Viewer, {
     vuetify: new Vuetify(),
-    stubs: {
-      ViewerToolbar: true,
-      DisplayLayers: true,
-      ImageViewer: true,
-      ContrastPanels: true,
-    },
   });
 }
 
