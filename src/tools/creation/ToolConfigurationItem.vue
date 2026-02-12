@@ -34,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 // Manually import those vuetify components that might be used procedurally
 import { VSelect, VCheckbox, VTextField, VRadioGroup } from "vuetify/lib";
 import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
@@ -43,15 +43,15 @@ import DockerImage from "@/tools/creation/templates/DockerImage.vue";
 import TagPicker from "@/components/TagPicker.vue";
 
 // Used to determine :is="" value from template interface type
-const typeToComponentName = {
-  select: "v-select",
-  annotation: "annotation-configuration",
-  restrictTagsAndLayer: "tag-and-layer-restriction",
-  checkbox: "v-checkbox",
-  radio: "v-radio-group",
-  text: "v-text-field",
-  dockerImage: "docker-image",
-  tags: "tag-picker",
+const typeToComponentName: Record<string, any> = {
+  select: VSelect,
+  annotation: AnnotationConfiguration,
+  restrictTagsAndLayer: TagAndLayerRestriction,
+  checkbox: VCheckbox,
+  radio: VRadioGroup,
+  text: VTextField,
+  dockerImage: DockerImage,
+  tags: TagPicker,
 };
 
 type TComponentType = keyof typeof typeToComponentName;
@@ -83,9 +83,11 @@ const componentValue = computed({
   },
 });
 
+const innerComponent = ref<any>(null);
+
 function changed() {
   emit("change");
 }
 
-defineExpose({ componentValue, typeToComponentName, changed });
+defineExpose({ componentValue, typeToComponentName, changed, innerComponent });
 </script>

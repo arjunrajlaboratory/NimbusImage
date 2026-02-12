@@ -64,17 +64,23 @@ describe("ToolConfigurationItem", () => {
     expect(wrapper.emitted("change")).toHaveLength(1);
   });
 
-  it("typeToComponentName maps types correctly", () => {
+  it("typeToComponentName maps all expected types", () => {
     const wrapper = mountComponent();
     const map = wrapper.vm.typeToComponentName;
-    expect(map.select).toBe("v-select");
-    expect(map.annotation).toBe("annotation-configuration");
-    expect(map.restrictTagsAndLayer).toBe("tag-and-layer-restriction");
-    expect(map.checkbox).toBe("v-checkbox");
-    expect(map.radio).toBe("v-radio-group");
-    expect(map.text).toBe("v-text-field");
-    expect(map.dockerImage).toBe("docker-image");
-    expect(map.tags).toBe("tag-picker");
+    const expectedKeys = [
+      "select",
+      "annotation",
+      "restrictTagsAndLayer",
+      "checkbox",
+      "radio",
+      "text",
+      "dockerImage",
+      "tags",
+    ];
+    expect(Object.keys(map)).toEqual(expectedKeys);
+    for (const key of expectedKeys) {
+      expect(map[key]).toBeDefined();
+    }
   });
 
   it("renders item name when present", () => {

@@ -47,9 +47,6 @@ import Vue from "vue";
 import store from "@/store";
 import propertiesStore from "@/store/properties";
 import ToolConfigurationItem from "@/tools/creation/ToolConfigurationItem.vue";
-import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
-import TagAndLayerRestriction from "@/tools/creation/templates/TagAndLayerRestriction.vue";
-import DockerImage from "@/tools/creation/templates/DockerImage.vue";
 
 const props = defineProps<{
   value: Record<string, any>;
@@ -192,12 +189,12 @@ function setDefaultValues() {
       default:
         // The itemRefs are referencing child refs
         if (Array.isArray(itemRefs.value[item.id])) {
-          const innerComponents = (itemRefs.value[item.id] as Vue[]).reduce(
-            (innerComps, configItem) => [
-              ...innerComps,
-              (configItem as any).$refs["innerComponent"] as Vue,
-            ],
-            [] as Vue[],
+          const innerComponents = (itemRefs.value[item.id] as any[]).reduce(
+            (innerComps, configItem) => {
+              const inner = configItem.innerComponent;
+              return inner ? [...innerComps, inner] : innerComps;
+            },
+            [] as any[],
           );
           switch (item.type) {
             case "annotation":
