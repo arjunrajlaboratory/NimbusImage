@@ -17,6 +17,7 @@ const {
   mockSyncStore,
   mockProgressStore,
   mockJobsStore,
+  mockSpatialIndex,
 } = vi.hoisted(() => {
   const mockAnnotationsAPI = {
     createAnnotation: vi.fn().mockResolvedValue(null),
@@ -82,12 +83,62 @@ const {
     addJob: vi.fn().mockResolvedValue(true),
   };
 
+  // Mock spatial index that replicates linear-scan behavior
+  // so existing viewport tests pass unchanged
+  const _spatialItems = new Map<string, { x: number; y: number }>();
+  const mockSpatialIndex = {
+    bulkLoad: vi.fn((items: { id: string; x: number; y: number }[]) => {
+      _spatialItems.clear();
+      for (const item of items) {
+        _spatialItems.set(item.id, { x: item.x, y: item.y });
+      }
+    }),
+    insert: vi.fn((id: string, x: number, y: number) => {
+      _spatialItems.set(id, { x, y });
+    }),
+    remove: vi.fn((id: string) => {
+      _spatialItems.delete(id);
+    }),
+    splitByViewport: vi.fn(
+      (
+        currentFrameIds: string[],
+        minX: number,
+        minY: number,
+        maxX: number,
+        maxY: number,
+      ) => {
+        const inViewportIds: string[] = [];
+        const outOfViewportIds: string[] = [];
+        for (const id of currentFrameIds) {
+          const pt = _spatialItems.get(id);
+          if (
+            pt &&
+            pt.x >= minX &&
+            pt.x <= maxX &&
+            pt.y >= minY &&
+            pt.y <= maxY
+          ) {
+            inViewportIds.push(id);
+          } else {
+            outOfViewportIds.push(id);
+          }
+        }
+        return { inViewportIds, outOfViewportIds };
+      },
+    ),
+    clear: vi.fn(() => {
+      _spatialItems.clear();
+    }),
+    _items: _spatialItems,
+  };
+
   return {
     mockAnnotationsAPI,
     mockMainStore,
     mockSyncStore,
     mockProgressStore,
     mockJobsStore,
+    mockSpatialIndex,
   };
 });
 
@@ -171,6 +222,11 @@ vi.mock("@/utils/annotation", () => ({
     }
     return (hash >>> 0) / 0xffffffff;
   }),
+}));
+
+// Mock the spatial index
+vi.mock("@/utils/spatialIndex", () => ({
+  annotationSpatialIndex: mockSpatialIndex,
 }));
 
 // Mock the log utility
@@ -1581,6 +1637,47 @@ describe("annotation store", () => {
       }
     });
 
+    it("updateVisibilityAndHydration uses spatial index for viewport split", async () => {
+      const inViewportAnns = Array.from({ length: 3 }, (_, i) =>
+        createMockAnnotation({
+          id: `in-vp-${i}`,
+          coordinates: [{ x: 50, y: 50 }],
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+      );
+      const outOfViewportAnns = Array.from({ length: 3 }, (_, i) =>
+        createMockAnnotation({
+          id: `out-vp-${i}`,
+          coordinates: [{ x: 500, y: 500 }],
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+      );
+      const allAnns = [...inViewportAnns, ...outOfViewportAnns];
+      store.setAnnotations(allAnns);
+
+      const gcsBounds = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      await store.updateVisibilityAndHydration({
+        filteredIds: allAnns.map((a) => a.id),
+        gcsBounds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+      });
+
+      // Verify splitByViewport was called
+      expect(mockSpatialIndex.splitByViewport).toHaveBeenCalledWith(
+        expect.any(Array),
+        0,
+        0,
+        100,
+        100,
+      );
+    });
+
     it("selected annotations survive frame change", async () => {
       // Set up annotations on two frames
       const frame0Anns = Array.from({ length: 5 }, (_, i) =>
@@ -1640,6 +1737,84 @@ describe("annotation store", () => {
       // No annotations should be visible (none on current frame)
       expect(store.visibleAnnotationIds).toHaveLength(0);
       expect(store.hydrationMode).toBe("dots");
+    });
+  });
+
+  describe("spatial index integration", () => {
+    it("setAnnotations calls bulkLoad on spatial index", () => {
+      const annotations = createMockAnnotations(5);
+      mockSpatialIndex.bulkLoad.mockClear();
+
+      store.setAnnotations(annotations);
+
+      expect(mockSpatialIndex.bulkLoad).toHaveBeenCalledTimes(1);
+      const loadedItems = mockSpatialIndex.bulkLoad.mock.calls[0][0];
+      expect(loadedItems).toHaveLength(5);
+      // Each item should have id, x, y
+      for (const item of loadedItems) {
+        expect(item).toHaveProperty("id");
+        expect(item).toHaveProperty("x");
+        expect(item).toHaveProperty("y");
+      }
+    });
+
+    it("setAnnotations skips bulkLoad when annotations are identical", () => {
+      const annotations = createMockAnnotations(3);
+      store.setAnnotations(annotations);
+      mockSpatialIndex.bulkLoad.mockClear();
+
+      // Set same annotations again (same ids, same order)
+      store.setAnnotations(annotations.map((a) => ({ ...a })));
+
+      // Should not call bulkLoad because the equality check short-circuits
+      expect(mockSpatialIndex.bulkLoad).not.toHaveBeenCalled();
+    });
+
+    it("addAnnotationImpl calls insert on spatial index", async () => {
+      mockMainStore.isLoggedIn = true;
+      mockSpatialIndex.insert.mockClear();
+
+      const newAnnotation = createMockAnnotation({ id: "new-1" });
+      mockAnnotationsAPI.createMultipleAnnotations.mockResolvedValueOnce([
+        newAnnotation,
+      ]);
+
+      await store.createMultipleAnnotations([createMockAnnotationBase()]);
+
+      expect(mockSpatialIndex.insert).toHaveBeenCalledWith(
+        "new-1",
+        expect.any(Number),
+        expect.any(Number),
+      );
+    });
+
+    it("setAnnotation calls remove then insert on spatial index", async () => {
+      mockMainStore.isLoggedIn = true;
+      const annotations = createMockAnnotations(3);
+      store.setAnnotations(annotations);
+
+      mockSpatialIndex.remove.mockClear();
+      mockSpatialIndex.insert.mockClear();
+
+      // Update an annotation (via updateAnnotationsPerId)
+      await store.updateAnnotationsPerId({
+        annotationIds: [annotations[1].id],
+        editFunction: (ann) => {
+          ann.coordinates = [{ x: 200, y: 200 }];
+        },
+      });
+
+      // Should have called remove with old coords and insert with new coords
+      expect(mockSpatialIndex.remove).toHaveBeenCalledWith(
+        annotations[1].id,
+        expect.any(Number),
+        expect.any(Number),
+      );
+      expect(mockSpatialIndex.insert).toHaveBeenCalledWith(
+        annotations[1].id,
+        expect.any(Number),
+        expect.any(Number),
+      );
     });
   });
 });

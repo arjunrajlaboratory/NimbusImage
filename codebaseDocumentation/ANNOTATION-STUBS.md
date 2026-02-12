@@ -727,6 +727,43 @@ The idea was to show shapes only when annotations are large enough relative to t
 
 The `medianAnnotationRadius` getter is still available if this feature is re-enabled.
 
+#### 4.11.2 R-tree Spatial Index for Viewport Filtering ✅ COMPLETED
+
+**Problem**: The `updateVisibilityAndHydration` action performed an O(n) linear scan over all current-frame annotations to split them by viewport bounds. This runs on every pan/zoom/frame change (250ms debounce). For 100K+ annotations, this linear scan is the performance bottleneck.
+
+**Solution**: Replace the linear viewport scan with an `rbush` R-tree spatial index for O(log n + k) bbox queries, where k = annotations in viewport.
+
+**Library choice**: `rbush` (v4, ~6KB) over `flatbush` because we need incremental insert/remove for `addAnnotationImpl` and `setAnnotation`, not just bulk loads.
+
+**Architecture**:
+- `AnnotationSpatialIndex` wrapper class in `src/utils/spatialIndex.ts`
+- Module-level singleton `annotationSpatialIndex` stored **outside** Vuex state (Vue 2's `Object.defineProperty` would recursively walk rbush's internal nodes and corrupt the tree)
+- Points stored as degenerate bboxes (`minX === maxX`, `minY === maxY`)
+- Global R-tree (not per-frame): the frame split at Step 1 is already O(n) on filteredIds and unavoidable; the R-tree replaces only the viewport split at Step 2. After the R-tree query, results are intersected with currentFrameIds via a Set.
+
+**API**:
+```typescript
+class AnnotationSpatialIndex {
+  bulkLoad(items: {id, x, y}[]): void;        // Clear + bulk insert (setAnnotations)
+  insert(id, x, y): void;                      // Single insert (addAnnotationImpl)
+  remove(id, x, y): void;                      // Single remove (setAnnotation)
+  splitByViewport(currentFrameIds, minX, minY, maxX, maxY):
+    { inViewportIds: string[]; outOfViewportIds: string[] };
+  clear(): void;
+}
+```
+
+**Integration points in `src/store/annotation.ts`**:
+- `setAnnotations`: calls `bulkLoad` after building stub map (handles dataset changes)
+- `addAnnotationImpl`: calls `insert` after adding stub to map
+- `setAnnotation`: calls `remove` (old coords) then `insert` (new coords) before updating stub
+- `updateVisibilityAndHydration`: replaced O(n) loop with `splitByViewport` call
+- `deleteAnnotations`: no change needed — calls `setAnnotations(filtered)` which triggers full bulk rebuild
+
+**Tests**:
+- `src/utils/__tests__/spatialIndex.test.ts`: 14 unit tests covering bulkLoad, insert, remove, splitByViewport, boundary points, ordering, empty tree, and 100K-point performance sanity
+- `src/store/__tests__/annotation.test.ts`: functional mock of spatial index (replicates linear-scan behavior) so all existing tests pass, plus 4 integration tests verifying `bulkLoad`/`insert`/`remove` are called from mutations
+
 #### 4.12 Remaining To-Do Items
 
 **Styling Adjustments**:
@@ -766,16 +803,16 @@ The `medianAnnotationRadius` getter is still available if this feature is re-ena
 
 **Performance Review**:
 - [ ] Profile `updateVisibilityAndHydration` with 100K+ annotations
-- [ ] Evaluate cost of viewport filtering (iterates all filtered annotations)
+- [x] Evaluate cost of viewport filtering → replaced O(n) linear scan with R-tree O(log n + k) query
 - [x] Review debounce timing (increased to 250ms to reduce churn)
 - [ ] Monitor memory usage during rapid pan/zoom
 - [ ] Test hydration/dehydration memory churn
 
-**R-tree Spatial Index**:
-- [ ] Implement R-tree for efficient viewport queries (current O(n) filtering won't scale to 100K+)
-- [ ] Evaluate libraries: `rbush` (lightweight), `flatbush` (static, very fast), or custom implementation
-- [ ] Index annotation centroids on dataset load
-- [ ] Replace linear viewport filtering in `updateVisibilityAndHydration` with R-tree bbox query
+**R-tree Spatial Index** ✅ COMPLETED:
+- [x] Implement R-tree for efficient viewport queries (current O(n) filtering won't scale to 100K+)
+- [x] Evaluate libraries: `rbush` (lightweight), `flatbush` (static, very fast), or custom implementation → chose `rbush` for incremental insert/remove
+- [x] Index annotation centroids on dataset load (`bulkLoad` in `setAnnotations`)
+- [x] Replace linear viewport filtering in `updateVisibilityAndHydration` with R-tree bbox query (`splitByViewport`)
 - [ ] Consider R-tree for selection (click/lasso) to avoid iterating all annotations
 - [ ] Benchmark: compare current linear scan vs R-tree query performance
 
@@ -1215,7 +1252,7 @@ Before completing Phase 4, the following items need manual review and adjustment
   - [~] 4.7 Threshold tuning (maxVisible=20K, maxHydrated=10K - may need adjustment)
   - [ ] 4.8 Performance review and optimization
   - [ ] 4.9 Selection updates for non-rendered annotations (if needed)
-  - [ ] 4.12 R-tree spatial index for efficient viewport queries
+  - [x] 4.12 R-tree spatial index for efficient viewport queries
   - [~] Zoom-based adaptive threshold (deferred/commented out)
 - [ ] Phase 5: Backend API for Stub Fetching
 - [ ] Phase 6: On-Demand Hydration
@@ -1309,3 +1346,29 @@ Before completing Phase 4, the following items need manual review and adjustment
   - Frame change dehydration (old frame dehydrated)
   - Selected annotations survive frame change
   - Empty current frame (nothing visible)
+
+### Files Added/Modified for R-tree Spatial Index (Phase 4.12)
+
+**`src/utils/spatialIndex.ts`** (NEW):
+- `AnnotationSpatialIndex` wrapper class around `rbush`
+- Methods: `bulkLoad`, `insert`, `remove`, `splitByViewport`, `clear`
+- Module-level singleton `annotationSpatialIndex` (outside Vuex state to avoid Vue 2 reactivity corruption)
+
+**`src/utils/__tests__/spatialIndex.test.ts`** (NEW):
+- 14 unit tests for `AnnotationSpatialIndex` (bulkLoad, insert, remove, splitByViewport, boundary, ordering, clear, 100K performance)
+
+**`src/store/annotation.ts`**:
+- Imported `annotationSpatialIndex` from `@/utils/spatialIndex`
+- `setAnnotations`: added `bulkLoad` call after stub-building loop
+- `addAnnotationImpl`: added `insert` call after stub set into map
+- `setAnnotation`: added `remove` (old coords) + `insert` (new coords) before stub update
+- `updateVisibilityAndHydration`: replaced O(n) viewport loop with `annotationSpatialIndex.splitByViewport()` call
+
+**`src/store/__tests__/annotation.test.ts`**:
+- Added functional mock for `@/utils/spatialIndex` (replicates linear-scan behavior for existing test compatibility)
+- Added 4 integration tests: `bulkLoad` called from `setAnnotations`, skipped on identical annotations, `insert` called from `addAnnotationImpl`, `remove`+`insert` called from `setAnnotation`
+- Total tests: 111 (94 annotation store + 14 spatial index + 3 parsing)
+
+**`package.json`**:
+- Added `rbush` (v4.0.1) to dependencies
+- Added `@types/rbush` (v4.0.0) to devDependencies

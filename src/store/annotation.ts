@@ -44,6 +44,7 @@ import {
   hashToNormalizedValue,
 } from "@/utils/annotation";
 import { logError } from "@/utils/log";
+import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
@@ -699,34 +700,21 @@ export class Annotations extends VuexModule {
       }
     }
 
-    // Step 2: Split current-frame IDs by viewport
+    // Step 2: Split current-frame IDs by viewport using R-tree spatial index
     let inViewportIds: string[] = currentFrameIds;
     let outOfViewportIds: string[] = [];
 
     if (gcsBounds && gcsBounds.length === 4) {
       const xs = gcsBounds.map((p) => p.x);
       const ys = gcsBounds.map((p) => p.y);
-      const minX = Math.min(...xs);
-      const maxX = Math.max(...xs);
-      const minY = Math.min(...ys);
-      const maxY = Math.max(...ys);
-
-      inViewportIds = [];
-      outOfViewportIds = [];
-      for (const id of currentFrameIds) {
-        const centroid = this.annotationCentroids[id];
-        if (
-          centroid &&
-          centroid.x >= minX &&
-          centroid.x <= maxX &&
-          centroid.y >= minY &&
-          centroid.y <= maxY
-        ) {
-          inViewportIds.push(id);
-        } else {
-          outOfViewportIds.push(id);
-        }
-      }
+      ({ inViewportIds, outOfViewportIds } =
+        annotationSpatialIndex.splitByViewport(
+          currentFrameIds,
+          Math.min(...xs),
+          Math.min(...ys),
+          Math.max(...xs),
+          Math.max(...ys),
+        ));
     }
 
     // Step 3: Fill visibility budget (two-tier: viewport first, then off-viewport)
@@ -961,6 +949,7 @@ export class Annotations extends VuexModule {
     };
     this.annotationStubs.set(value.id, stub);
     this.hydratedAnnotations.set(value.id, value);
+    annotationSpatialIndex.insert(value.id, centroid.x, centroid.y);
   }
 
   @Mutation
@@ -975,6 +964,17 @@ export class Annotations extends VuexModule {
     const centroid = simpleCentroid(annotation.coordinates);
     Vue.set(this.annotationCentroids, annotation.id, centroid);
     Vue.set(this.annotationIdToIdx, annotation.id, index);
+
+    // Update spatial index: remove old entry, insert new
+    const oldStub = this.annotationStubs.get(annotation.id);
+    if (oldStub) {
+      annotationSpatialIndex.remove(
+        annotation.id,
+        oldStub.centroid.x,
+        oldStub.centroid.y,
+      );
+    }
+    annotationSpatialIndex.insert(annotation.id, centroid.x, centroid.y);
 
     // Update stub/hydrated maps
     const stub: IAnnotationStub = {
@@ -1046,6 +1046,15 @@ export class Annotations extends VuexModule {
         this.hydratedAnnotations.set(annotation.id, annotation);
       }
     }
+
+    // Bulk-load all centroids into the spatial index (clears existing tree)
+    annotationSpatialIndex.bulkLoad(
+      [...this.annotationStubs.values()].map((s) => ({
+        id: s.id,
+        x: s.centroid.x,
+        y: s.centroid.y,
+      })),
+    );
   }
 
   @Action
