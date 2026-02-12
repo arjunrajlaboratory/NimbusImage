@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { computed } from "vue";
 import store from "@/store";
 
 const props = withDefaults(
@@ -36,23 +36,17 @@ const emit = defineEmits<{
   (e: "input", value: Record<number, boolean>): void;
 }>();
 
-const selectedChannels = ref<Record<number, boolean>>({});
-
-watch(
-  () => props.value,
-  (val) => {
-    selectedChannels.value = val ?? {};
+// Computed getter/setter mirrors the original @VModel behavior:
+// checkbox mutations go directly through Vue's reactivity on the object,
+// and full-object assignments emit "input" to the parent.
+const selectedChannels = computed({
+  get() {
+    return props.value;
   },
-  { immediate: true, deep: true },
-);
-
-watch(
-  selectedChannels,
-  (val) => {
-    emit("input", { ...val });
+  set(val: Record<number, boolean>) {
+    emit("input", val);
   },
-  { deep: true },
-);
+});
 
 const channelItems = computed(() => {
   if (!store.dataset) return [];
@@ -64,7 +58,8 @@ const channelItems = computed(() => {
 
 // Initialize missing channels (equivalent to created() hook)
 if (store.dataset?.channels) {
-  const updatedChannels = { ...props.value };
+  const current = selectedChannels.value || {};
+  const updatedChannels = { ...current };
   for (const channel of store.dataset.channels) {
     if (!(channel in updatedChannels)) {
       updatedChannels[channel] = false;
