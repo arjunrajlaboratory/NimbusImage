@@ -44,45 +44,47 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 
-@Component
-export default class PropertyFilterSelector extends Vue {
-  readonly filterStore = filterStore;
-  readonly propertyStore = propertyStore;
+const dialog = ref(false);
+const searchQuery = ref("");
 
-  dialog = false;
-  searchQuery = "";
+const allPropertyPaths = computed(() => propertyStore.computedPropertyPaths);
 
-  get allPropertyPaths() {
-    return this.propertyStore.computedPropertyPaths;
-  }
+const filteredPropertyPaths = computed(() => {
+  const query = searchQuery.value.toLowerCase();
+  return allPropertyPaths.value.filter((path: string[]) => {
+    const fullName = getPropertyFullName(path)?.toLowerCase();
+    return !query || (fullName && fullName.includes(query));
+  });
+});
 
-  get filteredPropertyPaths() {
-    const query = this.searchQuery.toLowerCase();
-    return this.allPropertyPaths.filter((path: string[]) => {
-      const fullName = this.getPropertyFullName(path)?.toLowerCase();
-      return !query || (fullName && fullName.includes(query));
-    });
-  }
-
-  getPropertyFullName(path: string[]) {
-    return this.propertyStore.getFullNameFromPath(path);
-  }
-
-  isPropertyPathFiltered(path: string[]) {
-    return this.filterStore.filterPaths.some(
-      (filterPath: string[]) =>
-        filterPath.length === path.length &&
-        filterPath.every((segment, i) => segment === path[i]),
-    );
-  }
-
-  togglePropertyPathFiltering(path: string[]) {
-    this.filterStore.togglePropertyPathFiltering(path);
-  }
+function getPropertyFullName(path: string[]) {
+  return propertyStore.getFullNameFromPath(path);
 }
+
+function isPropertyPathFiltered(path: string[]) {
+  return filterStore.filterPaths.some(
+    (filterPath: string[]) =>
+      filterPath.length === path.length &&
+      filterPath.every((segment, i) => segment === path[i]),
+  );
+}
+
+function togglePropertyPathFiltering(path: string[]) {
+  filterStore.togglePropertyPathFiltering(path);
+}
+
+defineExpose({
+  dialog,
+  searchQuery,
+  allPropertyPaths,
+  filteredPropertyPaths,
+  getPropertyFullName,
+  isPropertyPathFiltered,
+  togglePropertyPathFiltering,
+});
 </script>

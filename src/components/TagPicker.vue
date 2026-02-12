@@ -30,46 +30,50 @@
   </v-combobox>
 </template>
 
-<script lang="ts">
-import { Vue, Component, VModel, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, nextTick } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 
-// Interface element for the input of annotation tags
-@Component({
-  components: {},
-})
-export default class TagPicker extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
+const props = withDefaults(
+  defineProps<{
+    value: string[];
+    disabled?: boolean;
+  }>(),
+  {
+    disabled: false,
+  },
+);
 
-  @Prop({ default: false })
-  readonly disabled!: boolean;
+const emit = defineEmits<{
+  (e: "input", value: string[]): void;
+}>();
 
-  @VModel({ type: Array }) tags!: string[];
+const tags = computed({
+  get() {
+    return props.value;
+  },
+  set(val: string[]) {
+    emit("input", val);
+  },
+});
 
-  get tagList(): string[] {
-    return Array.from(
-      new Set([...this.annotationStore.annotationTags, ...this.store.toolTags]),
-    );
-  }
+const tagSearchInput = ref("");
+const combobox = ref<HTMLFormElement>();
 
-  tagSearchInput: string = "";
-  get layers() {
-    return this.store.layers;
-  }
+const tagList = computed((): string[] => {
+  return Array.from(
+    new Set([...annotationStore.annotationTags, ...store.toolTags]),
+  );
+});
 
-  $refs!: {
-    combobox: HTMLFormElement;
-  };
-
-  onTagChange() {
-    // Close the combobox and remove focus
-    Vue.nextTick(() => {
-      if (this.$refs.combobox) {
-        this.$refs.combobox.blur();
-      }
-    });
-  }
+function onTagChange() {
+  nextTick(() => {
+    if (combobox.value) {
+      combobox.value.blur();
+    }
+  });
 }
+
+defineExpose({ tags, tagList, tagSearchInput, onTagChange });
 </script>

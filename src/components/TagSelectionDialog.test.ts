@@ -4,11 +4,15 @@ import Vue from "vue";
 import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
-  default: {},
+  default: {
+    toolTags: [],
+  },
 }));
 
 vi.mock("@/store/annotation", () => ({
-  default: {},
+  default: {
+    annotationTags: [],
+  },
 }));
 
 import TagSelectionDialog from "./TagSelectionDialog.vue";

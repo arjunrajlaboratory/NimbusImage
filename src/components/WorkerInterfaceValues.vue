@@ -96,8 +96,8 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed, watch, onMounted } from "vue";
 import {
   IToolConfiguration,
   IWorkerInterface,
@@ -110,77 +110,79 @@ import TagPicker from "@/components/TagPicker.vue";
 import { getTourStepId } from "@/utils/strings";
 import { getDefault } from "@/utils/workerInterface";
 
-// Popup for new tool configuration
-@Component({
-  components: {
-    LayerSelect,
-    ChannelSelect,
-    ChannelCheckboxGroup,
-    TagPicker,
+const props = withDefaults(
+  defineProps<{
+    value: IWorkerInterfaceValues;
+    workerInterface: IWorkerInterface;
+    tool?: IToolConfiguration | null;
+    tooltipPosition?: "left" | "right";
+  }>(),
+  {
+    tool: null,
+    tooltipPosition: "right",
   },
-})
-export default class WorkerInterfaceValues extends Vue {
-  @Prop()
-  readonly workerInterface!: IWorkerInterface;
+);
 
-  // The tool is not always available, e.g. when this component is being
-  // called from the PropertyWorkerMenu. In that case, set to null so that
-  // we don't try to access the tool.values.workerInterfaceValues property.
-  @Prop({ default: null })
-  readonly tool!: IToolConfiguration | null;
+const emit = defineEmits<{
+  (e: "input", value: IWorkerInterfaceValues): void;
+}>();
 
-  @VModel({ type: Object }) interfaceValues!: IWorkerInterfaceValues;
-  @Prop({ default: "right", type: String })
-  readonly tooltipPosition!: "left" | "right";
+const interfaceValues = computed({
+  get() {
+    return props.value;
+  },
+  set(val: IWorkerInterfaceValues) {
+    emit("input", val);
+  },
+});
 
-  getTourStepId = getTourStepId;
+const isLeft = computed(() => props.tooltipPosition === "left");
+const isRight = computed(() => props.tooltipPosition === "right");
 
-  // Computed properties to determine tooltip alignment
-  get isLeft() {
-    return this.tooltipPosition === "left";
-  }
-  get isRight() {
-    return this.tooltipPosition === "right";
-  }
+const orderItemEntries = computed(() => {
+  const allEntries = Object.entries(props.workerInterface);
+  const alphabeticalOrderItems = allEntries.filter(
+    ([, { displayOrder }]) => displayOrder === undefined,
+  );
+  const explicitlySortedItems = allEntries
+    .filter(([, { displayOrder }]) => displayOrder !== undefined)
+    .sort(([, { displayOrder: a }], [, { displayOrder: b }]) => a! - b!);
+  return [...explicitlySortedItems, ...alphabeticalOrderItems];
+});
 
-  get orderItemEntries() {
-    const allEntries = Object.entries(this.workerInterface);
-    const alphabeticalOrderItems = allEntries.filter(
-      ([, { displayOrder }]) => displayOrder === undefined,
-    );
-    const explicitlySortedItems = allEntries
-      .filter(([, { displayOrder }]) => displayOrder !== undefined)
-      .sort(([, { displayOrder: a }], [, { displayOrder: b }]) => a! - b!);
-    return [...explicitlySortedItems, ...alphabeticalOrderItems];
-  }
-
-  formattedTooltip(text: string): string {
-    return text.replace(/\n/g, "<br>");
-  }
-
-  mounted() {
-    this.populateValues();
-  }
-
-  @Watch("workerInterface")
-  populateValues() {
-    const interfaceValues: IWorkerInterfaceValues = {};
-    for (const id in this.workerInterface) {
-      if (this.tool?.values?.workerInterfaceValues) {
-        if (id in this.tool.values.workerInterfaceValues) {
-          interfaceValues[id] = this.tool.values.workerInterfaceValues[id];
-        }
-      } else {
-        const interfaceTemplate = this.workerInterface[id];
-        interfaceValues[id] = getDefault(
-          interfaceTemplate.type,
-          interfaceTemplate.default,
-        );
-      }
-    }
-    this.interfaceValues = interfaceValues;
-  }
+function formattedTooltip(text: string): string {
+  return text.replace(/\n/g, "<br>");
 }
+
+function populateValues() {
+  const values: IWorkerInterfaceValues = {};
+  for (const id in props.workerInterface) {
+    if (props.tool?.values?.workerInterfaceValues) {
+      if (id in props.tool.values.workerInterfaceValues) {
+        values[id] = props.tool.values.workerInterfaceValues[id];
+      }
+    } else {
+      const interfaceTemplate = props.workerInterface[id];
+      values[id] = getDefault(
+        interfaceTemplate.type,
+        interfaceTemplate.default,
+      );
+    }
+  }
+  interfaceValues.value = values;
+}
+
+onMounted(populateValues);
+watch(() => props.workerInterface, populateValues);
+
+defineExpose({
+  interfaceValues,
+  isLeft,
+  isRight,
+  orderItemEntries,
+  formattedTooltip,
+  populateValues,
+});
 </script>
 
 <style scoped>

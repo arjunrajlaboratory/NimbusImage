@@ -46,61 +46,66 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import filterStore from "@/store/filters";
 import { IIdAnnotationFilter } from "@/store/model";
 
-@Component
-export default class AnnotationIDFilters extends Vue {
-  readonly filterStore = filterStore;
+const dialog = ref(false);
+const annotationIdsInput = ref("");
+const editingFilter = ref<IIdAnnotationFilter | null>(null);
 
-  dialog = false;
-  annotationIdsInput = "";
-  editingFilter: IIdAnnotationFilter | null = null;
+const filters = computed(() => filterStore.annotationIdFilters);
 
-  get filters() {
-    return this.filterStore.annotationIdFilters;
-  }
-
-  openNewFilterDialog() {
-    this.editingFilter = null;
-    this.annotationIdsInput = "";
-    this.dialog = true;
-  }
-
-  editFilter(filter: IIdAnnotationFilter) {
-    this.editingFilter = filter;
-    this.annotationIdsInput = filter.annotationIds.join("\n");
-    this.dialog = true;
-  }
-
-  saveFilter() {
-    const annotationIds = this.annotationIdsInput
-      .split(/[\s,;]+/)
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0);
-
-    if (this.editingFilter) {
-      this.filterStore.updateAnnotationIdFilter({
-        id: this.editingFilter.id,
-        annotationIds: annotationIds,
-      });
-    } else {
-      this.filterStore.newAnnotationIdFilter(annotationIds);
-    }
-
-    this.dialog = false;
-    this.annotationIdsInput = "";
-    this.editingFilter = null;
-  }
-
-  removeFilter(id: string) {
-    this.filterStore.removeAnnotationIdFilter(id);
-  }
-
-  toggleEnabled(id: string) {
-    this.filterStore.toggleAnnotationIdFilterEnabled(id);
-  }
+function openNewFilterDialog() {
+  editingFilter.value = null;
+  annotationIdsInput.value = "";
+  dialog.value = true;
 }
+
+function editFilter(filter: IIdAnnotationFilter) {
+  editingFilter.value = filter;
+  annotationIdsInput.value = filter.annotationIds.join("\n");
+  dialog.value = true;
+}
+
+function saveFilter() {
+  const annotationIds = annotationIdsInput.value
+    .split(/[\s,;]+/)
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+
+  if (editingFilter.value) {
+    filterStore.updateAnnotationIdFilter({
+      id: editingFilter.value.id,
+      annotationIds: annotationIds,
+    });
+  } else {
+    filterStore.newAnnotationIdFilter(annotationIds);
+  }
+
+  dialog.value = false;
+  annotationIdsInput.value = "";
+  editingFilter.value = null;
+}
+
+function removeFilter(id: string) {
+  filterStore.removeAnnotationIdFilter(id);
+}
+
+function toggleEnabled(id: string) {
+  filterStore.toggleAnnotationIdFilterEnabled(id);
+}
+
+defineExpose({
+  filters,
+  dialog,
+  annotationIdsInput,
+  editingFilter,
+  openNewFilterDialog,
+  editFilter,
+  saveFilter,
+  removeFilter,
+  toggleEnabled,
+});
 </script>

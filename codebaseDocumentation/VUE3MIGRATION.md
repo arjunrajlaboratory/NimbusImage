@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 108 | 26 already migrated to `<script setup>` |
+| Class components (`@Component`) | 108 | 37 already migrated to `<script setup>` |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -124,12 +124,33 @@ Once most components use Composition API and Vuetify wrappers are in place:
 | `DisplaySlice.vue` | 158 | 5 props, complex validation logic, removed unused store import |
 | `DisplayLayerGroup.vue` | 148 | Template ref array (`ref<T[]>([])`), computed get/set, `vuedraggable` |
 
+### Batch 5 — Annotation Browser, Filters, & Worker Interface Components
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `ContrastPanels.vue` | 39 | Options API → `computed()`, auto-registered child |
+| `ROIFilters.vue` | 43 | filterStore methods → plain functions, `computed()` |
+| `AnnotationBrowser.vue` | 37 | `ref()` for local state, filterStore import, auto-registered children |
+| `PropertyFilterSelector.vue` | 81 | `ref()` for dialog/search, store-delegating functions |
+| `TagCloudPicker.vue` | 204 | `defineProps`+`defineEmits`, `watch()` for bidirectional sync, `onMounted()` |
+| `TagFilterEditor.vue` | 78 | Computed get/set for VModel proxy, `.sync` stays for Vue 2.7 |
+| `AnnotationIdFilters.vue` | 100 | `ref()` for dialog state, ID parsing logic preserved |
+| `AnnotationFilters.vue` | 107 | 4 computed get/set proxying store, removed unused local state |
+| `LayerSelect.vue` | 64 | `Vue.set` → array spread, `watch()` + `onMounted()` |
+| `TagPicker.vue` | 78 | Template ref for combobox, `nextTick` import, removed unused `layers` getter |
+| `WorkerInterfaceValues.vue` | 186 | `withDefaults`, `watch()` for workerInterface, `getTourStepId` auto-available |
+
+**Key Phase 2 cleanups in this batch:**
+- `LayerSelect.vue`: Removed `Vue.set(arr, arr.length, val)` → array spread `[...arr, val]`
+- `TagPicker.vue`: Removed unused `get layers()` getter
+- `AnnotationFilters.vue`: Removed unused `tagSearchInput` and `show` local state
+
 ## Next Candidates
 
 Good candidates for the next migration batch, ordered by complexity:
 
 **Small UI components:**
 - `FileDropzone.vue` (~61 lines)
+- `ConfigurationSelect.vue` — requires converting `routeMapper` mixin to composable first
 
 **Medium components with store access:**
 - `AnnotationFilterDialog.vue`

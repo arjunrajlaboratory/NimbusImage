@@ -22,29 +22,23 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
-
+<script setup lang="ts">
+import { computed } from "vue";
 import filterStore from "@/store/filters";
 
-@Component({})
-export default class ROIFilters extends Vue {
-  readonly filterStore = filterStore;
+const filters = computed(() => filterStore.roiFilters);
 
-  addNewFilter() {
-    this.filterStore.newROIFilter();
-  }
-
-  removeFilter(id: string) {
-    this.filterStore.removeROIFilter(id);
-  }
-
-  get filters() {
-    return this.filterStore.roiFilters;
-  }
-
-  toggleEnabled(id: string) {
-    this.filterStore.toggleRoiFilterEnabled(id);
-  }
+function addNewFilter() {
+  filterStore.newROIFilter();
 }
+
+function removeFilter(id: string) {
+  filterStore.removeROIFilter(id);
+}
+
+function toggleEnabled(id: string) {
+  filterStore.toggleRoiFilterEnabled(id);
+}
+
+defineExpose({ filters, addNewFilter, removeFilter, toggleEnabled });
 </script>

@@ -30,12 +30,10 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
-
+<script setup lang="ts">
+import { computed } from "vue";
 import filterStore from "@/store/filters";
 import store from "@/store";
-
 import { ITagAnnotationFilter } from "@/store/model";
 import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
 import PropertyFilterHistogram from "@/components/AnnotationBrowser/AnnotationProperties/PropertyFilterHistogram.vue";
@@ -43,57 +41,45 @@ import RoiFilters from "@/components/AnnotationBrowser/ROIFilters.vue";
 import AnnotationIdFilters from "@/components/AnnotationBrowser/AnnotationIdFilters.vue";
 import PropertyFilterSelector from "@/components/AnnotationBrowser/PropertyFilterSelector.vue";
 
-@Component({
-  components: {
-    PropertyFilterHistogram,
-    RoiFilters,
-    TagFilterEditor,
-    AnnotationIdFilters,
-    PropertyFilterSelector,
+defineProps<{
+  additionalTags?: string[];
+}>();
+
+const tagFilter = computed({
+  get() {
+    return filterStore.tagFilter;
   },
-})
-export default class AnnotationFilters extends Vue {
-  readonly filterStore = filterStore;
-  readonly store = store;
+  set(filter: ITagAnnotationFilter) {
+    filterStore.setTagFilter(filter);
+  },
+});
 
-  @Prop()
-  readonly additionalTags!: string[];
+const onlyCurrentFrame = computed({
+  get() {
+    return filterStore.onlyCurrentFrame;
+  },
+  set(value: boolean) {
+    filterStore.setOnlyCurrentFrame(value);
+  },
+});
 
-  tagSearchInput: string = "";
+const propertyPaths = computed(() => filterStore.filterPaths);
 
-  show = false;
+const showAnnotationsFromHiddenLayers = computed({
+  get() {
+    return store.showAnnotationsFromHiddenLayers;
+  },
+  set(value: boolean) {
+    store.setShowAnnotationsFromHiddenLayers(value);
+  },
+});
 
-  get tagFilter() {
-    return this.filterStore.tagFilter;
-  }
-  set tagFilter(filter: ITagAnnotationFilter) {
-    this.filterStore.setTagFilter(filter);
-  }
-
-  get onlyCurrentFrame() {
-    return this.filterStore.onlyCurrentFrame;
-  }
-
-  set onlyCurrentFrame(value: boolean) {
-    this.filterStore.setOnlyCurrentFrame(value);
-  }
-
-  get propertyPaths() {
-    return this.filterStore.filterPaths;
-  }
-
-  get propertyFilters() {
-    return this.filterStore.propertyFilters;
-  }
-
-  get showAnnotationsFromHiddenLayers() {
-    return this.store.showAnnotationsFromHiddenLayers;
-  }
-
-  set showAnnotationsFromHiddenLayers(value: boolean) {
-    this.store.setShowAnnotationsFromHiddenLayers(value);
-  }
-}
+defineExpose({
+  tagFilter,
+  onlyCurrentFrame,
+  propertyPaths,
+  showAnnotationsFromHiddenLayers,
+});
 </script>
 
 <style lang="scss">
