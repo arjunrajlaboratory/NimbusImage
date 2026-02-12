@@ -20,6 +20,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
+import type { PropType } from "vue";
 import propertiesStore from "@/store/properties";
 import { IWorkerLabels } from "@/store/model";
 
@@ -29,10 +30,13 @@ interface IDockerImageSelectEntry {
   description: string | undefined;
 }
 
-const props = defineProps<{
-  value: string | null;
-  imageFilter: (labels: IWorkerLabels) => boolean;
-}>();
+const props = defineProps({
+  value: { type: String as PropType<string | null>, default: null },
+  imageFilter: {
+    type: Function as PropType<(labels: IWorkerLabels) => boolean>,
+    required: true as const,
+  },
+});
 
 const emit = defineEmits<{
   (e: "input", value: string | null): void;
