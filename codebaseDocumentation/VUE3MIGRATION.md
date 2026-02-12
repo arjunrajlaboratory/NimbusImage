@@ -452,7 +452,7 @@ vi.mock("@/store/annotation", () => ({
 ### Known Test Warnings
 
 - **"Multiple instances of Vue detected"**: Vuetify warning in test environments. Harmless; caused by module resolution in vitest. Using global `Vue.use(Vuetify)` instead of `createLocalVue` minimizes this.
-- **"Invalid prop type: null is not a constructor"**: Vue 2.7 quirk with union types like `Element | string` in `defineProps`. Resolves with Vue 3.
+- **"Invalid prop type: null is not a constructor"**: Vue 2.7 SFC compiler cannot resolve DOM interface types (e.g., `Element`, `HTMLElement`) to runtime constructors in type-only `defineProps`. See "DOM types in `defineProps`" gotcha below.
 - **"Unable to locate target [data-app]"**: Vuetify dialog warning. Use the `attachTo` pattern above to fix.
 
 ## Migration Patterns & Gotchas
@@ -541,6 +541,39 @@ Follow this order for each component:
 4. Add `defineExpose` for all test-accessed internals
 5. Re-run tests — verify pass
 6. After full batch: `pnpm tsc && pnpm lint && pnpm build`
+
+### DOM types in `defineProps` — avoid in type-only syntax
+
+Vue 2.7's SFC compiler cannot resolve DOM interface types (`Element`, `HTMLElement`, `HTMLSpanElement`, etc.) to runtime constructors when used in type-only `defineProps<{...}>()`. The compiler emits `null` in the runtime prop type array, causing two Vue warnings:
+
+```
+[Vue warn]: Invalid prop type: "null" is not a constructor
+[Vue warn]: Invalid prop: type check failed for prop "activator". Expected , String, got HTMLSpanElement
+```
+
+**Root cause:** `defineProps<{ activator: Element | string }>()` compiles to `{ activator: { type: [Element, String] } }` at runtime. But the SFC compiler resolves `Element` to `null` because it doesn't map DOM globals to constructors.
+
+**Fix:** Use runtime props syntax for props that accept DOM elements:
+
+```typescript
+// BAD — Element resolves to null in Vue 2.7 SFC compiler
+defineProps<{
+  activator: Element | string;
+}>();
+
+// GOOD — runtime syntax skips type checking for untyped props
+defineProps({
+  activator: { required: true },  // no type = accepts anything
+  content: { type: String, required: true },
+});
+```
+
+**Known affected component:** `NimbusTooltip.vue` — fixed by switching `activator` to runtime props syntax.
+
+**When scanning for other instances:** Search for DOM types in `defineProps` type parameters:
+```bash
+grep -n "defineProps<" src/**/*.vue | grep -i "element\|htmlelement\|node\|event"
+```
 
 ## Risk Areas
 

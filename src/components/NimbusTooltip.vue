@@ -14,20 +14,13 @@
 </template>
 
 <script setup lang="ts">
-withDefaults(
-  defineProps<{
-    activator: Element | string;
-    content: string;
-    position?: string;
-    openDelay?: number;
-    enabled?: boolean;
-  }>(),
-  {
-    position: "bottom",
-    openDelay: 0,
-    enabled: true,
-  },
-);
+defineProps({
+  activator: { required: true },
+  content: { type: String, required: true },
+  position: { type: String, default: "bottom" },
+  openDelay: { type: Number, default: 0 },
+  enabled: { type: Boolean, default: true },
+});
 
 function formattedTooltip(text: string): string {
   return text.replace(/\n/g, "<br>");
