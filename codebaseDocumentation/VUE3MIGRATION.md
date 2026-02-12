@@ -46,7 +46,7 @@ Convert components from Class API (`@Component` + decorators) to `<script setup>
 
 These can be done incrementally alongside Phase 1:
 
-- **Remove `Vue.set()` / `Vue.delete()`** (91 occurrences): Replace with direct property assignment or object spread. In Vue 3's Proxy-based reactivity, these are unnecessary.
+- **Remove `Vue.set()` / `Vue.delete()`** (~94 occurrences): Most can be replaced with direct property assignment or object spread (Vue 3's Proxy reactivity handles new properties). **Exception:** GeoJS-related `Vue.set` calls (in `ImageViewer.vue`, `AnnotationViewer.vue`) must be replaced with direct assignment + `markRaw()` — see "GeoJS & Vue 3 Proxy Reactivity" section.
 - **Convert `.sync` to `v-model:`** (11 occurrences): `<component :prop.sync="val">` → `<component v-model:prop="val">`. Works in Vue 2.7.
 - **Audit `$refs` usage** (62 occurrences): Ensure template refs work with Composition API components. Mixed-mode typing may need `any` temporarily.
 
@@ -77,8 +77,124 @@ Once most components use Composition API and Vuetify wrappers are in place:
 1. Update Vue 2.7 → Vue 3
 2. Update Vuetify 2 → Vuetify 3
 3. Update wrapper components for new APIs
-4. Fix remaining incompatibilities
-5. Full regression testing
+4. Apply `markRaw()` protection to GeoJS objects (see below)
+5. Fix remaining incompatibilities
+6. Full regression testing
+
+### GeoJS & Vue 3 Proxy Reactivity (Critical — Phase 5 Preparation)
+
+Vue 3 replaces `Object.defineProperty` (Vue 2) with **ES6 Proxies** for reactivity. Libraries like GeoJS (and similar WebGL/Canvas wrappers) rely on strict object identity (`this === that`) and internal private slots. When Vue 3 wraps a GeoJS instance in a Proxy, it breaks these internal checks, causing:
+
+1. **Identity failures:** GeoJS cannot recognize its own instances
+2. **Performance cliffs:** Vue attempts to deeply observe massive graphical objects
+3. **Crashes:** "Illegal invocation" errors when accessing internal slots via a Proxy
+
+**The fix:** Use `markRaw()` to tell Vue NOT to proxy GeoJS objects. This can be done now (Vue 2.7 supports `markRaw` from `vue`) and is forward-compatible with Vue 3.
+
+#### Current State
+
+`ImageViewer.vue` already uses `markRaw()` in 3 places (for `imageLayers` array and `params`), but **most GeoJS objects in `IMapEntry` are unprotected**. `AnnotationViewer.vue` has **no `markRaw()` usage at all**.
+
+#### Affected Objects in `ImageViewer.vue`
+
+The `IMapEntry` interface (`src/store/model.ts:1600-1614`) holds these GeoJS objects that all need `markRaw()`:
+
+| Field | Currently Protected? | Notes |
+|-------|---------------------|-------|
+| `map` | No | Core GeoJS map instance |
+| `imageLayers` | Yes (`markRaw([])`) | Array is marked raw; items pushed in need protection too |
+| `params` | Yes (`markRaw(params)`) | Already protected |
+| `annotationLayer` | No | GeoJS annotation layer |
+| `workerPreviewLayer` | No | GeoJS feature layer |
+| `workerPreviewFeature` | No | GeoJS feature |
+| `textLayer` | No | GeoJS feature layer |
+| `timelapseLayer` | No | GeoJS annotation layer |
+| `timelapseTextLayer` | No | GeoJS feature layer |
+| `interactionLayer` | No | GeoJS annotation layer |
+| `uiLayer` | No | GeoJS UI layer (optional) |
+
+**Fix in `_setupMap()`:**
+
+```typescript
+const mapentry: IMapEntry = {
+  map: markRaw(map),
+  imageLayers: [],                              // Reactive array (for DOM updates)
+  params: markRaw(params),
+  annotationLayer: markRaw(annotationLayer),
+  workerPreviewLayer: markRaw(workerPreviewLayer),
+  textLayer: markRaw(textLayer),
+  timelapseLayer: markRaw(timelapseLayer),
+  timelapseTextLayer: markRaw(timelapseTextLayer),
+  workerPreviewFeature: markRaw(workerPreviewFeature),
+  interactionLayer: markRaw(interactionLayer),
+  // ... baseLayerIndex, etc.
+};
+```
+
+**Fix in `_setupTileLayers()`:** Wrap items pushed into `imageLayers`:
+
+```typescript
+mapentry.imageLayers.push(markRaw(newMap));
+```
+
+#### Affected Objects in `AnnotationViewer.vue`
+
+These class properties hold GeoJS annotation objects that must be wrapped in `markRaw()` at every assignment site:
+
+| Property | Assignment Count | Key Methods |
+|----------|-----------------|-------------|
+| `pendingAnnotation` | ~3 | `createGeoJSAnnotation`, null resets |
+| `selectionAnnotation` | ~2 | `samPromptToAnnotation` |
+| `samPromptAnnotations` | ~2 | Array of annotations |
+| `samUnsubmittedAnnotation` | ~3 | GeoJS annotation from SAM |
+| `samLivePreviewAnnotation` | ~3 | GeoJS annotation from SAM |
+| `cursorAnnotation` | ~2 | `geojs.createAnnotation("circle")` |
+| `dragGhostAnnotation` | ~2 | `geojsAnnotationFactory(...)` |
+
+**Pattern for every GeoJS annotation assignment:**
+
+```typescript
+// BEFORE (current)
+this.cursorAnnotation = geojs.createAnnotation("circle");
+
+// AFTER (Vue 3-safe)
+this.cursorAnnotation = markRaw(geojs.createAnnotation("circle"));
+```
+
+**For arrays:** Wrap individual items, not the array itself (so Vue can track array length changes):
+
+```typescript
+// BEFORE
+newAnnotations.push(newAnnotation);
+
+// AFTER
+newAnnotations.push(markRaw(newAnnotation));
+```
+
+#### `Vue.set` Interaction with `markRaw`
+
+The 94 `Vue.set()` calls across the codebase fall into two categories:
+
+1. **Simple reactive property sets** (most cases): Replace with direct assignment in Vue 3. Vue 3's Proxy reactivity tracks new property additions automatically.
+2. **GeoJS object stores** (e.g., `Vue.set(this.maps, mllidx, mapentry)` in ImageViewer): These can become direct assignment BUT the value must be wrapped in `markRaw()` first.
+
+**Important:** Do NOT blindly remove `Vue.set` for GeoJS-related assignments without adding `markRaw()`. The combination `Vue.set` → direct assignment + `markRaw()` is the correct migration path for these objects.
+
+#### Verification Checklist (Post-Migration)
+
+After applying `markRaw()` changes, verify:
+
+1. **Map pan/zoom** — smooth without console errors (tests `ImageViewer` map instance)
+2. **Layer toggling** — layers appear/disappear correctly (tests `imageLayers` reactivity)
+3. **Drawing tools** — cursor appears, can draw circles/polygons (tests cursor/ghost instances)
+4. **Edit mode** — can drag existing annotations (tests `dragGhostAnnotation` identity)
+5. **SAM tools** — prompts appear, preview renders (tests SAM annotation instances)
+
+#### When to Apply These Changes
+
+These `markRaw()` additions can be done:
+- **Now (Phase 1):** Safe to add during Composition API migration of ImageViewer/AnnotationViewer. `markRaw` is a no-op performance hint in Vue 2.7 — it won't break anything.
+- **Phase 5 (required):** Must be in place before the Vue 3 switch or the app will crash.
 
 ## Components Migrated
 
@@ -396,7 +512,9 @@ Follow this order for each component:
 
 ## Risk Areas
 
-- **AnnotationViewer.vue** (3,160 lines): Most complex component. Break into composables before full migration.
+- **GeoJS Proxy Reactivity** (Critical): Vue 3's Proxy-based reactivity will break GeoJS object identity checks, causing crashes and performance cliffs. `ImageViewer.vue` and `AnnotationViewer.vue` require `markRaw()` on all GeoJS instances before the Vue 3 switch. See "GeoJS & Vue 3 Proxy Reactivity" section for full details.
+- **AnnotationViewer.vue** (3,160 lines): Most complex component. Break into composables before full migration. Contains 7 GeoJS annotation properties that need `markRaw()` protection.
+- **ImageViewer.vue** (~1,500 lines): GeoJS map/layer management. Already has partial `markRaw()` usage but 9 of 11 `IMapEntry` fields are unprotected. Must complete `markRaw()` coverage.
 - **Store interdependencies**: 11 Vuex modules with cross-references. Map dependencies before Pinia migration.
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
 - **Template ref typing**: Mixed Class + Composition components cause type mismatches during incremental migration.
