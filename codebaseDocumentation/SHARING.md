@@ -10,6 +10,10 @@ The sharing system allows dataset owners to:
 - View and manage who has access to their datasets
 - Revoke access from users
 
+Users who have been shared with (READ or WRITE) can:
+- View the sharing status (public/private, list of users with access)
+- See this info in DatasetInfo/ConfigurationInfo pages and in the Share dialog (read-only mode)
+
 ## Permission Model
 
 NimbusImage uses Girder's built-in access control system with three permission levels:
@@ -22,7 +26,8 @@ NimbusImage uses Girder's built-in access control system with three permission l
 
 **Key behaviors:**
 - Users automatically receive ADMIN access when they create a dataset
-- Only users with ADMIN access can modify sharing settings
+- Only users with ADMIN access can modify sharing settings (add/remove users, toggle public)
+- Any user with READ access can view the access list (who has access and at what level)
 - The dataset owner (ADMIN) cannot be removed from the access list
 
 ## Architecture
@@ -57,7 +62,7 @@ All three resource types must have matching permissions for proper access.
 
 Returns the current access list for a dataset.
 
-**Required permission:** ADMIN access to the dataset
+**Required permission:** READ access to the dataset
 
 **Response:**
 ```json
@@ -88,6 +93,42 @@ Returns the current access list for a dataset.
 - Uses `Folder().getFullAccessList()` for user list (doesn't include emails)
 - Requires separate bulk query to fetch user emails
 - Bulk loads configurations to avoid N+1 queries
+
+#### `GET /dataset_view/configuration_access/:configurationId`
+
+Returns the current access list for a configuration and its associated datasets.
+
+**Required permission:** READ access to the configuration
+
+**Response:**
+```json
+{
+  "configurationId": "string",
+  "public": true,
+  "users": [
+    {
+      "id": "string",
+      "login": "string",
+      "name": "string",
+      "email": "string",
+      "level": 0
+    }
+  ],
+  "groups": [],
+  "datasets": [
+    {
+      "id": "string",
+      "name": "string",
+      "public": true
+    }
+  ]
+}
+```
+
+**Implementation notes:**
+- Uses `Collection().getFullAccessList()` for user list (doesn't include emails)
+- Requires separate bulk query to fetch user emails
+- Bulk loads datasets to avoid N+1 queries
 
 #### `POST /dataset_view/share`
 
@@ -144,6 +185,7 @@ Location: `src/components/ShareDataset.vue`
 - Individual loading states per user row
 - Confirmation dialog before removing access
 - ADMIN users protected from removal (lock icon)
+- **Read-only mode** for non-admin users: when the current user doesn't have ADMIN (level 2) access, the dialog hides all edit controls (add user form, remove buttons, access level dropdowns, public toggle, collection checkboxes) and shows access levels as plain text. The dialog title changes from "Share Dataset:" to "Sharing:".
 
 ### State Management
 
@@ -209,6 +251,8 @@ interface IDatasetAccessList {
 
 ## UI Layout
 
+### Admin View (resource owner)
+
 ```
 +-----------------------------------------------+
 | Share Dataset: [Dataset Name]                 |
@@ -232,6 +276,26 @@ interface IDatasetAccessList {
 +-----------------------------------------------+
 ```
 
+### Read-Only View (non-admin shared users)
+
+```
++-----------------------------------------------+
+| Sharing: [Dataset Name]                       |
++-----------------------------------------------+
+| [Private] or [Public]                         |
++-----------------------------------------------+
+| Current Access:                               |
+| | User          | Access                    | |
+| | user@email    | Read                      | |
+| | jane.doe      | Write                     | |
+| | owner         | Admin (Owner)             | |
++-----------------------------------------------+
+|                                      [Done]   |
++-----------------------------------------------+
+```
+
+No collection checkboxes, public toggle, access level dropdowns, remove buttons, or add user form are shown.
+
 ## Error Handling
 
 | Error | User Message |
@@ -242,17 +306,19 @@ interface IDatasetAccessList {
 
 ## Future Considerations
 
-1. **Permission visibility**: Currently only ADMIN users can see the access list. Consider allowing READ users to view (but not modify) who has access.
+1. **Per-configuration public status**: The backend supports different public status per configuration, but the UI doesn't expose this since most datasets have a single configuration.
 
-2. **Per-configuration public status**: The backend supports different public status per configuration, but the UI doesn't expose this since most datasets have a single configuration.
-
-3. **Group support**: Girder supports group-based permissions, but the UI currently only handles individual users.
+2. **Group support**: Girder supports group-based permissions, but the UI currently only handles individual users.
 
 ## File Locations
 
 | File | Purpose |
 |------|---------|
 | `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/datasetView.py` | Backend API endpoints |
-| `src/components/ShareDataset.vue` | Frontend dialog component |
+| `src/components/ShareDataset.vue` | Frontend share dialog (admin: full edit, non-admin: read-only) |
+| `src/components/SharingStatusDisplay.vue` | Inline sharing status card (public/private chip, user list) |
+| `src/components/SharingStatusIcon.vue` | Small sharing icon for list items |
+| `src/views/dataset/DatasetInfo.vue` | Dataset info page (embeds SharingStatusDisplay) |
+| `src/views/configuration/ConfigurationInfo.vue` | Configuration info page (embeds SharingStatusDisplay) |
 | `src/store/GirderAPI.ts` | API client methods |
 | `src/store/model.ts` | TypeScript interfaces |

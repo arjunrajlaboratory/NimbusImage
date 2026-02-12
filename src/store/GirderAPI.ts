@@ -17,6 +17,7 @@ import {
   exampleConfigurationBase,
   IContrast,
   IDataset,
+  IConfigurationAccessList,
   IDatasetAccessList,
   IDatasetConfiguration,
   IDatasetConfigurationBase,
@@ -578,10 +579,24 @@ export default class GirderAPI {
   /**
    * Get the current access list for a dataset.
    * Returns users with their access levels and associated configurations.
-   * Requires ADMIN access to the dataset.
+   * Requires READ access to the dataset.
    */
   async getDatasetAccess(datasetId: string): Promise<IDatasetAccessList> {
     const response = await this.client.get(`dataset_view/access/${datasetId}`);
+    return response.data;
+  }
+
+  /**
+   * Get the current access list for a configuration.
+   * Returns users with their access levels and associated datasets.
+   * Requires READ access to the configuration.
+   */
+  async getConfigurationAccess(
+    configurationId: string,
+  ): Promise<IConfigurationAccessList> {
+    const response = await this.client.get(
+      `dataset_view/configuration_access/${configurationId}`,
+    );
     return response.data;
   }
 

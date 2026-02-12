@@ -2,7 +2,8 @@
   <v-dialog v-model="dialog" max-width="750px">
     <v-card>
       <v-card-title>
-        Share Dataset: {{ dataset ? dataset.name : "" }}
+        {{ isResourceAdmin ? "Share Dataset:" : "Sharing:" }}
+        {{ dataset ? dataset.name : "" }}
       </v-card-title>
       <v-card-text>
         <!-- Error Alert -->
@@ -23,8 +24,8 @@
         </div>
 
         <v-container v-else>
-          <!-- Collections Selection -->
-          <v-row v-if="configurations.length > 0">
+          <!-- Collections Selection (admin only) -->
+          <v-row v-if="isResourceAdmin && configurations.length > 0">
             <v-col cols="12">
               <div class="subtitle-2 mb-2">
                 Select collections to share along with dataset:
@@ -41,10 +42,10 @@
             </v-col>
           </v-row>
 
-          <v-divider class="my-4" />
+          <v-divider v-if="isResourceAdmin" class="my-4" />
 
-          <!-- Public Access Toggle -->
-          <v-row>
+          <!-- Public Access Toggle (admin only) -->
+          <v-row v-if="isResourceAdmin">
             <v-col cols="12">
               <v-checkbox
                 v-model="isPublic"
@@ -55,6 +56,22 @@
                 dense
                 @change="togglePublic"
               />
+            </v-col>
+          </v-row>
+
+          <!-- Public Status (read-only for non-admin) -->
+          <v-row v-else>
+            <v-col cols="12">
+              <v-chip
+                small
+                :color="isPublic ? 'green' : 'grey'"
+                text-color="white"
+              >
+                <v-icon left small>
+                  {{ isPublic ? "mdi-earth" : "mdi-lock" }}
+                </v-icon>
+                {{ isPublic ? "Public" : "Private" }}
+              </v-chip>
             </v-col>
           </v-row>
 
@@ -75,7 +92,13 @@
                       <th class="text-left" style="width: 150px">
                         Access Level
                       </th>
-                      <th class="text-center" style="width: 80px">Remove</th>
+                      <th
+                        v-if="isResourceAdmin"
+                        class="text-center"
+                        style="width: 80px"
+                      >
+                        Remove
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -95,18 +118,22 @@
                         >
                           Admin (Owner)
                         </span>
-                        <v-select
-                          v-else
-                          :value="user.level"
-                          :items="accessLevelItems"
-                          dense
-                          hide-details
-                          :loading="userLoading === user.id"
-                          :disabled="userLoading === user.id"
-                          @change="updateUserAccess(user, $event)"
-                        />
+                        <template v-else-if="isResourceAdmin">
+                          <v-select
+                            :value="user.level"
+                            :items="accessLevelItems"
+                            dense
+                            hide-details
+                            :loading="userLoading === user.id"
+                            :disabled="userLoading === user.id"
+                            @change="updateUserAccess(user, $event)"
+                          />
+                        </template>
+                        <span v-else class="font-weight-medium">
+                          {{ accessLevelLabel(user.level) }}
+                        </span>
                       </td>
-                      <td class="text-center">
+                      <td v-if="isResourceAdmin" class="text-center">
                         <v-btn
                           v-if="user.level !== 2"
                           icon
@@ -139,48 +166,49 @@
             </v-col>
           </v-row>
 
-          <v-divider class="my-4" />
-
-          <!-- Add User Form -->
-          <v-row>
-            <v-col cols="12">
-              <div class="subtitle-2 mb-2">Add User:</div>
-              <v-row dense align="center">
-                <v-col cols="5">
-                  <v-text-field
-                    v-model="newUserEmail"
-                    label="Username or Email"
-                    dense
-                    outlined
-                    hide-details
-                    :disabled="addUserLoading"
-                  />
-                </v-col>
-                <v-col cols="4">
-                  <v-select
-                    v-model="newUserAccessLevel"
-                    :items="accessLevelItems"
-                    label="Access"
-                    dense
-                    outlined
-                    hide-details
-                    :disabled="addUserLoading"
-                  />
-                </v-col>
-                <v-col cols="3">
-                  <v-btn
-                    color="primary"
-                    :loading="addUserLoading"
-                    :disabled="!newUserEmail || addUserLoading"
-                    @click="addUser"
-                  >
-                    <v-icon left small>mdi-plus</v-icon>
-                    Add
-                  </v-btn>
-                </v-col>
-              </v-row>
-            </v-col>
-          </v-row>
+          <!-- Add User Form (admin only) -->
+          <template v-if="isResourceAdmin">
+            <v-divider class="my-4" />
+            <v-row>
+              <v-col cols="12">
+                <div class="subtitle-2 mb-2">Add User:</div>
+                <v-row dense align="center">
+                  <v-col cols="5">
+                    <v-text-field
+                      v-model="newUserEmail"
+                      label="Username or Email"
+                      dense
+                      outlined
+                      hide-details
+                      :disabled="addUserLoading"
+                    />
+                  </v-col>
+                  <v-col cols="4">
+                    <v-select
+                      v-model="newUserAccessLevel"
+                      :items="accessLevelItems"
+                      label="Access"
+                      dense
+                      outlined
+                      hide-details
+                      :disabled="addUserLoading"
+                    />
+                  </v-col>
+                  <v-col cols="3">
+                    <v-btn
+                      color="primary"
+                      :loading="addUserLoading"
+                      :disabled="!newUserEmail || addUserLoading"
+                      @click="addUser"
+                    >
+                      <v-icon left small>mdi-plus</v-icon>
+                      Add
+                    </v-btn>
+                  </v-col>
+                </v-row>
+              </v-col>
+            </v-row>
+          </template>
         </v-container>
       </v-card-text>
       <v-card-actions>
@@ -213,6 +241,7 @@ import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import { IGirderSelectAble } from "@/girder";
 import store from "@/store";
 import { logError } from "@/utils/log";
+import { accessLevelLabel } from "@/utils/accessLevel";
 import {
   IDatasetAccessUser,
   IDatasetAccessConfiguration,
@@ -257,6 +286,14 @@ export default class ShareDataset extends Vue {
     { text: "Read", value: 0 },
     { text: "Write", value: 1 },
   ];
+
+  accessLevelLabel = accessLevelLabel;
+
+  get isResourceAdmin(): boolean {
+    const userId = this.store.girderUser?._id;
+    if (!userId) return false;
+    return this.users.some((u) => u.id === userId && u.level === 2);
+  }
 
   @Watch("value")
   onValueChanged(val: boolean) {
