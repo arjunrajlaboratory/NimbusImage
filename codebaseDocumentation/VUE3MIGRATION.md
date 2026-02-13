@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 121 | 95 migrated to `<script setup>`, 26 remaining |
+| Class components (`@Component`) | 121 | 98 migrated to `<script setup>`, 23 remaining |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -377,9 +377,28 @@ These `markRaw()` additions can be done:
 
 **After this batch:** 95 of 121 components migrated to `<script setup>` (~78%).
 
-## Remaining Components (26)
+### Batch 10 — Route View "Info" Components
 
-All 26 remaining components use the class-based `@Component` decorator pattern. Total: ~23,000 lines.
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `ConfigurationInfo.vue` | 468 | 3 `watch()`, `Vue.set` → direct assignment, `$refs.alert` → template ref, `$router.back()` via `getCurrentInstance()` |
+| `DatasetInfo.vue` | 880 | 6 `watch()` (3 on `dataset`), async imports → synchronous, removed dead `headers` array, `$router.push` via `getCurrentInstance()` |
+| `ProjectInfo.vue` | 1,021 | 1 `watch()`, 4 `Vue.set` → direct assignment, 3 stores, local interfaces, `formatSize` auto-available in template |
+
+**Key patterns in this batch:**
+- Route views with no props/emits — pure store consumers with `getCurrentInstance()!.proxy` for `$route`/`$router`
+- `Vue.set(cache, key, val)` → `cache.value[key] = val` (reactive in Vue 2.7 with `ref({})`)
+- DatasetInfo: Converted 2 async component imports (`GirderLocationChooser`, `AddToProjectDialog`) to synchronous imports
+- DatasetInfo: Removed unused `headers` data property (dead code)
+- ProjectInfo: `formatSize = formatSize` binding removed — direct import is auto-available in `<script setup>` template
+- ProjectInfo: `collectionInfoCache` type corrected from `IGirderItem` to `IGirderItem | IUPennCollection`
+- NewDataset.vue: Updated `$refs.viewCreation` type to `any` for mixed-mode compatibility
+
+**After this batch:** 98 of 121 components migrated to `<script setup>` (~81%).
+
+## Remaining Components (23)
+
+All 23 remaining components use the class-based `@Component` decorator pattern.
 
 ### Tier 1 — Medium Components (300–600 lines)
 
@@ -395,7 +414,6 @@ Straightforward migrations with standard patterns. Good candidates for the next 
 | `ViewerToolbar.vue` | 442 | Store-connected toolbar, tool selection |
 | `AnnotationProperties.vue` | 458 | Expansion panels, child component orchestration |
 | `App.vue` | 465 | Root component, layout, route watchers |
-| `ConfigurationInfo.vue` | 468 | Route params, CRUD operations, dialogs |
 | `ShareDataset.vue` | 475 | User search, permissions, sharing API |
 | `BreadCrumbs.vue` | 490 | Route-aware navigation, store watchers |
 | `PropertyFilterHistogram.vue` | 508 | D3/canvas histogram rendering, resize observer |
@@ -411,8 +429,6 @@ More complex migrations requiring careful attention to refs, watchers, and child
 | Component | Lines | Key Patterns / Notes |
 |-----------|-------|---------------------|
 | `CustomFileManager.vue` | 747 | File browser, drag/drop, upload, Girder integration |
-| `DatasetInfo.vue` | 880 | Route params, dataset CRUD, multiple dialogs |
-| `ProjectInfo.vue` | 1,021 | Project management, collections, datasets, sharing |
 | `Home.vue` | 1,317 | Landing page, project/dataset lists, onboarding |
 | `NewDataset.vue` | 1,435 | Multi-step dataset creation wizard, file upload |
 | `ImageViewer.vue` | 1,514 | GeoJS map/layers, tile rendering — needs `markRaw()` |
@@ -429,11 +445,11 @@ These should be split into composables before or during migration.
 
 ### Migration Order Recommendations
 
-1. **Batch 10** — Pick ~10 components from Tier 1 (smallest first): FileManagerOptions, ImageOverview, ChatComponent, UserColorSettings, AnnotationCSVDialog, ViewerToolbar, AnnotationProperties, App, ConfigurationInfo, ShareDataset
-2. **Batch 11** — Remaining Tier 1 + smaller Tier 2: BreadCrumbs, PropertyFilterHistogram, CollectionList, ContrastHistogram, AnnotationList, AnnotationWorkerMenu, CustomFileManager
-3. **Batch 12** — Larger Tier 2: DatasetInfo, ProjectInfo, Home, NewDataset
-4. **Batch 13** — ImageViewer (with `markRaw()` additions for GeoJS)
-5. **Batch 14** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
+1. **Batch 11** — Tier 1 (smallest first): FileManagerOptions, ImageOverview, ChatComponent, UserColorSettings, AnnotationCSVDialog, ViewerToolbar, AnnotationProperties, App, ShareDataset
+2. **Batch 12** — Remaining Tier 1 + smaller Tier 2: BreadCrumbs, PropertyFilterHistogram, CollectionList, ContrastHistogram, AnnotationList, AnnotationWorkerMenu, CustomFileManager
+3. **Batch 13** — Larger Tier 2: Home, NewDataset
+4. **Batch 14** — ImageViewer (with `markRaw()` additions for GeoJS)
+5. **Batch 15** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 

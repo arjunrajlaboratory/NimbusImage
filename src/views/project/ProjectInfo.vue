@@ -427,8 +427,8 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 import projects from "@/store/projects";
 import girderResources from "@/store/girderResources";
@@ -438,11 +438,18 @@ import {
   TProjectStatus,
   getProjectStatusColor,
 } from "@/store/model";
-import { IGirderFolder, IGirderItem } from "@/girder";
+import { IGirderFolder, IGirderItem, IUPennCollection } from "@/girder";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vue";
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
 import { formatSize } from "@/utils/conversion";
+
+// Suppress unused import warnings — auto-registered in <script setup>
+void AlertDialog;
+void AddDatasetToProjectDialog;
+void AddCollectionToProjectFilterDialog;
+
+const vm = getCurrentInstance()!.proxy;
 
 interface IProjectMetadataForm {
   title: string;
@@ -463,531 +470,555 @@ interface IUnifiedDatasetItem {
   collectionIds: string[];
 }
 
-@Component({
-  components: {
-    AlertDialog,
-    AddDatasetToProjectDialog,
-    AddCollectionToProjectFilterDialog,
-  },
-})
-export default class ProjectInfo extends Vue {
-  readonly store = store;
-  readonly projects = projects;
-  readonly girderResources = girderResources;
+// Template ref
+const alert = ref<any>(null);
 
-  // Note: alert uses 'any' due to Vue 2/3 Composition API type incompatibility during migration
-  $refs!: {
-    alert: any;
-  };
+// Dialog state
+const deleteConfirm = ref(false);
+const removeDatasetConfirm = ref(false);
+const removeCollectionConfirm = ref(false);
+const addDatasetDialog = ref(false);
+const addCollectionDialog = ref(false);
 
-  // Dialog state
-  deleteConfirm = false;
-  removeDatasetConfirm = false;
-  removeCollectionConfirm = false;
-  addDatasetDialog = false;
-  addCollectionDialog = false;
+// Edit state
+const nameInput = ref("");
+const descriptionInput = ref("");
+const savingMetadata = ref(false);
 
-  // Edit state
-  nameInput = "";
-  descriptionInput = "";
-  savingMetadata = false;
+// Remove targets
+const datasetToRemove = ref<string | null>(null);
+const collectionToRemove = ref<string | null>(null);
 
-  // Remove targets
-  datasetToRemove: string | null = null;
-  collectionToRemove: string | null = null;
+// Loading state
+const loadingDatasets = ref(false);
+const loadingCollections = ref(false);
 
-  // Loading state
-  loadingDatasets = false;
-  loadingCollections = false;
+// Filter state
+const datasetFilter = ref("");
+const collectionFilter = ref("");
 
-  // Filter state
-  datasetFilter = "";
-  collectionFilter = "";
+// Caches
+const datasetInfoCache = ref<{ [datasetId: string]: IGirderFolder }>({});
+const collectionInfoCache = ref<{
+  [collectionId: string]: IGirderItem | IUPennCollection;
+}>({});
+const collectionDatasetViewsCache = ref<{
+  [collectionId: string]: IDatasetView[];
+}>({});
 
-  // Caches
-  datasetInfoCache: { [datasetId: string]: IGirderFolder } = {};
-  collectionInfoCache: { [collectionId: string]: IGirderItem } = {};
-  collectionDatasetViewsCache: { [collectionId: string]: IDatasetView[] } = {};
+// Metadata form
+const metadata = ref<IProjectMetadataForm>({
+  title: "",
+  description: "",
+  license: "CC-BY-4.0",
+  keywords: [],
+  authors: "",
+  doi: "",
+  publicationDate: "",
+  funding: "",
+});
 
-  // Metadata form
-  metadata: IProjectMetadataForm = {
-    title: "",
-    description: "",
-    license: "CC-BY-4.0",
-    keywords: [],
-    authors: "",
-    doi: "",
-    publicationDate: "",
-    funding: "",
-  };
+const originalMetadata = ref<IProjectMetadataForm>({
+  title: "",
+  description: "",
+  license: "CC-BY-4.0",
+  keywords: [],
+  authors: "",
+  doi: "",
+  publicationDate: "",
+  funding: "",
+});
 
-  // Original metadata for change detection
-  originalMetadata: IProjectMetadataForm = {
-    title: "",
-    description: "",
-    license: "CC-BY-4.0",
-    keywords: [],
-    authors: "",
-    doi: "",
-    publicationDate: "",
-    funding: "",
-  };
+const licenseOptions = [
+  { text: "CC BY 4.0 (Attribution)", value: "CC-BY-4.0" },
+  { text: "CC BY-SA 4.0 (Attribution-ShareAlike)", value: "CC-BY-SA-4.0" },
+  { text: "CC BY-NC 4.0 (Attribution-NonCommercial)", value: "CC-BY-NC-4.0" },
+  { text: "CC0 (Public Domain)", value: "CC0-1.0" },
+  { text: "MIT License", value: "MIT" },
+  { text: "Apache 2.0", value: "Apache-2.0" },
+  { text: "Other", value: "other" },
+];
 
-  licenseOptions = [
-    { text: "CC BY 4.0 (Attribution)", value: "CC-BY-4.0" },
-    { text: "CC BY-SA 4.0 (Attribution-ShareAlike)", value: "CC-BY-SA-4.0" },
-    { text: "CC BY-NC 4.0 (Attribution-NonCommercial)", value: "CC-BY-NC-4.0" },
-    { text: "CC0 (Public Domain)", value: "CC0-1.0" },
-    { text: "MIT License", value: "MIT" },
-    { text: "Apache 2.0", value: "Apache-2.0" },
-    { text: "Other", value: "other" },
-  ];
+// Computed
+const project = computed((): IProject | null => projects.currentProject);
 
-  get project(): IProject | null {
-    return this.projects.currentProject;
-  }
+const statusColor = computed((): string =>
+  getProjectStatusColor(project.value?.meta.status),
+);
 
-  get statusColor(): string {
-    return getProjectStatusColor(this.project?.meta.status);
-  }
+const canStartExport = computed(
+  (): boolean => project.value?.meta.status === "draft",
+);
 
-  get canStartExport(): boolean {
-    return this.project?.meta.status === "draft";
-  }
+const canMarkExported = computed(
+  (): boolean => project.value?.meta.status === "exporting",
+);
 
-  get canMarkExported(): boolean {
-    return this.project?.meta.status === "exporting";
-  }
+const datasetItems = computed(() => {
+  if (!project.value) return [];
+  return project.value.meta.datasets.map((d) => ({
+    datasetId: d.datasetId,
+    addedDate: d.addedDate,
+    info: datasetInfoCache.value[d.datasetId],
+  }));
+});
 
-  get datasetItems() {
-    if (!this.project) return [];
-    return this.project.meta.datasets.map((d) => ({
+const collectionItems = computed(() => {
+  if (!project.value) return [];
+  return project.value.meta.collections.map((c) => ({
+    collectionId: c.collectionId,
+    addedDate: c.addedDate,
+    info: collectionInfoCache.value[c.collectionId],
+    datasetViews: collectionDatasetViewsCache.value[c.collectionId] || [],
+  }));
+});
+
+const allDatasetItems = computed((): IUnifiedDatasetItem[] => {
+  const datasetMap = new Map<string, IUnifiedDatasetItem>();
+
+  for (const d of project.value?.meta.datasets || []) {
+    datasetMap.set(d.datasetId, {
       datasetId: d.datasetId,
       addedDate: d.addedDate,
-      info: this.datasetInfoCache[d.datasetId],
-    }));
+      info: datasetInfoCache.value[d.datasetId],
+      source: "direct",
+      collectionIds: [],
+    });
   }
 
-  get collectionItems() {
-    if (!this.project) return [];
-    return this.project.meta.collections.map((c) => ({
-      collectionId: c.collectionId,
-      addedDate: c.addedDate,
-      info: this.collectionInfoCache[c.collectionId],
-      datasetViews: this.collectionDatasetViewsCache[c.collectionId] || [],
-    }));
-  }
-
-  get allDatasetItems(): IUnifiedDatasetItem[] {
-    const datasetMap = new Map<string, IUnifiedDatasetItem>();
-
-    // Add direct datasets
-    for (const d of this.project?.meta.datasets || []) {
-      datasetMap.set(d.datasetId, {
-        datasetId: d.datasetId,
-        addedDate: d.addedDate,
-        info: this.datasetInfoCache[d.datasetId],
-        source: "direct",
-        collectionIds: [],
-      });
-    }
-
-    // Add/update with collection datasets
-    for (const c of this.project?.meta.collections || []) {
-      const views = this.collectionDatasetViewsCache[c.collectionId] || [];
-      for (const v of views) {
-        const existing = datasetMap.get(v.datasetId);
-        if (existing) {
-          existing.collectionIds.push(c.collectionId);
-        } else {
-          datasetMap.set(v.datasetId, {
-            datasetId: v.datasetId,
-            addedDate: "",
-            info: this.datasetInfoCache[v.datasetId],
-            source: "collection",
-            collectionIds: [c.collectionId],
-          });
-        }
+  for (const c of project.value?.meta.collections || []) {
+    const views = collectionDatasetViewsCache.value[c.collectionId] || [];
+    for (const v of views) {
+      const existing = datasetMap.get(v.datasetId);
+      if (existing) {
+        existing.collectionIds.push(c.collectionId);
+      } else {
+        datasetMap.set(v.datasetId, {
+          datasetId: v.datasetId,
+          addedDate: "",
+          info: datasetInfoCache.value[v.datasetId],
+          source: "collection",
+          collectionIds: [c.collectionId],
+        });
       }
     }
-
-    return Array.from(datasetMap.values());
   }
 
-  get filteredDatasetItems(): IUnifiedDatasetItem[] {
-    if (!this.datasetFilter.trim()) {
-      return this.allDatasetItems;
-    }
-    const filter = this.datasetFilter.toLowerCase();
-    return this.allDatasetItems.filter((item) =>
-      item.info?.name?.toLowerCase().includes(filter),
-    );
-  }
+  return Array.from(datasetMap.values());
+});
 
-  get filteredCollectionItems() {
-    if (!this.collectionFilter.trim()) {
-      return this.collectionItems;
-    }
-    const filter = this.collectionFilter.toLowerCase();
-    return this.collectionItems.filter((item) =>
-      item.info?.name?.toLowerCase().includes(filter),
-    );
+const filteredDatasetItems = computed((): IUnifiedDatasetItem[] => {
+  if (!datasetFilter.value.trim()) {
+    return allDatasetItems.value;
   }
+  const filter = datasetFilter.value.toLowerCase();
+  return allDatasetItems.value.filter((item) =>
+    item.info?.name?.toLowerCase().includes(filter),
+  );
+});
 
-  get hasMetadataChanges(): boolean {
-    return (
-      this.metadata.title !== this.originalMetadata.title ||
-      this.metadata.description !== this.originalMetadata.description ||
-      this.metadata.license !== this.originalMetadata.license ||
-      this.metadata.authors !== this.originalMetadata.authors ||
-      this.metadata.doi !== this.originalMetadata.doi ||
-      this.metadata.publicationDate !== this.originalMetadata.publicationDate ||
-      this.metadata.funding !== this.originalMetadata.funding ||
-      JSON.stringify(this.metadata.keywords) !==
-        JSON.stringify(this.originalMetadata.keywords)
-    );
+const filteredCollectionItems = computed(() => {
+  if (!collectionFilter.value.trim()) {
+    return collectionItems.value;
   }
+  const filter = collectionFilter.value.toLowerCase();
+  return collectionItems.value.filter((item) =>
+    item.info?.name?.toLowerCase().includes(filter),
+  );
+});
 
-  get collectionSizes(): { [collectionId: string]: number } {
-    const sizes: { [collectionId: string]: number } = {};
-    for (const c of this.project?.meta.collections || []) {
-      const datasetViews =
-        this.collectionDatasetViewsCache[c.collectionId] || [];
-      let totalSize = 0;
-      for (const dv of datasetViews) {
-        const folder = this.datasetInfoCache[dv.datasetId];
-        if (folder?.size) {
-          totalSize += folder.size;
-        }
+const hasMetadataChanges = computed((): boolean => {
+  return (
+    metadata.value.title !== originalMetadata.value.title ||
+    metadata.value.description !== originalMetadata.value.description ||
+    metadata.value.license !== originalMetadata.value.license ||
+    metadata.value.authors !== originalMetadata.value.authors ||
+    metadata.value.doi !== originalMetadata.value.doi ||
+    metadata.value.publicationDate !== originalMetadata.value.publicationDate ||
+    metadata.value.funding !== originalMetadata.value.funding ||
+    JSON.stringify(metadata.value.keywords) !==
+      JSON.stringify(originalMetadata.value.keywords)
+  );
+});
+
+const collectionSizes = computed((): { [collectionId: string]: number } => {
+  const sizes: { [collectionId: string]: number } = {};
+  for (const c of project.value?.meta.collections || []) {
+    const datasetViews =
+      collectionDatasetViewsCache.value[c.collectionId] || [];
+    let totalSize = 0;
+    for (const dv of datasetViews) {
+      const folder = datasetInfoCache.value[dv.datasetId];
+      if (folder?.size) {
+        totalSize += folder.size;
       }
-      sizes[c.collectionId] = totalSize;
     }
-    return sizes;
+    sizes[c.collectionId] = totalSize;
+  }
+  return sizes;
+});
+
+const totalProjectSize = computed((): number => {
+  const seenDatasetIds = new Set<string>();
+  let total = 0;
+
+  for (const d of project.value?.meta.datasets || []) {
+    if (!seenDatasetIds.has(d.datasetId)) {
+      seenDatasetIds.add(d.datasetId);
+      const folder = datasetInfoCache.value[d.datasetId];
+      if (folder?.size) {
+        total += folder.size;
+      }
+    }
   }
 
-  get totalProjectSize(): number {
-    const seenDatasetIds = new Set<string>();
-    let total = 0;
-
-    // Add sizes from direct datasets
-    for (const d of this.project?.meta.datasets || []) {
-      if (!seenDatasetIds.has(d.datasetId)) {
-        seenDatasetIds.add(d.datasetId);
-        const folder = this.datasetInfoCache[d.datasetId];
+  for (const c of project.value?.meta.collections || []) {
+    const datasetViews =
+      collectionDatasetViewsCache.value[c.collectionId] || [];
+    for (const dv of datasetViews) {
+      if (!seenDatasetIds.has(dv.datasetId)) {
+        seenDatasetIds.add(dv.datasetId);
+        const folder = datasetInfoCache.value[dv.datasetId];
         if (folder?.size) {
           total += folder.size;
         }
       }
     }
-
-    // Add sizes from collection datasets (only if not already counted)
-    for (const c of this.project?.meta.collections || []) {
-      const datasetViews =
-        this.collectionDatasetViewsCache[c.collectionId] || [];
-      for (const dv of datasetViews) {
-        if (!seenDatasetIds.has(dv.datasetId)) {
-          seenDatasetIds.add(dv.datasetId);
-          const folder = this.datasetInfoCache[dv.datasetId];
-          if (folder?.size) {
-            total += folder.size;
-          }
-        }
-      }
-    }
-
-    return total;
   }
 
-  formatSize = formatSize;
+  return total;
+});
 
-  mounted() {
-    this.initializeFromProject();
-  }
-
-  @Watch("project")
-  onProjectChange() {
-    this.initializeFromProject();
-  }
-
-  initializeFromProject() {
-    if (this.project) {
-      this.nameInput = this.project.name;
-      this.descriptionInput = this.project.description;
-      this.initializeMetadata();
-      this.fetchDatasetInfo();
-      this.fetchCollectionInfo();
-    }
-  }
-
-  initializeMetadata() {
-    if (!this.project) return;
-    const meta = this.project.meta.metadata;
-    const metadataValues: IProjectMetadataForm = {
-      title: meta.title || this.project.name,
-      description: meta.description || this.project.description,
-      license: meta.license || "CC-BY-4.0",
-      keywords: [...(meta.keywords || [])],
-      authors: (meta as any).authors || "",
-      doi: (meta as any).doi || "",
-      publicationDate: (meta as any).publicationDate || "",
-      funding: (meta as any).funding || "",
-    };
-    this.metadata = {
-      ...metadataValues,
-      keywords: [...metadataValues.keywords],
-    };
-    this.originalMetadata = {
-      ...metadataValues,
-      keywords: [...metadataValues.keywords],
-    };
-  }
-
-  async fetchDatasetInfo() {
-    if (!this.project) return;
-    this.loadingDatasets = true;
-    try {
-      // Collect all dataset IDs that aren't already cached
-      const datasetIds = this.project.meta.datasets
-        .map((d) => d.datasetId)
-        .filter((id) => !this.datasetInfoCache[id]);
-
-      if (datasetIds.length > 0) {
-        // Batch fetch all folders at once
-        await this.girderResources.batchFetchResources({
-          folderIds: datasetIds,
-        });
-      }
-
-      // Populate local cache from the store's resources
-      for (const d of this.project.meta.datasets) {
-        if (!this.datasetInfoCache[d.datasetId]) {
-          const folder = this.girderResources.watchFolder(d.datasetId);
-          if (folder) {
-            Vue.set(this.datasetInfoCache, d.datasetId, folder);
-          }
-        }
-      }
-    } finally {
-      this.loadingDatasets = false;
-    }
-  }
-
-  async fetchCollectionInfo() {
-    if (!this.project) return;
-    this.loadingCollections = true;
-    try {
-      // Step 1: Batch fetch all collections at once
-      const collectionIds = this.project.meta.collections
-        .map((c) => c.collectionId)
-        .filter((id) => !this.collectionInfoCache[id]);
-
-      if (collectionIds.length > 0) {
-        await this.girderResources.batchFetchResources({
-          collectionIds: collectionIds,
-        });
-
-        // Populate local collection cache from the store's resources
-        for (const c of this.project.meta.collections) {
-          if (!this.collectionInfoCache[c.collectionId]) {
-            const collection = this.girderResources.watchCollection(
-              c.collectionId,
-            );
-            if (collection) {
-              Vue.set(this.collectionInfoCache, c.collectionId, collection);
-            }
-          }
-        }
-      }
-
-      // Step 2: Batch fetch dataset views for all collections at once
-      const uncachedCollectionIds = this.project.meta.collections
-        .map((c) => c.collectionId)
-        .filter((id) => !this.collectionDatasetViewsCache[id]);
-
-      if (uncachedCollectionIds.length > 0) {
-        const allViews = await this.store.api.findDatasetViews({
-          configurationIds: uncachedCollectionIds,
-        });
-
-        // Group views by configurationId and populate cache
-        const viewsByCollection = new Map<string, IDatasetView[]>();
-        for (const view of allViews) {
-          const views = viewsByCollection.get(view.configurationId) || [];
-          views.push(view);
-          viewsByCollection.set(view.configurationId, views);
-        }
-
-        // Populate cache (including empty arrays for collections with no views)
-        for (const collectionId of uncachedCollectionIds) {
-          Vue.set(
-            this.collectionDatasetViewsCache,
-            collectionId,
-            viewsByCollection.get(collectionId) || [],
-          );
-        }
-      }
-
-      // Step 3: Batch fetch all datasets from all collections at once
-      const allDatasetIds = new Set<string>();
-      for (const c of this.project.meta.collections) {
-        const views = this.collectionDatasetViewsCache[c.collectionId] || [];
-        for (const view of views) {
-          if (!this.datasetInfoCache[view.datasetId]) {
-            allDatasetIds.add(view.datasetId);
-          }
-        }
-      }
-
-      if (allDatasetIds.size > 0) {
-        await this.girderResources.batchFetchResources({
-          folderIds: Array.from(allDatasetIds),
-        });
-
-        // Populate local dataset cache from the store's resources
-        for (const datasetId of allDatasetIds) {
-          const folder = this.girderResources.watchFolder(datasetId);
-          if (folder) {
-            Vue.set(this.datasetInfoCache, datasetId, folder);
-          }
-        }
-      }
-    } finally {
-      this.loadingCollections = false;
-    }
-  }
-
-  openAlert(alert: IAlert) {
-    this.$refs.alert.openAlert(alert);
-  }
-
-  async tryUpdateName() {
-    if (!this.project) return;
-    const trimmed = (this.nameInput || "").trim();
-    if (trimmed.length === 0 || trimmed === this.project.name) {
-      this.nameInput = this.project.name;
-      return;
-    }
-    await this.projects.updateProject({
-      projectId: this.project.id,
-      name: trimmed,
-    });
-  }
-
-  async tryUpdateDescription() {
-    if (!this.project) return;
-    const trimmed = (this.descriptionInput || "").trim();
-    if (trimmed === this.project.description) return;
-    await this.projects.updateProject({
-      projectId: this.project.id,
-      description: trimmed,
-    });
-  }
-
-  async startExport() {
-    if (!this.project) return;
-    await this.projects.updateProjectStatus({
-      projectId: this.project.id,
-      status: "exporting" as TProjectStatus,
-    });
-  }
-
-  async markExported() {
-    if (!this.project) return;
-    await this.projects.updateProjectStatus({
-      projectId: this.project.id,
-      status: "exported" as TProjectStatus,
-    });
-  }
-
-  async deleteProject() {
-    if (!this.project) return;
-    const success = await this.projects.deleteProject(this.project.id);
-    if (success) {
-      this.deleteConfirm = false;
-      this.$router.push({ name: "home" });
-    }
-  }
-
-  confirmRemoveDataset(datasetId: string) {
-    this.datasetToRemove = datasetId;
-    this.removeDatasetConfirm = true;
-  }
-
-  async removeDataset() {
-    if (!this.project || !this.datasetToRemove) return;
-    await this.projects.removeDatasetFromProject({
-      projectId: this.project.id,
-      datasetId: this.datasetToRemove,
-    });
-    this.removeDatasetConfirm = false;
-    this.datasetToRemove = null;
-  }
-
-  confirmRemoveCollection(collectionId: string) {
-    this.collectionToRemove = collectionId;
-    this.removeCollectionConfirm = true;
-  }
-
-  async removeCollection() {
-    if (!this.project || !this.collectionToRemove) return;
-    await this.projects.removeCollectionFromProject({
-      projectId: this.project.id,
-      collectionId: this.collectionToRemove,
-    });
-    this.removeCollectionConfirm = false;
-    this.collectionToRemove = null;
-  }
-
-  navigateToCollection(collectionId: string) {
-    this.$router.push({
-      name: "configuration",
-      params: { configurationId: collectionId },
-    });
-  }
-
-  onDatasetAdded() {
-    this.addDatasetDialog = false;
-    this.fetchDatasetInfo();
-  }
-
-  onCollectionAdded() {
-    this.addCollectionDialog = false;
-    this.fetchCollectionInfo();
-  }
-
-  async saveMetadata() {
-    if (!this.project) return;
-    this.savingMetadata = true;
-    try {
-      await this.projects.updateProjectMetadata({
-        projectId: this.project.id,
-        metadata: {
-          title: this.metadata.title,
-          description: this.metadata.description,
-          license: this.metadata.license,
-          keywords: this.metadata.keywords,
-          authors: this.metadata.authors,
-          doi: this.metadata.doi,
-          publicationDate: this.metadata.publicationDate,
-          funding: this.metadata.funding,
-        },
-      });
-      // Update originalMetadata to match current values after successful save
-      this.originalMetadata = {
-        ...this.metadata,
-        keywords: [...this.metadata.keywords],
-      };
-      this.openAlert({
-        type: "success",
-        message: "Metadata saved successfully",
-      });
-    } catch (error) {
-      this.openAlert({ type: "error", message: "Failed to save metadata" });
-    } finally {
-      this.savingMetadata = false;
-    }
+// Methods
+function initializeFromProject() {
+  if (project.value) {
+    nameInput.value = project.value.name;
+    descriptionInput.value = project.value.description;
+    initializeMetadata();
+    fetchDatasetInfo();
+    fetchCollectionInfo();
   }
 }
+
+function initializeMetadata() {
+  if (!project.value) return;
+  const meta = project.value.meta.metadata;
+  const metadataValues: IProjectMetadataForm = {
+    title: meta.title || project.value.name,
+    description: meta.description || project.value.description,
+    license: meta.license || "CC-BY-4.0",
+    keywords: [...(meta.keywords || [])],
+    authors: (meta as any).authors || "",
+    doi: (meta as any).doi || "",
+    publicationDate: (meta as any).publicationDate || "",
+    funding: (meta as any).funding || "",
+  };
+  metadata.value = {
+    ...metadataValues,
+    keywords: [...metadataValues.keywords],
+  };
+  originalMetadata.value = {
+    ...metadataValues,
+    keywords: [...metadataValues.keywords],
+  };
+}
+
+async function fetchDatasetInfo() {
+  if (!project.value) return;
+  loadingDatasets.value = true;
+  try {
+    const datasetIds = project.value.meta.datasets
+      .map((d) => d.datasetId)
+      .filter((id) => !datasetInfoCache.value[id]);
+
+    if (datasetIds.length > 0) {
+      await girderResources.batchFetchResources({
+        folderIds: datasetIds,
+      });
+    }
+
+    for (const d of project.value.meta.datasets) {
+      if (!datasetInfoCache.value[d.datasetId]) {
+        const folder = girderResources.watchFolder(d.datasetId);
+        if (folder) {
+          datasetInfoCache.value[d.datasetId] = folder;
+        }
+      }
+    }
+  } finally {
+    loadingDatasets.value = false;
+  }
+}
+
+async function fetchCollectionInfo() {
+  if (!project.value) return;
+  loadingCollections.value = true;
+  try {
+    // Step 1: Batch fetch all collections at once
+    const collectionIds = project.value.meta.collections
+      .map((c) => c.collectionId)
+      .filter((id) => !collectionInfoCache.value[id]);
+
+    if (collectionIds.length > 0) {
+      await girderResources.batchFetchResources({
+        collectionIds: collectionIds,
+      });
+
+      for (const c of project.value.meta.collections) {
+        if (!collectionInfoCache.value[c.collectionId]) {
+          const collection = girderResources.watchCollection(c.collectionId);
+          if (collection) {
+            collectionInfoCache.value[c.collectionId] = collection;
+          }
+        }
+      }
+    }
+
+    // Step 2: Batch fetch dataset views for all collections at once
+    const uncachedCollectionIds = project.value.meta.collections
+      .map((c) => c.collectionId)
+      .filter((id) => !collectionDatasetViewsCache.value[id]);
+
+    if (uncachedCollectionIds.length > 0) {
+      const allViews = await store.api.findDatasetViews({
+        configurationIds: uncachedCollectionIds,
+      });
+
+      const viewsByCollection = new Map<string, IDatasetView[]>();
+      for (const view of allViews) {
+        const views = viewsByCollection.get(view.configurationId) || [];
+        views.push(view);
+        viewsByCollection.set(view.configurationId, views);
+      }
+
+      for (const collectionId of uncachedCollectionIds) {
+        collectionDatasetViewsCache.value[collectionId] =
+          viewsByCollection.get(collectionId) || [];
+      }
+    }
+
+    // Step 3: Batch fetch all datasets from all collections at once
+    const allDatasetIds = new Set<string>();
+    for (const c of project.value.meta.collections) {
+      const views = collectionDatasetViewsCache.value[c.collectionId] || [];
+      for (const view of views) {
+        if (!datasetInfoCache.value[view.datasetId]) {
+          allDatasetIds.add(view.datasetId);
+        }
+      }
+    }
+
+    if (allDatasetIds.size > 0) {
+      await girderResources.batchFetchResources({
+        folderIds: Array.from(allDatasetIds),
+      });
+
+      for (const datasetId of allDatasetIds) {
+        const folder = girderResources.watchFolder(datasetId);
+        if (folder) {
+          datasetInfoCache.value[datasetId] = folder;
+        }
+      }
+    }
+  } finally {
+    loadingCollections.value = false;
+  }
+}
+
+function openAlert(alertData: IAlert) {
+  alert.value.openAlert(alertData);
+}
+
+async function tryUpdateName() {
+  if (!project.value) return;
+  const trimmed = (nameInput.value || "").trim();
+  if (trimmed.length === 0 || trimmed === project.value.name) {
+    nameInput.value = project.value.name;
+    return;
+  }
+  await projects.updateProject({
+    projectId: project.value.id,
+    name: trimmed,
+  });
+}
+
+async function tryUpdateDescription() {
+  if (!project.value) return;
+  const trimmed = (descriptionInput.value || "").trim();
+  if (trimmed === project.value.description) return;
+  await projects.updateProject({
+    projectId: project.value.id,
+    description: trimmed,
+  });
+}
+
+async function startExport() {
+  if (!project.value) return;
+  await projects.updateProjectStatus({
+    projectId: project.value.id,
+    status: "exporting" as TProjectStatus,
+  });
+}
+
+async function markExported() {
+  if (!project.value) return;
+  await projects.updateProjectStatus({
+    projectId: project.value.id,
+    status: "exported" as TProjectStatus,
+  });
+}
+
+async function deleteProject() {
+  if (!project.value) return;
+  const success = await projects.deleteProject(project.value.id);
+  if (success) {
+    deleteConfirm.value = false;
+    vm.$router.push({ name: "home" });
+  }
+}
+
+function confirmRemoveDataset(datasetId: string) {
+  datasetToRemove.value = datasetId;
+  removeDatasetConfirm.value = true;
+}
+
+async function removeDataset() {
+  if (!project.value || !datasetToRemove.value) return;
+  await projects.removeDatasetFromProject({
+    projectId: project.value.id,
+    datasetId: datasetToRemove.value,
+  });
+  removeDatasetConfirm.value = false;
+  datasetToRemove.value = null;
+}
+
+function confirmRemoveCollection(collectionId: string) {
+  collectionToRemove.value = collectionId;
+  removeCollectionConfirm.value = true;
+}
+
+async function removeCollection() {
+  if (!project.value || !collectionToRemove.value) return;
+  await projects.removeCollectionFromProject({
+    projectId: project.value.id,
+    collectionId: collectionToRemove.value,
+  });
+  removeCollectionConfirm.value = false;
+  collectionToRemove.value = null;
+}
+
+function navigateToCollection(collectionId: string) {
+  vm.$router.push({
+    name: "configuration",
+    params: { configurationId: collectionId },
+  });
+}
+
+function onDatasetAdded() {
+  addDatasetDialog.value = false;
+  fetchDatasetInfo();
+}
+
+function onCollectionAdded() {
+  addCollectionDialog.value = false;
+  fetchCollectionInfo();
+}
+
+async function saveMetadata() {
+  if (!project.value) return;
+  savingMetadata.value = true;
+  try {
+    await projects.updateProjectMetadata({
+      projectId: project.value.id,
+      metadata: {
+        title: metadata.value.title,
+        description: metadata.value.description,
+        license: metadata.value.license,
+        keywords: metadata.value.keywords,
+        authors: metadata.value.authors,
+        doi: metadata.value.doi,
+        publicationDate: metadata.value.publicationDate,
+        funding: metadata.value.funding,
+      },
+    });
+    originalMetadata.value = {
+      ...metadata.value,
+      keywords: [...metadata.value.keywords],
+    };
+    openAlert({
+      type: "success",
+      message: "Metadata saved successfully",
+    });
+  } catch (error) {
+    openAlert({ type: "error", message: "Failed to save metadata" });
+  } finally {
+    savingMetadata.value = false;
+  }
+}
+
+// Watchers
+watch(project, () => {
+  initializeFromProject();
+});
+
+// Lifecycle
+onMounted(() => {
+  initializeFromProject();
+});
+
+defineExpose({
+  project,
+  statusColor,
+  canStartExport,
+  canMarkExported,
+  datasetItems,
+  collectionItems,
+  allDatasetItems,
+  filteredDatasetItems,
+  filteredCollectionItems,
+  hasMetadataChanges,
+  collectionSizes,
+  totalProjectSize,
+  formatSize,
+  deleteConfirm,
+  removeDatasetConfirm,
+  removeCollectionConfirm,
+  addDatasetDialog,
+  addCollectionDialog,
+  nameInput,
+  descriptionInput,
+  savingMetadata,
+  datasetToRemove,
+  collectionToRemove,
+  loadingDatasets,
+  loadingCollections,
+  datasetFilter,
+  collectionFilter,
+  datasetInfoCache,
+  collectionInfoCache,
+  collectionDatasetViewsCache,
+  metadata,
+  originalMetadata,
+  licenseOptions,
+  initializeFromProject,
+  initializeMetadata,
+  fetchDatasetInfo,
+  fetchCollectionInfo,
+  openAlert,
+  tryUpdateName,
+  tryUpdateDescription,
+  startExport,
+  markExported,
+  deleteProject,
+  confirmRemoveDataset,
+  removeDataset,
+  confirmRemoveCollection,
+  removeCollection,
+  navigateToCollection,
+  onDatasetAdded,
+  onCollectionAdded,
+  saveMetadata,
+});
 </script>
 
 <style lang="scss" scoped>

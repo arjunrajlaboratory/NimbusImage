@@ -324,482 +324,447 @@
     />
   </v-container>
 </template>
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IDatasetView } from "@/store/model";
 import { IGirderItem, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
+import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
+import AddToProjectDialog from "@/components/AddToProjectDialog.vue";
 
-@Component({
-  components: {
-    GirderLocationChooser: () =>
-      import("@/components/GirderLocationChooser.vue").then((mod) => mod),
-    AddToProjectDialog: () =>
-      import("@/components/AddToProjectDialog.vue").then((mod) => mod.default),
-  },
-})
-export default class DatasetInfo extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
+// Suppress unused import warnings — auto-registered in <script setup>
+void GirderLocationChooser;
+void AddToProjectDialog;
 
-  removeDatasetConfirm = false;
+const vm = getCurrentInstance()!.proxy;
 
-  removeDatasetViewConfirm = false;
-  viewToRemove: IDatasetView | null = null;
+// Local state
+const removeDatasetConfirm = ref(false);
+const removeDatasetViewConfirm = ref(false);
+const viewToRemove = ref<IDatasetView | null>(null);
+const datasetViews = ref<IDatasetView[]>([]);
+const configInfo = ref<{ [configurationId: string]: IGirderItem }>({});
+const selectedDatasetViewId = ref<string | null>(null);
+const defaultConfigurationName = ref("");
+const showNewCollectionDialog = ref(false);
+const showNewCollectionNameDialog = ref(false);
+const showAddToProjectDialog = ref(false);
+const newCollectionName = ref("");
+const selectedFolderId = ref<string | null>(null);
+const datasetParentId = ref<string | null>(null);
+const annotationCount = ref<number | null>(null);
+const connectionCount = ref<number | null>(null);
+const propertyCount = ref<number | null>(null);
+const propertyValueCount = ref<number | null>(null);
 
-  datasetViews: IDatasetView[] = [];
-  configInfo: { [configurationId: string]: IGirderItem } = {};
-  selectedDatasetViewId: string | null = null;
+// Computed
+const dataset = computed(() => store.dataset);
+const datasetName = computed(() => dataset.value?.name || "");
+const datasetId = computed(() => dataset.value?.id || "");
 
-  defaultConfigurationName: string = "";
-
-  showNewCollectionDialog = false;
-  showNewCollectionNameDialog = false;
-  showAddToProjectDialog = false;
-  newCollectionName: string = "";
-  selectedFolderId: string | null = null;
-  datasetParentId: string | null = null;
-
-  // Dataset statistics counts
-  annotationCount: number | null = null;
-  connectionCount: number | null = null;
-  propertyCount: number | null = null;
-  propertyValueCount: number | null = null;
-
-  readonly headers = [
-    {
-      text: "Field",
-      sortable: false,
-      value: "name",
-    },
-    {
-      text: "Value",
-      sortable: false,
-      value: "value",
-    },
-  ];
-
-  get datasetViewItems(): {
-    datasetView: IDatasetView;
-    configInfo: IGirderItem | undefined;
-  }[] {
-    return this.datasetViews.map((datasetView) => ({
+const datasetViewItems = computed(
+  (): { datasetView: IDatasetView; configInfo: IGirderItem | undefined }[] =>
+    datasetViews.value.map((datasetView) => ({
       datasetView,
-      configInfo: this.configInfo[datasetView.configurationId],
-    }));
-  }
+      configInfo: configInfo.value[datasetView.configurationId],
+    })),
+);
 
-  @Watch("datasetViews")
-  fetchConfigurationsInfo() {
-    for (const datasetView of this.datasetViews) {
-      if (!(datasetView.configurationId in this.configInfo)) {
-        this.girderResources
-          .getCollection(datasetView.configurationId)
-          .then((item: IGirderItem | null) =>
-            Vue.set(this.configInfo, datasetView.configurationId, item),
-          )
-          .catch((error: unknown) => {
-            logError(
-              `Failed to fetch collection info for ${datasetView.configurationId}:`,
-              error,
-            );
-            // Set to null to prevent retry loops
-            Vue.set(this.configInfo, datasetView.configurationId, null);
-          });
-      }
-    }
+const report = computed(() => [
+  { name: "Dataset Name", value: datasetName.value },
+  { name: "Dataset Description", value: dataset.value?.description || "" },
+  { name: "Timepoints", value: dataset.value?.time?.length || "?" },
+  { name: "XY Slices", value: dataset.value?.xy?.length || "?" },
+  { name: "Z Slices", value: dataset.value?.z?.length || "?" },
+  { name: "Channels", value: dataset.value?.channels?.length || "?" },
+  { name: "Annotations", value: annotationCount.value ?? "Loading..." },
+  { name: "Connections", value: connectionCount.value ?? "Loading..." },
+  { name: "Properties", value: propertyCount.value ?? "Loading..." },
+  { name: "Property Values", value: propertyValueCount.value ?? "Loading..." },
+]);
 
-    // Check if the selected view still exists in the dataset views
-    if (this.selectedDatasetViewId) {
-      const selectedViewExists = this.datasetViews.some(
-        (view) => view.id === this.selectedDatasetViewId,
-      );
+const nameRules = computed(() => [(v: string) => !!v || "Name is required"]);
 
-      // If the selected view no longer exists but there are other views, select the first one
-      if (!selectedViewExists && this.datasetViews.length > 0) {
-        this.selectedDatasetViewId = this.datasetViews[0].id;
-      }
-    }
-    // Set the first dataset view as selected if none is selected yet
-    else if (this.datasetViews.length > 0 && !this.selectedDatasetViewId) {
-      this.selectedDatasetViewId = this.datasetViews[0].id;
-    }
-  }
-
-  get dataset() {
-    return this.store.dataset;
-  }
-
-  get datasetName() {
-    return this.dataset?.name || "";
-  }
-
-  get datasetId() {
-    return this.dataset?.id || "";
-  }
-
-  get report() {
-    return [
-      {
-        name: "Dataset Name",
-        value: this.datasetName,
-      },
-      {
-        name: "Dataset Description",
-        value: this.dataset?.description || "",
-      },
-      {
-        name: "Timepoints",
-        value: this.dataset?.time?.length || "?",
-      },
-      {
-        name: "XY Slices",
-        value: this.dataset?.xy?.length || "?",
-      },
-      {
-        name: "Z Slices",
-        value: this.dataset?.z?.length || "?",
-      },
-      {
-        name: "Channels",
-        value: this.dataset?.channels?.length || "?",
-      },
-      {
-        name: "Annotations",
-        value: this.annotationCount ?? "Loading...",
-      },
-      {
-        name: "Connections",
-        value: this.connectionCount ?? "Loading...",
-      },
-      {
-        name: "Properties",
-        value: this.propertyCount ?? "Loading...",
-      },
-      {
-        name: "Property Values",
-        value: this.propertyValueCount ?? "Loading...",
-      },
-    ];
-  }
-
-  mounted() {
-    this.updateDatasetViews();
-    this.updateDefaultConfigurationName();
-    this.fetchDatasetParentFolder();
-    this.fetchCounts();
-  }
-
-  @Watch("dataset")
-  onDatasetChangeForCounts() {
-    this.fetchCounts();
-  }
-
-  @Watch("selectedDatasetViewId")
-  onSelectedViewChangeForCounts() {
-    this.fetchPropertyCount();
-  }
-
-  async fetchCounts() {
-    if (!this.dataset) {
-      this.annotationCount = null;
-      this.connectionCount = null;
-      this.propertyCount = null;
-      this.propertyValueCount = null;
-      return;
-    }
-
-    const datasetId = this.dataset.id;
-
-    // Fetch counts in parallel
-    const [annotationCount, connectionCount, propertyValueCount] =
-      await Promise.all([
-        this.store.annotationsAPI.getAnnotationCount(datasetId),
-        this.store.annotationsAPI.getConnectionCount(datasetId),
-        this.store.annotationsAPI.getPropertyValueCount(datasetId),
-      ]);
-
-    this.annotationCount = annotationCount;
-    this.connectionCount = connectionCount;
-    this.propertyValueCount = propertyValueCount;
-
-    // Property count depends on selected configuration
-    await this.fetchPropertyCount();
-  }
-
-  async fetchPropertyCount() {
-    if (!this.selectedDatasetViewId) {
-      this.propertyCount = null;
-      return;
-    }
-
-    const selectedView = this.datasetViews.find(
-      (v) => v.id === this.selectedDatasetViewId,
-    );
-    if (selectedView) {
-      this.propertyCount = await this.store.propertiesAPI.getPropertyCount(
-        selectedView.configurationId,
-      );
-    } else {
-      this.propertyCount = null;
-    }
-  }
-
-  @Watch("dataset")
-  async updateDatasetViews() {
-    if (this.dataset) {
-      try {
-        this.datasetViews = await this.store.api.findDatasetViews({
-          datasetId: this.dataset.id,
-        });
-      } catch (error) {
-        logError("Failed to fetch dataset views:", error);
-        this.datasetViews = [];
-      }
-    } else {
-      this.datasetViews = [];
-    }
-    return this.datasetViews;
-  }
-
-  @Watch("datasetName")
-  updateDefaultConfigurationName() {
-    this.defaultConfigurationName =
-      (this.datasetName || "Default") + " collection";
-  }
-
-  @Watch("dataset")
-  async fetchDatasetParentFolder() {
-    if (this.dataset) {
-      const folder = await this.girderResources.getFolder(this.dataset.id);
-      this.datasetParentId = folder?.parentId || null;
-    } else {
-      this.datasetParentId = null;
-    }
-  }
-
-  toRoute(datasetView: IDatasetView) {
-    return {
-      name: "datasetview",
-      params: Object.assign({}, this.$route.params, {
-        datasetViewId: datasetView.id,
-        datasetId: datasetView.datasetId,
-        configurationId: datasetView.configurationId,
-      }),
-    };
-  }
-
-  removeDataset() {
-    this.store.deleteDataset(this.dataset!).then(() => {
-      this.removeDatasetConfirm = false;
-      this.$router.push({
-        name: "root",
-      });
-    });
-  }
-
-  openRemoveConfigurationDialog(datasetView: IDatasetView) {
-    this.removeDatasetViewConfirm = true;
-    this.viewToRemove = datasetView;
-  }
-
-  closeRemoveConfigurationDialog() {
-    this.removeDatasetViewConfirm = false;
-    this.viewToRemove = null;
-  }
-
-  removeDatasetView() {
-    if (!this.viewToRemove) {
-      return;
-    }
-    // Store whether we're removing the currently selected view
-    const isRemovingSelected =
-      this.viewToRemove.id === this.selectedDatasetViewId;
-
-    const promise = this.store.deleteDatasetView(this.viewToRemove);
-    if (promise) {
-      promise.then(() => {
-        this.removeDatasetViewConfirm = false;
-        this.viewToRemove = null;
-
-        // Update the dataset views
-        this.updateDatasetViews().then(() => {
-          // If we removed the selected view and there are still views left, select the first one
-          if (isRemovingSelected && this.datasetViews.length > 0) {
-            this.selectedDatasetViewId = this.datasetViews[0].id;
-          } else if (this.datasetViews.length === 0) {
-            // If no views left, clear the selection
-            this.selectedDatasetViewId = null;
+// Methods
+function fetchConfigurationsInfo() {
+  for (const datasetView of datasetViews.value) {
+    if (!(datasetView.configurationId in configInfo.value)) {
+      girderResources
+        .getCollection(datasetView.configurationId)
+        .then((item: IGirderItem | null) => {
+          if (item) {
+            configInfo.value[datasetView.configurationId] = item;
           }
+        })
+        .catch((error: unknown) => {
+          logError(
+            `Failed to fetch collection info for ${datasetView.configurationId}:`,
+            error,
+          );
+          configInfo.value[datasetView.configurationId] = null as any;
         });
-      });
     }
   }
 
-  async duplicateView(
-    datasetView: IDatasetView,
-    configurationFolder: IGirderSelectAble | null,
-  ) {
-    if (!this.dataset || configurationFolder?._modelType !== "folder") {
-      return;
-    }
-    const baseConfig = await this.girderResources.getConfiguration(
-      datasetView.configurationId,
+  if (selectedDatasetViewId.value) {
+    const selectedViewExists = datasetViews.value.some(
+      (view) => view.id === selectedDatasetViewId.value,
     );
-    if (!baseConfig) {
-      return;
+    if (!selectedViewExists && datasetViews.value.length > 0) {
+      selectedDatasetViewId.value = datasetViews.value[0].id;
     }
-    const config = await store.api.duplicateConfiguration(
-      baseConfig,
-      configurationFolder._id,
-    );
-    await this.store.createDatasetView({
-      configurationId: config.id,
-      datasetId: this.dataset.id,
-    });
-
-    this.$router.push({
-      name: "configuration",
-      params: Object.assign({ configurationId: config.id }, this.$route.params),
-    });
-  }
-
-  async goToDefaultView() {
-    // If we already have dataset views, use the selected one
-    if (this.datasetViews.length > 0) {
-      const selectedView = this.selectedDatasetViewId
-        ? this.datasetViews.find((v) => v.id === this.selectedDatasetViewId)
-        : this.datasetViews[0];
-
-      if (selectedView) {
-        this.$router.push(this.toRoute(selectedView));
-        return;
-      }
-    }
-
-    // Otherwise create a new view
-    const defaultView = await this.createDefaultView();
-    if (defaultView) {
-      this.$router.push(this.toRoute(defaultView));
-    }
-  }
-
-  async createDefaultView() {
-    if (!this.dataset) {
-      return;
-    }
-
-    const datasetFolder = await this.girderResources.getFolder(this.dataset.id);
-    if (!datasetFolder?.parentId) {
-      return;
-    }
-
-    // Check if we have collection data to use
-    if (
-      datasetMetadataImport.hasCollectionData &&
-      datasetMetadataImport.collectionData
-    ) {
-      try {
-        // Use the collection data as the configuration base
-        const config = await this.store.api.createConfigurationFromBase(
-          this.defaultConfigurationName,
-          "",
-          datasetFolder.parentId,
-          datasetMetadataImport.collectionData,
-        );
-
-        // Clear the collection data after using it
-        datasetMetadataImport.clearCollectionFile();
-
-        const view = await this.store.createDatasetView({
-          configurationId: config.id,
-          datasetId: this.dataset.id,
-        });
-
-        return view;
-      } catch (error) {
-        logError("Failed to use downloadedcollection data:", error);
-        // Fall back to default configuration if collection data fails
-      }
-    }
-
-    // Default configuration creation (existing code)
-    const config = await this.store.createConfiguration({
-      name: this.defaultConfigurationName,
-      description: "",
-      folderId: datasetFolder.parentId,
-    });
-
-    if (!config) {
-      return;
-    }
-
-    const view = await this.store.createDatasetView({
-      configurationId: config.id,
-      datasetId: this.dataset.id,
-    });
-
-    return view;
-  }
-
-  handleLocationSelected(location: IGirderSelectAble | null) {
-    this.showNewCollectionDialog = false;
-
-    if (location && location._modelType === "folder") {
-      this.selectedFolderId = location._id;
-      this.newCollectionName = this.defaultConfigurationName;
-      this.showNewCollectionNameDialog = true;
-    }
-  }
-
-  async createNewCollection() {
-    if (!this.newCollectionName || !this.selectedFolderId || !this.dataset) {
-      return;
-    }
-
-    try {
-      // Create the configuration
-      const config = await this.store.createConfiguration({
-        name: this.newCollectionName,
-        description: "",
-        folderId: this.selectedFolderId,
-      });
-
-      if (config) {
-        // Create the dataset view
-        const view = await this.store.createDatasetView({
-          configurationId: config.id,
-          datasetId: this.dataset.id,
-        });
-
-        // Update the dataset views
-        await this.updateDatasetViews();
-
-        // Select the new view
-        if (view) {
-          this.selectedDatasetViewId = view.id;
-        }
-      }
-    } catch (error) {
-      logError("Error creating new collection:", error);
-    } finally {
-      // Reset the dialog state
-      this.showNewCollectionNameDialog = false;
-      this.selectedFolderId = null;
-    }
-  }
-
-  onAddedToProject() {
-    this.showAddToProjectDialog = false;
-  }
-
-  get nameRules() {
-    return [(v: string) => !!v || "Name is required"];
+  } else if (datasetViews.value.length > 0 && !selectedDatasetViewId.value) {
+    selectedDatasetViewId.value = datasetViews.value[0].id;
   }
 }
+
+async function fetchCounts() {
+  if (!dataset.value) {
+    annotationCount.value = null;
+    connectionCount.value = null;
+    propertyCount.value = null;
+    propertyValueCount.value = null;
+    return;
+  }
+
+  const dsId = dataset.value.id;
+
+  const [ac, cc, pvc] = await Promise.all([
+    store.annotationsAPI.getAnnotationCount(dsId),
+    store.annotationsAPI.getConnectionCount(dsId),
+    store.annotationsAPI.getPropertyValueCount(dsId),
+  ]);
+
+  annotationCount.value = ac;
+  connectionCount.value = cc;
+  propertyValueCount.value = pvc;
+
+  await fetchPropertyCount();
+}
+
+async function fetchPropertyCount() {
+  if (!selectedDatasetViewId.value) {
+    propertyCount.value = null;
+    return;
+  }
+
+  const selectedView = datasetViews.value.find(
+    (v) => v.id === selectedDatasetViewId.value,
+  );
+  if (selectedView) {
+    propertyCount.value = await store.propertiesAPI.getPropertyCount(
+      selectedView.configurationId,
+    );
+  } else {
+    propertyCount.value = null;
+  }
+}
+
+async function updateDatasetViews() {
+  if (dataset.value) {
+    try {
+      datasetViews.value = await store.api.findDatasetViews({
+        datasetId: dataset.value.id,
+      });
+    } catch (error) {
+      logError("Failed to fetch dataset views:", error);
+      datasetViews.value = [];
+    }
+  } else {
+    datasetViews.value = [];
+  }
+  return datasetViews.value;
+}
+
+function updateDefaultConfigurationName() {
+  defaultConfigurationName.value =
+    (datasetName.value || "Default") + " collection";
+}
+
+async function fetchDatasetParentFolder() {
+  if (dataset.value) {
+    const folder = await girderResources.getFolder(dataset.value.id);
+    datasetParentId.value = folder?.parentId || null;
+  } else {
+    datasetParentId.value = null;
+  }
+}
+
+function toRoute(datasetView: IDatasetView) {
+  return {
+    name: "datasetview",
+    params: Object.assign({}, vm.$route.params, {
+      datasetViewId: datasetView.id,
+      datasetId: datasetView.datasetId,
+      configurationId: datasetView.configurationId,
+    }),
+  };
+}
+
+function removeDataset() {
+  store.deleteDataset(dataset.value!).then(() => {
+    removeDatasetConfirm.value = false;
+    vm.$router.push({ name: "root" });
+  });
+}
+
+function openRemoveConfigurationDialog(datasetView: IDatasetView) {
+  removeDatasetViewConfirm.value = true;
+  viewToRemove.value = datasetView;
+}
+
+function closeRemoveConfigurationDialog() {
+  removeDatasetViewConfirm.value = false;
+  viewToRemove.value = null;
+}
+
+function removeDatasetView() {
+  if (!viewToRemove.value) {
+    return;
+  }
+  const isRemovingSelected =
+    viewToRemove.value.id === selectedDatasetViewId.value;
+
+  const promise = store.deleteDatasetView(viewToRemove.value);
+  if (promise) {
+    promise.then(() => {
+      removeDatasetViewConfirm.value = false;
+      viewToRemove.value = null;
+
+      updateDatasetViews().then(() => {
+        if (isRemovingSelected && datasetViews.value.length > 0) {
+          selectedDatasetViewId.value = datasetViews.value[0].id;
+        } else if (datasetViews.value.length === 0) {
+          selectedDatasetViewId.value = null;
+        }
+      });
+    });
+  }
+}
+
+async function duplicateView(
+  datasetView: IDatasetView,
+  configurationFolder: IGirderSelectAble | null,
+) {
+  if (!dataset.value || configurationFolder?._modelType !== "folder") {
+    return;
+  }
+  const baseConfig = await girderResources.getConfiguration(
+    datasetView.configurationId,
+  );
+  if (!baseConfig) {
+    return;
+  }
+  const config = await store.api.duplicateConfiguration(
+    baseConfig,
+    configurationFolder._id,
+  );
+  await store.createDatasetView({
+    configurationId: config.id,
+    datasetId: dataset.value.id,
+  });
+
+  vm.$router.push({
+    name: "configuration",
+    params: Object.assign({ configurationId: config.id }, vm.$route.params),
+  });
+}
+
+async function goToDefaultView() {
+  if (datasetViews.value.length > 0) {
+    const selectedView = selectedDatasetViewId.value
+      ? datasetViews.value.find((v) => v.id === selectedDatasetViewId.value)
+      : datasetViews.value[0];
+
+    if (selectedView) {
+      vm.$router.push(toRoute(selectedView));
+      return;
+    }
+  }
+
+  const defaultView = await createDefaultView();
+  if (defaultView) {
+    vm.$router.push(toRoute(defaultView));
+  }
+}
+
+async function createDefaultView() {
+  if (!dataset.value) {
+    return;
+  }
+
+  const datasetFolder = await girderResources.getFolder(dataset.value.id);
+  if (!datasetFolder?.parentId) {
+    return;
+  }
+
+  if (
+    datasetMetadataImport.hasCollectionData &&
+    datasetMetadataImport.collectionData
+  ) {
+    try {
+      const config = await store.api.createConfigurationFromBase(
+        defaultConfigurationName.value,
+        "",
+        datasetFolder.parentId,
+        datasetMetadataImport.collectionData,
+      );
+
+      datasetMetadataImport.clearCollectionFile();
+
+      const view = await store.createDatasetView({
+        configurationId: config.id,
+        datasetId: dataset.value.id,
+      });
+
+      return view;
+    } catch (error) {
+      logError("Failed to use downloadedcollection data:", error);
+    }
+  }
+
+  const config = await store.createConfiguration({
+    name: defaultConfigurationName.value,
+    description: "",
+    folderId: datasetFolder.parentId,
+  });
+
+  if (!config) {
+    return;
+  }
+
+  const view = await store.createDatasetView({
+    configurationId: config.id,
+    datasetId: dataset.value.id,
+  });
+
+  return view;
+}
+
+function handleLocationSelected(location: IGirderSelectAble | null) {
+  showNewCollectionDialog.value = false;
+
+  if (location && location._modelType === "folder") {
+    selectedFolderId.value = location._id;
+    newCollectionName.value = defaultConfigurationName.value;
+    showNewCollectionNameDialog.value = true;
+  }
+}
+
+async function createNewCollection() {
+  if (!newCollectionName.value || !selectedFolderId.value || !dataset.value) {
+    return;
+  }
+
+  try {
+    const config = await store.createConfiguration({
+      name: newCollectionName.value,
+      description: "",
+      folderId: selectedFolderId.value,
+    });
+
+    if (config) {
+      const view = await store.createDatasetView({
+        configurationId: config.id,
+        datasetId: dataset.value.id,
+      });
+
+      await updateDatasetViews();
+
+      if (view) {
+        selectedDatasetViewId.value = view.id;
+      }
+    }
+  } catch (error) {
+    logError("Error creating new collection:", error);
+  } finally {
+    showNewCollectionNameDialog.value = false;
+    selectedFolderId.value = null;
+  }
+}
+
+function onAddedToProject() {
+  showAddToProjectDialog.value = false;
+}
+
+// Watchers
+watch(dataset, () => {
+  fetchCounts();
+});
+
+watch(dataset, () => {
+  updateDatasetViews();
+});
+
+watch(dataset, () => {
+  fetchDatasetParentFolder();
+});
+
+watch(datasetName, () => {
+  updateDefaultConfigurationName();
+});
+
+watch(selectedDatasetViewId, () => {
+  fetchPropertyCount();
+});
+
+watch(datasetViews, () => {
+  fetchConfigurationsInfo();
+});
+
+// Lifecycle
+onMounted(() => {
+  updateDatasetViews();
+  updateDefaultConfigurationName();
+  fetchDatasetParentFolder();
+  fetchCounts();
+});
+
+defineExpose({
+  dataset,
+  datasetName,
+  datasetId,
+  datasetViewItems,
+  report,
+  nameRules,
+  removeDatasetConfirm,
+  removeDatasetViewConfirm,
+  viewToRemove,
+  datasetViews,
+  configInfo,
+  selectedDatasetViewId,
+  defaultConfigurationName,
+  showNewCollectionDialog,
+  showNewCollectionNameDialog,
+  showAddToProjectDialog,
+  newCollectionName,
+  selectedFolderId,
+  datasetParentId,
+  annotationCount,
+  connectionCount,
+  propertyCount,
+  propertyValueCount,
+  fetchConfigurationsInfo,
+  fetchCounts,
+  fetchPropertyCount,
+  updateDatasetViews,
+  updateDefaultConfigurationName,
+  fetchDatasetParentFolder,
+  toRoute,
+  removeDataset,
+  openRemoveConfigurationDialog,
+  closeRemoveConfigurationDialog,
+  removeDatasetView,
+  duplicateView,
+  goToDefaultView,
+  createDefaultView,
+  handleLocationSelected,
+  createNewCollection,
+  onAddedToProject,
+});
 </script>
 
 <style lang="scss" scoped>

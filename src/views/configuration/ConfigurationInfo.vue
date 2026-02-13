@@ -7,14 +7,14 @@
         color="primary"
         class="mr-2"
         @click="showAddToProjectDialog = true"
-        :disabled="!store.configuration"
+        :disabled="!configuration"
       >
         <v-icon left>mdi-folder-star</v-icon>
         Add Collection to Project...
       </v-btn>
       <v-dialog v-model="removeConfirm" max-width="33vw">
         <template #activator="{ on }">
-          <v-btn color="red" v-on="on" :disabled="!store.configuration">
+          <v-btn color="red" v-on="on" :disabled="!configuration">
             <v-icon left>mdi-close</v-icon>
             Delete Collection
           </v-btn>
@@ -33,7 +33,7 @@
     <v-text-field
       v-model="nameInput"
       label="Name"
-      :disabled="!store.configuration"
+      :disabled="!configuration"
       @blur="onNameBlur"
       @keyup.enter="onNameEnter"
     />
@@ -173,8 +173,8 @@
     />
   </v-container>
 </template>
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import isEqual from "lodash/isEqual";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
@@ -186,265 +186,283 @@ import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddCollectionToProjectDialog from "@/components/AddCollectionToProjectDialog.vue";
 
-@Component({
-  components: {
-    AddCollectionToProjectDialog,
-    AddDatasetToCollection,
-    AlertDialog,
-    ScaleSettings,
-  },
-})
-export default class ConfigurationInfo extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
+// Suppress unused import warnings — auto-registered in <script setup>
+void ScaleSettings;
+void AddDatasetToCollection;
+void AlertDialog;
+void AddCollectionToProjectDialog;
 
-  // Note: alert uses 'any' due to Vue 2/3 Composition API type incompatibility during migration
-  readonly $refs!: {
-    alert: any;
-  };
+const vm = getCurrentInstance()!.proxy;
 
-  removeConfirm = false;
+// Template ref
+const alert = ref<any>(null);
 
-  removeDatasetViewConfirm = false;
-  viewToRemove: IDatasetView | null = null;
+// Local state
+const removeConfirm = ref(false);
+const removeDatasetViewConfirm = ref(false);
+const viewToRemove = ref<IDatasetView | null>(null);
+const datasetViews = ref<IDatasetView[]>([]);
+const datasetInfoCache = ref<{ [datasetId: string]: IGirderFolder }>({});
+const datasetCompatibilityWarnings = ref<{ [datasetId: string]: string[] }>({});
+const addDatasetDialog = ref(false);
+const showAddToProjectDialog = ref(false);
+const nameInput = ref("");
 
-  datasetViews: IDatasetView[] = [];
-  datasetInfoCache: { [datasetId: string]: IGirderFolder } = {};
-  datasetCompatibilityWarnings: { [datasetId: string]: string[] } = {};
+// Computed
+const name = computed(() => {
+  if (!store.configuration) return "";
+  const cached = girderResources.watchCollection(store.configuration.id);
+  return cached?.name ?? store.configuration.name;
+});
 
-  addDatasetDialog: boolean = false;
-  showAddToProjectDialog: boolean = false;
+const description = computed(() => {
+  return store.configuration ? store.configuration.description : "";
+});
 
-  nameInput: string = "";
+const layers = computed(() => {
+  return store.layers;
+});
 
-  get name() {
-    if (!store.configuration) return "";
-    // Use reactive cache to get latest name after rename
-    const cached = girderResources.watchCollection(store.configuration.id);
-    return cached?.name ?? store.configuration.name;
-  }
+const configuration = computed(() => {
+  return store.configuration;
+});
 
-  get description() {
-    return this.store.configuration ? this.store.configuration.description : "";
-  }
-
-  get layers() {
-    return this.store.layers;
-  }
-
-  get configuration() {
-    return this.store.configuration;
-  }
-
-  mounted() {
-    this.updateConfigurationViews();
-    this.nameInput = this.name;
-  }
-
-  openAlert(alert: IAlert) {
-    this.addDatasetDialog = false;
-    this.$refs.alert.openAlert(alert);
-  }
-
-  addedDatasets() {
-    this.addDatasetDialog = false;
-    this.updateConfigurationViews();
-  }
-
-  @Watch("configuration")
-  async updateConfigurationViews() {
-    if (this.configuration) {
-      this.datasetViews = await this.store.api.findDatasetViews({
-        configurationId: this.configuration.id,
-      });
-    } else {
-      this.datasetViews = [];
-    }
-    return this.datasetViews;
-  }
-
-  @Watch("name")
-  syncNameInput() {
-    this.nameInput = this.name;
-  }
-
-  onNameBlur() {
-    this.tryRename();
-  }
-
-  onNameEnter() {
-    this.tryRename();
-  }
-
-  tryRename() {
-    const trimmed = (this.nameInput || "").trim();
-    if (!this.store.configuration) return;
-    if (trimmed.length === 0 || trimmed === this.name) return;
-    this.store.renameConfiguration(trimmed);
-  }
-
-  get datasetViewItems(): {
-    datasetView: IDatasetView;
-    datasetInfo: IGirderFolder | undefined;
-  }[] {
-    return this.datasetViews.map((datasetView) => ({
+const datasetViewItems = computed(
+  (): { datasetView: IDatasetView; datasetInfo: IGirderFolder | undefined }[] =>
+    datasetViews.value.map((datasetView) => ({
       datasetView,
-      datasetInfo: this.datasetInfoCache[datasetView.datasetId],
-    }));
+      datasetInfo: datasetInfoCache.value[datasetView.datasetId],
+    })),
+);
+
+// Methods
+function openAlert(alertData: IAlert) {
+  addDatasetDialog.value = false;
+  alert.value.openAlert(alertData);
+}
+
+function addedDatasets() {
+  addDatasetDialog.value = false;
+  updateConfigurationViews();
+}
+
+async function updateConfigurationViews() {
+  if (configuration.value) {
+    datasetViews.value = await store.api.findDatasetViews({
+      configurationId: configuration.value.id,
+    });
+  } else {
+    datasetViews.value = [];
   }
+  return datasetViews.value;
+}
 
-  @Watch("datasetViews")
-  fetchDatasetsInfo() {
-    for (const datasetView of this.datasetViews) {
-      this.girderResources
-        .getFolder(datasetView.datasetId)
-        .then((folder) =>
-          Vue.set(this.datasetInfoCache, datasetView.datasetId, folder),
-        );
-    }
-    this.checkDatasetsCompatibility();
-  }
+function onNameBlur() {
+  tryRename();
+}
 
-  async checkDatasetsCompatibility() {
-    if (!this.configuration) {
-      return;
-    }
-    const configCompat = this.configuration.compatibility;
-    if (!configCompat) {
-      return;
-    }
+function onNameEnter() {
+  tryRename();
+}
 
-    // Clear old warnings
-    this.datasetCompatibilityWarnings = {};
+function tryRename() {
+  const trimmed = (nameInput.value || "").trim();
+  if (!store.configuration) return;
+  if (trimmed.length === 0 || trimmed === name.value) return;
+  store.renameConfiguration(trimmed);
+}
 
-    for (const datasetView of this.datasetViews) {
-      try {
-        const dataset = await this.girderResources.getDataset({
-          id: datasetView.datasetId,
-        });
-        if (!dataset) {
-          continue;
-        }
-
-        const datasetCompat = getDatasetCompatibility(dataset);
-        if (!areCompatibles(configCompat, datasetCompat)) {
-          const warnings: string[] = [];
-
-          if (configCompat.xyDimensions !== datasetCompat.xyDimensions) {
-            warnings.push(
-              `XY: Dataset has ${datasetCompat.xyDimensions}, collection expects ${configCompat.xyDimensions}`,
-            );
-          }
-          if (configCompat.zDimensions !== datasetCompat.zDimensions) {
-            warnings.push(
-              `Z: Dataset has ${datasetCompat.zDimensions}, collection expects ${configCompat.zDimensions}`,
-            );
-          }
-          if (configCompat.tDimensions !== datasetCompat.tDimensions) {
-            warnings.push(
-              `T: Dataset has ${datasetCompat.tDimensions}, collection expects ${configCompat.tDimensions}`,
-            );
-          }
-
-          // Check channel differences using isEqual (same as areCompatibles)
-          if (!isEqual(configCompat.channels, datasetCompat.channels)) {
-            const configChannelCount = Object.keys(
-              configCompat.channels,
-            ).length;
-            const datasetChannelCount = Object.keys(
-              datasetCompat.channels,
-            ).length;
-
-            if (configChannelCount !== datasetChannelCount) {
-              warnings.push(
-                `Channels: Dataset has ${datasetChannelCount}, collection expects ${configChannelCount}`,
-              );
-            } else {
-              // Same count but different channel indices or names
-              const datasetNames = Object.values(datasetCompat.channels).join(
-                ", ",
-              );
-              const configNames = Object.values(configCompat.channels).join(
-                ", ",
-              );
-              warnings.push(
-                `Channels: Dataset has [${datasetNames}], collection expects [${configNames}]`,
-              );
-            }
-          }
-
-          if (warnings.length > 0) {
-            Vue.set(
-              this.datasetCompatibilityWarnings,
-              datasetView.datasetId,
-              warnings,
-            );
-          }
-        }
-      } catch (err) {
-        // Silently skip datasets that fail to load
+function fetchDatasetsInfo() {
+  for (const datasetView of datasetViews.value) {
+    girderResources.getFolder(datasetView.datasetId).then((folder) => {
+      if (folder) {
+        datasetInfoCache.value[datasetView.datasetId] = folder;
       }
-    }
-  }
-
-  toRoute(datasetView: IDatasetView) {
-    return {
-      name: "datasetview",
-      params: Object.assign({}, this.$route.params, {
-        datasetViewId: datasetView.id,
-      }),
-    };
-  }
-
-  openRemoveDatasetDialog(datasetView: IDatasetView) {
-    this.removeDatasetViewConfirm = true;
-    this.viewToRemove = datasetView;
-  }
-
-  closeRemoveDatasetDialog() {
-    this.removeDatasetViewConfirm = false;
-    this.viewToRemove = null;
-  }
-
-  removeDatasetView() {
-    if (!this.viewToRemove) {
-      return;
-    }
-    const promise = this.store.deleteDatasetView(this.viewToRemove);
-    if (promise) {
-      promise.then(() => {
-        this.removeDatasetViewConfirm = false;
-        this.viewToRemove = null;
-        this.updateConfigurationViews();
-      });
-    }
-  }
-
-  toSlice(slice: IDisplaySlice) {
-    switch (slice.type) {
-      case "constant":
-        return String(slice.value);
-      case "max-merge":
-        return "Max Merge";
-      case "offset":
-        return `Offset by ${slice.value}`;
-      default:
-        return "Current";
-    }
-  }
-
-  remove() {
-    this.store.deleteConfiguration(this.store.configuration!).then(() => {
-      this.removeConfirm = false;
-      this.$router.back();
     });
   }
+  checkDatasetsCompatibility();
+}
 
-  onAddedToProject() {
-    // Collection was added to project - could navigate or show notification
-    this.showAddToProjectDialog = false;
+async function checkDatasetsCompatibility() {
+  if (!configuration.value) {
+    return;
+  }
+  const configCompat = configuration.value.compatibility;
+  if (!configCompat) {
+    return;
+  }
+
+  // Clear old warnings
+  datasetCompatibilityWarnings.value = {};
+
+  for (const datasetView of datasetViews.value) {
+    try {
+      const dataset = await girderResources.getDataset({
+        id: datasetView.datasetId,
+      });
+      if (!dataset) {
+        continue;
+      }
+
+      const datasetCompat = getDatasetCompatibility(dataset);
+      if (!areCompatibles(configCompat, datasetCompat)) {
+        const warnings: string[] = [];
+
+        if (configCompat.xyDimensions !== datasetCompat.xyDimensions) {
+          warnings.push(
+            `XY: Dataset has ${datasetCompat.xyDimensions}, collection expects ${configCompat.xyDimensions}`,
+          );
+        }
+        if (configCompat.zDimensions !== datasetCompat.zDimensions) {
+          warnings.push(
+            `Z: Dataset has ${datasetCompat.zDimensions}, collection expects ${configCompat.zDimensions}`,
+          );
+        }
+        if (configCompat.tDimensions !== datasetCompat.tDimensions) {
+          warnings.push(
+            `T: Dataset has ${datasetCompat.tDimensions}, collection expects ${configCompat.tDimensions}`,
+          );
+        }
+
+        // Check channel differences using isEqual (same as areCompatibles)
+        if (!isEqual(configCompat.channels, datasetCompat.channels)) {
+          const configChannelCount = Object.keys(configCompat.channels).length;
+          const datasetChannelCount = Object.keys(
+            datasetCompat.channels,
+          ).length;
+
+          if (configChannelCount !== datasetChannelCount) {
+            warnings.push(
+              `Channels: Dataset has ${datasetChannelCount}, collection expects ${configChannelCount}`,
+            );
+          } else {
+            const datasetNames = Object.values(datasetCompat.channels).join(
+              ", ",
+            );
+            const configNames = Object.values(configCompat.channels).join(", ");
+            warnings.push(
+              `Channels: Dataset has [${datasetNames}], collection expects [${configNames}]`,
+            );
+          }
+        }
+
+        if (warnings.length > 0) {
+          datasetCompatibilityWarnings.value[datasetView.datasetId] = warnings;
+        }
+      }
+    } catch (err) {
+      // Silently skip datasets that fail to load
+    }
   }
 }
+
+function toRoute(datasetView: IDatasetView) {
+  return {
+    name: "datasetview",
+    params: Object.assign({}, vm.$route.params, {
+      datasetViewId: datasetView.id,
+    }),
+  };
+}
+
+function openRemoveDatasetDialog(datasetView: IDatasetView) {
+  removeDatasetViewConfirm.value = true;
+  viewToRemove.value = datasetView;
+}
+
+function closeRemoveDatasetDialog() {
+  removeDatasetViewConfirm.value = false;
+  viewToRemove.value = null;
+}
+
+function removeDatasetView() {
+  if (!viewToRemove.value) {
+    return;
+  }
+  const promise = store.deleteDatasetView(viewToRemove.value);
+  if (promise) {
+    promise.then(() => {
+      removeDatasetViewConfirm.value = false;
+      viewToRemove.value = null;
+      updateConfigurationViews();
+    });
+  }
+}
+
+function toSlice(slice: IDisplaySlice) {
+  switch (slice.type) {
+    case "constant":
+      return String(slice.value);
+    case "max-merge":
+      return "Max Merge";
+    case "offset":
+      return `Offset by ${slice.value}`;
+    default:
+      return "Current";
+  }
+}
+
+function remove() {
+  store.deleteConfiguration(store.configuration!).then(() => {
+    removeConfirm.value = false;
+    vm.$router.back();
+  });
+}
+
+function onAddedToProject() {
+  showAddToProjectDialog.value = false;
+}
+
+// Watchers
+watch(configuration, () => {
+  updateConfigurationViews();
+});
+
+watch(name, () => {
+  nameInput.value = name.value;
+});
+
+watch(datasetViews, () => {
+  fetchDatasetsInfo();
+});
+
+// Lifecycle
+onMounted(() => {
+  updateConfigurationViews();
+  nameInput.value = name.value;
+});
+
+defineExpose({
+  name,
+  description,
+  layers,
+  configuration,
+  datasetViewItems,
+  removeConfirm,
+  removeDatasetViewConfirm,
+  viewToRemove,
+  datasetViews,
+  datasetInfoCache,
+  datasetCompatibilityWarnings,
+  addDatasetDialog,
+  showAddToProjectDialog,
+  nameInput,
+  openAlert,
+  addedDatasets,
+  updateConfigurationViews,
+  tryRename,
+  fetchDatasetsInfo,
+  checkDatasetsCompatibility,
+  toRoute,
+  openRemoveDatasetDialog,
+  closeRemoveDatasetDialog,
+  removeDatasetView,
+  toSlice,
+  remove,
+  onAddedToProject,
+  onNameBlur,
+  onNameEnter,
+});
 </script>
 
 <style lang="scss" scoped>

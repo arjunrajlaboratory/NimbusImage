@@ -530,7 +530,8 @@ export default class NewDataset extends Vue {
     uploader?: GWCUpload;
     form: HTMLFormElement;
     configuration?: MultiSourceConfiguration;
-    viewCreation?: DatasetInfo;
+    // Note: uses 'any' due to Vue 2/3 Composition API type incompatibility during migration
+    viewCreation?: any;
   };
 
   configurationLogs = "";
