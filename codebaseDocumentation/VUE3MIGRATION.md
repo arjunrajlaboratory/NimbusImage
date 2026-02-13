@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 108 | 96 already migrated to `<script setup>` |
+| Class components (`@Component`) | 121 | 95 migrated to `<script setup>`, 26 remaining |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -375,21 +375,67 @@ These `markRaw()` additions can be done:
 - **Type fix** in ZenodoImporter: `IGirderLocation` → `IGirderSelectAble` for location chooser `value` prop compatibility with `<script setup>` stricter checking
 - **Test stub fix:** `shallowMount` needed for parent tests (ContrastPanels, Viewer) after child components migrated to `<script setup>` — `@vue/test-utils` v1 stub matching differs for `<script setup>` components
 
-**After this batch:** 96 of ~108 components migrated to `<script setup>` (~89%).
+**After this batch:** 95 of 121 components migrated to `<script setup>` (~78%).
 
-## Next Candidates
+## Remaining Components (26)
 
-Good candidates for the next migration batch, ordered by complexity:
+All 26 remaining components use the class-based `@Component` decorator pattern. Total: ~23,000 lines.
 
-**Medium components with store access:**
-- `AnnotationFilterDialog.vue`
-- `AnnotationCSVDialog.vue`
-- `ExportDialog.vue`
+### Tier 1 — Medium Components (300–600 lines)
 
-**Large/complex components (migrate last):**
-- `AnnotationViewer.vue` (~3,160 lines) — consider splitting into composables first
-- `ImageViewer.vue` — GeoJS integration, test rendering thoroughly
-- `src/store/index.ts` (~2,477 lines) — consider splitting before Pinia migration
+Straightforward migrations with standard patterns. Good candidates for the next 1–2 batches.
+
+| Component | Lines | Key Patterns / Notes |
+|-----------|-------|---------------------|
+| `FileManagerOptions.vue` | 356 | Props, local state, methods |
+| `ImageOverview.vue` | 356 | Store access, computed |
+| `ChatComponent.vue` | 395 | IndexedDB, Anthropic API integration |
+| `UserColorSettings.vue` | 417 | Color management, store sync |
+| `AnnotationCSVDialog.vue` | 427 | Dialog, CSV generation, export logic |
+| `ViewerToolbar.vue` | 442 | Store-connected toolbar, tool selection |
+| `AnnotationProperties.vue` | 458 | Expansion panels, child component orchestration |
+| `App.vue` | 465 | Root component, layout, route watchers |
+| `ConfigurationInfo.vue` | 468 | Route params, CRUD operations, dialogs |
+| `ShareDataset.vue` | 475 | User search, permissions, sharing API |
+| `BreadCrumbs.vue` | 490 | Route-aware navigation, store watchers |
+| `PropertyFilterHistogram.vue` | 508 | D3/canvas histogram rendering, resize observer |
+| `CollectionList.vue` | 568 | Data table, CRUD, search, dialogs |
+| `ContrastHistogram.vue` | 582 | Canvas rendering, mouse interaction, histogram data |
+| `AnnotationList.vue` | 617 | Data table, virtual scroll, selection, bulk actions |
+| `AnnotationWorkerMenu.vue` | 639 | Worker interface, job submission, progress tracking |
+
+### Tier 2 — Large Components (700–1,500 lines)
+
+More complex migrations requiring careful attention to refs, watchers, and child component interaction.
+
+| Component | Lines | Key Patterns / Notes |
+|-----------|-------|---------------------|
+| `CustomFileManager.vue` | 747 | File browser, drag/drop, upload, Girder integration |
+| `DatasetInfo.vue` | 880 | Route params, dataset CRUD, multiple dialogs |
+| `ProjectInfo.vue` | 1,021 | Project management, collections, datasets, sharing |
+| `Home.vue` | 1,317 | Landing page, project/dataset lists, onboarding |
+| `NewDataset.vue` | 1,435 | Multi-step dataset creation wizard, file upload |
+| `ImageViewer.vue` | 1,514 | GeoJS map/layers, tile rendering — needs `markRaw()` |
+
+### Tier 3 — Giant Components (2,500+ lines)
+
+These should be split into composables before or during migration.
+
+| Component | Lines | Key Patterns / Notes |
+|-----------|-------|---------------------|
+| `MultiSourceConfiguration.vue` | 2,595 | Multi-source dataset config, complex form state |
+| `Snapshots.vue` | 2,834 | Snapshot capture/management, canvas manipulation |
+| `AnnotationViewer.vue` | 3,300 | GeoJS annotations, tool interaction, SAM — needs `markRaw()` |
+
+### Migration Order Recommendations
+
+1. **Batch 10** — Pick ~10 components from Tier 1 (smallest first): FileManagerOptions, ImageOverview, ChatComponent, UserColorSettings, AnnotationCSVDialog, ViewerToolbar, AnnotationProperties, App, ConfigurationInfo, ShareDataset
+2. **Batch 11** — Remaining Tier 1 + smaller Tier 2: BreadCrumbs, PropertyFilterHistogram, CollectionList, ContrastHistogram, AnnotationList, AnnotationWorkerMenu, CustomFileManager
+3. **Batch 12** — Larger Tier 2: DatasetInfo, ProjectInfo, Home, NewDataset
+4. **Batch 13** — ImageViewer (with `markRaw()` additions for GeoJS)
+5. **Batch 14** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
+
+**Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 
 ## Testing Strategy
 
