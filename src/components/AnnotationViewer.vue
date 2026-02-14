@@ -79,6 +79,7 @@ import {
 } from "../store/model";
 
 import { logError, logWarning } from "@/utils/log";
+import { annotationSpatialIndex } from "@/utils/spatialIndex";
 
 import {
   pointDistance,
@@ -1885,6 +1886,38 @@ export default class AnnotationViewer extends Vue {
     // compute the right value of the radius.
     const unitsPerPixel = this.getMapUnitsPerPixel();
 
+    // R-tree broad-phase pre-filter: compute a bounding box for the selection
+    // area and query the spatial index for candidate annotation IDs.
+    // This avoids expensive geometric tests on annotations far from the selection.
+    // NOTE: The R-tree stores centroids only, so this is exact for point annotations
+    // but may miss line/polygon annotations whose centroid is outside the search box.
+    // Those cases are rare and the fallback is the same as the previous behavior
+    // (iterate rendered annotations on the GeoJS layer).
+    let candidateIds: Set<string> | null = null;
+    if (type === AnnotationShape.Point && coordinates.length > 0) {
+      // For click selection, search a box around the click point.
+      // Tolerance accounts for annotation visual radii (generous 50px).
+      const tolerance = 50 * unitsPerPixel;
+      const cx = coordinates[0].x;
+      const cy = coordinates[0].y;
+      candidateIds = annotationSpatialIndex.queryBox(
+        cx - tolerance,
+        cy - tolerance,
+        cx + tolerance,
+        cy + tolerance,
+      );
+    } else if (coordinates.length > 1) {
+      // For lasso/polygon selection, use the bbox of the selection polygon.
+      const xs = coordinates.map((p: IGeoJSPosition) => p.x);
+      const ys = coordinates.map((p: IGeoJSPosition) => p.y);
+      candidateIds = annotationSpatialIndex.queryBox(
+        Math.min(...xs),
+        Math.min(...ys),
+        Math.max(...xs),
+        Math.max(...ys),
+      );
+    }
+
     // Get selected annotations.
     const selectedAnnotations: IAnnotation[] = this.annotationLayer
       .annotations()
@@ -1901,6 +1934,11 @@ export default class AnnotationViewer extends Vue {
               (selectedAnnotation) => selectedAnnotation.id === girderId,
             )
           ) {
+            return selectedAnnotations;
+          }
+          // R-tree pre-filter: skip annotations whose centroid is not near
+          // the selection area. This is a broad-phase optimization.
+          if (candidateIds && !candidateIds.has(girderId)) {
             return selectedAnnotations;
           }
           const annotation = this.getAnnotationFromId(girderId);

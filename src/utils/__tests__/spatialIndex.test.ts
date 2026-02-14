@@ -144,6 +144,46 @@ describe("AnnotationSpatialIndex", () => {
     });
   });
 
+  describe("queryBox", () => {
+    beforeEach(() => {
+      index.bulkLoad([
+        { id: "a", x: 10, y: 10 },
+        { id: "b", x: 50, y: 50 },
+        { id: "c", x: 90, y: 90 },
+        { id: "d", x: 150, y: 150 },
+      ]);
+    });
+
+    it("returns IDs of centroids within the bounding box", () => {
+      const result = index.queryBox(0, 0, 60, 60);
+      expect(result).toEqual(new Set(["a", "b"]));
+    });
+
+    it("returns empty set when no centroids match", () => {
+      const result = index.queryBox(200, 200, 300, 300);
+      expect(result.size).toBe(0);
+    });
+
+    it("includes boundary points", () => {
+      const result = index.queryBox(10, 10, 50, 50);
+      expect(result.has("a")).toBe(true);
+      expect(result.has("b")).toBe(true);
+    });
+
+    it("returns all IDs when box covers entire range", () => {
+      const result = index.queryBox(-1000, -1000, 1000, 1000);
+      expect(result).toEqual(new Set(["a", "b", "c", "d"]));
+    });
+
+    it("works after individual inserts", () => {
+      index.insert("e", 30, 30);
+      const result = index.queryBox(0, 0, 40, 40);
+      expect(result.has("a")).toBe(true);
+      expect(result.has("e")).toBe(true);
+      expect(result.has("b")).toBe(false);
+    });
+  });
+
   describe("clear", () => {
     it("empties the tree", () => {
       index.bulkLoad([

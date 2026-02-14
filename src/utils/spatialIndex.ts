@@ -89,6 +89,27 @@ export class AnnotationSpatialIndex {
   }
 
   /**
+   * Query the R-tree for annotation IDs whose centroids fall within the bounding box.
+   *
+   * Useful as a broad-phase pre-filter for selection (click/lasso) to avoid
+   * testing every rendered annotation with expensive geometric intersection checks.
+   *
+   * NOTE: This index stores centroids only. For point annotations, the centroid IS
+   * the annotation coordinate, so results are exact. For line/polygon annotations,
+   * some may be missed if their centroid falls outside the query box but their
+   * geometry intersects it.
+   */
+  queryBox(
+    minX: number,
+    minY: number,
+    maxX: number,
+    maxY: number,
+  ): Set<string> {
+    const results = this.tree.search({ minX, minY, maxX, maxY });
+    return new Set(results.map((item) => item.id));
+  }
+
+  /**
    * Clear all items from the tree.
    */
   clear(): void {
