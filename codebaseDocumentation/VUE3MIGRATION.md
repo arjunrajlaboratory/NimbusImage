@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 121 | 98 migrated to `<script setup>`, 23 remaining |
+| Class components (`@Component`) | 121 | 110 migrated to `<script setup>`, 11 remaining |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -16,6 +16,38 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 | `v-dialog` usages | 129 | Event/prop API changes in Vuetify 3 |
 | `$refs` usages | 62 | Typing changes between Class → Composition |
 | Mixins | 0 | `routeMapper` mixin converted to `useRouteMapper` composable (Batch 9) |
+
+## Next Steps (Phase 1 Continuation)
+
+**Current progress:** 110 of 121 components migrated to `<script setup>` (Batches 1–12 complete). 11 remaining.
+
+**Branch:** `claude/vue3-migration-planning-tS4Hx`
+
+### ~~Immediate: Fix Batch 10 `ref({})` direct-assignment bug~~ DONE
+
+8 lines across 3 files (`ConfigurationInfo.vue`, `DatasetInfo.vue`, `ProjectInfo.vue`) converted from `cache.value[key] = val` to object spread. All 8 sites fixed.
+
+### ~~Batch 12 — 6 Tier 1 components~~ DONE
+
+See "Components Migrated" section below for details.
+
+**Verification after each batch:** `pnpm tsc` (check migrated files only — pre-existing test file errors are expected), `pnpm lint:fix`, `pnpm build`, `pnpm test`.
+
+### Batch 13 — Remaining Tier 1 + smaller Tier 2
+
+ContrastHistogram, AnnotationList, AnnotationWorkerMenu, CustomFileManager
+
+### Batch 14 — Larger Tier 2
+
+Home, NewDataset
+
+### Batch 15 — ImageViewer (with `markRaw()`)
+
+### Batch 16 — Tier 3 giants (with composable extraction)
+
+MultiSourceConfiguration, Snapshots, AnnotationViewer
+
+---
 
 ## Migration Strategy
 
@@ -387,7 +419,7 @@ These `markRaw()` additions can be done:
 
 **Key patterns in this batch:**
 - Route views with no props/emits — pure store consumers with `getCurrentInstance()!.proxy` for `$route`/`$router`
-- `Vue.set(cache, key, val)` → `cache.value[key] = val` (reactive in Vue 2.7 with `ref({})`)
+- `Vue.set(cache, key, val)` → `cache.value = { ...cache.value, [key]: val }` (direct assignment of new keys on `ref({})` is NOT reactive in Vue 2.7 — see "Vue.set/Vue.delete → object spread" gotcha)
 - DatasetInfo: Converted 2 async component imports (`GirderLocationChooser`, `AddToProjectDialog`) to synchronous imports
 - DatasetInfo: Removed unused `headers` data property (dead code)
 - ProjectInfo: `formatSize = formatSize` binding removed — direct import is auto-available in `<script setup>` template
@@ -396,28 +428,54 @@ These `markRaw()` additions can be done:
 
 **After this batch:** 98 of 121 components migrated to `<script setup>` (~81%).
 
-## Remaining Components (23)
+### Batch 11 — Standalone Leaf Components
 
-All 23 remaining components use the class-based `@Component` decorator pattern.
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `ChatComponent.vue` | 395 | Removed dead `bboxLayer`/`IGeoJSAnnotationLayer`, `getCurrentInstance()` for `$el` in `html2canvas`, template ref for `fileInput` |
+| `UserColorSettings.vue` | 417 | `Vue.set`/`Vue.delete` → object spread (see gotcha below), removed `Vue` import, `withDefaults` for `visible` prop |
+| `ShareDataset.vue` | 475 | v-model dialog computed get/set, single `watch(dialog)` replaces dual `@Watch("value")`/`@Watch("dialog")` |
+| `ImageOverview.vue` | 356 | Kebab-case refs renamed (`overview-map` → `overviewMap`), `onBeforeUnmount` for ResizeObserver cleanup (bug fix), 2 stacked `@Watch` → single `watch([urlPromise, osmLayer])` |
+| `AnnotationCSVDialog.vue` | 427 | 4 stacked `@Watch` → single `watch([...])`, `static UNDEFINED_VALUE_MAP` → module-level const, `import type Vue` for template ref |
+| `FileManagerOptions.vue` | 356 | Custom `OptionAction`/`MutatingAction` decorators → `withOptionAction`/`withMutatingAction` wrapper functions, lazy → sync imports, removed `createDecorator` |
 
-### Tier 1 — Medium Components (300–600 lines)
+**Key cleanups in this batch:**
+- `ChatComponent.vue`: Removed unused `bboxLayer` field and `IGeoJSAnnotationLayer` import (dead code)
+- `UserColorSettings.vue`: Replaced `Vue.set()`/`Vue.delete()` with object spread on `ref({})` — must replace whole object, not direct-assign new keys (see "Vue.set/Vue.delete → object spread" gotcha)
+- `ImageOverview.vue`: Added `onBeforeUnmount` to disconnect ResizeObserver (memory leak fix)
+- `ShareDataset.vue`: Simplified dual watcher pattern (value↔dialog sync) into single computed get/set + watcher
+- `FileManagerOptions.vue`: Eliminated `vue-class-component` `createDecorator` dependency; decorator stacking order preserved via nested wrapper calls
 
-Straightforward migrations with standard patterns. Good candidates for the next 1–2 batches.
+**After this batch:** 104 of 121 components migrated to `<script setup>` (~86%).
+
+### Batch 12 — Tier 1 Medium Components
+
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `ViewerToolbar.vue` | 442 | 16 getter/setter `computed()` pairs for store bindings, 3 unroll watchers collapsed into single `watch([unrollXY, unrollZ, unrollT])`, mousetrap hotkey handlers reference computed `.value` |
+| `AnnotationProperties.vue` | 458 | `defineEmits<{ (e: "expand"): void }>()`, batch processing state with `ref<(() => void) | null>(null)` for cancel function, Miller column computed |
+| `PropertyFilterHistogram.vue` | 508 | D3 drag handlers use template refs (`min.value!`, `max.value!`) instead of `$refs`, `destroyed()` → `onBeforeUnmount()`, `$nextTick()` → `nextTick()`, `debounce()` at module level |
+| `CollectionList.vue` | 568 | `Vue.set()` → object spread on `ref({})`, lazy `() => import(...)` → sync `import { Breadcrumb }`, `$router` → `getCurrentInstance()!.proxy`, non-reactive `let lastPendingChip` for promise chain |
+| `BreadCrumbs.vue` | 490 | `Vue.set(item, "subItems", ...)` → array replacement (`items.value = newArr`), `Vue.set(item, "text", ...)` → direct assignment (existing property), `$route`/`$router` via `getCurrentInstance()`, `eslint-disable` for `vue/no-async-in-computed-properties` (Promise-returning computeds — same pattern as class getters) |
+| `App.vue` | 465 | `$data[panel]` → `panelRefs: Record<string, Ref<boolean>>` map, `$loadAllTours()`/`$startTour()` → `(vm as any).$loadAllTours()` via `getCurrentInstance()`, `$router` via proxy |
+
+**Key patterns in this batch:**
+- `CollectionList.vue`: Non-reactive `let lastPendingChip` (plain variable, not `ref`) for promise chaining — no reactivity needed since it's only used internally for sequencing
+- `BreadCrumbs.vue`: The `datasetId`/`configurationId` computeds return `Promise<string> | null` (not async functions), matching the original class getter behavior. The `.then()` calls trigger `vue/no-async-in-computed-properties` but are just chaining on already-resolved promises
+- `App.vue`: Custom plugin methods (`$loadAllTours`, `$startTour`) accessed via `getCurrentInstance()!.proxy` with `as any` cast since they're added by plugins and not on the standard Vue type
+
+**After this batch:** 110 of 121 components migrated to `<script setup>` (~91%).
+
+## Remaining Components (11)
+
+All 11 remaining components use the class-based `@Component` decorator pattern.
+
+### Tier 1 — Medium Components (580–640 lines)
+
+Straightforward migrations with standard patterns.
 
 | Component | Lines | Key Patterns / Notes |
 |-----------|-------|---------------------|
-| `FileManagerOptions.vue` | 356 | Props, local state, methods |
-| `ImageOverview.vue` | 356 | Store access, computed |
-| `ChatComponent.vue` | 395 | IndexedDB, Anthropic API integration |
-| `UserColorSettings.vue` | 417 | Color management, store sync |
-| `AnnotationCSVDialog.vue` | 427 | Dialog, CSV generation, export logic |
-| `ViewerToolbar.vue` | 442 | Store-connected toolbar, tool selection |
-| `AnnotationProperties.vue` | 458 | Expansion panels, child component orchestration |
-| `App.vue` | 465 | Root component, layout, route watchers |
-| `ShareDataset.vue` | 475 | User search, permissions, sharing API |
-| `BreadCrumbs.vue` | 490 | Route-aware navigation, store watchers |
-| `PropertyFilterHistogram.vue` | 508 | D3/canvas histogram rendering, resize observer |
-| `CollectionList.vue` | 568 | Data table, CRUD, search, dialogs |
 | `ContrastHistogram.vue` | 582 | Canvas rendering, mouse interaction, histogram data |
 | `AnnotationList.vue` | 617 | Data table, virtual scroll, selection, bulk actions |
 | `AnnotationWorkerMenu.vue` | 639 | Worker interface, job submission, progress tracking |
@@ -445,11 +503,11 @@ These should be split into composables before or during migration.
 
 ### Migration Order Recommendations
 
-1. **Batch 11** — Tier 1 (smallest first): FileManagerOptions, ImageOverview, ChatComponent, UserColorSettings, AnnotationCSVDialog, ViewerToolbar, AnnotationProperties, App, ShareDataset
-2. **Batch 12** — Remaining Tier 1 + smaller Tier 2: BreadCrumbs, PropertyFilterHistogram, CollectionList, ContrastHistogram, AnnotationList, AnnotationWorkerMenu, CustomFileManager
-3. **Batch 13** — Larger Tier 2: Home, NewDataset
-4. **Batch 14** — ImageViewer (with `markRaw()` additions for GeoJS)
-5. **Batch 15** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
+1. **Batch 12** — Remaining Tier 1 (smallest first): ViewerToolbar, AnnotationProperties, App, BreadCrumbs, PropertyFilterHistogram, CollectionList
+2. **Batch 13** — Remaining Tier 1 + smaller Tier 2: ContrastHistogram, AnnotationList, AnnotationWorkerMenu, CustomFileManager
+3. **Batch 14** — Larger Tier 2: Home, NewDataset
+4. **Batch 15** — ImageViewer (with `markRaw()` additions for GeoJS)
+5. **Batch 16** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 
@@ -545,7 +603,7 @@ vi.mock("@/store/annotation", () => ({
 
 ## Migration Patterns & Gotchas
 
-Patterns and pitfalls discovered during Batches 1–6. Follow these when migrating remaining components.
+Patterns and pitfalls discovered during Batches 1–11. Follow these when migrating remaining components.
 
 ### `defineExpose` is required for test access
 
@@ -662,6 +720,46 @@ defineProps({
 ```bash
 grep -n "defineProps<" src/**/*.vue | grep -i "element\|htmlelement\|node\|event"
 ```
+
+### `Vue.set`/`Vue.delete` → object spread, NOT direct assignment (Vue 2.7 `ref({})`)
+
+**Critical gotcha discovered in Batch 11.** When removing `Vue.set()`/`Vue.delete()` from migrated components, do NOT replace them with direct property assignment on `ref<Record<...>>()` objects. Vue 2.7's `ref({})` still uses `Object.defineProperty` under the hood — it **cannot detect new property additions** via direct assignment.
+
+**Symptom:** UI partially updates (e.g., a "modified" indicator appears) but the actual value display doesn't change. Works after save+reload because the whole object is replaced from the backend.
+
+```typescript
+// BAD — new key NOT reactive in Vue 2.7
+const overrides = ref<Record<string, string>>({});
+overrides.value[newChannel] = color;        // Vue can't see this!
+delete overrides.value[channel];            // Vue can't see this either!
+
+// GOOD — replacing .value triggers reactivity
+overrides.value = { ...overrides.value, [newChannel]: color };
+
+const { [channel]: _, ...rest } = overrides.value;
+overrides.value = rest;
+```
+
+**Why it's tricky:** Updating an *existing* key via direct assignment IS reactive (the property was already defined by `Object.defineProperty`). So it works for some cases but silently breaks for others, making the bug intermittent.
+
+**Rule of thumb:** For `ref<Record<...>>()` objects, always use object spread for any mutation (add, update, or delete). This is safe in both Vue 2.7 and Vue 3.
+
+**Affected patterns across remaining components:**
+- Any `Vue.set(obj, key, val)` on a plain object → `obj.value = { ...obj.value, [key]: val }`
+- Any `Vue.delete(obj, key)` → destructure + spread
+- `Vue.set` on arrays (`Vue.set(arr, index, val)`) → `arr.value[index] = val` (array index assignment IS reactive) or `arr.value = [...arr.value.slice(0, i), val, ...arr.value.slice(i+1)]`
+- `Vue.set` on Vuex store state → keep `Vue.set` until Pinia migration (Vuex mutations have their own reactivity rules)
+
+**Components with remaining `Vue.set` that will need this pattern:**
+- `Property.vue` — `Vue.set()` on Vuex mutation (keep as-is until Phase 4)
+- `AnnotationConfiguration.vue` — `Vue.set()` on local reactive objects (apply object spread)
+- `ToolConfiguration.vue` — `Vue.set()` on local reactive objects (apply object spread)
+- `ImageViewer.vue` — `Vue.set()` on GeoJS objects (replace with direct assignment + `markRaw()`)
+- Remaining unmigrated components — apply during migration
+
+### ~~Known Batch 10 regression: direct assignment on `ref({})` caches~~ FIXED
+
+All 8 sites in `ConfigurationInfo.vue`, `DatasetInfo.vue`, and `ProjectInfo.vue` have been converted from `cache.value[key] = val` to object spread (`cache.value = { ...cache.value, [key]: val }`).
 
 ## Risk Areas
 

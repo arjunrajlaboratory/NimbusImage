@@ -222,7 +222,8 @@
   </v-app>
 </template>
 
-<script lang="ts">
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, getCurrentInstance, Ref } from "vue";
 import axios from "axios";
 import UserMenu from "./layout/UserMenu.vue";
 import ServerStatus from "./components/ServerStatus.vue";
@@ -232,7 +233,6 @@ import Snapshots from "./components/Snapshots.vue";
 import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.vue";
 import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
-import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import { logError } from "@/utils/log";
@@ -241,174 +241,115 @@ import ChatComponent from "@/components/ChatComponent.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 
-@Component({
-  components: {
-    HelpPanel,
-    AnnotationBrowser,
-    UserMenu,
-    BreadCrumbs,
-    ServerStatus,
-    AnalyzeAnnotations,
-    AnnotationsSettings,
-    Snapshots,
-    ChatComponent,
+// Suppress unused import warnings for template-only components
+void UserMenu;
+void ServerStatus;
+void AnalyzeAnnotations;
+void AnnotationsSettings;
+void Snapshots;
+void AnnotationBrowser;
+void HelpPanel;
+void BreadCrumbs;
+void ChatComponent;
+
+const vm = getCurrentInstance()!.proxy;
+
+const tourSearch = ref("");
+const availableTours = ref<Record<string, ITourMetadata>>({});
+
+const snapshotPanel = ref(false);
+const snapshotPanelFull = ref(false);
+const annotationPanel = ref(false);
+const settingsPanel = ref(false);
+const analyzePanel = ref(false);
+const chatbotOpen = ref(false);
+
+const lastModifiedRightPanel = ref<string | null>(null);
+const isUploadLoading = ref(false);
+const helpPanelIsOpen = ref(false);
+
+const panelRefs: Record<string, Ref<boolean>> = {
+  snapshotPanel,
+  annotationPanel,
+  settingsPanel,
+  analyzePanel,
+  chatbotOpen,
+};
+
+function toggleHelpDialogUsingHotkey() {
+  helpPanelIsOpen.value = !helpPanelIsOpen.value;
+}
+
+const appHotkeys: IHotkey = {
+  bind: "tab",
+  handler: toggleHelpDialogUsingHotkey,
+  data: {
+    section: "Global",
+    description: "Toggle help dialog",
   },
-})
-export default class App extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertyStore;
+};
 
-  readonly appHotkeys: IHotkey = {
-    bind: "tab",
-    handler: this.toggleHelpDialogUsingHotkey,
-    data: {
-      section: "Global",
-      description: "Toggle help dialog",
-    },
-  };
+function fetchConfig() {
+  axios
+    .get("config/templates.json")
+    .then((resp) => {
+      store.setToolTemplateList(resp.data);
+    })
+    .catch((err) => {
+      logError(err);
+      throw err;
+    });
+}
 
-  tourSearch = "";
-  availableTours: Record<string, ITourMetadata> = {};
+async function loadAllTours() {
+  availableTours.value = await (vm as any).$loadAllTours();
+}
 
-  snapshotPanel = false;
-  snapshotPanelFull = false;
+function goHome() {
+  vm.$router.push({ name: "root" });
+}
 
-  annotationPanel = false;
-
-  settingsPanel = false;
-
-  analyzePanel = false;
-
-  chatbotOpen = false;
-
-  lastModifiedRightPanel: string | null = null;
-
-  isUploadLoading = false;
-
-  helpPanelIsOpen = false;
-
-  fetchConfig() {
-    // Fetch the list of available tool templates
-    // It consists of a json file containing a list of items, each item describing
-    // the interface elements for a different tool type:
-    // * name: Name of the tool type
-    // * type: Type of tool to be added
-    // * interface: List of various form components necessary to configure the tool
-    // Interface elements have a name, an id, a type (see ToolConfiguration) and a type-dependent meta field
-    axios
-      .get("config/templates.json")
-      .then((resp) => {
-        this.store.setToolTemplateList(resp.data);
-      })
-      .catch((err) => {
-        logError(err);
-        throw err;
-      });
+function toggleRightPanel(panel: string | null) {
+  if (panel !== null) {
+    panelRefs[panel].value = !panelRefs[panel].value;
   }
-
-  mounted() {
-    this.fetchConfig();
-    // Load available tours
-    // TODO: Move to another async function to avoid async call in mounted
-    this.loadAllTours();
+  if (
+    lastModifiedRightPanel.value !== null &&
+    lastModifiedRightPanel.value !== panel
+  ) {
+    panelRefs[lastModifiedRightPanel.value].value = false;
   }
+  lastModifiedRightPanel.value = panel;
+}
 
-  async loadAllTours() {
-    this.availableTours = await this.$loadAllTours();
-  }
+const routeName = computed(() => vm.$route.name);
 
-  goHome() {
-    this.$router.push({ name: "root" });
-  }
-
-  toggleRightPanel(panel: string | null) {
-    if (panel !== null) {
-      this.$data[panel] = !this.$data[panel];
-    }
-    // The last panel updated has to be closed if it is not the currently updated panel
-    if (
-      this.lastModifiedRightPanel !== null &&
-      this.lastModifiedRightPanel !== panel
-    ) {
-      this.$data[this.lastModifiedRightPanel] = false;
-    }
-    this.lastModifiedRightPanel = panel;
-  }
-
-  @Watch("annotationPanel")
-  annotationPanelChanged() {
-    this.store.setIsAnnotationPanelOpen(this.annotationPanel);
-  }
-
-  get routeName() {
-    return this.$route.name;
-  }
-
-  get hasUncomputedProperties() {
-    const uncomputed = this.propertyStore.uncomputedAnnotationsPerProperty;
-    for (const id in uncomputed) {
-      if (uncomputed[id].length > 0) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  @Watch("routeName")
-  datasetChanged() {
-    if (this.routeName !== "datasetview") {
-      this.toggleRightPanel(null);
+const hasUncomputedProperties = computed(() => {
+  const uncomputed = propertyStore.uncomputedAnnotationsPerProperty;
+  for (const id in uncomputed) {
+    if (uncomputed[id].length > 0) {
+      return true;
     }
   }
+  return false;
+});
 
-  async goToNewDataset() {
-    if (this.isUploadLoading) return;
-
-    this.isUploadLoading = true;
-
-    let privateFolder: IGirderFolder | null = null;
-    try {
-      // Get the user's private folder
-      privateFolder = await this.store.api.getUserPrivateFolder();
-      if (!privateFolder) {
-        throw new Error("Could not access private folder");
-      }
-    } catch (error) {
-      logError(error);
-    } finally {
-      this.$router.push({
-        name: "newdataset",
-        params: {
-          quickupload: false,
-          defaultFiles: [],
-          initialUploadLocation: privateFolder,
-        } as any,
-      });
-      this.isUploadLoading = false;
-    }
-  }
-
-  get filteredToursByCategory(): Record<string, Record<string, ITourMetadata>> {
-    const tours = this.availableTours;
+const filteredToursByCategory = computed(
+  (): Record<string, Record<string, ITourMetadata>> => {
+    const tours = availableTours.value;
     const filtered = Object.entries(tours).filter(([, tour]) => {
-      // First filter by search term
       const matchesSearch = tour.name
         .toLowerCase()
-        .includes(this.tourSearch.toLowerCase());
+        .includes(tourSearch.value.toLowerCase());
 
-      // Then filter by route constraints
       const isDatasetTour = tour.entryPoint === "datasetview";
-      const isDatasetView = this.routeName === "datasetview";
-
-      // Show all tours if we're in dataset view
-      // Otherwise, hide datasetview-specific tours (because you need to select a dataset first)
+      const isDatasetView = routeName.value === "datasetview";
       const isAllowedOnCurrentRoute = isDatasetView || !isDatasetTour;
 
       return matchesSearch && isAllowedOnCurrentRoute;
     });
 
-    // Group by category
-    const grouped = filtered.reduce(
+    return filtered.reduce(
       (acc: Record<string, Record<string, ITourMetadata>>, [id, tour]) => {
         const category = tour.category || "General";
         if (!acc[category]) {
@@ -419,23 +360,85 @@ export default class App extends Vue {
       },
       {},
     );
+  },
+);
 
-    return grouped;
+function handleTourStart(tourId: string) {
+  const tour = availableTours.value[tourId];
+  if (tour && tour.entryPoint !== routeName.value) {
+    vm.$router.push({ name: tour.entryPoint });
   }
+  (vm as any).$startTour(tourId);
+}
 
-  toggleHelpDialogUsingHotkey() {
-    this.helpPanelIsOpen = !this.helpPanelIsOpen;
-  }
+async function goToNewDataset() {
+  if (isUploadLoading.value) return;
 
-  handleTourStart(tourId: string) {
-    const tour = this.availableTours[tourId];
-    if (tour && tour.entryPoint !== this.routeName) {
-      // If we're not on the correct route, navigate there first
-      this.$router.push({ name: tour.entryPoint });
+  isUploadLoading.value = true;
+
+  let privateFolder: IGirderFolder | null = null;
+  try {
+    privateFolder = await store.api.getUserPrivateFolder();
+    if (!privateFolder) {
+      throw new Error("Could not access private folder");
     }
-    this.$startTour(tourId);
+  } catch (error) {
+    logError(error);
+  } finally {
+    vm.$router.push({
+      name: "newdataset",
+      params: {
+        quickupload: false,
+        defaultFiles: [],
+        initialUploadLocation: privateFolder,
+      } as any,
+    });
+    isUploadLoading.value = false;
   }
 }
+
+function annotationPanelChanged() {
+  store.setIsAnnotationPanelOpen(annotationPanel.value);
+}
+
+function datasetChanged() {
+  if (routeName.value !== "datasetview") {
+    toggleRightPanel(null);
+  }
+}
+
+watch(annotationPanel, () => annotationPanelChanged());
+watch(routeName, () => datasetChanged());
+
+onMounted(() => {
+  fetchConfig();
+  loadAllTours();
+});
+
+defineExpose({
+  tourSearch,
+  availableTours,
+  snapshotPanel,
+  snapshotPanelFull,
+  annotationPanel,
+  settingsPanel,
+  analyzePanel,
+  chatbotOpen,
+  lastModifiedRightPanel,
+  isUploadLoading,
+  helpPanelIsOpen,
+  appHotkeys,
+  routeName,
+  hasUncomputedProperties,
+  filteredToursByCategory,
+  fetchConfig,
+  loadAllTours,
+  goHome,
+  toggleRightPanel,
+  toggleHelpDialogUsingHotkey,
+  handleTourStart,
+  goToNewDataset,
+});
 </script>
 <style lang="scss" scoped>
 .logo {

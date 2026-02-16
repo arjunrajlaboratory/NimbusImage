@@ -84,16 +84,21 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IUPennCollection } from "@/girder";
+import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
 import { formatDateString } from "@/utils/date";
 import CollectionItemRow from "./CollectionItemRow.vue";
 import { RawLocation } from "vue-router";
 import { logError, logWarning } from "@/utils/log";
 import { IDatasetView } from "@/store/model";
+
+// Suppress unused import warnings
+void GirderBreadcrumb;
+void formatDateString;
 
 interface IChipAttrs {
   text: string;
@@ -106,253 +111,275 @@ interface IChipsPerItemId {
   type: string;
 }
 
-@Component({
-  components: {
-    CollectionItemRow,
-    GirderBreadcrumb: () =>
-      import("@/girder/components").then((mod) => mod.Breadcrumb),
-  },
-})
-export default class CollectionList extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
+const vm = getCurrentInstance()!.proxy;
 
-  collections: IUPennCollection[] = [];
-  loading = true;
-  searchQuery = "";
+const collections = ref<IUPennCollection[]>([]);
+const loading = ref(true);
+const searchQuery = ref("");
 
-  chipsPerItemId: { [itemId: string]: IChipsPerItemId } = {};
-  debouncedChipsPerItemId: { [itemId: string]: IChipsPerItemId } = {};
-  pendingChips: number = 0;
-  lastPendingChip: Promise<any> = Promise.resolve();
-  computedChipsIds: Set<string> = new Set();
+const chipsPerItemId = ref<{ [itemId: string]: IChipsPerItemId }>({});
+const debouncedChipsPerItemId = ref<{ [itemId: string]: IChipsPerItemId }>({});
+const pendingChips = ref(0);
+let lastPendingChip: Promise<any> = Promise.resolve();
+const computedChipsIds = ref<Set<string>>(new Set());
 
-  formatDateString = formatDateString;
-
-  get currentFolderLocation() {
-    const currentFolder = this.store.folderLocation;
-
-    // Return the folder only if it has the properties needed for breadcrumb
-    if (currentFolder && "_id" in currentFolder && "name" in currentFolder) {
-      return currentFolder;
-    }
-
-    return null;
+const currentFolderLocation = computed(() => {
+  const currentFolder = store.folderLocation;
+  if (currentFolder && "_id" in currentFolder && "name" in currentFolder) {
+    return currentFolder;
   }
+  return null;
+});
 
-  get fallbackFolderPath() {
-    const currentFolder = this.store.folderLocation;
-
-    if (!currentFolder) {
-      return "Unknown location";
+const fallbackFolderPath = computed(() => {
+  const currentFolder = store.folderLocation;
+  if (!currentFolder) return "Unknown location";
+  if ("name" in currentFolder) return currentFolder.name;
+  if ("type" in currentFolder) {
+    switch (currentFolder.type) {
+      case "root":
+        return "Root";
+      case "users":
+        return "Users";
+      case "collections":
+        return "Collections";
+      default:
+        return currentFolder.type;
     }
+  }
+  if ("login" in currentFolder) {
+    return `${(currentFolder as any).login}'s folder`;
+  }
+  return "Current folder";
+});
 
-    // If it's a full folder object with name
-    if ("name" in currentFolder) {
-      return currentFolder.name;
-    }
+const filteredCollections = computed(() => {
+  if (!searchQuery.value) return collections.value;
+  const query = searchQuery.value.toLowerCase();
+  return collections.value.filter(
+    (collection) =>
+      collection.name.toLowerCase().includes(query) ||
+      (collection.description &&
+        collection.description.toLowerCase().includes(query)),
+  );
+});
 
-    // If it's just a type indicator
-    if ("type" in currentFolder) {
-      switch (currentFolder.type) {
-        case "root":
-          return "Root";
-        case "users":
-          return "Users";
-        case "collections":
-          return "Collections";
-        default:
-          return currentFolder.type;
+async function fetchCollections() {
+  loading.value = true;
+  try {
+    const currentFolder = store.folderLocation;
+    let folderId = null;
+    if (currentFolder && "_id" in currentFolder) {
+      folderId = currentFolder._id;
+    } else {
+      const privateFolder = await store.api.getUserPrivateFolder();
+      if (privateFolder) {
+        folderId = privateFolder._id;
       }
     }
 
-    // If it's a user object
-    if ("login" in currentFolder) {
-      return `${(currentFolder as any).login}'s folder`;
+    if (!folderId) {
+      collections.value = [];
+      return;
     }
 
-    return "Current folder";
-  }
-
-  async mounted() {
-    await this.fetchCollections();
-  }
-
-  get filteredCollections() {
-    if (!this.searchQuery) {
-      return this.collections;
-    }
-
-    const query = this.searchQuery.toLowerCase();
-    return this.collections.filter(
-      (collection) =>
-        collection.name.toLowerCase().includes(query) ||
-        (collection.description &&
-          collection.description.toLowerCase().includes(query)),
-    );
-  }
-
-  @Watch("filteredCollections")
-  async onFilteredCollectionsChange() {
-    // Collect all collection IDs that need chips
-    const collectionsNeedingChips = this.filteredCollections.filter(
-      (collection) => !this.computedChipsIds.has(collection._id),
-    );
-
-    if (collectionsNeedingChips.length === 0) return;
-
-    // Mark all as being computed
-    collectionsNeedingChips.forEach((collection) => {
-      this.computedChipsIds.add(collection._id);
-    });
-
-    // Generate chips for all collections in bulk
-    this.addBulkChipPromise(collectionsNeedingChips);
-  }
-
-  async fetchCollections() {
-    this.loading = true;
+    let response;
     try {
-      // Use the current folder location from the store
-      const currentFolder = this.store.folderLocation;
-
-      // Check if currentFolder is a full folder object with _id, or fallback to user's private folder
-      let folderId = null;
-      if (currentFolder && "_id" in currentFolder) {
-        folderId = currentFolder._id;
-      } else {
-        // If no current folder with _id, try to get user's private folder
-        const privateFolder = await this.store.api.getUserPrivateFolder();
-        if (privateFolder) {
-          folderId = privateFolder._id;
-        }
-      }
-
-      if (!folderId) {
-        this.collections = [];
-        return;
-      }
-
-      // First attempt: Try fetching collections with folderId (as per backend API)
-      let response;
-
+      response = await store.api.client.get("upenn_collection", {
+        params: {
+          folderId: folderId,
+          limit: 0,
+          sort: "updated",
+          sortdir: -1,
+        },
+      });
+    } catch (folderError) {
       try {
-        response = await this.store.api.client.get("upenn_collection", {
+        response = await store.api.client.get("upenn_collection", {
           params: {
-            folderId: folderId,
-            limit: 0, // Get all collections
+            limit: 0,
             sort: "updated",
             sortdir: -1,
           },
         });
-      } catch (folderError) {
-        // Second attempt: Try without folderId
-        // TODO: The endpoint currently does not support no folderId, so that should be updated.
-        try {
-          response = await this.store.api.client.get("upenn_collection", {
-            params: {
-              limit: 0, // Get all collections
-              sort: "updated",
-              sortdir: -1,
-            },
-          });
-        } catch (noFolderError) {
-          throw noFolderError;
-        }
+      } catch (noFolderError) {
+        throw noFolderError;
       }
-
-      this.collections = response.data.map((item: any) => ({
-        ...item,
-        _modelType: "upenn_collection" as const,
-      }));
-    } catch (error) {
-      logError("Failed to fetch collections:", error);
-      this.collections = [];
-    } finally {
-      this.loading = false;
     }
-  }
 
-  navigateToCollection(configurationId: string) {
-    this.$router.push({
-      name: "configuration",
-      params: { configurationId },
+    collections.value = response.data.map((item: any) => ({
+      ...item,
+      _modelType: "upenn_collection" as const,
+    }));
+  } catch (error) {
+    logError("Failed to fetch collections:", error);
+    collections.value = [];
+  } finally {
+    loading.value = false;
+  }
+}
+
+function navigateToCollection(configurationId: string) {
+  vm.$router.push({
+    name: "configuration",
+    params: { configurationId },
+  });
+}
+
+function addChipPromise(collection: IUPennCollection) {
+  lastPendingChip = lastPendingChip
+    .finally()
+    .then(() => collectionToChips(collection))
+    .then((chipAttrs) => {
+      chipsPerItemId.value = {
+        ...chipsPerItemId.value,
+        [collection._id]: chipAttrs,
+      };
     });
-  }
 
-  addChipPromise(collection: IUPennCollection) {
-    // Chain a new chip promise with last pending promise
-    this.lastPendingChip = this.lastPendingChip
-      .finally()
-      .then(() => this.collectionToChips(collection))
-      .then((chipAttrs) =>
-        Vue.set(this.chipsPerItemId, collection._id, chipAttrs),
-      );
+  ++pendingChips.value;
+  lastPendingChip.finally(() => {
+    if (--pendingChips.value === 0) {
+      debouncedChipsPerItemId.value = { ...chipsPerItemId.value };
+    }
+  });
+}
 
-    // When done with the last promise, update debouncedChipsPerItemId
-    ++this.pendingChips;
-    this.lastPendingChip.finally(() => {
-      if (--this.pendingChips === 0) {
-        this.debouncedChipsPerItemId = { ...this.chipsPerItemId };
+function addBulkChipPromise(bulkCollections: IUPennCollection[]) {
+  lastPendingChip = lastPendingChip
+    .finally()
+    .then(() => bulkCollectionsToChips(bulkCollections))
+    .then((allChipAttrs) => {
+      let updated = { ...chipsPerItemId.value };
+      for (const [collectionId, chipAttrs] of Object.entries(allChipAttrs)) {
+        updated[collectionId] = chipAttrs;
       }
+      chipsPerItemId.value = updated;
+    })
+    .catch((error) => {
+      logError("Error in bulkCollectionsToChips:", error);
     });
-  }
 
-  addBulkChipPromise(collections: IUPennCollection[]) {
-    // Chain a new bulk chip promise with last pending promise
-    this.lastPendingChip = this.lastPendingChip
-      .finally()
-      .then(() => this.bulkCollectionsToChips(collections))
-      .then((allChipAttrs) => {
-        // Update all collections at once
-        for (const [collectionId, chipAttrs] of Object.entries(allChipAttrs)) {
-          Vue.set(this.chipsPerItemId, collectionId, chipAttrs);
-        }
-      })
-      .catch((error) => {
-        logError("Error in bulkCollectionsToChips:", error);
-      });
+  ++pendingChips.value;
+  lastPendingChip.finally(() => {
+    if (--pendingChips.value === 0) {
+      debouncedChipsPerItemId.value = { ...chipsPerItemId.value };
+    }
+  });
+}
 
-    // When done with the last promise, update debouncedChipsPerItemId
-    ++this.pendingChips;
-    this.lastPendingChip.finally(() => {
-      if (--this.pendingChips === 0) {
-        this.debouncedChipsPerItemId = { ...this.chipsPerItemId };
-      }
+async function collectionToChips(collection: IUPennCollection) {
+  const ret: IChipAttrs[] = [];
+
+  try {
+    const views = await store.api.findDatasetViews({
+      configurationId: collection._id,
     });
-  }
 
-  async collectionToChips(collection: IUPennCollection) {
-    const ret: IChipAttrs[] = [];
+    if (views.length === 0) {
+      return { chips: ret, type: "collection" };
+    }
 
+    const datasetIds: string[] = Array.from(
+      new Set(views.map((view: IDatasetView) => String(view.datasetId))),
+    );
+
+    let folderInfoMap: { [id: string]: any } = {};
     try {
-      // Get all dataset views associated with this collection
-      const views = await this.store.api.findDatasetViews({
-        configurationId: collection._id,
+      const batchResponse = await store.api.batchResources({
+        folder: datasetIds,
       });
+      folderInfoMap = batchResponse.folder || {};
+    } catch (error) {
+      logError("Failed to batch fetch folder info:", error);
+      for (const datasetId of datasetIds as string[]) {
+        try {
+          const folderInfo = await girderResources.getFolder(datasetId);
+          if (folderInfo) {
+            folderInfoMap[datasetId] = folderInfo;
+          }
+        } catch (individualError) {
+          logError(`Failed to fetch folder ${datasetId}:`, individualError);
+        }
+      }
+    }
 
-      if (views.length === 0) {
-        return { chips: ret, type: "collection" };
+    const datasetChips: IChipAttrs[] = [];
+    for (const view of views) {
+      const datasetInfo = folderInfoMap[String(view.datasetId)];
+      if (!datasetInfo) {
+        logWarning(
+          `Dataset ${view.datasetId} not found for collection ${collection._id} (may have been deleted)`,
+        );
+        continue;
       }
 
-      // Collect all unique dataset IDs that need names
-      const datasetIds: string[] = Array.from(
-        new Set(views.map((view: IDatasetView) => String(view.datasetId))),
-      );
+      const chip: IChipAttrs = {
+        text: datasetInfo.name,
+        color: "#e57373",
+      };
 
-      // Use bulk API call to get all folder names at once
-      let folderInfoMap: { [id: string]: any } = {};
+      chip.to = {
+        name: "dataset",
+        params: { datasetId: String(view.datasetId) },
+      };
+
+      datasetChips.push(chip);
+    }
+
+    ret.push(...datasetChips);
+  } catch (error) {
+    logError(
+      "Failed to fetch dataset views for collection:",
+      collection._id,
+      error,
+    );
+  }
+
+  return {
+    chips: ret,
+    type: "collection",
+  };
+}
+
+async function bulkCollectionsToChips(
+  bulkCollections: IUPennCollection[],
+): Promise<{ [collectionId: string]: IChipsPerItemId }> {
+  const result: { [collectionId: string]: IChipsPerItemId } = {};
+
+  if (bulkCollections.length === 0) return result;
+
+  try {
+    const configurationIds = bulkCollections.map((c) => c._id);
+    const allViews = await store.api.findDatasetViews({
+      configurationIds: configurationIds,
+    });
+
+    const viewsByConfigId: { [configId: string]: IDatasetView[] } = {};
+    for (const view of allViews) {
+      const configId = String(view.configurationId);
+      if (!viewsByConfigId[configId]) {
+        viewsByConfigId[configId] = [];
+      }
+      viewsByConfigId[configId].push(view);
+    }
+
+    const allDatasetIds: string[] = Array.from(
+      new Set(allViews.map((view: IDatasetView) => String(view.datasetId))),
+    );
+
+    let folderInfoMap: { [id: string]: any } = {};
+    if (allDatasetIds.length > 0) {
       try {
-        const batchResponse = await this.store.api.batchResources({
-          folder: datasetIds,
+        const batchResponse = await store.api.batchResources({
+          folder: allDatasetIds,
         });
         folderInfoMap = batchResponse.folder || {};
       } catch (error) {
         logError("Failed to batch fetch folder info:", error);
-        // Fall back to individual calls if batch fails
-        for (const datasetId of datasetIds as string[]) {
+        for (const datasetId of allDatasetIds as string[]) {
           try {
-            const folderInfo = await this.girderResources.getFolder(datasetId);
+            const folderInfo = await girderResources.getFolder(datasetId);
             if (folderInfo) {
               folderInfoMap[datasetId] = folderInfo;
             }
@@ -361,9 +388,12 @@ export default class CollectionList extends Vue {
           }
         }
       }
+    }
 
-      // Create chips for each dataset using the bulk-fetched data
-      const datasetChips: IChipAttrs[] = [];
+    for (const collection of bulkCollections) {
+      const views = viewsByConfigId[collection._id] || [];
+      const chips: IChipAttrs[] = [];
+
       for (const view of views) {
         const datasetInfo = folderInfoMap[String(view.datasetId)];
         if (!datasetInfo) {
@@ -376,137 +406,77 @@ export default class CollectionList extends Vue {
         const chip: IChipAttrs = {
           text: datasetInfo.name,
           color: "#e57373",
+          to: {
+            name: "dataset",
+            params: { datasetId: String(view.datasetId) },
+          },
         };
 
-        // Add navigation to dataset
-        chip.to = {
-          name: "dataset",
-          params: { datasetId: String(view.datasetId) },
-        };
-
-        datasetChips.push(chip);
+        chips.push(chip);
       }
 
-      ret.push(...datasetChips);
-    } catch (error) {
-      logError(
-        "Failed to fetch dataset views for collection:",
-        collection._id,
-        error,
-      );
+      result[collection._id] = {
+        chips,
+        type: "collection",
+      };
     }
+  } catch (error) {
+    logError("Failed to bulk fetch dataset views:", error);
 
-    return {
-      chips: ret,
-      type: "collection",
-    };
-  }
-
-  async bulkCollectionsToChips(
-    collections: IUPennCollection[],
-  ): Promise<{ [collectionId: string]: IChipsPerItemId }> {
-    const result: { [collectionId: string]: IChipsPerItemId } = {};
-
-    if (collections.length === 0) return result;
-
-    try {
-      // Get all dataset views for all collections in one bulk call
-      const configurationIds = collections.map((c) => c._id);
-      const allViews = await this.store.api.findDatasetViews({
-        configurationIds: configurationIds,
-      });
-
-      // Group views by configuration ID
-      const viewsByConfigId: { [configId: string]: IDatasetView[] } = {};
-      for (const view of allViews) {
-        const configId = String(view.configurationId);
-        if (!viewsByConfigId[configId]) {
-          viewsByConfigId[configId] = [];
-        }
-        viewsByConfigId[configId].push(view);
-      }
-
-      // Collect all unique dataset IDs across all collections
-      const allDatasetIds: string[] = Array.from(
-        new Set(allViews.map((view: IDatasetView) => String(view.datasetId))),
-      );
-
-      // Bulk fetch all folder info at once
-      let folderInfoMap: { [id: string]: any } = {};
-      if (allDatasetIds.length > 0) {
-        try {
-          const batchResponse = await this.store.api.batchResources({
-            folder: allDatasetIds,
-          });
-          folderInfoMap = batchResponse.folder || {};
-        } catch (error) {
-          logError("Failed to batch fetch folder info:", error);
-          // Fall back to individual calls if batch fails
-          for (const datasetId of allDatasetIds as string[]) {
-            try {
-              const folderInfo =
-                await this.girderResources.getFolder(datasetId);
-              if (folderInfo) {
-                folderInfoMap[datasetId] = folderInfo;
-              }
-            } catch (individualError) {
-              logError(`Failed to fetch folder ${datasetId}:`, individualError);
-            }
-          }
-        }
-      }
-
-      // Generate chips for each collection
-      for (const collection of collections) {
-        const views = viewsByConfigId[collection._id] || [];
-        const chips: IChipAttrs[] = [];
-
-        for (const view of views) {
-          const datasetInfo = folderInfoMap[String(view.datasetId)];
-          if (!datasetInfo) {
-            logWarning(
-              `Dataset ${view.datasetId} not found for collection ${collection._id} (may have been deleted)`,
-            );
-            continue;
-          }
-
-          const chip: IChipAttrs = {
-            text: datasetInfo.name,
-            color: "#e57373",
-            to: {
-              name: "dataset",
-              params: { datasetId: String(view.datasetId) },
-            },
-          };
-
-          chips.push(chip);
-        }
-
-        result[collection._id] = {
-          chips,
-          type: "collection",
-        };
-      }
-    } catch (error) {
-      logError("Failed to bulk fetch dataset views:", error);
-
-      // Fall back to individual processing for each collection
-      for (const collection of collections) {
-        try {
-          result[collection._id] = await this.collectionToChips(collection);
-        } catch (individualError) {
-          logError(
-            `Failed to process collection ${collection._id}:`,
-            individualError,
-          );
-          result[collection._id] = { chips: [], type: "collection" };
-        }
+    for (const collection of bulkCollections) {
+      try {
+        result[collection._id] = await collectionToChips(collection);
+      } catch (individualError) {
+        logError(
+          `Failed to process collection ${collection._id}:`,
+          individualError,
+        );
+        result[collection._id] = { chips: [], type: "collection" };
       }
     }
-
-    return result;
   }
+
+  return result;
 }
+
+async function onFilteredCollectionsChange() {
+  const collectionsNeedingChips = filteredCollections.value.filter(
+    (collection) => !computedChipsIds.value.has(collection._id),
+  );
+
+  if (collectionsNeedingChips.length === 0) return;
+
+  collectionsNeedingChips.forEach((collection) => {
+    computedChipsIds.value.add(collection._id);
+  });
+
+  addBulkChipPromise(collectionsNeedingChips);
+}
+
+watch(filteredCollections, () => onFilteredCollectionsChange());
+
+onMounted(async () => {
+  await fetchCollections();
+});
+
+defineExpose({
+  collections,
+  loading,
+  searchQuery,
+  chipsPerItemId,
+  debouncedChipsPerItemId,
+  pendingChips,
+  computedChipsIds,
+  currentFolderLocation,
+  fallbackFolderPath,
+  filteredCollections,
+  fetchCollections,
+  navigateToCollection,
+  addChipPromise,
+  addBulkChipPromise,
+  collectionToChips,
+  bulkCollectionsToChips,
+});
 </script>
 
 <style lang="scss" scoped>

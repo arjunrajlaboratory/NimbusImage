@@ -89,9 +89,15 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
-import store from "@/store";
+<script setup lang="ts">
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+} from "vue";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { arePathEquals, getValueFromObjectAndPath } from "@/utils/paths";
@@ -100,298 +106,292 @@ import { drag, D3DragEvent } from "d3-drag";
 
 import { IPropertyAnnotationFilter, PropertyFilterMode } from "@/store/model";
 import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
-import { area, curveStepBefore } from "d3-shape";
+import { area as d3Area, curveStepBefore } from "d3-shape";
 import { v4 as uuidv4 } from "uuid";
 
 import { scaleLinear, scaleSymlog } from "d3-scale";
 import debounce from "lodash/debounce";
 
-@Component({
-  components: {
-    TagFilterEditor,
+// Suppress unused import warnings for template-only components
+void TagFilterEditor;
+
+const props = defineProps<{ propertyPath: string[] }>();
+
+// Template refs
+const wrapper = ref<HTMLElement>();
+const min = ref<HTMLElement>();
+const max = ref<HTMLElement>();
+
+const width = ref(300);
+const height = ref(60);
+const useLog = ref(false);
+const useCDF = ref(false);
+const defaultMinMax = ref(true);
+const valuesInput = ref("");
+
+const histToPixel = computed(() => {
+  const scale = scaleLinear()
+    .range([0, width.value])
+    .domain([defaultMin.value, defaultMax.value]);
+  return scale;
+});
+
+function toValue(val: number, isMax: boolean = false) {
+  const base = histToPixel.value(val);
+  if (isMax) {
+    return `${width.value - base}px`;
+  }
+  return `${base}px`;
+}
+
+const minValue = computed({
+  get: () =>
+    defaultMinMax.value ? defaultMin.value : propertyFilter.value.range.min,
+  set: (value) => {
+    const numVal = Number(value);
+    if (numVal > maxValue.value || numVal < defaultMin.value) return;
+    if (defaultMinMax.value) {
+      defaultMinMax.value = false;
+    }
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      range: { min: numVal, max: maxValue.value },
+    });
   },
-})
-export default class PropertyFilterHistogram extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertyStore;
-  readonly filterStore = filterStore;
-  readonly PropertyFilterMode = PropertyFilterMode;
+});
 
-  @Prop()
-  readonly propertyPath!: string[];
-
-  width = 300;
-  height = 60;
-
-  useLog: boolean = false;
-  useCDF: boolean = false;
-
-  defaultMinMax: boolean = true;
-
-  valuesInput: string = "";
-
-  debouncedUpdateValues = debounce(this.updateValuesFilter, 500);
-
-  get histToPixel() {
-    const scale = scaleLinear()
-      .range([0, this.width])
-      .domain([this.defaultMin, this.defaultMax]);
-    return scale;
-  }
-
-  toValue(val: number, isMax: boolean = false) {
-    const base = this.histToPixel(val);
-    if (isMax) {
-      return `${this.width - base}px`;
+const maxValue = computed({
+  get: () =>
+    defaultMinMax.value ? defaultMax.value : propertyFilter.value.range.max,
+  set: (value) => {
+    const numVal = Number(value);
+    if (numVal < minValue.value || numVal > defaultMax.value) return;
+    if (defaultMinMax.value) {
+      defaultMinMax.value = false;
     }
-    return `${base}px`;
-  }
-
-  get minValue() {
-    return this.defaultMinMax ? this.defaultMin : this.propertyFilter.range.min;
-  }
-
-  get maxValue() {
-    return this.defaultMinMax ? this.defaultMax : this.propertyFilter.range.max;
-  }
-
-  set minValue(value) {
-    const min = Number(value);
-    if (min > this.maxValue || min < this.defaultMin) {
-      return;
-    }
-    if (this.defaultMinMax) {
-      this.defaultMinMax = false;
-    }
-    this.filterStore.updatePropertyFilter({
-      ...this.propertyFilter,
-      range: { min, max: this.maxValue },
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      range: { min: minValue.value, max: numVal },
     });
-  }
+  },
+});
 
-  set maxValue(value) {
-    const max = Number(value);
-    if (max < this.minValue || max > this.defaultMax) {
-      return;
-    }
-    if (this.defaultMinMax) {
-      this.defaultMinMax = false;
-    }
-    this.filterStore.updatePropertyFilter({
-      ...this.propertyFilter,
-      range: { min: this.minValue, max },
-    });
-  }
+const defaultMin = computed(() => Math.min(...values.value));
 
-  get defaultMin() {
-    return Math.min(...this.values);
-  }
+const defaultMax = computed(() => Math.max(...values.value));
 
-  get defaultMax() {
-    return Math.max(...this.values);
-  }
+const propertyFilters = computed(() => filterStore.propertyFilters);
 
-  get propertyFilters() {
-    return this.filterStore.propertyFilters;
-  }
-
-  get propertyFilter() {
-    const filter = this.propertyFilters.find(
-      (value: IPropertyAnnotationFilter) =>
-        arePathEquals(value.propertyPath, this.propertyPath),
-    );
-    if (!filter) {
-      const newFilter: IPropertyAnnotationFilter = {
-        range: { min: this.defaultMin, max: this.defaultMax },
-
-        id: uuidv4(),
-        propertyPath: this.propertyPath,
-        exclusive: false,
-        enabled: true,
-        valuesOrRange: PropertyFilterMode.Range,
-      };
-      this.filterStore.updatePropertyFilter(newFilter);
-      return newFilter;
-    }
-    return filter;
-  }
-
-  get propertyFullName() {
-    return this.propertyStore.getFullNameFromPath(this.propertyPath);
-  }
-
-  get values() {
-    const valuesForThisProperty: number[] = [];
-    const propertyValues = this.propertyStore.propertyValues;
-    for (const annotationId in propertyValues) {
-      const valuesPerProperty = propertyValues[annotationId];
-      const value = getValueFromObjectAndPath(
-        valuesPerProperty,
-        this.propertyPath,
-      );
-      if (typeof value === "number") {
-        valuesForThisProperty.push(value);
-      }
-    }
-    return valuesForThisProperty;
-  }
-
-  get hist() {
-    return this.filterStore.getHistogram(this.propertyPath) || [];
-  }
-
-  get area() {
-    const nInitial = this.hist.length;
-    if (nInitial === 0) {
-      return "";
-    }
-    // Create a dummy point in histogram because of curveStepBefore
-    const minIntensity = this.hist[0].min;
-    const maxIntensity = this.hist[nInitial - 1].max;
-    const dummyFirstPoint = {
-      count: 0,
-      min: minIntensity,
-      max: minIntensity,
+const propertyFilter = computed(() => {
+  const filter = propertyFilters.value.find(
+    (value: IPropertyAnnotationFilter) =>
+      arePathEquals(value.propertyPath, props.propertyPath),
+  );
+  if (!filter) {
+    const newFilter: IPropertyAnnotationFilter = {
+      range: { min: defaultMin.value, max: defaultMax.value },
+      id: uuidv4(),
+      propertyPath: props.propertyPath,
+      exclusive: false,
+      enabled: true,
+      valuesOrRange: PropertyFilterMode.Range,
     };
-    const hist = [dummyFirstPoint, ...this.hist];
+    filterStore.updatePropertyFilter(newFilter);
+    return newFilter;
+  }
+  return filter;
+});
 
-    // We need to show densities instead of counts on the Y axis
-    // Density of the dummyFirstPoint is 0 and won't cause problems
-    const densities = hist.map(({ count, min, max }) =>
-      max <= min ? 0 : count / (max - min),
+const propertyFullName = computed(() =>
+  propertyStore.getFullNameFromPath(props.propertyPath),
+);
+
+const values = computed(() => {
+  const valuesForThisProperty: number[] = [];
+  const propValues = propertyStore.propertyValues;
+  for (const annotationId in propValues) {
+    const valuesPerProperty = propValues[annotationId];
+    const value = getValueFromObjectAndPath(
+      valuesPerProperty,
+      props.propertyPath,
     );
-    if (this.useCDF) {
-      for (let i = 1; i < densities.length; ++i) {
-        densities[i] += densities[i - 1];
-      }
+    if (typeof value === "number") {
+      valuesForThisProperty.push(value);
     }
-
-    // On the x axis
-    const intensities = hist.map(({ max }) => max);
-
-    const scaleY = this.useLog ? scaleSymlog() : scaleLinear();
-    scaleY.domain([0, Math.max(...densities)]);
-    scaleY.range([this.height, 0]);
-
-    const scaleX = scaleLinear();
-    scaleX.domain([minIntensity, maxIntensity]);
-    scaleX.range([0, this.width]);
-
-    const gen = area<number>()
-      .curve(curveStepBefore)
-      .x((_, i) => scaleX(intensities[i])!)
-      .y0(scaleY(0))
-      .y1((d) => scaleY(d)!);
-    return gen(densities) ?? undefined;
   }
+  return valuesForThisProperty;
+});
 
-  destroyed() {
-    if (this.propertyFilter.enabled) {
-      this.filterStore.updatePropertyFilter({
-        ...this.propertyFilter,
-        enabled: false,
-      });
+const hist = computed(() => filterStore.getHistogram(props.propertyPath) || []);
+
+const area = computed(() => {
+  const nInitial = hist.value.length;
+  if (nInitial === 0) return "";
+
+  const minIntensity = hist.value[0].min;
+  const maxIntensity = hist.value[nInitial - 1].max;
+  const dummyFirstPoint = {
+    count: 0,
+    min: minIntensity,
+    max: minIntensity,
+  };
+  const histData = [dummyFirstPoint, ...hist.value];
+
+  const densities = histData.map(({ count, min, max }) =>
+    max <= min ? 0 : count / (max - min),
+  );
+  if (useCDF.value) {
+    for (let i = 1; i < densities.length; ++i) {
+      densities[i] += densities[i - 1];
     }
   }
 
-  private updateMinMax(which: "min" | "max", pixel: number) {
-    const val = Math.round(this.histToPixel.invert(pixel));
-    if (which === "min") {
-      this.minValue = Math.min(this.maxValue, val);
-    } else {
-      this.maxValue = Math.max(this.minValue, val);
-    }
-  }
+  const intensities = histData.map(({ max }) => max);
 
-  @Watch("hist")
-  initializeHandles() {
-    if (this.$refs.min && this.$refs.max) {
-      const min = this.$refs.min as HTMLElement;
-      const max = this.$refs.max as HTMLElement;
+  const scaleY = useLog.value ? scaleSymlog() : scaleLinear();
+  scaleY.domain([0, Math.max(...densities)]);
+  scaleY.range([height.value, 0]);
 
-      const onDrag = (which: "min" | "max") => {
-        const evt = d3Event as D3DragEvent<HTMLElement, any, any>;
-        this.updateMinMax(which, Math.max(0, Math.min(evt.x, this.width)));
-      };
+  const scaleX = scaleLinear();
+  scaleX.domain([minIntensity, maxIntensity]);
+  scaleX.range([0, width.value]);
 
-      const dragBehavior = drag<HTMLElement, any>().on("drag", onDrag);
+  const gen = d3Area<number>()
+    .curve(curveStepBefore)
+    .x((_, i) => scaleX(intensities[i])!)
+    .y0(scaleY(0))
+    .y1((d) => scaleY(d)!);
+  return gen(densities) ?? undefined;
+});
 
-      selectAll([min, max]).data(["min", "max"]).call(dragBehavior);
-    }
-  }
-
-  mounted() {
-    // Initialize valuesInput if we have existing values
-    if (
-      this.propertyFilter.valuesOrRange === PropertyFilterMode.Values &&
-      this.propertyFilter.values
-    ) {
-      this.valuesInput = this.propertyFilter.values.join(", ");
-    }
-
-    // TODO(performance): should update only the related histogram
-    this.filterStore.updateHistograms();
-    if (!this.propertyFilter.enabled) {
-      this.filterStore.updatePropertyFilter({
-        ...this.propertyFilter,
-        enabled: true,
-      });
-    }
-    this.initializeHandles();
-  }
-
-  private parseValuesInput(input: string): number[] {
-    return input
-      .split(/[\s,;\t\n]+/)
-      .map((v) => v.trim())
-      .filter((v) => v !== "")
-      .map(Number)
-      .filter((v) => !isNaN(v));
-  }
-
-  updateValuesFilter() {
-    const values = this.parseValuesInput(this.valuesInput);
-
-    if (values.length) {
-      this.filterStore.updatePropertyFilter({
-        ...this.propertyFilter,
-        values: values,
-      });
-    }
-  }
-
-  updateViewMode(mode: PropertyFilterMode) {
-    this.filterStore.updatePropertyFilter({
-      ...this.propertyFilter,
-      valuesOrRange: mode,
-      // Clear values when switching to range mode
-      values:
-        mode === PropertyFilterMode.Range
-          ? undefined
-          : this.propertyFilter.values,
-    });
-    // Force reinitialize handles when switching to range mode
-    if (mode === PropertyFilterMode.Range) {
-      this.$nextTick(() => {
-        this.initializeHandles();
-      });
-    } else {
-      // If we are switching to values mode, update the values filter
-      this.updateValuesFilter();
-    }
-  }
-
-  toggleFilterEnabled(enabled: boolean) {
-    this.filterStore.updatePropertyFilter({
-      ...this.propertyFilter,
-      enabled,
-    });
-  }
-
-  removeFilter() {
-    this.filterStore.togglePropertyPathFiltering(this.propertyPath);
+function updateMinMax(which: "min" | "max", pixel: number) {
+  const val = Math.round(histToPixel.value.invert(pixel));
+  if (which === "min") {
+    minValue.value = Math.min(maxValue.value, val);
+  } else {
+    maxValue.value = Math.max(minValue.value, val);
   }
 }
+
+function initializeHandles() {
+  if (min.value && max.value) {
+    const minEl = min.value;
+    const maxEl = max.value;
+
+    const onDrag = (which: "min" | "max") => {
+      const evt = d3Event as D3DragEvent<HTMLElement, any, any>;
+      updateMinMax(which, Math.max(0, Math.min(evt.x, width.value)));
+    };
+
+    const dragBehavior = drag<HTMLElement, any>().on("drag", onDrag);
+
+    selectAll([minEl, maxEl]).data(["min", "max"]).call(dragBehavior);
+  }
+}
+
+function parseValuesInput(input: string): number[] {
+  return input
+    .split(/[\s,;\t\n]+/)
+    .map((v) => v.trim())
+    .filter((v) => v !== "")
+    .map(Number)
+    .filter((v) => !isNaN(v));
+}
+
+function updateValuesFilter() {
+  const parsedValues = parseValuesInput(valuesInput.value);
+  if (parsedValues.length) {
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      values: parsedValues,
+    });
+  }
+}
+
+const debouncedUpdateValues = debounce(updateValuesFilter, 500);
+
+function updateViewMode(mode: PropertyFilterMode) {
+  filterStore.updatePropertyFilter({
+    ...propertyFilter.value,
+    valuesOrRange: mode,
+    values:
+      mode === PropertyFilterMode.Range
+        ? undefined
+        : propertyFilter.value.values,
+  });
+  if (mode === PropertyFilterMode.Range) {
+    nextTick(() => {
+      initializeHandles();
+    });
+  } else {
+    updateValuesFilter();
+  }
+}
+
+function toggleFilterEnabled(enabled: boolean) {
+  filterStore.updatePropertyFilter({
+    ...propertyFilter.value,
+    enabled,
+  });
+}
+
+function removeFilter() {
+  filterStore.togglePropertyPathFiltering(props.propertyPath);
+}
+
+watch(hist, () => initializeHandles());
+
+onMounted(() => {
+  if (
+    propertyFilter.value.valuesOrRange === PropertyFilterMode.Values &&
+    propertyFilter.value.values
+  ) {
+    valuesInput.value = propertyFilter.value.values.join(", ");
+  }
+
+  filterStore.updateHistograms();
+  if (!propertyFilter.value.enabled) {
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      enabled: true,
+    });
+  }
+  initializeHandles();
+});
+
+onBeforeUnmount(() => {
+  if (propertyFilter.value.enabled) {
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      enabled: false,
+    });
+  }
+});
+
+defineExpose({
+  width,
+  height,
+  useLog,
+  useCDF,
+  defaultMinMax,
+  valuesInput,
+  histToPixel,
+  toValue,
+  minValue,
+  maxValue,
+  defaultMin,
+  defaultMax,
+  propertyFilter,
+  propertyFullName,
+  values,
+  hist,
+  area,
+  initializeHandles,
+  updateValuesFilter,
+  updateViewMode,
+  toggleFilterEnabled,
+  removeFilter,
+});
 </script>
 <style scoped lang="scss">
 .wrapper {
