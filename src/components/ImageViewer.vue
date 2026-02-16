@@ -868,17 +868,17 @@ export default class ImageViewer extends Vue {
       interactionLayer.node().css({ "mix-blend-mode": "unset" });
 
       const mapentry: IMapEntry = {
-        map,
+        map: markRaw(map),
         imageLayers: markRaw([]),
         params: markRaw(params),
         baseLayerIndex: mllidx ? undefined : 0,
-        annotationLayer,
-        workerPreviewLayer,
-        textLayer,
-        timelapseLayer,
-        timelapseTextLayer,
-        workerPreviewFeature,
-        interactionLayer,
+        annotationLayer: markRaw(annotationLayer),
+        workerPreviewLayer: markRaw(workerPreviewLayer),
+        textLayer: markRaw(textLayer),
+        timelapseLayer: markRaw(timelapseLayer),
+        timelapseTextLayer: markRaw(timelapseTextLayer),
+        workerPreviewFeature: markRaw(workerPreviewFeature),
+        interactionLayer: markRaw(interactionLayer),
       };
       Vue.set(this.maps, mllidx, mapentry);
     } else {
