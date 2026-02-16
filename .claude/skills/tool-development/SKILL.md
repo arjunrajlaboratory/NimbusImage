@@ -1,16 +1,6 @@
 ---
 name: tool-development
 description: "Use when creating a new annotation tool, modifying tool templates in public/config/templates.json, adding tool types to TToolType in model.ts, implementing tool interaction logic in AnnotationViewer.vue, or working with the tool selection UI. Covers: template JSON structure, interface element types (annotation, select, checkbox, radio, tags, dockerImage), submenu patterns, tool type registration, GeoJS interaction layer, mouse event handling, hit testing, and worker-based tool configuration."
-allowed-tools:
-  - Bash
-  - Read
-  - Grep
-  - Glob
-  - Edit
-  - Write
-  - Task
-  - TodoWrite
-user-invocable: true
 ---
 
 # NimbusImage Tool Development

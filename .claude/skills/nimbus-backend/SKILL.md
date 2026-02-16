@@ -1,16 +1,6 @@
 ---
 name: nimbus-backend
 description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic), database queries (Model.find vs collection.find), model loading patterns, error handling, and backend test patterns."
-allowed-tools:
-  - Bash
-  - Read
-  - Grep
-  - Glob
-  - Edit
-  - Write
-  - Task
-  - TodoWrite
-user-invocable: true
 ---
 
 # Nimbus Backend Development (Girder)

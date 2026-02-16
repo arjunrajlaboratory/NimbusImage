@@ -1,16 +1,6 @@
 ---
 name: nimbus-frontend
 description: "Use when writing or modifying Vue 2 components, Vuex store modules, TypeScript interfaces, or Vuetify UI in the src/ directory. Covers: vue-property-decorator class components, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 2 theming (light/dark mode), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button loading states, and style guidelines."
-allowed-tools:
-  - Bash
-  - Read
-  - Grep
-  - Glob
-  - Edit
-  - Write
-  - Task
-  - TodoWrite
-user-invocable: true
 ---
 
 # Nimbus Frontend Development

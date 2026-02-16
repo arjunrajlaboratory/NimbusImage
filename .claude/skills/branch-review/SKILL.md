@@ -1,16 +1,6 @@
 ---
 name: branch-review
 description: "Use when reviewing code changes on a feature branch before merging, or when the user asks for a code review, PR review, or branch diff analysis. Compares against a base branch (default: master). Checks: pattern consistency, looped API calls that should use batch endpoints, unnecessary temporary variables, proper use of existing utilities, TypeScript type safety, backend access control patterns, and code factorization. References project-specific feature documentation for contextual review."
-allowed-tools:
-  - Bash
-  - Read
-  - Grep
-  - Glob
-  - Edit
-  - Write
-  - Task
-  - TodoWrite
-user-invocable: true
 ---
 
 # Branch Code Review
