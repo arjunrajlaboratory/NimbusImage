@@ -741,7 +741,10 @@ async function fetchDatasetInfo() {
       if (!datasetInfoCache.value[d.datasetId]) {
         const folder = girderResources.watchFolder(d.datasetId);
         if (folder) {
-          datasetInfoCache.value[d.datasetId] = folder;
+          datasetInfoCache.value = {
+            ...datasetInfoCache.value,
+            [d.datasetId]: folder,
+          };
         }
       }
     }
@@ -768,7 +771,10 @@ async function fetchCollectionInfo() {
         if (!collectionInfoCache.value[c.collectionId]) {
           const collection = girderResources.watchCollection(c.collectionId);
           if (collection) {
-            collectionInfoCache.value[c.collectionId] = collection;
+            collectionInfoCache.value = {
+              ...collectionInfoCache.value,
+              [c.collectionId]: collection,
+            };
           }
         }
       }
@@ -792,8 +798,10 @@ async function fetchCollectionInfo() {
       }
 
       for (const collectionId of uncachedCollectionIds) {
-        collectionDatasetViewsCache.value[collectionId] =
-          viewsByCollection.get(collectionId) || [];
+        collectionDatasetViewsCache.value = {
+          ...collectionDatasetViewsCache.value,
+          [collectionId]: viewsByCollection.get(collectionId) || [],
+        };
       }
     }
 
@@ -816,7 +824,10 @@ async function fetchCollectionInfo() {
       for (const datasetId of allDatasetIds) {
         const folder = girderResources.watchFolder(datasetId);
         if (folder) {
-          datasetInfoCache.value[datasetId] = folder;
+          datasetInfoCache.value = {
+            ...datasetInfoCache.value,
+            [datasetId]: folder,
+          };
         }
       }
     }

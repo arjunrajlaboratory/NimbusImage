@@ -396,7 +396,10 @@ function fetchConfigurationsInfo() {
         .getCollection(datasetView.configurationId)
         .then((item: IGirderItem | null) => {
           if (item) {
-            configInfo.value[datasetView.configurationId] = item;
+            configInfo.value = {
+              ...configInfo.value,
+              [datasetView.configurationId]: item,
+            };
           }
         })
         .catch((error: unknown) => {
@@ -404,7 +407,10 @@ function fetchConfigurationsInfo() {
             `Failed to fetch collection info for ${datasetView.configurationId}:`,
             error,
           );
-          configInfo.value[datasetView.configurationId] = null as any;
+          configInfo.value = {
+            ...configInfo.value,
+            [datasetView.configurationId]: null as any,
+          };
         });
     }
   }

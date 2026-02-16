@@ -276,7 +276,10 @@ function fetchDatasetsInfo() {
   for (const datasetView of datasetViews.value) {
     girderResources.getFolder(datasetView.datasetId).then((folder) => {
       if (folder) {
-        datasetInfoCache.value[datasetView.datasetId] = folder;
+        datasetInfoCache.value = {
+          ...datasetInfoCache.value,
+          [datasetView.datasetId]: folder,
+        };
       }
     });
   }
@@ -347,7 +350,10 @@ async function checkDatasetsCompatibility() {
         }
 
         if (warnings.length > 0) {
-          datasetCompatibilityWarnings.value[datasetView.datasetId] = warnings;
+          datasetCompatibilityWarnings.value = {
+            ...datasetCompatibilityWarnings.value,
+            [datasetView.datasetId]: warnings,
+          };
         }
       }
     } catch (err) {
