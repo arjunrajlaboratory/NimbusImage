@@ -144,213 +144,178 @@
   </v-list>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IGirderFolder, IGirderSelectAble } from "@/girder";
-import { createDecorator } from "vue-class-component";
 import { downloadToClient } from "@/utils/download";
+import GirderLocationChooser from "@/components/GirderLocationChooser.vue"; // eslint-disable-line @typescript-eslint/no-unused-vars
+import AddToProjectDialog from "@/components/AddToProjectDialog.vue"; // eslint-disable-line @typescript-eslint/no-unused-vars
 
-// Use this decorator for any action
-const OptionAction = createDecorator((options, key) => {
-  const methods = options.methods;
-  if (!methods) {
-    return;
+const props = defineProps<{
+  items: IGirderSelectAble[];
+}>();
+
+const emit = defineEmits<{
+  (e: "itemsChanged"): void;
+  (e: "closeMenu"): void;
+}>();
+
+const disableOptions = ref(false);
+const moveDialog = ref(false);
+const renameDialog = ref(false);
+const newName = ref("");
+const deleteDialog = ref(false);
+const addToProjectDialog = ref(false);
+const moveFolderToAssetstorResolve = ref<
+  ((confirmation: boolean) => void) | null
+>(null);
+const isLoading = ref(false);
+
+const assetstores = computed(() => store.assetstores);
+
+const openedDialogs = computed(() => [
+  moveDialog.value,
+  renameDialog.value,
+  deleteDialog.value,
+  addToProjectDialog.value,
+]);
+
+const isADialogOpen = computed(() => openedDialogs.value.some((d) => d));
+
+function beforeAction() {
+  disableOptions.value = true;
+  isLoading.value = true;
+}
+
+function afterAction() {
+  disableOptions.value = false;
+  isLoading.value = false;
+}
+
+function afterMutating() {
+  for (const item of props.items) {
+    girderResources.ressourceChanged(item._id);
   }
-  // Keep the original method for later.
-  const originalMethod = methods[key];
-  const beforeAction = methods.beforeAction;
-  const afterAction = methods.afterAction;
+  emit("itemsChanged");
+}
 
-  // Wrap the method with the logging logic.
-  methods[key] = async function wrapperMethod(...args) {
-    try {
-      beforeAction?.apply(this, args);
-      return await originalMethod.apply(this, args);
-    } finally {
-      afterAction?.apply(this, args);
+function closeMenu() {
+  emit("closeMenu");
+}
+
+async function withOptionAction<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    beforeAction();
+    return await fn();
+  } finally {
+    afterAction();
+  }
+}
+
+async function withMutatingAction<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } finally {
+    afterMutating();
+  }
+}
+
+async function moveFolderToAssetstore(folderId: string, assetstoreId: string) {
+  try {
+    isLoading.value = false;
+    const confirmation = await new Promise<boolean>((resolve) => {
+      moveFolderToAssetstorResolve.value = resolve;
+    });
+    if (confirmation) {
+      isLoading.value = true;
+      await store.api.moveFolderToAssetstore(folderId, assetstoreId);
     }
-  };
-});
-
-// Use this decorator when the resources are invalidated by the action
-const MutatingAction = createDecorator((options, key) => {
-  const methods = options.methods;
-  if (!methods) {
-    return;
+  } finally {
+    moveFolderToAssetstorResolve.value = null;
+    isLoading.value = false;
+    closeMenu();
   }
-  // Keep the original method for later.
-  const originalMethod = methods[key];
-  const afterMutating = methods.afterMutating;
+}
 
-  // Run the original method.
-  methods[key] = async function wrapperMethod(...args) {
-    try {
-      return await originalMethod.apply(this, args);
-    } finally {
-      afterMutating?.apply(this, args);
-    }
-  };
-});
-
-@Component({
-  components: {
-    GirderLocationChooser: () =>
-      import("@/components/GirderLocationChooser.vue").then((mod) => mod),
-    AddToProjectDialog: () =>
-      import("@/components/AddToProjectDialog.vue").then((mod) => mod.default),
-  },
-})
-export default class FileManagerOptions extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
-
-  @Prop()
-  items!: IGirderSelectAble[];
-
-  disableOptions: boolean = false;
-
-  moveDialog: boolean = false;
-
-  renameDialog: boolean = false;
-  newName: string = "";
-
-  deleteDialog: boolean = false;
-
-  addToProjectDialog: boolean = false;
-
-  moveFolderToAssetstorResolve: ((confirmation: boolean) => void) | null = null;
-
-  isLoading: boolean = false;
-
-  get assetstores() {
-    return this.store.assetstores;
+function onItemsChanged() {
+  if (props.items.length === 1) {
+    newName.value = props.items[0].name;
   }
+}
 
-  async moveFolderToAssetstore(folderId: string, assetstoreId: string) {
-    try {
-      this.isLoading = false;
-      const confirmation = await new Promise<boolean>((resolve) => {
-        this.moveFolderToAssetstorResolve = resolve;
-      });
-      if (confirmation) {
-        this.isLoading = true;
-        await this.store.api.moveFolderToAssetstore(folderId, assetstoreId);
+function closeMenuOnDialogClose(isOpen: boolean, wasOpen: boolean) {
+  if (wasOpen && !isOpen) {
+    closeMenu();
+  }
+}
+
+async function move(location: IGirderFolder | null) {
+  await withMutatingAction(() =>
+    withOptionAction(async () => {
+      if (!location || !props.items.length) {
+        return;
       }
-    } finally {
-      this.moveFolderToAssetstorResolve = null;
-      this.isLoading = false;
-      this.closeMenu();
-    }
-  }
+      await store.api.moveItems(props.items, location._id);
+    }),
+  );
+}
 
-  mounted() {
-    this.onItemsChanged();
-  }
+async function rename() {
+  await withMutatingAction(() =>
+    withOptionAction(async () => {
+      if (props.items.length !== 1) {
+        return;
+      }
+      const item = props.items[0];
+      if (item._modelType !== "item" && item._modelType !== "folder") {
+        return;
+      }
+      await store.api.renameItem(item, newName.value);
+      newName.value = "";
+      renameDialog.value = false;
+    }),
+  );
+}
 
-  beforeAction() {
-    this.disableOptions = true;
-    this.isLoading = true;
-  }
+async function deleteItems() {
+  await withMutatingAction(() =>
+    withOptionAction(async () => {
+      await store.api.deleteItems(props.items);
+      deleteDialog.value = false;
+    }),
+  );
+}
 
-  afterAction() {
-    this.disableOptions = false;
-    this.isLoading = false;
-  }
-
-  afterMutating() {
-    for (const item of this.items) {
-      this.girderResources.ressourceChanged(item._id);
-    }
-    this.$emit("itemsChanged");
-  }
-
-  @Watch("items")
-  onItemsChanged() {
-    if (this.items.length === 1) {
-      this.newName = this.items[0].name;
-    }
-  }
-
-  get openedDialogs() {
-    return [
-      this.moveDialog,
-      this.renameDialog,
-      this.deleteDialog,
-      this.addToProjectDialog,
-    ];
-  }
-
-  get isADialogOpen() {
-    return this.openedDialogs.some((dialog) => dialog);
-  }
-
-  @Watch("isADialogOpen")
-  closeMenuOnDialogClose(isOpen: boolean, wasOpen: boolean) {
-    if (wasOpen && !isOpen) {
-      this.closeMenu();
-    }
-  }
-
-  closeMenu() {
-    this.$emit("closeMenu");
-  }
-
-  @MutatingAction
-  @OptionAction
-  async move(location: IGirderFolder | null) {
-    if (!location || !this.items.length) {
+async function downloadResource() {
+  await withOptionAction(async () => {
+    if (props.items.length !== 1) {
       return;
     }
-    await this.store.api.moveItems(this.items, location._id);
-  }
-
-  @MutatingAction
-  @OptionAction
-  async rename() {
-    if (this.items.length !== 1) {
-      return;
-    }
-    const item = this.items[0];
-    if (item._modelType !== "item" && item._modelType !== "folder") {
-      return;
-    }
-    await this.store.api.renameItem(item, this.newName);
-    this.newName = "";
-    this.renameDialog = false;
-  }
-
-  @MutatingAction
-  @OptionAction
-  async deleteItems() {
-    await this.store.api.deleteItems(this.items);
-    this.deleteDialog = false;
-  }
-
-  @OptionAction
-  async downloadResource() {
-    if (this.items.length !== 1) {
-      return;
-    }
-    const item = this.items[0];
+    const item = props.items[0];
     if (item._modelType !== "item" && item._modelType !== "file") {
       return;
     }
     try {
-      const data = await this.store.api.downloadResource(item);
+      const data = await store.api.downloadResource(item);
       downloadToClient({
         href: URL.createObjectURL(data),
         download: item.name,
       });
     } finally {
-      this.closeMenu();
+      closeMenu();
     }
-  }
-
-  onAddedToProject() {
-    this.addToProjectDialog = false;
-    this.closeMenu();
-  }
+  });
 }
+
+function onAddedToProject() {
+  addToProjectDialog.value = false;
+  closeMenu();
+}
+
+watch(() => props.items, onItemsChanged);
+watch(isADialogOpen, closeMenuOnDialogClose);
+
+onMounted(() => onItemsChanged());
 </script>

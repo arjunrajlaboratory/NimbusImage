@@ -149,12 +149,11 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
+import type Vue from "vue";
 import store from "@/store";
-import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
-import filterStore from "@/store/filters";
 
 import Papa from "papaparse";
 
@@ -167,261 +166,243 @@ interface PropertyPathItem {
   pathString: string;
 }
 
-@Component({
-  components: {},
-})
-export default class AnnotationCsvDialog extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
-  readonly propertyStore = propertyStore;
-  readonly filterStore = filterStore;
+const UNDEFINED_VALUE_MAP = {
+  na: "NA",
+  nan: "NaN",
+  empty: "",
+} as const;
 
-  readonly PREVIEW_ANNOTATION_LIMIT = 1000;
+const PREVIEW_ANNOTATION_LIMIT = 1000;
+const DISPLAY_CHAR_LIMIT = 10000;
 
-  filename: string = "";
+const props = defineProps<{
+  annotations: IAnnotation[];
+  propertyPaths: string[][];
+}>();
 
-  get isTooLargeForPreview() {
-    return this.annotations.length > this.PREVIEW_ANNOTATION_LIMIT;
-  }
+const fieldToCopy = ref<InstanceType<typeof Vue>>();
 
-  get canUseClipboard() {
-    return !!navigator || !!(navigator as Navigator)?.clipboard;
-  }
+const filename = ref("");
 
-  get dataset() {
-    return this.store.dataset;
-  }
+const dialog = ref(false);
+const text = ref("");
+const displayText = ref("");
 
-  mounted() {
-    this.resetFilename();
-  }
+const propertyExportMode = ref<"all" | "selected" | "listed">("all");
+const propertyFilter = ref("");
+const selectedPropertyPaths = ref<PropertyPathItem[]>([]);
 
-  @Watch("dataset")
-  resetFilename() {
-    this.filename = (this.dataset?.name ?? "unknown") + ".csv";
-  }
+const undefinedHandling = ref<"empty" | "na" | "nan">("empty");
 
-  copyCSVText() {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(this.text);
-    } else {
-      const fieldToCopy = (this.$refs.fieldToCopy as Vue)?.$el?.querySelector(
-        "input",
-      );
-      if (fieldToCopy) {
-        fieldToCopy.select();
-        document.execCommand("copy");
-      }
+const processingProgress = ref(0);
+const isProcessing = ref(false);
+const isDownloading = ref(false);
+
+const isTooLargeForPreview = computed(() => {
+  return props.annotations.length > PREVIEW_ANNOTATION_LIMIT;
+});
+
+const canUseClipboard = computed(() => {
+  return !!navigator || !!(navigator as Navigator)?.clipboard;
+});
+
+const dataset = computed(() => store.dataset);
+
+const displayedPropertyPaths = computed(
+  () => propertyStore.displayedPropertyPaths,
+);
+
+const filteredPropertyItems = computed(() => {
+  return (
+    propertyFilter.value
+      ? props.propertyPaths
+      : props.propertyPaths.filter((path) => {
+          const name = propertyStore.getFullNameFromPath(path);
+          return name
+            ?.toLowerCase()
+            .includes(propertyFilter.value.toLowerCase());
+        })
+  ).map((path) => ({
+    name: propertyStore.getFullNameFromPath(path) || "",
+    path: path,
+    pathString: path.join("."),
+  }));
+});
+
+function resetFilename() {
+  filename.value = (dataset.value?.name ?? "unknown") + ".csv";
+}
+
+function copyCSVText() {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text.value);
+  } else {
+    const fieldToCopyEl = (fieldToCopy.value as any)?.$el?.querySelector(
+      "input",
+    );
+    if (fieldToCopyEl) {
+      fieldToCopyEl.select();
+      document.execCommand("copy");
     }
   }
+}
 
-  dialog: boolean = false;
-  text = "";
-  displayText = "";
-  readonly DISPLAY_CHAR_LIMIT = 10000;
+async function generateCSVStringForAnnotations() {
+  isProcessing.value = true;
+  processingProgress.value = 0;
 
-  @Prop()
-  readonly annotations!: IAnnotation[];
+  try {
+    // Fields
+    const fields = [
+      "Id",
+      "Channel",
+      "XY",
+      "Z",
+      "Time",
+      "Tags",
+      "Shape",
+      "Name",
+    ];
+    const quotes = [true, false, false, false, false, true, true, true];
+    const usedPaths: string[][] = [];
 
-  @Prop()
-  readonly propertyPaths!: string[][];
-
-  propertyExportMode: "all" | "selected" | "listed" = "all";
-  propertyFilter: string = "";
-  selectedPropertyPaths: PropertyPathItem[] = [];
-
-  undefinedHandling: "empty" | "na" | "nan" = "empty";
-
-  private static readonly UNDEFINED_VALUE_MAP = {
-    na: "NA",
-    nan: "NaN",
-    empty: "",
-  } as const;
-
-  get filteredPropertyItems() {
-    return (
-      this.propertyFilter
-        ? this.propertyPaths
-        : this.propertyPaths.filter((path) => {
-            const name = this.propertyStore.getFullNameFromPath(path);
-            return name
-              ?.toLowerCase()
-              .includes(this.propertyFilter.toLowerCase());
-          })
-    ).map((path) => ({
-      name: this.propertyStore.getFullNameFromPath(path) || "",
-      path: path,
-      pathString: path.join("."),
-    }));
-  }
-
-  processingProgress: number = 0;
-  isProcessing: boolean = false;
-  isDownloading: boolean = false;
-
-  async generateCSVStringForAnnotations() {
-    this.isProcessing = true;
-    this.processingProgress = 0;
-
-    try {
-      // Fields
-      const fields = [
-        "Id",
-        "Channel",
-        "XY",
-        "Z",
-        "Time",
-        "Tags",
-        "Shape",
-        "Name",
-      ];
-      const quotes = [true, false, false, false, false, true, true, true];
-      const usedPaths: string[][] = [];
-
-      // Pre-compute included paths to avoid repeated checks
-      const includedPaths = this.propertyPaths.filter((path) => {
-        const pathName = this.propertyStore.getFullNameFromPath(path);
-        return pathName && this.shouldIncludePropertyPath(path);
-      });
-
-      includedPaths.forEach((path) => {
-        fields.push(this.propertyStore.getFullNameFromPath(path)!);
-        quotes.push(false);
-        usedPaths.push(path);
-      });
-
-      // Process annotations in chunks
-      const CHUNK_SIZE = 100;
-      const data: (string | number)[][] = [];
-      const propValues = this.propertyStore.propertyValues;
-      const annotations = this.annotations;
-      const nAnnotations = annotations.length;
-
-      for (let i = 0; i < nAnnotations; i += CHUNK_SIZE) {
-        const chunk = annotations.slice(i, i + CHUNK_SIZE);
-
-        // Process chunk
-        const rows = chunk.map((annotation) => {
-          const row: (string | number)[] = [
-            annotation.id,
-            annotation.channel,
-            annotation.location.XY + 1,
-            annotation.location.Z + 1,
-            annotation.location.Time + 1,
-            annotation.tags.join(", "),
-            annotation.shape,
-            annotation.name ?? "",
-          ];
-
-          for (const path of usedPaths) {
-            const value = getValueFromObjectAndPath(
-              propValues[annotation.id],
-              path,
-            );
-            row.push(
-              typeof value === "object" || typeof value === "undefined"
-                ? AnnotationCsvDialog.UNDEFINED_VALUE_MAP[
-                    this.undefinedHandling
-                  ]
-                : value,
-            );
-          }
-          return row;
-        });
-
-        data.push(...rows);
-        this.processingProgress = (i + CHUNK_SIZE) / nAnnotations;
-      }
-
-      // Generate csv
-      return Papa.unparse({ fields, data }, { quotes });
-    } finally {
-      this.isProcessing = false;
-      this.processingProgress = 1;
-    }
-  }
-
-  @Watch("propertyExportMode")
-  @Watch("selectedPropertyPaths")
-  @Watch("undefinedHandling")
-  @Watch("dialog")
-  updateText() {
-    if (this.dialog) {
-      // Skip preview generation for large datasets
-      if (this.isTooLargeForPreview) {
-        this.text = "";
-        this.displayText = "";
-        this.processingProgress = 1;
-        return;
-      }
-
-      this.generateCSVStringForAnnotations().then((text: string) => {
-        this.text = text;
-        this.displayText =
-          text.length > this.DISPLAY_CHAR_LIMIT
-            ? `${text.slice(0, this.DISPLAY_CHAR_LIMIT)}... (truncated, ${text.length} total characters)`
-            : text;
-      });
-    } else {
-      this.text = "";
-      this.displayText = "";
-    }
-  }
-
-  /**
-   * Get the property paths to include based on the current export mode.
-   */
-  getIncludedPropertyPaths(): string[][] {
-    return this.propertyPaths.filter((path) => {
-      const pathName = this.propertyStore.getFullNameFromPath(path);
-      return pathName && this.shouldIncludePropertyPath(path);
+    // Pre-compute included paths to avoid repeated checks
+    const includedPaths = props.propertyPaths.filter((path) => {
+      const pathName = propertyStore.getFullNameFromPath(path);
+      return pathName && shouldIncludePropertyPath(path);
     });
-  }
 
-  /**
-   * Get the undefined value string for the current handling mode.
-   */
-  getUndefinedValueString(): "" | "NA" | "NaN" {
-    return AnnotationCsvDialog.UNDEFINED_VALUE_MAP[this.undefinedHandling];
-  }
+    includedPaths.forEach((path) => {
+      fields.push(propertyStore.getFullNameFromPath(path)!);
+      quotes.push(false);
+      usedPaths.push(path);
+    });
 
-  async download() {
-    if (!this.store.dataset) {
+    // Process annotations in chunks
+    const CHUNK_SIZE = 100;
+    const data: (string | number)[][] = [];
+    const propValues = propertyStore.propertyValues;
+    const annotations = props.annotations;
+    const nAnnotations = annotations.length;
+
+    for (let i = 0; i < nAnnotations; i += CHUNK_SIZE) {
+      const chunk = annotations.slice(i, i + CHUNK_SIZE);
+
+      // Process chunk
+      const rows = chunk.map((annotation) => {
+        const row: (string | number)[] = [
+          annotation.id,
+          annotation.channel,
+          annotation.location.XY + 1,
+          annotation.location.Z + 1,
+          annotation.location.Time + 1,
+          annotation.tags.join(", "),
+          annotation.shape,
+          annotation.name ?? "",
+        ];
+
+        for (const path of usedPaths) {
+          const value = getValueFromObjectAndPath(
+            propValues[annotation.id],
+            path,
+          );
+          row.push(
+            typeof value === "object" || typeof value === "undefined"
+              ? UNDEFINED_VALUE_MAP[undefinedHandling.value]
+              : value,
+          );
+        }
+        return row;
+      });
+
+      data.push(...rows);
+      processingProgress.value = (i + CHUNK_SIZE) / nAnnotations;
+    }
+
+    // Generate csv
+    return Papa.unparse({ fields, data }, { quotes });
+  } finally {
+    isProcessing.value = false;
+    processingProgress.value = 1;
+  }
+}
+
+function updateText() {
+  if (dialog.value) {
+    // Skip preview generation for large datasets
+    if (isTooLargeForPreview.value) {
+      text.value = "";
+      displayText.value = "";
+      processingProgress.value = 1;
       return;
     }
 
-    this.isDownloading = true;
-    try {
-      // Always use backend endpoint for downloads (handles large datasets)
-      await this.store.exportAPI.exportCsv({
-        datasetId: this.store.dataset.id,
-        propertyPaths: this.getIncludedPropertyPaths(),
-        annotationIds: this.annotations.map((a) => a.id),
-        undefinedValue: this.getUndefinedValueString(),
-        filename: this.filename || "upenn_annotation_export.csv",
-      });
-    } finally {
-      this.isDownloading = false;
-    }
-  }
-
-  get displayedPropertyPaths() {
-    return this.propertyStore.displayedPropertyPaths;
-  }
-
-  shouldIncludePropertyPath(path: string[]) {
-    const pathString = path.join(".");
-    return (
-      this.propertyExportMode === "all" ||
-      (this.propertyExportMode === "listed" &&
-        this.displayedPropertyPaths.some(
-          (displayPath: string[]) => displayPath.join(".") === pathString,
-        )) ||
-      (this.propertyExportMode === "selected" &&
-        this.selectedPropertyPaths.some(
-          (selectedPath) => selectedPath.pathString === pathString,
-        ))
-    );
+    generateCSVStringForAnnotations().then((csv: string) => {
+      text.value = csv;
+      displayText.value =
+        csv.length > DISPLAY_CHAR_LIMIT
+          ? `${csv.slice(0, DISPLAY_CHAR_LIMIT)}... (truncated, ${csv.length} total characters)`
+          : csv;
+    });
+  } else {
+    text.value = "";
+    displayText.value = "";
   }
 }
+
+function getIncludedPropertyPaths(): string[][] {
+  return props.propertyPaths.filter((path) => {
+    const pathName = propertyStore.getFullNameFromPath(path);
+    return pathName && shouldIncludePropertyPath(path);
+  });
+}
+
+function getUndefinedValueString(): "" | "NA" | "NaN" {
+  return UNDEFINED_VALUE_MAP[undefinedHandling.value];
+}
+
+async function download() {
+  if (!store.dataset) {
+    return;
+  }
+
+  isDownloading.value = true;
+  try {
+    // Always use backend endpoint for downloads (handles large datasets)
+    await store.exportAPI.exportCsv({
+      datasetId: store.dataset.id,
+      propertyPaths: getIncludedPropertyPaths(),
+      annotationIds: props.annotations.map((a) => a.id),
+      undefinedValue: getUndefinedValueString(),
+      filename: filename.value || "upenn_annotation_export.csv",
+    });
+  } finally {
+    isDownloading.value = false;
+  }
+}
+
+function shouldIncludePropertyPath(path: string[]) {
+  const pathString = path.join(".");
+  return (
+    propertyExportMode.value === "all" ||
+    (propertyExportMode.value === "listed" &&
+      displayedPropertyPaths.value.some(
+        (displayPath: string[]) => displayPath.join(".") === pathString,
+      )) ||
+    (propertyExportMode.value === "selected" &&
+      selectedPropertyPaths.value.some(
+        (selectedPath) => selectedPath.pathString === pathString,
+      ))
+  );
+}
+
+// Collapse 4 stacked @Watch into single watch
+watch(
+  [propertyExportMode, selectedPropertyPaths, undefinedHandling, dialog],
+  () => updateText(),
+);
+
+watch(dataset, () => resetFilename());
+
+onMounted(() => resetFilename());
 </script>

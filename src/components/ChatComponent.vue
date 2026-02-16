@@ -6,7 +6,7 @@
       <v-btn icon @click="refreshChat" :loading="isRefreshing">
         <v-icon>mdi-refresh</v-icon>
       </v-btn>
-      <v-btn icon @click="$emit('close')">
+      <v-btn icon @click="emit('close')">
         <v-icon>mdi-close</v-icon>
       </v-btn>
     </v-card-title>
@@ -68,7 +68,7 @@
             @paste="handlePaste"
           />
           <v-btn @click="sendMessage" outlined>Send</v-btn>
-          <v-btn icon @click="$refs.fileInput.click()">
+          <v-btn icon @click="fileInput?.click()">
             <v-icon>mdi-image</v-icon>
           </v-btn>
           <input
@@ -85,203 +85,185 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, onMounted, getCurrentInstance } from "vue";
 import { logError } from "@/utils/log";
 import store from "@/store";
 import chatStore from "@/store/chat";
-import {
-  IChatImage,
-  IChatMessage,
-  IGeoJSAnnotationLayer,
-  IGeoJSMap,
-} from "@/store/model";
+import { IChatImage, IChatMessage, IGeoJSMap } from "@/store/model";
 import { marked } from "marked";
 import html2canvas from "html2canvas";
 
-@Component
-export default class ChatComponent extends Vue {
-  readonly store = store;
+const emit = defineEmits<{
+  (e: "close"): void;
+}>();
 
-  $el!: HTMLElement;
-  textInput = "";
-  imagesInput: IChatImage[] = [];
-  isWaiting = false;
-  isRefreshing = false;
+const chatMessages = ref<HTMLElement>();
+const fileInput = ref<HTMLInputElement>();
 
-  bboxLayer: IGeoJSAnnotationLayer | null = null;
+const textInput = ref("");
+const imagesInput = ref<IChatImage[]>([]);
+const isWaiting = ref(false);
+const isRefreshing = ref(false);
 
-  marked = marked;
+const vm = getCurrentInstance()!.proxy;
 
-  $refs!: {
-    chatMessages: HTMLElement;
-    fileInput: HTMLInputElement;
+const messages = computed(() => chatStore.messages);
+
+const geoJSMaps = computed(() => store.maps.map((map) => map.map));
+
+const firstMap = computed<IGeoJSMap | undefined>(() =>
+  geoJSMaps.value.length ? geoJSMaps.value[0] : undefined,
+);
+
+const visibleImagesInput = computed(() =>
+  filterVisibleImages(imagesInput.value),
+);
+
+function clearInputs() {
+  textInput.value = "";
+  imagesInput.value = [];
+}
+
+async function sendMessage(visible: boolean = true, customInput?: string) {
+  const trimmedInput = customInput || textInput.value.trim();
+  if (isWaiting.value || !trimmedInput) {
+    return;
+  }
+
+  const interfaceScreenshot = await captureInterfaceScreenshot();
+  if (interfaceScreenshot) {
+    imagesInput.value.unshift(interfaceScreenshot);
+  }
+
+  const viewportScreenshot = await captureViewportScreenshot();
+  if (viewportScreenshot) {
+    imagesInput.value.unshift(viewportScreenshot);
+  }
+
+  const userMessage: IChatMessage = {
+    type: "user",
+    content: trimmedInput,
+    images: [...imagesInput.value],
+    visible: visible,
   };
 
-  get messages() {
-    return chatStore.messages;
-  }
-
-  clearInputs() {
-    this.textInput = "";
-    this.imagesInput = [];
-  }
-
-  get geoJSMaps() {
-    return this.store.maps.map((map) => map.map);
-  }
-
-  get firstMap(): IGeoJSMap | undefined {
-    return this.geoJSMaps.length ? this.geoJSMaps[0] : undefined;
-  }
-
-  async sendMessage(visible: boolean = true, customInput?: string) {
-    const trimmedInput = customInput || this.textInput.trim();
-    if (this.isWaiting || !trimmedInput) {
-      return;
-    }
-
-    const interfaceScreenshot = await this.captureInterfaceScreenshot();
-    if (interfaceScreenshot) {
-      this.imagesInput.unshift(interfaceScreenshot);
-    }
-
-    const viewportScreenshot = await this.captureViewportScreenshot();
-    if (viewportScreenshot) {
-      this.imagesInput.unshift(viewportScreenshot);
-    }
-
-    const userMessage: IChatMessage = {
-      type: "user",
-      content: trimmedInput,
-      images: [...this.imagesInput],
-      visible: visible,
-    };
-
-    this.clearInputs();
-    try {
-      this.isWaiting = true;
-      await chatStore.sendMessage(userMessage);
-    } finally {
-      this.isWaiting = false;
-    }
-  }
-
-  addImageFile(file: File) {
-    if (this.imagesInput.length >= 4) {
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      if (this.imagesInput.length >= 4) {
-        return;
-      }
-      const result = e.target?.result as string;
-      this.imagesInput.push({ data: result, type: file.type });
-    };
-    reader.readAsDataURL(file);
-  }
-
-  async handleFileUpload(event: Event) {
-    const files = (event.target as HTMLInputElement).files;
-    if (!files || !files.length) {
-      return;
-    }
-
-    // Up to 4 images can be uploaded
-    for (let i = 0; i < files.length; i++) {
-      try {
-        const file = files[i];
-        this.addImageFile(file);
-      } catch (error) {
-        logError("Error processing file:", error);
-      }
-    }
-    this.$refs.fileInput.value = "";
-  }
-
-  async handlePaste(event: ClipboardEvent) {
-    event.preventDefault();
-    const items = event.clipboardData?.items;
-    if (!items) return;
-
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf("image") !== -1) {
-        const file = items[i].getAsFile();
-        if (file) {
-          this.addImageFile(file);
-        }
-      } else if (items[i].type === "text/plain") {
-        items[i].getAsString((text) => {
-          this.textInput += text;
-        });
-      }
-    }
-  }
-
-  removeImage(index: number) {
-    this.imagesInput.splice(index, 1);
-  }
-
-  async refreshChat() {
-    this.isRefreshing = true;
-    this.clearInputs();
-    await chatStore.clearAll();
-    const firstMessage =
-      "This is the first hidden user message. You will get two screenshots, one of the interface and one of the image itself in the viewport. Start by saying 'Hello, I'm here to help you with NimbusImage! Looks like you are looking at' and then quickly summarize what you see in a couple sentences. Then offer to help by asking what the user would like to do.";
-    await this.sendMessage(false, firstMessage);
-    this.isRefreshing = false;
-  }
-
-  mounted() {
-    if (this.messages.length === 0) {
-      this.refreshChat();
-    }
-  }
-
-  async captureInterfaceScreenshot(): Promise<IChatImage | null> {
-    try {
-      const canvas = await html2canvas(document.body, {
-        ignoreElements: (element) => {
-          return element === this.$el || this.$el.contains(element);
-        },
-      });
-      const imageData = canvas.toDataURL("image/png");
-      return { data: imageData, type: "image/png", visible: false };
-    } catch (error) {
-      logError("Error capturing screenshot:", error);
-      return null;
-    }
-  }
-
-  async captureViewportScreenshot(): Promise<IChatImage | null> {
-    const map = this.firstMap;
-    if (!map) {
-      return null;
-    }
-    const layers = map
-      .layers()
-      .filter((layer: any) => layer.node().css("visibility") !== "hidden");
-    const image = await map.screenshot(layers);
-    return { data: image, type: "image/png", visible: false };
-  }
-
-  filterVisibleImages(images: IChatImage[]) {
-    return images.filter((image) => image.visible !== false);
-  }
-
-  get visibleImagesInput() {
-    return this.filterVisibleImages(this.imagesInput);
-  }
-
-  filterVisibleMessages(messages: IChatMessage[]) {
-    return messages.filter((message) => message.visible !== false).reverse();
-  }
-
-  get visibleMessages() {
-    return this.filterVisibleMessages(this.messages);
+  clearInputs();
+  try {
+    isWaiting.value = true;
+    await chatStore.sendMessage(userMessage);
+  } finally {
+    isWaiting.value = false;
   }
 }
+
+function addImageFile(file: File) {
+  if (imagesInput.value.length >= 4) {
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    if (imagesInput.value.length >= 4) {
+      return;
+    }
+    const result = e.target?.result as string;
+    imagesInput.value.push({ data: result, type: file.type });
+  };
+  reader.readAsDataURL(file);
+}
+
+async function handleFileUpload(event: Event) {
+  const files = (event.target as HTMLInputElement).files;
+  if (!files || !files.length) {
+    return;
+  }
+
+  // Up to 4 images can be uploaded
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const file = files[i];
+      addImageFile(file);
+    } catch (error) {
+      logError("Error processing file:", error);
+    }
+  }
+  fileInput.value!.value = "";
+}
+
+async function handlePaste(event: ClipboardEvent) {
+  event.preventDefault();
+  const items = event.clipboardData?.items;
+  if (!items) return;
+
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf("image") !== -1) {
+      const file = items[i].getAsFile();
+      if (file) {
+        addImageFile(file);
+      }
+    } else if (items[i].type === "text/plain") {
+      items[i].getAsString((text) => {
+        textInput.value += text;
+      });
+    }
+  }
+}
+
+function removeImage(index: number) {
+  imagesInput.value.splice(index, 1);
+}
+
+async function refreshChat() {
+  isRefreshing.value = true;
+  clearInputs();
+  await chatStore.clearAll();
+  const firstMessage =
+    "This is the first hidden user message. You will get two screenshots, one of the interface and one of the image itself in the viewport. Start by saying 'Hello, I'm here to help you with NimbusImage! Looks like you are looking at' and then quickly summarize what you see in a couple sentences. Then offer to help by asking what the user would like to do.";
+  await sendMessage(false, firstMessage);
+  isRefreshing.value = false;
+}
+
+async function captureInterfaceScreenshot(): Promise<IChatImage | null> {
+  try {
+    const el = vm.$el as HTMLElement;
+    const canvas = await html2canvas(document.body, {
+      ignoreElements: (element) => {
+        return element === el || el.contains(element);
+      },
+    });
+    const imageData = canvas.toDataURL("image/png");
+    return { data: imageData, type: "image/png", visible: false };
+  } catch (error) {
+    logError("Error capturing screenshot:", error);
+    return null;
+  }
+}
+
+async function captureViewportScreenshot(): Promise<IChatImage | null> {
+  const map = firstMap.value;
+  if (!map) {
+    return null;
+  }
+  const layers = map
+    .layers()
+    .filter((layer: any) => layer.node().css("visibility") !== "hidden");
+  const image = await map.screenshot(layers);
+  return { data: image, type: "image/png", visible: false };
+}
+
+function filterVisibleImages(images: IChatImage[]) {
+  return images.filter((image) => image.visible !== false);
+}
+
+function filterVisibleMessages(messages: IChatMessage[]) {
+  return messages.filter((message) => message.visible !== false).reverse();
+}
+
+onMounted(() => {
+  if (messages.value.length === 0) {
+    refreshChat();
+  }
+});
 </script>
 
 <style scoped>
