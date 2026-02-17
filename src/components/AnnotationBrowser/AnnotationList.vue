@@ -226,8 +226,8 @@
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Emit, Watch } from "vue-property-decorator";
+<script lang="ts" setup>
+import { ref, computed, watch, getCurrentInstance } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
@@ -235,8 +235,6 @@ import filterStore from "@/store/filters";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import { simpleCentroid } from "@/utils/annotation";
 
-import TagPicker from "@/components/TagPicker.vue";
-import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
@@ -282,291 +280,315 @@ interface IAnnotationListItem {
   properties: IAnnotationPropertyValues[string];
 }
 
-@Component({
-  components: {
-    TagPicker,
-    ColorPickerMenu,
-    TagSelectionDialog,
-    ColorSelectionDialog,
+const emit = defineEmits<{
+  (e: "clickedTag", tag: string): void;
+}>();
+
+const vm = getCurrentInstance()!.proxy;
+
+// Template ref
+const dataTable = ref<any>(null);
+
+// Data
+const columnOptions = allHeaders;
+const selectedColumns = ref<THeaderId[]>(initialSelectedColumns);
+const tableItemClass = "px-1";
+const annotationFilteredDialog = ref(false);
+const localIdFilter = ref<string | undefined>("");
+const addOrRemove = ref<"add" | "remove">("add");
+
+// These are "from" or "to" v-data-table
+const page = ref(0);
+const itemsPerPage = ref(10);
+const groupBy = ref<string | string[]>([]);
+
+const showTagDialog = ref(false);
+const showColorDialog = ref(false);
+
+// Computeds
+const isDeletingAnnotations = computed(() => {
+  return annotationStore.isDeleting;
+});
+
+const selected = computed({
+  get: () => {
+    return annotationStore.selectedAnnotations.filter((annotation) =>
+      filteredAnnotationIdToIdx.value.has(annotation.id),
+    );
   },
-})
-export default class AnnotationList extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
-  readonly propertyStore = propertyStore;
-  readonly filterStore = filterStore;
-  readonly getStringFromPropertiesAndPath = getStringFromPropertiesAndPath;
+  set: (selected: IAnnotation[]) => {
+    annotationStore.setSelected(selected);
+  },
+});
 
-  get isDeletingAnnotations() {
-    return this.annotationStore.isDeleting;
-  }
+const selectedItems = computed({
+  get: () => {
+    return filteredItems.value.filter((item) => item.isSelected);
+  },
+  set: (items: IAnnotationListItem[]) => {
+    selected.value = items.map((item) => item.annotation);
+  },
+});
 
-  readonly columnOptions = allHeaders;
+function toggleAnnotationSelection(annotation: IAnnotation) {
+  annotationStore.toggleSelected([annotation]);
+}
 
-  // Pick the default columns to display
-  selectedColumns: THeaderId[] = initialSelectedColumns;
+const filteredAnnotationIdToIdx = computed(() => {
+  return filterStore.filteredAnnotationIdToIdx;
+});
 
-  tableItemClass = "px-1"; // To enable dividers, use v-data-table__divider
-
-  annotationFilteredDialog: boolean = false;
-  localIdFilter?: string = "";
-
-  addOrRemove: "add" | "remove" = "add";
-
-  // These are "from" or "to" v-data-table
-  page: number = 0; // one-way binding :page
-  itemsPerPage: number = 10; // one-way binding @update:items-per-page
-  groupBy: string | string[] = []; // one-way binding @update:group-by
-
-  get selected() {
-    return this.annotationStore.selectedAnnotations.filter((annotation) =>
-      this.filteredAnnotationIdToIdx.has(annotation.id),
+const listedAnnotations = computed(() => {
+  let annotations = filterStore.filteredAnnotations;
+  const idFilter = localIdFilter.value?.trim();
+  if (idFilter) {
+    annotations = annotations.filter((annotation) =>
+      annotation.id.includes(idFilter),
     );
   }
+  return annotations;
+});
 
-  set selected(selected: IAnnotation[]) {
-    this.annotationStore.setSelected(selected);
-  }
+const filteredItems = computed(() => {
+  return listedAnnotations.value.map(annotationToItem.value);
+});
 
-  get selectedItems() {
-    return this.filteredItems.filter((item) => item.isSelected);
-  }
+const annotationToItem = computed(() => {
+  return (annotation: IAnnotation) => ({
+    annotation,
+    index: annotationIdToIndex.value[annotation.id],
+    shapeName: AnnotationNames[annotation.shape],
+    isSelected: annotationStore.isAnnotationSelected(annotation.id),
+    properties: propertyStore.propertyValues[annotation.id] || {},
+  });
+});
 
-  set selectedItems(items) {
-    this.selected = items.map((item) => item.annotation);
-  }
+const displayedPropertyPaths = computed(() => {
+  return propertyStore.displayedPropertyPaths;
+});
 
-  toggleAnnotationSelection(annotation: IAnnotation) {
-    this.annotationStore.toggleSelected([annotation]);
-  }
+const annotationIdToIndex = computed(() => {
+  return annotationStore.annotationIdToIdx;
+});
 
-  get filteredAnnotationIdToIdx() {
-    return this.filterStore.filteredAnnotationIdToIdx;
-  }
+function updateAnnotationName(name: string, id: string) {
+  annotationStore.updateAnnotationName({ name, id });
+}
 
-  get listedAnnotations() {
-    let annotations = this.filterStore.filteredAnnotations;
-    const idFilter = this.localIdFilter?.trim();
-    if (idFilter) {
-      annotations = annotations.filter((annotation) =>
-        annotation.id.includes(idFilter),
-      );
-    }
-    return annotations;
-  }
+const selectAllIndeterminate = computed(() => {
+  const nSelected = selectedItems.value.length;
+  return nSelected > 0 && nSelected < filteredItems.value.length;
+});
 
-  get filteredItems() {
-    return this.listedAnnotations.map(this.annotationToItem);
-  }
+const selectAllValue = computed(() => {
+  return selectedItems.value.length === filteredItems.value.length;
+});
 
-  get annotationToItem() {
-    return (annotation: IAnnotation) => ({
-      annotation,
-      index: this.annotationIdToIndex[annotation.id],
-      shapeName: AnnotationNames[annotation.shape],
-      isSelected: this.annotationStore.isAnnotationSelected(annotation.id),
-      properties: this.propertyStore.propertyValues[annotation.id] || {},
-    });
-  }
-
-  get displayedPropertyPaths() {
-    return this.propertyStore.displayedPropertyPaths;
-  }
-
-  get annotationIdToIndex() {
-    return this.annotationStore.annotationIdToIdx;
-  }
-
-  updateAnnotationName(name: string, id: string) {
-    this.annotationStore.updateAnnotationName({ name, id });
-  }
-
-  get selectAllIndeterminate() {
-    const nSelected = this.selectedItems.length;
-    return nSelected > 0 && nSelected < this.filteredItems.length;
-  }
-
-  get selectAllValue() {
-    return this.selectedItems.length === this.filteredItems.length;
-  }
-
-  selectAllCallback() {
-    if (this.selectAllValue) {
-      this.selectedItems = [];
-    } else {
-      this.selectedItems = this.filteredItems;
-    }
-  }
-
-  get headers() {
-    // Filter headers based on selectedColumns while preserving the order defined above
-    const filteredHeaders = allHeaders.filter((header) =>
-      this.selectedColumns.includes(header.value),
-    );
-
-    // Return the filtered headers with propertyHeaders appended at the end
-    return [...filteredHeaders, ...this.propertyHeaders];
-  }
-
-  get propertyHeaders() {
-    const propertyHeaders = [];
-    // Order is important, it should be the same as in the <td v-for="x in y"> above
-    for (const path of this.displayedPropertyPaths) {
-      const fullName = this.propertyStore.getFullNameFromPath(path);
-      propertyHeaders.push({
-        text: fullName,
-        value: "properties." + path.join("."),
-      });
-    }
-    return propertyHeaders;
-  }
-
-  goToAnnotationIdLocation(annotationId: string) {
-    const annotation = this.annotationStore.getAnnotationFromId(annotationId);
-    if (!annotation) {
-      return;
-    }
-    this.store.setXY(annotation.location.XY);
-    this.store.setZ(annotation.location.Z);
-    this.store.setTime(annotation.location.Time);
-    // Also center the view on the annotation
-    this.store.setCameraInfo({
-      ...this.store.cameraInfo,
-      center: simpleCentroid(annotation.coordinates),
-    });
-    this.annotationStore.setHoveredAnnotationId(annotationId);
-  }
-
-  get hoveredId() {
-    return this.annotationStore.hoveredAnnotationId;
-  }
-
-  get vDataTable() {
-    const vDataTableParent = this.$refs.dataTable as any;
-    if (!vDataTableParent) {
-      return null;
-    }
-    return vDataTableParent.$children?.[0] || null;
-  }
-
-  get dataTableItems(): IAnnotationListItem[] {
-    const vDataTable = this.vDataTable;
-    if (!vDataTable) {
-      return [];
-    }
-    let tableItems = vDataTable.filteredItems.slice();
-    if (
-      (!vDataTable.disableSort || this.groupBy?.length) &&
-      vDataTable.serverItemsLength <= 0
-    ) {
-      tableItems = vDataTable.sortItems(tableItems);
-    }
-    return tableItems;
-  }
-
-  get getPageFromItemId() {
-    return (itemId: string) => {
-      const entryIndex = this.dataTableItems.findIndex(
-        ({ annotation }) => annotation.id === itemId,
-      );
-      if (entryIndex <= 0) {
-        return 0;
-      }
-      const itemsPerPage = this.itemsPerPage;
-      if (itemsPerPage <= 0) {
-        return 0;
-      } else {
-        return (Math.floor(entryIndex / itemsPerPage) || 0) + 1;
-      }
-    };
-  }
-
-  @Watch("hoveredId")
-  @Watch("itemsPerPage")
-  hoveredAnnotationChanged() {
-    if (this.hoveredId === null) {
-      return;
-    }
-    // Change page
-    this.page = this.getPageFromItemId(this.hoveredId);
-    // Get the tr element from the refs if it exists
-    let annotationRef = this.$refs[this.hoveredId];
-    if (annotationRef === undefined) {
-      return;
-    }
-    if (Array.isArray(annotationRef)) {
-      if (annotationRef.length <= 0) {
-        return;
-      }
-      annotationRef = annotationRef[0];
-    }
-    // Scroll to the element
-    (annotationRef as Element).scrollIntoView({
-      behavior: "smooth",
-      block: "nearest",
-    });
-  }
-
-  @Emit("clickedTag")
-  clickedTag(tag: string) {
-    return tag;
-  }
-
-  hover(annotationId: string | null) {
-    // Only update the hover if the total number of annotations is less than 5000
-    // Otherwise the update will be too slow for the UI to be responsive
-    // TODO: This could probably be relaxed by conditioning on the number of displayedAnnotations
-    if (this.annotationStore.annotations.length < 5000) {
-      this.annotationStore.setHoveredAnnotationId(annotationId);
-    }
-  }
-
-  showTagDialog = false;
-  showColorDialog = false;
-
-  handleTagSubmit({
-    tags,
-    addOrRemove,
-    replaceExisting,
-  }: {
-    tags: string[];
-    addOrRemove: "add" | "remove";
-    replaceExisting: boolean;
-  }) {
-    if (addOrRemove === "add") {
-      this.annotationStore.tagSelectedAnnotations({
-        tags,
-        replace: replaceExisting,
-      });
-    } else {
-      this.annotationStore.removeTagsFromSelectedAnnotations(tags);
-    }
-  }
-
-  handleColorSubmit({
-    useColorFromLayer,
-    color,
-    randomize,
-  }: {
-    useColorFromLayer: boolean;
-    color: string;
-    randomize?: boolean;
-  }) {
-    const newColor = useColorFromLayer ? null : color;
-    this.annotationStore.colorSelectedAnnotations({
-      color: newColor,
-      randomize,
-    });
-  }
-
-  deleteSelected() {
-    this.annotationStore.deleteSelectedAnnotations();
-  }
-
-  deleteUnselected() {
-    this.annotationStore.deleteUnselectedAnnotations();
+function selectAllCallback() {
+  if (selectAllValue.value) {
+    selectedItems.value = [];
+  } else {
+    selectedItems.value = filteredItems.value;
   }
 }
+
+const headers = computed(() => {
+  const filteredHeaders = allHeaders.filter((header) =>
+    selectedColumns.value.includes(header.value),
+  );
+  return [...filteredHeaders, ...propertyHeaders.value];
+});
+
+const propertyHeaders = computed(() => {
+  const result = [];
+  for (const path of displayedPropertyPaths.value) {
+    const fullName = propertyStore.getFullNameFromPath(path);
+    result.push({
+      text: fullName,
+      value: "properties." + path.join("."),
+    });
+  }
+  return result;
+});
+
+function goToAnnotationIdLocation(annotationId: string) {
+  const annotation = annotationStore.getAnnotationFromId(annotationId);
+  if (!annotation) {
+    return;
+  }
+  store.setXY(annotation.location.XY);
+  store.setZ(annotation.location.Z);
+  store.setTime(annotation.location.Time);
+  store.setCameraInfo({
+    ...store.cameraInfo,
+    center: simpleCentroid(annotation.coordinates),
+  });
+  annotationStore.setHoveredAnnotationId(annotationId);
+}
+
+const hoveredId = computed(() => {
+  return annotationStore.hoveredAnnotationId;
+});
+
+const dataTableInner = computed(() => {
+  const vDataTableParent = dataTable.value as any;
+  if (!vDataTableParent) {
+    return null;
+  }
+  return vDataTableParent.$children?.[0] || null;
+});
+
+const dataTableItems = computed((): IAnnotationListItem[] => {
+  const table = dataTableInner.value;
+  if (!table) {
+    return [];
+  }
+  let tableItems = table.filteredItems.slice();
+  if (
+    (!table.disableSort || groupBy.value?.length) &&
+    table.serverItemsLength <= 0
+  ) {
+    tableItems = table.sortItems(tableItems);
+  }
+  return tableItems;
+});
+
+const getPageFromItemId = computed(() => {
+  return (itemId: string) => {
+    const entryIndex = dataTableItems.value.findIndex(
+      ({ annotation }) => annotation.id === itemId,
+    );
+    if (entryIndex <= 0) {
+      return 0;
+    }
+    const perPage = itemsPerPage.value;
+    if (perPage <= 0) {
+      return 0;
+    } else {
+      return (Math.floor(entryIndex / perPage) || 0) + 1;
+    }
+  };
+});
+
+// Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
+watch([hoveredId, itemsPerPage], () => {
+  if (hoveredId.value === null) {
+    return;
+  }
+  // Change page
+  page.value = getPageFromItemId.value(hoveredId.value);
+  // Get the tr element from the refs if it exists
+  let annotationRef = vm.$refs[hoveredId.value];
+  if (annotationRef === undefined) {
+    return;
+  }
+  if (Array.isArray(annotationRef)) {
+    if (annotationRef.length <= 0) {
+      return;
+    }
+    annotationRef = annotationRef[0];
+  }
+  // Scroll to the element
+  (annotationRef as Element).scrollIntoView({
+    behavior: "smooth",
+    block: "nearest",
+  });
+});
+
+function clickedTag(tag: string) {
+  emit("clickedTag", tag);
+}
+
+function hover(annotationId: string | null) {
+  if (annotationStore.annotations.length < 5000) {
+    annotationStore.setHoveredAnnotationId(annotationId);
+  }
+}
+
+function handleTagSubmit({
+  tags,
+  addOrRemove,
+  replaceExisting,
+}: {
+  tags: string[];
+  addOrRemove: "add" | "remove";
+  replaceExisting: boolean;
+}) {
+  if (addOrRemove === "add") {
+    annotationStore.tagSelectedAnnotations({
+      tags,
+      replace: replaceExisting,
+    });
+  } else {
+    annotationStore.removeTagsFromSelectedAnnotations(tags);
+  }
+}
+
+function handleColorSubmit({
+  useColorFromLayer,
+  color,
+  randomize,
+}: {
+  useColorFromLayer: boolean;
+  color: string;
+  randomize?: boolean;
+}) {
+  const newColor = useColorFromLayer ? null : color;
+  annotationStore.colorSelectedAnnotations({
+    color: newColor,
+    randomize,
+  });
+}
+
+function deleteSelected() {
+  annotationStore.deleteSelectedAnnotations();
+}
+
+function deleteUnselected() {
+  annotationStore.deleteUnselectedAnnotations();
+}
+
+defineExpose({
+  isDeletingAnnotations,
+  columnOptions,
+  selectedColumns,
+  tableItemClass,
+  annotationFilteredDialog,
+  localIdFilter,
+  addOrRemove,
+  page,
+  itemsPerPage,
+  groupBy,
+  selected,
+  selectedItems,
+  toggleAnnotationSelection,
+  filteredAnnotationIdToIdx,
+  listedAnnotations,
+  filteredItems,
+  annotationToItem,
+  displayedPropertyPaths,
+  annotationIdToIndex,
+  updateAnnotationName,
+  selectAllIndeterminate,
+  selectAllValue,
+  selectAllCallback,
+  headers,
+  propertyHeaders,
+  goToAnnotationIdLocation,
+  hoveredId,
+  dataTableInner,
+  dataTableItems,
+  getPageFromItemId,
+  clickedTag,
+  hover,
+  showTagDialog,
+  showColorDialog,
+  handleTagSubmit,
+  handleColorSubmit,
+  deleteSelected,
+  deleteUnselected,
+  getStringFromPropertiesAndPath,
+});
 </script>
 <style>
 tbody tr:hover,

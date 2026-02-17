@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 121 | 110 migrated to `<script setup>`, 11 remaining |
+| Class components (`@Component`) | 121 | 113 migrated to `<script setup>`, 8 remaining |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -19,7 +19,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Next Steps (Phase 1 Continuation)
 
-**Current progress:** 110 of 121 components migrated to `<script setup>` (Batches 1–12 complete). 11 remaining.
+**Current progress:** 113 of 121 components migrated to `<script setup>` (Batches 1–13 complete). 8 remaining.
 
 **Branch:** `claude/vue3-migration-planning-tS4Hx`
 
@@ -33,13 +33,13 @@ See "Components Migrated" section below for details.
 
 **Verification after each batch:** `pnpm tsc` (check migrated files only — pre-existing test file errors are expected), `pnpm lint:fix`, `pnpm build`, `pnpm test`.
 
-### Batch 13 — Remaining Tier 1 + smaller Tier 2
+### ~~Batch 13 — Remaining Tier 1~~ DONE
 
-ContrastHistogram, AnnotationList, AnnotationWorkerMenu, CustomFileManager
+See "Components Migrated" section below for details.
 
-### Batch 14 — Larger Tier 2
+### Batch 14 — Tier 2
 
-Home, NewDataset
+CustomFileManager, Home, NewDataset
 
 ### Batch 15 — ImageViewer (with `markRaw()`)
 
@@ -466,19 +466,24 @@ These `markRaw()` additions can be done:
 
 **After this batch:** 110 of 121 components migrated to `<script setup>` (~91%).
 
-## Remaining Components (11)
+### Batch 13 — Tier 1 Medium Components (Completing Tier 1 Backlog)
 
-All 11 remaining components use the class-based `@Component` decorator pattern.
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `ContrastHistogram.vue` | 582 | `_uid` → module-level `uidCounter++`, `$el` → `rootEl` template ref, D3 drag/zoom with template refs, `throttle()` emitChange, computed get/set for `mode`/`editBlackPoint`/`editWhitePoint` |
+| `AnnotationWorkerMenu.vue` | 639 | `debounce()` + `onBeforeUnmount` cancel, `jobLog` side-effect refactored from computed to `watch()`, 4 stores as module-level imports, batch processing state |
+| `AnnotationList.vue` | 617 | Dynamic `:ref="item.annotation.id"` kept as-is, `$children` access via `(dataTable.value as any)?.$children?.[0]`, `getCurrentInstance()!.proxy.$refs` for dynamic refs, stacked `@Watch` → single `watch([hoveredId, itemsPerPage])`, computed get/set chains (`selectedItems` → `selected`) |
 
-### Tier 1 — Medium Components (580–640 lines)
+**Key patterns/cleanups in this batch:**
+- `ContrastHistogram.vue`: Replaced `_uid` with module-level counter (`let uidCounter = 0; const componentId = uidCounter++`); replaced `this.$el` with `rootEl` template ref on root div
+- `AnnotationWorkerMenu.vue`: Extracted `jobLog` computed side-effect (mutating `localJobLog` inside getter) into separate `watch([currentJobId, storeLog])` — computed is now pure; removed unused `LayerSelect` and `TagFilterEditor` imports/registrations
+- `AnnotationList.vue`: Removed unused `TagPicker` and `ColorPickerMenu` imports/registrations; `getStringFromPropertiesAndPath` auto-available in template via import; renamed `vDataTable` computed to `dataTableInner` to avoid shadowing Vuetify's global `VDataTable` component (see "setup bindings shadow globally-registered components" gotcha below)
 
-Straightforward migrations with standard patterns.
+**After this batch:** 113 of 121 components migrated to `<script setup>` (~93%).
 
-| Component | Lines | Key Patterns / Notes |
-|-----------|-------|---------------------|
-| `ContrastHistogram.vue` | 582 | Canvas rendering, mouse interaction, histogram data |
-| `AnnotationList.vue` | 617 | Data table, virtual scroll, selection, bulk actions |
-| `AnnotationWorkerMenu.vue` | 639 | Worker interface, job submission, progress tracking |
+## Remaining Components (8)
+
+All 8 remaining components use the class-based `@Component` decorator pattern.
 
 ### Tier 2 — Large Components (700–1,500 lines)
 
@@ -503,11 +508,9 @@ These should be split into composables before or during migration.
 
 ### Migration Order Recommendations
 
-1. **Batch 12** — Remaining Tier 1 (smallest first): ViewerToolbar, AnnotationProperties, App, BreadCrumbs, PropertyFilterHistogram, CollectionList
-2. **Batch 13** — Remaining Tier 1 + smaller Tier 2: ContrastHistogram, AnnotationList, AnnotationWorkerMenu, CustomFileManager
-3. **Batch 14** — Larger Tier 2: Home, NewDataset
-4. **Batch 15** — ImageViewer (with `markRaw()` additions for GeoJS)
-5. **Batch 16** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
+1. **Batch 14** — Tier 2 (smaller): CustomFileManager, Home, NewDataset
+2. **Batch 15** — ImageViewer (with `markRaw()` additions for GeoJS)
+3. **Batch 16** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 
@@ -756,6 +759,34 @@ overrides.value = rest;
 - `ToolConfiguration.vue` — `Vue.set()` on local reactive objects (apply object spread)
 - `ImageViewer.vue` — `Vue.set()` on GeoJS objects (replace with direct assignment + `markRaw()`)
 - Remaining unmigrated components — apply during migration
+
+### `<script setup>` bindings shadow globally-registered components
+
+**Critical gotcha discovered in Batch 13.** In `<script setup>`, Vue resolves template component names by checking setup bindings **first**, before the global component registry. If a `ref()`, `computed()`, or `const` in your setup scope has a name that matches a globally-registered component (case-insensitive PascalCase match), the setup binding **shadows** the global component.
+
+**Symptom:** The component silently renders as a comment node (`<!---->` in the DOM). No error in the console. Other components in the same template work fine.
+
+**Example:** A computed named `vDataTable` shadows Vuetify's globally-registered `VDataTable`:
+
+```typescript
+// BAD — shadows <v-data-table> in the template!
+const vDataTable = computed(() => {
+  return (dataTable.value as any)?.$children?.[0] || null;
+});
+// Vue resolves <v-data-table> → PascalCase VDataTable → finds setup binding
+// vDataTable → uses that (null) instead of the Vuetify component
+
+// GOOD — use a non-colliding name
+const dataTableInner = computed(() => {
+  return (dataTable.value as any)?.$children?.[0] || null;
+});
+```
+
+**How resolution works:** `<v-data-table>` in the template is converted to PascalCase `VDataTable`. Vue then checks the setup scope for any binding matching `VDataTable`, `vDataTable`, or `v-data-table` (case-insensitive). If found, it uses that binding as the component constructor. When the binding evaluates to `null` or a non-component value, Vue renders a comment node.
+
+**Rule:** Never name a `ref()`, `computed()`, or `const` with any name that matches a globally-registered component. Watch out especially for Vuetify components: `vDialog`, `vBtn`, `vCard`, `vDataTable`, `vTextField`, `vChip`, etc.
+
+**Debugging tip:** If a Vuetify component mysteriously disappears after migration to `<script setup>`, search the script for any binding whose camelCase name matches the component's PascalCase name.
 
 ### ~~Known Batch 10 regression: direct assignment on `ref({})` caches~~ FIXED
 
