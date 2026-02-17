@@ -30,9 +30,71 @@
       <v-card>
         <v-card-title>Measure objects</v-card-title>
         <v-card-text>
-          <analyze-panel />
+          <analyze-panel
+            :applyToAllDatasets="applyToAllDatasets"
+            @compute-property-batch="onComputePropertyBatch"
+            @compute-properties-batch="onComputePropertiesBatch"
+          />
         </v-card-text>
+        <!-- Batch progress display -->
+        <div v-if="batchProgress" class="px-6 pb-2">
+          <div class="batch-progress-header mb-2">
+            <strong>Batch Progress:</strong>
+            {{
+              batchProgress.completed +
+              batchProgress.failed +
+              batchProgress.cancelled
+            }}
+            / {{ batchProgress.total }} datasets
+            <span v-if="batchProgress.failed > 0" class="error--text">
+              ({{ batchProgress.failed }} failed)
+            </span>
+            <span v-if="batchProgress.cancelled > 0" class="warning--text">
+              ({{ batchProgress.cancelled }} cancelled)
+            </span>
+          </div>
+          <v-progress-linear
+            :value="batchProgressPercent"
+            color="primary"
+            height="20"
+            striped
+          >
+            <template v-slot:default>
+              <strong>{{ Math.round(batchProgressPercent) }}%</strong>
+            </template>
+          </v-progress-linear>
+          <div class="batch-current-dataset mt-1">
+            <small>Current: {{ batchProgress.currentDatasetName }}</small>
+          </div>
+        </div>
         <v-card-actions>
+          <v-tooltip
+            bottom
+            :disabled="!batchDisabledReason"
+            v-if="canApplyToAllDatasets || batchDisabledReason"
+          >
+            <template v-slot:activator="{ on, attrs }">
+              <div v-bind="attrs" v-on="on">
+                <v-checkbox
+                  v-model="applyToAllDatasets"
+                  :disabled="!canApplyToAllDatasets || !!batchProgress"
+                  :label="`Apply to all datasets (${collectionDatasetCount})`"
+                  class="mt-0"
+                  hide-details
+                ></v-checkbox>
+              </div>
+            </template>
+            <span>{{ batchDisabledReason }}</span>
+          </v-tooltip>
+          <v-btn
+            v-if="batchProgress"
+            color="orange"
+            small
+            class="ml-4"
+            @click="cancelBatch"
+          >
+            Cancel All
+          </v-btn>
           <v-spacer />
           <v-btn
             @click="onDialogClose(false)"
@@ -93,12 +155,14 @@
 </template>
 
 <script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { findIndexOfPath } from "@/utils/paths";
+import { logError } from "@/utils/log";
 import AnalyzePanel from "@/components/AnalyzePanel.vue";
+import { IAnnotationProperty } from "@/store/model";
 
 interface PropertyItem {
   name: string;
@@ -136,6 +200,20 @@ export default class AnnotationProperties extends Vue {
   selectedPath: string[] = [];
   activeTabKey: TTabKey = "display";
   showAnalyzeDialog = false;
+
+  // Batch processing state
+  applyToAllDatasets: boolean = false;
+  batchProgress: {
+    total: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    currentDatasetName: string;
+  } | null = null;
+  batchCancelFunction: (() => void) | null = null;
+  collectionDatasetCount: number = 0;
+  loadingDatasetCount: boolean = false;
+  readonly BATCH_DATASET_LIMIT = 10;
 
   get activeTabIndex(): number {
     return tabs.findIndex(({ key }) => this.activeTabKey === key);
@@ -248,6 +326,104 @@ export default class AnnotationProperties extends Vue {
 
   toggleFilter(propertyPath: string[]) {
     this.filterStore.togglePropertyPathFiltering(propertyPath);
+  }
+
+  get canApplyToAllDatasets(): boolean {
+    return (
+      this.store.selectedConfigurationId !== null &&
+      this.collectionDatasetCount > 1 &&
+      this.collectionDatasetCount <= this.BATCH_DATASET_LIMIT
+    );
+  }
+
+  get batchDisabledReason(): string | null {
+    if (!this.store.selectedConfigurationId) {
+      return null;
+    }
+    if (this.loadingDatasetCount) {
+      return null;
+    }
+    if (this.collectionDatasetCount <= 1) {
+      return null;
+    }
+    if (this.collectionDatasetCount > this.BATCH_DATASET_LIMIT) {
+      return `Collection has more than ${this.BATCH_DATASET_LIMIT} datasets`;
+    }
+    return null;
+  }
+
+  get batchProgressPercent(): number {
+    if (!this.batchProgress || this.batchProgress.total === 0) {
+      return 0;
+    }
+    const { completed, failed, cancelled, total } = this.batchProgress;
+    return ((completed + failed + cancelled) / total) * 100;
+  }
+
+  mounted() {
+    this.fetchCollectionDatasetCount();
+  }
+
+  @Watch("store.selectedConfigurationId")
+  onConfigurationChanged() {
+    this.fetchCollectionDatasetCount();
+  }
+
+  async fetchCollectionDatasetCount() {
+    this.loadingDatasetCount = true;
+    try {
+      this.collectionDatasetCount =
+        await this.store.getCollectionDatasetCount();
+    } catch (error) {
+      logError("Failed to fetch collection dataset count:", error);
+      this.collectionDatasetCount = 0;
+    } finally {
+      this.loadingDatasetCount = false;
+    }
+  }
+
+  async onComputePropertyBatch(property: IAnnotationProperty) {
+    const configurationId = this.store.selectedConfigurationId;
+    if (!configurationId) {
+      return;
+    }
+
+    this.batchProgress = {
+      total: this.collectionDatasetCount,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      currentDatasetName: "Starting...",
+    };
+
+    await this.propertyStore.computePropertyBatch({
+      property,
+      configurationId,
+      onBatchProgress: (status) => {
+        this.batchProgress = status;
+      },
+      onCancel: (cancel) => {
+        this.batchCancelFunction = cancel;
+      },
+      onComplete: () => {
+        this.batchCancelFunction = null;
+        setTimeout(() => {
+          this.batchProgress = null;
+        }, 3000);
+      },
+    });
+  }
+
+  async onComputePropertiesBatch(properties: IAnnotationProperty[]) {
+    for (const property of properties) {
+      await this.onComputePropertyBatch(property);
+    }
+  }
+
+  cancelBatch() {
+    if (this.batchCancelFunction) {
+      this.batchCancelFunction();
+    }
   }
 
   onDialogClose(value: boolean) {

@@ -22,6 +22,7 @@ import {
   ProgressType,
   IJobEventData,
   IErrorInfoList,
+  IDatasetView,
 } from "./model";
 
 import Vue from "vue";
@@ -35,6 +36,7 @@ import jobs, {
   createProgressEventCallback,
   createErrorEventCallback,
 } from "./jobs";
+import { logError } from "@/utils/log";
 import { findIndexOfPath } from "@/utils/paths";
 import { arePathEquals } from "@/utils/paths";
 import progress from "./progress";
@@ -407,6 +409,197 @@ export class Properties extends VuexModule {
     return computeJob;
   }
 
+  @Action
+  async computePropertyBatch({
+    property,
+    configurationId,
+    onBatchProgress,
+    onCancel,
+    onComplete,
+  }: {
+    property: IAnnotationProperty;
+    configurationId: string;
+    onBatchProgress: (status: {
+      total: number;
+      completed: number;
+      failed: number;
+      cancelled: number;
+      currentDatasetName: string;
+    }) => void;
+    // Called immediately with the cancel function so the caller can wire up
+    // cancellation UI before the batch loop starts (avoids timing issue where
+    // awaiting the full batch would delay setting the cancel function).
+    onCancel: (cancel: () => void) => void;
+    onComplete: (results: {
+      succeeded: number;
+      failed: number;
+      cancelled: number;
+    }) => void;
+  }): Promise<void> {
+    const propertyId = property.id;
+    const scales = main.scales;
+    const submittedJobIds: string[] = [];
+    let isCancelled = false;
+
+    // Create the cancel function and notify the caller immediately
+    const cancel = () => {
+      isCancelled = true;
+      for (const jobId of submittedJobIds) {
+        main.api.cancelJob(jobId);
+      }
+    };
+    onCancel(cancel);
+
+    // Get all dataset views for this configuration
+    const datasetViews: IDatasetView[] = await main.api.findDatasetViews({
+      configurationId,
+    });
+    const datasetIds = [...new Set(datasetViews.map((v) => v.datasetId))];
+    const total = datasetIds.length;
+
+    if (total === 0) {
+      onComplete({ succeeded: 0, failed: 0, cancelled: 0 });
+      return;
+    }
+
+    // Get dataset names for progress display
+    const datasetInfo = await main.api.batchResources({
+      folder: datasetIds,
+    });
+    const datasetNames: { [id: string]: string } = {};
+    for (const id of datasetIds) {
+      datasetNames[id] = datasetInfo.folder?.[id]?.name || "Unknown dataset";
+    }
+
+    // Create overall batch progress entry
+    const batchProgressId = await progress.create({
+      type: ProgressType.BATCH_PROPERTY_COMPUTE,
+      title: `Batch: ${property.name}`,
+    });
+    progress.update({
+      id: batchProgressId,
+      progress: 0,
+      total,
+    });
+
+    // Set property status to running
+    if (!this.propertyStatuses[propertyId]) {
+      Vue.set(this.propertyStatuses, propertyId, defaultStatus());
+    }
+    const status = this.propertyStatuses[propertyId];
+    Vue.set(status, "running", true);
+    Vue.set(status, "previousRun", null);
+
+    let completed = 0;
+    let failed = 0;
+    let cancelled = 0;
+
+    for (const datasetId of datasetIds) {
+      if (isCancelled) {
+        cancelled++;
+        onBatchProgress({
+          total,
+          completed,
+          failed,
+          cancelled,
+          currentDatasetName: datasetNames[datasetId],
+        });
+        continue;
+      }
+
+      const datasetName = datasetNames[datasetId];
+      onBatchProgress({
+        total,
+        completed,
+        failed,
+        cancelled,
+        currentDatasetName: datasetName,
+      });
+
+      // Create per-dataset progress entry
+      const datasetProgressId = await progress.create({
+        type: ProgressType.PROPERTY_COMPUTE,
+        title: `${property.name}: ${datasetName}`,
+      });
+
+      try {
+        const response = await this.propertiesAPI.computeProperty(
+          propertyId,
+          datasetId,
+          property,
+          scales,
+        );
+
+        const jobId = response.data[0]?._id;
+        if (!jobId) {
+          failed++;
+          progress.complete(datasetProgressId);
+        } else {
+          submittedJobIds.push(jobId);
+
+          const computeJob: IPropertyComputeJob = {
+            propertyId,
+            jobId,
+            datasetId,
+            eventCallback: (jobData: IJobEventData) => {
+              progress.handleJobProgress({
+                jobData,
+                progressId: datasetProgressId,
+                defaultTitle: `${property.name}: ${datasetName}`,
+              });
+            },
+          };
+
+          // Capture the completion promise immediately
+          const completionPromise = jobs.addJob(computeJob);
+
+          const success = await completionPromise;
+
+          if (isCancelled) {
+            cancelled++;
+          } else if (success) {
+            completed++;
+          } else {
+            failed++;
+          }
+          progress.complete(datasetProgressId);
+        }
+      } catch (error) {
+        logError(`Failed to compute property for ${datasetName}: ${error}`);
+        failed++;
+        progress.complete(datasetProgressId);
+      }
+
+      // Update batch progress
+      progress.update({
+        id: batchProgressId,
+        progress: completed + failed + cancelled,
+        total,
+      });
+      onBatchProgress({
+        total,
+        completed,
+        failed,
+        cancelled,
+        currentDatasetName: datasetName,
+      });
+    }
+
+    // Complete batch progress
+    progress.complete(batchProgressId);
+
+    // Refresh property values for the current dataset
+    await this.fetchPropertyValues();
+    await filters.updateHistograms();
+
+    // Update property status
+    Vue.set(status, "running", false);
+    Vue.set(status, "previousRun", completed > 0 && failed === 0);
+    Vue.set(status, "progressInfo", {});
+
+    onComplete({ succeeded: completed, failed, cancelled });
+  }
+
   @Mutation
   protected setPropertiesImpl(properties: IAnnotationProperty[]) {
     this.properties = [...properties];
@@ -515,7 +708,7 @@ export class Properties extends VuexModule {
       "getAnnotationLocationFromTool",
       tool,
     );
-    const tile = { XY: main.xy, Z: main.z, Time: main.time };
+    const tile = { ...location };
     this.propertiesAPI
       .requestWorkerPreview(
         image,

@@ -27,6 +27,7 @@ import {
   IErrorInfoList,
   ProgressType,
   IJobEventData,
+  IDatasetView,
 } from "./model";
 
 import Vue, { markRaw } from "vue";
@@ -1245,7 +1246,7 @@ export class Annotations extends VuexModule {
 
     const { location, channel } =
       await this.getAnnotationLocationFromTool(tool);
-    const tile = { XY: main.xy, Z: main.z, Time: main.time };
+    const tile = { ...location };
     const response = await this.annotationsAPI.computeAnnotationWithWorker(
       tool,
       main.dataset,
@@ -1302,6 +1303,280 @@ export class Annotations extends VuexModule {
     });
 
     return computeJob;
+  }
+
+  @Action
+  public async computeAnnotationsWithWorkerBatch({
+    tool,
+    workerInterface,
+    configurationId,
+    onBatchProgress,
+    onJobProgress,
+    onJobError,
+    onCancel,
+    onComplete,
+  }: {
+    tool: IToolConfiguration;
+    workerInterface: IWorkerInterfaceValues;
+    configurationId: string;
+    onBatchProgress: (status: {
+      total: number;
+      completed: number;
+      failed: number;
+      cancelled: number;
+      currentDatasetName: string;
+    }) => void;
+    onJobProgress: (datasetId: string, progressInfo: IProgressInfo) => void;
+    onJobError: (datasetId: string, errorInfo: IErrorInfoList) => void;
+    // Called immediately with the cancel function so the caller can wire up
+    // cancellation UI before the batch loop starts (avoids timing issue where
+    // awaiting the full batch would delay setting the cancel function).
+    onCancel: (cancel: () => void) => void;
+    onComplete: (results: {
+      succeeded: number;
+      failed: number;
+      cancelled: number;
+    }) => void;
+  }): Promise<{
+    cancel: () => void;
+    jobs: IAnnotationComputeJob[];
+  }> {
+    const submittedJobs: IAnnotationComputeJob[] = [];
+    let isCancelled = false;
+
+    // Create the cancel function and notify the caller immediately
+    const cancel = () => {
+      isCancelled = true;
+      // Cancel all running jobs
+      for (const job of submittedJobs) {
+        main.api.cancelJob(job.jobId);
+      }
+    };
+    onCancel(cancel);
+
+    // Get all dataset views for this configuration
+    const datasetViews: IDatasetView[] = await main.api.findDatasetViews({
+      configurationId,
+    });
+
+    // Get unique dataset IDs
+    const datasetIds = [...new Set(datasetViews.map((v) => v.datasetId))];
+    const total = datasetIds.length;
+
+    if (total === 0) {
+      onComplete({ succeeded: 0, failed: 0, cancelled: 0 });
+      return { cancel, jobs: [] };
+    }
+
+    // Get dataset names for progress display
+    const datasetInfo = await main.api.batchResources({ folder: datasetIds });
+    const datasetNames: { [id: string]: string } = {};
+    for (const id of datasetIds) {
+      datasetNames[id] = datasetInfo.folder?.[id]?.name || "Unknown dataset";
+    }
+
+    // Create overall batch progress entry
+    const batchProgressId = await progress.create({
+      type: ProgressType.BATCH_ANNOTATION_COMPUTE,
+      title: `Batch: ${tool.name}`,
+    });
+    // Initialize the batch progress with total
+    progress.update({
+      id: batchProgressId,
+      progress: 0,
+      total,
+    });
+
+    let completed = 0;
+    let failed = 0;
+    let cancelled = 0;
+
+    // Process each dataset
+    for (const datasetId of datasetIds) {
+      if (isCancelled) {
+        cancelled++;
+        onBatchProgress({
+          total,
+          completed,
+          failed,
+          cancelled,
+          currentDatasetName: datasetNames[datasetId],
+        });
+        continue;
+      }
+
+      const datasetName = datasetNames[datasetId];
+      onBatchProgress({
+        total,
+        completed,
+        failed,
+        cancelled,
+        currentDatasetName: datasetName,
+      });
+
+      // Create per-dataset progress tracking
+      const datasetProgressInfo: IProgressInfo = {};
+      const datasetErrorInfo: IErrorInfoList = { errors: [] };
+
+      // Create a progress entry for this specific dataset
+      const datasetProgressId = await progress.create({
+        type: ProgressType.ANNOTATION_COMPUTE,
+        title: `${tool.name}: ${datasetName}`,
+      });
+
+      try {
+        // Submit the job for this dataset
+        const result = await this.submitWorkerJobForDataset({
+          tool,
+          workerInterface,
+          datasetId,
+          progressInfo: datasetProgressInfo,
+          errorInfo: datasetErrorInfo,
+          onProgress: (info) => onJobProgress(datasetId, info),
+          onError: (info) => onJobError(datasetId, info),
+          progressId: datasetProgressId,
+        });
+
+        if (result) {
+          submittedJobs.push(result.job);
+
+          // Wait for the job to complete using the captured promise
+          // (avoids race condition where job finishes before we look it up)
+          const success = await result.completionPromise;
+
+          if (isCancelled) {
+            cancelled++;
+          } else if (success) {
+            completed++;
+          } else {
+            failed++;
+          }
+        } else {
+          failed++;
+        }
+        progress.complete(datasetProgressId);
+      } catch (error) {
+        logError(`Failed to process dataset ${datasetName}: ${error}`);
+        failed++;
+        progress.complete(datasetProgressId);
+      }
+
+      // Update batch progress
+      progress.update({
+        id: batchProgressId,
+        progress: completed + failed + cancelled,
+        total,
+      });
+      onBatchProgress({
+        total,
+        completed,
+        failed,
+        cancelled,
+        currentDatasetName: datasetName,
+      });
+    }
+
+    // Complete batch progress
+    progress.complete(batchProgressId);
+
+    // Refresh annotations for the currently viewed dataset
+    this.fetchAnnotations();
+
+    // Handle any new large images created by the worker
+    const currentDatasetId = main.dataset?.id;
+    if (currentDatasetId) {
+      const newLargeImage = await main.loadLargeImages(true);
+      if (newLargeImage) {
+        main.scheduleTileFramesComputation(currentDatasetId);
+        main.scheduleMaxMergeCache(currentDatasetId);
+        main.scheduleHistogramCache(currentDatasetId);
+      }
+    }
+
+    onComplete({ succeeded: completed, failed, cancelled });
+
+    return { cancel, jobs: submittedJobs };
+  }
+
+  @Action
+  private async submitWorkerJobForDataset({
+    tool,
+    workerInterface,
+    datasetId,
+    progressInfo,
+    errorInfo,
+    onProgress,
+    onError,
+    progressId,
+  }: {
+    tool: IToolConfiguration;
+    workerInterface: IWorkerInterfaceValues;
+    datasetId: string;
+    progressInfo: IProgressInfo;
+    errorInfo: IErrorInfoList;
+    onProgress: (info: IProgressInfo) => void;
+    onError: (info: IErrorInfoList) => void;
+    progressId: string;
+  }): Promise<{
+    job: IAnnotationComputeJob;
+    completionPromise: Promise<boolean>;
+  } | null> {
+    if (!main.configuration || !main.isLoggedIn) {
+      return null;
+    }
+
+    // Clear errors while maintaining reactivity
+    Vue.set(errorInfo, "errors", []);
+
+    // Get location and channel from tool configuration
+    const { location, channel } =
+      await this.getAnnotationLocationFromTool(tool);
+    const tile = { ...location };
+
+    const response = await this.annotationsAPI.computeAnnotationWithWorker(
+      tool,
+      { id: datasetId },
+      {
+        location,
+        channel,
+        tile,
+      },
+      workerInterface,
+      main.layers,
+      main.scales,
+    );
+
+    const jobId = response.data[0]?._id;
+    if (!jobId) {
+      progress.complete(progressId);
+      return null;
+    }
+
+    const computeJob: IAnnotationComputeJob = {
+      toolId: tool.id,
+      jobId,
+      datasetId,
+      eventCallback: (jobData: IJobEventData) => {
+        createProgressEventCallback(progressInfo)(jobData);
+        onProgress(progressInfo);
+
+        progress.handleJobProgress({
+          jobData,
+          progressId,
+          defaultTitle: `Computing ${tool.name}`,
+        });
+      },
+      errorCallback: (jobData: IJobEventData) => {
+        createErrorEventCallback(errorInfo)(jobData);
+        onError(errorInfo);
+      },
+    };
+
+    // Capture the completion promise before the job can finish and
+    // be removed from the job map (race condition fix)
+    const completionPromise = jobs.addJob(computeJob);
+
+    return { job: computeJob, completionPromise };
   }
 
   @Action

@@ -123,3 +123,122 @@ Tools can have optional descriptions that appear below the tool name in the sele
 3. **For docker worker tools**: The description comes from the `description` label in the worker's Docker image metadata.
 
 Descriptions should be brief (under 50 characters) and explain what the tool does in action-oriented language (e.g., "Click to select individual annotations" rather than "This tool selects annotations").
+
+## Interaction Layer and Visual Feedback
+
+The `interactionLayer` in `AnnotationViewer.vue` is a GeoJS annotation layer dedicated to handling user interactions and providing visual feedback during drawing operations. It's separate from the main `annotationLayer` which displays saved annotations.
+
+### Key Concepts
+
+**Annotation Modes:**
+The interaction layer supports several built-in drawing modes via `this.interactionLayer.mode(modeName)`:
+- `"point"` - Single point placement
+- `"line"` - Freehand line drawing
+- `"polygon"` - Freehand polygon drawing
+- `"rectangle"` - Rectangle drawing
+- `"ellipse"` - Ellipse/circle drawing (shows bounding box while dragging)
+- `null` - Disable drawing mode (for custom interactions)
+
+**Temporary Annotations:**
+For custom visual feedback, you can create temporary annotations on the interaction layer:
+
+```typescript
+// Create a temporary annotation
+const tempAnnotation = geojs.createAnnotation("circle");
+tempAnnotation.layer(this.interactionLayer);
+this.interactionLayer.addAnnotation(tempAnnotation);
+
+// Update it on mouse events
+tempAnnotation._coordinates(newCorners);
+tempAnnotation.draw();
+
+// Clean up when done
+this.interactionLayer.removeAnnotation(tempAnnotation);
+```
+
+### Visual Feedback Patterns
+
+The codebase uses several patterns for visual feedback:
+
+**1. Cursor Annotation (Snap Tools)**
+Used by "Snap circle to dot" to show the snap radius around the cursor:
+- Created via `geojs.createAnnotation("circle")`
+- Updates on `mousemove` and `zoom` events
+- Styled with semi-transparent fill
+
+```typescript
+// In addCursorAnnotation()
+this.cursorAnnotation = geojs.createAnnotation("circle");
+this.cursorAnnotation.style({
+  fill: true,
+  fillColor: "white",
+  fillOpacity: 0.2,
+  strokeWidth: 3,
+  strokeColor: "black",
+});
+```
+
+**2. Drag Ghost Annotation**
+Shows a semi-transparent copy when dragging annotations:
+- Created using `geojsAnnotationFactory()` with the annotation's shape
+- Styled with reduced opacity and different color
+- Removed after drag completes
+
+**3. Selection/Lasso Preview**
+Shows the selection path while drawing a lasso:
+- Uses `geojs.annotation.lineAnnotation()` with `closed: true`
+- Updates as user draws the selection area
+
+### Example: Circle and Ellipse Tool Implementation
+
+The circle and ellipse tools are good examples of how to add shapes that GeoJS doesn't natively support as stored annotation types. Both use GeoJS's native `"ellipse"` drawing mode for interaction, then convert the result to a polygon before saving. The difference is in the conversion math: the circle inscribes within the bounding box (diameter = min(width, height)), while the ellipse fills the full bounding box (semi-axes = half-width, half-height).
+
+**Key insight:** GeoJS's `mode()` accepts any annotation type name, including `"ellipse"`, even though our TypeScript types don't declare all of them. The native mode handles the cursor change, mouse interaction, and fires the standard `geo_annotation_state` event on completion.
+
+**The flow (shared by both tools):**
+
+1. **Tool activation** (`setNewAnnotationMode` in `AnnotationViewer.vue`): When a circle or ellipse tool is selected, it calls `setupCircleDrawingMode()`, which sets `this.interactionLayer.mode("ellipse")`. This gives us the crosshair cursor and click-drag drawing interaction for free, just like `mode("polygon")` or `mode("rectangle")` do for their respective tools.
+
+2. **Drawing**: GeoJS handles the interaction. The user sees a bounding box rectangle while dragging (this is GeoJS's native ellipse drawing preview).
+
+3. **Completion** (`handleInteractionAnnotationChange`): When the user releases the mouse, GeoJS fires `geo_annotation_state`. This routes to `addAnnotationFromGeoJsAnnotation()`, which detects the tool shape and runs the appropriate conversion:
+
+   **For Circle:** The bounding box is first squared (inscribed: diameter = min(width, height)), then passed to `ellipseToPolygonCoordinates()`.
+
+   **For Ellipse:** The bounding box coordinates are passed directly to `ellipseToPolygonCoordinates()`.
+
+   **Both:** `ellipseToPolygonCoordinates()` computes center and semi-axes from the bounding box and generates 64 polygon vertices. The tool configuration's shape is changed to `Polygon` before saving.
+
+**Why not a custom drawing mode?** Earlier iterations tried using `mode(null)` with custom `geoOn` mouse handlers, but this broke the cursor change (no crosshair) and event routing (map layer intercepted clicks for panning). Using a native GeoJS mode follows the same pattern as every other annotation tool and gets all the standard interaction behavior for free.
+
+**Code locations:**
+- `setupCircleDrawingMode()` - Sets `mode("ellipse")` (used by both circle and ellipse tools)
+- `addAnnotationFromGeoJsAnnotation()` - Circle/ellipse-to-polygon conversion
+- `ellipseToPolygonCoordinates()` - 64-vertex polygon generation (`src/utils/annotation.ts`)
+
+### Cleanup Pattern
+
+Always clean up temporary annotations and event handlers when the tool changes:
+
+```typescript
+clearAnnotationMode() {
+  // Remove temporary annotations
+  if (this.cursorAnnotation) {
+    this.interactionLayer.removeAnnotation(this.cursorAnnotation);
+    this.cursorAnnotation = null;
+  }
+
+  // Unbind event handlers
+  this.interactionLayer.geoOff(geojs.event.mousemove, this.handleMove);
+}
+```
+
+### GeoJS Events
+
+Common events for interaction handling:
+- `geojs.event.mousedown` - Mouse button pressed
+- `geojs.event.mousemove` - Mouse moved
+- `geojs.event.mouseup` - Mouse button released
+- `geojs.event.mouseclick` - Click completed
+- `geojs.event.zoom` - Map zoom changed (update radius-based previews)
+- `geojs.event.annotation.state` - Annotation drawing completed (native modes)

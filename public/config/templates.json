@@ -278,9 +278,19 @@
         "meta": {
           "items": [
             {
-              "text": "ViT-B",
+              "text": "SAM1 ViT-B",
               "value": "vit_b",
-              "description": "Click or drag to segment objects with AI"
+              "description": "Original SAM model, click or drag to segment objects with AI"
+            },
+            {
+              "text": "SAM2 Hiera Base+",
+              "value": "sam2_hiera_base_plus",
+              "description": "SAM2 base+ model, better quality segmentation"
+            },
+            {
+              "text": "SAM2 Hiera Large",
+              "value": "sam2_hiera_large",
+              "description": "SAM2 large model, best quality segmentation"
             }
           ]
         }
