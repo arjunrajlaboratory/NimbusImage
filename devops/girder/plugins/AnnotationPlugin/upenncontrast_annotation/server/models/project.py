@@ -18,6 +18,8 @@ from girder.exceptions import ValidationException, GirderException
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
+from ..models.datasetView import DatasetView as DatasetViewModel
+from ..models.collection import Collection as CollectionModel
 
 
 class ProjectSchema:
@@ -287,13 +289,6 @@ class Project(ProxiedModel):
         - collections: list of Collection documents
         - datasetViews: list of DatasetView documents
         """
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-        from ..models.collection import (
-            Collection as CollectionModel
-        )
-
         dataset_ids = [
             d['datasetId']
             for d in project['meta']['datasets']
@@ -355,70 +350,176 @@ class Project(ProxiedModel):
             'datasetViews': dataset_views,
         }
 
+    def _bulkSetUserAccess(
+        self, doc_ids, model, user_id, level
+    ):
+        """Set a single user's access on multiple docs.
+
+        Uses two bulk MongoDB ops ($pull + $push) instead
+        of N individual setUserAccess calls.
+
+        :param doc_ids: List of document ObjectIds.
+        :param model: The Girder model instance.
+        :param user_id: The user's ObjectId.
+        :param level: AccessType level, or -1 to remove.
+        """
+        if not doc_ids:
+            return
+        query = {'_id': {'$in': list(doc_ids)}}
+        model.update(
+            query,
+            {'$pull': {
+                'access.users': {'id': user_id}
+            }}
+        )
+        if level is not None and level >= 0:
+            model.update(
+                query,
+                {'$push': {'access.users': {
+                    'id': user_id,
+                    'level': level,
+                    'flags': []
+                }}}
+            )
+
+    def _bulkSetPublic(self, doc_ids, model, public):
+        """Set public flag on multiple documents.
+
+        Uses a single updateMany instead of N individual
+        setPublic calls.
+
+        :param doc_ids: List of document ObjectIds.
+        :param model: The Girder model instance.
+        :param public: Boolean, True to make public.
+        """
+        if not doc_ids:
+            return
+        model.update(
+            {'_id': {'$in': list(doc_ids)}},
+            {'$set': {'public': public}}
+        )
+
+    def _bulkSetAllUsersAccess(
+        self, doc_ids, model, project
+    ):
+        """Apply project's full user ACL to multiple docs.
+
+        Bulk-validates that users exist, then uses two
+        bulk MongoDB ops ($pull + $push with $each).
+
+        :param doc_ids: List of document ObjectIds.
+        :param model: The Girder model instance.
+        :param project: The project document.
+        """
+        if not doc_ids:
+            return
+        project_users = project.get(
+            'access', {}
+        ).get('users', [])
+        if not project_users:
+            return
+        # Bulk validate users exist
+        user_ids = [u['id'] for u in project_users]
+        valid_ids = {
+            u['_id'] for u in User().find(
+                {'_id': {'$in': user_ids}},
+                fields=['_id']
+            )
+        }
+        entries = [
+            {
+                'id': u['id'],
+                'level': u['level'],
+                'flags': u.get('flags', [])
+            }
+            for u in project_users
+            if u['id'] in valid_ids
+        ]
+        if not entries:
+            return
+        query = {'_id': {'$in': list(doc_ids)}}
+        valid_user_ids = [e['id'] for e in entries]
+        model.update(
+            query,
+            {'$pull': {
+                'access.users': {
+                    'id': {'$in': valid_user_ids}
+                }
+            }}
+        )
+        model.update(
+            query,
+            {'$push': {
+                'access.users': {'$each': entries}
+            }}
+        )
+
     def propagateUserAccess(
         self, project, targetUser, level
     ):
         """Propagate a single user's access level to all
         project resources.
 
+        Uses bulk DB operations instead of per-document
+        setUserAccess calls.
+
         :param project: The project document.
         :param targetUser: The Girder user document.
         :param level: AccessType level (0, 1, 2) or -1
                       to remove access.
         """
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-        from ..models.collection import (
-            Collection as CollectionModel
-        )
-
         resources = self._gatherAllResources(project)
-
-        for ds in resources['datasets']:
-            Folder().setUserAccess(
-                ds, targetUser, level, save=True
-            )
-        for coll in resources['collections']:
-            CollectionModel().setUserAccess(
-                coll, targetUser, level, save=True
-            )
-        for dv in resources['datasetViews']:
-            DatasetViewModel().setUserAccess(
-                dv, targetUser, level, save=True
-            )
+        uid = targetUser['_id']
+        ds_ids = [d['_id'] for d in resources['datasets']]
+        coll_ids = [
+            c['_id'] for c in resources['collections']
+        ]
+        dv_ids = [
+            v['_id'] for v in resources['datasetViews']
+        ]
+        self._bulkSetUserAccess(
+            ds_ids, Folder(), uid, level
+        )
+        self._bulkSetUserAccess(
+            coll_ids, CollectionModel(), uid, level
+        )
+        self._bulkSetUserAccess(
+            dv_ids, DatasetViewModel(), uid, level
+        )
 
     def propagatePublic(self, project, public):
         """Set public/private on all project resources.
 
+        Uses bulk DB operations instead of per-document
+        setPublic calls.
+
         :param project: The project document.
         :param public: Boolean, True to make public.
         """
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-        from ..models.collection import (
-            Collection as CollectionModel
-        )
-
         resources = self._gatherAllResources(project)
-
-        for ds in resources['datasets']:
-            Folder().setPublic(ds, public, save=True)
-        for coll in resources['collections']:
-            CollectionModel().setPublic(
-                coll, public, save=True
-            )
-        for dv in resources['datasetViews']:
-            DatasetViewModel().setPublic(
-                dv, public, save=True
-            )
+        ds_ids = [d['_id'] for d in resources['datasets']]
+        coll_ids = [
+            c['_id'] for c in resources['collections']
+        ]
+        dv_ids = [
+            v['_id'] for v in resources['datasetViews']
+        ]
+        self._bulkSetPublic(ds_ids, Folder(), public)
+        self._bulkSetPublic(
+            coll_ids, CollectionModel(), public
+        )
+        self._bulkSetPublic(
+            dv_ids, DatasetViewModel(), public
+        )
 
     def propagateAllUsersAccess(
         self, project, documents, model
     ):
         """Apply the project's full user access list to
         one or more documents of a given model.
+
+        Uses bulk DB operations instead of per-user
+        per-document setUserAccess calls.
 
         :param project: The project document.
         :param documents: List of documents to update
@@ -427,22 +528,10 @@ class Project(ProxiedModel):
         """
         if not isinstance(documents, list):
             documents = [documents]
-
-        project_users = project.get(
-            'access', {}
-        ).get('users', [])
-
-        for user_entry in project_users:
-            target = User().load(
-                user_entry['id'], force=True
-            )
-            if not target:
-                continue
-            level = user_entry['level']
-            for doc in documents:
-                model.setUserAccess(
-                    doc, target, level, save=True
-                )
+        doc_ids = [d['_id'] for d in documents]
+        self._bulkSetAllUsersAccess(
+            doc_ids, model, project
+        )
 
     def _gatherDatasetResources(self, dataset):
         """Load a dataset's associated views and configs.
@@ -451,13 +540,6 @@ class Project(ProxiedModel):
         - dataset_views: list of DatasetView documents
         - configs: list of Collection documents
         """
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-        from ..models.collection import (
-            Collection as CollectionModel
-        )
-
         dvModel = DatasetViewModel()
         dataset_views = list(dvModel.find(
             {'datasetId': dataset['_id']}
@@ -482,10 +564,6 @@ class Project(ProxiedModel):
         - dataset_views: list of DatasetView documents
         - datasets: list of Folder documents
         """
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-
         dvModel = DatasetViewModel()
         dataset_views = list(dvModel.find(
             {'configurationId': collection['_id']}
@@ -507,13 +585,6 @@ class Project(ProxiedModel):
         :param project: The project document.
         :param dataset: The dataset (Folder) document.
         """
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-        from ..models.collection import (
-            Collection as CollectionModel
-        )
-
         dataset_views, configs = (
             self._gatherDatasetResources(dataset)
         )
@@ -536,13 +607,6 @@ class Project(ProxiedModel):
         :param project: The project document.
         :param collection: The Collection document.
         """
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-        from ..models.collection import (
-            Collection as CollectionModel
-        )
-
         dataset_views, datasets = (
             self._gatherCollectionResources(collection)
         )
@@ -560,29 +624,29 @@ class Project(ProxiedModel):
         """Propagate project public flag to a dataset and
         its associated views/configs.
 
+        Uses bulk DB operations instead of per-document
+        setPublic calls.
+
         :param project: The project document.
         :param dataset: The dataset (Folder) document.
         """
         if not project.get('public', False):
             return
 
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-        from ..models.collection import (
-            Collection as CollectionModel
-        )
-
         dataset_views, configs = (
             self._gatherDatasetResources(dataset)
         )
-        Folder().setPublic(dataset, True, save=True)
-        dvModel = DatasetViewModel()
-        for dv in dataset_views:
-            dvModel.setPublic(dv, True, save=True)
-        collModel = CollectionModel()
-        for c in configs:
-            collModel.setPublic(c, True, save=True)
+        self._bulkSetPublic(
+            [dataset['_id']], Folder(), True
+        )
+        dv_ids = [v['_id'] for v in dataset_views]
+        self._bulkSetPublic(
+            dv_ids, DatasetViewModel(), True
+        )
+        config_ids = [c['_id'] for c in configs]
+        self._bulkSetPublic(
+            config_ids, CollectionModel(), True
+        )
 
     def propagatePublicToCollection(
         self, project, collection
@@ -590,28 +654,26 @@ class Project(ProxiedModel):
         """Propagate project public flag to a collection
         and its associated views/datasets.
 
+        Uses bulk DB operations instead of per-document
+        setPublic calls.
+
         :param project: The project document.
         :param collection: The Collection document.
         """
         if not project.get('public', False):
             return
 
-        from ..models.datasetView import (
-            DatasetView as DatasetViewModel
-        )
-        from ..models.collection import (
-            Collection as CollectionModel
-        )
-
         dataset_views, datasets = (
             self._gatherCollectionResources(collection)
         )
-        CollectionModel().setPublic(
-            collection, True, save=True
+        self._bulkSetPublic(
+            [collection['_id']], CollectionModel(), True
         )
-        dvModel = DatasetViewModel()
-        for dv in dataset_views:
-            dvModel.setPublic(dv, True, save=True)
-        folderModel = Folder()
-        for ds in datasets:
-            folderModel.setPublic(ds, True, save=True)
+        dv_ids = [v['_id'] for v in dataset_views]
+        self._bulkSetPublic(
+            dv_ids, DatasetViewModel(), True
+        )
+        ds_ids = [d['_id'] for d in datasets]
+        self._bulkSetPublic(
+            ds_ids, Folder(), True
+        )

@@ -14,6 +14,9 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 from girder.models.user import User
 
+from upenncontrast_annotation.server.helpers.access_helpers import (
+    fetchUserEmails
+)
 from upenncontrast_annotation.server.models.project import (
     Project as ProjectModel
 )
@@ -336,16 +339,7 @@ class Project(Resource):
             u['id']
             for u in accessList.get('users', [])
         ]
-        userEmails = {}
-        if userIds:
-            users = list(User().find(
-                {'_id': {'$in': userIds}},
-                fields=['email']
-            ))
-            userEmails = {
-                u['_id']: u.get('email', '')
-                for u in users
-            }
+        userEmails = fetchUserEmails(userIds)
 
         return {
             'projectId': str(project['_id']),

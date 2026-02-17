@@ -11,6 +11,7 @@ from upenncontrast_annotation.server.models.datasetView import (
 from girder.constants import AccessType
 from girder.exceptions import ValidationException, AccessException
 from girder.models.folder import Folder
+from girder.models.user import User
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -809,5 +810,277 @@ class TestProjectPermissionPropagation:
         with pytest.raises(AccessException):
             Folder().load(
                 dataset['_id'], user=None,
+                level=AccessType.READ
+            )
+
+
+@pytest.mark.usefixtures(
+    "unbindLargeImage", "unbindAnnotation"
+)
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestBulkPermissionOperations:
+    """Tests specifically for bulk DB operations in
+    permission propagation."""
+
+    def test_bulk_share_all_resource_types(
+        self, admin, user
+    ):
+        """Sharing a project propagates access to ALL
+        resource types (dataset, config, view) via bulk
+        operations."""
+        pm = Project()
+
+        # Create two datasets with views
+        ds1, cfg1, dv1 = createDatasetWithView(admin)
+        ds2, cfg2, dv2 = createDatasetWithView(admin)
+
+        proj = pm.createProject(
+            name="Bulk Share All Types", creator=admin
+        )
+        proj = pm.addDataset(proj, str(ds1['_id']))
+        proj = pm.addDataset(proj, str(ds2['_id']))
+
+        # Share with user
+        pm.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+        pm.propagateUserAccess(
+            proj, user, AccessType.READ
+        )
+
+        # All 6 resources should be accessible
+        for ds in [ds1, ds2]:
+            assert Folder().load(
+                ds['_id'], user=user,
+                level=AccessType.READ
+            ) is not None
+        for cfg in [cfg1, cfg2]:
+            assert Collection().load(
+                cfg['_id'], user=user,
+                level=AccessType.READ
+            ) is not None
+        for dv in [dv1, dv2]:
+            assert DatasetViewModel().load(
+                dv['_id'], user=user,
+                level=AccessType.READ
+            ) is not None
+
+    def test_bulk_public_all_resource_types(
+        self, admin
+    ):
+        """Making a project public sets public flag on
+        ALL resource types via bulk operations."""
+        pm = Project()
+
+        ds1, cfg1, dv1 = createDatasetWithView(admin)
+        ds2, cfg2, dv2 = createDatasetWithView(admin)
+
+        proj = pm.createProject(
+            name="Bulk Public All", creator=admin
+        )
+        proj = pm.addDataset(proj, str(ds1['_id']))
+        proj = pm.addDataset(proj, str(ds2['_id']))
+
+        pm.setPublic(proj, True, save=True)
+        pm.propagatePublic(proj, True)
+
+        # All resources should be publicly accessible
+        for ds in [ds1, ds2]:
+            assert Folder().load(
+                ds['_id'], user=None,
+                level=AccessType.READ
+            ) is not None
+        for cfg in [cfg1, cfg2]:
+            assert Collection().load(
+                cfg['_id'], user=None,
+                level=AccessType.READ
+            ) is not None
+        for dv in [dv1, dv2]:
+            assert DatasetViewModel().load(
+                dv['_id'], user=None,
+                level=AccessType.READ
+            ) is not None
+
+    def test_bulk_access_on_add_multi_user(
+        self, admin, user
+    ):
+        """Adding a dataset to a project shared with
+        multiple users gives all users access via bulk
+        operations."""
+        pm = Project()
+
+        # Create a second user
+        user2 = User().createUser(
+            login='testuser2',
+            password='password',
+            firstName='Test',
+            lastName='User2',
+            email='user2@test.com'
+        )
+
+        # Create project, share with both users
+        proj = pm.createProject(
+            name="Multi-User Add", creator=admin
+        )
+        pm.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+        pm.setUserAccess(
+            proj, user2, AccessType.WRITE, save=True
+        )
+
+        # Create a new dataset and add to project
+        ds, cfg, dv = createDatasetWithView(admin)
+        proj = pm.addDataset(proj, str(ds['_id']))
+        pm.propagateAccessToDataset(proj, ds)
+
+        # user should have READ access
+        assert Folder().load(
+            ds['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+        assert Collection().load(
+            cfg['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+        assert DatasetViewModel().load(
+            dv['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+
+        # user2 should have WRITE access
+        assert Folder().load(
+            ds['_id'], user=user2,
+            level=AccessType.WRITE
+        ) is not None
+        assert Collection().load(
+            cfg['_id'], user=user2,
+            level=AccessType.WRITE
+        ) is not None
+        assert DatasetViewModel().load(
+            dv['_id'], user=user2,
+            level=AccessType.WRITE
+        ) is not None
+
+    def test_bulk_update_access_level(
+        self, admin, user
+    ):
+        """Changing a user's access level on a project
+        updates all resources via bulk operations."""
+        pm = Project()
+
+        ds, cfg, dv = createDatasetWithView(admin)
+        proj = pm.createProject(
+            name="Update Level", creator=admin
+        )
+        proj = pm.addDataset(proj, str(ds['_id']))
+
+        # Share at READ first
+        pm.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+        pm.propagateUserAccess(
+            proj, user, AccessType.READ
+        )
+
+        # User can read but not write
+        assert Folder().load(
+            ds['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+        with pytest.raises(AccessException):
+            Folder().load(
+                ds['_id'], user=user,
+                level=AccessType.WRITE
+            )
+
+        # Upgrade to WRITE
+        pm.setUserAccess(
+            proj, user, AccessType.WRITE, save=True
+        )
+        pm.propagateUserAccess(
+            proj, user, AccessType.WRITE
+        )
+
+        # User should now have WRITE access
+        assert Folder().load(
+            ds['_id'], user=user,
+            level=AccessType.WRITE
+        ) is not None
+        assert Collection().load(
+            cfg['_id'], user=user,
+            level=AccessType.WRITE
+        ) is not None
+        assert DatasetViewModel().load(
+            dv['_id'], user=user,
+            level=AccessType.WRITE
+        ) is not None
+
+    def test_bulk_empty_project_no_error(
+        self, admin, user
+    ):
+        """Propagating permissions on an empty project
+        (no datasets/collections) does not error."""
+        pm = Project()
+
+        proj = pm.createProject(
+            name="Empty Project", creator=admin
+        )
+
+        # These should not raise
+        pm.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+        pm.propagateUserAccess(
+            proj, user, AccessType.READ
+        )
+        pm.propagatePublic(proj, True)
+        pm.propagatePublic(proj, False)
+
+    def test_bulk_revoke_removes_all_resources(
+        self, admin, user
+    ):
+        """Revoking access (-1) via bulk removes user
+        from all resource types."""
+        pm = Project()
+
+        ds, cfg, dv = createDatasetWithView(admin)
+        proj = pm.createProject(
+            name="Bulk Revoke", creator=admin
+        )
+        proj = pm.addDataset(proj, str(ds['_id']))
+
+        # Grant then revoke
+        pm.setUserAccess(
+            proj, user, AccessType.READ, save=True
+        )
+        pm.propagateUserAccess(
+            proj, user, AccessType.READ
+        )
+        # Verify granted
+        assert Folder().load(
+            ds['_id'], user=user,
+            level=AccessType.READ
+        ) is not None
+
+        pm.setUserAccess(
+            proj, user, -1, save=True
+        )
+        pm.propagateUserAccess(proj, user, -1)
+
+        # All resources should be inaccessible
+        with pytest.raises(AccessException):
+            Folder().load(
+                ds['_id'], user=user,
+                level=AccessType.READ
+            )
+        with pytest.raises(AccessException):
+            Collection().load(
+                cfg['_id'], user=user,
+                level=AccessType.READ
+            )
+        with pytest.raises(AccessException):
+            DatasetViewModel().load(
+                dv['_id'], user=user,
                 level=AccessType.READ
             )

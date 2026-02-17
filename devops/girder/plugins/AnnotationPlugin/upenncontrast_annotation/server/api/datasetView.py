@@ -10,6 +10,9 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 from girder.models.user import User
 
+from upenncontrast_annotation.server.helpers.access_helpers import (
+    fetchUserEmails
+)
 from upenncontrast_annotation.server.models.datasetView import \
     DatasetView as DatasetViewModel
 from upenncontrast_annotation.server.models.collection import \
@@ -364,13 +367,7 @@ class DatasetView(Resource):
         # Bulk fetch emails for all users
         # (getFullAccessList doesn't include them)
         userIds = [u['id'] for u in accessList.get('users', [])]
-        userEmails = {}
-        if userIds:
-            users = list(User().find(
-                {'_id': {'$in': userIds}},
-                fields=['email']
-            ))
-            userEmails = {u['_id']: u.get('email', '') for u in users}
+        userEmails = fetchUserEmails(userIds)
 
         # Find all DatasetViews for this dataset
         datasetViews = list(self._datasetViewModel.find({
