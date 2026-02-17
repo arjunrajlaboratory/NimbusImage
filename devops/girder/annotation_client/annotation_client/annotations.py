@@ -39,6 +39,14 @@ PATHS = {
     ),
     "dataset_views_by_dataset": "/dataset_view?datasetId={datasetId}",
     "item_by_id": "/item/{itemId}",
+    "count_annotations": "/upenn_annotation/count?datasetId={datasetId}",
+    "count_connections": "/annotation_connection/count?datasetId={datasetId}",
+    "count_property_values": (
+        "/annotation_property_values/count?datasetId={datasetId}"
+    ),
+    "count_properties": (
+        "/annotation_property/count?configurationId={configurationId}"
+    ),
 }
 
 
@@ -457,4 +465,59 @@ class UPennContrastAnnotationClient:
         """
         return self.client.get(
             PATHS["dataset_views_by_dataset"].format(datasetId=datasetId)
+        )
+
+    # Count endpoints
+
+    def countAnnotationsByDatasetId(self, datasetId, shape=None, tags=None):
+        """
+        Get the count of annotations in the specified dataset
+
+        :param str datasetId: The dataset's id
+        :param str shape: optional filter by shape
+        :param str tags: optional filter by tags
+        :return: Count of annotations as dict with 'count' key
+        :rtype: dict
+        """
+        url = PATHS["count_annotations"].format(datasetId=datasetId)
+        if shape:
+            url = f"{url}&shape={shape}"
+        if tags:
+            url = f"{url}&tags={tags}"
+        return self.client.get(url)
+
+    def countConnectionsByDatasetId(self, datasetId):
+        """
+        Get the count of connections in the specified dataset
+
+        :param str datasetId: The dataset's id
+        :return: Count of connections as dict with 'count' key
+        :rtype: dict
+        """
+        return self.client.get(
+            PATHS["count_connections"].format(datasetId=datasetId)
+        )
+
+    def countPropertyValuesByDatasetId(self, datasetId):
+        """
+        Get the count of property values in the specified dataset
+
+        :param str datasetId: The dataset's id
+        :return: Count of property values as dict with 'count' key
+        :rtype: dict
+        """
+        return self.client.get(
+            PATHS["count_property_values"].format(datasetId=datasetId)
+        )
+
+    def countPropertiesByConfigurationId(self, configurationId):
+        """
+        Get the count of properties in the specified configuration
+
+        :param str configurationId: The configuration's id
+        :return: Count of properties as dict with 'count' key
+        :rtype: dict
+        """
+        return self.client.get(
+            PATHS["count_properties"].format(configurationId=configurationId)
         )

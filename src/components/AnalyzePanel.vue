@@ -1,10 +1,20 @@
 <template>
   <div class="analyze-panel">
     <div class="property-container">
-      <property-creation class="property-creation" />
+      <property-creation
+        class="property-creation"
+        :applyToAllDatasets="applyToAllDatasets"
+        @compute-property-batch="$emit('compute-property-batch', $event)"
+      />
       <v-card class="property-list-container">
         <div class="property-list-scroll">
-          <property-list />
+          <property-list
+            :applyToAllDatasets="applyToAllDatasets"
+            @compute-property-batch="$emit('compute-property-batch', $event)"
+            @compute-properties-batch="
+              $emit('compute-properties-batch', $event)
+            "
+          />
         </div>
       </v-card>
     </div>
@@ -12,7 +22,7 @@
 </template>
 
 <script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+import { Vue, Component, Prop } from "vue-property-decorator";
 import PropertyList from "@/components/AnnotationBrowser/AnnotationProperties/PropertyList.vue";
 import PropertyCreation from "@/components/AnnotationBrowser/AnnotationProperties/PropertyCreation.vue";
 
@@ -22,7 +32,10 @@ import PropertyCreation from "@/components/AnnotationBrowser/AnnotationPropertie
     PropertyList,
   },
 })
-export default class AnalyzeAnnotations extends Vue {}
+export default class AnalyzeAnnotations extends Vue {
+  @Prop({ type: Boolean, default: false })
+  readonly applyToAllDatasets!: boolean;
+}
 </script>
 
 <style scoped>
