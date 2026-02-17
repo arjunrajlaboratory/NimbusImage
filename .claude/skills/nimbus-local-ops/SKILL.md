@@ -70,6 +70,10 @@ curl -s -H "Girder-Token: $TOKEN" "http://localhost:8080/api/v1/upenn_annotation
 curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"key": "value"}' "http://localhost:8080/api/v1/upenn_annotation"
 
+# Create (POST with query params, no body)
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
+  "http://localhost:8080/api/v1/project?name=MyProject&description=Test"
+
 # Update (PUT with JSON body)
 curl -s -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"key": "newValue"}' "http://localhost:8080/api/v1/upenn_annotation/$ID"
@@ -77,6 +81,8 @@ curl -s -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
 # Delete
 curl -s -X DELETE -H "Girder-Token: $TOKEN" "http://localhost:8080/api/v1/upenn_annotation/$ID"
 ```
+
+**Gotcha: `411 Length Required`** — Many Girder endpoints accept parameters via query string, not a JSON body (e.g., project create, share, set_public, user create). For POST/PUT without a body, you **must** add `-H "Content-Length: 0"` or CherryPy returns 411.
 
 For full endpoint details with request/response examples: read `references/api-endpoints.md`
 
@@ -179,6 +185,7 @@ Job status codes: 0=inactive, 1=queued, 2=running, 3=success, 4=error, 5=cancell
 - **401 Unauthorized**: Token expired or missing. Re-authenticate.
 - **400 Bad Request**: Check JSON body format. Use Swagger UI to see expected schema.
 - **404 Not Found**: Verify endpoint name (e.g., `upenn_annotation` not `annotation`).
+- **411 Length Required**: POST/PUT without a body needs `-H "Content-Length: 0"`.
 - **Connection refused**: Check `docker ps` to confirm containers are running.
 
 For step-by-step test scenarios: read `references/test-scenarios.md`
