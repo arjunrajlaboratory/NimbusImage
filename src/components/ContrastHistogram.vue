@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="rootEl"
     :class="{
       histogram: true,
       'theme--light': !$vuetify.theme.dark,
@@ -13,7 +14,7 @@
       true-value="absolute"
       false-label="Percentile"
       false-value="percentile"
-      :id="`input-${_uid}`"
+      :id="`input-${componentId}`"
     />
     <div class="wrapper">
       <svg :width="width" :height="height" ref="svg">
@@ -97,8 +98,8 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script lang="ts" setup>
+import { ref, computed, watch, onMounted } from "vue";
 import SwitchToggle from "./SwitchToggle.vue";
 import { IContrast } from "../store/model";
 import { ITileHistogram } from "../store/images";
@@ -120,304 +121,333 @@ function roundAbs(v: number) {
 // This is debounced elsewhere
 const THROTTLE = 1; // ms
 
-@Component({
-  components: {
-    SwitchToggle,
-  },
-})
-export default class ContrastHistogram extends Vue {
-  @Prop()
-  readonly configurationContrast!: IContrast;
+let uidCounter = 0;
+const componentId = uidCounter++;
 
-  @Prop()
-  readonly viewContrast!: IContrast | null;
+const props = defineProps<{
+  configurationContrast: IContrast;
+  viewContrast: IContrast | null;
+  histogram: Promise<ITileHistogram>;
+}>();
 
-  @Prop()
-  readonly histogram!: Promise<ITileHistogram>;
+const emit = defineEmits<{
+  (e: "change", value: IContrast): void;
+  (e: "revert"): void;
+  (e: "commit", value: IContrast): void;
+}>();
 
-  width = 100;
-  readonly height = 80;
+// Template refs
+const rootEl = ref<HTMLElement>();
+const min = ref<HTMLElement>();
+const max = ref<HTMLElement>();
+const svg = ref<HTMLElement>();
+const path = ref<HTMLElement>();
 
-  histData: ITileHistogram | null = null;
+// Data
+const width = ref(100);
+const height = 80;
 
-  scale: number = 1;
-  translation: number = 0;
+const histData = ref<ITileHistogram | null>(null);
+const scale = ref(1);
+const translation = ref(0);
 
-  $refs!: {
-    min: HTMLElement;
-    max: HTMLElement;
-    svg: HTMLElement;
-    path: HTMLElement;
+// For typing contrast in text fields and hitting "Enter"
+const cachedBlackPoint = ref<number | null>(null);
+const cachedWhitePoint = ref<number | null>(null);
+
+let _zoomBehavior: ZoomBehavior<HTMLElement, any> | null = null;
+
+// Computeds
+const currentContrast = computed(() => {
+  return props.viewContrast || props.configurationContrast;
+});
+
+const editMin = computed(() => {
+  return mode.value === "percentile" || !histData.value
+    ? 0
+    : histData.value.min;
+});
+
+const editMax = computed(() => {
+  return mode.value === "percentile" || !histData.value
+    ? 100
+    : histData.value.max;
+});
+
+const editIcon = computed(() => {
+  switch (mode.value) {
+    case "percentile":
+      return "mdi-percent";
+    default:
+      return undefined;
+  }
+});
+
+const pixelRange = computed(() => {
+  return [translation.value, translation.value + scale.value * width.value];
+});
+
+const histToPixel = computed(() => {
+  const s = scaleLinear().domain([0, 100]).range(pixelRange.value);
+  if (histData.value) {
+    s.domain([histData.value.min, histData.value.max]);
+  }
+  return s;
+});
+
+const percentageToPixel = computed(() => {
+  return scaleLinear().domain([0, 100]).range(pixelRange.value);
+});
+
+const toValue = computed(() => {
+  const clamp = (x: number) => Math.min(width.value, Math.max(0, x));
+  return (contrast: IContrast, color: "white" | "black") => {
+    const convert =
+      contrast.mode === "percentile"
+        ? percentageToPixel.value
+        : histToPixel.value;
+    switch (color) {
+      case "white":
+        return `${clamp(width.value - convert(contrast.whitePoint))}px`;
+      case "black":
+        return `${clamp(convert(contrast.blackPoint))}px`;
+    }
   };
+});
 
-  _zoomBehavior: ZoomBehavior<HTMLElement, any> | null = null;
-
-  _uid!: string; // Vue has that appearantly
-
-  // For typing contrast in text fields and hitting "Enter"
-  cachedBlackPoint: number | null = null;
-  cachedWhitePoint: number | null = null;
-
-  get currentContrast() {
-    return this.viewContrast || this.configurationContrast;
+function toLabel(value: number) {
+  switch (mode.value) {
+    case "percentile":
+      return `${Math.round(value * 100) / 100}%`;
+    default:
+      return Math.round(value).toString();
   }
+}
 
-  get mode() {
-    return this.viewContrast?.mode || this.configurationContrast.mode;
-  }
+const emitChange = throttle((value: IContrast) => {
+  emit("change", value);
+}, THROTTLE);
 
-  get editMin() {
-    return this.mode === "percentile" || !this.histData ? 0 : this.histData.min;
-  }
-
-  get editMax() {
-    return this.mode === "percentile" || !this.histData
-      ? 100
-      : this.histData.max;
-  }
-
-  get editIcon() {
-    switch (this.mode) {
-      case "percentile":
-        return "mdi-percent";
-      default:
-        return undefined;
-    }
-  }
-
-  get pixelRange() {
-    return [this.translation, this.translation + this.scale * this.width];
-  }
-
-  get histToPixel() {
-    const scale = scaleLinear().domain([0, 100]).range(this.pixelRange);
-    if (this.histData) {
-      scale.domain([this.histData.min, this.histData.max]);
-    }
-    return scale;
-  }
-
-  get percentageToPixel() {
-    return scaleLinear().domain([0, 100]).range(this.pixelRange);
-  }
-
-  get toValue() {
-    const clamp = (x: number) => Math.min(this.width, Math.max(0, x));
-    return (contrast: IContrast, color: "white" | "black") => {
-      const convert =
-        contrast.mode === "percentile"
-          ? this.percentageToPixel
-          : this.histToPixel;
-      switch (color) {
-        case "white":
-          return `${clamp(this.width - convert(contrast.whitePoint))}px`;
-        case "black":
-          return `${clamp(convert(contrast.blackPoint))}px`;
-      }
-    };
-  }
-
-  toLabel(value: number) {
-    switch (this.mode) {
-      case "percentile":
-        return `${Math.round(value * 100) / 100}%`;
-      default:
-        return Math.round(value).toString();
-    }
-  }
-
-  @Watch("histogram")
-  onValueChange(hist: Promise<ITileHistogram>) {
-    this.histData = null;
-    hist.then((data) => (this.histData = data));
-  }
-
-  created() {
-    this.histogram.then((data) => (this.histData = data));
-  }
-
-  mounted() {
-    this.handleResize();
-
-    selectAll([this.$refs.min, this.$refs.max])
-      .data(["blackPoint", "whitePoint"])
-      .call(
-        drag<HTMLElement, any>().on(
-          "drag",
-          (which: "blackPoint" | "whitePoint") => {
-            const evt = d3Event as D3DragEvent<HTMLElement, any, any>;
-            this.updatePoint(which, Math.max(0, Math.min(evt.x, this.width)));
-          },
-        ),
-      );
-
-    select(this.$refs.svg).call(this.getZoomBehavior());
-  }
-
-  @Watch("width")
-  getZoomBehavior() {
-    if (!this._zoomBehavior) {
-      this._zoomBehavior = zoom<HTMLElement, any>()
-        .scaleExtent([1, 32])
-        .on("zoom", this.updatePanAndZoom);
-    }
-    return this._zoomBehavior.translateExtent([
-      [0, 0],
-      [this.width, 0],
-    ]);
-  }
-
-  updatePanAndZoom() {
-    const evt = d3Event as D3ZoomEvent<HTMLElement, any>;
-    const transform = evt.transform;
-    this.translation = transform.x;
-    this.scale = transform.k;
-    const transformString =
-      "translate(" + this.translation + ",0" + ") scale(" + this.scale + ",1)";
-    select(this.$refs.path).attr("transform", transformString);
-  }
-
-  private updatePoint(which: "blackPoint" | "whitePoint", pixel: number) {
-    const copy = Object.assign({}, this.currentContrast);
-
-    switch (this.mode) {
-      case "percentile":
-        copy[which] = roundPer(this.percentageToPixel.invert(pixel));
-        break;
-      default:
-        copy[which] = roundAbs(this.histToPixel.invert(pixel));
-        break;
-    }
-    if (which === "blackPoint") {
-      // ensure not overlapping
-      copy.blackPoint = Math.min(copy.blackPoint, copy.whitePoint);
-    } else {
-      // ensure not overlapping
-      copy.whitePoint = Math.max(copy.whitePoint, copy.blackPoint);
-    }
-    this.emitChange.call(this, copy);
-  }
-
-  private readonly emitChange = throttle(function (
-    this: ContrastHistogram,
-    value: IContrast,
-  ) {
-    this.$emit("change", value);
-  }, THROTTLE);
-
-  set mode(value: "percentile" | "absolute") {
-    const copy = Object.assign({}, this.currentContrast);
+const mode = computed({
+  get: () => {
+    return props.viewContrast?.mode || props.configurationContrast.mode;
+  },
+  set: (value: "percentile" | "absolute") => {
+    const copy = Object.assign({}, currentContrast.value);
     copy.mode = value;
 
     const absToPer = (v: number) =>
-      roundPer(this.percentageToPixel.invert(this.histToPixel(v)));
+      roundPer(percentageToPixel.value.invert(histToPixel.value(v)));
     const perToAbs = (v: number) =>
-      roundAbs(this.histToPixel.invert(this.percentageToPixel(v)));
+      roundAbs(histToPixel.value.invert(percentageToPixel.value(v)));
     const converter = value === "percentile" ? absToPer : perToAbs;
 
     copy.blackPoint = converter(copy.blackPoint);
     copy.whitePoint = converter(copy.whitePoint);
 
-    this.emitChange.call(this, copy);
-  }
+    emitChange(copy);
+  },
+});
 
-  get editBlackPoint() {
-    return this.currentContrast.blackPoint;
-  }
-
-  set editBlackPoint(value: number) {
-    const copy = Object.assign({}, this.currentContrast);
+const editBlackPoint = computed({
+  get: () => currentContrast.value.blackPoint,
+  set: (value: number) => {
+    const copy = Object.assign({}, currentContrast.value);
     copy.blackPoint = typeof value === "string" ? parseInt(value, 10) : value;
     if (copy.blackPoint <= copy.whitePoint) {
-      this.emitChange.call(this, copy);
-      this.cachedBlackPoint = null;
+      emitChange(copy);
+      cachedBlackPoint.value = null;
     } else {
-      this.cachedBlackPoint = copy.blackPoint;
+      cachedBlackPoint.value = copy.blackPoint;
     }
-  }
+  },
+});
 
-  validateCachedBlackPoint(event: KeyboardEvent) {
-    if (
-      event.key === "Enter" &&
-      this.cachedBlackPoint !== null &&
-      this.cachedBlackPoint > this.editWhitePoint
-    ) {
-      this.editBlackPoint = this.editWhitePoint;
-    }
-  }
-
-  get editWhitePoint() {
-    return this.currentContrast.whitePoint;
-  }
-
-  set editWhitePoint(value: number) {
-    const copy = Object.assign({}, this.currentContrast);
-    copy.whitePoint = typeof value === "string" ? parseInt(value, 10) : value;
-    if (copy.blackPoint <= copy.whitePoint) {
-      this.emitChange.call(this, copy);
-      this.cachedWhitePoint = null;
-    } else {
-      this.cachedWhitePoint = copy.whitePoint;
-    }
-  }
-
-  validateCachedWhitePoint(event: KeyboardEvent) {
-    if (
-      event.key === "Enter" &&
-      this.cachedWhitePoint !== null &&
-      this.editBlackPoint > this.cachedWhitePoint
-    ) {
-      this.editWhitePoint = this.editBlackPoint;
-    }
-  }
-
-  reset() {
-    const copy = Object.assign({}, this.currentContrast);
-    const scale =
-      this.mode === "percentile" ? this.percentageToPixel : this.histToPixel;
-    copy.blackPoint = scale.invert(0);
-    copy.whitePoint = scale.invert(this.width);
-    this.emitChange.call(this, copy);
-  }
-
-  revertSaved() {
-    this.$emit("revert");
-  }
-
-  saveCurrent() {
-    const copy = Object.assign({}, this.currentContrast);
-    this.$emit("commit", copy);
-  }
-
-  handleResize() {
-    const { width } = this.$el.getBoundingClientRect();
-    this.width = width;
-  }
-
-  get areaPath() {
-    if (!this.histData) {
-      return "";
-    }
-    const bins = this.histData.hist;
-    let maxValue = bins.reduce((acc, v) => Math.max(acc, v), 0);
-    const secondMax = bins.reduce(
-      (acc, v) => Math.max(acc, v !== maxValue ? v : 0),
-      0,
-    );
-    maxValue = Math.min(maxValue, secondMax * 1.5);
-    const scaleY = scaleLinear().domain([0, maxValue]).range([this.height, 0]);
-    const scaleX = scalePoint<number>()
-      .domain(bins.map((_, i) => i))
-      .range([0, this.width]);
-
-    const gen = area<number>()
-      .curve(curveStep)
-      .x((_, i) => scaleX(i)!)
-      .y0((d) => scaleY(d)!)
-      .y1(scaleY(0));
-    return gen(bins) || undefined;
+function validateCachedBlackPoint(event: KeyboardEvent) {
+  if (
+    event.key === "Enter" &&
+    cachedBlackPoint.value !== null &&
+    cachedBlackPoint.value > editWhitePoint.value
+  ) {
+    editBlackPoint.value = editWhitePoint.value;
   }
 }
+
+const editWhitePoint = computed({
+  get: () => currentContrast.value.whitePoint,
+  set: (value: number) => {
+    const copy = Object.assign({}, currentContrast.value);
+    copy.whitePoint = typeof value === "string" ? parseInt(value, 10) : value;
+    if (copy.blackPoint <= copy.whitePoint) {
+      emitChange(copy);
+      cachedWhitePoint.value = null;
+    } else {
+      cachedWhitePoint.value = copy.whitePoint;
+    }
+  },
+});
+
+function validateCachedWhitePoint(event: KeyboardEvent) {
+  if (
+    event.key === "Enter" &&
+    cachedWhitePoint.value !== null &&
+    editBlackPoint.value > cachedWhitePoint.value
+  ) {
+    editWhitePoint.value = editBlackPoint.value;
+  }
+}
+
+function updatePoint(which: "blackPoint" | "whitePoint", pixel: number) {
+  const copy = Object.assign({}, currentContrast.value);
+
+  switch (mode.value) {
+    case "percentile":
+      copy[which] = roundPer(percentageToPixel.value.invert(pixel));
+      break;
+    default:
+      copy[which] = roundAbs(histToPixel.value.invert(pixel));
+      break;
+  }
+  if (which === "blackPoint") {
+    copy.blackPoint = Math.min(copy.blackPoint, copy.whitePoint);
+  } else {
+    copy.whitePoint = Math.max(copy.whitePoint, copy.blackPoint);
+  }
+  emitChange(copy);
+}
+
+function updatePanAndZoom() {
+  const evt = d3Event as D3ZoomEvent<HTMLElement, any>;
+  const transform = evt.transform;
+  translation.value = transform.x;
+  scale.value = transform.k;
+  const transformString =
+    "translate(" + translation.value + ",0" + ") scale(" + scale.value + ",1)";
+  select(path.value!).attr("transform", transformString);
+}
+
+function getZoomBehavior() {
+  if (!_zoomBehavior) {
+    _zoomBehavior = zoom<HTMLElement, any>()
+      .scaleExtent([1, 32])
+      .on("zoom", updatePanAndZoom);
+  }
+  return _zoomBehavior.translateExtent([
+    [0, 0],
+    [width.value, 0],
+  ]);
+}
+
+watch(width, () => {
+  getZoomBehavior();
+});
+
+function reset() {
+  const copy = Object.assign({}, currentContrast.value);
+  const s =
+    mode.value === "percentile" ? percentageToPixel.value : histToPixel.value;
+  copy.blackPoint = s.invert(0);
+  copy.whitePoint = s.invert(width.value);
+  emitChange(copy);
+}
+
+function revertSaved() {
+  emit("revert");
+}
+
+function saveCurrent() {
+  const copy = Object.assign({}, currentContrast.value);
+  emit("commit", copy);
+}
+
+function handleResize() {
+  if (rootEl.value) {
+    const { width: w } = rootEl.value.getBoundingClientRect();
+    width.value = w;
+  }
+}
+
+const areaPath = computed(() => {
+  if (!histData.value) {
+    return "";
+  }
+  const bins = histData.value.hist;
+  let maxValue = bins.reduce((acc, v) => Math.max(acc, v), 0);
+  const secondMax = bins.reduce(
+    (acc, v) => Math.max(acc, v !== maxValue ? v : 0),
+    0,
+  );
+  maxValue = Math.min(maxValue, secondMax * 1.5);
+  const scaleY = scaleLinear().domain([0, maxValue]).range([height, 0]);
+  const scaleX = scalePoint<number>()
+    .domain(bins.map((_, i) => i))
+    .range([0, width.value]);
+
+  const gen = area<number>()
+    .curve(curveStep)
+    .x((_, i) => scaleX(i)!)
+    .y0((d) => scaleY(d)!)
+    .y1(scaleY(0));
+  return gen(bins) || undefined;
+});
+
+// Watch histogram prop
+watch(
+  () => props.histogram,
+  (hist) => {
+    histData.value = null;
+    hist.then((data) => (histData.value = data));
+  },
+);
+
+// Created equivalent — load histogram
+props.histogram.then((data) => (histData.value = data));
+
+onMounted(() => {
+  handleResize();
+
+  selectAll([min.value!, max.value!])
+    .data(["blackPoint", "whitePoint"])
+    .call(
+      drag<HTMLElement, any>().on(
+        "drag",
+        (which: "blackPoint" | "whitePoint") => {
+          const evt = d3Event as D3DragEvent<HTMLElement, any, any>;
+          updatePoint(which, Math.max(0, Math.min(evt.x, width.value)));
+        },
+      ),
+    );
+
+  select(svg.value!).call(getZoomBehavior());
+});
+
+defineExpose({
+  width,
+  histData,
+  scale,
+  translation,
+  cachedBlackPoint,
+  cachedWhitePoint,
+  currentContrast,
+  mode,
+  editMin,
+  editMax,
+  editIcon,
+  pixelRange,
+  histToPixel,
+  percentageToPixel,
+  toValue,
+  toLabel,
+  editBlackPoint,
+  editWhitePoint,
+  validateCachedBlackPoint,
+  validateCachedWhitePoint,
+  reset,
+  revertSaved,
+  saveCurrent,
+  handleResize,
+  areaPath,
+});
 </script>
 
 <style lang="scss" scoped>
