@@ -82,6 +82,9 @@ export default class AnnotationProperty extends Vue {
   @Prop()
   readonly property!: IAnnotationProperty;
 
+  @Prop({ type: Boolean, default: false })
+  readonly applyToAllDatasets!: boolean;
+
   get status(): IPropertyStatus {
     return this.propertyStore.getStatus(this.property.id);
   }
@@ -110,6 +113,12 @@ export default class AnnotationProperty extends Vue {
     if (this.status.running) {
       return;
     }
+
+    if (this.applyToAllDatasets) {
+      this.$emit("compute-property-batch", this.property);
+      return;
+    }
+
     // Create a new error info object for this computation
     const errorInfo: IErrorInfoList = { errors: [] };
 

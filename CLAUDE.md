@@ -134,6 +134,29 @@ See `TOOLS.md` for detailed documentation on adding new tools.
 - Histograms cached per-layer for performance
 - Resource metadata cached in `girderResources` module
 
+**API Endpoint Reference:**
+
+Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names differ from what you might expect:
+
+| REST Path | Source File | Notes |
+|-----------|-------------|-------|
+| `/api/v1/upenn_annotation` | `server/api/annotation.py` | NOT `/annotation` |
+| `/api/v1/upenn_collection` | `server/api/collection.py` | NOT `/collection` |
+| `/api/v1/annotation_connection` | `server/api/connections.py` | Connections between annotations |
+| `/api/v1/annotation_property_values` | `server/api/propertyValues.py` | Computed property data |
+| `/api/v1/annotation_property` | `server/api/property.py` | Property definitions |
+| `/api/v1/worker_interface` | `server/api/workerInterfaces.py` | Docker worker registration |
+| `/api/v1/worker_preview` | `server/api/workerPreviews.py` | Worker preview images |
+| `/api/v1/dataset_view` | `server/api/datasetView.py` | Per-user view state |
+| `/api/v1/history` | `server/api/history.py` | Undo/redo history |
+| `/api/v1/user_assetstore` | `server/api/user_assetstore.py` | Per-user storage |
+| `/api/v1/user_colors` | `server/api/user_colors.py` | User color preferences |
+| `/api/v1/export` | `server/api/export.py` | JSON/CSV export |
+| `/api/v1/project` | `server/api/project.py` | Project management |
+| `/api/v1/resource` | `server/api/resource.py` | Custom resource search |
+
+All source files under `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/`. Swagger UI at `http://localhost:8080/api/v1#!/`.
+
 ### Image Rendering Pipeline
 
 1. **Layer Resolution** - Determine which frames to display based on layer configuration (xy, z, time indices)
@@ -400,6 +423,16 @@ Look for opportunities to simplify code:
 - Unit tests use Vitest
 - Test files: `*.test.ts` alongside source
 - Run with `pnpm test`
+
+### Backend Tests (Girder Plugin)
+- Tests use pytest with Girder fixtures
+- Test files: `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/test/`
+- Run with tox from the plugin directory:
+```bash
+cd devops/girder/plugins/AnnotationPlugin
+tox        # Run all tests
+tox -r     # Recreate environment (after dependency changes)
+```
 
 ### Backend Tests (Girder Plugin)
 The AnnotationPlugin has Python tests using pytest via tox:
