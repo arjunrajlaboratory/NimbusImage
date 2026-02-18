@@ -15,7 +15,7 @@ from girder.models.folder import Folder
 from girder.models.user import User
 
 from upenncontrast_annotation.server.helpers.access_helpers import (
-    fetchUserEmails
+    formatAccessList
 )
 from upenncontrast_annotation.server.models.project import (
     Project as ProjectModel
@@ -329,35 +329,11 @@ class Project(Resource):
         )
     )
     def getAccess(self, project):
-        accessList = (
-            self._projectModel.getFullAccessList(
-                project
-            )
+        result = formatAccessList(
+            self._projectModel, project
         )
-
-        userIds = [
-            u['id']
-            for u in accessList.get('users', [])
-        ]
-        userEmails = fetchUserEmails(userIds)
-
-        return {
-            'projectId': str(project['_id']),
-            'public': project.get('public', False),
-            'users': [
-                {
-                    'id': str(u['id']),
-                    'login': u.get('login', ''),
-                    'name': u.get('name', ''),
-                    'email': userEmails.get(
-                        u['id'], ''
-                    ),
-                    'level': u['level'],
-                }
-                for u in accessList.get('users', [])
-            ],
-            'groups': accessList.get('groups', []),
-        }
+        result['projectId'] = str(project['_id'])
+        return result
 
     @access.user
     @autoDescribeRoute(

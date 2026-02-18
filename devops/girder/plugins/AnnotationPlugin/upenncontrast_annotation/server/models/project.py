@@ -163,79 +163,81 @@ class Project(ProxiedModel):
             },
         })
 
-    def addDataset(self, project, datasetId):
-        """Add a dataset to the project (check for duplicates)."""
-        datasetId = (
-            ObjectId(datasetId) if isinstance(datasetId, str) else datasetId
+    @staticmethod
+    def _ensureObjectId(value):
+        """Convert string to ObjectId if needed."""
+        return (
+            ObjectId(value)
+            if isinstance(value, str) else value
         )
 
-        # Check if already in project
-        existing_ids = {d['datasetId'] for d in project['meta']['datasets']}
-        if datasetId in existing_ids:
-            raise ValidationException('Dataset already in project')
+    def _addResource(
+        self, project, resourceId,
+        collection_key, id_key, label
+    ):
+        """Add a resource to the project.
 
-        # Add dataset reference
-        project['meta']['datasets'].append({
-            'datasetId': datasetId,
-            'addedDate': datetime.datetime.utcnow()
+        :param collection_key: 'datasets' or 'collections'
+        :param id_key: 'datasetId' or 'collectionId'
+        :param label: Human-readable name for errors.
+        """
+        resourceId = self._ensureObjectId(resourceId)
+        existing_ids = {
+            r[id_key]
+            for r in project['meta'][collection_key]
+        }
+        if resourceId in existing_ids:
+            raise ValidationException(
+                f'{label} already in project'
+            )
+        project['meta'][collection_key].append({
+            id_key: resourceId,
+            'addedDate': datetime.datetime.utcnow(),
         })
-
         project['updated'] = datetime.datetime.utcnow()
         return self.save(project)
+
+    def _removeResource(
+        self, project, resourceId,
+        collection_key, id_key
+    ):
+        """Remove a resource from the project."""
+        resourceId = self._ensureObjectId(resourceId)
+        project['meta'][collection_key] = [
+            r for r in project['meta'][collection_key]
+            if r[id_key] != resourceId
+        ]
+        project['updated'] = datetime.datetime.utcnow()
+        return self.save(project)
+
+    def addDataset(self, project, datasetId):
+        """Add a dataset to the project."""
+        return self._addResource(
+            project, datasetId,
+            'datasets', 'datasetId', 'Dataset'
+        )
 
     def removeDataset(self, project, datasetId):
         """Remove a dataset from the project."""
-        datasetId = (
-            ObjectId(datasetId) if isinstance(datasetId, str) else datasetId
+        return self._removeResource(
+            project, datasetId,
+            'datasets', 'datasetId'
         )
-
-        # Filter out the dataset
-        project['meta']['datasets'] = [
-            d for d in project['meta']['datasets']
-            if d['datasetId'] != datasetId
-        ]
-
-        project['updated'] = datetime.datetime.utcnow()
-        return self.save(project)
 
     def addCollection(self, project, collectionId):
-        """Add a collection to the project (check for duplicates)."""
-        collectionId = (
-            ObjectId(collectionId) if isinstance(collectionId, str)
-            else collectionId
+        """Add a collection to the project."""
+        return self._addResource(
+            project, collectionId,
+            'collections', 'collectionId',
+            'Collection'
         )
-
-        # Check if already in project
-        existing_ids = {
-            c['collectionId'] for c in project['meta']['collections']
-        }
-        if collectionId in existing_ids:
-            raise ValidationException('Collection already in project')
-
-        # Add collection reference
-        project['meta']['collections'].append({
-            'collectionId': collectionId,
-            'addedDate': datetime.datetime.utcnow()
-        })
-
-        project['updated'] = datetime.datetime.utcnow()
-        return self.save(project)
 
     def removeCollection(self, project, collectionId):
         """Remove a collection from the project."""
-        collectionId = (
-            ObjectId(collectionId) if isinstance(collectionId, str)
-            else collectionId
+        return self._removeResource(
+            project, collectionId,
+            'collections', 'collectionId'
         )
-
-        # Filter out the collection
-        project['meta']['collections'] = [
-            c for c in project['meta']['collections']
-            if c['collectionId'] != collectionId
-        ]
-
-        project['updated'] = datetime.datetime.utcnow()
-        return self.save(project)
 
     def updateFields(self, project, name=None, description=None):
         """Update project name/description."""
@@ -454,14 +456,34 @@ class Project(ProxiedModel):
             }}
         )
 
+    def _applyToAllResourceTypes(
+        self, resources, apply_fn
+    ):
+        """Apply a function to all resource types.
+
+        :param resources: Dict from _gatherAllResources.
+        :param apply_fn: fn(doc_ids, model) to call.
+        """
+        apply_fn(
+            [d['_id'] for d in resources['datasets']],
+            Folder()
+        )
+        apply_fn(
+            [c['_id']
+             for c in resources['collections']],
+            CollectionModel()
+        )
+        apply_fn(
+            [v['_id']
+             for v in resources['datasetViews']],
+            DatasetViewModel()
+        )
+
     def propagateUserAccess(
         self, project, targetUser, level
     ):
         """Propagate a single user's access level to all
         project resources.
-
-        Uses bulk DB operations instead of per-document
-        setUserAccess calls.
 
         :param project: The project document.
         :param targetUser: The Girder user document.
@@ -470,46 +492,27 @@ class Project(ProxiedModel):
         """
         resources = self._gatherAllResources(project)
         uid = targetUser['_id']
-        ds_ids = [d['_id'] for d in resources['datasets']]
-        coll_ids = [
-            c['_id'] for c in resources['collections']
-        ]
-        dv_ids = [
-            v['_id'] for v in resources['datasetViews']
-        ]
-        self._bulkSetUserAccess(
-            ds_ids, Folder(), uid, level
-        )
-        self._bulkSetUserAccess(
-            coll_ids, CollectionModel(), uid, level
-        )
-        self._bulkSetUserAccess(
-            dv_ids, DatasetViewModel(), uid, level
+        self._applyToAllResourceTypes(
+            resources,
+            lambda ids, model: (
+                self._bulkSetUserAccess(
+                    ids, model, uid, level
+                )
+            )
         )
 
     def propagatePublic(self, project, public):
         """Set public/private on all project resources.
 
-        Uses bulk DB operations instead of per-document
-        setPublic calls.
-
         :param project: The project document.
         :param public: Boolean, True to make public.
         """
         resources = self._gatherAllResources(project)
-        ds_ids = [d['_id'] for d in resources['datasets']]
-        coll_ids = [
-            c['_id'] for c in resources['collections']
-        ]
-        dv_ids = [
-            v['_id'] for v in resources['datasetViews']
-        ]
-        self._bulkSetPublic(ds_ids, Folder(), public)
-        self._bulkSetPublic(
-            coll_ids, CollectionModel(), public
-        )
-        self._bulkSetPublic(
-            dv_ids, DatasetViewModel(), public
+        self._applyToAllResourceTypes(
+            resources,
+            lambda ids, model: (
+                self._bulkSetPublic(ids, model, public)
+            )
         )
 
     def propagateAllUsersAccess(
@@ -578,102 +581,109 @@ class Project(ProxiedModel):
             ))
         return dataset_views, datasets
 
-    def propagateAccessToDataset(self, project, dataset):
-        """Propagate project ACL to a dataset and its
-        associated views/configs.
+    def _propagateToResource(
+        self, project, doc, doc_model,
+        related_docs, related_model,
+        dataset_views, propagate_type
+    ):
+        """Propagate permissions to a resource and its
+        related views and resources.
 
-        :param project: The project document.
-        :param dataset: The dataset (Folder) document.
+        :param doc: The primary document.
+        :param doc_model: Model for the primary document.
+        :param related_docs: Related documents.
+        :param related_model: Model for related docs.
+        :param dataset_views: Associated DatasetViews.
+        :param propagate_type: 'access' or 'public'.
         """
-        dataset_views, configs = (
+        if propagate_type == 'access':
+            self.propagateAllUsersAccess(
+                project, doc, doc_model
+            )
+            self.propagateAllUsersAccess(
+                project, dataset_views,
+                DatasetViewModel()
+            )
+            self.propagateAllUsersAccess(
+                project, related_docs,
+                related_model
+            )
+        elif propagate_type == 'public':
+            if not project.get('public', False):
+                return
+            for ids, model in [
+                ([doc['_id']], doc_model),
+                (
+                    [v['_id']
+                     for v in dataset_views],
+                    DatasetViewModel()
+                ),
+                (
+                    [r['_id']
+                     for r in related_docs],
+                    related_model
+                ),
+            ]:
+                self._bulkSetPublic(
+                    ids, model, True
+                )
+
+    def propagateAccessToDataset(
+        self, project, dataset
+    ):
+        """Propagate project ACL to a dataset and its
+        associated views/configs."""
+        views, configs = (
             self._gatherDatasetResources(dataset)
         )
-        self.propagateAllUsersAccess(
-            project, dataset, Folder()
-        )
-        self.propagateAllUsersAccess(
-            project, dataset_views, DatasetViewModel()
-        )
-        self.propagateAllUsersAccess(
-            project, configs, CollectionModel()
+        self._propagateToResource(
+            project, dataset, Folder(),
+            configs, CollectionModel(),
+            views, 'access'
         )
 
     def propagateAccessToCollection(
         self, project, collection
     ):
-        """Propagate project ACL to a collection and its
-        associated views/datasets.
-
-        :param project: The project document.
-        :param collection: The Collection document.
-        """
-        dataset_views, datasets = (
-            self._gatherCollectionResources(collection)
+        """Propagate project ACL to a collection and
+        its associated views/datasets."""
+        views, datasets = (
+            self._gatherCollectionResources(
+                collection
+            )
         )
-        self.propagateAllUsersAccess(
-            project, collection, CollectionModel()
-        )
-        self.propagateAllUsersAccess(
-            project, dataset_views, DatasetViewModel()
-        )
-        self.propagateAllUsersAccess(
-            project, datasets, Folder()
+        self._propagateToResource(
+            project, collection,
+            CollectionModel(), datasets,
+            Folder(), views, 'access'
         )
 
-    def propagatePublicToDataset(self, project, dataset):
-        """Propagate project public flag to a dataset and
-        its associated views/configs.
-
-        Uses bulk DB operations instead of per-document
-        setPublic calls.
-
-        :param project: The project document.
-        :param dataset: The dataset (Folder) document.
-        """
-        if not project.get('public', False):
-            return
-
-        dataset_views, configs = (
+    def propagatePublicToDataset(
+        self, project, dataset
+    ):
+        """Propagate project public flag to a dataset
+        and its associated views/configs."""
+        views, configs = (
             self._gatherDatasetResources(dataset)
         )
-        self._bulkSetPublic(
-            [dataset['_id']], Folder(), True
-        )
-        dv_ids = [v['_id'] for v in dataset_views]
-        self._bulkSetPublic(
-            dv_ids, DatasetViewModel(), True
-        )
-        config_ids = [c['_id'] for c in configs]
-        self._bulkSetPublic(
-            config_ids, CollectionModel(), True
+        self._propagateToResource(
+            project, dataset, Folder(),
+            configs, CollectionModel(),
+            views, 'public'
         )
 
     def propagatePublicToCollection(
         self, project, collection
     ):
         """Propagate project public flag to a collection
-        and its associated views/datasets.
-
-        Uses bulk DB operations instead of per-document
-        setPublic calls.
-
-        :param project: The project document.
-        :param collection: The Collection document.
-        """
-        if not project.get('public', False):
-            return
-
-        dataset_views, datasets = (
-            self._gatherCollectionResources(collection)
+        and its associated views/datasets."""
+        views, datasets = (
+            self._gatherCollectionResources(
+                collection
+            )
         )
-        self._bulkSetPublic(
-            [collection['_id']], CollectionModel(), True
-        )
-        dv_ids = [v['_id'] for v in dataset_views]
-        self._bulkSetPublic(
-            dv_ids, DatasetViewModel(), True
-        )
-        ds_ids = [d['_id'] for d in datasets]
-        self._bulkSetPublic(
-            ds_ids, Folder(), True
+        self._propagateToResource(
+            project, collection,
+            CollectionModel(), datasets,
+            Folder(), views, 'public'
         )
