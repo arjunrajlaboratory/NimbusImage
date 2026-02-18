@@ -335,14 +335,22 @@
     </v-dialog>
   </v-container>
 </template>
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  nextTick,
+  getCurrentInstance,
+} from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IGirderApiKey, IGirderLocation, IGirderSelectAble } from "@/girder";
+import { IGirderApiKey, IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import UploadManager from "@girder/components/src/utils/upload";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
+import { Upload as GirderUpload } from "@/girder/components";
 import { IDataset } from "@/store/model";
 import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
@@ -354,6 +362,7 @@ import datasetMetadataImport from "@/store/datasetMetadataImport";
 import { importAnnotationsFromData } from "@/utils/annotationImport";
 import { formatSize } from "@/utils/conversion";
 import { parseTranscodeOutput } from "@/utils/strings";
+import Vue from "vue";
 
 const allTriggers = Object.values(triggersPerCategory).flat();
 
@@ -387,41 +396,30 @@ function basename(filename: string): string {
 }
 
 function findCommonPrefix(strings: string[]): string {
-  // Handle special cases
   if (strings.length === 0) {
     return "";
   } else if (strings.length === 1) {
     return strings[0];
   }
 
-  // For filenames that are purely numeric at the start, use first filename + "_multi"
   if (strings.every((s) => /^\d+/.test(s))) {
     return basename(strings[0]) + "_multi";
   }
 
-  // For non-numeric prefixes:
-  // Extract the non-metadata prefix of each filename. Note that because of the
-  // way the regex is constructed, the first match group will never be `null`.
   const triggerAndDigit = allTriggers.map(
     (trigger) => `\\d${trigger}|${trigger}\\d`,
   );
   const re = new RegExp(`(.*?)(?:_|-|${triggerAndDigit.join("|")})`);
   const matches = strings.map((s) => s.match(re)![1]);
 
-  // Get the minimum length of all the strings; the common prefix cannot be
-  // longer than this.
   const minLength = matches.reduce(
     (acc, cur) => Math.min(acc, cur.length),
     Infinity,
   );
 
-  // Sweep through the first string, and compare the letter found in each
-  // position with the letter at that position for all the strings. Stop when an
-  // inequality occurs.
   let result = [];
   for (let i = 0; i < minLength; i++) {
     const ch = matches[0].charAt(i);
-
     if (!matches.map((s) => s.charAt(i)).every((c) => c === ch)) {
       break;
     }
@@ -431,988 +429,850 @@ function findCommonPrefix(strings: string[]): string {
   return result.join("");
 }
 
-@Component({
-  components: {
-    GirderLocationChooser,
-    FileDropzone,
-    MultiSourceConfiguration,
-    DatasetInfo,
-    GirderUpload: () => import("@/girder/components").then((mod) => mod.Upload),
-  },
-})
-export default class NewDataset extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
+// --- Props ---
+interface Props {
+  defaultFiles?: File[];
+  quickupload?: boolean;
+  autoMultiConfig?: boolean;
+  initialUploadLocation?: IGirderLocation;
+  initialName?: string;
+  initialDescription?: string;
+  fileGroups?: File[][];
+  batchMode?: boolean;
+  batchName?: string;
+}
 
-  /**
-   * TODO (2025-12-31): Refactor props vs store inconsistency
-   *
-   * PROBLEM:
-   * This component has two ways of receiving data:
-   * 1. Props (defaultFiles, initialName, quickupload, batchMode, etc.)
-   * 2. Vuex store (store.uploadWorkflow.*)
-   *
-   * When navigating from Home.vue via router.push({ name: "newdataset" }),
-   * NO PROPS are passed - data is stored in Vuex before navigation. However,
-   * the component still has props and some code paths check props instead of
-   * the store, causing bugs (e.g., initialName prop is undefined even though
-   * store.uploadWorkflow.initialName has the correct value).
-   *
-   * CURRENT WORKAROUNDS:
-   * - The `files` getter checks store.uploadCurrentFiles when uploadWorkflow.active
-   * - The `configureDataset()` method checks store.uploadWorkflow.initialName
-   *   instead of the initialName prop
-   * - Similar patterns throughout where we prefer store over props
-   *
-   * RECOMMENDED FIX:
-   * 1. Decide on ONE pattern: store-only makes sense since the upload workflow
-   *    spans navigation and needs persistent state
-   * 2. Remove or deprecate these props: defaultFiles, initialName, initialDescription,
-   *    quickupload, batchMode, batchName, fileGroups, initialUploadLocation
-   * 3. Always read from store.uploadWorkflow when uploadWorkflow.active is true
-   * 4. Keep props only if there's a legitimate use case for embedding this
-   *    component directly (without the upload workflow)
-   * 5. Update all code paths to consistently use store values
-   *
-   * WHY THIS MATTERS:
-   * The mixed pattern makes it easy to introduce bugs - you might check a prop
-   * that's never passed, or forget to check the store. Consolidating to one
-   * pattern will make the code more maintainable and less error-prone.
-   */
+const props = withDefaults(defineProps<Props>(), {
+  defaultFiles: () => [],
+  quickupload: false,
+  autoMultiConfig: true,
+  fileGroups: () => [],
+  batchMode: false,
+});
 
-  @Prop({ type: Array, default: () => [] })
-  readonly defaultFiles!: File[];
+const emit = defineEmits<{
+  (e: "datasetUploaded", id: string): void;
+}>();
 
-  @Prop({ default: false })
-  readonly quickupload!: boolean;
+const vm = getCurrentInstance()!.proxy;
 
-  @Prop({ default: true })
-  readonly autoMultiConfig!: boolean;
+// --- Template refs ---
+const form = ref<HTMLFormElement>();
+// In Vue 2.7 <script setup>, template refs for child components may not expose
+// methods directly via ref(). Use $refs for child component method access.
+const uploader = ref<GWCUpload>();
+const configuration = ref<InstanceType<typeof MultiSourceConfiguration>>();
+const viewCreation = ref<any>();
 
-  @Prop()
-  readonly initialUploadLocation!: IGirderLocation;
+// --- Reactive data ---
+const uploadedFiles = ref<File[] | null>(null);
+const configuring = ref(false);
+const creatingView = ref(false);
+const valid = ref(false);
+const failedDataset = ref("");
+const uploading = ref(false);
+const hideUploader = ref(false);
+const name = ref("");
+const description = ref("");
+const uploadCls = GirderUploadManager;
+const path = ref<IGirderLocation | null>(null);
+const dataset = ref<IDataset | null>(null);
+const configurationLogs = ref("");
+const transcodeProgress = ref<number | undefined>(undefined);
+const progressStatusText = ref("");
+const totalFrames = ref(0);
+const currentFrame = ref(0);
+const showLogDialog = ref(false);
+const showCopySnackbar = ref(false);
+const pipelineError = ref(false);
+const showBatchErrorDialog = ref(false);
+const batchErrorMessage = ref("");
+const skippedDatasets = ref<number[]>([]);
+const fileSizeExceeded = ref(false);
+const fileSizeExceededMessage = ref("");
+const maxApiKeyFileSize = ref<number | null>(null);
+const allFiles = ref<File[]>([]);
+const currentDatasetIndex = ref(0);
 
-  @Prop()
-  readonly initialName?: string;
+// --- Computed ---
+const maxTotalFileSize = computed(() => {
+  if (maxApiKeyFileSize.value) {
+    return maxApiKeyFileSize.value;
+  }
+  return Number(import.meta.env.VITE_MAX_TOTAL_FILE_SIZE) || Infinity;
+});
 
-  @Prop()
-  readonly initialDescription?: string;
+const invalidLocation = computed(() => {
+  if (!path.value) return false;
+  return (
+    ("_modelType" in path.value &&
+      unselectableLocations.includes(path.value._modelType)) ||
+    ("type" in path.value && unselectableLocations.includes(path.value.type))
+  );
+});
 
-  @Prop({ type: Array, default: () => [] })
-  readonly fileGroups!: File[][];
+const datasetId = computed(() => dataset.value?.id || null);
 
-  @Prop({ default: false })
-  readonly batchMode!: boolean;
-
-  @Prop()
-  readonly batchName?: string;
-
-  uploadedFiles: File[] | null = null;
-
-  configuring = false;
-  creatingView = false;
-
-  valid = false;
-  failedDataset = "";
-  uploading = false;
-  hideUploader = false;
-  name = "";
-  description = "";
-
-  uploadCls = GirderUploadManager;
-
-  path: IGirderLocation | null = null;
-  // originalPath is now in store.uploadWorkflow.originalPath
-
-  dataset: IDataset | null = null;
-
-  $refs!: {
-    uploader?: GWCUpload;
-    form: HTMLFormElement;
-    configuration?: MultiSourceConfiguration;
-    // Note: uses 'any' due to Vue 2/3 Composition API type incompatibility during migration
-    viewCreation?: any;
+const totalProgressPercentage = computed(() => {
+  const stepWeights = [3, 3, 1];
+  let iStep = 0;
+  const totalPercentage = (localPercentage: number): number => {
+    let completedStepsWeight = 0;
+    for (let i = 0; i < iStep; ++i) {
+      completedStepsWeight += stepWeights[i];
+    }
+    let totalStepsWeight = completedStepsWeight;
+    for (let i = iStep; i < stepWeights.length; ++i) {
+      totalStepsWeight += stepWeights[i];
+    }
+    return (
+      (100 * completedStepsWeight + localPercentage * stepWeights[iStep]) /
+      totalStepsWeight
+    );
   };
 
-  configurationLogs = "";
-
-  // For progress tracking of the transcoding
-  transcodeProgress: number | undefined = undefined;
-  progressStatusText: string = "";
-  totalFrames: number = 0;
-  currentFrame: number = 0;
-
-  // For the transcoding log dialog
-  showLogDialog: boolean = false;
-  showCopySnackbar: boolean = false;
-
-  pipelineError = false;
-
-  // Batch mode error handling
-  showBatchErrorDialog: boolean = false;
-  batchErrorMessage: string = "";
-  skippedDatasets: number[] = [];
-
-  fileSizeExceeded = false;
-  fileSizeExceededMessage = "";
-
-  maxApiKeyFileSize: number | null = null;
-
-  allFiles: File[] = [];
-
-  // Batch mode state is now in store.uploadWorkflow
-  // Keep currentDatasetIndex for backwards compatibility with non-store flows
-  currentDatasetIndex: number = 0;
-
-  get maxTotalFileSize() {
-    // If the maxApiKeyFileSize is set, use that
-    if (this.maxApiKeyFileSize) {
-      return this.maxApiKeyFileSize;
+  if (uploading.value) {
+    if (!uploader.value) {
+      return totalPercentage(0);
     }
-    // Otherwise, use the default max total file size
-    return Number(import.meta.env.VITE_MAX_TOTAL_FILE_SIZE) || Infinity;
+    return totalPercentage(uploader.value.totalProgressPercent);
   }
+  iStep += 1;
 
-  get invalidLocation() {
-    if (!this.path) return false;
-    return (
-      ("_modelType" in this.path &&
-        unselectableLocations.includes(this.path._modelType)) ||
-      ("type" in this.path && unselectableLocations.includes(this.path.type))
-    );
+  if (configuring.value) {
+    const nLines = configurationLogs.value.split("\n").length;
+    const exponent = -0.01 * nLines;
+    return totalPercentage(100 - 100 * Math.exp(exponent));
   }
+  iStep += 1;
 
-  get datasetId() {
-    return this.dataset?.id || null;
+  if (creatingView.value) {
+    return totalPercentage(50);
   }
+  iStep += 1;
 
-  get totalProgressPercentage() {
-    const stepWeights = [3, 3, 1];
-    let iStep = 0;
-    const totalPercentage = (localPercentage: number): number => {
-      // Sum of the weight of the steps that are completed
-      let completedStepsWeight = 0;
-      for (let i = 0; i < iStep; ++i) {
-        completedStepsWeight += stepWeights[i];
-      }
-      // Total sum of the weight of all steps
-      let totalStepsWeight = completedStepsWeight;
-      for (let i = iStep; i < stepWeights.length; ++i) {
-        totalStepsWeight += stepWeights[i];
-      }
-      // Return the percentage of completion
-      return (
-        (100 * completedStepsWeight + localPercentage * stepWeights[iStep]) /
-        totalStepsWeight
-      );
-    };
+  return totalPercentage(0);
+});
 
-    // First step: uploading
-    if (this.uploading) {
-      const uploader = this.$refs.uploader;
-      if (!uploader) {
-        return totalPercentage(0);
-      }
-      return totalPercentage(uploader.totalProgressPercent);
-    }
-    iStep += 1;
+const pageTwo = computed(() => dataset.value != null);
 
-    // Second step: configuring
-    if (this.configuring) {
-      const nLines = this.configurationLogs.split("\n").length;
-      const exponent = -0.01 * nLines;
-      return totalPercentage(100 - 100 * Math.exp(exponent));
-    }
-    iStep += 1;
+const rules = computed(() => [
+  (v: string) => v.trim().length > 0 || `value is required`,
+]);
 
-    // Third step: create view
-    if (this.creatingView) {
-      return totalPercentage(50);
-    }
-    iStep += 1;
+const filesSelected = computed(() => files.value.length > 0);
 
-    return totalPercentage(0);
+const recommendedName = computed(() => {
+  const f = files.value;
+  if (f.length === 0) return "";
+  if (f.length === 1) return basename(f[0].name);
+  const prefix = findCommonPrefix(f.map((d) => d.name));
+  return prefix.length > 0 ? prefix : basename(f[0].name);
+});
+
+const totalSizeString = computed(() => {
+  if (!uploadedFiles.value) return 0;
+  const totalBytes = uploadedFiles.value.reduce(
+    (sum, file) => sum + file.size,
+    0,
+  );
+  return formatSize(totalBytes);
+});
+
+const maxTotalFileSizeString = computed(() =>
+  formatSize(maxTotalFileSize.value),
+);
+
+const isQuickImport = computed((): boolean =>
+  store.uploadWorkflow.active
+    ? store.uploadWorkflow.quickupload
+    : props.quickupload,
+);
+
+const isBatchMode = computed((): boolean =>
+  store.uploadWorkflow.active
+    ? store.uploadWorkflow.batchMode
+    : props.batchMode,
+);
+
+const effectiveBatchName = computed(
+  (): string => store.uploadWorkflow.batchName || props.batchName || "",
+);
+
+const totalDatasets = computed((): number => {
+  if (store.uploadWorkflow.active) {
+    return store.uploadTotalDatasets || 1;
   }
+  return props.fileGroups.length || (props.defaultFiles.length > 0 ? 1 : 0);
+});
 
-  get pageTwo() {
-    return this.dataset != null;
+const isFirstDataset = computed((): boolean => {
+  if (store.uploadWorkflow.active) {
+    return store.uploadIsFirstDataset;
   }
+  return currentDatasetIndex.value === 0;
+});
 
-  get rules() {
-    return [(v: string) => v.trim().length > 0 || `value is required`];
+const isLastDataset = computed((): boolean => {
+  if (store.uploadWorkflow.active) {
+    return store.uploadIsLastDataset;
   }
+  return currentDatasetIndex.value >= props.fileGroups.length - 1;
+});
 
-  get filesSelected() {
-    return this.files.length > 0;
+const isProcessingFirstDataset = computed((): boolean => isFirstDataset.value);
+
+const showConfigAtTop = computed(
+  (): boolean =>
+    isBatchMode.value &&
+    !isQuickImport.value &&
+    isProcessingFirstDataset.value &&
+    configuring.value,
+);
+
+const currentFiles = computed((): File[] => {
+  if (store.uploadWorkflow.active && store.uploadWorkflow.batchMode) {
+    return store.uploadCurrentFiles;
   }
-
-  get recommendedName() {
-    const { files } = this;
-
-    // If there aren't any files selected yet, return a blank string.
-    if (files.length === 0) {
-      return "";
-    }
-
-    // If there is only one file, return its name with the extension struck off.
-    if (files.length === 1) {
-      return basename(files[0].name);
-    }
-
-    // For more than one file, search for the longest prefix common to all, and
-    // use that as the name if it's nonblank; otherwise use the name of the
-    // first file.
-    const prefix = findCommonPrefix(files.map((d) => d.name));
-    if (prefix.length > 0) {
-      return prefix;
-    } else {
-      return basename(files[0].name);
-    }
+  if (isBatchMode.value && props.fileGroups.length > 0) {
+    return props.fileGroups[currentDatasetIndex.value] || [];
   }
+  return uploadedFiles.value || props.defaultFiles;
+});
 
-  get totalSizeString() {
-    if (!this.uploadedFiles) return 0;
-    const totalBytes = this.uploadedFiles.reduce(
-      (sum, file) => sum + file.size,
-      0,
-    );
-    return formatSize(totalBytes);
+const currentDatasetName = computed((): string => {
+  if (store.uploadWorkflow.active && store.uploadWorkflow.batchMode) {
+    return store.uploadCurrentDatasetName;
   }
+  const f = currentFiles.value;
+  if (f.length === 0) return "Dataset";
+  return basename(f[0].name);
+});
 
-  get maxTotalFileSizeString() {
-    return formatSize(this.maxTotalFileSize);
+const files = computed(() => {
+  if (isBatchMode.value) {
+    return currentFiles.value;
   }
-
-  // Computed properties that use store when upload workflow is active
-  get isQuickImport(): boolean {
-    return this.store.uploadWorkflow.active
-      ? this.store.uploadWorkflow.quickupload
-      : this.quickupload;
+  if (uploadedFiles.value) {
+    return uploadedFiles.value;
   }
-
-  get isBatchMode(): boolean {
-    return this.store.uploadWorkflow.active
-      ? this.store.uploadWorkflow.batchMode
-      : this.batchMode;
+  if (store.uploadWorkflow.active) {
+    return store.uploadCurrentFiles;
   }
+  return props.defaultFiles;
+});
 
-  get effectiveBatchName(): string {
-    return this.store.uploadWorkflow.batchName || this.batchName || "";
-  }
+// --- Methods ---
+function convertScopeToBytes(scope: string[] | null): number | null {
+  if (!scope) return null;
 
-  get totalDatasets(): number {
-    if (this.store.uploadWorkflow.active) {
-      return this.store.uploadTotalDatasets || 1;
-    }
-    return this.fileGroups.length || (this.defaultFiles.length > 0 ? 1 : 0);
-  }
+  const sizeMap: Record<string, number> = {
+    "nimbus.upload.limit.500mb": 500 * 1024 * 1024,
+    "nimbus.upload.limit.1gb": 1 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.2gb": 2 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.5gb": 5 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.10gb": 10 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.20gb": 20 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.50gb": 50 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.100gb": 100 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.200gb": 200 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.500gb": 500 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.1tb": 1 * 1024 * 1024 * 1024 * 1024,
+    "nimbus.upload.limit.2tb": 2 * 1024 * 1024 * 1024 * 1024,
+  };
 
-  get isFirstDataset(): boolean {
-    if (this.store.uploadWorkflow.active) {
-      return this.store.uploadIsFirstDataset;
-    }
-    return this.currentDatasetIndex === 0;
-  }
-
-  get isLastDataset(): boolean {
-    if (this.store.uploadWorkflow.active) {
-      return this.store.uploadIsLastDataset;
-    }
-    return this.currentDatasetIndex >= this.fileGroups.length - 1;
-  }
-
-  get isProcessingFirstDataset(): boolean {
-    return this.isFirstDataset;
-  }
-
-  /**
-   * Whether to show MultiSourceConfiguration at the top of the view.
-   * True for advanced batch mode (first dataset) during configuration.
-   */
-  get showConfigAtTop(): boolean {
-    return (
-      this.isBatchMode &&
-      !this.isQuickImport &&
-      this.isProcessingFirstDataset &&
-      this.configuring
-    );
-  }
-
-  /**
-   * Get the files for the current dataset being processed.
-   *
-   * This getter handles two different flows (see TODO at line ~447):
-   * 1. Store-based workflow: When uploadWorkflow.active is true, files come from
-   *    the store (set before navigation from Home.vue)
-   * 2. Prop-based workflow: When uploadWorkflow.active is false, files come from
-   *    props (for direct component embedding)
-   *
-   * Note: We explicitly check `store.uploadWorkflow.active && store.uploadWorkflow.batchMode`
-   * rather than using `this.isBatchMode` in the first condition because we need to
-   * ensure the store workflow is actually active before accessing store.uploadCurrentFiles.
-   * The second condition uses `this.isBatchMode` which falls back to the prop when
-   * the store workflow isn't active.
-   */
-  get currentFiles(): File[] {
-    // Store-based batch mode: files managed by store
-    if (
-      this.store.uploadWorkflow.active &&
-      this.store.uploadWorkflow.batchMode
-    ) {
-      return this.store.uploadCurrentFiles;
-    }
-    // Prop-based batch mode: files passed via fileGroups prop
-    if (this.isBatchMode && this.fileGroups.length > 0) {
-      return this.fileGroups[this.currentDatasetIndex] || [];
-    }
-    // Single dataset mode: files from uploader or defaultFiles prop
-    return this.uploadedFiles || this.defaultFiles;
-  }
-
-  get currentDatasetName(): string {
-    if (
-      this.store.uploadWorkflow.active &&
-      this.store.uploadWorkflow.batchMode
-    ) {
-      return this.store.uploadCurrentDatasetName;
-    }
-    const files = this.currentFiles;
-    if (files.length === 0) return "Dataset";
-    return basename(files[0].name);
-  }
-
-  // Override existing `files` getter to use currentFiles in collection mode
-  get files() {
-    if (this.isBatchMode) {
-      return this.currentFiles;
-    }
-    // Check uploadedFiles first (for manual file selection)
-    if (this.uploadedFiles) {
-      return this.uploadedFiles;
-    }
-    // Check store if upload workflow is active
-    if (this.store.uploadWorkflow.active) {
-      return this.store.uploadCurrentFiles;
-    }
-    // Fall back to defaultFiles prop
-    return this.defaultFiles;
-  }
-
-  async mounted() {
-    // Read from store if upload workflow is active
-    if (this.store.uploadWorkflow.active) {
-      this.path = this.store.uploadWorkflow.initialUploadLocation;
-      // originalPath is already set in store, no need to track locally
-
-      if (this.store.uploadWorkflow.initialName) {
-        this.name = this.store.uploadWorkflow.initialName;
-      }
-      if (this.store.uploadWorkflow.initialDescription) {
-        this.description = this.store.uploadWorkflow.initialDescription;
-      }
-    } else {
-      // Fallback to props
-      this.path = this.initialUploadLocation;
-      if (this.initialName) this.name = this.initialName;
-      if (this.initialDescription) this.description = this.initialDescription;
-    }
-
-    this.maxApiKeyFileSize = await this.getMaxUploadSize();
-  }
-
-  async getMaxUploadSize() {
-    const apiKeys = await this.store.api.getUserApiKeys();
-    // First filter by all active keys, then find the maximum upload size
-    // Else, return none
-    const activeKeys = apiKeys.filter((key: IGirderApiKey) => key.active);
-    const maxUploadSize = activeKeys.reduce(
-      (max: number | null, key: IGirderApiKey) => {
-        const size = this.convertScopeToBytes(key.scope);
-        return size ? Math.max(max || 0, size) : max;
-      },
-      null,
-    );
-    return maxUploadSize;
-  }
-
-  convertScopeToBytes(scope: string[] | null): number | null {
-    if (!scope) {
-      return null;
-    }
-
-    // Note that the maxTotalFileSize is expected to be in bytes,
-    // so we need to convert the scope to bytes
-    const sizeMap: Record<string, number> = {
-      "nimbus.upload.limit.500mb": 500 * 1024 * 1024,
-      "nimbus.upload.limit.1gb": 1 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.2gb": 2 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.5gb": 5 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.10gb": 10 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.20gb": 20 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.50gb": 50 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.100gb": 100 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.200gb": 200 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.500gb": 500 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.1tb": 1 * 1024 * 1024 * 1024 * 1024,
-      "nimbus.upload.limit.2tb": 2 * 1024 * 1024 * 1024 * 1024,
-    };
-
-    // Find the first matching scope and return its byte value
-    for (const key of scope) {
-      if (key in sizeMap) {
-        return sizeMap[key];
-      }
-    }
-
-    return null;
-  }
-
-  async createCollection() {
-    const collection = await this.store.createUploadCollection();
-    if (!collection) {
-      this.pipelineError = true;
-      return;
-    }
-    // Collection is now stored in this.store.uploadWorkflow.collection
-  }
-
-  async uploadMounted() {
-    // Store original path on first dataset only (if not already in store)
-    if (
-      this.isBatchMode &&
-      this.isFirstDataset &&
-      !this.store.uploadWorkflow.originalPath
-    ) {
-      this.store.setUploadOriginalPath(this.path);
-    }
-
-    // Set files for current dataset
-    const filesToUpload = this.isBatchMode ? this.currentFiles : this.files;
-    this.$refs.uploader?.inputFilesChanged(filesToUpload);
-
-    if (this.isQuickImport || this.isBatchMode) {
-      // Set name based on mode - prefer store value over prop
-      const initialName = this.store.uploadWorkflow.active
-        ? this.store.uploadWorkflow.initialName
-        : this.initialName;
-
-      if (this.isBatchMode) {
-        this.name = this.currentDatasetName;
-      } else if (initialName) {
-        // Use initialName as-is - it already includes the date from Home.vue
-        this.name = initialName;
-      } else {
-        // Fallback: add date only when no initialName provided
-        this.name = this.recommendedName + " - " + formatDate(new Date());
-      }
-
-      const initialDescription = this.store.uploadWorkflow.active
-        ? this.store.uploadWorkflow.initialDescription
-        : this.initialDescription;
-      if (initialDescription && this.isFirstDataset) {
-        this.description = initialDescription;
-      }
-
-      await Vue.nextTick();
-      await Vue.nextTick();
-
-      if (this.invalidLocation) {
-        this.pipelineError = true;
-        logError("Invalid location for dataset creation");
-        return;
-      }
-
-      // Don't submit if there was a previous error
-      if (this.pipelineError) {
-        return;
-      }
-
-      this.submit();
+  for (const key of scope) {
+    if (key in sizeMap) {
+      return sizeMap[key];
     }
   }
 
-  async submit() {
-    // Don't proceed if there's already an error
-    if (this.pipelineError) {
-      logError("submit() called but pipelineError is set, aborting");
-      return;
-    }
-
-    if (!this.valid || !this.path || !("_id" in this.path)) {
-      return;
-    }
-
-    if (this.fileSizeExceeded || this.invalidLocation) {
-      this.pipelineError = true;
-      return;
-    }
-
-    // In collection mode, use originalPath from store for dataset creation
-    // In single dataset mode, use current path
-    const pathForCreation = this.isBatchMode
-      ? this.store.uploadWorkflow.originalPath
-      : this.path;
-
-    if (
-      !pathForCreation ||
-      !("_id" in pathForCreation) ||
-      pathForCreation._modelType !== "folder"
-    ) {
-      logError("Invalid path for dataset creation");
-      this.pipelineError = true;
-      return;
-    }
-
-    const datasetName = this.isBatchMode ? this.currentDatasetName : this.name;
-
-    this.dataset = await this.store.createDataset({
-      name: datasetName,
-      description: this.description,
-      path: pathForCreation,
-    });
-
-    if (this.dataset === null) {
-      this.failedDataset = datasetName;
-      return;
-    }
-
-    // Track datasets in store for collection mode
-    if (this.isBatchMode) {
-      this.store.addUploadedDataset(this.dataset);
-    }
-
-    this.failedDataset = "";
-    this.path = await this.girderResources.getFolder(this.dataset.id);
-    await Vue.nextTick();
-
-    this.uploading = true;
-    this.$refs.uploader!.startUpload();
-  }
-
-  async submitSingleDataset() {
-    // Extract existing submit() logic here
-    this.dataset = await this.store.createDataset({
-      name: this.name,
-      description: this.description,
-      // Type assertion: at runtime, path is a folder with _id, not a special location type
-      path: this.path as IGirderSelectAble,
-    });
-
-    if (this.dataset === null) {
-      this.failedDataset = this.name;
-      return;
-    }
-
-    this.failedDataset = "";
-    this.path = await this.girderResources.getFolder(this.dataset.id);
-    await Vue.nextTick();
-
-    this.uploading = true;
-    this.$refs.uploader!.startUpload();
-  }
-
-  async configureDatasetWithStrategy() {
-    this.configuring = true;
-    await Vue.nextTick();
-
-    const config = this.$refs.configuration;
-    if (!config) {
-      logError("MultiSourceConfiguration not mounted for subsequent dataset");
-      this.handleBatchError("Configuration component not ready");
-      return;
-    }
-
-    const strategy = this.store.uploadWorkflow.dimensionStrategy;
-    if (!strategy) {
-      logError("No dimension strategy saved from first dataset");
-      this.handleBatchError("No dimension strategy saved from first dataset");
-      return;
-    }
-
-    this.progressStatusText = "Detecting file structure...";
-
-    // Use the new method that properly handles async state
-    await config.reinitializeAndApplyStrategy(strategy);
-
-    this.progressStatusText = strategy.transcode
-      ? "Transcoding..."
-      : "Generating configuration...";
-    config.submit();
-  }
-
-  async advanceToNextDataset() {
-    if (this.isLastDataset) {
-      // All datasets processed - navigate to collection
-      this.navigateToCollection();
-      return;
-    }
-
-    // Advance index in store
-    this.store.advanceUploadDatasetIndex();
-
-    // Reset local component state
-    this.dataset = null;
-    this.configuring = false;
-    this.configurationLogs = "";
-    this.transcodeProgress = undefined;
-
-    // Reset path from store's originalPath
-    if (!this.store.uploadWorkflow.originalPath) {
-      logError(
-        "[Batch Mode] ERROR: originalPath is not set in store, cannot continue",
-      );
-      this.pipelineError = true;
-      return;
-    }
-    this.path = this.store.uploadWorkflow.originalPath;
-
-    // Show uploader - this will trigger uploadMounted which calls submit()
-    this.hideUploader = false;
-  }
-
-  navigateToCollection() {
-    // Capture collection and datasets BEFORE calling completeUploadWorkflow
-    // because completeUploadWorkflow resets the state
-
-    const collection = this.store.uploadWorkflow.collection;
-    const datasets = [...this.store.uploadWorkflow.datasets]; // Copy array
-
-    // Now reset the workflow state
-    this.store.completeUploadWorkflow();
-
-    if (collection) {
-      // Set the collection in the store so ConfigurationInfo can load it
-      this.store.setSelectedConfiguration(collection.id);
-      this.$router.push({
-        name: "configuration",
-        params: { configurationId: collection.id },
-      });
-    } else if (datasets && datasets.length > 0) {
-      this.$router.push({
-        name: "dataset",
-        params: { datasetId: datasets[0].id },
-      });
-    } else {
-      this.$router.push({
-        name: "root",
-      });
-    }
-  }
-
-  /**
-   * Handle errors during batch upload. Shows a dialog letting user choose to stop or continue.
-   * For single dataset uploads, falls back to setting pipelineError directly.
-   */
-  handleBatchError(message: string) {
-    if (!this.isBatchMode) {
-      // Single dataset mode - use existing pipelineError behavior
-      this.pipelineError = true;
-      return;
-    }
-
-    // Batch mode - show dialog
-    this.batchErrorMessage = message;
-    this.showBatchErrorDialog = true;
-  }
-
-  /**
-   * User chose to stop the batch upload after an error.
-   * Navigate to partial results if any datasets were processed.
-   */
-  handleStopBatch() {
-    this.showBatchErrorDialog = false;
-    this.pipelineError = true;
-
-    // Navigate to partial results
-    const collection = this.store.uploadWorkflow.collection;
-    const datasets = [...this.store.uploadWorkflow.datasets];
-
-    // Reset workflow state
-    this.store.completeUploadWorkflow();
-
-    if (collection && datasets.length > 0) {
-      // Navigate to collection with processed datasets
-      this.$router.push({
-        name: "configuration",
-        params: { configurationId: collection.id },
-      });
-    } else if (datasets.length > 0) {
-      // Navigate to first dataset
-      this.$router.push({
-        name: "dataset",
-        params: { datasetId: datasets[0].id },
-      });
-    } else {
-      this.$router.push({ name: "root" });
-    }
-  }
-
-  /**
-   * User chose to skip the failed dataset and continue with remaining datasets.
-   */
-  handleContinueBatch() {
-    this.showBatchErrorDialog = false;
-    this.skippedDatasets.push(this.store.uploadWorkflow.currentDatasetIndex);
-
-    // Reset error states
-    this.pipelineError = false;
-    this.batchErrorMessage = "";
-
-    // Advance to next dataset
-    this.advanceToNextDataset();
-  }
-
-  filesChanged(files: FileUpload[] | File[]) {
-    // Convert to FileUpload[] format if necessary
-    const fileUploads: FileUpload[] = Array.isArray(files)
-      ? files.map((file) => {
-          return typeof file === "object" && "file" in file
-            ? (file as FileUpload)
-            : { file: file as File };
-        })
-      : [];
-
-    const totalSize = fileUploads.reduce((sum, { file }) => sum + file.size, 0);
-    const maxSizeBytes = this.maxTotalFileSize;
-
-    if (totalSize > maxSizeBytes) {
-      this.fileSizeExceeded = true;
-      this.uploadedFiles = null;
-      if (this.isQuickImport) {
-        this.pipelineError = true;
-        return;
-      }
-      return;
-    }
-
-    this.fileSizeExceeded = false;
-    this.uploadedFiles = fileUploads.map(({ file }) => file);
-    this.allFiles = this.uploadedFiles;
-
-    if (this.name === "" && fileUploads.length > 0) {
-      this.name = this.recommendedName;
-    }
-  }
-
-  addMoreFiles(newFiles: File[]) {
-    const merged = [...this.allFiles, ...newFiles];
-    this.allFiles = merged;
-
-    // Update girder-upload's internal state
-    if (this.$refs.uploader) {
-      this.$refs.uploader.inputFilesChanged(merged);
-    }
-  }
-
-  interruptedUpload() {
-    this.uploading = false;
-    this.hideUploader = false;
-  }
-
-  nextStep() {
-    this.hideUploader = true;
-    this.uploading = false;
-
-    if (!this.dataset) {
-      logError("nextStep called but dataset is null");
-      this.pipelineError = true;
-      return;
-    }
-
-    const datasetId = this.dataset.id;
-
-    if (this.isBatchMode) {
-      if (this.isFirstDataset) {
-        // First dataset: run full interactive configuration
-        this.configureDataset();
-      } else {
-        // Subsequent datasets: configure with saved strategy
-        this.configureDatasetWithStrategy();
-      }
-    } else if (this.isQuickImport) {
-      this.configureDataset();
-    } else if (this.autoMultiConfig) {
-      this.$router.push({
-        name: "multi",
-        params: { datasetId },
-      });
-    }
-
-    this.$emit("datasetUploaded", datasetId);
-  }
-
-  async configureDataset() {
-    // Don't set dataset yet because the only large image files are the upload files
-    // If dataset is set now, it will not use the multi-source file later
-
-    // Configure the dataset with default variables
-    this.configuring = true;
-    await Vue.nextTick();
-    const config = this.$refs.configuration;
-    if (!config) {
-      logError(
-        "MultiSourceConfiguration component not mounted during quickupload",
-      );
-      this.pipelineError = true;
-      return;
-    }
-    // Ensure that the component is initialized
-    await (config.initialized || config.initialize());
-
-    // In advanced batch mode (first dataset), wait for user to manually submit
-    // In quick import mode, auto-submit
-    if (this.isQuickImport) {
-      config.submit();
-    }
-    // Otherwise, user will click submit in MultiSourceConfiguration UI
-  }
-
-  generationDone(jsonId: string | null) {
-    if (this.isBatchMode) {
-      // For collection mode, handle specially
-      this.handleCollectionGenerationDone(jsonId);
-    } else if (this.isQuickImport) {
-      // Existing single-dataset flow
-      this.createView(jsonId);
-    } else {
-      return;
-    }
-  }
-
-  async handleCollectionGenerationDone(jsonId: string | null) {
-    if (!jsonId) {
-      logError("Failed to generate JSON");
-      this.pipelineError = true;
-      return;
-    }
-
-    // Dimension strategy is automatically saved to store by MultiSourceConfiguration
-    // via watchers on assignments and transcode changes
-    if (this.isFirstDataset) {
-      // CRITICAL: Load the full dataset (with tile metadata) before creating collection
-      // The dataset in uploadWorkflow.datasets[] is just the basic folder info,
-      // but createConfigurationFromDataset needs the full tile/frame metadata
-      await this.store.setSelectedDataset(this.dataset!.id);
-
-      // Create the collection using store action
-      await this.createCollection();
-
-      if (this.pipelineError || !this.store.uploadWorkflow.collection) {
-        logWarning("Failed to create collection");
-        return;
-      }
-    }
-
-    // Create dataset view for current dataset
-    const collection = this.store.uploadWorkflow.collection;
-    if (collection && this.dataset) {
-      try {
-        const datasetView = await this.store.createDatasetView({
-          configurationId: collection.id,
-          datasetId: this.dataset.id,
-        });
-        if (!datasetView) {
-          logError(
-            `[Batch Mode] Failed to create dataset view - API returned null`,
-          );
-        }
-      } catch (error) {
-        logError(`[Batch Mode] Error creating dataset view:`, error);
-        // Don't fail the whole process if dataset view creation fails
-      }
-    } else {
-      logError(
-        `[Batch Mode] Cannot create dataset view. collection: ${!!collection}, dataset: ${!!this.dataset}`,
-      );
-    }
-
-    this.configuring = false;
-
-    // Move to next dataset or finish
-    this.advanceToNextDataset();
-  }
-
-  async createView(jsonId: string | null) {
-    if (!jsonId) {
-      logError("Failed to generate JSON during quick upload");
-      this.pipelineError = true;
-      return;
-    }
-    // Set the dataset now that multi-source is available
-    await this.store.setSelectedDataset(this.dataset!.id);
-    this.configuring = false;
-
-    // Check if we have annotation data to import
-    if (
-      datasetMetadataImport.hasAnnotationData &&
-      datasetMetadataImport.annotationData
-    ) {
-      try {
-        // Import annotations using the default import options
-        await importAnnotationsFromData(datasetMetadataImport.annotationData);
-        // Clear the annotation data after successful import
-        datasetMetadataImport.clearAnnotationFile();
-      } catch (error) {
-        logError("Failed to import annotations:", error);
-        // Continue with view creation even if annotation import fails
-      }
-    }
-
-    // Create a default dataset view for this dataset
-    this.creatingView = true;
-    await Vue.nextTick();
-    const viewCreation = this.$refs.viewCreation;
-    if (!viewCreation) {
-      logError("DatasetInfo component not mounted during quickupload");
-      this.pipelineError = true;
-      return;
-    }
-    const defaultView = await viewCreation.createDefaultView();
-    if (!defaultView) {
-      logError("Failed to create default view during quick upload");
-      this.pipelineError = true;
-      return;
-    }
-    this.store.setDatasetViewId(defaultView.id);
-    const route = viewCreation.toRoute(defaultView);
-    this.creatingView = false;
-
-    // Go to the viewer
-    this.$router.push(route);
-  }
-
-  // Watch for changes in the logs and parse them to update progress
-  @Watch("configurationLogs")
-  onConfigurationLogsChange() {
-    if (this.configuring && this.configurationLogs) {
-      const progress = parseTranscodeOutput(this.configurationLogs);
-      this.progressStatusText = progress.progressStatusText;
-      if (progress.transcodeProgress !== undefined)
-        this.transcodeProgress = progress.transcodeProgress;
-      if (progress.currentFrame !== undefined)
-        this.currentFrame = progress.currentFrame;
-      if (progress.totalFrames !== undefined)
-        this.totalFrames = progress.totalFrames;
-    }
-  }
-
-  // Copy log to clipboard
-  copyLogToClipboard() {
-    if (navigator.clipboard && this.configurationLogs) {
-      navigator.clipboard.writeText(this.configurationLogs);
-      this.showCopySnackbar = true;
-    }
-  }
-
-  onConfigDataReceived(_configData: any) {
-    logWarning(
-      "onConfigDataReceived called but is no longer used; _configData: ",
-      _configData,
-    );
-    // This handler is kept for backward compatibility but is no longer used
-    // The assignment strategy is now saved directly in handleCollectionGenerationDone
+  return null;
+}
+
+async function getMaxUploadSize() {
+  const apiKeys = await store.api.getUserApiKeys();
+  const activeKeys = apiKeys.filter((key: IGirderApiKey) => key.active);
+  return activeKeys.reduce((max: number | null, key: IGirderApiKey) => {
+    const size = convertScopeToBytes(key.scope);
+    return size ? Math.max(max || 0, size) : max;
+  }, null);
+}
+
+async function createCollection() {
+  const collection = await store.createUploadCollection();
+  if (!collection) {
+    pipelineError.value = true;
+    return;
   }
 }
+
+async function uploadMounted() {
+  if (
+    isBatchMode.value &&
+    isFirstDataset.value &&
+    !store.uploadWorkflow.originalPath
+  ) {
+    store.setUploadOriginalPath(path.value);
+  }
+
+  const filesToUpload = isBatchMode.value ? currentFiles.value : files.value;
+  uploader.value?.inputFilesChanged(filesToUpload);
+
+  if (isQuickImport.value || isBatchMode.value) {
+    const initialNameValue = store.uploadWorkflow.active
+      ? store.uploadWorkflow.initialName
+      : props.initialName;
+
+    if (isBatchMode.value) {
+      name.value = currentDatasetName.value;
+    } else if (initialNameValue) {
+      name.value = initialNameValue;
+    } else {
+      name.value = recommendedName.value + " - " + formatDate(new Date());
+    }
+
+    const initialDescriptionValue = store.uploadWorkflow.active
+      ? store.uploadWorkflow.initialDescription
+      : props.initialDescription;
+    if (initialDescriptionValue && isFirstDataset.value) {
+      description.value = initialDescriptionValue;
+    }
+
+    await nextTick();
+    await nextTick();
+
+    if (invalidLocation.value) {
+      pipelineError.value = true;
+      logError("Invalid location for dataset creation");
+      return;
+    }
+
+    if (pipelineError.value) {
+      return;
+    }
+
+    submit();
+  }
+}
+
+async function submit() {
+  if (pipelineError.value) {
+    logError("submit() called but pipelineError is set, aborting");
+    return;
+  }
+
+  if (!valid.value || !path.value || !("_id" in path.value)) {
+    return;
+  }
+
+  if (fileSizeExceeded.value || invalidLocation.value) {
+    pipelineError.value = true;
+    return;
+  }
+
+  const pathForCreation = isBatchMode.value
+    ? store.uploadWorkflow.originalPath
+    : path.value;
+
+  if (
+    !pathForCreation ||
+    !("_id" in pathForCreation) ||
+    pathForCreation._modelType !== "folder"
+  ) {
+    logError("Invalid path for dataset creation");
+    pipelineError.value = true;
+    return;
+  }
+
+  const datasetName = isBatchMode.value ? currentDatasetName.value : name.value;
+
+  dataset.value = await store.createDataset({
+    name: datasetName,
+    description: description.value,
+    path: pathForCreation,
+  });
+
+  if (dataset.value === null) {
+    failedDataset.value = datasetName;
+    return;
+  }
+
+  if (isBatchMode.value) {
+    store.addUploadedDataset(dataset.value);
+  }
+
+  failedDataset.value = "";
+  path.value = await girderResources.getFolder(dataset.value.id);
+  await nextTick();
+
+  if (!uploader.value) {
+    logError("Uploader component not available after dataset creation");
+    pipelineError.value = true;
+    return;
+  }
+  uploading.value = true;
+  uploader.value.startUpload();
+}
+
+async function submitSingleDataset() {
+  dataset.value = await store.createDataset({
+    name: name.value,
+    description: description.value,
+    path: path.value as any,
+  });
+
+  if (dataset.value === null) {
+    failedDataset.value = name.value;
+    return;
+  }
+
+  failedDataset.value = "";
+  path.value = await girderResources.getFolder(dataset.value.id);
+  await nextTick();
+
+  if (!uploader.value) {
+    logError("Uploader component not available after dataset creation");
+    pipelineError.value = true;
+    return;
+  }
+  uploading.value = true;
+  uploader.value.startUpload();
+}
+
+async function configureDatasetWithStrategy() {
+  configuring.value = true;
+  await nextTick();
+
+  const config = configuration.value;
+  if (!config) {
+    logError("MultiSourceConfiguration not mounted for subsequent dataset");
+    handleBatchError("Configuration component not ready");
+    return;
+  }
+
+  const strategy = store.uploadWorkflow.dimensionStrategy;
+  if (!strategy) {
+    logError("No dimension strategy saved from first dataset");
+    handleBatchError("No dimension strategy saved from first dataset");
+    return;
+  }
+
+  progressStatusText.value = "Detecting file structure...";
+  await config.reinitializeAndApplyStrategy(strategy);
+  progressStatusText.value = strategy.transcode
+    ? "Transcoding..."
+    : "Generating configuration...";
+  config.submit();
+}
+
+async function advanceToNextDataset() {
+  if (isLastDataset.value) {
+    navigateToCollection();
+    return;
+  }
+
+  store.advanceUploadDatasetIndex();
+
+  dataset.value = null;
+  configuring.value = false;
+  configurationLogs.value = "";
+  transcodeProgress.value = undefined;
+
+  if (!store.uploadWorkflow.originalPath) {
+    logError(
+      "[Batch Mode] ERROR: originalPath is not set in store, cannot continue",
+    );
+    pipelineError.value = true;
+    return;
+  }
+  path.value = store.uploadWorkflow.originalPath;
+
+  hideUploader.value = false;
+}
+
+function navigateToCollection() {
+  const collection = store.uploadWorkflow.collection;
+  const datasets = [...store.uploadWorkflow.datasets];
+
+  store.completeUploadWorkflow();
+
+  if (collection) {
+    store.setSelectedConfiguration(collection.id);
+    vm.$router.push({
+      name: "configuration",
+      params: { configurationId: collection.id },
+    });
+  } else if (datasets && datasets.length > 0) {
+    vm.$router.push({
+      name: "dataset",
+      params: { datasetId: datasets[0].id },
+    });
+  } else {
+    vm.$router.push({
+      name: "root",
+    });
+  }
+}
+
+function handleBatchError(message: string) {
+  if (!isBatchMode.value) {
+    pipelineError.value = true;
+    return;
+  }
+
+  batchErrorMessage.value = message;
+  showBatchErrorDialog.value = true;
+}
+
+function handleStopBatch() {
+  showBatchErrorDialog.value = false;
+  pipelineError.value = true;
+
+  const collection = store.uploadWorkflow.collection;
+  const datasets = [...store.uploadWorkflow.datasets];
+
+  store.completeUploadWorkflow();
+
+  if (collection && datasets.length > 0) {
+    vm.$router.push({
+      name: "configuration",
+      params: { configurationId: collection.id },
+    });
+  } else if (datasets.length > 0) {
+    vm.$router.push({
+      name: "dataset",
+      params: { datasetId: datasets[0].id },
+    });
+  } else {
+    vm.$router.push({ name: "root" });
+  }
+}
+
+function handleContinueBatch() {
+  showBatchErrorDialog.value = false;
+  skippedDatasets.value.push(store.uploadWorkflow.currentDatasetIndex);
+
+  pipelineError.value = false;
+  batchErrorMessage.value = "";
+
+  advanceToNextDataset();
+}
+
+function filesChanged(inputFiles: FileUpload[] | File[]) {
+  const fileUploads: FileUpload[] = Array.isArray(inputFiles)
+    ? inputFiles.map((file) => {
+        return typeof file === "object" && "file" in file
+          ? (file as FileUpload)
+          : { file: file as File };
+      })
+    : [];
+
+  const totalSize = fileUploads.reduce((sum, { file }) => sum + file.size, 0);
+  const maxSizeBytes = maxTotalFileSize.value;
+
+  if (totalSize > maxSizeBytes) {
+    fileSizeExceeded.value = true;
+    uploadedFiles.value = null;
+    if (isQuickImport.value) {
+      pipelineError.value = true;
+      return;
+    }
+    return;
+  }
+
+  fileSizeExceeded.value = false;
+  uploadedFiles.value = fileUploads.map(({ file }) => file);
+  allFiles.value = uploadedFiles.value;
+
+  if (name.value === "" && fileUploads.length > 0) {
+    name.value = recommendedName.value;
+  }
+}
+
+function addMoreFiles(newFiles: File[]) {
+  const merged = [...allFiles.value, ...newFiles];
+  allFiles.value = merged;
+
+  if (uploader.value) {
+    uploader.value.inputFilesChanged(merged);
+  }
+}
+
+function interruptedUpload() {
+  uploading.value = false;
+  hideUploader.value = false;
+}
+
+function nextStep() {
+  hideUploader.value = true;
+  uploading.value = false;
+
+  if (!dataset.value) {
+    logError("nextStep called but dataset is null");
+    pipelineError.value = true;
+    return;
+  }
+
+  const dsId = dataset.value.id;
+
+  if (isBatchMode.value) {
+    if (isFirstDataset.value) {
+      configureDataset();
+    } else {
+      configureDatasetWithStrategy();
+    }
+  } else if (isQuickImport.value) {
+    configureDataset();
+  } else if (props.autoMultiConfig) {
+    vm.$router.push({
+      name: "multi",
+      params: { datasetId: dsId },
+    });
+  }
+
+  emit("datasetUploaded", dsId);
+}
+
+async function configureDataset() {
+  configuring.value = true;
+  await nextTick();
+  const config = configuration.value;
+  if (!config) {
+    logError(
+      "MultiSourceConfiguration component not mounted during quickupload",
+    );
+    pipelineError.value = true;
+    return;
+  }
+  await (config.initialized || config.initialize());
+
+  if (isQuickImport.value) {
+    config.submit();
+  }
+}
+
+function generationDone(jsonId: string | null) {
+  if (isBatchMode.value) {
+    handleCollectionGenerationDone(jsonId);
+  } else if (isQuickImport.value) {
+    createView(jsonId);
+  } else {
+    return;
+  }
+}
+
+async function handleCollectionGenerationDone(jsonId: string | null) {
+  if (!jsonId) {
+    logError("Failed to generate JSON");
+    pipelineError.value = true;
+    return;
+  }
+
+  if (isFirstDataset.value) {
+    await store.setSelectedDataset(dataset.value!.id);
+    await createCollection();
+
+    if (pipelineError.value || !store.uploadWorkflow.collection) {
+      logWarning("Failed to create collection");
+      return;
+    }
+  }
+
+  const collection = store.uploadWorkflow.collection;
+  if (collection && dataset.value) {
+    try {
+      const datasetView = await store.createDatasetView({
+        configurationId: collection.id,
+        datasetId: dataset.value.id,
+      });
+      if (!datasetView) {
+        logError(
+          `[Batch Mode] Failed to create dataset view - API returned null`,
+        );
+      }
+    } catch (error) {
+      logError(`[Batch Mode] Error creating dataset view:`, error);
+    }
+  } else {
+    logError(
+      `[Batch Mode] Cannot create dataset view. collection: ${!!collection}, dataset: ${!!dataset.value}`,
+    );
+  }
+
+  configuring.value = false;
+  advanceToNextDataset();
+}
+
+async function createView(jsonId: string | null) {
+  if (!jsonId) {
+    logError("Failed to generate JSON during quick upload");
+    pipelineError.value = true;
+    return;
+  }
+  await store.setSelectedDataset(dataset.value!.id);
+  configuring.value = false;
+
+  if (
+    datasetMetadataImport.hasAnnotationData &&
+    datasetMetadataImport.annotationData
+  ) {
+    try {
+      await importAnnotationsFromData(datasetMetadataImport.annotationData);
+      datasetMetadataImport.clearAnnotationFile();
+    } catch (error) {
+      logError("Failed to import annotations:", error);
+    }
+  }
+
+  creatingView.value = true;
+  await nextTick();
+  const vc = viewCreation.value;
+  if (!vc) {
+    logError("DatasetInfo component not mounted during quickupload");
+    pipelineError.value = true;
+    return;
+  }
+  const defaultView = await vc.createDefaultView();
+  if (!defaultView) {
+    logError("Failed to create default view during quick upload");
+    pipelineError.value = true;
+    return;
+  }
+  store.setDatasetViewId(defaultView.id);
+  const route = vc.toRoute(defaultView);
+  creatingView.value = false;
+
+  vm.$router.push(route);
+}
+
+function copyLogToClipboard() {
+  if (navigator.clipboard && configurationLogs.value) {
+    navigator.clipboard.writeText(configurationLogs.value);
+    showCopySnackbar.value = true;
+  }
+}
+
+function onConfigDataReceived(_configData: any) {
+  logWarning(
+    "onConfigDataReceived called but is no longer used; _configData: ",
+    _configData,
+  );
+}
+
+// --- Watcher ---
+watch(configurationLogs, () => {
+  if (configuring.value && configurationLogs.value) {
+    const progress = parseTranscodeOutput(configurationLogs.value);
+    progressStatusText.value = progress.progressStatusText;
+    if (progress.transcodeProgress !== undefined)
+      transcodeProgress.value = progress.transcodeProgress;
+    if (progress.currentFrame !== undefined)
+      currentFrame.value = progress.currentFrame;
+    if (progress.totalFrames !== undefined)
+      totalFrames.value = progress.totalFrames;
+  }
+});
+
+// --- Lifecycle ---
+onMounted(async () => {
+  if (store.uploadWorkflow.active) {
+    path.value = store.uploadWorkflow.initialUploadLocation;
+    if (store.uploadWorkflow.initialName) {
+      name.value = store.uploadWorkflow.initialName;
+    }
+    if (store.uploadWorkflow.initialDescription) {
+      description.value = store.uploadWorkflow.initialDescription;
+    }
+  } else {
+    path.value = props.initialUploadLocation ?? null;
+    if (props.initialName) name.value = props.initialName;
+    if (props.initialDescription) description.value = props.initialDescription;
+  }
+
+  maxApiKeyFileSize.value = await getMaxUploadSize();
+});
+
+// --- Expose for tests and external access ---
+defineExpose({
+  store,
+  girderResources,
+  uploader,
+  form,
+  configuration,
+  viewCreation,
+  uploadedFiles,
+  configuring,
+  creatingView,
+  valid,
+  failedDataset,
+  uploading,
+  hideUploader,
+  name,
+  description,
+  uploadCls,
+  path,
+  dataset,
+  configurationLogs,
+  transcodeProgress,
+  progressStatusText,
+  totalFrames,
+  currentFrame,
+  showLogDialog,
+  showCopySnackbar,
+  pipelineError,
+  showBatchErrorDialog,
+  batchErrorMessage,
+  skippedDatasets,
+  fileSizeExceeded,
+  fileSizeExceededMessage,
+  maxApiKeyFileSize,
+  allFiles,
+  currentDatasetIndex,
+  maxTotalFileSize,
+  invalidLocation,
+  datasetId,
+  totalProgressPercentage,
+  pageTwo,
+  rules,
+  filesSelected,
+  recommendedName,
+  totalSizeString,
+  maxTotalFileSizeString,
+  isQuickImport,
+  isBatchMode,
+  effectiveBatchName,
+  totalDatasets,
+  isFirstDataset,
+  isLastDataset,
+  isProcessingFirstDataset,
+  showConfigAtTop,
+  currentFiles,
+  currentDatasetName,
+  files,
+  convertScopeToBytes,
+  getMaxUploadSize,
+  createCollection,
+  uploadMounted,
+  submit,
+  submitSingleDataset,
+  configureDatasetWithStrategy,
+  advanceToNextDataset,
+  navigateToCollection,
+  handleBatchError,
+  handleStopBatch,
+  handleContinueBatch,
+  filesChanged,
+  addMoreFiles,
+  interruptedUpload,
+  nextStep,
+  configureDataset,
+  generationDone,
+  handleCollectionGenerationDone,
+  createView,
+  copyLogToClipboard,
+  onConfigDataReceived,
+});
 </script>
 
 <style lang="scss">

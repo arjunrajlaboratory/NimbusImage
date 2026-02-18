@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 121 | 114 migrated to `<script setup>`, 7 remaining |
+| Class components (`@Component`) | 121 | 115 migrated to `<script setup>`, 6 remaining |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -19,7 +19,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Next Steps (Phase 1 Continuation)
 
-**Current progress:** 114 of 121 components migrated to `<script setup>` (Batches 1–14 complete). 7 remaining.
+**Current progress:** 116 of 121 components migrated to `<script setup>` (Batches 1–15 complete). 5 remaining.
 
 **Branch:** `claude/vue3-migration-planning-tS4Hx`
 
@@ -37,13 +37,17 @@ See "Components Migrated" section below for details.
 
 See "Components Migrated" section below for details.
 
-### Batch 14 — Tier 2
+### ~~Batch 14 — Tier 2~~ PARTIAL
 
-CustomFileManager, Home, NewDataset
+CustomFileManager migrated. Home migrated (Batch 15).
 
-### Batch 15 — ImageViewer (with `markRaw()`)
+### ~~Batch 15 — Remaining Tier 2~~ COMPLETE
 
-### Batch 16 — Tier 3 giants (with composable extraction)
+NewDataset migrated (106 tests).
+
+### Batch 16 — ImageViewer (with `markRaw()`)
+
+### Batch 17 — Tier 3 giants (with composable extraction)
 
 MultiSourceConfiguration, Snapshots, AnnotationViewer
 
@@ -496,9 +500,37 @@ These `markRaw()` additions can be done:
 
 **After this batch:** 114 of 121 components migrated to `<script setup>` (~94%).
 
-## Remaining Components (7)
+### Batch 15 — Tier 2 (Home)
 
-All 7 remaining components use the class-based `@Component` decorator pattern.
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `Home.vue` | 1,317 | `Vue.set()` → object spread on `userDisplayNames` ref, `getCurrentInstance()` for `$router`/`$startTour`, `routeName` computed for `$route` watcher, `validateNamesDebounceTimer` as plain `let` (not ref), 9 `@Watch` → `watch()`, 59 pre-existing tests pass unchanged |
+
+**Key patterns in this batch:**
+- **`Vue.set()` → object spread:** Both `getUserDisplayName` and `fetchUsersForDatasets` mutate `userDisplayNames` — replaced `Vue.set(this.userDisplayNames, key, val)` with `userDisplayNames.value = { ...userDisplayNames.value, [key]: val }` per pattern #10
+- **`fetchUsersForDatasets` reactivity fix:** Original used direct assignment (`this.userDisplayNames[userId] = ...`) which was a latent bug in the class version — now uses object spread for proper Vue 2.7 reactivity
+- **`$route` watcher:** Used `routeName` computed (`computed(() => vm.$route?.name)`) instead of watching `vm.$route` directly (pattern from `App.vue:325`)
+- **Non-reactive timer:** `validateNamesDebounceTimer` declared as plain `let` since it's never rendered
+
+**After this batch:** 115 of 121 components migrated to `<script setup>` (~95%).
+
+### Batch 15 (continued) — Tier 2 (NewDataset)
+
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `NewDataset.vue` | 1,435 | Multi-step dataset creation wizard with 3 modes (regular, quick import, batch). 9 props → `defineProps`/`withDefaults`, `$emit` → `defineEmits`, ~30 data fields → `ref()`, ~20 computed getters → `computed()`, `@Watch("configurationLogs")` → `watch()`, `mounted()` → `onMounted()`, template refs for child component method access, `Vue.nextTick()` → `nextTick()`, `getCurrentInstance()` for `$router`. 106 tests. |
+
+**Key patterns in this batch:**
+- **Template refs for child components:** `const uploader = ref<GWCUpload>()` bound to `ref="uploader"` in template. Methods accessible via `uploader.value.startUpload()`
+- **Defensive null checks on refs:** After async operations, child components may be unmounted. Added `if (!uploader.value)` guards before calling methods
+- **`@hook:mounted` on child component:** `@hook:mounted="uploadMounted"` fires when girder-upload mounts, triggering auto-submit in quick/batch modes
+- **Test stub naming for `<script setup>`:** `shallowMount` with `<script setup>` components requires **PascalCase** stub names (e.g., `GirderUpload` not `"girder-upload"`). Kebab-case stubs are not matched to `<script setup>` component registrations and get replaced by auto-generated minimal stubs that lack methods/data.
+
+**After this batch:** 116 of 121 components migrated to `<script setup>` (~96%).
+
+## Remaining Components (5)
+
+All 5 remaining components use the class-based `@Component` decorator pattern.
 
 ### Tier 2 — Large Components (700–1,500 lines)
 
@@ -506,8 +538,6 @@ More complex migrations requiring careful attention to refs, watchers, and child
 
 | Component | Lines | Key Patterns / Notes |
 |-----------|-------|---------------------|
-| `Home.vue` | 1,317 | Landing page, project/dataset lists, onboarding |
-| `NewDataset.vue` | 1,435 | Multi-step dataset creation wizard, file upload |
 | `ImageViewer.vue` | 1,514 | GeoJS map/layers, tile rendering — needs `markRaw()` |
 
 ### Tier 3 — Giant Components (2,500+ lines)
@@ -522,8 +552,8 @@ These should be split into composables before or during migration.
 
 ### Migration Order Recommendations
 
-1. **Batch 15** — Tier 2 (remaining): Home, NewDataset, ImageViewer (with `markRaw()`)
-2. **Batch 16** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
+1. **Batch 16** — ImageViewer (with `markRaw()`)
+2. **Batch 17** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 
