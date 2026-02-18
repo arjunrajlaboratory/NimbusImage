@@ -7,26 +7,30 @@ description: "Use when writing or modifying Python code in the Girder backend pl
 
 ## Access Control
 
-### Access Levels
+### Access Levels (Document-Level)
 
 | Value | Constant | Meaning |
 |-------|----------|---------|
 | -1 | (none) | No access / Remove access |
 | 0 | `AccessType.READ` | View-only access |
 | 1 | `AccessType.WRITE` | Edit access |
-| 2 | `AccessType.ADMIN` | Full control |
+| 2 | `AccessType.ADMIN` | Owner — can manage access (share, set public, delete) |
+
+**Important:** `AccessType.ADMIN` means **owner of that document**, not a site-wide admin. The creator of a project/dataset gets ADMIN on it and can share it with others.
 
 Use `-1` (not `null`) to remove a user's access.
 
-### Access Decorators
+### Access Decorators (Endpoint-Level)
 
 ```python
 from girder.api import access
 
 @access.public      # Anyone can access
 @access.user        # Requires authenticated user
-@access.admin       # Requires admin privileges
+@access.admin       # Requires site-wide Girder admin (NOT document owner)
 ```
+
+**Note:** `@access.admin` (decorator) and `AccessType.ADMIN` (document level) are different. The decorator requires site-wide admin; the access level means document owner.
 
 ### Model-Level Access
 

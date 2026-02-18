@@ -299,7 +299,8 @@ Exception: Keep temporaries when they improve readability for complex expression
 
 When editing backend code, always maintain the existing security and access control patterns:
 
-- Use `AccessType` decorators consistently (`READ`, `WRITE`, `ADMIN`)
+- Use `AccessType` levels consistently: `READ` (view), `WRITE` (edit), `ADMIN` (owner — can share, set public, delete)
+- Note: `AccessType.ADMIN` on a document means **owner of that document**, not site-wide admin. `@access.admin` (the endpoint decorator) means site-wide Girder admin — these are different concepts.
 - Check user permissions before data operations
 - Validate that users have access to the dataset/resource being modified
 - Never bypass access checks, even for "convenience"

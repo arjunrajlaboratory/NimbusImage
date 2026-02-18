@@ -2,16 +2,18 @@
 
 ## Access Levels
 
-Girder uses numeric access levels:
+Girder uses numeric access levels on individual documents (not site-wide):
 
 | Value | Constant | Meaning |
 |-------|----------|---------|
 | -1 | (none) | No access / Remove access |
 | 0 | `AccessType.READ` | View-only access |
 | 1 | `AccessType.WRITE` | Edit access |
-| 2 | `AccessType.ADMIN` | Full control |
+| 2 | `AccessType.ADMIN` | Owner — can manage access (share, set public, delete) |
 
-**Important:** Use `-1` (not `null`) to remove a user's access. This is Girder's convention and simplifies validation:
+**Important:** `AccessType.ADMIN` means **owner of that specific document**, not a site-wide admin. The creator of a project/dataset gets ADMIN on it. This is distinct from `@access.admin` (the endpoint decorator), which requires the user to be a site-wide Girder admin.
+
+Use `-1` (not `null`) to remove a user's access. This is Girder's convention and simplifies validation:
 
 ```python
 # Good - use -1 to remove access
@@ -105,7 +107,7 @@ def setDatasetPublic(self, dataset, public):
 
 ### Access Check: Owner Protection
 
-ADMIN users (dataset creators) cannot be removed from the access list:
+Document owners (users with `AccessType.ADMIN` on the document, typically the creator) cannot be removed from the access list:
 
 ```python
 # Check before removing access

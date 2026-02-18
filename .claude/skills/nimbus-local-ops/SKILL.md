@@ -70,12 +70,62 @@ curl -s -H "Girder-Token: $TOKEN" "http://localhost:8080/api/v1/upenn_annotation
 curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"key": "value"}' "http://localhost:8080/api/v1/upenn_annotation"
 
+# Create (POST with query params, no body)
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
+  "http://localhost:8080/api/v1/project?name=MyProject&description=Test"
+
 # Update (PUT with JSON body)
 curl -s -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"key": "newValue"}' "http://localhost:8080/api/v1/upenn_annotation/$ID"
 
 # Delete
 curl -s -X DELETE -H "Girder-Token: $TOKEN" "http://localhost:8080/api/v1/upenn_annotation/$ID"
+```
+
+**Gotcha: `411 Length Required`** — Many Girder endpoints accept parameters via query string, not a JSON body (e.g., project create, share, set_public, user create). For POST/PUT without a body, you **must** add `-H "Content-Length: 0"` or CherryPy returns 411.
+
+**Gotcha: `autoDescribeRoute` vs `describeRoute` parameter handling** — Endpoints using `autoDescribeRoute` (most project endpoints, dataset_view share/setPublic) handle parameters differently from raw `describeRoute` endpoints:
+
+- **`autoDescribeRoute` with `.param()`**: Parameters are query string params. Use `-H "Content-Length: 0"` with query params:
+  ```bash
+  curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
+    "http://localhost:8080/api/v1/project/$ID/set_public?public=true"
+  ```
+
+- **`autoDescribeRoute` with `.modelParam(..., paramType='formData')`**: The modelParam must be sent as form data (`-d`), NOT as a query param:
+  ```bash
+  # CORRECT - form data for formData modelParam
+  curl -s -X POST -H "Girder-Token: $TOKEN" \
+    -d "datasetId=$DATASET_ID" \
+    "http://localhost:8080/api/v1/project/$ID/dataset"
+
+  # WRONG - query param with Content-Length: 0 gives "No matching route"
+  curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
+    "http://localhost:8080/api/v1/project/$ID/dataset?datasetId=$DATASET_ID"
+  ```
+
+- **`describeRoute` with `.param(..., paramType='body')`**: Parameters are in a JSON body:
+  ```bash
+  curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+    -d '{"key": "value"}' "http://localhost:8080/api/v1/endpoint"
+  ```
+
+**Rule of thumb**: Check the endpoint source code for `paramType`. If `formData`, use `-d "key=value"`. If `body`, use `-d '{"key": "value"}'` with `Content-Type: application/json`. If just `.param()` with no paramType, use query string with `-H "Content-Length: 0"`.
+
+**Gotcha: Shell variable expansion in URLs** — When using shell variables in URLs, avoid `${VAR}/path` patterns inside double quotes as they can cause unexpected behavior. Use explicit concatenation or ensure proper quoting:
+```bash
+# Safe - variable is cleanly delimited
+curl -s "http://localhost:8080/api/v1/project/${PROJECT_ID}/access"
+
+# Also safe - separate variable
+URL="http://localhost:8080/api/v1/project/$PROJECT_ID/access"
+curl -s "$URL"
+```
+
+**Gotcha: Finding datasets** — Datasets are Girder folders with `meta.subtype: 'contrastDataset'`. They may be owned by any user, so listing a specific user's folders won't find all datasets. Use MongoDB directly for discovery:
+```bash
+docker exec upenncontrast-mongodb-1 mongosh girder --eval \
+  "db.folder.find({'meta.subtype': 'contrastDataset'}, {name: 1}).limit(5).toArray()" --quiet
 ```
 
 For full endpoint details with request/response examples: read `references/api-endpoints.md`
@@ -179,6 +229,7 @@ Job status codes: 0=inactive, 1=queued, 2=running, 3=success, 4=error, 5=cancell
 - **401 Unauthorized**: Token expired or missing. Re-authenticate.
 - **400 Bad Request**: Check JSON body format. Use Swagger UI to see expected schema.
 - **404 Not Found**: Verify endpoint name (e.g., `upenn_annotation` not `annotation`).
+- **411 Length Required**: POST/PUT without a body needs `-H "Content-Length: 0"`.
 - **Connection refused**: Check `docker ps` to confirm containers are running.
 
 For step-by-step test scenarios: read `references/test-scenarios.md`
