@@ -446,8 +446,8 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, reactive, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 
 import {
@@ -495,12 +495,12 @@ interface IBaseAssignmentOption {
 
 interface IFileAssignmentOption extends IBaseAssignmentOption {
   source: Sources.File;
-  data: IFileSourceData; // To compute which image should be taken from the tiles
+  data: IFileSourceData;
 }
 
 interface IFilenameAssignementOption extends IBaseAssignmentOption {
   source: Sources.Filename;
-  data: IFilenameSourceData; // To compute which image should be taken from the tiles
+  data: IFilenameSourceData;
 }
 
 interface IImageAssinmentOption extends IBaseAssignmentOption {
@@ -518,7 +518,6 @@ interface IAssignment {
   value: TAssignmentOption;
 }
 
-/** Represents a filename-sourced variable with its token position and assignment */
 interface IFilenameVariable {
   dimension: TAssignmentOption;
   tokenIndex: number;
@@ -567,1621 +566,1477 @@ interface ICompositingSource {
   };
 }
 
-@Component({
-  components: {},
-})
-export default class MultiSourceConfiguration extends Vue {
-  readonly store = store;
+// --- Props & Emits ---
 
-  @Prop({ required: true })
-  datasetId!: string;
+const props = withDefaults(
+  defineProps<{
+    datasetId: string;
+    autoDatasetRoute?: boolean;
+  }>(),
+  { autoDatasetRoute: true },
+);
 
-  @Prop({ default: true })
-  autoDatasetRoute!: boolean;
+const emit = defineEmits<{
+  (e: "generatedJson", jsonId: string | null, config: any): void;
+  (e: "configData", data: any): void;
+  (e: "log", logs: string): void;
+}>();
 
-  tilesInternalMetadata: { [key: string]: any }[] | null = null;
-  tilesMetadata: ITileMeta[] | null = null;
+const instance = getCurrentInstance()!.proxy!;
 
-  enableCompositing: boolean = false;
+// --- Reactive state ---
 
-  transcode: boolean = false;
+const tilesInternalMetadata = ref<{ [key: string]: any }[] | null>(null);
+const tilesMetadata = ref<ITileMeta[] | null>(null);
 
-  isUploading: boolean = false;
-  logs: string = "";
+const enableCompositing = ref(false);
+const transcode = ref(false);
 
-  // For the transcodinglog dialog
-  showLogDialog: boolean = false;
-  showCopySnackbar: boolean = false;
+const isUploading = ref(false);
+const logs = ref("");
 
-  // Store last generated config for reuse
-  lastGeneratedConfig: any = null;
+const showLogDialog = ref(false);
+const showCopySnackbar = ref(false);
 
-  // For progress tracking of the transcoding
-  transcodeProgress: number | undefined = undefined;
-  progressStatusText: string = "";
-  totalFrames: number = 0;
-  currentFrame: number = 0;
+const lastGeneratedConfig = ref<any>(null);
 
-  isRGBFile: boolean = false;
-  rgbBandCount: number = 0;
+const transcodeProgress = ref<number | undefined>(undefined);
+const progressStatusText = ref("");
+const totalFrames = ref(0);
+const currentFrame = ref(0);
 
-  splitRGBBands: boolean = true;
+const isRGBFile = ref(false);
+const rgbBandCount = ref(0);
 
-  // Progress tracking for initialization
-  initTotal: number = 0;
-  initCompleted: number = 0;
-  initPending: string[] = [];
-  initInFlight: string[] = [];
-  initError: { name: string; message: string } | null = null;
+const splitRGBBands = ref(true);
 
-  get isMultiBandRGBFile(): boolean {
-    return this.isRGBFile && this.rgbBandCount > 1;
-  }
+const initTotal = ref(0);
+const initCompleted = ref(0);
+const initPending = ref<string[]>([]);
+const initInFlight = ref<string[]>([]);
+const initError = ref<{ name: string; message: string } | null>(null);
 
-  get initProgressPercent(): number {
-    return this.initTotal > 0
-      ? Math.round((this.initCompleted / this.initTotal) * 100)
-      : 0;
-  }
+const dimensions = ref<TAssignmentOption[]>([]);
 
-  get initPendingDisplay(): string[] {
-    return this.initPending.slice(0, 5); // Show max 5 pending files
-  }
+const assignments = reactive<{ [dimension in TUpDim]: IAssignment | null }>({
+  XY: null,
+  Z: null,
+  T: null,
+  C: null,
+});
 
-  detectColorVsChannels(tileMeta: ITileMeta) {
-    const bandCount = tileMeta.bandCount || 1;
-    let isColor = false;
+const searchInput = ref("");
+let filenameVariableCount = 0;
+let fileVariableCount = 0;
+let imageVariableCount = 0;
+let assignmentIdCount = 0;
 
-    // 1) Check photometricInterpretation first, if present
-    const photo = tileMeta.metadata?.photometricInterpretation;
-    if (photo === 2 || photo === "RGB") {
-      isColor = true;
-    }
+const girderItems = ref<IGirderItem[]>([]);
 
-    // 2) If we have an explicit channel dimension > 1,
-    //    that means multi-channel, not a single-plane color.
-    //    In that case, override isColor = false
-    if (tileMeta.IndexRange?.IndexC > 1) {
-      isColor = false;
-    }
+const initialized = ref<Promise<void> | null>(null);
+const initializing = ref(false);
+let reinitializeFlag = false;
 
-    // 3) If we still don't know, fallback to:
-    //    - bandCount = 3 (or 4) => color
-    //    - otherwise => multi-channel
-    if (typeof photo === "undefined") {
-      if (bandCount === 3 || bandCount === 4) {
-        isColor = true;
-      }
-    }
+// --- Constants ---
 
-    return isColor;
-  }
+const dimensionNames: { [dim in TUpDim]: string } = {
+  XY: "Positions",
+  Z: "Z",
+  T: "Time",
+  C: "Channels",
+};
 
-  // Call join on the array, cutting out elements or the first word if too long and adding hyphens
-  // Output is always shorter than maxChars
-  // For example: ["foo", "bar", "foobar", "barfoo"] => "foo, bar, foobar..."
-  sliceAndJoin(arr: string[], maxChars: number = 16, sep: string = ", ") {
-    if (arr.length <= 0) {
-      return "";
-    }
-    // First element is too long
-    if (
-      arr[0].length > maxChars ||
-      (arr[0].length === maxChars && arr.length > 1)
-    ) {
-      return arr[0].slice(0, maxChars - 1) + "…";
-    }
-    // Add words until the limit of characters is reached or exceeded
-    let nWords = 1;
-    let nChars = arr[0].length;
-    while (nChars < maxChars && nWords < arr.length) {
-      nChars += sep.length + arr[nWords].length;
-      ++nWords;
-    }
-    // The whole string fits
-    if (nChars <= maxChars && nWords === arr.length) {
-      return arr.join(sep);
-    }
-    // Remove the last word and add hyphens
-    return arr.slice(0, nWords - 1).join(sep) + "…";
-  }
+const dimesionNamesEntries = Object.entries(dimensionNames) as [
+  TUpDim,
+  string,
+][];
 
-  get canDoCompositing() {
-    return (
-      this.tilesInternalMetadata !== null &&
-      this.tilesInternalMetadata.length === 1 &&
-      this.tilesInternalMetadata[0].nd2_frame_metadata &&
-      this.tilesMetadata !== null &&
-      this.tilesMetadata.length === 1
-    );
-  }
+const variableColors: { [key in TDimensions]: string } = {
+  XY: "#4CAF50",
+  Z: "#2196F3",
+  T: "#FF9800",
+  C: "#9C27B0",
+};
 
-  get shouldDoCompositing() {
-    return this.canDoCompositing && this.enableCompositing;
-  }
+// --- Computed ---
 
-  /**
-   * Number of files in the dataset
-   */
-  get fileCount(): number {
-    return this.girderItems.length;
-  }
+const isMultiBandRGBFile = computed(
+  () => isRGBFile.value && rgbBandCount.value > 1,
+);
 
-  /**
-   * Maximum number of frames per file
-   */
-  get framesPerFile(): number {
-    if (!this.tilesMetadata) return 1;
-    return Math.max(
-      ...this.tilesMetadata.map((tile) => tile.frames?.length || 1),
-    );
-  }
+const initProgressPercent = computed(() =>
+  initTotal.value > 0
+    ? Math.round((initCompleted.value / initTotal.value) * 100)
+    : 0,
+);
 
-  /**
-   * Total number of frames across all files (for display in Variables summary)
-   */
-  get datasetTotalFrames(): number {
-    if (!this.tilesMetadata) return this.fileCount;
-    return this.tilesMetadata.reduce(
-      (sum, tile) => sum + (tile.frames?.length || 1),
-      0,
-    );
-  }
+const initPendingDisplay = computed(() => initPending.value.slice(0, 5));
 
-  /**
-   * Extract all unique values from file source data
-   */
-  private extractFileSourceValues(data: IFileSourceData): string[] {
-    const allValues: string[] = [];
-    for (const itemIdx in data) {
-      const itemValues = data[itemIdx].values;
-      if (itemValues) {
-        itemValues.forEach((v) => {
-          if (!allValues.includes(v)) allValues.push(v);
-        });
-      }
-    }
-    return allValues;
-  }
+const canDoCompositing = computed(
+  () =>
+    tilesInternalMetadata.value !== null &&
+    tilesInternalMetadata.value.length === 1 &&
+    tilesInternalMetadata.value[0].nd2_frame_metadata &&
+    tilesMetadata.value !== null &&
+    tilesMetadata.value.length === 1,
+);
 
-  get items() {
-    return this.dimensions
-      .filter((dim) => dim.size > 0)
-      .map((dim: TAssignmentOption) => {
-        let values = "";
-        let allValues: string[] = [];
-        switch (dim.source) {
-          case Sources.Filename:
-            allValues = (dim.data as IFilenameSourceData).values;
-            values = this.sliceAndJoin(allValues);
-            break;
-          case Sources.File:
-            allValues = this.extractFileSourceValues(
-              dim.data as IFileSourceData,
-            );
-            values =
-              allValues.length > 0
-                ? this.sliceAndJoin(allValues, 24)
-                : "From metadata";
-            break;
-          case Sources.Images:
-            // Generate numeric labels for images
-            allValues = Array.from({ length: dim.size }, (_, i) => `${i + 1}`);
-            values = "";
-            break;
-        }
-        return {
-          ...dim,
-          values,
-          allValues,
-          key: `${dim.id}_${dim.guess}_${dim.source}`,
-        };
-      });
-  }
+const shouldDoCompositing = computed(
+  () => canDoCompositing.value && enableCompositing.value,
+);
 
-  // Colors for highlighting different variables in the filename
-  readonly variableColors: { [key in TDimensions]: string } = {
-    XY: "#4CAF50", // Green
-    Z: "#2196F3", // Blue
-    T: "#FF9800", // Orange
-    C: "#9C27B0", // Purple
-  };
+const fileCount = computed(() => girderItems.value.length);
 
-  /**
-   * Get the filename-sourced variables with their token positions and assignments
-   */
-  get filenameVariables(): IFilenameVariable[] {
-    if (!this.girderItems.length) return [];
+const framesPerFile = computed(() => {
+  if (!tilesMetadata.value) return 1;
+  return Math.max(
+    ...tilesMetadata.value.map((tile) => tile.frames?.length || 1),
+  );
+});
 
-    const exampleFilename = this.girderItems[0].name;
-    const tokens = exampleFilename.split(filenameDelimiterPattern);
+const datasetTotalFrames = computed(() => {
+  if (!tilesMetadata.value) return fileCount.value;
+  return tilesMetadata.value.reduce(
+    (sum, tile) => sum + (tile.frames?.length || 1),
+    0,
+  );
+});
 
-    const result: IFilenameVariable[] = [];
-
-    // Find filename-sourced dimensions and their token positions
-    for (const dim of this.dimensions) {
-      if (dim.source !== Sources.Filename || dim.size === 0) continue;
-
-      const filenameData = dim.data as IFilenameSourceData;
-      const valueIdx = filenameData.valueIdxPerFilename[exampleFilename];
-      const value = filenameData.values[valueIdx];
-
-      // Find which token matches this value
-      // Note: If multiple tokens have the same value, highlights the first occurrence
-      const tokenIndex = tokens.findIndex((token) => token === value);
-      if (tokenIndex !== -1) {
-        // Find the actual assignment for this dimension
-        let assignedTo: TUpDim | null = null;
-        for (const [assignmentDim, assignment] of Object.entries(
-          this.assignments,
-        )) {
-          if (assignment?.value.id === dim.id) {
-            assignedTo = assignmentDim as TUpDim;
-            break;
-          }
-        }
-        result.push({ dimension: dim, tokenIndex, value, assignedTo });
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Compute segments of the filename with highlighting information
-   */
-  get highlightedFilenameSegments(): {
-    text: string;
-    class: string;
-    style: { backgroundColor?: string; color?: string };
-    title: string;
-  }[] {
-    if (!this.girderItems.length || this.filenameVariables.length === 0) {
-      return [];
-    }
-
-    const exampleFilename = this.girderItems[0].name;
-    // Create a capturing version of the delimiter pattern to preserve delimiters in split
-    const capturingPattern = new RegExp(`(${filenameDelimiterPattern.source})`);
-    const parts = exampleFilename.split(capturingPattern);
-
-    // Build a map of token index to variable info
-    // Tokens are at even indices (0, 2, 4, ...), delimiters at odd indices
-    const tokenToVariable = new Map<
-      number,
-      { guess: TDimensions; assignedTo: TUpDim | null; name: string }
-    >();
-
-    let tokenCount = 0;
-    for (let i = 0; i < parts.length; i++) {
-      if (i % 2 === 0) {
-        // This is a token (not a delimiter)
-        for (const varInfo of this.filenameVariables) {
-          if (varInfo.tokenIndex === tokenCount) {
-            tokenToVariable.set(i, {
-              guess: varInfo.dimension.guess,
-              assignedTo: varInfo.assignedTo,
-              name: varInfo.dimension.name,
-            });
-          }
-        }
-        tokenCount++;
-      }
-    }
-
-    // Build segments
-    return parts.map((part, idx) => {
-      const varInfo = tokenToVariable.get(idx);
-      if (varInfo) {
-        // Use assignment color if assigned, otherwise use guess color
-        const colorKey = varInfo.assignedTo || varInfo.guess;
-        const assignmentLabel = varInfo.assignedTo
-          ? this.dimensionNames[varInfo.assignedTo]
-          : "Unassigned";
-        return {
-          text: part,
-          class: "filename-variable",
-          style: {
-            backgroundColor: this.variableColors[colorKey],
-            color: "#ffffff",
-          },
-          title: `${varInfo.name} → ${assignmentLabel}`,
-        };
+const items = computed(() =>
+  dimensions.value
+    .filter((dim) => dim.size > 0)
+    .map((dim: TAssignmentOption) => {
+      let values = "";
+      let allValues: string[] = [];
+      switch (dim.source) {
+        case Sources.Filename:
+          allValues = (dim.data as IFilenameSourceData).values;
+          values = sliceAndJoin(allValues);
+          break;
+        case Sources.File:
+          allValues = extractFileSourceValues(dim.data as IFileSourceData);
+          values =
+            allValues.length > 0
+              ? sliceAndJoin(allValues, 24)
+              : "From metadata";
+          break;
+        case Sources.Images:
+          allValues = Array.from({ length: dim.size }, (_, i) => `${i + 1}`);
+          values = "";
+          break;
       }
       return {
-        text: part,
-        class: "",
-        style: {},
-        title: "",
+        ...dim,
+        values,
+        allValues,
+        key: `${dim.id}_${dim.guess}_${dim.source}`,
       };
-    });
+    }),
+);
+
+const filenameVariables = computed((): IFilenameVariable[] => {
+  if (!girderItems.value.length) return [];
+
+  const exampleFilename = girderItems.value[0].name;
+  const tokens = exampleFilename.split(filenameDelimiterPattern);
+
+  const result: IFilenameVariable[] = [];
+
+  for (const dim of dimensions.value) {
+    if (dim.source !== Sources.Filename || dim.size === 0) continue;
+
+    const filenameData = dim.data as IFilenameSourceData;
+    const valueIdx = filenameData.valueIdxPerFilename[exampleFilename];
+    const value = filenameData.values[valueIdx];
+
+    const tokenIndex = tokens.findIndex((token) => token === value);
+    if (tokenIndex !== -1) {
+      let assignedTo: TUpDim | null = null;
+      for (const [assignmentDim, assignment] of Object.entries(assignments)) {
+        if (assignment?.value.id === dim.id) {
+          assignedTo = assignmentDim as TUpDim;
+          break;
+        }
+      }
+      result.push({ dimension: dim, tokenIndex, value, assignedTo });
+    }
   }
 
-  /**
-   * Legend items for the highlighted variables, showing both guess and assignment
-   */
-  get filenameLegend(): {
+  return result;
+});
+
+const highlightedFilenameSegments = computed(() => {
+  if (!girderItems.value.length || filenameVariables.value.length === 0) {
+    return [];
+  }
+
+  const exampleFilename = girderItems.value[0].name;
+  const capturingPattern = new RegExp(`(${filenameDelimiterPattern.source})`);
+  const parts = exampleFilename.split(capturingPattern);
+
+  const tokenToVariable = new Map<
+    number,
+    { guess: TDimensions; assignedTo: TUpDim | null; name: string }
+  >();
+
+  let tokenCount = 0;
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) {
+      for (const varInfo of filenameVariables.value) {
+        if (varInfo.tokenIndex === tokenCount) {
+          tokenToVariable.set(i, {
+            guess: varInfo.dimension.guess,
+            assignedTo: varInfo.assignedTo,
+            name: varInfo.dimension.name,
+          });
+        }
+      }
+      tokenCount++;
+    }
+  }
+
+  return parts.map((part, idx) => {
+    const varInfo = tokenToVariable.get(idx);
+    if (varInfo) {
+      const colorKey = varInfo.assignedTo || varInfo.guess;
+      const assignmentLabel = varInfo.assignedTo
+        ? dimensionNames[varInfo.assignedTo]
+        : "Unassigned";
+      return {
+        text: part,
+        class: "filename-variable",
+        style: {
+          backgroundColor: variableColors[colorKey],
+          color: "#ffffff",
+        },
+        title: `${varInfo.name} → ${assignmentLabel}`,
+      };
+    }
+    return { text: part, class: "", style: {}, title: "" };
+  });
+});
+
+const filenameLegend = computed(() => {
+  const legend: {
     label: string;
     color: string;
     guess: string;
     showGuess: boolean;
-  }[] {
-    const legend: {
-      label: string;
-      color: string;
-      guess: string;
-      showGuess: boolean;
-    }[] = [];
+  }[] = [];
 
-    for (const varInfo of this.filenameVariables) {
-      const guess = varInfo.dimension.guess;
-      const assignedTo = varInfo.assignedTo;
-      // Use assignment color if assigned, otherwise use guess color
-      const colorKey = assignedTo || guess;
-      const assignmentLabel = assignedTo
-        ? `${this.dimensionNames[assignedTo]} (${assignedTo})`
-        : "Unassigned";
-      const guessLabel = `${this.dimensionNames[guess]} (${guess})`;
-      const showGuess = assignedTo !== null && assignedTo !== guess;
+  for (const varInfo of filenameVariables.value) {
+    const guess = varInfo.dimension.guess;
+    const assignedTo = varInfo.assignedTo;
+    const colorKey = assignedTo || guess;
+    const assignmentLabel = assignedTo
+      ? `${dimensionNames[assignedTo]} (${assignedTo})`
+      : "Unassigned";
+    const guessLabel = `${dimensionNames[guess]} (${guess})`;
+    const showGuess = assignedTo !== null && assignedTo !== guess;
 
-      legend.push({
-        label: assignmentLabel,
-        color: this.variableColors[colorKey],
-        guess: guessLabel,
-        showGuess,
+    legend.push({
+      label: assignmentLabel,
+      color: variableColors[colorKey],
+      guess: guessLabel,
+      showGuess,
+    });
+  }
+
+  return legend;
+});
+
+const assignmentItems = computed(() => {
+  const assignedDimensions = Object.entries(assignments).reduce(
+    (acc, [, assignment]) =>
+      assignment ? [...acc, assignment.value.id] : acc,
+    [] as number[],
+  );
+
+  const isNotAssigned = (dimension: TAssignmentOption) =>
+    !assignedDimensions.includes(dimension.id);
+  return items.value
+    .filter(isNotAssigned)
+    .map(assignmentOptionToAssignmentItem);
+});
+
+const submitError = computed((): string | null => {
+  if (!submitEnabled()) {
+    return "Not all variables are assigned";
+  }
+  if (!isRGBAssignmentValid.value) {
+    return "If splitting RGB file into channels, then filenames must be assigned to another variable";
+  }
+  return null;
+});
+
+const isRGBAssignmentValid = computed(() => {
+  if (isMultiBandRGBFile.value && splitRGBBands.value) {
+    return assignments.C === null;
+  }
+  return true;
+});
+
+// --- Methods ---
+
+function extractFileSourceValues(data: IFileSourceData): string[] {
+  const allValues: string[] = [];
+  for (const itemIdx in data) {
+    const itemValues = data[itemIdx].values;
+    if (itemValues) {
+      itemValues.forEach((v) => {
+        if (!allValues.includes(v)) allValues.push(v);
       });
     }
+  }
+  return allValues;
+}
 
-    return legend;
+function detectColorVsChannels(tileMeta: ITileMeta) {
+  const bandCount = tileMeta.bandCount || 1;
+  let isColor = false;
+
+  const photo = tileMeta.metadata?.photometricInterpretation;
+  if (photo === 2 || photo === "RGB") {
+    isColor = true;
   }
 
-  dimensions: TAssignmentOption[] = [];
+  if (tileMeta.IndexRange?.IndexC > 1) {
+    isColor = false;
+  }
 
-  readonly dimensionNames: { [dim in TUpDim]: string } = {
-    XY: "Positions",
-    Z: "Z",
-    T: "Time",
-    C: "Channels",
+  if (typeof photo === "undefined") {
+    if (bandCount === 3 || bandCount === 4) {
+      isColor = true;
+    }
+  }
+
+  return isColor;
+}
+
+function sliceAndJoin(arr: string[], maxChars: number = 16, sep: string = ", ") {
+  if (arr.length <= 0) {
+    return "";
+  }
+  if (
+    arr[0].length > maxChars ||
+    (arr[0].length === maxChars && arr.length > 1)
+  ) {
+    return arr[0].slice(0, maxChars - 1) + "…";
+  }
+  let nWords = 1;
+  let nChars = arr[0].length;
+  while (nChars < maxChars && nWords < arr.length) {
+    nChars += sep.length + arr[nWords].length;
+    ++nWords;
+  }
+  if (nChars <= maxChars && nWords === arr.length) {
+    return arr.join(sep);
+  }
+  return arr.slice(0, nWords - 1).join(sep) + "…";
+}
+
+function assignmentOptionToAssignmentItem(
+  dimension: TAssignmentOption,
+): IAssignment {
+  return { text: dimension.name, value: dimension };
+}
+
+function addSizeToDimension(
+  guess: TDimensions,
+  size: number,
+  sourceData:
+    | { source: Sources.File; data: IFileSourceData }
+    | { source: Sources.Filename; data: IFilenameSourceData }
+    | { source: Sources.Images; data: null },
+  name: string | null = null,
+): void {
+  if (size === 0) {
+    return;
+  }
+  const { source, data } = sourceData;
+
+  const dim =
+    source === Sources.File &&
+    dimensions.value.find(
+      (dimension) => dimension.source === source && dimension.guess === guess,
+    );
+  if (dim) {
+    dim.data = {
+      ...(dim.data as IFileSourceData),
+      ...(data as IFileSourceData),
+    };
+    dim.size = Math.max(dim.size, size);
+    return;
+  }
+
+  let computedName = name;
+  if (!computedName) {
+    computedName = "";
+    switch (source) {
+      case Sources.Filename:
+        computedName = `Filename variable ${++filenameVariableCount}`;
+        break;
+      case Sources.File:
+        computedName = `Metadata ${++fileVariableCount} (${dimensionNames[guess]})`;
+        break;
+      case Sources.Images:
+        computedName = `Image variable ${++imageVariableCount}`;
+        break;
+    }
+  }
+  const newDimension: TAssignmentOption = {
+    id: assignmentIdCount++,
+    guess,
+    size,
+    name: computedName,
+    ...sourceData,
   };
+  dimensions.value = [...dimensions.value, newDimension];
+}
 
-  readonly dimesionNamesEntries = Object.entries(this.dimensionNames) as [
-    TUpDim,
-    string,
-  ][];
+function getDefaultAssignmentItem(assignment: string) {
+  const assignmentOption =
+    dimensions.value.find(
+      ({ guess, source, size }) =>
+        source === Sources.File && size > 0 && guess === assignment,
+    ) ||
+    dimensions.value.find(
+      ({ guess, size }) => size > 0 && guess === assignment,
+    ) ||
+    null;
+  if (assignmentOption) {
+    return assignmentOptionToAssignmentItem(assignmentOption);
+  }
+  return null;
+}
 
-  assignmentOptionToAssignmentItem(dimension: TAssignmentOption): IAssignment {
+function resetDimensionsToDefault() {
+  for (const dim in dimensionNames) {
+    assignments[dim as TUpDim] = getDefaultAssignmentItem(dim);
+  }
+}
+
+function areDimensionsSetToDefault() {
+  return Object.keys(dimensionNames).every(
+    (dim) =>
+      getDefaultAssignmentItem(dim)?.value ===
+      assignments[dim as TUpDim]?.value,
+  );
+}
+
+function isAssignmentImmutable(assignment: IAssignment) {
+  const value = assignment.value;
+  if (!(value.source === Sources.File)) {
+    return false;
+  }
+  const itemIndices = Object.keys(value.data).map(Number);
+  return itemIndices.every((idx) =>
+    girderItems.value[idx].name.toLowerCase().endsWith(".nd2"),
+  );
+}
+
+function assignmentDisabled(dimension: TUpDim) {
+  const currentAssignment = assignments[dimension];
+  return (
+    (currentAssignment && isAssignmentImmutable(currentAssignment)) ||
+    assignmentItems.value.length === 0
+  );
+}
+
+function clearDisabled(dimension: TUpDim) {
+  const currentAssignment = assignments[dimension];
+  return !currentAssignment || isAssignmentImmutable(currentAssignment);
+}
+
+function isVariableAssigned(item: TAssignmentOption): boolean {
+  return Object.values(assignments).some(
+    (assignment) => assignment?.value.id === item.id,
+  );
+}
+
+function getAssignedDimension(item: TAssignmentOption): string | null {
+  for (const [dim, assignment] of Object.entries(assignments)) {
+    if (assignment?.value.id === item.id) {
+      return dim;
+    }
+  }
+  return null;
+}
+
+function getAssignedDimensionColor(item: TAssignmentOption): string {
+  const dim = getAssignedDimension(item);
+  if (dim && dim in variableColors) {
+    return variableColors[dim as TUpDim];
+  }
+  return "rgba(255, 255, 255, 0.3)";
+}
+
+function getSlotClasses(dimension: TUpDim): Record<string, boolean> {
+  const hasAssignment = !!assignments[dimension];
+  const hasAvailableVariables = assignmentItems.value.length > 0;
+  const isImmutable =
+    hasAssignment && isAssignmentImmutable(assignments[dimension]!);
+
+  return {
+    "assignment-slot--filled": hasAssignment,
+    "assignment-slot--empty-available": !hasAssignment && hasAvailableVariables,
+    "assignment-slot--empty-none": !hasAssignment && !hasAvailableVariables,
+    "assignment-slot--immutable": isImmutable,
+  };
+}
+
+function getSlotStyle(dimension: TUpDim): Record<string, string> {
+  const color = variableColors[dimension];
+  const hasAssignment = !!assignments[dimension];
+  const hasAvailableVariables = assignmentItems.value.length > 0;
+
+  if (!hasAssignment && !hasAvailableVariables) {
     return {
-      text: dimension.name,
-      value: dimension,
+      backgroundColor: `${color}15`,
+      borderColor: `${color}40`,
     };
   }
+  return {};
+}
 
-  get assignmentItems() {
-    const assignedDimensions = Object.entries(this.assignments).reduce(
-      (assignedDimensions, [, assignment]) =>
-        assignment
-          ? [...assignedDimensions, assignment.value.id]
-          : assignedDimensions,
-      [] as number[],
+function getAssignmentBadgeStyleForSlot(
+  dimension: TUpDim,
+): Record<string, string> {
+  const assignment = assignments[dimension];
+  if (!assignment) return {};
+
+  const dimensionColor = variableColors[dimension];
+  return {
+    borderLeftColor: dimensionColor,
+    backgroundColor: `${dimensionColor}15`,
+  };
+}
+
+function getAssignmentText(dimension: TUpDim): string {
+  return assignments[dimension]?.text ?? "";
+}
+
+function getAssignmentValues(dimension: TUpDim): string {
+  const assignment = assignments[dimension];
+  if (!assignment) return "";
+  return getItemValues(assignment.value);
+}
+
+function getAssignmentSize(dimension: TUpDim): number {
+  return assignments[dimension]?.value.size ?? 0;
+}
+
+function getItemValues(item: TAssignmentOption): string {
+  switch (item.source) {
+    case Sources.Filename:
+      return sliceAndJoin((item.data as IFilenameSourceData).values, 24);
+    case Sources.File: {
+      const allValues = extractFileSourceValues(item.data as IFileSourceData);
+      if (allValues.length > 0) {
+        return sliceAndJoin(allValues, 24);
+      }
+      return `${item.size} values`;
+    }
+    case Sources.Images:
+      return `${item.size} values`;
+    default:
+      return "";
+  }
+}
+
+function isAssignmentImmutableForDimension(dimension: TUpDim): boolean {
+  const assignment = assignments[dimension];
+  return assignment ? isAssignmentImmutable(assignment) : false;
+}
+
+function submitEnabled() {
+  const filledAssignments = Object.values(assignments).reduce(
+    (count, assignment) => (assignment ? ++count : count),
+    0,
+  );
+  return (
+    !initializing.value &&
+    (filledAssignments >= items.value.length || filledAssignments >= 4)
+  );
+}
+
+function getValueFromAssignments(
+  dim: TDimensions,
+  itemIdx: number,
+  frameIdx: number,
+): number {
+  const assignmentValue = assignments[dim]?.value;
+  if (!assignmentValue) {
+    return 0;
+  }
+  switch (assignmentValue.source) {
+    case Sources.File: {
+      const fileData = assignmentValue.data as IFileSourceData;
+      return fileData[itemIdx]
+        ? Math.floor(frameIdx / fileData[itemIdx].stride) %
+            fileData[itemIdx].range
+        : 0;
+    }
+    case Sources.Filename: {
+      const filenameData = assignmentValue.data as IFilenameSourceData;
+      const filename = girderItems.value[itemIdx].name;
+      return filenameData.valueIdxPerFilename[filename];
+    }
+    case Sources.Images:
+      return frameIdx;
+  }
+}
+
+function getCompositingValueFromAssignments(
+  dim: TDimensions,
+  itemIdx: number,
+  frameIdx: number,
+): number {
+  const assignmentValue = assignments[dim]?.value;
+  if (!assignmentValue) {
+    return 0;
+  }
+  switch (assignmentValue.source) {
+    case Sources.File: {
+      const fileData = assignmentValue.data as IFileSourceData;
+      return fileData[itemIdx]
+        ? Math.floor(frameIdx / fileData[itemIdx].stride) %
+            fileData[itemIdx].range
+        : 0;
+    }
+    case Sources.Filename: {
+      const filenameData = assignmentValue.data as IFilenameSourceData;
+      const filename = girderItems.value[itemIdx].name;
+      return filenameData.valueIdxPerFilename[filename];
+    }
+    case Sources.Images:
+      return frameIdx;
+  }
+}
+
+function extractDimensionLabels(dim: TUpDim): string[] | null {
+  const assignment = assignments[dim]?.value;
+  if (!assignment) return null;
+
+  if (assignment.source === Sources.File && tilesInternalMetadata.value) {
+    const nd2Labels = extractDimensionLabelsFromND2(
+      dim,
+      tilesInternalMetadata.value,
+      assignment.size,
     );
-
-    const isNotAssigned = (dimension: TAssignmentOption) =>
-      !assignedDimensions.includes(dimension.id);
-    return this.items
-      .filter(isNotAssigned)
-      .map(this.assignmentOptionToAssignmentItem);
+    if (nd2Labels) {
+      return nd2Labels;
+    }
   }
 
-  assignments: { [dimension in TUpDim]: IAssignment | null } = {
+  switch (assignment.source) {
+    case Sources.File: {
+      const fileData = assignment.data as IFileSourceData;
+      const labelsPerIdx: string[][] = [];
+      for (const itemIdx in fileData) {
+        const values = fileData[itemIdx].values;
+        if (values) {
+          values.forEach((val, idx) => {
+            if (!labelsPerIdx[idx]) labelsPerIdx[idx] = [];
+            if (!labelsPerIdx[idx].includes(val)) {
+              labelsPerIdx[idx].push(val);
+            }
+          });
+        }
+      }
+      return labelsPerIdx.map((labels) => labels.join("/"));
+    }
+    case Sources.Filename:
+      return assignment.data.values;
+
+    case Sources.Images:
+      return Array.from({ length: assignment.size }, (_, i) => `${i + 1}`);
+  }
+}
+
+function copyLogToClipboard() {
+  if (navigator.clipboard && logs.value) {
+    navigator.clipboard.writeText(logs.value);
+    showCopySnackbar.value = true;
+  }
+}
+
+function getDimensionStrategy(): IDimensionStrategy {
+  const strategy: IDimensionStrategy = {
     XY: null,
     Z: null,
     T: null,
     C: null,
+    transcode: transcode.value,
   };
 
-  /**
-   * Watch assignments and save to store when changed.
-   * This allows NewDataset.vue to read the strategy from the store
-   * instead of calling getDimensionStrategy() via $refs.
-   */
-  @Watch("assignments", { deep: true })
-  onAssignmentsChange() {
-    this.saveDimensionStrategyToStore();
+  for (const dim of ["XY", "Z", "T", "C"] as const) {
+    const assignment = assignments[dim];
+    if (assignment?.value) {
+      strategy[dim] = {
+        source: assignment.value.source,
+        guess: assignment.value.guess,
+      };
+    }
   }
 
-  @Watch("transcode")
-  onTranscodeChange() {
-    this.saveDimensionStrategyToStore();
+  return strategy;
+}
+
+function saveDimensionStrategyToStore() {
+  if (
+    !store.uploadWorkflow.active ||
+    !store.uploadWorkflow.batchMode ||
+    !store.uploadIsFirstDataset
+  ) {
+    return;
   }
 
-  /**
-   * Save the current dimension strategy to the store.
-   * Only saves when in batch mode for the first dataset.
-   */
-  saveDimensionStrategyToStore() {
-    // Only save strategy during batch mode upload workflow for first dataset
-    if (
-      !this.store.uploadWorkflow.active ||
-      !this.store.uploadWorkflow.batchMode ||
-      !this.store.uploadIsFirstDataset
+  const strategy = getDimensionStrategy();
+  store.setUploadDimensionStrategy(strategy);
+}
+
+async function initialize() {
+  if (initializing.value) {
+    reinitializeFlag = true;
+    return;
+  }
+  initializing.value = true;
+  do {
+    reinitializeFlag = false;
+    await initializeImplementation();
+  } while (reinitializeFlag);
+  initializing.value = false;
+}
+
+async function initializeImplementation() {
+  const fetchedItems = await store.api.getItems(props.datasetId);
+
+  girderItems.value = fetchedItems;
+
+  const names = fetchedItems.map((item: IGirderItem) => item.name);
+
+  transcode.value = !names.every((name: string) =>
+    name.toLowerCase().endsWith(".nd2"),
+  );
+
+  if (names.length > 1) {
+    collectFilenameMetadata2(names).forEach((filenameData) => {
+      addSizeToDimension(filenameData.guess, filenameData.values.length, {
+        source: Sources.Filename,
+        data: filenameData,
+      });
+    });
+  }
+
+  const fileExtensions = names.map((name: string) => {
+    const parts = name.split(".");
+    return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
+  });
+  const hasOibFiles = fileExtensions.includes("oib");
+
+  if (hasOibFiles) {
+    try {
+      for (const item of fetchedItems) {
+        if (item.name.toLowerCase().endsWith(".oib")) {
+          try {
+            await store.api.createLargeImage(item);
+            await new Promise((r) => setTimeout(r, 5000));
+          } catch (createError) {
+            logError(
+              `Error creating large image for ${item.name}:`,
+              createError,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      logError("Error in OIB pre-processing:", error);
+    }
+  }
+
+  initTotal.value = fetchedItems.length;
+  initCompleted.value = 0;
+  initPending.value = fetchedItems.map((item: IGirderItem) => item.name);
+  initInFlight.value = [];
+  initError.value = null;
+
+  const limit = pLimit(4);
+
+  try {
+    const promises = fetchedItems.map((item: IGirderItem, idx: number) =>
+      limit(async () => {
+        try {
+          initInFlight.value.push(item.name);
+
+          const tilesMeta = await pRetry(
+            async () => store.api.getTiles(item),
+            {
+              retries: hasOibFiles ? 15 : 10,
+              onFailedAttempt: (error: any) => {
+                const attemptNumber = error?.attemptNumber || 0;
+                const message =
+                  error?.response?.data?.message || error?.message || "";
+                logError(
+                  `Error retrieving tiles for item ${item._id} (attempt ${attemptNumber}):`,
+                  message,
+                );
+
+                if (
+                  !hasOibFiles &&
+                  error?.response?.data?.message !==
+                    "No large image file in this item."
+                ) {
+                  throw new AbortError(message);
+                }
+              },
+              factor: 1,
+              minTimeout: hasOibFiles ? 3000 : 1000,
+              maxTimeout: hasOibFiles ? 3000 : 1000,
+              randomize: false,
+            },
+          );
+
+          const internalMetadata = await pRetry(
+            async () => store.api.getTilesInternalMetadata(item),
+            { retries: 3 },
+          );
+
+          initCompleted.value++;
+          initPending.value = initPending.value.filter(
+            (name) => name !== item.name,
+          );
+          initInFlight.value = initInFlight.value.filter(
+            (name) => name !== item.name,
+          );
+
+          return { idx, tilesMetadata: tilesMeta, internalMetadata };
+        } catch (error: any) {
+          initInFlight.value = initInFlight.value.filter(
+            (name) => name !== item.name,
+          );
+
+          initError.value = {
+            name: item.name,
+            message:
+              error?.response?.data?.message ||
+              error?.message ||
+              "Unknown error",
+          };
+          throw error;
+        }
+      }),
+    );
+
+    const promiseResults = await Promise.all(promises);
+    promiseResults.sort((a: any, b: any) => a.idx - b.idx);
+    tilesMetadata.value = promiseResults.map((r: any) => r.tilesMetadata);
+    tilesInternalMetadata.value = promiseResults.map(
+      (r: any) => r.internalMetadata,
+    );
+  } catch (error) {
+    logError("Failed to process tiles metadata:", error);
+    throw error;
+  }
+
+  if (!tilesMetadata.value || !tilesInternalMetadata.value) {
+    logError("Failed to retrieve tiles or internal metadata after retries");
+    throw "Could not retrieve tiles from Girder";
+  }
+
+  const firstItem = tilesMetadata.value[0];
+  rgbBandCount.value = firstItem?.bandCount || 0;
+  isRGBFile.value = detectColorVsChannels(firstItem);
+
+  let maxFramesPerItem = 0;
+  let hasFileVariable = false;
+  tilesMetadata.value.forEach((tile, tileIdx) => {
+    const frames: number = tile.frames?.length || 1;
+    maxFramesPerItem = Math.max(maxFramesPerItem, frames);
+    if (tile.IndexRange && tile.IndexStride) {
+      hasFileVariable = true;
+      for (const dim in dimensionNames) {
+        const indexDim = `Index${dim}`;
+        const range = tile.IndexRange[indexDim];
+        if (range) {
+          addSizeToDimension(dim as TDimensions, range, {
+            source: Sources.File,
+            data: {
+              [tileIdx]: {
+                range: range,
+                stride: tile.IndexStride[indexDim],
+                values: dim === "C" ? tile.channels : null,
+              },
+            },
+          });
+        }
+      }
+    }
+  });
+
+  if (!hasFileVariable) {
+    logWarning(
+      `[MultiSourceConfig] No file variables found, adding Images dimension for Z with size=${maxFramesPerItem}`,
+    );
+    addSizeToDimension(
+      "Z",
+      maxFramesPerItem,
+      { source: Sources.Images, data: null },
+      "All frames per item",
+    );
+  }
+
+  resetDimensionsToDefault();
+}
+
+async function submit() {
+  const jsonId = await generateJson();
+
+  emit("generatedJson", jsonId, lastGeneratedConfig.value);
+
+  if (!jsonId) {
+    return;
+  }
+  if (props.autoDatasetRoute) {
+    (instance as any).$router.push({
+      name: "dataset",
+      params: { datasetId: props.datasetId },
+    });
+  }
+}
+
+async function generateJson(): Promise<string | null> {
+  let channels: string[] | null = null;
+  const channelAssignment = assignments.C?.value;
+  if (channelAssignment) {
+    switch (channelAssignment.source) {
+      case Sources.File: {
+        const fileData = channelAssignment.data as IFileSourceData;
+        const channelsPerIdx = [] as string[][];
+        for (const itemIdx in fileData) {
+          const values = fileData[itemIdx].values;
+          if (values) {
+            for (let chanIdx = 0; chanIdx < values.length; ++chanIdx) {
+              if (!channelsPerIdx[chanIdx]) {
+                channelsPerIdx[chanIdx] = [];
+              }
+              if (!channelsPerIdx[chanIdx].includes(values[chanIdx])) {
+                channelsPerIdx[chanIdx].push(values[chanIdx]);
+              }
+            }
+          }
+        }
+        channels = [];
+        for (const channelsAtIdx of channelsPerIdx) {
+          channels.push(channelsAtIdx.join("/"));
+        }
+        break;
+      }
+      case Sources.Filename: {
+        const filenameData = channelAssignment.data as IFilenameSourceData;
+        channels = filenameData.values;
+        break;
+      }
+      case Sources.Images:
+        channels = [...Array(channelAssignment.size).keys()].map(
+          (id) => `Default ${id}`,
+        );
+        break;
+    }
+  }
+  if (channels === null || channels.length === 0) {
+    channels = ["Default"];
+  }
+
+  const xyLabels: string[] | null = extractDimensionLabels("XY");
+  const zLabels: string[] | null = extractDimensionLabels("Z");
+  const tLabels: string[] | null = extractDimensionLabels("T");
+
+  if (isMultiBandRGBFile.value && splitRGBBands.value) {
+    const bandSuffixes = [" - Red", " - Green", " - Blue"];
+    const expandedChannels: string[] = [];
+    for (const ch of channels) {
+      for (let b = 0; b < rgbBandCount.value; b++) {
+        expandedChannels.push(`${ch}${bandSuffixes[b] || `_band${b}`}`);
+      }
+    }
+    channels = expandedChannels;
+  }
+
+  const sources: ICompositingSource[] | IBasicSource[] = [];
+
+  if (shouldDoCompositing.value) {
+    const compositingSources: ICompositingSource[] =
+      sources as ICompositingSource[];
+    if (!tilesMetadata.value) {
+      return null;
+    }
+    for (
+      let itemIdx = 0;
+      itemIdx < girderItems.value.length;
+      ++itemIdx
     ) {
-      return;
+      const item = girderItems.value[itemIdx];
+      const nFrames = tilesMetadata.value[itemIdx].frames?.length || 1;
+
+      if (isMultiBandRGBFile.value && splitRGBBands.value) {
+        for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
+          for (let bandIdx = 0; bandIdx < rgbBandCount.value; bandIdx++) {
+            compositingSources.push({
+              path: item.name,
+              xySet: getValueFromAssignments("XY", itemIdx, frameIdx),
+              zSet: getValueFromAssignments("Z", itemIdx, frameIdx),
+              tSet: getValueFromAssignments("T", itemIdx, frameIdx),
+              cSet: bandIdx,
+              frames: [frameIdx],
+              style: { bands: [{ band: bandIdx + 1 }] },
+            });
+          }
+        }
+      } else {
+        for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
+          compositingSources.push({
+            path: item.name,
+            xySet: getCompositingValueFromAssignments("XY", itemIdx, frameIdx),
+            zSet: getCompositingValueFromAssignments("Z", itemIdx, frameIdx),
+            tSet: getCompositingValueFromAssignments("T", itemIdx, frameIdx),
+            cSet: getCompositingValueFromAssignments("C", itemIdx, frameIdx),
+            frames: [frameIdx],
+          });
+        }
+      }
+    }
+    const { mm_x, mm_y } = tilesMetadata.value![0];
+    const { sizeX, sizeY } = tilesMetadata.value![0];
+    const framesMetadata =
+      tilesInternalMetadata.value![0].nd2_frame_metadata;
+    const coordinates: IGeoJSPositionWithTransform[] = framesMetadata.map(
+      (f: any) => {
+        const framePos = f.position.stagePositionUm;
+        const pos = {
+          x: framePos[0] / (mm_x * 1000),
+          y: framePos[1] / (mm_y * 1000),
+          s11: 1,
+          s12: 0,
+          s21: 0,
+          s22: 1,
+        };
+        if (
+          tilesInternalMetadata.value![0].nd2 &&
+          tilesInternalMetadata.value![0].nd2.channels
+        ) {
+          const chan = tilesInternalMetadata.value![0].nd2.channels;
+          const chan0 =
+            chan.volume !== undefined ? chan.volume : chan[0].volume;
+          if (
+            chan0.cameraTransformationMatrix &&
+            (Math.abs(chan0.cameraTransformationMatrix[0] - 1) > 0.01 ||
+              Math.abs(chan0.cameraTransformationMatrix[3] - 1) > 0.01)
+          ) {
+            if (
+              Math.abs(chan0.cameraTransformationMatrix[0] - -1) < 0.01 &&
+              Math.abs(chan0.cameraTransformationMatrix[3] - -1) < 0.01
+            ) {
+              pos.s11 = -1.0;
+              pos.s12 = 0.0;
+              pos.s21 = 0.0;
+              pos.s22 = -1.0;
+            } else {
+              pos.s11 = chan0.cameraTransformationMatrix[0];
+              pos.s12 = chan0.cameraTransformationMatrix[1];
+              pos.s21 = chan0.cameraTransformationMatrix[2];
+              pos.s22 = chan0.cameraTransformationMatrix[3];
+            }
+          }
+        }
+        return pos;
+      },
+    );
+    const corners = [
+      { x: 0, y: 0 },
+      { x: sizeX, y: 0 },
+      { x: 0, y: sizeY },
+      { x: sizeX, y: sizeY },
+    ];
+    const transformedCorners = corners.map((corner) => ({
+      x:
+        (coordinates[0]?.s11 ?? 1) * corner.x +
+        (coordinates[0]?.s12 ?? 0) * corner.y,
+      y:
+        (coordinates[0]?.s21 ?? 0) * corner.x +
+        (coordinates[0]?.s22 ?? 1) * corner.y,
+    }));
+    const offsetMin = {
+      x: Math.min(...transformedCorners.map((c) => c.x)),
+      y: Math.min(...transformedCorners.map((c) => c.y)),
+    };
+    const offsetMax = {
+      x: Math.max(...transformedCorners.map((c) => c.x)),
+      y: Math.max(...transformedCorners.map((c) => c.y)),
+    };
+    const minCoordinate = {
+      x:
+        Math.min(...coordinates.map((coordinate) => coordinate.x)) +
+        offsetMin.x,
+      y:
+        Math.min(...coordinates.map((coordinate) => coordinate.y)) -
+        offsetMax.y,
+    };
+    const maxCoordinate = {
+      x:
+        Math.max(...coordinates.map((coordinate) => coordinate.x)) +
+        offsetMax.x,
+      y:
+        Math.max(...coordinates.map((coordinate) => coordinate.y)) -
+        offsetMin.y,
+    };
+    let finalCoordinates = coordinates.map((coordinate) => ({
+      x: Math.round(coordinate.x - minCoordinate.x),
+      y: Math.round(maxCoordinate.y - coordinate.y),
+      s11: coordinate.s11,
+      s12: coordinate.s12,
+      s21: coordinate.s21,
+      s22: coordinate.s22,
+    }));
+    compositingSources.forEach((source, sourceIdx) => {
+      source.position =
+        finalCoordinates[Math.floor(sourceIdx / channels!.length)];
+      source.xySet = 0;
+    });
+  } else {
+    const basicSources: IBasicSource[] = sources as IBasicSource[];
+    for (
+      let itemIdx = 0;
+      itemIdx < girderItems.value.length;
+      ++itemIdx
+    ) {
+      const item = girderItems.value[itemIdx];
+      if (!tilesMetadata.value || !tilesInternalMetadata.value) {
+        continue;
+      }
+
+      if (isMultiBandRGBFile.value && splitRGBBands.value) {
+        const nFrames = tilesMetadata.value[itemIdx].frames?.length || 1;
+        for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
+          for (let bandIdx = 0; bandIdx < rgbBandCount.value; bandIdx++) {
+            basicSources.push({
+              path: item.name,
+              style: { bands: [{ band: bandIdx + 1 }] },
+              c: bandIdx,
+              tValues: [getValueFromAssignments("T", itemIdx, frameIdx)],
+              zValues: [getValueFromAssignments("Z", itemIdx, frameIdx)],
+              xyValues: [getValueFromAssignments("XY", itemIdx, frameIdx)],
+            });
+          }
+        }
+      } else {
+        const framesAsAxes: TFramesAsAxes = {};
+        const dimValues: { [dim in TLowDim]?: number } = {};
+
+        for (const dim in assignments) {
+          const upDim = dim as TUpDim;
+          const lowDim = dim.toLowerCase() as TLowDim;
+          const assignment = assignments[upDim];
+          if (!assignment) {
+            continue;
+          }
+          let dimValue = 0;
+          switch (assignment.value.source) {
+            case Sources.File: {
+              const fileSource = assignment.value.data;
+              framesAsAxes[lowDim] = fileSource[itemIdx].stride;
+              break;
+            }
+            case Sources.Filename: {
+              const filenameSource = assignment.value.data;
+              dimValue = filenameSource.valueIdxPerFilename[item.name];
+              break;
+            }
+            case Sources.Images:
+              framesAsAxes[lowDim] = 1;
+              break;
+          }
+          dimValues[lowDim] = dimValue;
+        }
+        const newSource: IBasicSource = {
+          path: item.name,
+          framesAsAxes,
+        };
+        for (const dim in dimValues) {
+          const lowDim = dim as TLowDim;
+          newSource[`${lowDim}Values`] = [dimValues[lowDim]!];
+        }
+        basicSources.push(newSource);
+      }
+    }
+  }
+
+  const configData = {
+    channels,
+    sources,
+    uniformSources: true,
+    singleBand: isMultiBandRGBFile.value,
+  };
+
+  lastGeneratedConfig.value = configData;
+  emit("configData", configData);
+
+  logs.value = "";
+  isUploading.value = true;
+  transcodeProgress.value = undefined;
+  if (transcode.value) {
+    progressStatusText.value = "Preparing transcoding";
+  } else {
+    progressStatusText.value = "Preparing dataset";
+  }
+
+  const eventCallback = (jobData: IJobEventData) => {
+    if (jobData.text) {
+      logs.value += jobData.text;
+      emit("log", logs.value);
+      const progress = parseTranscodeOutput(jobData.text);
+      progressStatusText.value = progress.progressStatusText;
+      if (progress.transcodeProgress !== undefined)
+        transcodeProgress.value = progress.transcodeProgress;
+      if (progress.currentFrame !== undefined)
+        currentFrame.value = progress.currentFrame;
+      if (progress.totalFrames !== undefined)
+        totalFrames.value = progress.totalFrames;
+    }
+  };
+
+  const datasetId = props.datasetId;
+  try {
+    const itemId = await store.addMultiSourceMetadata({
+      parentId: datasetId,
+      metadata: JSON.stringify(configData),
+      transcode: transcode.value,
+      eventCallback,
+    });
+
+    if (!itemId) {
+      throw new Error("Failed to add multi source");
     }
 
-    const strategy = this.getDimensionStrategy();
-    this.store.setUploadDimensionStrategy(strategy);
+    try {
+      const dimensionLabels = {
+        xy: xyLabels,
+        z: zLabels,
+        t: tLabels,
+      };
+      await store.api.updateDatasetMetadata(datasetId, {
+        dimensionLabels: dimensionLabels,
+      });
+      await store.girderResources.ressourceChanged(datasetId);
+    } catch (labelError) {
+      logError("Failed to store dimension labels (non-fatal):", labelError);
+    }
+
+    store.scheduleTileFramesComputation(datasetId);
+    store.scheduleMaxMergeCache(datasetId);
+    store.scheduleHistogramCache(datasetId);
+
+    return itemId;
+  } catch (error) {
+    logError("Failed to create multi source:", error);
+    return null;
+  }
+}
+
+async function reinitializeAndApplyStrategy(
+  strategy: IDimensionStrategy,
+): Promise<void> {
+  while (initializing.value) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  searchInput: string = "";
+  dimensions.value = [];
+  assignments.XY = null;
+  assignments.Z = null;
+  assignments.T = null;
+  assignments.C = null;
+  tilesMetadata.value = null;
+  tilesInternalMetadata.value = null;
+  girderItems.value = [];
   filenameVariableCount = 0;
   fileVariableCount = 0;
   imageVariableCount = 0;
   assignmentIdCount = 0;
+  initTotal.value = 0;
+  initCompleted.value = 0;
+  initPending.value = [];
+  initInFlight.value = [];
+  initError.value = null;
 
-  addSizeToDimension(
-    guess: TDimensions,
-    size: number,
-    sourceData:
-      | {
-          source: Sources.File;
-          data: IFileSourceData;
-        }
-      | {
-          source: Sources.Filename;
-          data: IFilenameSourceData;
-        }
-      | {
-          source: Sources.Images;
-          data: null;
-        },
-    name: string | null = null,
-  ): void {
-    if (size === 0) {
-      return;
-    }
-    const { source, data } = sourceData;
-
-    // Merge the dimension when the source is file and source and guess match
-    const dim =
-      source === Sources.File &&
-      this.dimensions.find(
-        (dimension) => dimension.source === source && dimension.guess === guess,
-      );
-    if (dim) {
-      dim.data = {
-        ...(dim.data as IFileSourceData),
-        ...(data as IFileSourceData),
-      };
-      dim.size = Math.max(dim.size, size);
-      return;
-    }
-
-    // If no merge, compute the name if needed and add to this.dimensions
-    let computedName = name;
-    if (!computedName) {
-      computedName = "";
-      switch (source) {
-        case Sources.Filename:
-          computedName = `Filename variable ${++this.filenameVariableCount}`;
-          break;
-        case Sources.File:
-          computedName = `Metadata ${++this.fileVariableCount} (${
-            this.dimensionNames[guess]
-          })`;
-          break;
-        case Sources.Images:
-          computedName = `Image variable ${++this.imageVariableCount}`;
-          break;
-      }
-    }
-    const newDimension: TAssignmentOption = {
-      id: this.assignmentIdCount++,
-      guess,
-      size,
-      name: computedName,
-      ...sourceData,
-    };
-    this.dimensions = [...this.dimensions, newDimension];
+  initializing.value = true;
+  try {
+    await initializeImplementation();
+  } finally {
+    initializing.value = false;
   }
 
-  girderItems: IGirderItem[] = [];
+  applyDimensionStrategy(strategy);
+}
 
-  getDefaultAssignmentItem(assignment: string) {
-    const assignmentOption =
-      this.dimensions.find(
-        ({ guess, source, size }) =>
-          source === Sources.File && size > 0 && guess === assignment,
-      ) ||
-      this.dimensions.find(
-        ({ guess, size }) => size > 0 && guess === assignment,
-      ) ||
-      null;
-    if (assignmentOption) {
-      return this.assignmentOptionToAssignmentItem(assignmentOption);
-    } else {
-      return null;
-    }
-  }
+function applyDimensionStrategy(strategy: IDimensionStrategy): void {
+  transcode.value = strategy.transcode;
 
-  // Used by other component to check if this one is initialized
-  public initialized: Promise<void> | null = null;
+  for (const dim of ["XY", "Z", "T", "C"] as const) {
+    const savedStrategy = strategy[dim];
 
-  mounted() {
-    this.initialized = this.initialize();
-  }
-
-  initializing = false;
-  reinitialize = false;
-  @Watch("datasetId")
-  async initialize() {
-    if (this.initializing) {
-      this.reinitialize = true;
-      return;
-    }
-    this.initializing = true;
-    do {
-      this.reinitialize = false;
-      await this.initializeImplementation();
-    } while (this.reinitialize);
-    this.initializing = false;
-  }
-
-  async initializeImplementation() {
-    // Get tile information
-    const items = await this.store.api.getItems(this.datasetId);
-
-    this.girderItems = items;
-
-    //  Get info from filename
-    const names = items.map((item: IGirderItem) => item.name);
-
-    // Enable transcoding by default except for ND2 files
-    this.transcode = !names.every((name: string) =>
-      name.toLowerCase().endsWith(".nd2"),
-    );
-
-    // Add variables from filenames if there is more than one file
-    if (names.length > 1) {
-      collectFilenameMetadata2(names).forEach((filenameData) => {
-        this.addSizeToDimension(
-          filenameData.guess,
-          filenameData.values.length,
-          {
-            source: Sources.Filename,
-            data: filenameData,
-          },
-        );
-      });
-    }
-
-    // Check for OIB files; for whatever reason, these need to be
-    // explicitly turned into large images before we can get information from it
-    const fileExtensions = names.map((name: string) => {
-      const parts = name.split(".");
-      return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
-    });
-    const hasOibFiles = fileExtensions.includes("oib");
-
-    // For OIB files, explicitly try to create a large image first
-    if (hasOibFiles) {
-      try {
-        // Process each OIB file to ensure it has a large image
-        for (const item of items) {
-          if (item.name.toLowerCase().endsWith(".oib")) {
-            try {
-              await this.store.api.createLargeImage(item);
-              // Wait longer for OIB processing
-              await new Promise((r) => setTimeout(r, 5000));
-            } catch (createError) {
-              logError(
-                `Error creating large image for ${item.name}:`,
-                createError,
-              );
-              // Continue anyway - the item might already have a large image
-            }
-          }
-        }
-      } catch (error) {
-        logError("Error in OIB pre-processing:", error);
-      }
-    }
-
-    // Initialize progress tracking
-    this.initTotal = items.length;
-    this.initCompleted = 0;
-    this.initPending = items.map((item: IGirderItem) => item.name);
-    this.initInFlight = [];
-    this.initError = null;
-
-    const limit = pLimit(4);
-
-    try {
-      const promises = items.map((item: IGirderItem, idx: number) =>
-        limit(async () => {
-          try {
-            // Mark file as in flight
-            this.initInFlight.push(item.name);
-
-            // Tiles metadata with retries and fixed delay depending on OIB
-            const tilesMetadata = await pRetry(
-              async () => {
-                return this.store.api.getTiles(item);
-              },
-              {
-                retries: hasOibFiles ? 15 : 10,
-                onFailedAttempt: (error: any) => {
-                  const attemptNumber = error?.attemptNumber || 0;
-                  const message =
-                    error?.response?.data?.message || error?.message || "";
-                  logError(
-                    `Error retrieving tiles for item ${item._id} (attempt ${attemptNumber}):`,
-                    message,
-                  );
-
-                  // For non-OIB files:
-                  // - Keep retrying when the large image isn't ready yet
-                  // - Abort early for any other error
-                  if (
-                    !hasOibFiles &&
-                    error?.response?.data?.message !==
-                      "No large image file in this item."
-                  ) {
-                    throw new AbortError(message);
-                  }
-                },
-                factor: 1,
-                minTimeout: hasOibFiles ? 3000 : 1000,
-                maxTimeout: hasOibFiles ? 3000 : 1000,
-                randomize: false,
-              },
-            );
-
-            // Internal metadata with modest retries
-            const internalMetadata = await pRetry(
-              async () => this.store.api.getTilesInternalMetadata(item),
-              { retries: 3 },
-            );
-
-            // Update progress on successful completion
-            this.initCompleted++;
-            this.initPending = this.initPending.filter(
-              (name) => name !== item.name,
-            );
-            this.initInFlight = this.initInFlight.filter(
-              (name) => name !== item.name,
-            );
-
-            return { idx, tilesMetadata, internalMetadata };
-          } catch (error: any) {
-            // Remove from in-flight on error
-            this.initInFlight = this.initInFlight.filter(
-              (name) => name !== item.name,
-            );
-
-            // Set error state and stop processing
-            this.initError = {
-              name: item.name,
-              message:
-                error?.response?.data?.message ||
-                error?.message ||
-                "Unknown error",
-            };
-            throw error;
-          }
-        }),
-      );
-
-      const promiseResults = await Promise.all(promises);
-      // Guarantee ordering when rebuilding arrays from concurrent work
-      promiseResults.sort((a: any, b: any) => a.idx - b.idx);
-      this.tilesMetadata = promiseResults.map((r: any) => r.tilesMetadata);
-      this.tilesInternalMetadata = promiseResults.map(
-        (r: any) => r.internalMetadata,
-      );
-    } catch (error) {
-      // If any file failed completely, stop and show error
-      logError("Failed to process tiles metadata:", error);
-      throw error;
-    }
-
-    if (!this.tilesMetadata || !this.tilesInternalMetadata) {
-      logError("Failed to retrieve tiles or internal metadata after retries");
-      throw "Could not retrieve tiles from Girder";
-    }
-
-    // Check for RGB bands
-    const firstItem = this.tilesMetadata[0];
-    this.rgbBandCount = firstItem?.bandCount || 0;
-    this.isRGBFile = this.detectColorVsChannels(firstItem);
-
-    let maxFramesPerItem = 0;
-    let hasFileVariable = false;
-    this.tilesMetadata.forEach((tile, tileIdx) => {
-      const frames: number = tile.frames?.length || 1;
-      maxFramesPerItem = Math.max(maxFramesPerItem, frames);
-      if (tile.IndexRange && tile.IndexStride) {
-        hasFileVariable = true;
-        for (const dim in this.dimensionNames) {
-          const indexDim = `Index${dim}`;
-          const range = tile.IndexRange[indexDim];
-          if (range) {
-            this.addSizeToDimension(
-              // We know that the keys of this.dimensionNames are of type TDimensions
-              dim as TDimensions,
-              range,
-              {
-                source: Sources.File,
-                data: {
-                  [tileIdx]: {
-                    range: range,
-                    stride: tile.IndexStride[indexDim],
-                    values: dim === "C" ? tile.channels : null,
-                  },
-                },
-              },
-            );
-          }
-        }
-      }
-    });
-
-    if (!hasFileVariable) {
+    if (!savedStrategy) {
       logWarning(
-        `[MultiSourceConfig] No file variables found, adding Images dimension for Z with size=${maxFramesPerItem}`,
+        `[MultiSourceConfig] No saved strategy for ${dim}, setting to null`,
       );
-      this.addSizeToDimension(
-        "Z",
-        maxFramesPerItem,
-        {
-          source: Sources.Images,
-          data: null,
-        },
-        "All frames per item",
+      assignments[dim] = null;
+      continue;
+    }
+
+    let matchingDimension = dimensions.value.find(
+      (d) =>
+        d.source === savedStrategy.source &&
+        d.guess === savedStrategy.guess &&
+        d.size > 0,
+    );
+
+    if (!matchingDimension) {
+      logWarning(
+        `[MultiSourceConfig] No exact match for ${dim}, trying guess-only match`,
+      );
+      matchingDimension = dimensions.value.find(
+        (d) => d.guess === savedStrategy.guess && d.size > 0,
       );
     }
 
-    this.resetDimensionsToDefault();
-  }
-
-  resetDimensionsToDefault() {
-    for (const dim in this.dimensionNames) {
-      this.assignments[dim as TUpDim] = this.getDefaultAssignmentItem(dim);
-    }
-  }
-
-  areDimensionsSetToDefault() {
-    return Object.keys(this.dimensionNames).every(
-      (dim) =>
-        this.getDefaultAssignmentItem(dim)?.value ===
-        this.assignments[dim as TUpDim]?.value,
-    );
-  }
-
-  isAssignmentImmutable(assignment: IAssignment) {
-    // Assignemnt is immutable when it comes from the metadata of an nd2 file
-    const value = assignment.value;
-    if (!(value.source === Sources.File)) {
-      return false;
-    }
-    const itemIndices = Object.keys(value.data).map(Number);
-    const allItemsAreNd2 = itemIndices.every((idx) =>
-      this.girderItems[idx].name.toLowerCase().endsWith(".nd2"),
-    );
-    return allItemsAreNd2;
-  }
-
-  assignmentDisabled(dimension: TUpDim) {
-    const currentAssignment = this.assignments[dimension];
-    return (
-      (currentAssignment && this.isAssignmentImmutable(currentAssignment)) ||
-      this.assignmentItems.length === 0
-    );
-  }
-
-  clearDisabled(dimension: TUpDim) {
-    const currentAssignment = this.assignments[dimension];
-    return !currentAssignment || this.isAssignmentImmutable(currentAssignment);
-  }
-
-  /**
-   * Check if a variable item is currently assigned to any dimension
-   */
-  isVariableAssigned(item: TAssignmentOption): boolean {
-    return Object.values(this.assignments).some(
-      (assignment) => assignment?.value.id === item.id,
-    );
-  }
-
-  /**
-   * Get the dimension that a variable is assigned to
-   */
-  getAssignedDimension(item: TAssignmentOption): string | null {
-    for (const [dim, assignment] of Object.entries(this.assignments)) {
-      if (assignment?.value.id === item.id) {
-        return dim;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Get the color for the dimension a variable is assigned to
-   */
-  getAssignedDimensionColor(item: TAssignmentOption): string {
-    const dim = this.getAssignedDimension(item);
-    if (dim && dim in this.variableColors) {
-      return this.variableColors[dim as TUpDim];
-    }
-    return "rgba(255, 255, 255, 0.3)";
-  }
-
-  /**
-   * Get CSS classes for an assignment slot based on its state
-   */
-  getSlotClasses(dimension: TUpDim): Record<string, boolean> {
-    const hasAssignment = !!this.assignments[dimension];
-    const hasAvailableVariables = this.assignmentItems.length > 0;
-    const isImmutable =
-      hasAssignment && this.isAssignmentImmutable(this.assignments[dimension]!);
-
-    return {
-      "assignment-slot--filled": hasAssignment,
-      "assignment-slot--empty-available":
-        !hasAssignment && hasAvailableVariables,
-      "assignment-slot--empty-none": !hasAssignment && !hasAvailableVariables,
-      "assignment-slot--immutable": isImmutable,
-    };
-  }
-
-  /**
-   * Get style for an assignment slot (ghost color when empty and no variables)
-   */
-  getSlotStyle(dimension: TUpDim): Record<string, string> {
-    const color = this.variableColors[dimension];
-    const hasAssignment = !!this.assignments[dimension];
-    const hasAvailableVariables = this.assignmentItems.length > 0;
-
-    if (!hasAssignment && !hasAvailableVariables) {
-      // Ghost state: faded dimension color
-      return {
-        backgroundColor: `${color}15`,
-        borderColor: `${color}40`,
-      };
-    }
-    return {};
-  }
-
-  /**
-   * Get style for the badge inside an assignment slot - uses slot's dimension color
-   */
-  getAssignmentBadgeStyleForSlot(dimension: TUpDim): Record<string, string> {
-    const assignment = this.assignments[dimension];
-    if (!assignment) return {};
-
-    // Use the slot's dimension color, not the variable's guess color
-    const dimensionColor = this.variableColors[dimension];
-    return {
-      borderLeftColor: dimensionColor,
-      backgroundColor: `${dimensionColor}15`,
-    };
-  }
-
-  /**
-   * Get the text of an assignment for a dimension
-   */
-  getAssignmentText(dimension: TUpDim): string {
-    return this.assignments[dimension]?.text ?? "";
-  }
-
-  /**
-   * Get the values preview for an assignment
-   */
-  getAssignmentValues(dimension: TUpDim): string {
-    const assignment = this.assignments[dimension];
-    if (!assignment) return "";
-    return this.getItemValues(assignment.value);
-  }
-
-  /**
-   * Get the size of an assignment
-   */
-  getAssignmentSize(dimension: TUpDim): number {
-    return this.assignments[dimension]?.value.size ?? 0;
-  }
-
-  /**
-   * Get values preview for a dimension option (for dropdown and badges)
-   */
-  getItemValues(item: TAssignmentOption): string {
-    switch (item.source) {
-      case Sources.Filename:
-        return this.sliceAndJoin((item.data as IFilenameSourceData).values, 24);
-      case Sources.File:
-        const allValues = this.extractFileSourceValues(
-          item.data as IFileSourceData,
-        );
-        if (allValues.length > 0) {
-          return this.sliceAndJoin(allValues, 24);
-        }
-        return `${item.size} values`;
-      case Sources.Images:
-        return `${item.size} values`;
-      default:
-        return "";
-    }
-  }
-
-  /**
-   * Check if an assignment for a dimension is immutable
-   */
-  isAssignmentImmutableForDimension(dimension: TUpDim): boolean {
-    const assignment = this.assignments[dimension];
-    return assignment ? this.isAssignmentImmutable(assignment) : false;
-  }
-
-  submitEnabled() {
-    const filledAssignments = Object.values(this.assignments).reduce(
-      (count, assignment) => (assignment ? ++count : count),
-      0,
-    );
-    return (
-      !this.initializing &&
-      (filledAssignments >= this.items.length || filledAssignments >= 4)
-    );
-  }
-
-  getValueFromAssignments(
-    dim: TDimensions,
-    itemIdx: number,
-    frameIdx: number,
-  ): number {
-    const assignmentValue = this.assignments[dim]?.value;
-    if (!assignmentValue) {
-      return 0;
-    }
-    switch (assignmentValue.source) {
-      case Sources.File:
-        const fileData = assignmentValue.data as IFileSourceData;
-        return fileData[itemIdx]
-          ? Math.floor(frameIdx / fileData[itemIdx].stride) %
-              fileData[itemIdx].range
-          : 0;
-      case Sources.Filename:
-        const filenameData = assignmentValue.data as IFilenameSourceData;
-        const filename = this.girderItems[itemIdx].name;
-        return filenameData.valueIdxPerFilename[filename];
-      case Sources.Images:
-        return frameIdx;
-    }
-  }
-
-  getCompositingValueFromAssignments(
-    dim: TDimensions,
-    itemIdx: number,
-    frameIdx: number,
-  ): number {
-    const assignmentValue = this.assignments[dim]?.value;
-    if (!assignmentValue) {
-      return 0;
-    }
-    switch (assignmentValue.source) {
-      case Sources.File:
-        const fileData = assignmentValue.data as IFileSourceData;
-        return fileData[itemIdx]
-          ? Math.floor(frameIdx / fileData[itemIdx].stride) %
-              fileData[itemIdx].range
-          : 0;
-      case Sources.Filename:
-        const filenameData = assignmentValue.data as IFilenameSourceData;
-        const filename = this.girderItems[itemIdx].name;
-        return filenameData.valueIdxPerFilename[filename];
-      case Sources.Images:
-        return frameIdx;
-    }
-  }
-
-  async submit() {
-    const jsonId = await this.generateJson();
-
-    this.$emit("generatedJson", jsonId, this.lastGeneratedConfig);
-
-    if (!jsonId) {
-      return;
-    }
-    if (this.autoDatasetRoute) {
-      this.$router.push({
-        name: "dataset",
-        params: { datasetId: this.datasetId },
-      });
-    }
-  }
-
-  async generateJson(): Promise<string | null> {
-    // Find the channel names
-    let channels: string[] | null = null;
-    const channelAssignment = this.assignments.C?.value;
-    if (channelAssignment) {
-      switch (channelAssignment.source) {
-        case Sources.File:
-          // For each channel index, find the possible different channel names
-          const fileData = channelAssignment.data as IFileSourceData;
-          const channelsPerIdx = [] as string[][];
-          for (const itemIdx in fileData) {
-            const values = fileData[itemIdx].values;
-            if (values) {
-              for (let chanIdx = 0; chanIdx < values.length; ++chanIdx) {
-                if (!channelsPerIdx[chanIdx]) {
-                  channelsPerIdx[chanIdx] = [];
-                }
-                if (!channelsPerIdx[chanIdx].includes(values[chanIdx])) {
-                  channelsPerIdx[chanIdx].push(values[chanIdx]);
-                }
-              }
-            }
-          }
-          channels = [];
-          for (const channelsAtIdx of channelsPerIdx) {
-            channels.push(channelsAtIdx.join("/"));
-          }
-          break;
-        case Sources.Filename:
-          const filenameData = channelAssignment.data as IFilenameSourceData;
-          channels = filenameData.values;
-          break;
-        case Sources.Images:
-          channels = [...Array(channelAssignment.size).keys()].map(
-            (id) => `Default ${id}`,
-          );
-          break;
-      }
-    }
-    if (channels === null || channels.length === 0) {
-      channels = ["Default"];
-    }
-
-    // Extract labels for other dimensions
-    const xyLabels: string[] | null = this.extractDimensionLabels("XY");
-    const zLabels: string[] | null = this.extractDimensionLabels("Z");
-    const tLabels: string[] | null = this.extractDimensionLabels("T");
-
-    // Handle RGB expansion
-    if (this.isMultiBandRGBFile && this.splitRGBBands) {
-      // Assuming 3 bands (R,G,B), adjust as needed if dynamic
-      const bandSuffixes = [" - Red", " - Green", " - Blue"];
-      const expandedChannels: string[] = [];
-      for (const ch of channels) {
-        for (let b = 0; b < this.rgbBandCount; b++) {
-          expandedChannels.push(`${ch}${bandSuffixes[b] || `_band${b}`}`);
-        }
-      }
-      channels = expandedChannels;
-    }
-
-    // See specifications of multi source here:
-    // https://girder.github.io/large_image/multi_source_specification.html
-    // The sources have two possible interfaces depending on compositing
-    const sources: ICompositingSource[] | IBasicSource[] = [];
-
-    if (this.shouldDoCompositing) {
-      // Compositing
-      const compositingSources: ICompositingSource[] =
-        sources as ICompositingSource[];
-      if (!this.tilesMetadata) {
-        return null;
-      }
-      // For each frame, find (XY, Z, T, C)
-      for (let itemIdx = 0; itemIdx < this.girderItems.length; ++itemIdx) {
-        const item = this.girderItems[itemIdx];
-        const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
-
-        if (this.isMultiBandRGBFile && this.splitRGBBands) {
-          // For RGB files, create separate sources for each band
-          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-            for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
-              compositingSources.push({
-                path: item.name,
-                xySet: this.getValueFromAssignments("XY", itemIdx, frameIdx),
-                zSet: this.getValueFromAssignments("Z", itemIdx, frameIdx),
-                tSet: this.getValueFromAssignments("T", itemIdx, frameIdx),
-                cSet: bandIdx, // Map each band to its corresponding channel
-                frames: [frameIdx],
-                style: {
-                  bands: [{ band: bandIdx + 1 }],
-                },
-              });
-            }
-          }
-        } else {
-          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-            compositingSources.push({
-              path: item.name,
-              xySet: this.getCompositingValueFromAssignments(
-                "XY",
-                itemIdx,
-                frameIdx,
-              ),
-              zSet: this.getCompositingValueFromAssignments(
-                "Z",
-                itemIdx,
-                frameIdx,
-              ),
-              tSet: this.getCompositingValueFromAssignments(
-                "T",
-                itemIdx,
-                frameIdx,
-              ),
-              cSet: this.getCompositingValueFromAssignments(
-                "C",
-                itemIdx,
-                frameIdx,
-              ),
-              frames: [frameIdx],
-            });
-          }
-        }
-      }
-      const { mm_x, mm_y } = this.tilesMetadata![0];
-      const { sizeX, sizeY } = this.tilesMetadata![0];
-      const framesMetadata = this.tilesInternalMetadata![0].nd2_frame_metadata;
-      const coordinates: IGeoJSPositionWithTransform[] = framesMetadata.map(
-        (f: any) => {
-          const framePos = f.position.stagePositionUm;
-          const pos = {
-            x: framePos[0] / (mm_x * 1000),
-            y: framePos[1] / (mm_y * 1000),
-            s11: 1,
-            s12: 0,
-            s21: 0,
-            s22: 1,
-          };
-          if (
-            this.tilesInternalMetadata![0].nd2 &&
-            this.tilesInternalMetadata![0].nd2.channels
-          ) {
-            const chan = this.tilesInternalMetadata![0].nd2.channels;
-            const chan0 =
-              chan.volume !== undefined ? chan.volume : chan[0].volume;
-            /* 
-            // In David's version, if it was close to an inversion, 
-            // it would just invert the position, but this ends up being inverted
-            // from what the transformation would do. Keeping for posterity.
-            if (
-              chan0.cameraTransformationMatrix &&
-              Math.abs(chan0.cameraTransformationMatrix[0] - -1) < 0.01 &&
-              Math.abs(chan0.cameraTransformationMatrix[3] - -1)
-            ) {
-              // pos.x *= -1;
-              // pos.y *= -1;
-            }
-            */
-            if (
-              // If close to the identity matrix, then we don't need to apply the transform
-              // Only apply transform if it's not close to the identity matrix
-              chan0.cameraTransformationMatrix &&
-              (Math.abs(chan0.cameraTransformationMatrix[0] - 1) > 0.01 ||
-                Math.abs(chan0.cameraTransformationMatrix[3] - 1) > 0.01)
-            ) {
-              // If close to an inversion matrix, then just round to inversion
-              if (
-                Math.abs(chan0.cameraTransformationMatrix[0] - -1) < 0.01 &&
-                Math.abs(chan0.cameraTransformationMatrix[3] - -1) < 0.01
-              ) {
-                pos.s11 = -1.0;
-                pos.s12 = 0.0;
-                pos.s21 = 0.0;
-                pos.s22 = -1.0;
-              } else {
-                // Otherwise, apply the matrix
-                // AR note: I wonder if we should apply the matrix to the position itself as well
-                // It is hard to say without an example with a more egregious transformation
-                pos.s11 = chan0.cameraTransformationMatrix[0];
-                pos.s12 = chan0.cameraTransformationMatrix[1];
-                pos.s21 = chan0.cameraTransformationMatrix[2];
-                pos.s22 = chan0.cameraTransformationMatrix[3];
-              }
-            }
-          }
-          return pos;
-        },
+    if (!matchingDimension) {
+      logWarning(
+        `[MultiSourceConfig] No guess match for ${dim}, trying source-only match`,
       );
-      // We need to find the bounding box.
-      // The offset of the tile positions will depend on the transformation.
-      // First, define the corners of a single tile.
-      const corners = [
-        { x: 0, y: 0 },
-        { x: sizeX, y: 0 },
-        { x: 0, y: sizeY },
-        { x: sizeX, y: sizeY },
-      ];
-      // Apply the transformation to all corners
-      const transformedCorners = corners.map((corner) => ({
-        x:
-          (coordinates[0]?.s11 ?? 1) * corner.x +
-          (coordinates[0]?.s12 ?? 0) * corner.y,
-        y:
-          (coordinates[0]?.s21 ?? 0) * corner.x +
-          (coordinates[0]?.s22 ?? 1) * corner.y,
-      }));
-      // Find the minimum and maximum x and y values for the transformed corners
-      const offsetMin = {
-        x: Math.min(...transformedCorners.map((c) => c.x)),
-        y: Math.min(...transformedCorners.map((c) => c.y)),
-      };
-      const offsetMax = {
-        x: Math.max(...transformedCorners.map((c) => c.x)),
-        y: Math.max(...transformedCorners.map((c) => c.y)),
-      };
-      // Find the minimum and maximum x and y values for the coordinates
-      const minCoordinate = {
-        x:
-          Math.min(...coordinates.map((coordinate) => coordinate.x)) +
-          offsetMin.x,
-        y:
-          Math.min(...coordinates.map((coordinate) => coordinate.y)) -
-          offsetMax.y, // Notice that the math is a little funny here. That's because Y is inverted.
-      };
-      const maxCoordinate = {
-        x:
-          Math.max(...coordinates.map((coordinate) => coordinate.x)) +
-          offsetMax.x,
-        y:
-          Math.max(...coordinates.map((coordinate) => coordinate.y)) -
-          offsetMin.y, // Notice that the math is a little funny here. That's because Y is inverted.
-      };
-      let finalCoordinates = coordinates.map((coordinate) => ({
-        x: Math.round(coordinate.x - minCoordinate.x),
-        y: Math.round(maxCoordinate.y - coordinate.y),
-        s11: coordinate.s11,
-        s12: coordinate.s12,
-        s21: coordinate.s21,
-        s22: coordinate.s22,
-      }));
-      compositingSources.forEach((source, sourceIdx) => {
-        source.position =
-          finalCoordinates[Math.floor(sourceIdx / channels!.length)];
-        source.xySet = 0;
-      });
+      matchingDimension = dimensions.value.find(
+        (d) => d.source === savedStrategy.source && d.size > 0,
+      );
+    }
+
+    if (matchingDimension) {
+      assignments[dim] = assignmentOptionToAssignmentItem(matchingDimension);
     } else {
-      // No compositing
-      const basicSources: IBasicSource[] = sources as IBasicSource[];
-      for (let itemIdx = 0; itemIdx < this.girderItems.length; ++itemIdx) {
-        const item = this.girderItems[itemIdx];
-        if (!this.tilesMetadata || !this.tilesInternalMetadata) {
-          continue;
-        }
-
-        if (this.isMultiBandRGBFile && this.splitRGBBands) {
-          const nFrames = this.tilesMetadata[itemIdx].frames?.length || 1;
-          for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-            // For RGB files, create separate sources for each band
-            for (let bandIdx = 0; bandIdx < this.rgbBandCount; bandIdx++) {
-              basicSources.push({
-                path: item.name,
-                style: {
-                  bands: [{ band: bandIdx + 1 }],
-                },
-                c: bandIdx,
-                tValues: [this.getValueFromAssignments("T", itemIdx, frameIdx)],
-                zValues: [this.getValueFromAssignments("Z", itemIdx, frameIdx)],
-                xyValues: [
-                  this.getValueFromAssignments("XY", itemIdx, frameIdx),
-                ],
-              });
-            }
-          }
-        } else {
-          const framesAsAxes: TFramesAsAxes = {};
-          const dimValues: { [dim in TLowDim]?: number } = {};
-
-          for (const dim in this.assignments) {
-            const upDim = dim as TUpDim;
-            const lowDim = dim.toLowerCase() as TLowDim;
-            const assignment = this.assignments[upDim];
-            // Add file strides
-            if (!assignment) {
-              continue;
-            }
-            let dimValue = 0;
-            switch (assignment.value.source) {
-              case Sources.File:
-                const fileSource = assignment.value.data;
-                framesAsAxes[lowDim] = fileSource[itemIdx].stride;
-                break;
-
-              case Sources.Filename:
-                const filenameSource = assignment.value.data;
-                dimValue = filenameSource.valueIdxPerFilename[item.name];
-                break;
-
-              case Sources.Images:
-                framesAsAxes[lowDim] = 1;
-                break;
-            }
-            dimValues[lowDim] = dimValue;
-          }
-          const newSource: IBasicSource = {
-            path: item.name,
-            framesAsAxes,
-          };
-          for (const dim in dimValues) {
-            const lowDim = dim as TLowDim;
-            newSource[`${lowDim}Values`] = [dimValues[lowDim]!];
-          }
-          basicSources.push(newSource);
-        }
-      }
-    }
-
-    // Build config data for potential reuse
-    const configData = {
-      channels,
-      sources,
-      uniformSources: true,
-      singleBand: this.isMultiBandRGBFile,
-    };
-
-    // Store and emit the config data
-    this.lastGeneratedConfig = configData;
-    this.$emit("configData", configData);
-
-    this.logs = "";
-    this.isUploading = true;
-    this.transcodeProgress = undefined;
-    if (this.transcode) {
-      this.progressStatusText = "Preparing transcoding";
-    } else {
-      this.progressStatusText = "Preparing dataset";
-    }
-
-    const eventCallback = (jobData: IJobEventData) => {
-      if (jobData.text) {
-        this.logs += jobData.text;
-        this.$emit("log", this.logs);
-        const progress = parseTranscodeOutput(jobData.text);
-        this.progressStatusText = progress.progressStatusText;
-        if (progress.transcodeProgress !== undefined)
-          this.transcodeProgress = progress.transcodeProgress;
-        if (progress.currentFrame !== undefined)
-          this.currentFrame = progress.currentFrame;
-        if (progress.totalFrames !== undefined)
-          this.totalFrames = progress.totalFrames;
-      }
-    };
-
-    const datasetId = this.datasetId;
-    try {
-      const itemId = await this.store.addMultiSourceMetadata({
-        parentId: datasetId,
-        metadata: JSON.stringify(configData),
-        transcode: this.transcode,
-        eventCallback,
-      });
-
-      if (!itemId) {
-        throw new Error("Failed to add multi source");
-      }
-
-      // Store dimension labels as separate metadata on the dataset folder
-      try {
-        const dimensionLabels = {
-          xy: xyLabels,
-          z: zLabels,
-          t: tLabels,
-        };
-        await this.store.api.updateDatasetMetadata(datasetId, {
-          dimensionLabels: dimensionLabels,
-        });
-        // Invalidate the folder cache so the updated metadata is fetched
-        await this.store.girderResources.ressourceChanged(datasetId);
-      } catch (labelError) {
-        logError("Failed to store dimension labels (non-fatal):", labelError);
-        // Don't fail the whole process if label storage fails
-      }
-
-      // Schedule caches after successful metadata upload
-      this.store.scheduleTileFramesComputation(datasetId);
-      this.store.scheduleMaxMergeCache(datasetId);
-      this.store.scheduleHistogramCache(datasetId);
-
-      return itemId;
-    } catch (error) {
-      logError("Failed to create multi source:", error);
-      return null;
-    }
-  }
-
-  get submitError(): string | null {
-    if (!this.submitEnabled()) {
-      return "Not all variables are assigned";
-    }
-
-    if (!this.isRGBAssignmentValid) {
-      return "If splitting RGB file into channels, then filenames must be assigned to another variable";
-    }
-    return null;
-  }
-
-  get isRGBAssignmentValid(): boolean {
-    if (this.isMultiBandRGBFile && this.splitRGBBands) {
-      return this.assignments.C === null;
-    }
-    return true;
-  }
-
-  // Extract dimension labels for a given dimension
-  extractDimensionLabels(dim: TUpDim): string[] | null {
-    const assignment = this.assignments[dim]?.value;
-    if (!assignment) return null;
-
-    // Try to extract labels from ND2 metadata first (only for File source)
-    if (assignment.source === Sources.File && this.tilesInternalMetadata) {
-      const nd2Labels = extractDimensionLabelsFromND2(
-        dim,
-        this.tilesInternalMetadata,
-        assignment.size,
+      logWarning(
+        `[MultiSourceConfig] No match found for ${dim}, using default`,
       );
-      if (nd2Labels) {
-        return nd2Labels;
-      }
-    }
-
-    // Fall back to original extraction logic
-    switch (assignment.source) {
-      case Sources.File:
-        const fileData = assignment.data as IFileSourceData;
-        const labelsPerIdx: string[][] = [];
-        for (const itemIdx in fileData) {
-          const values = fileData[itemIdx].values;
-          if (values) {
-            values.forEach((val, idx) => {
-              if (!labelsPerIdx[idx]) labelsPerIdx[idx] = [];
-              if (!labelsPerIdx[idx].includes(val)) {
-                labelsPerIdx[idx].push(val);
-              }
-            });
-          }
-        }
-        return labelsPerIdx.map((labels) => labels.join("/"));
-
-      case Sources.Filename:
-        return assignment.data.values;
-
-      case Sources.Images:
-        return Array.from({ length: assignment.size }, (_, i) => `${i + 1}`);
-    }
-  }
-
-  // Copy log to clipboard
-  copyLogToClipboard() {
-    if (navigator.clipboard && this.logs) {
-      navigator.clipboard.writeText(this.logs);
-      this.showCopySnackbar = true;
-    }
-  }
-
-  /**
-   * Extract the current dimension assignment strategy.
-   * Used internally by saveDimensionStrategyToStore() to save to the Vuex store
-   * when assignments change. The store-based approach allows other components
-   * (like NewDataset.vue) to read the strategy without using $refs.
-   */
-  getDimensionStrategy(): IDimensionStrategy {
-    const strategy: IDimensionStrategy = {
-      XY: null,
-      Z: null,
-      T: null,
-      C: null,
-      transcode: this.transcode,
-    };
-
-    for (const dim of ["XY", "Z", "T", "C"] as const) {
-      const assignment = this.assignments[dim];
-      if (assignment?.value) {
-        strategy[dim] = {
-          source: assignment.value.source,
-          guess: assignment.value.guess,
-        };
-      }
-    }
-
-    return strategy;
-  }
-
-  // Reinitialize and apply strategy - handles race conditions with @Watch
-  async reinitializeAndApplyStrategy(
-    strategy: IDimensionStrategy,
-  ): Promise<void> {
-    // Wait for any pending initialization to complete first
-    while (this.initializing) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    // Reset all internal state
-    this.dimensions = [];
-    this.assignments = { XY: null, Z: null, T: null, C: null };
-    this.tilesMetadata = null;
-    this.tilesInternalMetadata = null;
-    this.girderItems = [];
-    this.filenameVariableCount = 0;
-    this.fileVariableCount = 0;
-    this.imageVariableCount = 0;
-    this.assignmentIdCount = 0;
-    this.initTotal = 0;
-    this.initCompleted = 0;
-    this.initPending = [];
-    this.initInFlight = [];
-    this.initError = null;
-
-    // Run initialization directly (not through initialize() to avoid the guard)
-    this.initializing = true;
-    try {
-      await this.initializeImplementation();
-    } finally {
-      this.initializing = false;
-    }
-
-    // Now apply the strategy
-    this.applyDimensionStrategy(strategy);
-  }
-
-  // Apply a saved strategy to current dimensions
-  applyDimensionStrategy(strategy: IDimensionStrategy): void {
-    // Set transcode setting
-    this.transcode = strategy.transcode;
-
-    // For each dimension axis, try to find a matching dimension option
-    for (const dim of ["XY", "Z", "T", "C"] as const) {
-      const savedStrategy = strategy[dim];
-
-      if (!savedStrategy) {
-        logWarning(
-          `[MultiSourceConfig] No saved strategy for ${dim}, setting to null`,
-        );
-        this.assignments[dim] = null;
-        continue;
-      }
-
-      // First, try to find exact match (same source and guess)
-      let matchingDimension = this.dimensions.find(
-        (d) =>
-          d.source === savedStrategy.source &&
-          d.guess === savedStrategy.guess &&
-          d.size > 0,
-      );
-
-      // If no exact match, try matching just the guess (dimension type)
-      if (!matchingDimension) {
-        logWarning(
-          `[MultiSourceConfig] No exact match for ${dim}, trying guess-only match`,
-        );
-        matchingDimension = this.dimensions.find(
-          (d) => d.guess === savedStrategy.guess && d.size > 0,
-        );
-      }
-
-      // If still no match, try matching just the source type
-      if (!matchingDimension) {
-        logWarning(
-          `[MultiSourceConfig] No guess match for ${dim}, trying source-only match`,
-        );
-        matchingDimension = this.dimensions.find(
-          (d) => d.source === savedStrategy.source && d.size > 0,
-        );
-      }
-
-      if (matchingDimension) {
-        this.assignments[dim] =
-          this.assignmentOptionToAssignmentItem(matchingDimension);
-      } else {
-        logWarning(
-          `[MultiSourceConfig] No match found for ${dim}, using default`,
-        );
-        // Fall back to default for this dimension
-        this.assignments[dim] = this.getDefaultAssignmentItem(dim);
-      }
+      assignments[dim] = getDefaultAssignmentItem(dim);
     }
   }
 }
+
+// --- Watchers ---
+
+watch(
+  () => assignments,
+  () => saveDimensionStrategyToStore(),
+  { deep: true },
+);
+
+watch(
+  () => transcode.value,
+  () => saveDimensionStrategyToStore(),
+);
+
+watch(
+  () => props.datasetId,
+  () => initialize(),
+);
+
+// --- Lifecycle ---
+
+onMounted(() => {
+  initialized.value = initialize();
+});
+
+// --- Expose for parent components and tests ---
+
+defineExpose({
+  // Refs
+  tilesInternalMetadata,
+  tilesMetadata,
+  enableCompositing,
+  transcode,
+  isUploading,
+  logs,
+  showLogDialog,
+  showCopySnackbar,
+  lastGeneratedConfig,
+  transcodeProgress,
+  progressStatusText,
+  totalFrames,
+  currentFrame,
+  isRGBFile,
+  rgbBandCount,
+  splitRGBBands,
+  initTotal,
+  initCompleted,
+  initPending,
+  initInFlight,
+  initError,
+  dimensions,
+  assignments,
+  girderItems,
+  initialized,
+  initializing,
+  // Computed
+  isMultiBandRGBFile,
+  initProgressPercent,
+  initPendingDisplay,
+  canDoCompositing,
+  shouldDoCompositing,
+  fileCount,
+  framesPerFile,
+  datasetTotalFrames,
+  items,
+  filenameVariables,
+  highlightedFilenameSegments,
+  filenameLegend,
+  assignmentItems,
+  submitError,
+  isRGBAssignmentValid,
+  // Methods
+  detectColorVsChannels,
+  sliceAndJoin,
+  assignmentOptionToAssignmentItem,
+  addSizeToDimension,
+  getDefaultAssignmentItem,
+  resetDimensionsToDefault,
+  areDimensionsSetToDefault,
+  isAssignmentImmutable,
+  assignmentDisabled,
+  clearDisabled,
+  isVariableAssigned,
+  getAssignedDimension,
+  getAssignedDimensionColor,
+  getSlotClasses,
+  getSlotStyle,
+  getAssignmentBadgeStyleForSlot,
+  getAssignmentText,
+  getAssignmentValues,
+  getAssignmentSize,
+  getItemValues,
+  isAssignmentImmutableForDimension,
+  submitEnabled,
+  getValueFromAssignments,
+  getCompositingValueFromAssignments,
+  submit,
+  generateJson,
+  extractDimensionLabels,
+  copyLogToClipboard,
+  getDimensionStrategy,
+  saveDimensionStrategyToStore,
+  initialize,
+  reinitializeAndApplyStrategy,
+  applyDimensionStrategy,
+  // Constants
+  dimensionNames,
+  dimesionNamesEntries,
+  variableColors,
+});
 </script>
 
 <style lang="scss">
