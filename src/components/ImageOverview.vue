@@ -331,6 +331,19 @@ onBeforeUnmount(() => {
     observer.value = null;
   }
 });
+
+defineExpose({
+  map,
+  osmLayer,
+  featureLayer,
+  outlineFeature,
+  dataset,
+  cornerToIcon,
+  moveOverviewToCorner,
+  create,
+  onParentPan,
+  onUrlChanged,
+});
 </script>
 
 <style scoped lang="scss">

@@ -405,4 +405,24 @@ watch(
 watch(dataset, () => resetFilename());
 
 onMounted(() => resetFilename());
+
+defineExpose({
+  dialog,
+  text,
+  filename,
+  propertyExportMode,
+  undefinedHandling,
+  processingProgress,
+  isProcessing,
+  isTooLargeForPreview,
+  displayedPropertyPaths,
+  filteredPropertyItems,
+  resetFilename,
+  generateCSVStringForAnnotations,
+  updateText,
+  getIncludedPropertyPaths,
+  getUndefinedValueString,
+  shouldIncludePropertyPath,
+  download,
+});
 </script>

@@ -470,4 +470,33 @@ async function addUser() {
     addUserLoading.value = false;
   }
 }
+
+defineExpose({
+  dialog,
+  loading,
+  showError,
+  errorString,
+  isPublic,
+  users,
+  configurations,
+  selectedConfigIds,
+  associatedViews,
+  publicLoading,
+  userLoading,
+  addUserLoading,
+  newUserEmail,
+  newUserAccessLevel,
+  confirmDialog,
+  userToRemove,
+  accessLevelItems,
+  resetState,
+  fetchAccessInfo,
+  close,
+  getSelectedViews,
+  togglePublic,
+  updateUserAccess,
+  confirmRemoveUser,
+  removeUser,
+  addUser,
+});
 </script>

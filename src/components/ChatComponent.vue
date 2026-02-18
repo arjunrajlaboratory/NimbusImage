@@ -264,6 +264,24 @@ onMounted(() => {
     refreshChat();
   }
 });
+
+defineExpose({
+  textInput,
+  imagesInput,
+  isWaiting,
+  isRefreshing,
+  messages,
+  firstMap,
+  visibleImagesInput,
+  sendMessage,
+  addImageFile,
+  handleFileUpload,
+  removeImage,
+  refreshChat,
+  captureViewportScreenshot,
+  filterVisibleImages,
+  filterVisibleMessages,
+});
 </script>
 
 <style scoped>

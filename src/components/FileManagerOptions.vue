@@ -318,4 +318,21 @@ watch(() => props.items, onItemsChanged);
 watch(isADialogOpen, closeMenuOnDialogClose);
 
 onMounted(() => onItemsChanged());
+
+defineExpose({
+  disableOptions,
+  moveDialog,
+  renameDialog,
+  newName,
+  deleteDialog,
+  isLoading,
+  assetstores,
+  isADialogOpen,
+  closeMenu,
+  move,
+  rename,
+  deleteItems,
+  downloadResource,
+  onAddedToProject,
+});
 </script>

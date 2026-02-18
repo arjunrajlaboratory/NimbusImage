@@ -415,4 +415,26 @@ onMounted(async () => {
   }
   loadColors();
 });
+
+defineExpose({
+  localOverrides,
+  saving,
+  allChannels,
+  displayColors,
+  isNewChannelValid,
+  colorRule,
+  channelNameRule,
+  isCustomChannel,
+  getChannelLabel,
+  loadColors,
+  saveColors,
+  resetColor,
+  openColorPicker,
+  applyPickerColor,
+  onColorInput,
+  addNewChannel,
+  saveAndClose,
+  resetAllColors,
+  cancelChanges,
+});
 </script>
