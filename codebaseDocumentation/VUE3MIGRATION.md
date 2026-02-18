@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 121 | 113 migrated to `<script setup>`, 8 remaining |
+| Class components (`@Component`) | 121 | 114 migrated to `<script setup>`, 7 remaining |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -19,7 +19,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Next Steps (Phase 1 Continuation)
 
-**Current progress:** 113 of 121 components migrated to `<script setup>` (Batches 1–13 complete). 8 remaining.
+**Current progress:** 114 of 121 components migrated to `<script setup>` (Batches 1–14 complete). 7 remaining.
 
 **Branch:** `claude/vue3-migration-planning-tS4Hx`
 
@@ -481,9 +481,24 @@ These `markRaw()` additions can be done:
 
 **After this batch:** 113 of 121 components migrated to `<script setup>` (~93%).
 
-## Remaining Components (8)
+### Batch 14 — Tier 2 (CustomFileManager)
 
-All 8 remaining components use the class-based `@Component` decorator pattern.
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `CustomFileManager.vue` | 747 | Async `() => import(...)` → sync `import { FileManager }`, `Vue.set()` on plain (non-reactive) object → direct assignment, `Vue.nextTick()` → `nextTick()`, `$refs.alert` → `alertDialog` template ref, `batchTimer` cleanup via `onBeforeUnmount`, dead code removal (`girderResources`, `formatDateString` bridge, `store` bridge) |
+
+**Key patterns in this batch:**
+- **Async → sync component import:** `GirderFileManager: () => import("@/girder/components").then(mod => mod.FileManager)` → `import { FileManager as GirderFileManager } from "@/girder/components"` (Vue 2.7 has no `defineAsyncComponent`)
+- **`Vue.set()` on plain object:** `chipsPerItemId` is a non-reactive accumulator (`let ... = {}`), so `Vue.set(this.chipsPerItemId, id, val)` → `chipsPerItemId[id] = val` (direct assignment is fine since it's not reactive; the reactive snapshot is created via `debouncedChipsPerItemId.value = { ...chipsPerItemId }`)
+- **Timer cleanup (bug fix):** Added `onBeforeUnmount(() => clearTimeout(batchTimer))` — original class component had no cleanup for the debounce timer
+- **Dead code removal:** `readonly girderResources = girderResources` (imported but unused), `formatDateString = formatDateString` (unnecessary bridge in `<script setup>`), `readonly store = store` (unnecessary bridge)
+- **Stacked `@Watch` → array watcher:** `@Watch("selected") @Watch("selectable") emitSelected()` → `watch([selected, () => props.selectable], emitSelected)`
+
+**After this batch:** 114 of 121 components migrated to `<script setup>` (~94%).
+
+## Remaining Components (7)
+
+All 7 remaining components use the class-based `@Component` decorator pattern.
 
 ### Tier 2 — Large Components (700–1,500 lines)
 
@@ -491,7 +506,6 @@ More complex migrations requiring careful attention to refs, watchers, and child
 
 | Component | Lines | Key Patterns / Notes |
 |-----------|-------|---------------------|
-| `CustomFileManager.vue` | 747 | File browser, drag/drop, upload, Girder integration |
 | `Home.vue` | 1,317 | Landing page, project/dataset lists, onboarding |
 | `NewDataset.vue` | 1,435 | Multi-step dataset creation wizard, file upload |
 | `ImageViewer.vue` | 1,514 | GeoJS map/layers, tile rendering — needs `markRaw()` |
@@ -508,9 +522,8 @@ These should be split into composables before or during migration.
 
 ### Migration Order Recommendations
 
-1. **Batch 14** — Tier 2 (smaller): CustomFileManager, Home, NewDataset
-2. **Batch 15** — ImageViewer (with `markRaw()` additions for GeoJS)
-3. **Batch 16** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
+1. **Batch 15** — Tier 2 (remaining): Home, NewDataset, ImageViewer (with `markRaw()`)
+2. **Batch 16** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 
@@ -523,6 +536,40 @@ Pair each migration batch with tests:
 3. **Store tests** — Test modules in isolation
 
 Framework: Vitest (already configured). Run with `pnpm test`.
+
+### Missing Tests — Batches 11–13
+
+18 components migrated in Batches 11–13 are missing test files. Batch 14 (CustomFileManager) has tests. Batch 10 and earlier have tests.
+
+#### Batch 11 (6 components)
+
+| Component | Lines | Testing Notes |
+|-----------|-------|---------------|
+| `ChatComponent.vue` | 395 | Mock IndexedDB, Anthropic API; test message rendering, file input ref |
+| `UserColorSettings.vue` | 417 | Test color override CRUD via object spread on `ref({})`; mock store |
+| `ShareDataset.vue` | 475 | Test dialog open/close computed, share/unshare API calls |
+| `ImageOverview.vue` | 356 | Mock GeoJS; test ResizeObserver cleanup in `onBeforeUnmount` |
+| `AnnotationCSVDialog.vue` | 427 | Test CSV export scope selection, column toggling, stacked watcher |
+| `FileManagerOptions.vue` | 356 | Test `withOptionAction`/`withMutatingAction` wrappers; mock store API |
+
+#### Batch 12 (6 components)
+
+| Component | Lines | Testing Notes |
+|-----------|-------|---------------|
+| `ViewerToolbar.vue` | 442 | Test 16 computed get/set pairs for store bindings; mock mousetrap |
+| `AnnotationProperties.vue` | 458 | Test batch processing state, Miller column computed, emit |
+| `PropertyFilterHistogram.vue` | 508 | Mock D3; test drag handlers with template refs, debounce |
+| `CollectionList.vue` | 568 | Test chip promise chain, batch resolution, `ref({})` spread pattern |
+| `BreadCrumbs.vue` | 490 | Test breadcrumb navigation, `$route`/`$router` via `getCurrentInstance()` |
+| `App.vue` | 465 | Test panel refs map, tour plugin access, router integration |
+
+#### Batch 13 (3 components)
+
+| Component | Lines | Testing Notes |
+|-----------|-------|---------------|
+| `ContrastHistogram.vue` | 582 | Mock D3 drag/zoom; test `uidCounter`, `rootEl` ref, throttled emit |
+| `AnnotationWorkerMenu.vue` | 639 | Test debounce + cancel cleanup, `jobLog` watcher (was computed side-effect) |
+| `AnnotationList.vue` | 617 | Test dynamic refs via `getCurrentInstance()`, `$children` access, stacked watcher |
 
 ### Component Test Setup
 

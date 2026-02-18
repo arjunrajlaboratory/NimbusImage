@@ -61,7 +61,7 @@
         />
         <v-btn
           class="mx-2 ghost-button"
-          @click="$refs.fileInput.click()"
+          @click="fileInput?.click()"
           :disabled="shouldDisableSingleFileUpload"
           outlined
         >
@@ -97,30 +97,36 @@
         </file-item-row>
       </template>
     </girder-file-manager>
-    <alert-dialog ref="alert"></alert-dialog>
+    <alert-dialog ref="alertDialog"></alert-dialog>
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script lang="ts" setup>
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+} from "vue";
 import store from "@/store";
-import girderResources from "@/store/girderResources";
 import { IGirderLocation, IGirderSelectAble } from "@/girder";
 import {
   isConfigurationItem,
   isDatasetFolder,
   toConfigurationItem,
   toDatasetFolder,
+  unselectableLocations,
 } from "@/utils/girderSelectable";
 import { RawLocation } from "vue-router";
 import FileManagerOptions from "./FileManagerOptions.vue";
 import FileItemRow from "./FileItemRow.vue";
 import { Search as GirderSearch } from "@/girder/components";
-import { formatDateString } from "@/utils/date";
+import { FileManager as GirderFileManager } from "@/girder/components";
 import { vuetifyConfig } from "@/girder";
 import { logError } from "@/utils/log";
 import AlertDialog from "@/components/AlertDialog.vue";
-import { unselectableLocations } from "@/utils/girderSelectable";
 
 interface IChipAttrs {
   text: string;
@@ -133,417 +139,412 @@ interface IChipsPerItemId {
   type: string;
 }
 
-@Component({
-  components: {
-    FileManagerOptions,
-    GirderSearch,
-    AlertDialog,
-    FileItemRow,
-    GirderFileManager: () =>
-      import("@/girder/components").then((mod) => mod.FileManager),
+const props = withDefaults(
+  defineProps<{
+    menuEnabled?: boolean;
+    selectable?: boolean;
+    moreChips?: boolean;
+    clickableChips?: boolean;
+    location?: IGirderLocation | null;
+    useDefaultLocation?: boolean;
+  }>(),
+  {
+    menuEnabled: true,
+    selectable: false,
+    moreChips: true,
+    clickableChips: true,
+    location: null,
+    useDefaultLocation: true,
   },
-})
-export default class CustomFileManager extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
+);
 
-  @Prop({
-    default: true,
-  })
-  menuEnabled!: boolean;
+const emit = defineEmits<{
+  (e: "update:location", value: IGirderLocation | null): void;
+  (e: "selected", value: IGirderSelectAble[]): void;
+  (e: "rowclick", value: IGirderSelectAble): void;
+}>();
 
-  @Prop({
-    default: false,
-  })
-  selectable!: boolean;
+// Template refs
+const fileInput = ref<HTMLInputElement>();
+const alertDialog = ref<InstanceType<typeof AlertDialog>>();
 
-  @Prop({
-    default: true,
-  })
-  moreChips!: boolean;
+// Reactive state
+const overridingLocation = ref<IGirderLocation | null>(null);
+const defaultLocation = ref<IGirderLocation | null>(null);
+const debouncedChipsPerItemId = ref<Record<string, IChipsPerItemId>>({});
+const selected = ref<IGirderSelectAble[]>([]);
+const selectedItemsOptionsMenu = ref(false);
+const rowOptionsMenu = ref<Record<string, boolean>>({});
 
-  @Prop({
-    default: true,
-  })
-  clickableChips!: boolean;
+// Non-reactive internal state
+let chipsPerItemId: Record<string, IChipsPerItemId> = {};
+let pendingChips = 0;
+let lastPendingChip: Promise<any> = Promise.resolve();
+let computedChipsIds = new Set<string>();
+let batchQueueDatasetIds = new Set<string>();
+let batchQueueConfigurationIds = new Set<string>();
+let batchTimer: number | null = null;
 
-  @Prop({
-    default: null,
-  })
-  location!: IGirderLocation | null;
+// Computed
+const isLoggedIn = computed(() => store.isLoggedIn);
 
-  @Prop({
-    default: true,
-  })
-  useDefaultLocation!: boolean;
+const currentLocation = computed({
+  get() {
+    if (overridingLocation.value) {
+      return overridingLocation.value;
+    }
+    if (props.useDefaultLocation && props.location === null) {
+      emit("update:location", defaultLocation.value);
+      return defaultLocation.value;
+    }
+    return props.location;
+  },
+  set(value: IGirderLocation | null) {
+    emit("update:location", value);
+  },
+});
 
-  overridingLocation: IGirderLocation | null = null;
-  defaultLocation: IGirderLocation | null = null;
-  chipsPerItemId: { [itemId: string]: IChipsPerItemId } = {};
-  debouncedChipsPerItemId: { [itemId: string]: IChipsPerItemId } = {};
-  pendingChips: number = 0;
-  lastPendingChip: Promise<any> = Promise.resolve();
-  computedChipsIds: Set<string> = new Set();
-  selected: IGirderSelectAble[] = [];
+const shouldDisableSingleFileUpload = computed(() => {
+  return (
+    !currentLocation.value ||
+    ("_modelType" in currentLocation.value &&
+      unselectableLocations.includes(currentLocation.value._modelType)) ||
+    ("type" in currentLocation.value &&
+      unselectableLocations.includes(currentLocation.value.type))
+  );
+});
 
-  // Batch mapping queues
-  batchQueueDatasetIds: Set<string> = new Set();
-  batchQueueConfigurationIds: Set<string> = new Set();
-  batchTimer: number | null = null;
+// Methods
+async function reloadItems() {
+  try {
+    overridingLocation.value = { type: "root" };
+    await nextTick();
+  } finally {
+    overridingLocation.value = null;
+  }
+}
 
-  selectedItemsOptionsMenu: boolean = false;
-  rowOptionsMenu: { [itemId: string]: boolean } = {};
+async function fetchLocation() {
+  const privateFolder = await store.api.getUserPrivateFolder();
+  defaultLocation.value = privateFolder || store.girderUser;
+}
 
-  formatDateString = formatDateString; // Import function from utils/date.ts for use in template
+function emitSelected() {
+  if (props.selectable) {
+    emit("selected", selected.value);
+  }
+}
 
-  // Note: alert uses 'any' due to Vue 2/3 Composition API type incompatibility during migration
-  $refs!: {
-    fileInput: HTMLInputElement;
-    alert: any;
+function searchInput(value: IGirderSelectAble) {
+  if (
+    value._modelType === "upenn_collection" ||
+    value._modelType === "file" ||
+    value._modelType === "item"
+  ) {
+    return;
+  }
+  currentLocation.value = value;
+  emit("rowclick", value);
+}
+
+function iconToMdi(icon: string) {
+  return vuetifyConfig.icons.values[icon] || `mdi-${icon}`;
+}
+
+function iconFromItem(selectable: IGirderSelectAble) {
+  if (isDatasetFolder(selectable)) {
+    return "box_com";
+  }
+  if (isConfigurationItem(selectable)) {
+    return "collection";
+  }
+  switch (selectable._modelType) {
+    case "file":
+    case "item":
+    case "upenn_collection":
+      return "file";
+    case "folder":
+      return "folder";
+    case "user":
+      return "user";
+    default:
+      return "file";
+  }
+}
+
+function renderItem(selectable: IGirderSelectAble) {
+  const datasetFolder = toDatasetFolder(selectable);
+  const configurationItem = toConfigurationItem(selectable);
+  selectable.icon = iconFromItem(selectable);
+  const folderOrItem = datasetFolder || configurationItem;
+  if (folderOrItem && !computedChipsIds.has(selectable._id)) {
+    computedChipsIds.add(selectable._id);
+    addChipPromise(selectable);
+  }
+}
+
+function addChipPromise(item: IGirderSelectAble) {
+  // Chain a new chip promise with last pending promise
+  lastPendingChip = lastPendingChip
+    .finally()
+    .then(() => itemToChips(item))
+    .then((chipAttrs) => {
+      chipsPerItemId[item._id] = chipAttrs;
+    });
+  // When done with the last promise, update debouncedChipsPerItemId
+  ++pendingChips;
+  lastPendingChip.finally(() => {
+    if (--pendingChips === 0) {
+      debouncedChipsPerItemId.value = { ...chipsPerItemId };
+    }
+  });
+}
+
+async function itemToChips(selectable: IGirderSelectAble) {
+  const ret: IChipAttrs[] = [];
+
+  // Determine type first
+  const isDataset = isDatasetFolder(selectable);
+  const isConfig = isConfigurationItem(selectable);
+
+  if (!isDataset && !isConfig) {
+    return { chips: ret, type: null as any };
+  }
+
+  const type = isDataset ? "dataset" : "configuration";
+
+  // First chip (type indicator)
+  const chipOptions = {
+    dataset: {
+      text: "Dataset",
+      to_name: "dataset",
+      to_params: { datasetId: selectable._id },
+    },
+    configuration: {
+      text: "Collection",
+      to_name: "configuration",
+      to_params: { configurationId: selectable._id },
+    },
   };
 
-  async reloadItems() {
-    try {
-      this.overridingLocation = { type: "root" };
-      await Vue.nextTick();
-    } finally {
-      this.overridingLocation = null;
-    }
-  }
-
-  get shouldDisableSingleFileUpload() {
-    return (
-      !this.currentLocation ||
-      ("_modelType" in this.currentLocation &&
-        unselectableLocations.includes(this.currentLocation._modelType)) ||
-      ("type" in this.currentLocation &&
-        unselectableLocations.includes(this.currentLocation.type))
-    );
-  }
-
-  get currentLocation() {
-    if (this.overridingLocation) {
-      return this.overridingLocation;
-    }
-    if (this.useDefaultLocation && this.location === null) {
-      this.$emit("update:location", this.defaultLocation);
-      return this.defaultLocation;
-    }
-    return this.location;
-  }
-
-  set currentLocation(value: IGirderLocation | null) {
-    this.$emit("update:location", value);
-  }
-
-  mounted() {
-    this.fetchLocation();
-  }
-
-  get isLoggedIn() {
-    return this.store.isLoggedIn;
-  }
-
-  @Watch("isLoggedIn")
-  async fetchLocation() {
-    const privateFolder = await this.store.api.getUserPrivateFolder();
-    this.defaultLocation = privateFolder || this.store.girderUser;
-  }
-
-  @Watch("selected")
-  @Watch("selectable")
-  emitSelected() {
-    if (this.selectable) {
-      this.$emit("selected", this.selected);
-    }
-  }
-
-  searchInput(value: IGirderSelectAble) {
-    if (
-      value._modelType === "upenn_collection" ||
-      value._modelType === "file" ||
-      value._modelType === "item"
-    ) {
-      return;
-    }
-    this.currentLocation = value;
-    this.$emit("rowclick", value);
-  }
-
-  iconToMdi(icon: string) {
-    return vuetifyConfig.icons.values[icon] || `mdi-${icon}`;
-  }
-
-  iconFromItem(selectable: IGirderSelectAble) {
-    if (isDatasetFolder(selectable)) {
-      return "box_com";
-    }
-    if (isConfigurationItem(selectable)) {
-      return "collection";
-    }
-    switch (selectable._modelType) {
-      case "file":
-      case "item":
-      case "upenn_collection":
-        return "file";
-      case "folder":
-        return "folder";
-      case "user":
-        return "user";
-      default:
-        return "file";
-    }
-  }
-
-  renderItem(selectable: IGirderSelectAble) {
-    const datasetFolder = toDatasetFolder(selectable);
-    const configurationItem = toConfigurationItem(selectable);
-    selectable.icon = this.iconFromItem(selectable);
-    const folderOrItem = datasetFolder || configurationItem;
-    if (folderOrItem && !this.computedChipsIds.has(selectable._id)) {
-      this.computedChipsIds.add(selectable._id);
-      this.addChipPromise(selectable);
-    }
-  }
-
-  addChipPromise(item: IGirderSelectAble) {
-    // Chain a new chip promise with last pending promise
-    this.lastPendingChip = this.lastPendingChip
-      .finally()
-      .then(() => this.itemToChips(item))
-      .then((chipAttrs) => Vue.set(this.chipsPerItemId, item._id, chipAttrs));
-    // When done with the last promise, update debouncedChipsPerItemId
-    ++this.pendingChips;
-    this.lastPendingChip.finally(() => {
-      if (--this.pendingChips === 0) {
-        this.debouncedChipsPerItemId = { ...this.chipsPerItemId };
-      }
-    });
-  }
-
-  async itemToChips(selectable: IGirderSelectAble) {
-    const ret: IChipAttrs[] = [];
-
-    // Determine type first
-    const isDataset = isDatasetFolder(selectable);
-    const isConfig = isConfigurationItem(selectable);
-
-    if (!isDataset && !isConfig) {
-      return { chips: ret, type: null as any };
-    }
-
-    const type = isDataset ? "dataset" : "configuration";
-
-    // First chip (type indicator)
-    const chipOptions = {
-      dataset: {
-        text: "Dataset",
-        to_name: "dataset",
-        to_params: { datasetId: selectable._id },
-      },
-      configuration: {
-        text: "Collection",
-        to_name: "configuration",
-        to_params: { configurationId: selectable._id },
-      },
+  const chipOption = chipOptions[type];
+  const headerChip: IChipAttrs = {
+    text: chipOption.text,
+    color: "grey darken-1",
+  };
+  if (props.clickableChips) {
+    headerChip.to = {
+      name: chipOption.to_name,
+      params: chipOption.to_params,
     };
+  }
+  ret.push(headerChip);
 
-    const chipOption = chipOptions[type];
-    const headerChip: IChipAttrs = {
-      text: chipOption.text,
-      color: "grey darken-1",
-    };
-    if (this.clickableChips) {
-      headerChip.to = {
-        name: chipOption.to_name,
-        params: chipOption.to_params,
-      };
-    }
-    ret.push(headerChip);
-
-    // If we don't show more chips, return early
-    if (!this.moreChips) {
-      return { chips: ret, type };
-    }
-
-    // Enqueue for batch resolution and return header-only chips for now
-    if (isDataset) {
-      this.batchQueueDatasetIds.add(selectable._id);
-    } else {
-      this.batchQueueConfigurationIds.add(selectable._id);
-    }
-    this.scheduleBatchResolve();
-
+  // If we don't show more chips, return early
+  if (!props.moreChips) {
     return { chips: ret, type };
   }
 
-  scheduleBatchResolve() {
-    // Clear any existing timer to restart the debounce period
-    if (this.batchTimer !== null) {
-      window.clearTimeout(this.batchTimer);
-      this.batchTimer = null;
-    }
+  // Enqueue for batch resolution and return header-only chips for now
+  if (isDataset) {
+    batchQueueDatasetIds.add(selectable._id);
+  } else {
+    batchQueueConfigurationIds.add(selectable._id);
+  }
+  scheduleBatchResolve();
 
-    // Debounce mechanism: Wait 50ms to collect IDs from multiple itemToChips calls
-    // This allows Vue's rendering cycle to call itemToChips() many times
-    // (once per item being rendered), accumulating dataset/configuration IDs
-    // in batchQueueDatasetIds and batchQueueConfigurationIds sets.
-    // After 50ms of no new calls, flushBatchResolve() fires a single
-    // bulk API request to resolve all collected IDs at once.
-    this.batchTimer = window.setTimeout(() => this.flushBatchResolve(), 50);
+  return { chips: ret, type };
+}
+
+function scheduleBatchResolve() {
+  // Clear any existing timer to restart the debounce period
+  if (batchTimer !== null) {
+    window.clearTimeout(batchTimer);
+    batchTimer = null;
   }
 
-  async flushBatchResolve() {
-    const datasetIds = Array.from(this.batchQueueDatasetIds);
-    const configurationIds = Array.from(this.batchQueueConfigurationIds);
-    this.batchQueueDatasetIds.clear();
-    this.batchQueueConfigurationIds.clear();
-    this.batchTimer = null;
+  // Debounce mechanism: Wait 50ms to collect IDs from multiple itemToChips calls
+  // This allows Vue's rendering cycle to call itemToChips() many times
+  // (once per item being rendered), accumulating dataset/configuration IDs
+  // in batchQueueDatasetIds and batchQueueConfigurationIds sets.
+  // After 50ms of no new calls, flushBatchResolve() fires a single
+  // bulk API request to resolve all collected IDs at once.
+  batchTimer = window.setTimeout(() => flushBatchResolve(), 50);
+}
 
-    if (datasetIds.length === 0 && configurationIds.length === 0) {
-      return;
-    }
+async function flushBatchResolve() {
+  const datasetIds = Array.from(batchQueueDatasetIds);
+  const configurationIds = Array.from(batchQueueConfigurationIds);
+  batchQueueDatasetIds.clear();
+  batchQueueConfigurationIds.clear();
+  batchTimer = null;
 
-    // Query mapping with names
-    let pairs: Array<{
-      datasetId: string;
-      configurationId: string;
-      datasetName?: string;
-      configurationName?: string;
-    }> = [];
-    try {
-      pairs = await this.store.api.mapDatasetViews({
-        datasetIds: datasetIds.length ? datasetIds : undefined,
-        configurationIds: configurationIds.length
-          ? configurationIds
-          : undefined,
-        includeNames: true,
-      } as any);
-    } catch (e) {
-      // If endpoint not available, fall back silently
-      logError("Failed to map dataset views:", e);
-      return;
-    }
+  if (datasetIds.length === 0 && configurationIds.length === 0) {
+    return;
+  }
 
-    // Build additional chips per item
-    const addChip = (
-      id: string,
-      chipText: string,
-      type: "dataset" | "configuration",
-      relatedId: string,
-    ) => {
-      const current = this.chipsPerItemId[id];
-      if (!current) return;
+  // Query mapping with names
+  let pairs: Array<{
+    datasetId: string;
+    configurationId: string;
+    datasetName?: string;
+    configurationName?: string;
+  }> = [];
+  try {
+    pairs = await store.api.mapDatasetViews({
+      datasetIds: datasetIds.length ? datasetIds : undefined,
+      configurationIds: configurationIds.length ? configurationIds : undefined,
+      includeNames: true,
+    } as any);
+  } catch (e) {
+    // If endpoint not available, fall back silently
+    logError("Failed to map dataset views:", e);
+    return;
+  }
 
-      const extra: IChipAttrs = {
-        color: type === "dataset" ? "#4baeff" : "#e57373",
-        text: chipText,
-        to: this.clickableChips
-          ? {
-              name: type === "dataset" ? "configuration" : "dataset",
-              params:
-                type === "dataset"
-                  ? { configurationId: relatedId }
-                  : { datasetId: relatedId },
-            }
-          : undefined,
-      };
-      const chips = [...current.chips, extra];
-      Vue.set(this.chipsPerItemId, id, { chips, type });
+  // Build additional chips per item
+  const addChip = (
+    id: string,
+    chipText: string,
+    type: "dataset" | "configuration",
+    relatedId: string,
+  ) => {
+    const current = chipsPerItemId[id];
+    if (!current) return;
+
+    const extra: IChipAttrs = {
+      color: type === "dataset" ? "#4baeff" : "#e57373",
+      text: chipText,
+      to: props.clickableChips
+        ? {
+            name: type === "dataset" ? "configuration" : "dataset",
+            params:
+              type === "dataset"
+                ? { configurationId: relatedId }
+                : { datasetId: relatedId },
+          }
+        : undefined,
     };
+    const chips = [...current.chips, extra];
+    chipsPerItemId[id] = { chips, type };
+  };
 
-    // Track missing names to optionally resolve via batchResources
-    const missingDatasetIds = new Set<string>();
-    const missingConfigIds = new Set<string>();
+  // Track missing names to optionally resolve via batchResources
+  const missingDatasetIds = new Set<string>();
+  const missingConfigIds = new Set<string>();
 
-    for (const p of pairs) {
-      if (datasetIds.includes(p.datasetId)) {
-        if (!p.configurationName) missingConfigIds.add(p.configurationId);
-        addChip(
-          p.datasetId,
-          p.configurationName || p.configurationId,
-          "dataset",
-          p.configurationId,
-        );
-      }
-      if (configurationIds.includes(p.configurationId)) {
-        if (!p.datasetName) missingDatasetIds.add(p.datasetId);
-        addChip(
-          p.configurationId,
-          p.datasetName || p.datasetId,
-          "configuration",
-          p.datasetId,
-        );
-      }
+  for (const p of pairs) {
+    if (datasetIds.includes(p.datasetId)) {
+      if (!p.configurationName) missingConfigIds.add(p.configurationId);
+      addChip(
+        p.datasetId,
+        p.configurationName || p.configurationId,
+        "dataset",
+        p.configurationId,
+      );
     }
-
-    if (missingDatasetIds.size || missingConfigIds.size) {
-      try {
-        const batch = await this.store.api.batchResources({
-          folder: missingDatasetIds.size
-            ? Array.from(missingDatasetIds)
-            : undefined,
-          upenn_collection: missingConfigIds.size
-            ? Array.from(missingConfigIds)
-            : undefined,
-        });
-        for (const p of pairs) {
-          if (datasetIds.includes(p.datasetId) && !p.configurationName) {
-            const name = batch.upenn_collection?.[p.configurationId]?.name;
-            if (name) addChip(p.datasetId, name, "dataset", p.configurationId);
-          }
-          if (configurationIds.includes(p.configurationId) && !p.datasetName) {
-            const name = batch.folder?.[p.datasetId]?.name;
-            if (name)
-              addChip(p.configurationId, name, "configuration", p.datasetId);
-          }
-        }
-      } catch (e) {
-        // Ignore if batch endpoint unavailable
-        logError("Failed to batch resolve resources:", e);
-      }
+    if (configurationIds.includes(p.configurationId)) {
+      if (!p.datasetName) missingDatasetIds.add(p.datasetId);
+      addChip(
+        p.configurationId,
+        p.datasetName || p.datasetId,
+        "configuration",
+        p.datasetId,
+      );
     }
-
-    // Refresh debounced copy after batch update
-    this.debouncedChipsPerItemId = { ...this.chipsPerItemId };
   }
 
-  async handleFileUpload(event: Event) {
-    const input = event.target as HTMLInputElement;
-    if (!input.files?.length) {
-      return;
-    }
-
-    const file = input.files[0];
-    // Check file size (500MB = 500 * 1024 * 1024 bytes)
-    if (file.size > 500 * 1024 * 1024) {
-      this.$refs.alert.openAlert({
-        type: "error",
-        message: "File size exceeds 500MB limit",
+  if (missingDatasetIds.size || missingConfigIds.size) {
+    try {
+      const batch = await store.api.batchResources({
+        folder: missingDatasetIds.size
+          ? Array.from(missingDatasetIds)
+          : undefined,
+        upenn_collection: missingConfigIds.size
+          ? Array.from(missingConfigIds)
+          : undefined,
       });
-      // Reset the input so the same file can be selected again
-      input.value = "";
-      return;
-    }
-
-    const location = this.currentLocation;
-    if (!location) return;
-    // Check if location is a folder or user (has _id and _modelType)
-    if ("_id" in location && "_modelType" in location) {
-      try {
-        await this.store.api.uploadFile(
-          file,
-          location._id,
-          location._modelType,
-        );
-        // Reload the current folder to show new file
-        await this.reloadItems();
-      } catch (error) {
-        logError("Upload failed:", error);
+      for (const p of pairs) {
+        if (datasetIds.includes(p.datasetId) && !p.configurationName) {
+          const name = batch.upenn_collection?.[p.configurationId]?.name;
+          if (name) addChip(p.datasetId, name, "dataset", p.configurationId);
+        }
+        if (configurationIds.includes(p.configurationId) && !p.datasetName) {
+          const name = batch.folder?.[p.datasetId]?.name;
+          if (name)
+            addChip(p.configurationId, name, "configuration", p.datasetId);
+        }
       }
+    } catch (e) {
+      // Ignore if batch endpoint unavailable
+      logError("Failed to batch resolve resources:", e);
+    }
+  }
+
+  // Refresh debounced copy after batch update
+  debouncedChipsPerItemId.value = { ...chipsPerItemId };
+}
+
+async function handleFileUpload(event: Event) {
+  const input = event.target as HTMLInputElement;
+  if (!input.files?.length) {
+    return;
+  }
+
+  const file = input.files[0];
+  // Check file size (500MB = 500 * 1024 * 1024 bytes)
+  if (file.size > 500 * 1024 * 1024) {
+    alertDialog.value?.openAlert({
+      type: "error",
+      message: "File size exceeds 500MB limit",
+    });
+    // Reset the input so the same file can be selected again
+    input.value = "";
+    return;
+  }
+
+  const location = currentLocation.value;
+  if (!location) return;
+  // Check if location is a folder or user (has _id and _modelType)
+  if ("_id" in location && "_modelType" in location) {
+    try {
+      await store.api.uploadFile(file, location._id, location._modelType);
+      // Reload the current folder to show new file
+      await reloadItems();
+    } catch (error) {
+      logError("Upload failed:", error);
     }
   }
 }
+
+defineExpose({
+  currentLocation,
+  shouldDisableSingleFileUpload,
+  isLoggedIn,
+  defaultLocation,
+  overridingLocation,
+  selected,
+  computedChipsIds,
+  searchInput,
+  iconFromItem,
+  iconToMdi,
+  renderItem,
+  reloadItems,
+  handleFileUpload,
+  itemToChips,
+});
+
+// Watchers
+watch(isLoggedIn, fetchLocation);
+watch([selected, () => props.selectable], emitSelected);
+
+// Lifecycle
+onMounted(fetchLocation);
+onBeforeUnmount(() => {
+  if (batchTimer !== null) {
+    window.clearTimeout(batchTimer);
+  }
+});
 </script>
 
 <style lang="scss" scoped>
