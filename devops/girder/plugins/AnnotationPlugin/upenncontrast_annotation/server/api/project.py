@@ -161,7 +161,15 @@ class Project(Resource):
         .errorResponse('Write access denied.', 403)
     )
     def addDataset(self, project, dataset):
-        """Add dataset to project, then sync permissions."""
+        """Add dataset to project, then sync permissions.
+
+        TODO #0001: Currently requires WRITE access on
+        the dataset. Should require ADMIN (owner) so
+        that only the dataset owner can add it to a
+        project, since adding triggers permission
+        propagation (sharing the project grants access
+        to the dataset).
+        """
         result = self._projectModel.addDataset(
             project, dataset['_id']
         )
@@ -199,7 +207,15 @@ class Project(Resource):
         .errorResponse('Write access denied.', 403)
     )
     def addCollection(self, project, collection):
-        """Add collection to project, then sync permissions."""
+        """Add collection to project, then sync perms.
+
+        TODO #0001: Currently requires WRITE access on
+        the collection. Should require ADMIN (owner) so
+        that only the collection owner can add it to a
+        project, since adding triggers permission
+        propagation (sharing the project grants access
+        to the collection).
+        """
         result = self._projectModel.addCollection(
             project, collection['_id']
         )
@@ -286,6 +302,15 @@ class Project(Resource):
     )
     def share(self, project, userMailOrUsername,
               accessType):
+        # TODO #0001: Currently, sharing a project
+        # propagates access to all contained datasets
+        # and collections without checking that the
+        # sharer has ADMIN (owner) privileges on those
+        # resources. We should require ADMIN on each
+        # dataset/collection so that only the owner
+        # can grant others access via project sharing.
+        # For now, the project-level ADMIN check
+        # (above) is the only gate.
         accessType = AccessType().validate(accessType)
 
         targetUser = User().findOne(
@@ -363,6 +388,11 @@ class Project(Resource):
         .errorResponse('Admin access denied.', 403)
     )
     def setPublic(self, project, public):
+        # TODO #0001: Currently, making a project
+        # public propagates to all contained datasets
+        # and collections without checking ADMIN
+        # (owner) privileges on those resources.
+        # Should require ADMIN on each resource.
         self._projectModel.setPublic(
             project, public, save=True
         )
