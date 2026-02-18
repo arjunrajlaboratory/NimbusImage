@@ -19,7 +19,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Next Steps (Phase 1 Continuation)
 
-**Current progress:** 116 of 121 components migrated to `<script setup>` (Batches 1–15 complete). 5 remaining.
+**Current progress:** 117 of 121 components migrated to `<script setup>` (Batches 1–15 complete). 4 remaining.
 
 **Branch:** `claude/vue3-migration-planning-tS4Hx`
 
@@ -45,11 +45,13 @@ CustomFileManager migrated. Home migrated (Batch 15).
 
 NewDataset migrated (106 tests).
 
-### Batch 16 — ImageViewer (with `markRaw()`)
+### Batch 16 — MultiSourceConfiguration
 
-### Batch 17 — Tier 3 giants (with composable extraction)
+### Batch 17 — Snapshots
 
-MultiSourceConfiguration, Snapshots, AnnotationViewer
+### Batch 18 — ImageViewer (with `markRaw()`)
+
+### Batch 19 — AnnotationViewer (with `markRaw()`)
 
 ---
 
@@ -528,32 +530,23 @@ These `markRaw()` additions can be done:
 
 **After this batch:** 116 of 121 components migrated to `<script setup>` (~96%).
 
-## Remaining Components (5)
+## Remaining Components (4)
 
-All 5 remaining components use the class-based `@Component` decorator pattern.
-
-### Tier 2 — Large Components (700–1,500 lines)
-
-More complex migrations requiring careful attention to refs, watchers, and child component interaction.
-
-| Component | Lines | Key Patterns / Notes |
-|-----------|-------|---------------------|
-| `ImageViewer.vue` | 1,514 | GeoJS map/layers, tile rendering — needs `markRaw()` |
-
-### Tier 3 — Giant Components (2,500+ lines)
-
-These should be split into composables before or during migration.
+All 4 remaining components use the class-based `@Component` decorator pattern.
 
 | Component | Lines | Key Patterns / Notes |
 |-----------|-------|---------------------|
 | `MultiSourceConfiguration.vue` | 2,595 | Multi-source dataset config, complex form state |
 | `Snapshots.vue` | 2,834 | Snapshot capture/management, canvas manipulation |
+| `ImageViewer.vue` | 1,514 | GeoJS map/layers, tile rendering — needs `markRaw()` |
 | `AnnotationViewer.vue` | 3,300 | GeoJS annotations, tool interaction, SAM — needs `markRaw()` |
 
-### Migration Order Recommendations
+### Migration Order
 
-1. **Batch 16** — ImageViewer (with `markRaw()`)
-2. **Batch 17** — Tier 3 giants (with composable extraction): MultiSourceConfiguration, Snapshots, AnnotationViewer
+1. **Batch 16** — MultiSourceConfiguration
+2. **Batch 17** — Snapshots
+3. **Batch 18** — ImageViewer (with `markRaw()`)
+4. **Batch 19** — AnnotationViewer (with `markRaw()`)
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 
