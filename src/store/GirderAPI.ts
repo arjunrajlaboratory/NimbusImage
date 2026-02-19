@@ -815,16 +815,18 @@ export default class GirderAPI {
       return this.histogramCache.get(key)!;
     }
 
-    // From the Bluebird repo itself:
-    // > Please use native promises instead if at all possible.
-    const promise = BluebirdPromise.map(
-      images,
-      (image: IImage) =>
-        this.getHistogram(image.item, {
-          frame: image.frameIndex,
-        }),
-      { concurrency: HistogramConcurrency },
-    ).then((histograms: ITileHistogram[]) => mergeHistograms(histograms));
+    // BluebirdPromise.map is used for concurrency control, but wrap in
+    // native Promise so downstream instanceof checks work (e.g. prop validation)
+    const promise = Promise.resolve(
+      BluebirdPromise.map(
+        images,
+        (image: IImage) =>
+          this.getHistogram(image.item, {
+            frame: image.frameIndex,
+          }),
+        { concurrency: HistogramConcurrency },
+      ).then((histograms: ITileHistogram[]) => mergeHistograms(histograms)),
+    );
     this.histogramCache.set(key, promise);
     promise.then((hist: ITileHistogram) => {
       this.resolvedHistogramCache.set(key, hist);

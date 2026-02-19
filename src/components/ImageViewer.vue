@@ -232,12 +232,13 @@ function generateFilterURL(
       return;
     }
 
-    const levelP = level;
-    const wpP = wp;
-    const bpP = bp;
+    const range = wp - bp;
+    if (range === 0) {
+      return;
+    }
 
-    const slope = `${levelP / (wpP - bpP)}`;
-    const intercept = `${-(levelP * bpP) / (wpP - bpP)}`;
+    const slope = `${level / range}`;
+    const intercept = `${-(level * bp) / range}`;
     if (slope != el.getAttribute("slope")) {
       el.setAttribute("slope", slope);
     }
