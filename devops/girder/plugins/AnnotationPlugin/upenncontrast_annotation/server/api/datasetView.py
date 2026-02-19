@@ -10,6 +10,9 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 from girder.models.user import User
 
+from upenncontrast_annotation.server.helpers.access_helpers import (
+    formatAccessList
+)
 from upenncontrast_annotation.server.models.datasetView import \
     DatasetView as DatasetViewModel
 from upenncontrast_annotation.server.models.collection import \
@@ -352,65 +355,37 @@ class DatasetView(Resource):
         .errorResponse('Read access was denied for the dataset.', 403)
     )
     def getDatasetAccess(self, dataset):
-        """Return the full access list for a dataset and its
-        configurations."""
-        # Get full access list from the dataset folder
-        # getFullAccessList returns users/groups with login and name populated
-        # but NOT email, so we need to fetch emails separately
-        accessList = Folder().getFullAccessList(dataset)
-
-        # Bulk fetch emails for all users
-        # (getFullAccessList doesn't include them)
-        userIds = [u['id'] for u in accessList.get('users', [])]
-        userEmails = {}
-        if userIds:
-            users = list(User().find(
-                {'_id': {'$in': userIds}},
-                fields=['email']
-            ))
-            userEmails = {u['_id']: u.get('email', '') for u in users}
+        """Return the full access list for a dataset
+        and its configurations."""
+        result = formatAccessList(Folder(), dataset)
+        result['datasetId'] = str(dataset['_id'])
 
         # Find all DatasetViews for this dataset
-        datasetViews = list(self._datasetViewModel.find({
-            'datasetId': dataset['_id']
-        }))
+        datasetViews = list(
+            self._datasetViewModel.find({
+                'datasetId': dataset['_id']
+            })
+        )
 
-        # Get unique configuration IDs
-        configIds = {dv['configurationId'] for dv in datasetViews}
-
-        # Bulk load all configurations at once (avoid N+1 queries)
-        # TODO: The UI currently doesn't expose per-configuration public status
-        # because configurations are confusing for most users. Most datasets
-        # have just one configuration anyway. Consider adding this UI later
-        # if users request more granular public/private control.
+        # Bulk load configurations (avoid N+1 queries)
+        configIds = {
+            dv['configurationId']
+            for dv in datasetViews
+        }
         configs = list(CollectionModel().find({
             '_id': {'$in': list(configIds)}
         }))
-        configurations = [
+        result['configurations'] = [
             {
                 'id': str(config['_id']),
                 'name': config.get('name', ''),
-                'public': config.get('public', False)
+                'public': config.get(
+                    'public', False
+                ),
             }
             for config in configs
         ]
-
-        return {
-            'datasetId': str(dataset['_id']),
-            'public': dataset.get('public', False),
-            'users': [
-                {
-                    'id': str(u['id']),
-                    'login': u.get('login', ''),
-                    'name': u.get('name', ''),
-                    'email': userEmails.get(u['id'], ''),
-                    'level': u['level']
-                }
-                for u in accessList.get('users', [])
-            ],
-            'groups': accessList.get('groups', []),
-            'configurations': configurations
-        }
+        return result
 
     @access.user
     @autoDescribeRoute(
@@ -442,26 +417,14 @@ class DatasetView(Resource):
         )
     )
     def getConfigurationAccess(self, configuration):
-        """Return the access list for a configuration and its
-        datasets."""
-        accessList = CollectionModel().getFullAccessList(
-            configuration
+        """Return the access list for a configuration
+        and its datasets."""
+        result = formatAccessList(
+            CollectionModel(), configuration
         )
-
-        # Bulk fetch emails for all users
-        userIds = [
-            u['id'] for u in accessList.get('users', [])
-        ]
-        userEmails = {}
-        if userIds:
-            users = list(User().find(
-                {'_id': {'$in': userIds}},
-                fields=['email']
-            ))
-            userEmails = {
-                u['_id']: u.get('email', '')
-                for u in users
-            }
+        result['configurationId'] = str(
+            configuration['_id']
+        )
 
         # Find all DatasetViews for this configuration
         datasetViews = list(self._datasetViewModel.find({
@@ -483,27 +446,14 @@ class DatasetView(Resource):
                 {
                     'id': str(f['_id']),
                     'name': f.get('name', ''),
-                    'public': f.get('public', False),
+                    'public': f.get(
+                        'public', False
+                    ),
                 }
                 for f in folders
             ]
-
-        return {
-            'configurationId': str(configuration['_id']),
-            'public': configuration.get('public', False),
-            'users': [
-                {
-                    'id': str(u['id']),
-                    'login': u.get('login', ''),
-                    'name': u.get('name', ''),
-                    'email': userEmails.get(u['id'], ''),
-                    'level': u['level'],
-                }
-                for u in accessList.get('users', [])
-            ],
-            'groups': accessList.get('groups', []),
-            'datasets': datasets,
-        }
+        result['datasets'] = datasets
+        return result
 
     @access.public
     @autoDescribeRoute(

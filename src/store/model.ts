@@ -419,6 +419,7 @@ export interface IDatasetViewBase {
 
 export interface IDatasetView extends IDatasetViewBase {
   readonly id: string;
+  readonly _accessLevel?: number;
 }
 
 // Access control types for sharing datasets
@@ -456,6 +457,13 @@ export interface IConfigurationAccessList {
   users: IDatasetAccessUser[];
   groups: unknown[];
   datasets: IConfigurationAccessDataset[];
+}
+
+export interface IProjectAccessList {
+  projectId: string;
+  public: boolean;
+  users: IDatasetAccessUser[];
+  groups: unknown[];
 }
 
 export interface IProjectDatasetReference {
@@ -504,6 +512,8 @@ export interface IProject {
   creatorId: string;
   created: string;
   updated: string;
+  public?: boolean;
+  _accessLevel?: number;
   meta: {
     datasets: IProjectDatasetReference[];
     collections: IProjectCollectionReference[];
