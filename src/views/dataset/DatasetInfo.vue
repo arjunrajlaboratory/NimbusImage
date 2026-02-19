@@ -27,6 +27,11 @@
                 </tr>
               </tbody>
             </v-simple-table>
+            <sharing-status-display
+              :loading="sharingLoading"
+              :is-public="sharingIsPublic"
+              :access-users="sharingUsers"
+            />
             <div class="text-right mt-4 mr-2">
               <v-btn
                 color="primary"
@@ -159,12 +164,22 @@
                     ></v-radio>
                   </v-list-item-action>
                   <v-list-item-content>
-                    <v-list-item-title>
+                    <v-list-item-title class="d-flex align-center">
                       {{
                         d.configInfo
                           ? d.configInfo.name
                           : "Unnamed configuration"
                       }}
+                      <sharing-status-icon
+                        v-if="
+                          getConfigSharingInfo(d.datasetView.configurationId)
+                        "
+                        :is-public="
+                          getConfigSharingInfo(d.datasetView.configurationId)
+                            ?.public ?? false
+                        "
+                        :users="sharingUsers || []"
+                      />
                     </v-list-item-title>
                     <v-list-item-subtitle>
                       {{
@@ -328,10 +343,17 @@
 import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IDatasetView } from "@/store/model";
+import {
+  IDatasetView,
+  IDatasetAccessUser,
+  IDatasetAccessConfiguration,
+} from "@/store/model";
 import { IGirderItem, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
+import { fetchSharingInfo } from "@/utils/sharingInfo";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
+import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
+import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
 
 @Component({
   components: {
@@ -339,6 +361,8 @@ import datasetMetadataImport from "@/store/datasetMetadataImport";
       import("@/components/GirderLocationChooser.vue").then((mod) => mod),
     AddToProjectDialog: () =>
       import("@/components/AddToProjectDialog.vue").then((mod) => mod.default),
+    SharingStatusDisplay,
+    SharingStatusIcon,
   },
 })
 export default class DatasetInfo extends Vue {
@@ -362,6 +386,12 @@ export default class DatasetInfo extends Vue {
   newCollectionName: string = "";
   selectedFolderId: string | null = null;
   datasetParentId: string | null = null;
+
+  // Sharing state
+  sharingLoading = false;
+  sharingIsPublic = false;
+  sharingUsers: IDatasetAccessUser[] | null = null;
+  sharingConfigurations: IDatasetAccessConfiguration[] = [];
 
   // Dataset statistics counts
   annotationCount: number | null = null;
@@ -491,11 +521,35 @@ export default class DatasetInfo extends Vue {
     this.updateDefaultConfigurationName();
     this.fetchDatasetParentFolder();
     this.fetchCounts();
+    this.fetchSharingInfo();
   }
 
   @Watch("dataset")
   onDatasetChangeForCounts() {
     this.fetchCounts();
+    this.fetchSharingInfo();
+  }
+
+  async fetchSharingInfo() {
+    if (!this.dataset) {
+      this.sharingUsers = null;
+      this.sharingConfigurations = [];
+      return;
+    }
+    this.sharingLoading = true;
+    const result = await fetchSharingInfo(() =>
+      this.store.api.getDatasetAccess(this.dataset!.id),
+    );
+    this.sharingIsPublic = result?.public ?? false;
+    this.sharingUsers = result?.users ?? null;
+    this.sharingConfigurations = result?.configurations ?? [];
+    this.sharingLoading = false;
+  }
+
+  getConfigSharingInfo(
+    configurationId: string,
+  ): IDatasetAccessConfiguration | undefined {
+    return this.sharingConfigurations.find((c) => c.id === configurationId);
   }
 
   @Watch("selectedDatasetViewId")
