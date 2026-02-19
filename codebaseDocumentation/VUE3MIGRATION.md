@@ -19,7 +19,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Next Steps (Phase 1 Continuation)
 
-**Current progress:** 118 of 121 components migrated to `<script setup>` (Batches 1–16 complete). 3 remaining.
+**Current progress:** 119 of 121 components migrated to `<script setup>` (Batches 1–17 complete). 2 remaining.
 
 **Branch:** `claude/vue3-migration-planning-tS4Hx`
 
@@ -56,7 +56,17 @@ NewDataset migrated (106 tests).
 - **Watcher closure captures:** `watch()` callbacks capture the local function reference directly; spying on `vm.method` doesn't intercept — test the observable side effect instead
 - **Store getter overrides in tests:** Use `Object.defineProperty` to temporarily override store getters (e.g., `uploadWorkflow`, `uploadIsFirstDataset`) to enable conditional code paths
 
-### Batch 17 — Snapshots
+### ~~Batch 17 — Snapshots~~ COMPLETE
+
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `Snapshots.vue` | 2,834→2,777 | Snapshot creation/loading, image/movie download, GeoJS bounding box management, scalebar rendering. 1 prop → `defineProps`, ~35 data fields → `ref()`, ~20 computed → `computed()` (4 get/set pairs), 4 `@Watch` → `watch()`, ~40 methods → functions, `Vue.set` → direct assignment, exported enums moved to separate `<script>` block. 141 tests. |
+
+**Key patterns in this batch:**
+- **Exported enums in `<script setup>`:** `<script setup>` cannot contain ES module exports. Enums used by other components (e.g., `MovieFormat` imported by `MovieDialog.vue`) must be in a separate `<script lang="ts">` block
+- **Non-reactive mock store:** Module-level store imports are not reactive in `<script setup>` (unlike class component data properties). Tests that change store state after mount must remount the component to see updated computed values
+- **Template ref mocking:** In `<script setup>`, template refs are exposed via `defineExpose`. Mock via `wrapper.vm.refName = mock` (not `$refs`)
+- **Internal method spying:** `vi.spyOn(wrapper.vm, "method")` doesn't intercept closure-captured functions — verify through mocked utility function calls instead
 
 ### Batch 18 — ImageViewer (with `markRaw()`)
 
