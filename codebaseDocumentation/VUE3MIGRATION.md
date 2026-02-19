@@ -173,19 +173,31 @@ Vue 3 replaces `Object.defineProperty` (Vue 2) with **ES6 Proxies** for reactivi
 
 The `IMapEntry` interface (`src/store/model.ts:1600-1614`) holds these GeoJS objects that all need `markRaw()`:
 
-| Field | Currently Protected? | Notes |
-|-------|---------------------|-------|
-| `map` | No | Core GeoJS map instance |
-| `imageLayers` | Yes (`markRaw([])`) | Array is marked raw; items pushed in need protection too |
-| `params` | Yes (`markRaw(params)`) | Already protected |
-| `annotationLayer` | No | GeoJS annotation layer |
-| `workerPreviewLayer` | No | GeoJS feature layer |
-| `workerPreviewFeature` | No | GeoJS feature |
-| `textLayer` | No | GeoJS feature layer |
-| `timelapseLayer` | No | GeoJS annotation layer |
-| `timelapseTextLayer` | No | GeoJS feature layer |
-| `interactionLayer` | No | GeoJS annotation layer |
-| `uiLayer` | No | GeoJS UI layer (optional) |
+| Field | Protected? | Notes |
+|-------|-----------|-------|
+| `map` | Yes (Batch 18) | Core GeoJS map instance |
+| `imageLayers` | Yes | Array is marked raw; items pushed in are also wrapped |
+| `params` | Yes | Already protected pre-migration |
+| `annotationLayer` | Yes (Batch 18) | GeoJS annotation layer |
+| `workerPreviewLayer` | Yes (Batch 18) | GeoJS feature layer |
+| `workerPreviewFeature` | Yes (Batch 18) | GeoJS feature |
+| `textLayer` | Yes (Batch 18) | GeoJS feature layer |
+| `timelapseLayer` | Yes (Batch 18) | GeoJS annotation layer |
+| `timelapseTextLayer` | Yes (Batch 18) | GeoJS feature layer |
+| `interactionLayer` | Yes (Batch 18) | GeoJS annotation layer |
+| `uiLayer` | Yes (Batch 18) | GeoJS UI layer (optional) |
+
+#### Known Console Warnings (Vue 2.7 only)
+
+Adding `markRaw()` to GeoJS objects in Vue 2.7 causes some WebGL console warnings:
+
+- `WebGL: INVALID_OPERATION: useProgram: object does not belong to this context`
+- `WebGL: INVALID_OPERATION: detachShader: object does not belong to this context`
+- `m_viewer.renderWindow(...)._init is not a function`
+
+**Root cause:** In Vue 2, without `markRaw`, GeoJS objects were wrapped with Vue's `__ob__` observer and reactive getters/setters via `Object.defineProperty`. GeoJS internally tolerates this. With `markRaw`, the objects stay pristine (only a non-enumerable `__v_skip` property is added). The WebGL context management in GeoJS may have incidentally relied on Vue 2's observation behavior. These warnings do not affect functionality.
+
+**Expected resolution:** These warnings should disappear after the Vue 3 upgrade, where `markRaw` prevents Proxy wrapping entirely (its intended purpose). The warnings are cosmetic — the application works correctly with them present.
 
 **Fix in `_setupMap()`:**
 
