@@ -6,9 +6,21 @@ import Vuetify from "vuetify";
 const { d3Chain, d3DragChain, d3ZoomChain } = vi.hoisted(() => {
   const d3Chain: any = {};
   const methods = [
-    "append", "attr", "style", "select", "selectAll", "data",
-    "call", "on", "remove", "enter", "exit", "merge",
-    "transition", "duration", "text",
+    "append",
+    "attr",
+    "style",
+    "select",
+    "selectAll",
+    "data",
+    "call",
+    "on",
+    "remove",
+    "enter",
+    "exit",
+    "merge",
+    "transition",
+    "duration",
+    "text",
   ];
   for (const method of methods) {
     d3Chain[method] = (..._args: any[]) => d3Chain;

@@ -367,36 +367,6 @@
 </template>
 
 <script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
-import store from "@/store";
-import {
-  IGirderFolder,
-  IGirderLocation,
-  IGirderSelectAble,
-  IUPennCollection,
-} from "@/girder";
-import girderResources from "@/store/girderResources";
-import {
-  IDatasetView,
-  WelcomeTourNames,
-  WelcomeTourTypes,
-  WelcomeTourStatus,
-} from "@/store/model";
-import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
-import { Upload as GirderUpload } from "@/girder/components";
-import FileDropzone from "@/components/Files/FileDropzone.vue";
-import CustomFileManager from "@/components/CustomFileManager.vue";
-import CollectionList from "@/components/CollectionList.vue";
-import ProjectList from "@/components/ProjectList.vue";
-import RecentProjects from "@/components/RecentProjects.vue";
-import projects from "@/store/projects";
-import ZenodoImporter from "@/components/ZenodoImporter.vue";
-import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
-import RecentDatasets from "@/components/RecentDatasets.vue";
-import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
-import { formatDateNumber, formatDate } from "@/utils/date";
-import { logError } from "@/utils/log";
-import Persister from "@/store/Persister";
 import { triggersPerCategory } from "@/utils/parsing";
 
 const allTriggers = Object.values(triggersPerCategory).flat();
@@ -452,714 +422,797 @@ function findCommonPrefix(strings: string[]): string {
 
   return result.join("");
 }
+</script>
 
-@Component({
-  components: {
-    GirderUpload,
-    FileDropzone,
-    GirderLocationChooser,
-    CustomFileManager,
-    CollectionList,
-    ProjectList,
-    RecentProjects,
-    ZenodoImporter,
-    ZenodoCommunityDisplay,
-    RecentDatasets,
-  },
-})
-export default class Home extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
-  readonly projectsStore = projects;
-  readonly isDatasetFolder = isDatasetFolder;
-  // Normally, this environment variable would be set:
-  // export VITE_ZENODO_SAMPLES="nimbusimagesampledatasets"
-  readonly zenodoCommunityId = import.meta.env.VITE_ZENODO_SAMPLES || null;
+<script lang="ts" setup>
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  getCurrentInstance,
+  nextTick,
+} from "vue";
+import store from "@/store";
+import {
+  IGirderFolder,
+  IGirderLocation,
+  IGirderSelectAble,
+  IUPennCollection,
+} from "@/girder";
+import girderResources from "@/store/girderResources";
+import {
+  IDatasetView,
+  WelcomeTourNames,
+  WelcomeTourTypes,
+  WelcomeTourStatus,
+} from "@/store/model";
+import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
+import { Upload as GirderUpload } from "@/girder/components";
+import FileDropzone from "@/components/Files/FileDropzone.vue";
+import CustomFileManager from "@/components/CustomFileManager.vue";
+import CollectionList from "@/components/CollectionList.vue";
+import ProjectList from "@/components/ProjectList.vue";
+import RecentProjects from "@/components/RecentProjects.vue";
+import projects from "@/store/projects";
+import ZenodoImporter from "@/components/ZenodoImporter.vue";
+import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
+import RecentDatasets from "@/components/RecentDatasets.vue";
+import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
+import { formatDateNumber, formatDate } from "@/utils/date";
+import { logError } from "@/utils/log";
+import Persister from "@/store/Persister";
 
-  formatDateNumber = formatDateNumber; // Import function from utils/date.ts for use in template
+// Suppress unused-variable warnings for auto-registered components
+void GirderLocationChooser;
+void GirderUpload;
+void FileDropzone;
+void CustomFileManager;
+void CollectionList;
+void ProjectList;
+void RecentProjects;
+void ZenodoImporter;
+void ZenodoCommunityDisplay;
+void RecentDatasets;
 
-  isNavigating: boolean = false;
+const vm = getCurrentInstance()!.proxy;
 
-  get location() {
-    return this.store.folderLocation;
+// Normally, this environment variable would be set:
+// export VITE_ZENODO_SAMPLES="nimbusimagesampledatasets"
+const zenodoCommunityId = import.meta.env.VITE_ZENODO_SAMPLES || null;
+
+// Template ref
+const fileInput = ref<HTMLInputElement>();
+
+// Reactive data
+const isNavigating = ref(false);
+const isDragging = ref(false);
+const showZenodoImporter = ref(false);
+const showUploadDialog = ref(false);
+const showUploadInfo = ref(false);
+const browseMode = ref<"files" | "collections" | "projects">("files");
+const datasetsTab = ref(0);
+const loadingProjects = ref(false);
+
+const pendingFiles = ref<File[]>([]);
+const datasetName = ref("");
+const selectedLocation = ref<IGirderLocation | null>(null);
+const nameTaken = ref(false);
+const checkingName = ref(false);
+const nameError = ref("");
+const batchMode = ref(false);
+
+// Batch mode dataset name editing
+const datasetNames = ref<string[]>([]);
+const nameConflicts = ref<number[]>([]);
+const validatingNames = ref(false);
+let validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+const userDisplayNames = ref<Record<string, string>>({});
+
+const selectedZenodoDataset = ref<any>(null);
+
+// Computed properties
+const location = computed({
+  get: () => store.folderLocation,
+  set: (loc: IGirderLocation) => store.setFolderLocation(loc),
+});
+
+const locationName = computed(() => {
+  // @ts-ignore: name or login may be undefined, but this case is checked
+  const name: string = location.value.name || location.value.login;
+  if (name) {
+    return name;
+  }
+  // @ts-ignore: same reason as for name and login
+  const alternative: string = location.value.type || location.value._modelType;
+  if (alternative) {
+    // Capitalize first letter
+    return alternative[0].toUpperCase() + alternative.slice(1);
+  }
+  return "Unknown location name";
+});
+
+const recommendedName = computed(() => {
+  // If there aren't any files selected yet, return a blank string.
+  if (pendingFiles.value.length === 0) {
+    return "";
   }
 
-  set location(location: IGirderLocation) {
-    this.store.setFolderLocation(location);
+  // If there is only one file, return its name with the extension struck off.
+  if (pendingFiles.value.length === 1) {
+    return basename(pendingFiles.value[0].name);
   }
 
-  isDragging: boolean = false;
-  showZenodoImporter: boolean = false;
-  showUploadDialog: boolean = false;
-  showUploadInfo: boolean = false;
-  browseMode: "files" | "collections" | "projects" = "files";
-  datasetsTab: number = 0;
-  loadingProjects: boolean = false;
-
-  pendingFiles: File[] = [];
-  datasetName: string = "";
-  selectedLocation: IGirderLocation | null = null;
-  nameTaken: boolean = false;
-  checkingName: boolean = false;
-  nameError: string = "";
-  batchMode: boolean = false;
-
-  // Batch mode dataset name editing
-  datasetNames: string[] = [];
-  nameConflicts: number[] = []; // Array instead of Set for Vue 2 reactivity
-  validatingNames: boolean = false;
-  validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  userDisplayNames: { [key: string]: string } = {};
-
-  get locationName() {
-    // @ts-ignore: name or login may be undefined, but this case is checked
-    const name: string = this.location.name || this.location.login;
-    if (name) {
-      return name;
-    }
-    // @ts-ignore: same reason as for name and login
-    const alternative: string = this.location.type || this.location._modelType;
-    if (alternative) {
-      // Capitalize first letter
-      return alternative[0].toUpperCase() + alternative.slice(1);
-    }
-    return "Unknown location name";
+  // For more than one file, search for the longest prefix common to all, and
+  // use that as the name if it's nonblank; otherwise use the name of the
+  // first file.
+  const prefix = findCommonPrefix(pendingFiles.value.map((d) => d.name));
+  if (prefix.length > 0) {
+    return prefix;
+  } else {
+    return basename(pendingFiles.value[0].name);
   }
+});
 
-  get recommendedName() {
-    const { pendingFiles } = this;
-
-    // If there aren't any files selected yet, return a blank string.
-    if (pendingFiles.length === 0) {
-      return "";
-    }
-
-    // If there is only one file, return its name with the extension struck off.
-    if (pendingFiles.length === 1) {
-      return basename(pendingFiles[0].name);
-    }
-
-    // For more than one file, search for the longest prefix common to all, and
-    // use that as the name if it's nonblank; otherwise use the name of the
-    // first file.
-    const prefix = findCommonPrefix(pendingFiles.map((d) => d.name));
-    if (prefix.length > 0) {
-      return prefix;
-    } else {
-      return basename(pendingFiles[0].name);
-    }
+const fileGroups = computed((): File[][] => {
+  if (batchMode.value) {
+    // Each file becomes its own dataset
+    return pendingFiles.value.map((file) => [file]);
+  } else {
+    // All files go into one dataset
+    return [pendingFiles.value];
   }
+});
 
-  get fileGroups(): File[][] {
-    if (this.batchMode) {
-      // Each file becomes its own dataset
-      return this.pendingFiles.map((file) => [file]);
-    } else {
-      // All files go into one dataset
-      return [this.pendingFiles];
-    }
-  }
+const nameRules = computed(() => {
+  return [(v: string) => v.trim().length > 0 || "Dataset name is required"];
+});
 
-  getDatasetNameForFile(file: File): string {
-    return basename(file.name);
-  }
+const isFormValid = computed(() => {
+  const baseValid =
+    datasetName.value.trim().length > 0 &&
+    selectedLocation.value !== null &&
+    "_id" in selectedLocation.value &&
+    !nameTaken.value &&
+    !checkingName.value;
 
-  initializeDatasetNames() {
-    this.datasetNames = this.pendingFiles.map((file) =>
-      this.getDatasetNameForFile(file),
+  // Additional validation for batch mode
+  if (batchMode.value) {
+    const hasEmptyNames = datasetNames.value.some((n) => !n?.trim());
+    const hasConflicts = nameConflicts.value.length > 0;
+    return (
+      baseValid && !hasEmptyNames && !hasConflicts && !validatingNames.value
     );
-    this.nameConflicts = [];
   }
 
-  validateDatasetNamesDebounced() {
-    // Debounce to avoid interfering with button clicks
-    if (this.validateNamesDebounceTimer) {
-      clearTimeout(this.validateNamesDebounceTimer);
+  return baseValid;
+});
+
+const datasetViews = computed(() => {
+  const result: IDatasetView[] = [];
+  const used: Set<string> = new Set();
+  store.recentDatasetViews.forEach((datasetView: IDatasetView) => {
+    if (!used.has(datasetView.id)) {
+      used.add(datasetView.id);
+      result.push(datasetView);
     }
-    this.validateNamesDebounceTimer = setTimeout(() => {
-      this.validateDatasetNames();
-    }, 300);
+  });
+  return result;
+});
+
+const recentProjects = computed(() => projects.recentProjects);
+
+const datasetInfo = computed(() => {
+  const infos: { [datasetId: string]: IGirderFolder | null } = {};
+  for (const datasetView of datasetViews.value) {
+    const id = datasetView.datasetId;
+    const folder = girderResources.watchFolder(id);
+    infos[id] = folder || null;
+  }
+  return infos;
+});
+
+const configInfo = computed(() => {
+  const infos: { [configId: string]: IUPennCollection | null } = {};
+  for (const datasetView of datasetViews.value) {
+    const id = datasetView.configurationId;
+    const item = girderResources.watchCollection(id);
+    infos[id] = item || null;
+  }
+  return infos;
+});
+
+const datasetViewItems = computed(() => {
+  const items = [];
+  for (const datasetView of datasetViews.value) {
+    const configI = configInfo.value[datasetView.configurationId];
+    const datasetI = datasetInfo.value[datasetView.datasetId];
+    if (!configI || !datasetI) {
+      continue;
+    }
+    items.push({
+      datasetView,
+      configInfo: configI,
+      datasetInfo: datasetI,
+    });
+  }
+  return items;
+});
+
+const routeName = computed(() => vm.$route?.name);
+
+// Methods
+function getDatasetNameForFile(file: File): string {
+  return basename(file.name);
+}
+
+function initializeDatasetNames() {
+  datasetNames.value = pendingFiles.value.map((file) =>
+    getDatasetNameForFile(file),
+  );
+  nameConflicts.value = [];
+}
+
+function validateDatasetNamesDebounced() {
+  // Debounce to avoid interfering with button clicks
+  if (validateNamesDebounceTimer) {
+    clearTimeout(validateNamesDebounceTimer);
+  }
+  validateNamesDebounceTimer = setTimeout(() => {
+    validateDatasetNames();
+  }, 300);
+}
+
+async function validateDatasetNames() {
+  if (
+    !batchMode.value ||
+    !selectedLocation.value ||
+    !("_id" in selectedLocation.value)
+  ) {
+    return;
   }
 
-  async validateDatasetNames() {
-    if (
-      !this.batchMode ||
-      !this.selectedLocation ||
-      !("_id" in this.selectedLocation)
-    ) {
-      return;
-    }
+  validatingNames.value = true;
+  const conflicts: number[] = [];
 
-    this.validatingNames = true;
-    const conflicts: number[] = [];
+  try {
+    // Check for internal duplicates first
+    const nameCounts = new Map<string, number[]>();
+    datasetNames.value.forEach((name, idx) => {
+      const lower = name.trim().toLowerCase();
+      if (!nameCounts.has(lower)) {
+        nameCounts.set(lower, []);
+      }
+      nameCounts.get(lower)!.push(idx);
+    });
 
-    try {
-      // Check for internal duplicates first
-      const nameCounts = new Map<string, number[]>();
-      this.datasetNames.forEach((name, idx) => {
-        const lower = name.trim().toLowerCase();
-        if (!nameCounts.has(lower)) {
-          nameCounts.set(lower, []);
-        }
-        nameCounts.get(lower)!.push(idx);
-      });
+    // Mark all indices that have duplicate names
+    nameCounts.forEach((indices) => {
+      if (indices.length > 1) {
+        indices.forEach((idx) => {
+          if (!conflicts.includes(idx)) {
+            conflicts.push(idx);
+          }
+        });
+      }
+    });
 
-      // Mark all indices that have duplicate names
-      nameCounts.forEach((indices) => {
-        if (indices.length > 1) {
-          indices.forEach((idx) => {
+    // Check each unique name against existing datasets
+    const uniqueNames = [...new Set(datasetNames.value.map((n) => n.trim()))];
+    for (const name of uniqueNames) {
+      if (!name) continue;
+      const exists = await store.api.checkDatasetNameExists(
+        name,
+        selectedLocation.value,
+      );
+      if (exists) {
+        // Mark all indices with this name as conflicts
+        datasetNames.value.forEach((n, idx) => {
+          if (n.trim().toLowerCase() === name.toLowerCase()) {
             if (!conflicts.includes(idx)) {
               conflicts.push(idx);
             }
-          });
-        }
-      });
-
-      // Check each unique name against existing datasets
-      const uniqueNames = [...new Set(this.datasetNames.map((n) => n.trim()))];
-      for (const name of uniqueNames) {
-        if (!name) continue;
-        const exists = await this.store.api.checkDatasetNameExists(
-          name,
-          this.selectedLocation,
-        );
-        if (exists) {
-          // Mark all indices with this name as conflicts
-          this.datasetNames.forEach((n, idx) => {
-            if (n.trim().toLowerCase() === name.toLowerCase()) {
-              if (!conflicts.includes(idx)) {
-                conflicts.push(idx);
-              }
-            }
-          });
-        }
+          }
+        });
       }
-    } finally {
-      this.nameConflicts = conflicts;
-      this.validatingNames = false;
     }
+  } finally {
+    nameConflicts.value = conflicts;
+    validatingNames.value = false;
   }
+}
 
-  getNameError(idx: number): string {
-    if (!this.nameConflicts.includes(idx)) return "";
-    const name = this.datasetNames[idx]?.trim().toLowerCase();
+function getNameError(idx: number): string {
+  if (!nameConflicts.value.includes(idx)) return "";
+  const name = datasetNames.value[idx]?.trim().toLowerCase();
 
-    // Check if it's a duplicate within the batch
-    const duplicateCount = this.datasetNames.filter(
-      (n) => n.trim().toLowerCase() === name,
-    ).length;
+  // Check if it's a duplicate within the batch
+  const duplicateCount = datasetNames.value.filter(
+    (n) => n.trim().toLowerCase() === name,
+  ).length;
 
-    if (duplicateCount > 1) {
-      return "Duplicate name in batch";
-    }
-    return "Dataset already exists in this location";
+  if (duplicateCount > 1) {
+    return "Duplicate name in batch";
   }
+  return "Dataset already exists in this location";
+}
 
-  get nameRules() {
-    return [(v: string) => v.trim().length > 0 || "Dataset name is required"];
+async function getUsernameFromId(
+  creatorId: string,
+): Promise<{ fullname: string; username: string }> {
+  const user = await girderResources.getUser(creatorId);
+  if (!user) {
+    return { fullname: "Unknown User", username: "unknown" };
   }
+  const fullname = `${user.firstName} ${user.lastName}`.trim();
+  return {
+    fullname: fullname || user.email, // fallback to email if no name set
+    username: user.email,
+  };
+}
 
-  get isFormValid() {
-    const baseValid =
-      this.datasetName.trim().length > 0 &&
-      this.selectedLocation !== null &&
-      "_id" in this.selectedLocation &&
-      !this.nameTaken &&
-      !this.checkingName;
-
-    // Additional validation for batch mode
-    if (this.batchMode) {
-      const hasEmptyNames = this.datasetNames.some((n) => !n?.trim());
-      const hasConflicts = this.nameConflicts.length > 0;
-      return (
-        baseValid && !hasEmptyNames && !hasConflicts && !this.validatingNames
-      );
-    }
-
-    return baseValid;
-  }
-
-  get datasetViews() {
-    const result: IDatasetView[] = [];
-    const used: Set<string> = new Set();
-    this.store.recentDatasetViews.forEach((datasetView: IDatasetView) => {
-      if (!used.has(datasetView.id)) {
-        used.add(datasetView.id);
-        result.push(datasetView);
-      }
-    });
-    return result;
-  }
-
-  get recentProjects() {
-    return this.projectsStore.recentProjects;
-  }
-
-  get datasetInfo() {
-    const infos: {
-      [datasetId: string]: IGirderFolder | null;
-    } = {};
-    for (const datasetView of this.datasetViews) {
-      const id = datasetView.datasetId;
-      const folder = this.girderResources.watchFolder(id);
-      infos[id] = folder || null;
-    }
-    return infos;
-  }
-
-  get configInfo() {
-    const infos: {
-      [configId: string]: IUPennCollection | null;
-    } = {};
-    for (const datasetView of this.datasetViews) {
-      const id = datasetView.configurationId;
-      const item = this.girderResources.watchCollection(id);
-      infos[id] = item || null;
-    }
-    return infos;
-  }
-
-  get datasetViewItems() {
-    const items = [];
-    for (const datasetView of this.datasetViews) {
-      const configInfo = this.configInfo[datasetView.configurationId];
-      const datasetInfo = this.datasetInfo[datasetView.datasetId];
-      if (!configInfo || !datasetInfo) {
-        continue;
-      }
-      items.push({ datasetView, configInfo, datasetInfo });
-    }
-    return items;
-  }
-
-  async getUsernameFromId(
-    creatorId: string,
-  ): Promise<{ fullname: string; username: string }> {
-    const user = await this.girderResources.getUser(creatorId);
-    if (!user) {
-      return { fullname: "Unknown User", username: "unknown" };
-    }
-    const fullname = `${user.firstName} ${user.lastName}`.trim();
-    return {
-      fullname: fullname || user.email, // fallback to email if no name set
-      username: user.email,
+function getUserDisplayName(creatorId: string): string {
+  if (!userDisplayNames.value[creatorId]) {
+    userDisplayNames.value = {
+      ...userDisplayNames.value,
+      [creatorId]: "Loading...",
     };
+    getUsernameFromId(creatorId).then((user) => {
+      userDisplayNames.value = {
+        ...userDisplayNames.value,
+        [creatorId]: `${user.fullname} (${user.username})`,
+      };
+    });
   }
+  return userDisplayNames.value[creatorId];
+}
 
-  getUserDisplayName(creatorId: string): string {
-    if (!this.userDisplayNames[creatorId]) {
-      Vue.set(this.userDisplayNames, creatorId, "Loading...");
-      this.getUsernameFromId(creatorId).then((user) => {
-        Vue.set(
-          this.userDisplayNames,
-          creatorId,
-          `${user.fullname} (${user.username})`,
-        );
-      });
+async function fetchUsersForDatasets() {
+  const userIds = new Set<string>();
+
+  for (const view of datasetViewItems.value) {
+    if (view.datasetInfo.creatorId) {
+      userIds.add(view.datasetInfo.creatorId);
     }
-    return this.userDisplayNames[creatorId];
   }
 
-  async fetchUsersForDatasets() {
-    const userIds = new Set<string>();
+  if (userIds.size > 0) {
+    await girderResources.batchFetchResources({
+      userIds: Array.from(userIds),
+    });
 
-    for (const view of this.datasetViewItems) {
-      if (view.datasetInfo.creatorId) {
-        userIds.add(view.datasetInfo.creatorId);
+    // Update display names using object spread for reactivity
+    const updates: Record<string, string> = {};
+    for (const userId of userIds) {
+      const user = girderResources.watchUser(userId);
+      if (user) {
+        const fullname = `${user.firstName} ${user.lastName}`.trim();
+        updates[userId] = `${fullname || user.email} (${user.email})`;
       }
     }
+    if (Object.keys(updates).length > 0) {
+      userDisplayNames.value = { ...userDisplayNames.value, ...updates };
+    }
+  }
+}
 
-    if (userIds.size > 0) {
-      await this.girderResources.batchFetchResources({
-        userIds: Array.from(userIds),
-      });
+async function fetchDatasetsAndConfigurations() {
+  // Don't proceed if resources are being locked (loaded individually)
+  if (Object.keys(girderResources.resourcesLocks).length > 0) {
+    return;
+  }
 
-      // Update display names
-      for (const userId of userIds) {
-        const user = this.girderResources.watchUser(userId);
-        if (user) {
-          const fullname = `${user.firstName} ${user.lastName}`.trim();
-          this.userDisplayNames[userId] =
-            `${fullname || user.email} (${user.email})`;
-        }
-      }
+  // Collect IDs that aren't already in cache
+  const datasetIds: string[] = [];
+  const configIds: string[] = [];
+
+  for (const view of datasetViews.value) {
+    // Check if dataset is not in cache
+    if (!girderResources.watchFolder(view.datasetId)) {
+      datasetIds.push(view.datasetId);
+    }
+    // Check if configuration is not in cache
+    if (!girderResources.watchCollection(view.configurationId)) {
+      configIds.push(view.configurationId);
     }
   }
 
-  @Watch("datasetViews")
-  @Watch("girderResources.resources")
-  async fetchDatasetsAndConfigurations() {
-    // Don't proceed if resources are being locked (loaded individually)
-    if (Object.keys(girderResources.resourcesLocks).length > 0) {
-      return;
-    }
-
-    // Collect IDs that aren't already in cache
-    const datasetIds: string[] = [];
-    const configIds: string[] = [];
-
-    for (const view of this.datasetViews) {
-      // Check if dataset is not in cache
-      if (!this.girderResources.watchFolder(view.datasetId)) {
-        datasetIds.push(view.datasetId);
-      }
-      // Check if configuration is not in cache
-      if (!this.girderResources.watchCollection(view.configurationId)) {
-        configIds.push(view.configurationId);
-      }
-    }
-
-    // Batch fetch all missing resources
-    if (datasetIds.length > 0 || configIds.length > 0) {
-      await this.girderResources.batchFetchResources({
-        folderIds: datasetIds,
-        collectionIds: configIds,
-      });
-    }
-  }
-
-  @Watch("datasetViewItems")
-  async fetchUsersForDatasetsWatcher() {
-    await this.fetchUsersForDatasets();
-  }
-
-  mounted() {
-    this.initializeRecentViews();
-    this.refreshRecentDatasetDetails();
-    this.initializeWelcomeTour();
-    this.fetchRecentProjects();
-    this.isNavigating = false; // Reset navigation state on mount
-  }
-
-  @Watch("store.isLoggedIn")
-  onLoginStatusChange(isLoggedIn: boolean) {
-    if (isLoggedIn) {
-      // User has just logged in, try initializing the tour
-      this.initializeWelcomeTour();
-      // Fetch recent projects
-      this.fetchRecentProjects();
-    }
-  }
-
-  async initializeWelcomeTour() {
-    // Only proceed if the user is logged in
-    if (!this.store.isLoggedIn) {
-      return;
-    }
-
-    // Check if tour status exists, returns default of "notYetRun" if not
-    // Note that currently, the value will never actually be NOT_YET_RUN, but
-    // if we want to capture multiple statuses in the future, it might be useful.
-    const tourStatus = Persister.get(
-      WelcomeTourTypes.HOME,
-      WelcomeTourStatus.NOT_YET_RUN,
-    );
-
-    // If it was the default value of NOT_YET_RUN, then update the status and start tour
-    if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
-      Persister.set(WelcomeTourTypes.HOME, WelcomeTourStatus.ALREADY_RUN);
-      this.$startTour(WelcomeTourNames[WelcomeTourTypes.HOME]);
-    }
-  }
-
-  // Add a navigation guard for route changes
-  @Watch("$route")
-  onRouteChange() {
-    this.isNavigating = false;
-  }
-
-  @Watch("selectedLocation")
-  onLocationChange() {
-    // Clear name validation state when location changes
-    // The validation rule will re-run automatically
-    if (this.nameTaken) {
-      this.nameTaken = false;
-      this.nameError = "";
-    }
-    // Validate batch mode dataset names when location changes
-    if (this.batchMode && this.pendingFiles.length > 0) {
-      this.validateDatasetNames();
-    }
-  }
-
-  @Watch("pendingFiles")
-  onPendingFilesChange() {
-    this.initializeDatasetNames();
-    if (this.batchMode && this.selectedLocation) {
-      this.validateDatasetNames();
-    }
-  }
-
-  @Watch("batchMode")
-  onBatchModeChange(newVal: boolean) {
-    if (newVal) {
-      this.initializeDatasetNames();
-      if (this.selectedLocation) {
-        this.validateDatasetNames();
-      }
-    }
-  }
-
-  @Watch("datasetName")
-  async onDatasetNameChange(newName: string) {
-    // Skip validation in batch mode - collection names are checked differently
-    if (this.batchMode) {
-      return;
-    }
-
-    if (!newName || !newName.trim()) {
-      this.nameTaken = false;
-      this.nameError = "";
-      return;
-    }
-
-    if (!this.selectedLocation || !("_id" in this.selectedLocation)) {
-      return;
-    }
-
-    this.checkingName = true;
-    this.nameTaken = false;
-    this.nameError = "";
-
-    try {
-      const exists = await this.store.api.checkDatasetNameExists(
-        newName.trim(),
-        this.selectedLocation,
-      );
-      if (exists) {
-        this.nameTaken = true;
-        this.nameError =
-          "A dataset with this name already exists in the selected location";
-      } else {
-        this.nameTaken = false;
-        this.nameError = "";
-      }
-    } catch (error) {
-      // If check fails, don't block submission - let the server handle it
-      this.nameError = "";
-    } finally {
-      this.checkingName = false;
-    }
-  }
-
-  private async initializeRecentViews() {
-    try {
-      await this.store.fetchRecentDatasetViews();
-    } catch (error) {
-      logError("Failed to initialize recent views:", error);
-    }
-  }
-
-  private async fetchRecentProjects() {
-    this.loadingProjects = true;
-    try {
-      await this.projectsStore.fetchProjects();
-    } catch (error) {
-      logError("Failed to fetch recent projects:", error);
-    } finally {
-      this.loadingProjects = false;
-    }
-  }
-
-  async refreshRecentDatasetDetails() {
-    const datasetIds = this.datasetViews.map((d) => d.datasetId);
-    const configIds = this.datasetViews.map((d) => d.configurationId);
-
-    await this.girderResources.batchFetchResources({
+  // Batch fetch all missing resources
+  if (datasetIds.length > 0 || configIds.length > 0) {
+    await girderResources.batchFetchResources({
       folderIds: datasetIds,
       collectionIds: configIds,
     });
   }
+}
 
-  onLocationUpdate(selectable: IGirderSelectAble) {
-    if (selectable._modelType === "upenn_collection") {
-      return;
-    }
-    if (isDatasetFolder(selectable)) {
-      this.$router.push({
-        name: "dataset",
-        params: { datasetId: selectable._id },
-      });
-    } else if (isConfigurationItem(selectable)) {
-      this.$router.push({
-        name: "configuration",
-        params: { configurationId: selectable._id },
-      });
-    } else if (
-      selectable._modelType !== "file" &&
-      selectable._modelType !== "item"
-    ) {
-      this.location = selectable;
-    }
-  }
-
-  quickUpload(files: File[], name?: string, location?: IGirderLocation) {
-    // Initialize upload workflow in store
-    this.store.initializeUploadWorkflow({
-      quickupload: true,
-      batchMode: this.batchMode,
-      batchName: this.batchMode ? name || this.datasetName || "" : "",
-      fileGroups: this.batchMode ? this.fileGroups : [files],
-      datasetNames: this.batchMode ? [...this.datasetNames] : [],
-      initialUploadLocation: location || this.location,
-      initialName: this.batchMode ? "" : name || "",
-      initialDescription: "",
-    });
-
-    // Navigate without complex params
-    this.$router.push({ name: "newdataset" });
-  }
-
-  comprehensiveUpload(
-    files: File[],
-    name?: string,
-    location?: IGirderLocation,
-  ) {
-    this.store.initializeUploadWorkflow({
-      quickupload: false,
-      batchMode: this.batchMode,
-      batchName: this.batchMode ? name || this.datasetName || "" : "",
-      fileGroups: this.batchMode ? this.fileGroups : [files],
-      datasetNames: this.batchMode ? [...this.datasetNames] : [],
-      initialUploadLocation: location || this.location,
-      initialName: this.batchMode ? "" : name || "",
-      initialDescription: "",
-    });
-
-    this.$router.push({ name: "newdataset" });
-  }
-
-  handleDrop(event: DragEvent) {
-    this.isDragging = false;
-    const files = Array.from(event.dataTransfer?.files || []);
-    if (files.length > 0) {
-      this.pendingFiles = files;
-      this.initializeUploadDialog();
-      this.showUploadDialog = true;
-    }
-  }
-
-  openFileSelector() {
-    const input = this.$refs.fileInput as HTMLInputElement;
-    input.click();
-  }
-
-  handleFileSelect(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files || []);
-
-    if (files.length > 0) {
-      this.pendingFiles = files;
-      this.initializeUploadDialog();
-      this.showUploadDialog = true;
-    }
-
-    // Reset the input
-    input.value = "";
-  }
-
-  initializeUploadDialog() {
-    // Set the default name based on recommended name
-    this.datasetName = this.recommendedName + " - " + formatDate(new Date());
-    // Set the default location to current location
-    this.selectedLocation = this.location;
-  }
-
-  onDragLeave(event: DragEvent) {
-    // Check if we're leaving the card and not entering a child element
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = event.clientX;
-    const y = event.clientY;
-
-    // Check if the mouse has actually left the card boundaries
-    if (
-      x <= rect.left ||
-      x >= rect.right ||
-      y <= rect.top ||
-      y >= rect.bottom
-    ) {
-      this.isDragging = false;
-    }
-  }
-
-  handleAcceptDefaults() {
-    if (!this.isFormValid) {
-      return;
-    }
-    this.quickUpload(
-      this.pendingFiles,
-      this.datasetName,
-      this.selectedLocation || undefined,
-    );
-    this.closeUploadDialog();
-  }
-
-  handleConfigureDataset() {
-    if (!this.isFormValid) {
-      return;
-    }
-    this.comprehensiveUpload(
-      this.pendingFiles,
-      this.datasetName,
-      this.selectedLocation || undefined,
-    );
-    this.closeUploadDialog();
-  }
-
-  closeUploadDialog() {
-    this.showUploadDialog = false;
-    this.showUploadInfo = false;
-    this.pendingFiles = [];
-    this.datasetName = "";
-    this.selectedLocation = null;
-    this.nameTaken = false;
-    this.nameError = "";
-    this.checkingName = false;
-    this.batchMode = false;
-    // Reset batch mode name validation state
-    this.datasetNames = [];
-    this.nameConflicts = [];
-    this.validatingNames = false;
-    if (this.validateNamesDebounceTimer) {
-      clearTimeout(this.validateNamesDebounceTimer);
-      this.validateNamesDebounceTimer = null;
-    }
-  }
-
-  toggleZenodoImporter(): void {
-    this.showZenodoImporter = true;
-    // Scroll to the Browse section where the ZenodoImporter is displayed
-    this.$nextTick(() => {
-      const browseSection = document.querySelector(".home-row:nth-of-type(2)");
-      if (browseSection) {
-        browseSection.scrollIntoView({ behavior: "smooth" });
-      }
-    });
-  }
-
-  handleSampleDatasetSelected(dataset: any) {
-    this.selectedZenodoDataset = dataset;
-    this.showZenodoImporter = true;
-  }
-
-  handleProjectClicked() {
-    // Switch to Projects browse mode when clicking a project
-    this.browseMode = "projects";
-  }
-
-  selectedZenodoDataset: any = null;
-
-  navigateToDatasetView(datasetViewId: string) {
-    this.isNavigating = true;
-    this.$router.push({
-      name: "datasetview",
-      params: {
-        datasetViewId: datasetViewId,
-      },
-    });
+async function initializeRecentViews() {
+  try {
+    await store.fetchRecentDatasetViews();
+  } catch (error) {
+    logError("Failed to initialize recent views:", error);
   }
 }
+
+async function fetchRecentProjects() {
+  loadingProjects.value = true;
+  try {
+    await projects.fetchProjects();
+  } catch (error) {
+    logError("Failed to fetch recent projects:", error);
+  } finally {
+    loadingProjects.value = false;
+  }
+}
+
+async function refreshRecentDatasetDetails() {
+  const dIds = datasetViews.value.map((d) => d.datasetId);
+  const cIds = datasetViews.value.map((d) => d.configurationId);
+
+  await girderResources.batchFetchResources({
+    folderIds: dIds,
+    collectionIds: cIds,
+  });
+}
+
+function onLocationUpdate(selectable: IGirderSelectAble) {
+  if (selectable._modelType === "upenn_collection") {
+    return;
+  }
+  if (isDatasetFolder(selectable)) {
+    vm.$router.push({
+      name: "dataset",
+      params: { datasetId: selectable._id },
+    });
+  } else if (isConfigurationItem(selectable)) {
+    vm.$router.push({
+      name: "configuration",
+      params: { configurationId: selectable._id },
+    });
+  } else if (
+    selectable._modelType !== "file" &&
+    selectable._modelType !== "item"
+  ) {
+    location.value = selectable;
+  }
+}
+
+function quickUpload(files: File[], name?: string, loc?: IGirderLocation) {
+  // Initialize upload workflow in store
+  store.initializeUploadWorkflow({
+    quickupload: true,
+    batchMode: batchMode.value,
+    batchName: batchMode.value ? name || datasetName.value || "" : "",
+    fileGroups: batchMode.value ? fileGroups.value : [files],
+    datasetNames: batchMode.value ? [...datasetNames.value] : [],
+    initialUploadLocation: loc || location.value,
+    initialName: batchMode.value ? "" : name || "",
+    initialDescription: "",
+  });
+
+  // Navigate without complex params
+  vm.$router.push({ name: "newdataset" });
+}
+
+function comprehensiveUpload(
+  files: File[],
+  name?: string,
+  loc?: IGirderLocation,
+) {
+  store.initializeUploadWorkflow({
+    quickupload: false,
+    batchMode: batchMode.value,
+    batchName: batchMode.value ? name || datasetName.value || "" : "",
+    fileGroups: batchMode.value ? fileGroups.value : [files],
+    datasetNames: batchMode.value ? [...datasetNames.value] : [],
+    initialUploadLocation: loc || location.value,
+    initialName: batchMode.value ? "" : name || "",
+    initialDescription: "",
+  });
+
+  vm.$router.push({ name: "newdataset" });
+}
+
+function handleDrop(event: DragEvent) {
+  isDragging.value = false;
+  const files = Array.from(event.dataTransfer?.files || []);
+  if (files.length > 0) {
+    pendingFiles.value = files;
+    initializeUploadDialog();
+    showUploadDialog.value = true;
+  }
+}
+
+function openFileSelector() {
+  fileInput.value?.click();
+}
+
+function handleFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+
+  if (files.length > 0) {
+    pendingFiles.value = files;
+    initializeUploadDialog();
+    showUploadDialog.value = true;
+  }
+
+  // Reset the input
+  input.value = "";
+}
+
+function initializeUploadDialog() {
+  // Set the default name based on recommended name
+  datasetName.value = recommendedName.value + " - " + formatDate(new Date());
+  // Set the default location to current location
+  selectedLocation.value = location.value;
+}
+
+function onDragLeave(event: DragEvent) {
+  // Check if we're leaving the card and not entering a child element
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const x = event.clientX;
+  const y = event.clientY;
+
+  // Check if the mouse has actually left the card boundaries
+  if (x <= rect.left || x >= rect.right || y <= rect.top || y >= rect.bottom) {
+    isDragging.value = false;
+  }
+}
+
+function handleAcceptDefaults() {
+  if (!isFormValid.value) {
+    return;
+  }
+  quickUpload(
+    pendingFiles.value,
+    datasetName.value,
+    selectedLocation.value || undefined,
+  );
+  closeUploadDialog();
+}
+
+function handleConfigureDataset() {
+  if (!isFormValid.value) {
+    return;
+  }
+  comprehensiveUpload(
+    pendingFiles.value,
+    datasetName.value,
+    selectedLocation.value || undefined,
+  );
+  closeUploadDialog();
+}
+
+function closeUploadDialog() {
+  showUploadDialog.value = false;
+  showUploadInfo.value = false;
+  pendingFiles.value = [];
+  datasetName.value = "";
+  selectedLocation.value = null;
+  nameTaken.value = false;
+  nameError.value = "";
+  checkingName.value = false;
+  batchMode.value = false;
+  // Reset batch mode name validation state
+  datasetNames.value = [];
+  nameConflicts.value = [];
+  validatingNames.value = false;
+  if (validateNamesDebounceTimer) {
+    clearTimeout(validateNamesDebounceTimer);
+    validateNamesDebounceTimer = null;
+  }
+}
+
+function toggleZenodoImporter(): void {
+  showZenodoImporter.value = true;
+  // Scroll to the Browse section where the ZenodoImporter is displayed
+  nextTick(() => {
+    const browseSection = document.querySelector(".home-row:nth-of-type(2)");
+    if (browseSection) {
+      browseSection.scrollIntoView({ behavior: "smooth" });
+    }
+  });
+}
+
+function handleSampleDatasetSelected(dataset: any) {
+  selectedZenodoDataset.value = dataset;
+  showZenodoImporter.value = true;
+}
+
+function handleProjectClicked() {
+  // Switch to Projects browse mode when clicking a project
+  browseMode.value = "projects";
+}
+
+function navigateToDatasetView(datasetViewId: string) {
+  isNavigating.value = true;
+  vm.$router.push({
+    name: "datasetview",
+    params: {
+      datasetViewId: datasetViewId,
+    },
+  });
+}
+
+async function initializeWelcomeTour() {
+  // Only proceed if the user is logged in
+  if (!store.isLoggedIn) {
+    return;
+  }
+
+  // Check if tour status exists, returns default of "notYetRun" if not
+  const tourStatus = Persister.get(
+    WelcomeTourTypes.HOME,
+    WelcomeTourStatus.NOT_YET_RUN,
+  );
+
+  // If it was the default value of NOT_YET_RUN, then update the status and start tour
+  if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
+    Persister.set(WelcomeTourTypes.HOME, WelcomeTourStatus.ALREADY_RUN);
+    (vm as any).$startTour(WelcomeTourNames[WelcomeTourTypes.HOME]);
+  }
+}
+
+// Watchers
+watch(datasetViews, () => fetchDatasetsAndConfigurations());
+watch(
+  () => girderResources.resources,
+  () => fetchDatasetsAndConfigurations(),
+);
+watch(datasetViewItems, () => fetchUsersForDatasets());
+
+watch(
+  () => store.isLoggedIn,
+  (val) => {
+    if (val) {
+      initializeWelcomeTour();
+      fetchRecentProjects();
+    }
+  },
+);
+
+watch(routeName, () => {
+  isNavigating.value = false;
+});
+
+watch(selectedLocation, () => {
+  // Clear name validation state when location changes
+  if (nameTaken.value) {
+    nameTaken.value = false;
+    nameError.value = "";
+  }
+  // Validate batch mode dataset names when location changes
+  if (batchMode.value && pendingFiles.value.length > 0) {
+    validateDatasetNames();
+  }
+});
+
+watch(pendingFiles, () => {
+  initializeDatasetNames();
+  if (batchMode.value && selectedLocation.value) {
+    validateDatasetNames();
+  }
+});
+
+watch(batchMode, (newVal) => {
+  if (newVal) {
+    initializeDatasetNames();
+    if (selectedLocation.value) {
+      validateDatasetNames();
+    }
+  }
+});
+
+watch(datasetName, async (newName) => {
+  // Skip validation in batch mode - collection names are checked differently
+  if (batchMode.value) {
+    return;
+  }
+
+  if (!newName || !newName.trim()) {
+    nameTaken.value = false;
+    nameError.value = "";
+    return;
+  }
+
+  if (!selectedLocation.value || !("_id" in selectedLocation.value)) {
+    return;
+  }
+
+  checkingName.value = true;
+  nameTaken.value = false;
+  nameError.value = "";
+
+  try {
+    const exists = await store.api.checkDatasetNameExists(
+      newName.trim(),
+      selectedLocation.value,
+    );
+    if (exists) {
+      nameTaken.value = true;
+      nameError.value =
+        "A dataset with this name already exists in the selected location";
+    } else {
+      nameTaken.value = false;
+      nameError.value = "";
+    }
+  } catch (error) {
+    // If check fails, don't block submission - let the server handle it
+    nameError.value = "";
+  } finally {
+    checkingName.value = false;
+  }
+});
+
+// Lifecycle
+onMounted(() => {
+  initializeRecentViews();
+  refreshRecentDatasetDetails();
+  initializeWelcomeTour();
+  fetchRecentProjects();
+  isNavigating.value = false;
+});
+
+defineExpose({
+  // Data refs
+  isNavigating,
+  isDragging,
+  showZenodoImporter,
+  showUploadDialog,
+  showUploadInfo,
+  browseMode,
+  datasetsTab,
+  loadingProjects,
+  pendingFiles,
+  datasetName,
+  selectedLocation,
+  nameTaken,
+  checkingName,
+  nameError,
+  batchMode,
+  datasetNames,
+  nameConflicts,
+  validatingNames,
+  userDisplayNames,
+  selectedZenodoDataset,
+  // Computed
+  location,
+  locationName,
+  recommendedName,
+  fileGroups,
+  nameRules,
+  isFormValid,
+  datasetViews,
+  recentProjects,
+  datasetInfo,
+  configInfo,
+  datasetViewItems,
+  // Methods
+  initializeDatasetNames,
+  validateDatasetNamesDebounced,
+  validateDatasetNames,
+  getNameError,
+  getUserDisplayName,
+  onLocationUpdate,
+  handleDrop,
+  openFileSelector,
+  handleFileSelect,
+  initializeUploadDialog,
+  handleAcceptDefaults,
+  handleConfigureDataset,
+  closeUploadDialog,
+  toggleZenodoImporter,
+  handleSampleDatasetSelected,
+  handleProjectClicked,
+  navigateToDatasetView,
+  quickUpload,
+  comprehensiveUpload,
+  initializeWelcomeTour,
+  fetchUsersForDatasets,
+  fetchDatasetsAndConfigurations,
+});
 </script>
 
 <style lang="scss" scoped>

@@ -47,20 +47,18 @@ vi.mock("papaparse", () => ({
 }));
 
 vi.mock("@/utils/paths", () => ({
-  getValueFromObjectAndPath: vi.fn(
-    (values: any, path: string[]) => {
-      if (!values) return null;
-      let current = values;
-      for (const key of path) {
-        if (current && typeof current === "object" && key in current) {
-          current = current[key];
-        } else {
-          return null;
-        }
+  getValueFromObjectAndPath: vi.fn((values: any, path: string[]) => {
+    if (!values) return null;
+    let current = values;
+    for (const key of path) {
+      if (current && typeof current === "object" && key in current) {
+        current = current[key];
+      } else {
+        return null;
       }
-      return current;
-    },
-  ),
+    }
+    return current;
+  }),
 }));
 
 import AnnotationCSVDialog from "./AnnotationCSVDialog.vue";

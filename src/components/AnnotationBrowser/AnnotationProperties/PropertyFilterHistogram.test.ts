@@ -6,9 +6,21 @@ import Vuetify from "vuetify";
 const { d3Chain } = vi.hoisted(() => {
   const d3Chain: any = {};
   const methods = [
-    "append", "attr", "style", "select", "selectAll", "data",
-    "call", "on", "remove", "enter", "exit", "merge",
-    "transition", "duration", "text",
+    "append",
+    "attr",
+    "style",
+    "select",
+    "selectAll",
+    "data",
+    "call",
+    "on",
+    "remove",
+    "enter",
+    "exit",
+    "merge",
+    "transition",
+    "duration",
+    "text",
   ];
   for (const method of methods) {
     d3Chain[method] = (..._args: any[]) => d3Chain;
@@ -228,7 +240,8 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     vm.maxValue = -999;
     // Only the onMounted call should have happened, not one for this setter
-    const callsFromOnMounted = (filterStore.updatePropertyFilter as any).mock.calls.length;
+    const callsFromOnMounted = (filterStore.updatePropertyFilter as any).mock
+      .calls.length;
     // Re-attempt with invalid
     (filterStore.updatePropertyFilter as any).mockClear();
     vm.maxValue = -999;

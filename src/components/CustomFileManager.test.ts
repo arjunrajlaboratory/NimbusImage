@@ -33,7 +33,8 @@ vi.mock("@/girder/components", () => ({
   },
   FileManager: {
     name: "GirderFileManager",
-    template: "<div><slot name='headerwidget' /><slot name='row-widget' /></div>",
+    template:
+      "<div><slot name='headerwidget' /><slot name='row-widget' /></div>",
     props: ["location", "selectable", "value"],
   },
 }));
@@ -480,7 +481,9 @@ describe("CustomFileManager", () => {
       });
       const vm = wrapper.vm as any;
 
-      const file = new File([""], "large.bin", { type: "application/octet-stream" });
+      const file = new File([""], "large.bin", {
+        type: "application/octet-stream",
+      });
       Object.defineProperty(file, "size", {
         value: 501 * 1024 * 1024,
       });
@@ -528,7 +531,10 @@ describe("CustomFileManager", () => {
       vi.mocked(isConfigurationItem).mockReturnValue(false);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      const result = await vm.itemToChips({ _id: "item1", _modelType: "folder" });
+      const result = await vm.itemToChips({
+        _id: "item1",
+        _modelType: "folder",
+      });
       expect(result.chips).toEqual([]);
       expect(result.type).toBeNull();
       wrapper.destroy();

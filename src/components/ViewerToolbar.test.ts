@@ -40,8 +40,7 @@ vi.mock("@/store", () => ({
     setLayerMode: (...args: any[]) => mockSetLayerMode(...args),
     refreshDataset: (...args: any[]) => mockRefreshDataset(...args),
     showTimelapseMode: false,
-    setShowTimelapseMode: (...args: any[]) =>
-      mockSetShowTimelapseMode(...args),
+    setShowTimelapseMode: (...args: any[]) => mockSetShowTimelapseMode(...args),
     timelapseModeWindow: 10,
     setTimelapseModeWindow: (...args: any[]) =>
       mockSetTimelapseModeWindow(...args),
@@ -122,8 +121,7 @@ describe("ViewerToolbar", () => {
     (store as any).setUnrollXY = (...args: any[]) => mockSetUnrollXY(...args);
     (store as any).setUnrollZ = (...args: any[]) => mockSetUnrollZ(...args);
     (store as any).setUnrollT = (...args: any[]) => mockSetUnrollT(...args);
-    (store as any).setLayerMode = (...args: any[]) =>
-      mockSetLayerMode(...args);
+    (store as any).setLayerMode = (...args: any[]) => mockSetLayerMode(...args);
     (store as any).refreshDataset = (...args: any[]) =>
       mockRefreshDataset(...args);
     mockGetFolder.mockResolvedValue(null);
@@ -200,7 +198,11 @@ describe("ViewerToolbar", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.maxXY).toBe(2); // falls back to store.xy
-    (store as any).dataset = { xy: [0, 1, 2, 3, 4], z: [0, 1, 2], time: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] };
+    (store as any).dataset = {
+      xy: [0, 1, 2, 3, 4],
+      z: [0, 1, 2],
+      time: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    };
     wrapper.destroy();
   });
 

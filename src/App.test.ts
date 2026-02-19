@@ -30,7 +30,9 @@ vi.mock("@/store/properties", () => ({
 
 vi.mock("axios", () => ({
   default: {
-    get: vi.fn().mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] }),
+    get: vi
+      .fn()
+      .mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] }),
   },
 }));
 

@@ -31,8 +31,20 @@ Vue.use(Vuetify);
 const defaultAccessList = {
   public: false,
   users: [
-    { id: "u1", login: "admin", name: "Admin", email: "admin@test.com", level: 2 },
-    { id: "u2", login: "user1", name: "User One", email: "user1@test.com", level: 0 },
+    {
+      id: "u1",
+      login: "admin",
+      name: "Admin",
+      email: "admin@test.com",
+      level: 2,
+    },
+    {
+      id: "u2",
+      login: "user1",
+      name: "User One",
+      email: "user1@test.com",
+      level: 0,
+    },
   ],
   configurations: [
     { id: "cfg1", name: "Config 1", public: false },

@@ -120,9 +120,7 @@ describe("AnnotationWorkerMenu", () => {
     (store as any).editToolInConfiguration = vi.fn();
     (store as any).selectedConfigurationId = "config-1";
     (store as any).api = { cancelJob: vi.fn() };
-    (store as any).getCollectionDatasetCount = vi
-      .fn()
-      .mockResolvedValue(3);
+    (store as any).getCollectionDatasetCount = vi.fn().mockResolvedValue(3);
     (annotationsStore as any).computeAnnotationsWithWorker = vi
       .fn()
       .mockResolvedValue({ jobId: "job-123", datasetId: "ds-1" });
@@ -154,7 +152,9 @@ describe("AnnotationWorkerMenu", () => {
     expect(propertiesStore.getWorkerInterface).toHaveBeenCalledWith(
       "worker-image:latest",
     );
-    expect(vm.workerInterface).toEqual({ param1: { type: "number", default: 5 } });
+    expect(vm.workerInterface).toEqual({
+      param1: { type: "number", default: 5 },
+    });
     wrapper.destroy();
   });
 
@@ -334,7 +334,9 @@ describe("AnnotationWorkerMenu", () => {
     const vm = wrapper.vm as any;
     vm.running = true;
     await vm.compute();
-    expect(annotationsStore.computeAnnotationsWithWorker).not.toHaveBeenCalled();
+    expect(
+      annotationsStore.computeAnnotationsWithWorker,
+    ).not.toHaveBeenCalled();
     wrapper.destroy();
   });
 

@@ -260,11 +260,7 @@ function makeBasicTileMeta(overrides: any = {}) {
   };
 }
 
-function makeND2TileMeta(
-  nC: number = 3,
-  nZ: number = 5,
-  nT: number = 4,
-): any {
+function makeND2TileMeta(nC: number = 3, nZ: number = 5, nT: number = 4): any {
   const frames = [];
   let idx = 0;
   for (let t = 0; t < nT; t++) {
@@ -308,9 +304,7 @@ const mockRouter = { push: vi.fn() };
 
 function mountComponent(
   propsData: any = {},
-  {
-    skipInitialize = true,
-  }: { skipInitialize?: boolean } = {},
+  { skipInitialize = true }: { skipInitialize?: boolean } = {},
 ) {
   const app = document.createElement("div");
   app.setAttribute("data-app", "true");
@@ -626,10 +620,7 @@ describe("MultiSourceConfiguration", () => {
     it("sums frames across all tiles", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.tilesMetadata = [
-        { frames: [1, 2, 3] },
-        { frames: [1, 2] },
-      ];
+      vm.tilesMetadata = [{ frames: [1, 2, 3] }, { frames: [1, 2] }];
       expect(vm.datasetTotalFrames).toBe(5);
       wrapper.destroy();
     });
@@ -722,10 +713,7 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       // Use filenames where tokens match the variable values exactly
       // "red_01.tif" splits to ["red", "01", "tif"], values ["red", "green"]
-      vm.girderItems = [
-        { name: "red_01.tif" },
-        { name: "green_01.tif" },
-      ];
+      vm.girderItems = [{ name: "red_01.tif" }, { name: "green_01.tif" }];
       vm.dimensions = [
         {
           id: 0,
@@ -913,9 +901,7 @@ describe("MultiSourceConfiguration", () => {
       // Single file, no filename parsing
       expect(vm.girderItems).toHaveLength(1);
       // Should have file-source dimensions from IndexRange
-      const fileDims = vm.dimensions.filter(
-        (d: any) => d.source === "file",
-      );
+      const fileDims = vm.dimensions.filter((d: any) => d.source === "file");
       expect(fileDims.length).toBeGreaterThan(0);
       wrapper.destroy();
     });
@@ -1115,9 +1101,7 @@ describe("MultiSourceConfiguration", () => {
 
       await vm.initialized;
 
-      const imagesDim = vm.dimensions.find(
-        (d: any) => d.source === "images",
-      );
+      const imagesDim = vm.dimensions.find((d: any) => d.source === "images");
       expect(imagesDim).toBeDefined();
       expect(imagesDim.name).toBe("All frames per item");
       expect(imagesDim.size).toBe(3);
@@ -1509,7 +1493,11 @@ describe("MultiSourceConfiguration", () => {
         Object.defineProperty(storeAny, "uploadWorkflow", origWorkflow);
       }
       if (origFirstDataset) {
-        Object.defineProperty(storeAny, "uploadIsFirstDataset", origFirstDataset);
+        Object.defineProperty(
+          storeAny,
+          "uploadIsFirstDataset",
+          origFirstDataset,
+        );
       }
       wrapper.destroy();
     });
@@ -1811,9 +1799,7 @@ describe("MultiSourceConfiguration", () => {
           },
         },
       ];
-      vm.girderItems = [
-        { _id: "item1", name: "test.nd2" },
-      ];
+      vm.girderItems = [{ _id: "item1", name: "test.nd2" }];
       vm.tilesMetadata = [
         {
           frames: Array.from({ length: 6 }, (_, i) => ({ Index: i })),
@@ -2008,7 +1994,11 @@ describe("MultiSourceConfiguration", () => {
 
       const callArg = mockAddMultiSourceMetadata.mock.calls[0][0];
       const metadata = JSON.parse(callArg.metadata);
-      expect(metadata.channels).toEqual(["Default 0", "Default 1", "Default 2"]);
+      expect(metadata.channels).toEqual([
+        "Default 0",
+        "Default 1",
+        "Default 2",
+      ]);
       wrapper.destroy();
     });
   });
@@ -2111,10 +2101,7 @@ describe("MultiSourceConfiguration", () => {
     it("appends ellipsis when values exceed limit", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      const result = vm.sliceAndJoin(
-        ["foo", "bar", "baz", "qux", "quux"],
-        16,
-      );
+      const result = vm.sliceAndJoin(["foo", "bar", "baz", "qux", "quux"], 16);
       expect(result).toMatch(/…$/);
       wrapper.destroy();
     });
@@ -2185,7 +2172,10 @@ describe("MultiSourceConfiguration", () => {
     it("returns filled class when dimension is assigned", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.assignments.C = { text: "Ch", value: { id: 0, source: "file", data: {} } };
+      vm.assignments.C = {
+        text: "Ch",
+        value: { id: 0, source: "file", data: {} },
+      };
       const classes = vm.getSlotClasses("C");
       expect(classes["assignment-slot--filled"]).toBe(true);
       expect(classes["assignment-slot--empty-available"]).toBe(false);
@@ -2521,7 +2511,9 @@ describe("MultiSourceConfiguration", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       const dim = { id: 0, guess: "C", size: 3, source: "file", data: {} };
-      expect(vm.getAssignedDimensionColor(dim)).toBe("rgba(255, 255, 255, 0.3)");
+      expect(vm.getAssignedDimensionColor(dim)).toBe(
+        "rgba(255, 255, 255, 0.3)",
+      );
       wrapper.destroy();
     });
 
@@ -2567,7 +2559,10 @@ describe("MultiSourceConfiguration", () => {
     it("getSlotStyle returns empty when assignment exists", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.assignments.C = { text: "Ch", value: { id: 0, source: "file", data: {} } };
+      vm.assignments.C = {
+        text: "Ch",
+        value: { id: 0, source: "file", data: {} },
+      };
       const style = vm.getSlotStyle("C");
       expect(style).toEqual({});
       wrapper.destroy();

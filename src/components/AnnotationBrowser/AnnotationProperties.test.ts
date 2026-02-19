@@ -25,8 +25,7 @@ vi.mock("@/store/properties", () => ({
     displayedPropertyPaths: [["prop1", "subA"]],
     getFullNameFromPath: vi.fn((path: string[]) => path.join(".")),
     togglePropertyPathVisibility: vi.fn(),
-    computePropertyBatch: (...args: any[]) =>
-      mockComputePropertyBatch(...args),
+    computePropertyBatch: (...args: any[]) => mockComputePropertyBatch(...args),
     getPropertyById: vi.fn((id: string) => ({ name: id.toUpperCase() })),
   },
 }));
@@ -86,12 +85,12 @@ describe("AnnotationProperties", () => {
     mockGetCollectionDatasetCount.mockResolvedValue(3);
     // Re-assign mock functions after restoreAllMocks
     (propertyStore as any).togglePropertyPathVisibility = vi.fn();
-    (propertyStore as any).getFullNameFromPath = vi.fn(
-      (path: string[]) => path.join("."),
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) =>
+      path.join("."),
     );
-    (propertyStore as any).getPropertyById = vi.fn(
-      (id: string) => ({ name: id.toUpperCase() }),
-    );
+    (propertyStore as any).getPropertyById = vi.fn((id: string) => ({
+      name: id.toUpperCase(),
+    }));
     (filterStore as any).togglePropertyPathFiltering = vi.fn();
   });
 
@@ -277,9 +276,7 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     await Vue.nextTick();
     await Vue.nextTick();
-    expect(vm.batchDisabledReason).toBe(
-      "Collection has more than 10 datasets",
-    );
+    expect(vm.batchDisabledReason).toBe("Collection has more than 10 datasets");
     wrapper.destroy();
   });
 

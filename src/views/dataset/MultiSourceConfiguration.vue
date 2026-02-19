@@ -447,7 +447,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, getCurrentInstance } from "vue";
+import {
+  ref,
+  reactive,
+  computed,
+  watch,
+  onMounted,
+  getCurrentInstance,
+} from "vue";
 import store from "@/store";
 
 import {
@@ -847,8 +854,7 @@ const filenameLegend = computed(() => {
 
 const assignmentItems = computed(() => {
   const assignedDimensions = Object.entries(assignments).reduce(
-    (acc, [, assignment]) =>
-      assignment ? [...acc, assignment.value.id] : acc,
+    (acc, [, assignment]) => (assignment ? [...acc, assignment.value.id] : acc),
     [] as number[],
   );
 
@@ -913,7 +919,11 @@ function detectColorVsChannels(tileMeta: ITileMeta) {
   return isColor;
 }
 
-function sliceAndJoin(arr: string[], maxChars: number = 16, sep: string = ", ") {
+function sliceAndJoin(
+  arr: string[],
+  maxChars: number = 16,
+  sep: string = ", ",
+) {
   if (arr.length <= 0) {
     return "";
   }
@@ -1369,33 +1379,30 @@ async function initializeImplementation() {
         try {
           initInFlight.value.push(item.name);
 
-          const tilesMeta = await pRetry(
-            async () => store.api.getTiles(item),
-            {
-              retries: hasOibFiles ? 15 : 10,
-              onFailedAttempt: (error: any) => {
-                const attemptNumber = error?.attemptNumber || 0;
-                const message =
-                  error?.response?.data?.message || error?.message || "";
-                logError(
-                  `Error retrieving tiles for item ${item._id} (attempt ${attemptNumber}):`,
-                  message,
-                );
+          const tilesMeta = await pRetry(async () => store.api.getTiles(item), {
+            retries: hasOibFiles ? 15 : 10,
+            onFailedAttempt: (error: any) => {
+              const attemptNumber = error?.attemptNumber || 0;
+              const message =
+                error?.response?.data?.message || error?.message || "";
+              logError(
+                `Error retrieving tiles for item ${item._id} (attempt ${attemptNumber}):`,
+                message,
+              );
 
-                if (
-                  !hasOibFiles &&
-                  error?.response?.data?.message !==
-                    "No large image file in this item."
-                ) {
-                  throw new AbortError(message);
-                }
-              },
-              factor: 1,
-              minTimeout: hasOibFiles ? 3000 : 1000,
-              maxTimeout: hasOibFiles ? 3000 : 1000,
-              randomize: false,
+              if (
+                !hasOibFiles &&
+                error?.response?.data?.message !==
+                  "No large image file in this item."
+              ) {
+                throw new AbortError(message);
+              }
             },
-          );
+            factor: 1,
+            minTimeout: hasOibFiles ? 3000 : 1000,
+            maxTimeout: hasOibFiles ? 3000 : 1000,
+            randomize: false,
+          });
 
           const internalMetadata = await pRetry(
             async () => store.api.getTilesInternalMetadata(item),
@@ -1571,11 +1578,7 @@ async function generateJson(): Promise<string | null> {
     if (!tilesMetadata.value) {
       return null;
     }
-    for (
-      let itemIdx = 0;
-      itemIdx < girderItems.value.length;
-      ++itemIdx
-    ) {
+    for (let itemIdx = 0; itemIdx < girderItems.value.length; ++itemIdx) {
       const item = girderItems.value[itemIdx];
       const nFrames = tilesMetadata.value[itemIdx].frames?.length || 1;
 
@@ -1608,8 +1611,7 @@ async function generateJson(): Promise<string | null> {
     }
     const { mm_x, mm_y } = tilesMetadata.value![0];
     const { sizeX, sizeY } = tilesMetadata.value![0];
-    const framesMetadata =
-      tilesInternalMetadata.value![0].nd2_frame_metadata;
+    const framesMetadata = tilesInternalMetadata.value![0].nd2_frame_metadata;
     const coordinates: IGeoJSPositionWithTransform[] = framesMetadata.map(
       (f: any) => {
         const framePos = f.position.stagePositionUm;
@@ -1705,11 +1707,7 @@ async function generateJson(): Promise<string | null> {
     });
   } else {
     const basicSources: IBasicSource[] = sources as IBasicSource[];
-    for (
-      let itemIdx = 0;
-      itemIdx < girderItems.value.length;
-      ++itemIdx
-    ) {
+    for (let itemIdx = 0; itemIdx < girderItems.value.length; ++itemIdx) {
       const item = girderItems.value[itemIdx];
       if (!tilesMetadata.value || !tilesInternalMetadata.value) {
         continue;

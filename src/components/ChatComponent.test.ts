@@ -84,7 +84,10 @@ describe("ChatComponent", () => {
   });
 
   it("firstMap returns the first map when maps exist", () => {
-    const mockMap = { layers: vi.fn().mockReturnValue([]), screenshot: vi.fn() };
+    const mockMap = {
+      layers: vi.fn().mockReturnValue([]),
+      screenshot: vi.fn(),
+    };
     (store as any).maps = [{ map: mockMap }];
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
@@ -290,10 +293,16 @@ describe("ChatComponent", () => {
   });
 
   it("captureViewportScreenshot takes screenshot when map exists", async () => {
-    const mockScreenshot = vi.fn().mockResolvedValue("data:image/png;base64,viewport");
+    const mockScreenshot = vi
+      .fn()
+      .mockResolvedValue("data:image/png;base64,viewport");
     const mockMap = {
       layers: vi.fn().mockReturnValue([
-        { node: vi.fn().mockReturnValue({ css: vi.fn().mockReturnValue("visible") }) },
+        {
+          node: vi
+            .fn()
+            .mockReturnValue({ css: vi.fn().mockReturnValue("visible") }),
+        },
       ]),
       screenshot: mockScreenshot,
     };

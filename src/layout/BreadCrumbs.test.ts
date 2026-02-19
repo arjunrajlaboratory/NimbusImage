@@ -70,7 +70,11 @@ import store from "@/store";
 
 Vue.use(Vuetify);
 
-function mountComponent(routeParams: any = {}, routeQuery: any = {}, routeName = "home") {
+function mountComponent(
+  routeParams: any = {},
+  routeQuery: any = {},
+  routeName = "home",
+) {
   const mockRouter = { push: vi.fn() };
   const mockRoute = {
     params: routeParams,
@@ -313,11 +317,7 @@ describe("BreadCrumbs", () => {
   it("refreshItems builds owner item when folder has creatorId", async () => {
     mockWatchFolder.mockReturnValue({ name: "My Dataset" });
     mockGetFolder.mockResolvedValue({ name: "My Dataset", creatorId: "u1" });
-    const wrapper = mountComponent(
-      { datasetId: "ds1" },
-      {},
-      "dataset",
-    );
+    const wrapper = mountComponent({ datasetId: "ds1" }, {}, "dataset");
     const vm = wrapper.vm as any;
     await vm.refreshItems(true);
     const itemTitles = vm.items.map((i: any) => i.title);
@@ -328,11 +328,7 @@ describe("BreadCrumbs", () => {
   it("refreshItems deduplicates when called with same params and not forced", async () => {
     mockWatchFolder.mockReturnValue({ name: "My Dataset" });
     mockGetFolder.mockResolvedValue({ name: "My Dataset" });
-    const wrapper = mountComponent(
-      { datasetId: "ds1" },
-      {},
-      "dataset",
-    );
+    const wrapper = mountComponent({ datasetId: "ds1" }, {}, "dataset");
     const vm = wrapper.vm as any;
     await vm.refreshItems(true);
     const initialCallCount = mockGetFolder.mock.calls.length;
@@ -345,11 +341,7 @@ describe("BreadCrumbs", () => {
   it("refreshItems forces refresh even when params are the same", async () => {
     mockWatchFolder.mockReturnValue({ name: "My Dataset" });
     mockGetFolder.mockResolvedValue({ name: "My Dataset" });
-    const wrapper = mountComponent(
-      { datasetId: "ds1" },
-      {},
-      "dataset",
-    );
+    const wrapper = mountComponent({ datasetId: "ds1" }, {}, "dataset");
     const vm = wrapper.vm as any;
     await vm.refreshItems(true);
     const initialCallCount = mockGetFolder.mock.calls.length;
@@ -366,7 +358,10 @@ describe("BreadCrumbs", () => {
     mockGetFolder.mockResolvedValue(null);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.addedDatasets(["ds1"], [{ id: "view1", datasetId: "ds1", configurationId: "cfg1" }]);
+    vm.addedDatasets(
+      ["ds1"],
+      [{ id: "view1", datasetId: "ds1", configurationId: "cfg1" }],
+    );
     expect(vm.$router.push).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "datasetview",

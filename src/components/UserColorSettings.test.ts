@@ -181,9 +181,7 @@ describe("UserColorSettings", () => {
     expect(vm.colorRule("#GGG")).toBe(
       "Must be a valid hex color (e.g., #FF0000)",
     );
-    expect(vm.colorRule("")).toBe(
-      "Must be a valid hex color (e.g., #FF0000)",
-    );
+    expect(vm.colorRule("")).toBe("Must be a valid hex color (e.g., #FF0000)");
     wrapper.destroy();
   });
 
