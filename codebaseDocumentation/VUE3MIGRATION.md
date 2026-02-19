@@ -8,7 +8,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 | Category | Count | Notes |
 |----------|-------|-------|
-| Class components (`@Component`) | 121 | 115 migrated to `<script setup>`, 6 remaining |
+| Class components (`@Component`) | 121 | 120 migrated to `<script setup>`, 1 remaining |
 | `.sync` modifier usages | 11 | Convert to `v-model:propName` |
 | `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
 | Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
@@ -19,7 +19,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Next Steps (Phase 1 Continuation)
 
-**Current progress:** 119 of 121 components migrated to `<script setup>` (Batches 1–17 complete). 2 remaining.
+**Current progress:** 120 of 121 components migrated to `<script setup>` (Batches 1–18 complete). 1 remaining.
 
 **Branch:** `claude/vue3-migration-planning-tS4Hx`
 
@@ -70,7 +70,22 @@ NewDataset migrated (106 tests).
 
 **Bug fix (pre-existing):** Movie export (GIF/ZIP/Video) never rendered the scalebar independently of the timestamp option. The scalebar canvas rendering was nested inside `if (shouldAddTimeStamp)`, so disabling timestamps also disabled the scalebar. Video export never drew the scalebar at all. Fixed by checking `addScalebar` independently of `shouldAddTimeStamp` in all three movie download functions.
 
-### Batch 18 — ImageViewer (with `markRaw()`)
+### ~~Batch 18 — ImageViewer (with `markRaw()`)~~ COMPLETE
+
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `ImageViewer.vue` | 1,500→1,395 | GeoJS map/layer management with full `markRaw()` protection. 1 prop → `defineProps`+`withDefaults` (`shouldResetMaps`), `$emit` → `defineEmits` (`reset-complete`), `computed({ get, set })` for store-backed `maps`/`cameraInfo`, `computed()` for read-only store proxies, `@Watch` → `watch()` including multi-source `watch([a, b], handler)`, `mounted()` → `onMounted()`, `beforeDestroy()` → `onBeforeUnmount()`. 106 tests. |
+
+**Key patterns in this batch:**
+- **`markRaw()` on ALL GeoJS objects:** Every GeoJS object stored in reactive state (map, layers, features) is wrapped with `markRaw()` for Vue 3 Proxy safety. This includes all `IMapEntry` fields: `map`, `params`, `annotationLayer`, `workerPreviewLayer`, `workerPreviewFeature`, `textLayer`, `timelapseLayer`, `timelapseTextLayer`, `interactionLayer`, `uiLayer`, and items pushed into `imageLayers`
+- **Function ref pattern for dynamic template refs:** Replaced `$refs["map-${idx}"]` with `getMapRefSetter()` — a curried function that returns a setter callback for each map index, bound via `:ref="getMapRefSetter(idx)"` in the template
+- **`Vue.set()` → array spread + assign for maps:** `Vue.set(this.maps, idx, mapentry)` replaced with array spread and direct assignment; `Vue.set` on `readyLayers` replaced with `splice()`
+- **`Vue.nextTick` → `nextTick`:** All `Vue.nextTick()` calls replaced with imported `nextTick()`
+- **Plain `let` variables (non-reactive):** `scaleWidget`, `scalePixelWidget`, `synchronisationEnabled` declared as plain `let` (not `ref()`) since they don't need reactivity tracking
+- **`defineExpose()` with getter/setter accessors:** Plain `let` variables exposed via `defineExpose` using getter/setter accessors so tests can read and write them through `wrapper.vm`
+- **`vitest.config.js` updated:** Added resolve alias for `onnxruntime-web/webgpu` pointing to the browser entry point, fixing test resolution
+- **Test mocks: `Vue.observable()` wrapper:** Store mocks wrapped in `Vue.observable()` to enable computed tracking in tests (plain objects don't trigger computed re-evaluation in Vue 2.7)
+- **Test mocks: `setMaps` mockImplementation:** `setMaps` mock implementation actually updates `store.maps` so that computed properties depending on `maps` reflect changes during tests
 
 ### Batch 19 — AnnotationViewer (with `markRaw()`)
 
@@ -152,7 +167,7 @@ Vue 3 replaces `Object.defineProperty` (Vue 2) with **ES6 Proxies** for reactivi
 
 #### Current State
 
-`ImageViewer.vue` already uses `markRaw()` in 3 places (for `imageLayers` array and `params`), but **most GeoJS objects in `IMapEntry` are unprotected**. `AnnotationViewer.vue` has **no `markRaw()` usage at all**.
+`ImageViewer.vue` now has full `markRaw()` coverage on all GeoJS objects in `IMapEntry` (completed in Batch 18). `AnnotationViewer.vue` has **no `markRaw()` usage at all**.
 
 #### Affected Objects in `ImageViewer.vue`
 
@@ -551,20 +566,18 @@ These `markRaw()` additions can be done:
 
 **After this batch:** 116 of 121 components migrated to `<script setup>` (~96%).
 
-## Remaining Components (3)
+## Remaining Components (1)
 
-All 3 remaining components use the class-based `@Component` decorator pattern.
+The last remaining component uses the class-based `@Component` decorator pattern.
 
 | Component | Lines | Key Patterns / Notes |
 |-----------|-------|---------------------|
-| `Snapshots.vue` | 2,834 | Snapshot capture/management, canvas manipulation |
-| `ImageViewer.vue` | 1,514 | GeoJS map/layers, tile rendering — needs `markRaw()` |
 | `AnnotationViewer.vue` | 3,300 | GeoJS annotations, tool interaction, SAM — needs `markRaw()` |
 
 ### Migration Order
 
-1. **Batch 17** — Snapshots
-2. **Batch 18** — ImageViewer (with `markRaw()`)
+1. ~~**Batch 17** — Snapshots~~ DONE
+2. ~~**Batch 18** — ImageViewer (with `markRaw()`)~~ DONE
 3. **Batch 19** — AnnotationViewer (with `markRaw()`)
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
@@ -846,7 +859,7 @@ overrides.value = rest;
 - `Property.vue` — `Vue.set()` on Vuex mutation (keep as-is until Phase 4)
 - `AnnotationConfiguration.vue` — `Vue.set()` on local reactive objects (apply object spread)
 - `ToolConfiguration.vue` — `Vue.set()` on local reactive objects (apply object spread)
-- `ImageViewer.vue` — `Vue.set()` on GeoJS objects (replace with direct assignment + `markRaw()`)
+- ~~`ImageViewer.vue`~~ — Done (Batch 18): `Vue.set()` replaced with array spread + `markRaw()`
 - Remaining unmigrated components — apply during migration
 
 ### `<script setup>` bindings shadow globally-registered components
@@ -885,7 +898,7 @@ All 8 sites in `ConfigurationInfo.vue`, `DatasetInfo.vue`, and `ProjectInfo.vue`
 
 - **GeoJS Proxy Reactivity** (Critical): Vue 3's Proxy-based reactivity will break GeoJS object identity checks, causing crashes and performance cliffs. `ImageViewer.vue` and `AnnotationViewer.vue` require `markRaw()` on all GeoJS instances before the Vue 3 switch. See "GeoJS & Vue 3 Proxy Reactivity" section for full details.
 - **AnnotationViewer.vue** (3,160 lines): Most complex component. Break into composables before full migration. Contains 7 GeoJS annotation properties that need `markRaw()` protection.
-- **ImageViewer.vue** (~1,500 lines): GeoJS map/layer management. Already has partial `markRaw()` usage but 9 of 11 `IMapEntry` fields are unprotected. Must complete `markRaw()` coverage.
+- **ImageViewer.vue** (~1,395 lines): Migrated (Batch 18). Full `markRaw()` coverage on all GeoJS objects in `IMapEntry` fields. 106 tests passing.
 - **Store interdependencies**: 11 Vuex modules with cross-references. Map dependencies before Pinia migration.
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
 - **Template ref typing**: Mixed Class + Composition components cause type mismatches during incremental migration.
