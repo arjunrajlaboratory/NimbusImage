@@ -192,7 +192,6 @@
         :autoDatasetRoute="false"
         @log="configurationLogs = $event"
         @generatedJson="generationDone"
-        @configData="onConfigDataReceived"
       />
     </template>
 
@@ -206,7 +205,6 @@
           :autoDatasetRoute="false"
           @log="configurationLogs = $event"
           @generatedJson="generationDone"
-          @configData="onConfigDataReceived"
           class="d-none"
         />
         <!-- Show status text and spinner when auto-processing -->
@@ -1153,13 +1151,6 @@ function copyLogToClipboard() {
   }
 }
 
-function onConfigDataReceived(_configData: any) {
-  logWarning(
-    "onConfigDataReceived called but is no longer used; _configData: ",
-    _configData,
-  );
-}
-
 // --- Watcher ---
 watch(configurationLogs, () => {
   if (configuring.value && configurationLogs.value) {
@@ -1271,7 +1262,6 @@ defineExpose({
   handleCollectionGenerationDone,
   createView,
   copyLogToClipboard,
-  onConfigDataReceived,
 });
 </script>
 
