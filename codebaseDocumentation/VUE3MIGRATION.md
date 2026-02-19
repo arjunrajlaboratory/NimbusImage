@@ -68,6 +68,8 @@ NewDataset migrated (106 tests).
 - **Template ref mocking:** In `<script setup>`, template refs are exposed via `defineExpose`. Mock via `wrapper.vm.refName = mock` (not `$refs`)
 - **Internal method spying:** `vi.spyOn(wrapper.vm, "method")` doesn't intercept closure-captured functions — verify through mocked utility function calls instead
 
+**Bug fix (pre-existing):** Movie export (GIF/ZIP/Video) never rendered the scalebar independently of the timestamp option. The scalebar canvas rendering was nested inside `if (shouldAddTimeStamp)`, so disabling timestamps also disabled the scalebar. Video export never drew the scalebar at all. Fixed by checking `addScalebar` independently of `shouldAddTimeStamp` in all three movie download functions.
+
 ### Batch 18 — ImageViewer (with `markRaw()`)
 
 ### Batch 19 — AnnotationViewer (with `markRaw()`)

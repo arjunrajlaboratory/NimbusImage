@@ -2186,7 +2186,7 @@ async function downloadMovieAsZippedImageSequence(
         imageUrl = URL.createObjectURL(blob);
       }
 
-      if (params.shouldAddTimeStamp) {
+      if (params.shouldAddTimeStamp || addScalebar.value) {
         const img = await new Promise<HTMLImageElement>((resolve, reject) => {
           const img = new Image();
           img.onload = () => resolve(img);
@@ -2202,11 +2202,15 @@ async function downloadMovieAsZippedImageSequence(
 
         ctx.drawImage(img, 0, 0);
 
-        drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+        if (addScalebar.value) {
+          drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+        }
 
         URL.revokeObjectURL(imageUrl);
 
-        addTimeStampToCanvas(canvas, params, i);
+        if (params.shouldAddTimeStamp) {
+          addTimeStampToCanvas(canvas, params, i);
+        }
 
         const annotatedBlob = await new Promise<Blob>((resolve) => {
           canvas.toBlob((blob) => resolve(blob!), "image/png");
@@ -2298,7 +2302,7 @@ async function downloadMovieAsGif(
       const img = new Image();
       await new Promise<void>((resolve, reject) => {
         img.onload = () => {
-          if (params.shouldAddTimeStamp) {
+          if (params.shouldAddTimeStamp || addScalebar.value) {
             const canvas = document.createElement("canvas");
             canvas.width = img.width;
             canvas.height = img.height;
@@ -2307,9 +2311,13 @@ async function downloadMovieAsGif(
 
             ctx.drawImage(img, 0, 0);
 
-            drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+            if (addScalebar.value) {
+              drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+            }
 
-            addTimeStampToCanvas(canvas, params, i);
+            if (params.shouldAddTimeStamp) {
+              addTimeStampToCanvas(canvas, params, i);
+            }
 
             gif.addFrame(canvas, { delay: 1000 / params.fps });
           } else {
@@ -2476,6 +2484,10 @@ async function downloadMovieAsVideo(
         img.onerror = reject;
         img.src = imageUrl;
       });
+
+      if (addScalebar.value) {
+        drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+      }
 
       if (params.shouldAddTimeStamp) {
         addTimeStampToCanvas(canvas, params, currentFrame);
