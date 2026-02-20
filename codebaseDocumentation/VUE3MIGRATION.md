@@ -117,6 +117,26 @@ NewDataset migrated (106 tests).
 
 ### Batch 19 — AnnotationViewer (with `markRaw()`)
 
+**Pre-migration test suite complete:** `src/components/AnnotationViewer.test.ts` — 244 tests across 11 categories:
+
+| Category | Tests |
+|----------|-------|
+| Computed property store proxies | 31 |
+| Annotation rendering logic | 23 |
+| Selection / hit detection | 15 |
+| Tool handlers | 34 |
+| Coordinate transformation | 7 |
+| Timelapse mode | 14 |
+| Mouse / drag interactions | 17 |
+| Context menu & dialogs | 11 |
+| Event binding & lifecycle | 14 |
+| SAM integration | 12 |
+| Watcher deduplication & ancillary | 46 |
+
+All 244 tests pass against the current class-based AnnotationViewer.vue. After the `<script setup>` migration, the same tests should continue to pass (with `defineExpose` added for test-accessed internals).
+
+**Next:** Migrate AnnotationViewer.vue from `@Component` class to `<script setup>` composition API.
+
 ---
 
 ## Migration Strategy
