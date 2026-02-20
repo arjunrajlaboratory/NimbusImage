@@ -193,7 +193,13 @@
       type="file"
       ref="fileInput"
       multiple
-      style="display: none"
+      style="
+        position: absolute;
+        width: 0;
+        height: 0;
+        overflow: hidden;
+        opacity: 0;
+      "
       @change="handleFileSelect"
     />
 
@@ -856,7 +862,12 @@ async function refreshRecentDatasetDetails() {
   });
 }
 
-function onLocationUpdate(selectable: IGirderSelectAble) {
+function onLocationUpdate(
+  selectable: IGirderSelectAble | IGirderLocation | null,
+) {
+  if (!selectable || !("_modelType" in selectable)) {
+    return;
+  }
   if (selectable._modelType === "upenn_collection") {
     return;
   }

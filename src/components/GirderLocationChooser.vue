@@ -34,7 +34,7 @@
         </v-btn>
         <v-btn
           @click.prevent="select"
-          :disabled="!selected || selected._modelType !== 'folder'"
+          :disabled="!isFolderSelected"
           color="primary"
         >
           Select
@@ -46,13 +46,14 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
-import { IGirderSelectAble } from "@/girder";
+import { IGirderLocation } from "@/girder";
+
 import CustomFileManager from "@/components/CustomFileManager.vue";
 import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
 
 const props = withDefaults(
   defineProps<{
-    value?: IGirderSelectAble | null;
+    value?: IGirderLocation | null;
     title?: string;
     breadcrumb?: boolean;
     activatorDisabled?: boolean;
@@ -72,7 +73,7 @@ const props = withDefaults(
 const vm = getCurrentInstance()!.proxy;
 
 const dialogInternalCache = ref(false);
-const selected = ref<IGirderSelectAble | null>(null);
+const selected = ref<IGirderLocation | null>(null);
 
 const dialogInternal = computed({
   get: () => props.dialog ?? dialogInternalCache.value,
@@ -82,8 +83,17 @@ const dialogInternal = computed({
   },
 });
 
+const isFolderSelected = computed(
+  () =>
+    selected.value &&
+    "_modelType" in selected.value &&
+    selected.value._modelType === "folder",
+);
+
 const selectedName = computed(() =>
-  selected.value ? selected.value.name : "Select a folder...",
+  selected.value && "name" in selected.value
+    ? selected.value.name
+    : "Select a folder...",
 );
 
 onMounted(() => {

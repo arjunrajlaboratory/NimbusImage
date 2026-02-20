@@ -17,9 +17,37 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 | `$refs` usages | 62 | Typing changes between Class → Composition |
 | Mixins | 0 | `routeMapper` mixin converted to `useRouteMapper` composable (Batch 9) |
 
-## Next Steps (Phase 1 Continuation)
+## Current Status & Known Issues
 
-**Current progress:** 120 of 121 components migrated to `<script setup>` (Batches 1–18 complete). 1 remaining.
+**Migration progress:** 120 of 121 components migrated to `<script setup>` (Batches 1–18 complete). 1 remaining (AnnotationViewer.vue).
+
+### TypeScript Errors (`pnpm tsc`)
+
+There are **22 non-test `tsc` errors** remaining. These are all **type-only** — the build (`pnpm build`) succeeds. Categories:
+
+1. **`IGirderLocation` vs `IGirderSelectAble` v-model mismatches (8 errors):** Components that use `GirderLocationChooser` (which expects `IGirderLocation` for its `value` prop) pass values from store that Vue's type inference expands to structural types that don't perfectly match. Affected: `AddDatasetToCollection`, `AddDatasetToProjectDialog`, `ZenodoImporter`, `NewConfiguration`, `ImportConfiguration`, `DuplicateImportConfiguration`, `ImportDataset`, `Home.vue`. These are harmless — the runtime values are always compatible. Fix: could add explicit type guards at each callsite, but low priority since the code works correctly.
+
+2. **Nullable prop mismatches (4 errors):** `DisplayLayer.vue` and `LayerInfoGrid.vue` pass `IContrast | null` and `Promise<ITileHistogram | null>` to `ContrastHistogram` props typed as non-null. Fix: widen ContrastHistogram's prop types to accept null.
+
+3. **`WorkerInterfaceValues.vue` union type narrowing (4 errors):** `TWorkerInterfaceValue` union type passed to Vuetify components that expect specific types. Fix: add type guards or casts at each binding.
+
+4. **`LayerSelect.vue` read-only prop assignment (3 errors):** Writing to `props.value` directly. Fix: use local ref or emit.
+
+5. **`Snapshots.vue` nullable/signature mismatches (2 errors):** `IDataset | null` where `IDataset` expected, and callback signature mismatch. Fix: add null guards and align types.
+
+6. **`AddDatasetToCollection.vue` nullable string (1 error):** `string | null` where `string` expected.
+
+**Why we are not fixing these now:** All 22 are type-level only — the application builds and runs correctly. Many are prop type mismatches between parent and child components introduced during incremental migration (parent migrated before child or vice versa). They should be cleaned up in a dedicated type-fixing pass after AnnotationViewer migration is complete.
+
+### Known Runtime Bugs
+
+1. **Chrome file dropzone click not working:** On the Home page, clicking the upload dropzone card does not open the system file dialog in Chrome (works in Firefox). Dragging files onto the dropzone works in both browsers. The hidden `<input type="file">` is triggered via `fileInput.value?.click()` from a `@click` handler. Chrome may be blocking the programmatic `.click()` due to its user gesture security policy — the `display: none` approach was changed to `position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0` but the issue persists. Needs further investigation — may require creating a fresh `<input>` element per click or using a label-based approach instead.
+
+2. **ImageViewer dataset transition flicker:** When navigating from one dataset to another, the previous dataset's tiles remain visible briefly before the new dataset's tiles load and replace them. This appears to be a timing issue in the map reset/draw cycle — the old tile layers are not cleared synchronously when the dataset changes. Needs investigation in the `draw()` / `_setupMap()` / `_setupTileLayers()` flow to determine if old layers should be explicitly removed or hidden before new tiles start loading.
+
+3. **WebGL console warnings from `markRaw()`:** See "Known Console Warnings (Vue 2.7 only)" section below. These are cosmetic and expected to resolve after Vue 3 upgrade.
+
+## Next Steps (Phase 1 Continuation)
 
 **Branch:** `claude/vue3-migration-planning-tS4Hx`
 
