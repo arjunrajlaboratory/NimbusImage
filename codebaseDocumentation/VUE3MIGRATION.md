@@ -19,7 +19,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status & Known Issues
 
-**Migration progress:** 120 of 121 components migrated to `<script setup>` (Batches 1–18 complete). 1 remaining (AnnotationViewer.vue).
+**Migration progress:** 121 of 121 components migrated to `<script setup>` (Batches 1–19 complete). All components migrated.
 
 ### TypeScript Errors (`pnpm tsc`)
 
@@ -115,27 +115,20 @@ NewDataset migrated (106 tests).
 - **Test mocks: `Vue.observable()` wrapper:** Store mocks wrapped in `Vue.observable()` to enable computed tracking in tests (plain objects don't trigger computed re-evaluation in Vue 2.7)
 - **Test mocks: `setMaps` mockImplementation:** `setMaps` mock implementation actually updates `store.maps` so that computed properties depending on `maps` reflect changes during tests
 
-### Batch 19 — AnnotationViewer (with `markRaw()`)
+### ~~Batch 19 — AnnotationViewer~~ COMPLETE
 
-**Pre-migration test suite complete:** `src/components/AnnotationViewer.test.ts` — 244 tests across 11 categories:
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `AnnotationViewer.vue` | 3,300→3,310 | GeoJS annotation interaction, tool handlers, SAM integration. 15 props → `defineProps`+`withDefaults`, ~20 data fields → `ref()`, ~40 computed getters → `computed()`, ~50 methods → functions, ~40 `@Watch` decorators consolidated into ~15 `watch()` calls, `mounted()` → `onMounted()`, `beforeDestroy()` → `onBeforeUnmount()`. 244 tests. |
 
-| Category | Tests |
-|----------|-------|
-| Computed property store proxies | 31 |
-| Annotation rendering logic | 23 |
-| Selection / hit detection | 15 |
-| Tool handlers | 34 |
-| Coordinate transformation | 7 |
-| Timelapse mode | 14 |
-| Mouse / drag interactions | 17 |
-| Context menu & dialogs | 11 |
-| Event binding & lifecycle | 14 |
-| SAM integration | 12 |
-| Watcher deduplication & ancillary | 46 |
-
-All 244 tests pass against the current class-based AnnotationViewer.vue. After the `<script setup>` migration, the same tests should continue to pass (with `defineExpose` added for test-accessed internals).
-
-**Next:** Migrate AnnotationViewer.vue from `@Component` class to `<script setup>` composition API.
+**Key patterns in this batch:**
+- **`getCurrentInstance()` for spy-compatible delegation:** In `<script setup>`, internal function calls go through closures, not the component instance, so `vi.spyOn(wrapper.vm, "method")` can't intercept them. Solution: capture `getCurrentInstance()` during setup and have ~10 delegation functions (watchers, event handlers) call through `_instance!.proxy as any` so test spies work correctly
+- **Multi-source `watch()` consolidation:** 40+ `@Watch` decorators consolidated into ~15 `watch()` calls using array syntax (e.g., `watch([xy, z, time, ...], onPrimaryChange)`)
+- **`Vue.set()` → direct assignment:** 2 occurrences of `Vue.set(obj, key, val)` replaced with direct property assignment using `as any` casts
+- **`Vue.nextTick` → `nextTick`:** Replaced with imported `nextTick()` from vue
+- **Import aliasing for name collision:** `editPolygonAnnotation` utility renamed to `editPolygonAnnotationUtil` on import to avoid conflict with local function of same name
+- **`timelapseTags` watcher bug fixed:** Pre-existing bug where `@Watch("timelapseTags")` had no corresponding getter. Fixed by watching `() => store.timelapseTags` directly
+- **Throttle/debounce without `.bind(this)`:** Throttled/debounced functions created as `const` wrappers around named functions (closures capture scope naturally)
 
 ---
 
@@ -638,7 +631,7 @@ The last remaining component uses the class-based `@Component` decorator pattern
 
 1. ~~**Batch 17** — Snapshots~~ DONE
 2. ~~**Batch 18** — ImageViewer (with `markRaw()`)~~ DONE
-3. **Batch 19** — AnnotationViewer (with `markRaw()`)
+3. ~~**Batch 19** — AnnotationViewer~~ DONE
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 
@@ -957,7 +950,7 @@ All 8 sites in `ConfigurationInfo.vue`, `DatasetInfo.vue`, and `ProjectInfo.vue`
 ## Risk Areas
 
 - **GeoJS Proxy Reactivity** (Critical): Vue 3's Proxy-based reactivity will break GeoJS object identity checks, causing crashes and performance cliffs. `ImageViewer.vue` and `AnnotationViewer.vue` require `markRaw()` on all GeoJS instances before the Vue 3 switch. See "GeoJS & Vue 3 Proxy Reactivity" section for full details.
-- **AnnotationViewer.vue** (3,160 lines): Most complex component. Break into composables before full migration. Contains 7 GeoJS annotation properties that need `markRaw()` protection.
+- **AnnotationViewer.vue** (~3,310 lines): Migrated (Batch 19). Uses `getCurrentInstance()` proxy pattern for test spy compatibility. 244 tests passing. No `markRaw()` added yet — GeoJS objects come via props from ImageViewer (already wrapped).
 - **ImageViewer.vue** (~1,395 lines): Migrated (Batch 18). Full `markRaw()` coverage on all GeoJS objects in `IMapEntry` fields. 106 tests passing.
 - **Store interdependencies**: 11 Vuex modules with cross-references. Map dependencies before Pinia migration.
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
