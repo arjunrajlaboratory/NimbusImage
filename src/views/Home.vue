@@ -188,21 +188,6 @@
       </v-container>
     </template>
 
-    <!-- Hidden file input that enables native file selection when clicking upload cards -->
-    <input
-      type="file"
-      ref="fileInput"
-      multiple
-      style="
-        position: absolute;
-        width: 0;
-        height: 0;
-        overflow: hidden;
-        opacity: 0;
-      "
-      @change="handleFileSelect"
-    />
-
     <!-- Upload Choice Dialog -->
     <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
       <v-card>
@@ -488,7 +473,6 @@ const vm = getCurrentInstance()!.proxy;
 const zenodoCommunityId = import.meta.env.VITE_ZENODO_SAMPLES || null;
 
 // Template ref
-const fileInput = ref<HTMLInputElement>();
 
 // Reactive data
 const isNavigating = ref(false);
@@ -936,7 +920,15 @@ function handleDrop(event: DragEvent) {
 }
 
 function openFileSelector() {
-  fileInput.value?.click();
+  // Create a temporary <input type="file"> on each click.
+  // Calling .click() on a freshly-created, detached input avoids Chrome's
+  // issue where programmatic .click() on an existing DOM-attached input
+  // (inside Vuetify's <v-card>) is silently blocked.
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+  input.addEventListener("change", handleFileSelect);
+  input.click();
 }
 
 function handleFileSelect(event: Event) {
