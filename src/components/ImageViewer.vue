@@ -173,6 +173,7 @@ import {
 import annotationStore from "@/store/annotation";
 import progressStore from "@/store/progress";
 import store from "@/store";
+import sync from "@/store/sync";
 import girderResources from "@/store/girderResources";
 import geojs from "geojs";
 
@@ -1122,6 +1123,17 @@ function _setTileUrls(
 }
 
 function draw() {
+  // Prevent drawing during dataset transitions to avoid stale tile display.
+  // When configuration loads before dataset, layerStackImages can generate
+  // tile URLs pointing to the old dataset's images.
+  if (sync.datasetLoading) {
+    maps.value.forEach((mapentry) => {
+      mapentry.imageLayers.forEach((layer) => {
+        layer.node().css("visibility", "hidden");
+      });
+    });
+    return;
+  }
   if ((width.value == height.value && width.value == 1) || !dataset.value) {
     return;
   }
@@ -1304,6 +1316,15 @@ watch(compositionMode, updateCompositionMode);
 
 watch(backgroundColor, updateBackgroundColor);
 
+watch(
+  () => sync.datasetLoading,
+  (loading) => {
+    if (!loading) {
+      draw();
+    }
+  },
+);
+
 watch(mapLayerList, () => {
   nextTick(() => {
     if (!refsMounted.value) {
@@ -1346,6 +1367,7 @@ defineExpose({
   store,
   annotationStore,
   girderResources,
+  sync,
   maps,
   cameraInfo,
   overview,
