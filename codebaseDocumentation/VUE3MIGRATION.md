@@ -4,141 +4,25 @@
 
 This document tracks the incremental migration of NimbusImage from Vue 2 (Class Components + Vuex with decorators) to Vue 3 (Composition API + Vuetify 3). The strategy is to adopt Vue 3-compatible patterns within Vue 2.7 first, then switch frameworks with minimal breakage.
 
-## Current State (as of initial planning)
+## Current Status
 
-| Category | Count | Notes |
-|----------|-------|-------|
-| Class components (`@Component`) | 121 | 120 migrated to `<script setup>`, 1 remaining |
-| `.sync` modifier usages | 11 | Convert to `v-model:propName` |
-| `Vue.set` / `Vue.delete` | 91 | Remove (Vue 3 reactivity handles these) |
-| Vuex store modules (`@Module`) | 11 | Keep Vuex for now; migrate to Pinia later |
-| `v-data-table` usages | 15 | Vuetify 3 API changes significantly |
-| `v-dialog` usages | 129 | Event/prop API changes in Vuetify 3 |
-| `$refs` usages | 62 | Typing changes between Class → Composition |
-| Mixins | 0 | `routeMapper` mixin converted to `useRouteMapper` composable (Batch 9) |
+**Phase 1 complete:** 121 of 121 components migrated to `<script setup>` (Batches 1–19). All class components (`@Component` + decorators) have been converted to Composition API.
 
-## Current Status & Known Issues
+**TypeScript:** `pnpm tsc` reports **0 errors**. All 1,428 errors (1,406 test infrastructure + 22 component type mismatches) have been fixed. A type shim (`src/test-shims.d.ts`) provides permissive `mount()`/`shallowMount()` overloads for `@vue/test-utils` v1 compatibility — to be removed during Phase 3.
 
-**Migration progress:** 121 of 121 components migrated to `<script setup>` (Batches 1–19 complete). All components migrated.
+**Build:** `pnpm build` succeeds. `pnpm test` passes 2,071 tests (2 flaky canvas tests — see "Known Flaky Tests" in Testing section).
 
-### TypeScript Errors (`pnpm tsc`)
+### Known Runtime Issue
 
-There are **22 non-test `tsc` errors** remaining. These are all **type-only** — the build (`pnpm build`) succeeds. Categories:
-
-1. **`IGirderLocation` vs `IGirderSelectAble` v-model mismatches (8 errors):** Components that use `GirderLocationChooser` (which expects `IGirderLocation` for its `value` prop) pass values from store that Vue's type inference expands to structural types that don't perfectly match. Affected: `AddDatasetToCollection`, `AddDatasetToProjectDialog`, `ZenodoImporter`, `NewConfiguration`, `ImportConfiguration`, `DuplicateImportConfiguration`, `ImportDataset`, `Home.vue`. These are harmless — the runtime values are always compatible. Fix: could add explicit type guards at each callsite, but low priority since the code works correctly.
-
-2. **Nullable prop mismatches (4 errors):** `DisplayLayer.vue` and `LayerInfoGrid.vue` pass `IContrast | null` and `Promise<ITileHistogram | null>` to `ContrastHistogram` props typed as non-null. Fix: widen ContrastHistogram's prop types to accept null.
-
-3. **`WorkerInterfaceValues.vue` union type narrowing (4 errors):** `TWorkerInterfaceValue` union type passed to Vuetify components that expect specific types. Fix: add type guards or casts at each binding.
-
-4. **`LayerSelect.vue` read-only prop assignment (3 errors):** Writing to `props.value` directly. Fix: use local ref or emit.
-
-5. **`Snapshots.vue` nullable/signature mismatches (2 errors):** `IDataset | null` where `IDataset` expected, and callback signature mismatch. Fix: add null guards and align types.
-
-6. **`AddDatasetToCollection.vue` nullable string (1 error):** `string | null` where `string` expected.
-
-**Why we are not fixing these now:** All 22 are type-level only — the application builds and runs correctly. Many are prop type mismatches between parent and child components introduced during incremental migration (parent migrated before child or vice versa). They should be cleaned up in a dedicated type-fixing pass after AnnotationViewer migration is complete.
-
-### Known Runtime Bugs
-
-1. ~~**Chrome file dropzone click not working:**~~ **FIXED.** Replaced the static `<input type="file">` element with a dynamically created, detached input on each click (`openFileSelector()` creates a fresh `document.createElement("input")` and calls `.click()` on it). Chrome's security policy blocks programmatic `.click()` on persistent DOM-attached file inputs inside Vuetify components, but allows it on freshly created detached elements. The old static input and CSS visibility workarounds were removed.
-
-2. ~~**ImageViewer dataset transition flicker:**~~ **FIXED.** Added a `sync.datasetLoading` guard at the top of `draw()` in `ImageViewer.vue`. During dataset transitions, the guard hides existing tile layers and returns early, preventing stale tile URLs from being generated when the configuration loads before the dataset. A watcher on `sync.datasetLoading` triggers `draw()` once the new dataset finishes loading, ensuring correct tiles are displayed. The root cause was `setSelectedDataset()` and `setSelectedConfiguration()` running in parallel in `setDatasetViewId()`, allowing `layerStackImages` to recompute with new layers + old dataset.
-
-3. **WebGL console warnings from `markRaw()`:** See "Known Console Warnings (Vue 2.7 only)" section below. These are cosmetic and expected to resolve after Vue 3 upgrade.
-
-## Next Steps (Phase 1 Continuation)
-
-**Branch:** `claude/vue3-migration-planning-tS4Hx`
-
-### ~~Immediate: Fix Batch 10 `ref({})` direct-assignment bug~~ DONE
-
-8 lines across 3 files (`ConfigurationInfo.vue`, `DatasetInfo.vue`, `ProjectInfo.vue`) converted from `cache.value[key] = val` to object spread. All 8 sites fixed.
-
-### ~~Batch 12 — 6 Tier 1 components~~ DONE
-
-See "Components Migrated" section below for details.
-
-**Verification after each batch:** `pnpm tsc` (check migrated files only — pre-existing test file errors are expected), `pnpm lint:fix`, `pnpm build`, `pnpm test`.
-
-### ~~Batch 13 — Remaining Tier 1~~ DONE
-
-See "Components Migrated" section below for details.
-
-### ~~Batch 14 — Tier 2~~ PARTIAL
-
-CustomFileManager migrated. Home migrated (Batch 15).
-
-### ~~Batch 15 — Remaining Tier 2~~ COMPLETE
-
-NewDataset migrated (106 tests).
-
-### ~~Batch 16 — MultiSourceConfiguration~~ COMPLETE
-
-| Component | Lines | Key Patterns |
-|-----------|-------|-------------|
-| `MultiSourceConfiguration.vue` | 2,451 | Complex multi-source dataset configuration with file parsing and dimension assignment. 1 prop → `defineProps`, `$emit` → `defineEmits`, ~50 data fields → `ref()`/`reactive()`, ~30 computed → `computed()`, 3 `@Watch` → `watch()`, `mounted()` → `onMounted()`, `getCurrentInstance()` for `$router`. 143 tests. |
-
-**Key patterns in this batch:**
-- **`reactive()` for deeply-watched objects:** `assignments` uses `reactive()` so the deep watcher fires on property mutations without needing `.value`
-- **Watcher closure captures:** `watch()` callbacks capture the local function reference directly; spying on `vm.method` doesn't intercept — test the observable side effect instead
-- **Store getter overrides in tests:** Use `Object.defineProperty` to temporarily override store getters (e.g., `uploadWorkflow`, `uploadIsFirstDataset`) to enable conditional code paths
-
-### ~~Batch 17 — Snapshots~~ COMPLETE
-
-| Component | Lines | Key Patterns |
-|-----------|-------|-------------|
-| `Snapshots.vue` | 2,834→2,777 | Snapshot creation/loading, image/movie download, GeoJS bounding box management, scalebar rendering. 1 prop → `defineProps`, ~35 data fields → `ref()`, ~20 computed → `computed()` (4 get/set pairs), 4 `@Watch` → `watch()`, ~40 methods → functions, `Vue.set` → direct assignment, exported enums moved to separate `<script>` block. 141 tests. |
-
-**Key patterns in this batch:**
-- **Exported enums in `<script setup>`:** `<script setup>` cannot contain ES module exports. Enums used by other components (e.g., `MovieFormat` imported by `MovieDialog.vue`) must be in a separate `<script lang="ts">` block
-- **Non-reactive mock store:** Module-level store imports are not reactive in `<script setup>` (unlike class component data properties). Tests that change store state after mount must remount the component to see updated computed values
-- **Template ref mocking:** In `<script setup>`, template refs are exposed via `defineExpose`. Mock via `wrapper.vm.refName = mock` (not `$refs`)
-- **Internal method spying:** `vi.spyOn(wrapper.vm, "method")` doesn't intercept closure-captured functions — verify through mocked utility function calls instead
-
-**Bug fix (pre-existing):** Movie export (GIF/ZIP/Video) never rendered the scalebar independently of the timestamp option. The scalebar canvas rendering was nested inside `if (shouldAddTimeStamp)`, so disabling timestamps also disabled the scalebar. Video export never drew the scalebar at all. Fixed by checking `addScalebar` independently of `shouldAddTimeStamp` in all three movie download functions.
-
-### ~~Batch 18 — ImageViewer (with `markRaw()`)~~ COMPLETE
-
-| Component | Lines | Key Patterns |
-|-----------|-------|-------------|
-| `ImageViewer.vue` | 1,500→1,395 | GeoJS map/layer management with full `markRaw()` protection. 1 prop → `defineProps`+`withDefaults` (`shouldResetMaps`), `$emit` → `defineEmits` (`reset-complete`), `computed({ get, set })` for store-backed `maps`/`cameraInfo`, `computed()` for read-only store proxies, `@Watch` → `watch()` including multi-source `watch([a, b], handler)`, `mounted()` → `onMounted()`, `beforeDestroy()` → `onBeforeUnmount()`. 106 tests. |
-
-**Key patterns in this batch:**
-- **`markRaw()` on ALL GeoJS objects:** Every GeoJS object stored in reactive state (map, layers, features) is wrapped with `markRaw()` for Vue 3 Proxy safety. This includes all `IMapEntry` fields: `map`, `params`, `annotationLayer`, `workerPreviewLayer`, `workerPreviewFeature`, `textLayer`, `timelapseLayer`, `timelapseTextLayer`, `interactionLayer`, `uiLayer`, and items pushed into `imageLayers`
-- **Function ref pattern for dynamic template refs:** Replaced `$refs["map-${idx}"]` with `getMapRefSetter()` — a curried function that returns a setter callback for each map index, bound via `:ref="getMapRefSetter(idx)"` in the template
-- **`Vue.set()` → array spread + assign for maps:** `Vue.set(this.maps, idx, mapentry)` replaced with array spread and direct assignment; `Vue.set` on `readyLayers` replaced with `splice()`
-- **`Vue.nextTick` → `nextTick`:** All `Vue.nextTick()` calls replaced with imported `nextTick()`
-- **Plain `let` variables (non-reactive):** `scaleWidget`, `scalePixelWidget`, `synchronisationEnabled` declared as plain `let` (not `ref()`) since they don't need reactivity tracking
-- **`defineExpose()` with getter/setter accessors:** Plain `let` variables exposed via `defineExpose` using getter/setter accessors so tests can read and write them through `wrapper.vm`
-- **`vitest.config.js` updated:** Added resolve alias for `onnxruntime-web/webgpu` pointing to the browser entry point, fixing test resolution
-- **Test mocks: `Vue.observable()` wrapper:** Store mocks wrapped in `Vue.observable()` to enable computed tracking in tests (plain objects don't trigger computed re-evaluation in Vue 2.7)
-- **Test mocks: `setMaps` mockImplementation:** `setMaps` mock implementation actually updates `store.maps` so that computed properties depending on `maps` reflect changes during tests
-
-### ~~Batch 19 — AnnotationViewer~~ COMPLETE
-
-| Component | Lines | Key Patterns |
-|-----------|-------|-------------|
-| `AnnotationViewer.vue` | 3,300→3,310 | GeoJS annotation interaction, tool handlers, SAM integration. 15 props → `defineProps`+`withDefaults`, ~20 data fields → `ref()`, ~40 computed getters → `computed()`, ~50 methods → functions, ~40 `@Watch` decorators consolidated into ~15 `watch()` calls, `mounted()` → `onMounted()`, `beforeDestroy()` → `onBeforeUnmount()`. 244 tests. |
-
-**Key patterns in this batch:**
-- **`getCurrentInstance()` for spy-compatible delegation:** In `<script setup>`, internal function calls go through closures, not the component instance, so `vi.spyOn(wrapper.vm, "method")` can't intercept them. Solution: capture `getCurrentInstance()` during setup and have ~10 delegation functions (watchers, event handlers) call through `_instance!.proxy as any` so test spies work correctly
-- **Multi-source `watch()` consolidation:** 40+ `@Watch` decorators consolidated into ~15 `watch()` calls using array syntax (e.g., `watch([xy, z, time, ...], onPrimaryChange)`)
-- **`Vue.set()` → direct assignment:** 2 occurrences of `Vue.set(obj, key, val)` replaced with direct property assignment using `as any` casts
-- **`Vue.nextTick` → `nextTick`:** Replaced with imported `nextTick()` from vue
-- **Import aliasing for name collision:** `editPolygonAnnotation` utility renamed to `editPolygonAnnotationUtil` on import to avoid conflict with local function of same name
-- **`timelapseTags` watcher bug fixed:** Pre-existing bug where `@Watch("timelapseTags")` had no corresponding getter. Fixed by watching `() => store.timelapseTags` directly
-- **Throttle/debounce without `.bind(this)`:** Throttled/debounced functions created as `const` wrappers around named functions (closures capture scope naturally)
+**WebGL console warnings from `markRaw()`:** Cosmetic warnings in Vue 2.7 caused by `markRaw()` on GeoJS objects in ImageViewer. Expected to resolve after Vue 3 upgrade. See "GeoJS & Vue 3 Proxy Reactivity" under Phase 3.
 
 ---
 
 ## Migration Strategy
 
-### Phase 1: Composition API Migration (Current)
+### Phase 1: Composition API Migration — COMPLETE
 
-Convert components from Class API (`@Component` + decorators) to `<script setup>` syntax. This is fully supported in Vue 2.7 and is the standard Vue 3 pattern.
-
-**Approach:** Start with leaf components (no child component dependencies), then work inward toward complex components.
+All 121 components converted from Class API (`@Component` + decorators) to `<script setup>` syntax (Batches 1–19). See "Components Migrated" appendix for per-batch details.
 
 **Key pattern translations:**
 
@@ -165,109 +49,63 @@ These can be done incrementally alongside Phase 1:
 - **Convert `.sync` to `v-model:`** (11 occurrences): `<component :prop.sync="val">` → `<component v-model:prop="val">`. Works in Vue 2.7.
 - **Audit `$refs` usage** (62 occurrences): Ensure template refs work with Composition API components. Mixed-mode typing may need `any` temporarily.
 
-### Phase 3: Vuetify 3 Preparation
+### Phase 3: Framework Switch & Testing Upgrade (Future)
 
-Vuetify 3 has significant API changes. Mitigation strategies:
+This is the core Vue 3 + Vuetify 3 upgrade. There is limited prep work worth doing ahead of time — Vuetify 3's API changes are extensive enough that most issues will need to be debugged after flipping the switch.
 
-**Wrapper components:** Create thin wrappers in `src/components/ui/` for heavily-used Vuetify components. When Vuetify 3 arrives, update only the wrapper.
+#### Prerequisites (Hard Blockers)
 
-Priority wrappers:
-- `v-dialog` (129 usages) — event names change (`@input` → `@update:modelValue`)
-- `v-data-table` (15 usages) — API overhaul in Vuetify 3
-- Form validation — Vuetify 3 removes built-in validation; will need VeeValidate or similar
+1. **GeoJS `markRaw()` in AnnotationViewer.vue:** `ImageViewer.vue` has full `markRaw()` coverage (Batch 18), but `AnnotationViewer.vue` still needs it on all GeoJS annotation objects. Without this, Vue 3's Proxy wrapping will cause "Illegal invocation" WebGL crashes. See "GeoJS & Vue 3 Proxy Reactivity" section for the full list of affected objects and patterns.
 
-**Icon migration:** Current `mdi-*` string usage works with `@mdi/js` in both versions.
+2. **Tooling:** Disable the Vetur VS Code extension and install **"Vue - Official" (Volar)** along with the **Vue.js devtools for Vue 3**. Vetur does not support Vue 3 SFC syntax and will produce false errors. Update `vite.config.ts` to use `@vitejs/plugin-vue` (replacing `@vitejs/plugin-vue2`).
 
-### Phase 4: Store Migration (Future)
+#### Testing Infrastructure Transition
 
-Currently using Vuex with `vuex-module-decorators` (11 modules). Plan:
-1. Keep Vuex during Composition API migration
-2. Install Pinia alongside Vuex when ready
-3. Migrate one store module at a time (start with smallest: `properties.ts`)
-4. Eventually remove Vuex
+Migrate from `@vue/test-utils` v1 to v2. Key breaking changes:
 
-### Phase 5: Vue 3 + Vuetify 3 Switch (Future)
+- **`createLocalVue` is removed.** Plugins (Vuetify, Vuex, Vue Router) must now be passed via the `global.plugins` array in `mount()` options:
+  ```typescript
+  // v1 (current)
+  Vue.use(Vuetify);
+  mount(Component, { vuetify: new Vuetify() });
 
-Once most components use Composition API and Vuetify wrappers are in place:
-1. Update Vue 2.7 → Vue 3
+  // v2 (Vue 3)
+  mount(Component, {
+    global: {
+      plugins: [vuetify, store, router],
+    },
+  });
+  ```
+- **`propsData` renamed to `props`.**
+- **`wrapper.vm` fully typed** for `<script setup>` components (no more `Wrapper<Vue>` — the test-shims.d.ts workaround becomes unnecessary).
+- **`attachTo` cleanup is automatic** — no more manual `wrapper.destroy()` needed.
+
+#### Framework Update Steps
+
+1. Update Vue 2.7 → Vue 3 (`vue@3`, `@vitejs/plugin-vue`, remove `vue-template-compiler`)
 2. Update Vuetify 2 → Vuetify 3
-3. Update wrapper components for new APIs
-4. Apply `markRaw()` protection to GeoJS objects (see below)
-5. **Remove `src/test-shims.d.ts`** — this file adds permissive `mount()`/`shallowMount()` overloads for `@vue/test-utils` v1 to work with `<script setup>` components. When upgrading to `@vue/test-utils` v2 (which natively supports `<script setup>`), delete this shim so tests get proper type checking again.
+3. Migrate `@vue/test-utils` v1 → v2
+4. **Remove `src/test-shims.d.ts`** — this file adds permissive `mount()`/`shallowMount()` overloads for `@vue/test-utils` v1. With v2, tests get proper type checking for `<script setup>` components.
+5. Debug Vuetify component API changes individually (see below)
 6. Fix remaining incompatibilities
 7. Full regression testing
 
-### GeoJS & Vue 3 Proxy Reactivity (Critical — Phase 5 Preparation)
+#### Known Vuetify 3 Migration Challenges
 
-Vue 3 replaces `Object.defineProperty` (Vue 2) with **ES6 Proxies** for reactivity. Libraries like GeoJS (and similar WebGL/Canvas wrappers) rely on strict object identity (`this === that`) and internal private slots. When Vue 3 wraps a GeoJS instance in a Proxy, it breaks these internal checks, causing:
+These will need to be addressed after the framework switch, not as prep work:
 
-1. **Identity failures:** GeoJS cannot recognize its own instances
-2. **Performance cliffs:** Vue attempts to deeply observe massive graphical objects
-3. **Crashes:** "Illegal invocation" errors when accessing internal slots via a Proxy
+- **`v-data-table` (15 usages):** Requires complete rewrites, especially complex instances like `AnnotationList.vue`. Vue 3 removes the `$children` API (used for accessing inner table internals), and Vuetify 3 overhauls pagination, scoped slots, and the item rendering API.
+- **`v-dialog` (129 usages):** Event names change (`@input` → `@update:modelValue`, `.sync` → `v-model`). Dialog usage patterns are too varied to handle systematically — debug each individually.
+- **Form validation:** Vuetify 3 removes built-in validation; will need VeeValidate or similar.
+- **Icon migration:** Current `mdi-*` string usage works with `@mdi/js` in both versions (no change needed).
 
-**The fix:** Use `markRaw()` to tell Vue NOT to proxy GeoJS objects. This can be done now (Vue 2.7 supports `markRaw` from `vue`) and is forward-compatible with Vue 3.
+#### GeoJS & Vue 3 Proxy Reactivity (Hard Blocker)
 
-#### Current State
+Vue 3 replaces `Object.defineProperty` (Vue 2) with **ES6 Proxies** for reactivity. Libraries like GeoJS (and similar WebGL/Canvas wrappers) rely on strict object identity (`this === that`) and internal private slots. When Vue 3 wraps a GeoJS instance in a Proxy, it breaks these internal checks, causing "Illegal invocation" crashes, identity failures, and performance cliffs from deep observation of massive graphical objects.
 
-`ImageViewer.vue` now has full `markRaw()` coverage on all GeoJS objects in `IMapEntry` (completed in Batch 18). `AnnotationViewer.vue` has **no `markRaw()` usage at all**.
+**The fix:** Use `markRaw()` to tell Vue NOT to proxy GeoJS objects. `markRaw` is safe in Vue 2.7 (no-op performance hint) and required in Vue 3.
 
-#### Affected Objects in `ImageViewer.vue`
-
-The `IMapEntry` interface (`src/store/model.ts:1600-1614`) holds these GeoJS objects that all need `markRaw()`:
-
-| Field | Protected? | Notes |
-|-------|-----------|-------|
-| `map` | Yes (Batch 18) | Core GeoJS map instance |
-| `imageLayers` | Yes | Array is marked raw; items pushed in are also wrapped |
-| `params` | Yes | Already protected pre-migration |
-| `annotationLayer` | Yes (Batch 18) | GeoJS annotation layer |
-| `workerPreviewLayer` | Yes (Batch 18) | GeoJS feature layer |
-| `workerPreviewFeature` | Yes (Batch 18) | GeoJS feature |
-| `textLayer` | Yes (Batch 18) | GeoJS feature layer |
-| `timelapseLayer` | Yes (Batch 18) | GeoJS annotation layer |
-| `timelapseTextLayer` | Yes (Batch 18) | GeoJS feature layer |
-| `interactionLayer` | Yes (Batch 18) | GeoJS annotation layer |
-| `uiLayer` | Yes (Batch 18) | GeoJS UI layer (optional) |
-
-#### Known Console Warnings (Vue 2.7 only)
-
-Adding `markRaw()` to GeoJS objects in Vue 2.7 causes some WebGL console warnings:
-
-- `WebGL: INVALID_OPERATION: useProgram: object does not belong to this context`
-- `WebGL: INVALID_OPERATION: detachShader: object does not belong to this context`
-- `m_viewer.renderWindow(...)._init is not a function`
-
-**Root cause:** In Vue 2, without `markRaw`, GeoJS objects were wrapped with Vue's `__ob__` observer and reactive getters/setters via `Object.defineProperty`. GeoJS internally tolerates this. With `markRaw`, the objects stay pristine (only a non-enumerable `__v_skip` property is added). The WebGL context management in GeoJS may have incidentally relied on Vue 2's observation behavior. These warnings do not affect functionality.
-
-**Expected resolution:** These warnings should disappear after the Vue 3 upgrade, where `markRaw` prevents Proxy wrapping entirely (its intended purpose). The warnings are cosmetic — the application works correctly with them present.
-
-**Fix in `_setupMap()`:**
-
-```typescript
-const mapentry: IMapEntry = {
-  map: markRaw(map),
-  imageLayers: [],                              // Reactive array (for DOM updates)
-  params: markRaw(params),
-  annotationLayer: markRaw(annotationLayer),
-  workerPreviewLayer: markRaw(workerPreviewLayer),
-  textLayer: markRaw(textLayer),
-  timelapseLayer: markRaw(timelapseLayer),
-  timelapseTextLayer: markRaw(timelapseTextLayer),
-  workerPreviewFeature: markRaw(workerPreviewFeature),
-  interactionLayer: markRaw(interactionLayer),
-  // ... baseLayerIndex, etc.
-};
-```
-
-**Fix in `_setupTileLayers()`:** Wrap items pushed into `imageLayers`:
-
-```typescript
-mapentry.imageLayers.push(markRaw(newMap));
-```
-
-#### Affected Objects in `AnnotationViewer.vue`
-
-These class properties hold GeoJS annotation objects that must be wrapped in `markRaw()` at every assignment site:
+**Current state:** `ImageViewer.vue` has full `markRaw()` coverage on all GeoJS objects in `IMapEntry` (Batch 18). `AnnotationViewer.vue` still needs it — the following objects must be wrapped at every assignment site:
 
 | Property | Assignment Count | Key Methods |
 |----------|-----------------|-------------|
@@ -279,52 +117,34 @@ These class properties hold GeoJS annotation objects that must be wrapped in `ma
 | `cursorAnnotation` | ~2 | `geojs.createAnnotation("circle")` |
 | `dragGhostAnnotation` | ~2 | `geojsAnnotationFactory(...)` |
 
-**Pattern for every GeoJS annotation assignment:**
-
+**Pattern:**
 ```typescript
-// BEFORE (current)
-this.cursorAnnotation = geojs.createAnnotation("circle");
+// Wrap every GeoJS object assignment
+cursorAnnotation.value = markRaw(geojs.createAnnotation("circle"));
 
-// AFTER (Vue 3-safe)
-this.cursorAnnotation = markRaw(geojs.createAnnotation("circle"));
-```
-
-**For arrays:** Wrap individual items, not the array itself (so Vue can track array length changes):
-
-```typescript
-// BEFORE
-newAnnotations.push(newAnnotation);
-
-// AFTER
+// For arrays: wrap items, not the array (so Vue tracks length changes)
 newAnnotations.push(markRaw(newAnnotation));
 ```
 
-#### `Vue.set` Interaction with `markRaw`
+**`Vue.set` + `markRaw` interaction:** When replacing `Vue.set` for GeoJS-related assignments, always add `markRaw()`. The correct migration path is `Vue.set(obj, key, geoObj)` → `obj[key] = markRaw(geoObj)`.
 
-The 94 `Vue.set()` calls across the codebase fall into two categories:
+**Verification after applying `markRaw()`:** Map pan/zoom, layer toggling, drawing tools, edit mode drag, and SAM tools should all work without console errors.
 
-1. **Simple reactive property sets** (most cases): Replace with direct assignment in Vue 3. Vue 3's Proxy reactivity tracks new property additions automatically.
-2. **GeoJS object stores** (e.g., `Vue.set(this.maps, mllidx, mapentry)` in ImageViewer): These can become direct assignment BUT the value must be wrapped in `markRaw()` first.
+**Known Vue 2.7 console warnings:** `markRaw()` on GeoJS objects causes cosmetic WebGL warnings (`useProgram: object does not belong to this context`, etc.). These don't affect functionality and should disappear after the Vue 3 upgrade where `markRaw` prevents Proxy wrapping entirely (its intended purpose).
 
-**Important:** Do NOT blindly remove `Vue.set` for GeoJS-related assignments without adding `markRaw()`. The combination `Vue.set` → direct assignment + `markRaw()` is the correct migration path for these objects.
+### Phase 4: Store Migration (Future)
 
-#### Verification Checklist (Post-Migration)
+Post-stabilization. Once the app is running on Vue 3 + Vuetify 3:
 
-After applying `markRaw()` changes, verify:
+Currently using Vuex with `vuex-module-decorators` (11 modules). Plan:
+1. Keep Vuex during the framework switch
+2. Install Pinia alongside Vuex when ready
+3. Migrate one store module at a time (start with smallest: `properties.ts`)
+4. Eventually remove Vuex
 
-1. **Map pan/zoom** — smooth without console errors (tests `ImageViewer` map instance)
-2. **Layer toggling** — layers appear/disappear correctly (tests `imageLayers` reactivity)
-3. **Drawing tools** — cursor appears, can draw circles/polygons (tests cursor/ghost instances)
-4. **Edit mode** — can drag existing annotations (tests `dragGhostAnnotation` identity)
-5. **SAM tools** — prompts appear, preview renders (tests SAM annotation instances)
+## Appendix: Components Migrated (Batches 1–19)
 
-#### When to Apply These Changes
-
-These `markRaw()` additions can be done:
-- **Now (Phase 1):** Safe to add during Composition API migration of ImageViewer/AnnotationViewer. `markRaw` is a no-op performance hint in Vue 2.7 — it won't break anything.
-- **Phase 5 (required):** Must be in place before the Vue 3 switch or the app will crash.
-
-## Components Migrated
+Historical record of each migration batch. Key patterns discovered in each batch are documented here for reference; the most important ones are consolidated in "Migration Patterns & Gotchas" above.
 
 ### Batch 1 — Leaf Components
 | Component | Lines | Key Patterns |
@@ -619,20 +439,6 @@ These `markRaw()` additions can be done:
 - **Test stub naming for `<script setup>`:** `shallowMount` with `<script setup>` components requires **PascalCase** stub names (e.g., `GirderUpload` not `"girder-upload"`). Kebab-case stubs are not matched to `<script setup>` component registrations and get replaced by auto-generated minimal stubs that lack methods/data.
 
 **After this batch:** 116 of 121 components migrated to `<script setup>` (~96%).
-
-## Remaining Components (1)
-
-The last remaining component uses the class-based `@Component` decorator pattern.
-
-| Component | Lines | Key Patterns / Notes |
-|-----------|-------|---------------------|
-| `AnnotationViewer.vue` | 3,300 | GeoJS annotations, tool interaction, SAM — needs `markRaw()` |
-
-### Migration Order
-
-1. ~~**Batch 17** — Snapshots~~ DONE
-2. ~~**Batch 18** — ImageViewer (with `markRaw()`)~~ DONE
-3. ~~**Batch 19** — AnnotationViewer~~ DONE
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
 
@@ -949,6 +755,8 @@ addMultipleConnections(value: IAnnotationConnection[]) {
 
 **Rule of thumb:** In any Vuex mutation that modifies an array watched by a `<script setup>` component's `watch()`, always replace the array (`this.arr = [...this.arr, item]`) rather than mutating in place (`this.arr.push(item)`). This is safe for both Vue 2.7 and Vue 3.
 
+**Future-proofing note (`shallowRef`):** This array-replacement pattern is also strictly required when we eventually transition large state arrays (annotations, connections, properties) to `shallowRef` for performance optimization post-Vue 3 migration. `shallowRef` only tracks `.value` reassignment — it completely ignores internal mutations like `.push()` or `.splice()`. By enforcing the spread/replacement pattern now to fix the Vue 2.7 `watch()` bug, the state management code is already compatible with `shallowRef`.
+
 **Test coverage:** `src/store/annotation-mutations.test.ts` includes regression tests proving that array replacement triggers `watch()` and that `.push()` does not.
 
 ### `<script setup>` bindings shadow globally-registered components
@@ -979,10 +787,6 @@ const dataTableInner = computed(() => {
 
 **Debugging tip:** If a Vuetify component mysteriously disappears after migration to `<script setup>`, search the script for any binding whose camelCase name matches the component's PascalCase name.
 
-### ~~Known Batch 10 regression: direct assignment on `ref({})` caches~~ FIXED
-
-All 8 sites in `ConfigurationInfo.vue`, `DatasetInfo.vue`, and `ProjectInfo.vue` have been converted from `cache.value[key] = val` to object spread (`cache.value = { ...cache.value, [key]: val }`).
-
 ## Risk Areas
 
 - **GeoJS Proxy Reactivity** (Critical): Vue 3's Proxy-based reactivity will break GeoJS object identity checks, causing crashes and performance cliffs. `ImageViewer.vue` and `AnnotationViewer.vue` require `markRaw()` on all GeoJS instances before the Vue 3 switch. See "GeoJS & Vue 3 Proxy Reactivity" section for full details.
@@ -991,4 +795,5 @@ All 8 sites in `ConfigurationInfo.vue`, `DatasetInfo.vue`, and `ProjectInfo.vue`
 - **Store interdependencies**: 11 Vuex modules with cross-references. Map dependencies before Pinia migration.
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
 - **Template ref typing**: Mixed Class + Composition components cause type mismatches during incremental migration.
-- **Vuetify v-data-table**: Significant API differences in v3. Abstract usage early.
+- **Vuetify v-data-table**: Significant API differences in v3. Complex usages (especially `AnnotationList.vue` with `$children` access) require complete rewrites. See Phase 3 notes.
+- **Vue 3 Proxy performance on large arrays**: Rendering massive arrays of annotations will initially cause performance regressions due to deep Proxy wrapping. This is a known issue to be resolved after getting the app running by transitioning annotation, connection, and property arrays to `shallowRef`, which avoids deep Proxy wrapping while still tracking reassignment.
