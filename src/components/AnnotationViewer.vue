@@ -39,6 +39,7 @@ import {
   onBeforeUnmount,
   nextTick,
   getCurrentInstance,
+  markRaw,
 } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
@@ -1850,7 +1851,7 @@ function addCursorAnnotation() {
   if (cursorAnnotation.value) {
     return;
   }
-  cursorAnnotation.value = geojs.createAnnotation("circle");
+  cursorAnnotation.value = markRaw(geojs.createAnnotation("circle"));
   cursorAnnotation.value.layer(props.interactionLayer);
   props.interactionLayer.addAnnotation(cursorAnnotation.value);
   props.interactionLayer.geoOn(geojs.event.mousemove, updateCursorAnnotation);
@@ -2120,9 +2121,8 @@ function previewMouseState(mouseState: IMouseState | null) {
     const previewPrompt = mouseState && mouseStateToSamPrompt(mouseState);
     const previewPromptNode = samToolState.value.nodes.input.previewPrompt;
     if (previewPrompt) {
-      selectionAnnotation.value = samPromptToAnnotation(
-        previewPrompt,
-        previewBaseStyle,
+      selectionAnnotation.value = markRaw(
+        samPromptToAnnotation(previewPrompt, previewBaseStyle),
       );
       const currentPrompts = samPrompts.value;
       const previewPrompts = [...currentPrompts, previewPrompt];
@@ -2134,10 +2134,12 @@ function previewMouseState(mouseState: IMouseState | null) {
   } else {
     const vertices = mouseState?.path ?? [];
     if (vertices.length > 1) {
-      selectionAnnotation.value = geojs.annotation.lineAnnotation({
-        style: previewBaseStyle,
-        vertices,
-      });
+      selectionAnnotation.value = markRaw(
+        geojs.annotation.lineAnnotation({
+          style: previewBaseStyle,
+          vertices,
+        }),
+      );
     } else {
       selectionAnnotation.value = null;
     }
@@ -2235,9 +2237,8 @@ function pendingAnnotationChanged() {
     pendingAnnotation.value = null;
   }
   if (pendingStoreAnnotation.value) {
-    pendingAnnotation.value = createGeoJSAnnotation(
-      pendingStoreAnnotation.value,
-    );
+    const created = createGeoJSAnnotation(pendingStoreAnnotation.value);
+    pendingAnnotation.value = created ? markRaw(created) : null;
   }
   if (pendingAnnotation.value) {
     pendingAnnotation.value.options("specialAnnotation", true);
@@ -2268,7 +2269,7 @@ function onSamMainOutputChanged() {
   });
   geoJsAnnotation.options("specialAnnotation", true);
 
-  samUnsubmittedAnnotation.value = geoJsAnnotation;
+  samUnsubmittedAnnotation.value = markRaw(geoJsAnnotation);
   props.annotationLayer.addAnnotation(samUnsubmittedAnnotation.value);
 }
 
@@ -2309,7 +2310,7 @@ function onSamLivePreviewOutputChanged() {
   });
   geoJsAnnotation.options("specialAnnotation", true);
 
-  samLivePreviewAnnotation.value = geoJsAnnotation;
+  samLivePreviewAnnotation.value = markRaw(geoJsAnnotation);
   props.annotationLayer.addAnnotation(samLivePreviewAnnotation.value);
 }
 
@@ -2357,7 +2358,7 @@ function onSamPromptsChanged(prompts: TSamPrompt[]) {
   };
   const newAnnotations = [];
   for (const prompt of prompts) {
-    const newAnnotation = samPromptToAnnotation(prompt, promptBaseStyle);
+    const newAnnotation = markRaw(samPromptToAnnotation(prompt, promptBaseStyle));
     newAnnotation.options("specialAnnotation", true);
     props.annotationLayer.addAnnotation(newAnnotation);
     newAnnotations.push(newAnnotation);
@@ -2735,11 +2736,12 @@ function handleDragStart(evt: IGeoJSMouseState) {
         strokeWidth: 2,
       };
 
-      dragGhostAnnotation.value = geojsAnnotationFactory(
+      const ghost = geojsAnnotationFactory(
         annotation.shape,
         [...annotation.coordinates],
         { style },
       );
+      dragGhostAnnotation.value = ghost ? markRaw(ghost) : null;
 
       if (dragGhostAnnotation.value) {
         dragGhostAnnotation.value.options("specialAnnotation", true);
