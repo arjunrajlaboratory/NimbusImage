@@ -1,5 +1,4 @@
-import { Vue } from "vue-property-decorator";
-import { reactive } from "vue";
+import { ref } from "vue";
 
 export interface IFeatureDescription {
   section: string;
@@ -8,7 +7,16 @@ export interface IFeatureDescription {
 }
 
 let counter = 0;
-export const descriptions: { [id: string]: IFeatureDescription } = reactive({});
+
+// Internal mutable store — not reactive, so directive hooks don't create
+// dependency-tracking loops when they run inside a component's render watcher.
+const _raw: Record<string, IFeatureDescription> = {};
+// Exposed reactive ref — consumers (HelpPanel) read this to render.
+export const descriptions = ref<Record<string, IFeatureDescription>>({});
+
+function flush() {
+  descriptions.value = { ..._raw };
+}
 
 function bind(el: any, value: IFeatureDescription) {
   let id: number;
@@ -19,12 +27,26 @@ function bind(el: any, value: IFeatureDescription) {
     el.featureDescriptionId = id;
   }
   el.featureDescription = value;
-  Vue.set(descriptions, id, value);
+  _raw[id] = value;
+  flush();
 }
 
 function unbind(el: any) {
   const id: number = el.featureDescriptionId;
-  Vue.delete(descriptions, id);
+  delete _raw[id];
+  flush();
+}
+
+function shallowEqual(
+  a: IFeatureDescription,
+  b: IFeatureDescription,
+): boolean {
+  return (
+    a === b ||
+    (a.section === b.section &&
+      a.title === b.title &&
+      a.description === b.description)
+  );
 }
 
 export default function install(Vue: any) {
@@ -32,7 +54,14 @@ export default function install(Vue: any) {
     inserted(el: any, { value }: { value: IFeatureDescription }) {
       bind(el, value);
     },
-    update(el: any, { value }: { value: IFeatureDescription }) {
+    update(
+      el: any,
+      {
+        value,
+        oldValue,
+      }: { value: IFeatureDescription; oldValue: IFeatureDescription },
+    ) {
+      if (shallowEqual(value, oldValue)) return;
       unbind(el);
       bind(el, value);
     },

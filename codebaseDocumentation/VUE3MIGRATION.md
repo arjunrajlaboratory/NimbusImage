@@ -8,6 +8,8 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 **Phase 1 complete:** 124 of 124 components migrated to `<script setup>` (Batches 1–19 + master merge). All class components (`@Component` + decorators) have been converted to Composition API.
 
+**Phase 2 in progress:** `$refs` via `getCurrentInstance()` converted (2 files). Custom directive state migrated from `reactive({})` to `ref({})` with non-reactive internal store to prevent render loops (2 files). `Vue.set()`/`Vue.delete()` deferred to Phase 3 (see below). `.sync` modifier (11 occurrences) deferred to Phase 3.
+
 **TypeScript:** `pnpm tsc` reports **0 errors**. All 1,428 errors (1,406 test infrastructure + 22 component type mismatches) have been fixed. A type shim (`src/test-shims.d.ts`) provides permissive `mount()`/`shallowMount()` overloads for `@vue/test-utils` v1 compatibility — to be removed during Phase 3.
 
 **Build:** `pnpm build` succeeds. `pnpm test` passes 2,073 tests (2 flaky canvas tests — see "Known Flaky Tests" in Testing section).
@@ -43,11 +45,14 @@ All 124 components converted from Class API (`@Component` + decorators) to `<scr
 
 ### Phase 2: Remove Vue 2-Only Patterns
 
-These can be done incrementally alongside Phase 1:
+**Status:** `$refs` conversion and directive state migration complete. `Vue.set()`/`Vue.delete()` and `.sync` modifier deferred to Phase 3.
 
-- **Remove `Vue.set()` / `Vue.delete()`** (~94 occurrences): Most can be replaced with direct property assignment or object spread (Vue 3's Proxy reactivity handles new properties). **Exception:** GeoJS-related `Vue.set` calls (in `ImageViewer.vue`, `AnnotationViewer.vue`) must be replaced with direct assignment + `markRaw()` — see "GeoJS & Vue 3 Proxy Reactivity" section.
-- **Convert `.sync` to `v-model:`** (11 occurrences): `<component :prop.sync="val">` → `<component v-model:prop="val">`. Works in Vue 2.7.
-- **Audit `$refs` usage** (62 occurrences): Ensure template refs work with Composition API components. Mixed-mode typing may need `any` temporarily.
+- **Remove `Vue.set()` / `Vue.delete()`** (56 occurrences, 11 files) — **Deferred to Phase 3.** Attempted and reverted: replacing `Vue.set()` in Vuex store mutations with object spread / direct assignment caused subtle reactivity bugs in Vue 2.7 (infinite render loops in directives, dataset loading failures). Vue 3's Proxy-based reactivity handles all `Vue.set` use cases automatically (`obj[newKey] = val`, `delete obj[key]`, `arr[idx] = val` all just work), so these replacements add risk now with no benefit. Remove `Vue.set`/`Vue.delete` during the Phase 3 framework switch when they become unnecessary.
+- **~~Migrate directive state (`v-mousetrap.ts`, `v-description.ts`)~~** — DONE. Changed from `reactive({})` + `Vue.set()`/`Vue.delete()` to a non-reactive internal `_raw` object with a `ref({})` facade flushed on mutation. This prevents directive `update` hooks from creating dependency-tracking loops inside the parent component's render watcher (see "Directive State and Render Watcher Loops" gotcha below).
+- **~~Convert `$refs` via `getCurrentInstance()`~~** — DONE. 2 usages converted:
+  - `Toolset.vue`: Function ref array pattern for `v-for` dynamic refs
+  - `AnnotationList.vue`: `Map<string, Element>` for dynamic annotation refs
+- **Convert `.sync` to `v-model:`** (11 occurrences) — **Deferred to Phase 3.** `v-model:prop` syntax requires Vue 3's template compiler. The `.sync` modifier is the correct Vue 2 pattern and works fine in Vue 2.7.
 
 ### Phase 3: Framework Switch & Testing Upgrade (Future)
 
@@ -719,41 +724,65 @@ defineProps({
 grep -n "defineProps<" src/**/*.vue | grep -i "element\|htmlelement\|node\|event"
 ```
 
-### `Vue.set`/`Vue.delete` → object spread, NOT direct assignment (Vue 2.7 `ref({})`)
+### `Vue.set`/`Vue.delete` — keep until Phase 3
 
-**Critical gotcha discovered in Batch 11.** When removing `Vue.set()`/`Vue.delete()` from migrated components, do NOT replace them with direct property assignment on `ref<Record<...>>()` objects. Vue 2.7's `ref({})` still uses `Object.defineProperty` under the hood — it **cannot detect new property additions** via direct assignment.
+**Deferred.** Removing `Vue.set()`/`Vue.delete()` from Vuex store mutations and component code was attempted and reverted. While the replacement patterns are correct in isolation, they cause subtle reactivity bugs when applied across the codebase in Vue 2.7:
 
-**Symptom:** UI partially updates (e.g., a "modified" indicator appears) but the actual value display doesn't change. Works after save+reload because the whole object is replaced from the backend.
+1. **Infinite render loops:** Replacing `reactive({})` + `Vue.set()` with `ref({})` + object spread in directive state caused dependency-tracking loops (see "Directive State and Render Watcher Loops" below).
+2. **Dataset loading failures:** Replacing `Vue.set()` in Vuex mutations with object spread changed watcher behavior — replacing entire objects (new reference) vs. adding properties in-place (same reference) triggers different sets of watchers, causing cascading reactivity differences that are hard to debug.
+
+**Decision:** Vue 3's Proxy-based reactivity handles all `Vue.set` use cases automatically. Removing `Vue.set` in Vue 2.7 adds risk with no functional benefit. Remove during the Phase 3 framework switch.
+
+**Components still using `Vue.set`/`Vue.delete`:** `annotation.ts`, `index.ts`, `properties.ts`, `girderResources.ts`, `jobs.ts`, `AnnotationConfiguration.vue`, `ToolConfiguration.vue`, `Property.vue`, `samPipeline.ts`.
+
+### `Vue.set`/`Vue.delete` → object spread for `ref({})` (component-level only)
+
+**Still relevant for component-level `ref<Record<...>>()` objects** (NOT Vuex state). When a `<script setup>` component uses `ref({})` to hold a local record, Vue 2.7 cannot detect new property additions via direct assignment:
 
 ```typescript
 // BAD — new key NOT reactive in Vue 2.7
 const overrides = ref<Record<string, string>>({});
 overrides.value[newChannel] = color;        // Vue can't see this!
-delete overrides.value[channel];            // Vue can't see this either!
 
 // GOOD — replacing .value triggers reactivity
 overrides.value = { ...overrides.value, [newChannel]: color };
-
-const { [channel]: _, ...rest } = overrides.value;
-overrides.value = rest;
 ```
 
-**Why it's tricky:** Updating an *existing* key via direct assignment IS reactive (the property was already defined by `Object.defineProperty`). So it works for some cases but silently breaks for others, making the bug intermittent.
+This gotcha applies to component-local `ref({})` objects only. For Vuex store state, keep using `Vue.set()` until Phase 3.
 
-**Rule of thumb:** For `ref<Record<...>>()` objects, always use object spread for any mutation (add, update, or delete). This is safe in both Vue 2.7 and Vue 3.
+### Directive state and render watcher loops
 
-**Affected patterns across remaining components:**
-- Any `Vue.set(obj, key, val)` on a plain object → `obj.value = { ...obj.value, [key]: val }`
-- Any `Vue.delete(obj, key)` → destructure + spread
-- `Vue.set` on arrays (`Vue.set(arr, index, val)`) → `arr.value[index] = val` (array index assignment IS reactive) or `arr.value = [...arr.value.slice(0, i), val, ...arr.value.slice(i+1)]`
-- `Vue.set` on Vuex store state → keep `Vue.set` until Pinia migration (Vuex mutations have their own reactivity rules)
+**Critical gotcha discovered during Phase 2.** Custom directives (`v-description`, `v-mousetrap`) that maintain module-level reactive state must NOT use `ref({})` with direct `.value` reads/writes in their `update` hooks.
 
-**Components with remaining `Vue.set` that will need this pattern:**
-- `Property.vue` — `Vue.set()` on Vuex mutation (keep as-is until Phase 4)
-- `AnnotationConfiguration.vue` — `Vue.set()` on local reactive objects (apply object spread)
-- `ToolConfiguration.vue` — `Vue.set()` on local reactive objects (apply object spread)
-- ~~`ImageViewer.vue`~~ — Done (Batch 18): `Vue.set()` replaced with array spread + `markRaw()`
-- Remaining unmigrated components — apply during migration
+**Root cause:** In Vue 2, directive `update` hooks run during the component's render watcher evaluation (inside `_update()`, which is called within `Watcher.get()` while `Dep.target` is set). Any reactive reads inside the hook (e.g., `descriptions.value`) get tracked as dependencies of the **parent component's render watcher**, not the directive's own logic. If the hook also writes to the same reactive source, it re-queues the render watcher, creating an infinite loop.
+
+**Trigger condition:** Template uses inline object literals for directive values (e.g., `v-description="{ section: '...', ... }"`). Since `{} !== {}`, the `value === oldValue` identity check always fails, so the `update` hook always runs `unbind` + `bind`, which reads and writes `descriptions.value` every render.
+
+**Fix (applied):** Use a plain (non-reactive) `_raw` object for internal bookkeeping, and a `ref({})` facade that consumers read. The directive hooks only write to `_raw` and call `flush()` which writes (but never reads) the ref:
+
+```typescript
+const _raw: Record<string, Data> = {};        // not reactive
+export const data = ref<Record<string, Data>>({}); // consumers read this
+
+function flush() {
+  data.value = { ..._raw }; // setter only — no dep.depend(), just dep.notify()
+}
+
+function bind(el, value) {
+  _raw[id] = value;
+  flush(); // safe: only triggers notify, doesn't track as render dep
+}
+```
+
+Additionally, the `update` hook uses shallow content comparison (not reference identity) to skip no-op updates from inline object literals:
+
+```typescript
+update(el, { value, oldValue }) {
+  if (shallowEqual(value, oldValue)) return; // content check, not reference
+  unbind(el);
+  bind(el, value);
+}
+```
 
 ### Vuex mutations must replace arrays, NOT push (Vue 2.7 `watch()`)
 

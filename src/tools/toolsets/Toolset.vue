@@ -54,7 +54,7 @@
                     <!-- If type === segmentation, add an annotation worker menu -->
                     <template v-if="tool.type === 'segmentation'">
                       <v-menu
-                        ref="annotationMenu"
+                        :ref="setAnnotationMenuRef"
                         offset-x
                         :closeOnClick="false"
                         :closeOnContentClick="false"
@@ -135,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, getCurrentInstance } from "vue";
+import { ref, computed, nextTick } from "vue";
 import draggable from "vuedraggable";
 import store from "@/store";
 import {
@@ -153,7 +153,12 @@ import ToolItem from "./ToolItem.vue";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
 
-const vm = getCurrentInstance()!.proxy;
+const annotationMenuRefs = ref<any[]>([]);
+function setAnnotationMenuRef(el: any) {
+  if (el && !annotationMenuRefs.value.includes(el)) {
+    annotationMenuRefs.value.push(el);
+  }
+}
 
 const panels = ref<number>(0);
 
@@ -240,23 +245,9 @@ function getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
 
 function onWorkerMenuLoaded() {
   nextTick(() => {
-    // Access the menu component with the ref and cast it to any
-    const menuRef = vm.$refs.annotationMenu as any;
-
-    // Handle case where ref is an array (multiple components with same ref)
-    if (Array.isArray(menuRef)) {
-      menuRef.forEach((menuItem: any) => {
-        if (menuItem) {
-          if (typeof menuItem.updateDimensions === "function") {
-            menuItem.updateDimensions();
-          }
-        }
-      });
-    }
-    // Handle case where ref is a single component
-    else if (menuRef) {
-      if (typeof menuRef.updateDimensions === "function") {
-        menuRef.updateDimensions();
+    for (const menuItem of annotationMenuRefs.value) {
+      if (menuItem && typeof menuItem.updateDimensions === "function") {
+        menuItem.updateDimensions();
       }
     }
   });

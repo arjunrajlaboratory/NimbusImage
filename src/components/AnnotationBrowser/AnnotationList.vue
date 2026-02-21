@@ -140,7 +140,7 @@
               @click="goToAnnotationIdLocation(item.annotation.id)"
               title="Go to annotation location"
               :class="item.annotation.id === hoveredId ? 'is-hovered' : ''"
-              :ref="item.annotation.id"
+              :ref="(el) => setAnnotationRef(item.annotation.id, el)"
             >
               <td :class="tableItemClass">
                 <v-checkbox
@@ -227,7 +227,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, getCurrentInstance } from "vue";
+import { ref, computed, watch } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
@@ -284,7 +284,16 @@ const emit = defineEmits<{
   (e: "clickedTag", tag: string): void;
 }>();
 
-const vm = getCurrentInstance()!.proxy;
+const annotationRefMap = new Map<string, Element>();
+function setAnnotationRef(id: string, el: any) {
+  if (el) {
+    // In Vue 2, component refs resolve to the component instance; get the $el
+    const element = el.$el || el;
+    annotationRefMap.set(id, element);
+  } else {
+    annotationRefMap.delete(id);
+  }
+}
 
 // Template ref
 const dataTable = ref<any>(null);
@@ -477,19 +486,13 @@ watch([hoveredId, itemsPerPage], () => {
   }
   // Change page
   page.value = getPageFromItemId.value(hoveredId.value);
-  // Get the tr element from the refs if it exists
-  let annotationRef = vm.$refs[hoveredId.value];
-  if (annotationRef === undefined) {
+  // Get the tr element from the ref map if it exists
+  const annotationEl = annotationRefMap.get(hoveredId.value);
+  if (!annotationEl) {
     return;
   }
-  if (Array.isArray(annotationRef)) {
-    if (annotationRef.length <= 0) {
-      return;
-    }
-    annotationRef = annotationRef[0];
-  }
   // Scroll to the element
-  (annotationRef as Element).scrollIntoView({
+  annotationEl.scrollIntoView({
     behavior: "smooth",
     block: "nearest",
   });

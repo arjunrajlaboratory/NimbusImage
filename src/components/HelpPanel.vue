@@ -53,7 +53,7 @@ import { IFeatureDescription, descriptions } from "@/utils/v-description";
 const hotkeyItems = computed(() => {
   const sections: Map<string, { key: string; description: string }[]> =
     new Map();
-  for (const [key, data] of Object.entries(boundKeys)) {
+  for (const [key, data] of Object.entries(boundKeys.value)) {
     if (!sections.has(data.section)) {
       sections.set(data.section, []);
     }
@@ -70,7 +70,7 @@ const hotkeyItems = computed(() => {
 
 const featureItems = computed(() => {
   const sections: Map<string, IFeatureDescription[]> = new Map();
-  for (const desc of Object.values(descriptions)) {
+  for (const desc of Object.values(descriptions.value)) {
     if (!sections.has(desc.section)) {
       sections.set(desc.section, []);
     }

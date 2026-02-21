@@ -288,8 +288,7 @@ async function fetchAccessInfo(projectId: string) {
   loading.value = true;
   showError.value = false;
   try {
-    const accessList =
-      await store.projectsAPI.getProjectAccess(projectId);
+    const accessList = await store.projectsAPI.getProjectAccess(projectId);
     isPublic.value = accessList.public;
     users.value = accessList.users;
   } catch (error) {
@@ -440,11 +439,7 @@ async function removeUser() {
   userLoading.value = user.id;
   showError.value = false;
   try {
-    await store.projectsAPI.shareProject(
-      props.project.id,
-      user.login,
-      -1,
-    );
+    await store.projectsAPI.shareProject(props.project.id, user.login, -1);
     users.value = users.value.filter((u) => u.id !== user.id);
   } catch (error) {
     logError("Failed to remove user access", error);
@@ -460,8 +455,7 @@ async function removeUser() {
 
 function confirmAddUser() {
   if (!newUserEmail.value) return;
-  const levelLabel =
-    accessLevelLabels[newUserAccessLevel.value] ?? "Unknown";
+  const levelLabel = accessLevelLabels[newUserAccessLevel.value] ?? "Unknown";
   showConfirm(
     "Share Project",
     `Grant ${levelLabel} access to "${newUserEmail.value}"? ` +
