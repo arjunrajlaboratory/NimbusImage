@@ -189,9 +189,11 @@ export class Properties extends VuexModule {
   togglePropertyPathVisibility(path: string[]) {
     const pathIdx = findIndexOfPath(path, this.displayedPropertyPaths);
     if (pathIdx < 0) {
-      this.displayedPropertyPaths.push(path);
+      this.displayedPropertyPaths = [...this.displayedPropertyPaths, path];
     } else {
-      this.displayedPropertyPaths.splice(pathIdx, 1);
+      this.displayedPropertyPaths = this.displayedPropertyPaths.filter(
+        (_, i) => i !== pathIdx,
+      );
     }
   }
 

@@ -915,6 +915,37 @@ overrides.value = rest;
 - ~~`ImageViewer.vue`~~ — Done (Batch 18): `Vue.set()` replaced with array spread + `markRaw()`
 - Remaining unmigrated components — apply during migration
 
+### Vuex mutations must replace arrays, NOT push (Vue 2.7 `watch()`)
+
+**Critical gotcha discovered post-Batch 19.** Vue 2.7's Composition API `watch()` uses `Object.is()` for change detection (following Vue 3 semantics). This differs from Vue 2's `@Watch` decorator, which fires for any object value regardless of reference identity (due to an `isObject(value)` check in the watcher's `run()` method).
+
+**Impact:** Vuex `@Mutation` methods that use `.push()` on state arrays **do not** trigger `watch()` callbacks in `<script setup>` components, because `.push()` mutates the array in place (same reference). `Object.is(sameArray, sameArray)` returns `true`, so `hasChanged()` returns `false`, and the callback is skipped.
+
+**Symptom:** Feature works when using `@Watch` in class components but silently breaks after migration to `<script setup>`. Data persists to the backend (appears after page refresh) but the UI doesn't update. Partial updates may occur when an unrelated watched source changes, triggering a draw that coincidentally includes the new data.
+
+```typescript
+// BAD — .push() keeps same reference, watch() won't detect change
+@Mutation
+addMultipleConnections(value: IAnnotationConnection[]) {
+  this.annotationConnections.push(...value);
+}
+
+// GOOD — array replacement creates new reference, watch() detects change
+@Mutation
+addMultipleConnections(value: IAnnotationConnection[]) {
+  this.annotationConnections = [...this.annotationConnections, ...value];
+}
+```
+
+**Fixed mutations:**
+- `annotation.ts`: `addMultipleConnections` — `.push(...value)` → spread replacement
+- `annotation.ts`: `addConnectionImpl` — `.push(value)` → spread replacement
+- `properties.ts`: `togglePropertyPathVisibility` — `.push(path)` and `.splice()` → spread replacement and `.filter()`
+
+**Rule of thumb:** In any Vuex mutation that modifies an array watched by a `<script setup>` component's `watch()`, always replace the array (`this.arr = [...this.arr, item]`) rather than mutating in place (`this.arr.push(item)`). This is safe for both Vue 2.7 and Vue 3.
+
+**Test coverage:** `src/store/annotation-mutations.test.ts` includes regression tests proving that array replacement triggers `watch()` and that `.push()` does not.
+
 ### `<script setup>` bindings shadow globally-registered components
 
 **Critical gotcha discovered in Batch 13.** In `<script setup>`, Vue resolves template component names by checking setup bindings **first**, before the global component registry. If a `ref()`, `computed()`, or `const` in your setup scope has a name that matches a globally-registered component (case-insensitive PascalCase match), the setup binding **shadows** the global component.

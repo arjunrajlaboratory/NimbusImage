@@ -786,7 +786,7 @@ export class Annotations extends VuexModule {
 
   @Mutation
   public addMultipleConnections(value: IAnnotationConnection[]) {
-    this.annotationConnections.push(...value);
+    this.annotationConnections = [...this.annotationConnections, ...value];
   }
 
   @Mutation
@@ -799,7 +799,7 @@ export class Annotations extends VuexModule {
 
   @Mutation
   private addConnectionImpl(value: IAnnotationConnection) {
-    this.annotationConnections.push(value);
+    this.annotationConnections = [...this.annotationConnections, value];
   }
 
   @Mutation
