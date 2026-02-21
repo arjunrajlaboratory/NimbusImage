@@ -6,17 +6,17 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status
 
-**Phase 1 complete:** 124 of 124 components migrated to `<script setup>` (Batches 1–19 + master merge). All class components (`@Component` + decorators) have been converted to Composition API.
+**Phases 1–2 complete. Ready for Phase 3 (Vue 3 + Vuetify 3 framework switch).**
 
-**Phase 2 in progress:** `$refs` via `getCurrentInstance()` converted (2 files). Custom directive state migrated from `reactive({})` to `ref({})` with non-reactive internal store to prevent render loops (2 files). `Vue.set()`/`Vue.delete()` deferred to Phase 3 (see below). `.sync` modifier (11 occurrences) deferred to Phase 3.
-
-**TypeScript:** `pnpm tsc` reports **0 errors**. All 1,428 errors (1,406 test infrastructure + 22 component type mismatches) have been fixed. A type shim (`src/test-shims.d.ts`) provides permissive `mount()`/`shallowMount()` overloads for `@vue/test-utils` v1 compatibility — to be removed during Phase 3.
-
-**Build:** `pnpm build` succeeds. `pnpm test` passes 2,073 tests (2 flaky canvas tests — see "Known Flaky Tests" in Testing section).
+All prep work that can be done safely within Vue 2.7 is finished:
+- **Phase 1:** 124/124 components migrated to `<script setup>` (Batches 1–19 + master merge)
+- **Phase 2:** `$refs` converted, directive state migrated, `markRaw()` applied to all GeoJS objects in both `ImageViewer.vue` and `AnnotationViewer.vue`. Remaining items (`Vue.set`/`Vue.delete`, `.sync` modifier) are deferred to Phase 3 where they resolve automatically.
+- **TypeScript:** `pnpm tsc` reports **0 errors**. Type shim (`src/test-shims.d.ts`) to be removed during Phase 3.
+- **Build:** `pnpm build` succeeds. `pnpm test` passes (2 flaky canvas tests — see "Known Flaky Tests").
 
 ### Known Runtime Issue
 
-**WebGL console warnings from `markRaw()`:** Cosmetic warnings in Vue 2.7 caused by `markRaw()` on GeoJS objects in ImageViewer. Expected to resolve after Vue 3 upgrade. See "GeoJS & Vue 3 Proxy Reactivity" under Phase 3.
+**WebGL console warnings from `markRaw()`:** Cosmetic warnings in Vue 2.7 caused by `markRaw()` on GeoJS objects. Expected to resolve after Vue 3 upgrade where `markRaw` prevents Proxy wrapping entirely (its intended purpose).
 
 ---
 
@@ -43,9 +43,9 @@ All 124 components converted from Class API (`@Component` + decorators) to `<scr
 - `$vnode.data` for class/style passthrough is Vue 2-only — will need `useAttrs()` in Vue 3
 - Template ref typing differs between Class Components and Composition API — use `any` during mixed-mode migration
 
-### Phase 2: Remove Vue 2-Only Patterns
+### Phase 2: Remove Vue 2-Only Patterns — COMPLETE
 
-**Status:** `$refs` conversion and directive state migration complete. `Vue.set()`/`Vue.delete()` and `.sync` modifier deferred to Phase 3.
+**Status:** All actionable items done. Remaining items deferred to Phase 3 where they resolve automatically.
 
 - **Remove `Vue.set()` / `Vue.delete()`** (56 occurrences, 11 files) — **Deferred to Phase 3.** Attempted and reverted: replacing `Vue.set()` in Vuex store mutations with object spread / direct assignment caused subtle reactivity bugs in Vue 2.7 (infinite render loops in directives, dataset loading failures). Vue 3's Proxy-based reactivity handles all `Vue.set` use cases automatically (`obj[newKey] = val`, `delete obj[key]`, `arr[idx] = val` all just work), so these replacements add risk now with no benefit. Remove `Vue.set`/`Vue.delete` during the Phase 3 framework switch when they become unnecessary.
 - **~~Migrate directive state (`v-mousetrap.ts`, `v-description.ts`)~~** — DONE. Changed from `reactive({})` + `Vue.set()`/`Vue.delete()` to a non-reactive internal `_raw` object with a `ref({})` facade flushed on mutation. This prevents directive `update` hooks from creating dependency-tracking loops inside the parent component's render watcher (see "Directive State and Render Watcher Loops" gotcha below).
@@ -54,15 +54,19 @@ All 124 components converted from Class API (`@Component` + decorators) to `<scr
   - `AnnotationList.vue`: `Map<string, Element>` for dynamic annotation refs
 - **Convert `.sync` to `v-model:`** (11 occurrences) — **Deferred to Phase 3.** `v-model:prop` syntax requires Vue 3's template compiler. The `.sync` modifier is the correct Vue 2 pattern and works fine in Vue 2.7.
 
-### Phase 3: Framework Switch & Testing Upgrade (Future)
+### Phase 3: Framework Switch & Testing Upgrade — NEXT
 
-This is the core Vue 3 + Vuetify 3 upgrade. There is limited prep work worth doing ahead of time — Vuetify 3's API changes are extensive enough that most issues will need to be debugged after flipping the switch.
+This is the core Vue 3 + Vuetify 3 upgrade. All prep work is done. Vuetify 3's API changes are extensive enough that most issues will need to be debugged after flipping the switch.
 
-#### Prerequisites (Hard Blockers)
+#### Prerequisites (Hard Blockers) — ALL DONE
 
-1. **GeoJS `markRaw()` in AnnotationViewer.vue:** `ImageViewer.vue` has full `markRaw()` coverage (Batch 18), but `AnnotationViewer.vue` still needs it on all GeoJS annotation objects. Without this, Vue 3's Proxy wrapping will cause "Illegal invocation" WebGL crashes. See "GeoJS & Vue 3 Proxy Reactivity" section for the full list of affected objects and patterns.
+1. ~~**GeoJS `markRaw()` in AnnotationViewer.vue**~~ — **DONE.** Both `ImageViewer.vue` (Batch 18) and `AnnotationViewer.vue` now have full `markRaw()` coverage on all GeoJS annotation objects stored in reactive refs.
 
-2. **Tooling:** Disable the Vetur VS Code extension and install **"Vue - Official" (Volar)** along with the **Vue.js devtools for Vue 3**. Vetur does not support Vue 3 SFC syntax and will produce false errors. Update `vite.config.ts` to use `@vitejs/plugin-vue` (replacing `@vitejs/plugin-vue2`).
+2. **Tooling — do this first when starting Phase 3:**
+   - Disable the **Vetur** VS Code extension and install **"Vue - Official" (Volar)**. Vetur does not support Vue 3 SFC syntax and will produce false errors.
+   - **`vue-tsc`** (already installed as a dependency) will be the primary tool for finding type errors after the framework switch. Run `pnpm tsc` frequently — it will surface most incompatibilities (changed Vuetify prop types, removed APIs, etc.) as compile-time errors rather than runtime crashes.
+   - Install **Vue.js devtools for Vue 3** (the Vue 2 devtools won't work).
+   - Update `vite.config.ts` to use `@vitejs/plugin-vue` (replacing `@vitejs/plugin-vue2`).
 
 #### Testing Infrastructure Transition
 
@@ -104,38 +108,29 @@ These will need to be addressed after the framework switch, not as prep work:
 - **Form validation:** Vuetify 3 removes built-in validation; will need VeeValidate or similar.
 - **Icon migration:** Current `mdi-*` string usage works with `@mdi/js` in both versions (no change needed).
 
-#### GeoJS & Vue 3 Proxy Reactivity (Hard Blocker)
+#### GeoJS & Vue 3 Proxy Reactivity — DONE
 
-Vue 3 replaces `Object.defineProperty` (Vue 2) with **ES6 Proxies** for reactivity. Libraries like GeoJS (and similar WebGL/Canvas wrappers) rely on strict object identity (`this === that`) and internal private slots. When Vue 3 wraps a GeoJS instance in a Proxy, it breaks these internal checks, causing "Illegal invocation" crashes, identity failures, and performance cliffs from deep observation of massive graphical objects.
+Vue 3 replaces `Object.defineProperty` (Vue 2) with **ES6 Proxies** for reactivity. GeoJS objects rely on strict object identity and WebGL internal slots — Proxy wrapping breaks them ("Illegal invocation" crashes).
 
-**The fix:** Use `markRaw()` to tell Vue NOT to proxy GeoJS objects. `markRaw` is safe in Vue 2.7 (no-op performance hint) and required in Vue 3.
+**Fix applied:** `markRaw()` on all GeoJS objects stored in reactive refs. This is a no-op in Vue 2.7 and prevents Proxy wrapping in Vue 3.
 
-**Current state:** `ImageViewer.vue` has full `markRaw()` coverage on all GeoJS objects in `IMapEntry` (Batch 18). `AnnotationViewer.vue` still needs it — the following objects must be wrapped at every assignment site:
+**Coverage:**
+- `ImageViewer.vue`: All GeoJS objects in `IMapEntry` fields (maps, layers, features) — done in Batch 18
+- `AnnotationViewer.vue`: All 7 reactive GeoJS refs (`cursorAnnotation`, `pendingAnnotation`, `selectionAnnotation`, `samUnsubmittedAnnotation`, `samLivePreviewAnnotation`, `dragGhostAnnotation`, `samPromptAnnotations` items) — done post-Phase 2
 
-| Property | Assignment Count | Key Methods |
-|----------|-----------------|-------------|
-| `pendingAnnotation` | ~3 | `createGeoJSAnnotation`, null resets |
-| `selectionAnnotation` | ~2 | `samPromptToAnnotation` |
-| `samPromptAnnotations` | ~2 | Array of annotations |
-| `samUnsubmittedAnnotation` | ~3 | GeoJS annotation from SAM |
-| `samLivePreviewAnnotation` | ~3 | GeoJS annotation from SAM |
-| `cursorAnnotation` | ~2 | `geojs.createAnnotation("circle")` |
-| `dragGhostAnnotation` | ~2 | `geojsAnnotationFactory(...)` |
+**What does NOT need `markRaw()`:** GeoJS objects in local function variables (e.g., the `newAnnotations` array in `drawNewAnnotations`, the `drawnGeoJSAnnotations` Map) — these are plain JS, never stored in reactive state, so Vue won't proxy them.
 
-**Pattern:**
+**Pattern for future GeoJS code:**
 ```typescript
-// Wrap every GeoJS object assignment
-cursorAnnotation.value = markRaw(geojs.createAnnotation("circle"));
+// Wrap when storing in a ref
+someRef.value = markRaw(geojs.createAnnotation("circle"));
 
-// For arrays: wrap items, not the array (so Vue tracks length changes)
+// For arrays of GeoJS objects in refs: wrap each item
 newAnnotations.push(markRaw(newAnnotation));
+
+// DON'T wrap local variables — they're not reactive
+const localAnnotation = geojs.annotation.pointAnnotation(opts); // fine as-is
 ```
-
-**`Vue.set` + `markRaw` interaction:** When replacing `Vue.set` for GeoJS-related assignments, always add `markRaw()`. The correct migration path is `Vue.set(obj, key, geoObj)` → `obj[key] = markRaw(geoObj)`.
-
-**Verification after applying `markRaw()`:** Map pan/zoom, layer toggling, drawing tools, edit mode drag, and SAM tools should all work without console errors.
-
-**Known Vue 2.7 console warnings:** `markRaw()` on GeoJS objects causes cosmetic WebGL warnings (`useProgram: object does not belong to this context`, etc.). These don't affect functionality and should disappear after the Vue 3 upgrade where `markRaw` prevents Proxy wrapping entirely (its intended purpose).
 
 ### Phase 4: Store Migration (Future)
 
@@ -847,9 +842,9 @@ const dataTableInner = computed(() => {
 
 ## Risk Areas
 
-- **GeoJS Proxy Reactivity** (Critical): Vue 3's Proxy-based reactivity will break GeoJS object identity checks, causing crashes and performance cliffs. `ImageViewer.vue` and `AnnotationViewer.vue` require `markRaw()` on all GeoJS instances before the Vue 3 switch. See "GeoJS & Vue 3 Proxy Reactivity" section for full details.
-- **AnnotationViewer.vue** (~3,310 lines): Migrated (Batch 19). Uses `getCurrentInstance()` proxy pattern for test spy compatibility. 244 tests passing. No `markRaw()` added yet — GeoJS objects come via props from ImageViewer (already wrapped).
-- **ImageViewer.vue** (~1,395 lines): Migrated (Batch 18). Full `markRaw()` coverage on all GeoJS objects in `IMapEntry` fields. 106 tests passing.
+- ~~**GeoJS Proxy Reactivity**~~ (Resolved): Both `ImageViewer.vue` and `AnnotationViewer.vue` now have full `markRaw()` coverage on all GeoJS objects in reactive refs.
+- **AnnotationViewer.vue** (~3,310 lines): Migrated (Batch 19). Full `markRaw()` coverage. 244 tests passing.
+- **ImageViewer.vue** (~1,395 lines): Migrated (Batch 18). Full `markRaw()` coverage. 106 tests passing.
 - **Store interdependencies**: 11 Vuex modules with cross-references. Map dependencies before Pinia migration.
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
 - **Template ref typing**: Mixed Class + Composition components cause type mismatches during incremental migration.
