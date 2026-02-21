@@ -61,12 +61,8 @@ This is the core Vue 3 + Vuetify 3 upgrade. All prep work is done. Vuetify 3's A
 #### Prerequisites (Hard Blockers) — ALL DONE
 
 1. ~~**GeoJS `markRaw()` in AnnotationViewer.vue**~~ — **DONE.** Both `ImageViewer.vue` (Batch 18) and `AnnotationViewer.vue` now have full `markRaw()` coverage on all GeoJS annotation objects stored in reactive refs.
-
-2. **Tooling — do this first when starting Phase 3:**
-   - Disable the **Vetur** VS Code extension and install **"Vue - Official" (Volar)**. Vetur does not support Vue 3 SFC syntax and will produce false errors.
-   - **`vue-tsc`** (already installed as a dependency) will be the primary tool for finding type errors after the framework switch. Run `pnpm tsc` frequently — it will surface most incompatibilities (changed Vuetify prop types, removed APIs, etc.) as compile-time errors rather than runtime crashes.
-   - Install **Vue.js devtools for Vue 3** (the Vue 2 devtools won't work).
-   - Update `vite.config.ts` to use `@vitejs/plugin-vue` (replacing `@vitejs/plugin-vue2`).
+2. ~~**124/124 components migrated to `<script setup>`**~~ — **DONE.** All component logic is already in Composition API. The framework switch only fights framework syntax, not application architecture.
+3. ~~**`pnpm tsc` reports 0 errors, `pnpm build` succeeds, `pnpm test` passes**~~ — **DONE.**
 
 #### Testing Infrastructure Transition
 
@@ -89,15 +85,123 @@ Migrate from `@vue/test-utils` v1 to v2. Key breaking changes:
 - **`wrapper.vm` fully typed** for `<script setup>` components (no more `Wrapper<Vue>` — the test-shims.d.ts workaround becomes unnecessary).
 - **`attachTo` cleanup is automatic** — no more manual `wrapper.destroy()` needed.
 
-#### Framework Update Steps
+#### Framework Update Steps — Detailed Playbook
 
-1. Update Vue 2.7 → Vue 3 (`vue@3`, `@vitejs/plugin-vue`, remove `vue-template-compiler`)
-2. Update Vuetify 2 → Vuetify 3
-3. Migrate `@vue/test-utils` v1 → v2
-4. **Remove `src/test-shims.d.ts`** — this file adds permissive `mount()`/`shallowMount()` overloads for `@vue/test-utils` v1. With v2, tests get proper type checking for `<script setup>` components.
-5. Debug Vuetify component API changes individually (see below)
-6. Fix remaining incompatibilities
-7. Full regression testing
+The app **will break** the moment the switch is flipped. This is expected. The playbook is about **controlled triaging**: fix things in strict order — compiler first, bundler second, runtime third — so you aren't chasing ghosts.
+
+##### Step 1: Package Swap & Tooling Update
+
+Before changing any application code, update the environment and dependencies.
+
+**Tooling:**
+- Disable **Vetur** VS Code extension, install **Vue - Official** (formerly Volar)
+- Install **Vue.js devtools for Vue 3** (the Vue 2 devtools won't work)
+- Update AI context (CLAUDE.md, workspace rules) to state the project is now **Vue 3, Vuetify 3, Vue Router 4** — prevents AI assists from generating Vue 2/Vuetify 2 syntax
+
+**Dependencies:**
+```bash
+# Remove Vue 2 specifics
+pnpm remove vue-template-compiler @vitejs/plugin-vue2
+
+# Upgrade core packages (Vue 3 compatible versions of router/store)
+pnpm add vue@^3.4.0 vuetify@^3.5.0 vue-router@4 vuex@4
+pnpm add -D @vitejs/plugin-vue
+
+# Upgrade test utils
+pnpm add -D @vue/test-utils@^2.4.0
+```
+
+##### Step 2: Bundler & Entry Point (`vite.config.ts` & `main.ts`)
+
+Get Vite to understand the new Vue version, then update how Vue boots up.
+
+**Vite Config:** Swap the plugin:
+```typescript
+// vite.config.ts
+import vue from '@vitejs/plugin-vue';
+// replace vue2() with vue() in your plugins array
+```
+
+**`main.ts` Initialization:** Vue 3 removes the global `Vue` object. Switch to `createApp`:
+```typescript
+import { createApp } from 'vue';
+import App from './App.vue';
+import router from './router';
+import store from './store';
+import vuetify from './plugins/vuetify'; // Update this file for Vuetify 3 export
+
+const app = createApp(App);
+app.use(router);
+app.use(store);
+app.use(vuetify);
+app.mount('#app');
+```
+
+**Vuetify 3 plugin (`plugins/vuetify.ts`):** Must export a Vuetify instance created with `createVuetify()` instead of `new Vuetify()`.
+
+**Vue Router 4:** Must switch from `new VueRouter()` to `createRouter()` + `createWebHistory()`.
+
+**Vuex 4:** Must switch from `new Vuex.Store()` to `createStore()`.
+
+##### Step 3: Type Check First (`pnpm tsc`) — Do NOT Open Browser Yet
+
+Let TypeScript be the guide. Run `pnpm tsc --noEmit` before trying to load the app.
+
+1. **Delete `src/test-shims.d.ts` immediately** — it will cause conflicting types with `@vue/test-utils` v2
+2. **Router/Store type fixes:** Vue Router 4 and Vuex 4 have different instantiation signatures (`createRouter`, `createWebHistory`, `createStore`). Fix these in their respective setup files
+3. **Vuetify prop errors:** Expect dozens of type errors for Vuetify components (removed props, changed event signatures). Fix at the compiler level first — e.g., `v-dialog`'s `.sync`/`@input` → `v-model`
+
+##### Step 4: Component Triage (Global Find & Replace)
+
+Once TypeScript is mostly quiet, handle the predictable Vue 3 breaking changes across `.vue` files.
+
+**`Vue.set` and `Vue.delete` removal (56 occurrences, 11 files):**
+Deferred from Phase 2 — now is the time. Vue 3's Proxy-based reactivity makes them unnecessary:
+- `Vue.set(obj, key, val)` → `obj[key] = val`
+- `Vue.delete(obj, key)` → `delete obj[key]`
+- For arrays: `Vue.set(arr, idx, val)` → `arr[idx] = val`
+
+Files: `annotation.ts`, `index.ts`, `properties.ts`, `girderResources.ts`, `jobs.ts`, `AnnotationConfiguration.vue`, `ToolConfiguration.vue`, `Property.vue`, `samPipeline.ts`
+
+**`.sync` modifier → `v-model:` (11 occurrences):**
+Global search for `\.sync="` and replace with `v-model:propName="`. The `.sync` modifier is removed in Vue 3 — `v-model:prop` is the replacement.
+
+**`$listeners` removal:**
+Vue 3 merges listeners into `$attrs`. Remove any `v-on="$listeners"` (e.g., `ToolItem.vue` from Batch 7). Components using `v-bind="$attrs"` already get listeners included.
+
+**`$scopedSlots` → `$slots`:**
+Vue 3 unifies `$scopedSlots` and `$slots`. Replace any `$scopedSlots` references with `$slots`.
+
+**Dual `<script>` blocks → `defineOptions()`:**
+Components using dual `<script>` blocks for `inheritAttrs: false` (e.g., `ColorPickerMenu.vue`, `AnnotationConfiguration.vue`, `ToolTypeSelection.vue`) can now use `defineOptions({ inheritAttrs: false })` directly in `<script setup>` (available in Vue 3.3+).
+
+**`$vnode.data` access:**
+`ColorPickerMenu.vue` uses `$vnode.data` for class/style passthrough — this is Vue 2-only. Replace with `useAttrs()` in Vue 3.
+
+**`getCurrentInstance()` cleanup:**
+Many components use `getCurrentInstance()!.proxy` for `$route`/`$router`/`$emit`. In Vue 3:
+- `$route`/`$router` → `useRoute()` / `useRouter()` from `vue-router`
+- `$emit` via `getCurrentInstance()` → should already be using `defineEmits` (verify)
+- Tour plugin methods → may need `app.config.globalProperties` registration
+
+##### Step 5: Boot the Browser & Tackle Vuetify 3
+
+Now run `pnpm dev` and open the browser. The app will likely load but look broken. Vuetify 3 is a near-complete rewrite — this is where the bulk of debugging time goes.
+
+**Priority order:**
+1. **Heavy hitters first:** Views containing `v-data-table` (especially `AnnotationList.vue` with `$children` access). Scoped slots for tables changed entirely (`item.<name>` slots)
+2. **Dialogs and overlays:** `v-dialog` and `v-menu` — z-indexing, activation APIs, and default padding have shifted
+3. **Form validation:** Vuetify 3 removes built-in validation; will need VeeValidate or similar
+4. **Everything else:** Work through remaining console errors view by view
+
+##### Step 6: Test Suite Recovery
+
+Once the app is visually functional and navigable without console crashes:
+
+1. Update mounting functions to use `global.plugins` array (see "Testing Infrastructure Transition" above)
+2. Replace `propsData` with `props` in all test files
+3. Remove manual `wrapper.destroy()` calls (cleanup is automatic in v2)
+4. Run `pnpm test` and triage failures
 
 #### Known Vuetify 3 Migration Challenges
 
