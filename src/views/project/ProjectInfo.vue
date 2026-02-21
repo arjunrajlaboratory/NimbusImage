@@ -15,6 +15,10 @@
         {{ formatSize(totalProjectSize) }} total
       </v-chip>
       <v-spacer />
+      <v-btn color="primary" class="mr-2" @click="shareDialog = true">
+        <v-icon left>mdi-share-variant</v-icon>
+        Share Project
+      </v-btn>
       <!-- TODO: Export workflow buttons - not yet implemented
            Uncomment when Zenodo export integration is ready
       <v-btn
@@ -405,6 +409,8 @@
       <add-dataset-to-project-dialog
         v-if="project"
         :project="project"
+        :is-shared="isProjectShared"
+        :is-public="isProjectPublic"
         @added="onDatasetAdded"
         @done="addDatasetDialog = false"
       />
@@ -415,10 +421,15 @@
       <add-collection-to-project-filter-dialog
         v-if="project"
         :project="project"
+        :is-shared="isProjectShared"
+        :is-public="isProjectPublic"
         @added="onCollectionAdded"
         @done="addCollectionDialog = false"
       />
     </v-dialog>
+
+    <!-- Share Project Dialog -->
+    <share-project v-model="shareDialog" :project="project" />
   </v-container>
 
   <v-container v-else class="text-center">
@@ -429,11 +440,14 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { isAxiosError } from "axios";
 import store from "@/store";
 import projects from "@/store/projects";
 import girderResources from "@/store/girderResources";
+import { logError } from "@/utils/log";
 import {
   IProject,
+  IProjectAccessList,
   IDatasetView,
   TProjectStatus,
   getProjectStatusColor,
@@ -442,12 +456,14 @@ import { IGirderFolder, IGirderItem, IUPennCollection } from "@/girder";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vue";
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
+import ShareProject from "@/components/ShareProject.vue";
 import { formatSize } from "@/utils/conversion";
 
 // Suppress unused import warnings — auto-registered in <script setup>
 void AlertDialog;
 void AddDatasetToProjectDialog;
 void AddCollectionToProjectFilterDialog;
+void ShareProject;
 
 const vm = getCurrentInstance()!.proxy;
 
@@ -479,6 +495,7 @@ const removeDatasetConfirm = ref(false);
 const removeCollectionConfirm = ref(false);
 const addDatasetDialog = ref(false);
 const addCollectionDialog = ref(false);
+const shareDialog = ref(false);
 
 // Edit state
 const nameInput = ref("");
@@ -505,6 +522,9 @@ const collectionInfoCache = ref<{
 const collectionDatasetViewsCache = ref<{
   [collectionId: string]: IDatasetView[];
 }>({});
+
+// Access info
+const projectAccessInfo = ref<IProjectAccessList | null>(null);
 
 // Metadata form
 const metadata = ref<IProjectMetadataForm>({
@@ -545,6 +565,21 @@ const project = computed((): IProject | null => projects.currentProject);
 const statusColor = computed((): string =>
   getProjectStatusColor(project.value?.meta.status),
 );
+
+const isProjectPublic = computed((): boolean => {
+  return project.value?.public ?? false;
+});
+
+const isProjectShared = computed((): boolean => {
+  if (projectAccessInfo.value) {
+    // ADMIN: use the full access list
+    return projectAccessInfo.value.users.length > 1;
+  }
+  // Non-ADMIN with WRITE access: they were explicitly added, so
+  // the project is shared by definition.
+  const level = project.value?._accessLevel ?? -1;
+  return level >= 1 && level < 2;
+});
 
 const canStartExport = computed(
   (): boolean => project.value?.meta.status === "draft",
@@ -697,6 +732,23 @@ function initializeFromProject() {
     initializeMetadata();
     fetchDatasetInfo();
     fetchCollectionInfo();
+    fetchAccessInfo();
+  }
+}
+
+async function fetchAccessInfo() {
+  if (!project.value) return;
+  try {
+    projectAccessInfo.value = await store.projectsAPI.getProjectAccess(
+      project.value.id,
+    );
+  } catch (error) {
+    projectAccessInfo.value = null;
+    if (isAxiosError(error) && error.response?.status === 403) {
+      // User doesn't have ADMIN access; expected
+      return;
+    }
+    logError("Failed to fetch project access info", error);
   }
 }
 
@@ -972,6 +1024,12 @@ watch(project, () => {
   initializeFromProject();
 });
 
+watch(shareDialog, (open) => {
+  if (!open) {
+    fetchAccessInfo();
+  }
+});
+
 // Lifecycle
 onMounted(() => {
   initializeFromProject();
@@ -980,6 +1038,8 @@ onMounted(() => {
 defineExpose({
   project,
   statusColor,
+  isProjectPublic,
+  isProjectShared,
   canStartExport,
   canMarkExported,
   datasetItems,
@@ -996,6 +1056,7 @@ defineExpose({
   removeCollectionConfirm,
   addDatasetDialog,
   addCollectionDialog,
+  shareDialog,
   nameInput,
   descriptionInput,
   savingMetadata,
@@ -1008,10 +1069,12 @@ defineExpose({
   datasetInfoCache,
   collectionInfoCache,
   collectionDatasetViewsCache,
+  projectAccessInfo,
   metadata,
   originalMetadata,
   licenseOptions,
   initializeFromProject,
+  fetchAccessInfo,
   initializeMetadata,
   fetchDatasetInfo,
   fetchCollectionInfo,

@@ -350,6 +350,22 @@ export class Main extends VuexModule {
     return this.girderUser?.admin === true;
   }
 
+  // Whether the current user can write to the active dataset view.
+  // Anonymous users are already blocked by the isLoggedIn check, but
+  // logged-in users may also have only READ access — e.g. when a
+  // project is made public or shared at READ level. The dataset-level
+  // set_public endpoint sets the public flag (READ-only); it does NOT
+  // grant WRITE. Without this check, every logged-in read-only user
+  // would hit a 403 on the PUT /dataset_view/:id call that saves
+  // lastViewed, lastLocation, contrasts, etc.
+  get canEditDatasetView() {
+    return (
+      this.isLoggedIn &&
+      this.datasetView != null &&
+      (this.datasetView._accessLevel ?? 0) >= 1
+    );
+  }
+
   get userChannelColors() {
     return this.girderUser?.meta?.channelColors || {};
   }
@@ -1278,8 +1294,8 @@ export class Main extends VuexModule {
       this.setDatasetViewImpl(datasetView);
       const promises: Promise<any>[] = [];
 
-      // Only update lastViewed if user is logged in (anonymous users can't update)
-      if (this.isLoggedIn) {
+      // Only update lastViewed if user has write access to the view
+      if (this.canEditDatasetView) {
         promises.push(this.api.updateDatasetView(datasetView));
       }
 
@@ -1656,7 +1672,7 @@ export class Main extends VuexModule {
       return;
     }
     this.setLastLocationInDatasetView(location);
-    if (this.isLoggedIn) {
+    if (this.canEditDatasetView) {
       await this.api.updateDatasetView(this.datasetView);
     }
   }
@@ -1973,7 +1989,7 @@ export class Main extends VuexModule {
     this.changeLayer({ layerId, delta: { contrast }, sync: true });
     if (this.datasetView) {
       Vue.delete(this.datasetView.layerContrasts, layerId);
-      if (this.isLoggedIn) {
+      if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
     }
@@ -1989,7 +2005,7 @@ export class Main extends VuexModule {
   }) {
     if (this.datasetView) {
       Vue.set(this.datasetView.layerContrasts, layerId, contrast);
-      if (this.isLoggedIn) {
+      if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
     }
@@ -1999,7 +2015,7 @@ export class Main extends VuexModule {
   async resetContrastInView(layerId: string) {
     if (this.datasetView) {
       Vue.delete(this.datasetView.layerContrasts, layerId);
-      if (this.isLoggedIn) {
+      if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
     }
@@ -2029,7 +2045,7 @@ export class Main extends VuexModule {
   }) {
     if (this.datasetView) {
       Vue.set(this.datasetView.scales, itemId, scale);
-      if (this.isLoggedIn) {
+      if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
     }
@@ -2039,7 +2055,7 @@ export class Main extends VuexModule {
   resetScalesInView(itemId: keyof IScales) {
     if (this.datasetView) {
       Vue.delete(this.datasetView.scales, itemId);
-      if (this.isLoggedIn) {
+      if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
     }
@@ -2410,7 +2426,7 @@ export class Main extends VuexModule {
       return;
     }
     Vue.set(this.datasetView, "layerContrasts", {});
-    if (this.isLoggedIn) {
+    if (this.canEditDatasetView) {
       this.api.updateDatasetView(this.datasetView);
     }
   }
@@ -2421,7 +2437,7 @@ export class Main extends VuexModule {
       return;
     }
     Vue.set(this.datasetView, "layerContrasts", contrasts);
-    if (this.isLoggedIn) {
+    if (this.canEditDatasetView) {
       this.api.updateDatasetView(this.datasetView);
     }
   }

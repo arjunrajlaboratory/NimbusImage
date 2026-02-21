@@ -38,6 +38,11 @@
       @keyup.enter="onNameEnter"
     />
     <v-textarea :value="description" label="Description" readonly />
+    <sharing-status-display
+      :loading="sharingLoading"
+      :is-public="sharingIsPublic"
+      :access-users="sharingUsers"
+    />
     <v-card class="mb-4">
       <v-card-title> Datasets </v-card-title>
       <v-card-text>
@@ -65,8 +70,16 @@
         <v-list>
           <v-list-item v-for="d in datasetViewItems" :key="d.datasetView.id">
             <v-list-item-content>
-              <v-list-item-title>
+              <v-list-item-title class="d-flex align-center">
                 {{ d.datasetInfo ? d.datasetInfo.name : "Unnamed dataset" }}
+                <sharing-status-icon
+                  v-if="getDatasetSharingInfo(d.datasetView.datasetId)"
+                  :is-public="
+                    getDatasetSharingInfo(d.datasetView.datasetId)?.public ??
+                    false
+                  "
+                  :users="sharingUsers || []"
+                />
               </v-list-item-title>
               <v-list-item-subtitle>
                 {{
@@ -178,19 +191,30 @@ import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import isEqual from "lodash/isEqual";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IDatasetView, IDisplaySlice, areCompatibles } from "@/store/model";
+import {
+  IDatasetView,
+  IDisplaySlice,
+  areCompatibles,
+  IDatasetAccessUser,
+  IConfigurationAccessDataset,
+} from "@/store/model";
 import { getDatasetCompatibility } from "@/store/GirderAPI";
 import { IGirderFolder } from "@/girder";
 import ScaleSettings from "@/components/ScaleSettings.vue";
 import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddCollectionToProjectDialog from "@/components/AddCollectionToProjectDialog.vue";
+import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
+import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
+import { fetchSharingInfo } from "@/utils/sharingInfo";
 
 // Suppress unused import warnings — auto-registered in <script setup>
 void ScaleSettings;
 void AddDatasetToCollection;
 void AlertDialog;
 void AddCollectionToProjectDialog;
+void SharingStatusDisplay;
+void SharingStatusIcon;
 
 const vm = getCurrentInstance()!.proxy;
 
@@ -207,6 +231,12 @@ const datasetCompatibilityWarnings = ref<{ [datasetId: string]: string[] }>({});
 const addDatasetDialog = ref(false);
 const showAddToProjectDialog = ref(false);
 const nameInput = ref("");
+
+// Sharing state
+const sharingLoading = ref(false);
+const sharingIsPublic = ref(false);
+const sharingUsers = ref<IDatasetAccessUser[] | null>(null);
+const sharingDatasets = ref<IConfigurationAccessDataset[]>([]);
 
 // Computed
 const name = computed(() => {
@@ -255,6 +285,28 @@ async function updateConfigurationViews() {
     datasetViews.value = [];
   }
   return datasetViews.value;
+}
+
+async function fetchSharingInfoData() {
+  if (!configuration.value) {
+    sharingUsers.value = null;
+    sharingDatasets.value = [];
+    return;
+  }
+  sharingLoading.value = true;
+  const result = await fetchSharingInfo(() =>
+    store.api.getConfigurationAccess(configuration.value!.id),
+  );
+  sharingIsPublic.value = result?.public ?? false;
+  sharingUsers.value = result?.users ?? null;
+  sharingDatasets.value = result?.datasets ?? [];
+  sharingLoading.value = false;
+}
+
+function getDatasetSharingInfo(
+  datasetId: string,
+): IConfigurationAccessDataset | undefined {
+  return sharingDatasets.value.find((d) => d.id === datasetId);
 }
 
 function onNameBlur() {
@@ -422,6 +474,7 @@ function onAddedToProject() {
 // Watchers
 watch(configuration, () => {
   updateConfigurationViews();
+  fetchSharingInfoData();
 });
 
 watch(name, () => {
@@ -436,6 +489,7 @@ watch(datasetViews, () => {
 onMounted(() => {
   updateConfigurationViews();
   nameInput.value = name.value;
+  fetchSharingInfoData();
 });
 
 defineExpose({
@@ -453,9 +507,15 @@ defineExpose({
   addDatasetDialog,
   showAddToProjectDialog,
   nameInput,
+  sharingLoading,
+  sharingIsPublic,
+  sharingUsers,
+  sharingDatasets,
   openAlert,
   addedDatasets,
   updateConfigurationViews,
+  fetchSharingInfoData,
+  getDatasetSharingInfo,
   tryRename,
   fetchDatasetsInfo,
   checkDatasetsCompatibility,

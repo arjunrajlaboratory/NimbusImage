@@ -6,11 +6,11 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status
 
-**Phase 1 complete:** 121 of 121 components migrated to `<script setup>` (Batches 1–19). All class components (`@Component` + decorators) have been converted to Composition API.
+**Phase 1 complete:** 124 of 124 components migrated to `<script setup>` (Batches 1–19 + master merge). All class components (`@Component` + decorators) have been converted to Composition API.
 
 **TypeScript:** `pnpm tsc` reports **0 errors**. All 1,428 errors (1,406 test infrastructure + 22 component type mismatches) have been fixed. A type shim (`src/test-shims.d.ts`) provides permissive `mount()`/`shallowMount()` overloads for `@vue/test-utils` v1 compatibility — to be removed during Phase 3.
 
-**Build:** `pnpm build` succeeds. `pnpm test` passes 2,071 tests (2 flaky canvas tests — see "Known Flaky Tests" in Testing section).
+**Build:** `pnpm build` succeeds. `pnpm test` passes 2,073 tests (2 flaky canvas tests — see "Known Flaky Tests" in Testing section).
 
 ### Known Runtime Issue
 
@@ -22,7 +22,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ### Phase 1: Composition API Migration — COMPLETE
 
-All 121 components converted from Class API (`@Component` + decorators) to `<script setup>` syntax (Batches 1–19). See "Components Migrated" appendix for per-batch details.
+All 124 components converted from Class API (`@Component` + decorators) to `<script setup>` syntax (Batches 1–19 + master merge). See "Components Migrated" appendix for per-batch details.
 
 **Key pattern translations:**
 
@@ -142,7 +142,7 @@ Currently using Vuex with `vuex-module-decorators` (11 modules). Plan:
 3. Migrate one store module at a time (start with smallest: `properties.ts`)
 4. Eventually remove Vuex
 
-## Appendix: Components Migrated (Batches 1–19)
+## Appendix: Components Migrated (Batches 1–19 + Master Merge)
 
 Historical record of each migration batch. Key patterns discovered in each batch are documented here for reference; the most important ones are consolidated in "Migration Patterns & Gotchas" above.
 
@@ -441,6 +441,35 @@ Historical record of each migration batch. Key patterns discovered in each batch
 **After this batch:** 116 of 121 components migrated to `<script setup>` (~96%).
 
 **Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
+
+### Master Merge — Project Sharing Feature (3 new components + 6 conflict resolutions)
+
+Merged master's "Project Sharing and Permission Propagation" feature into the migration branch. Master added 3 new class-style components and modified 6 existing ones. All 3 new components were migrated to `<script setup>`, and all 6 conflicts were resolved by keeping our `<script setup>` code and porting master's new sharing logic.
+
+**New components migrated:**
+
+| Component | Lines | Key Patterns |
+|-----------|-------|-------------|
+| `SharingStatusDisplay.vue` | 106 | Pure display, `defineProps` only, imports `accessLevelLabel`/`accessLevelColor` utils |
+| `SharingStatusIcon.vue` | 133 | 3 props, 3 `computed()` (`iconName`, `iconColor`, `displayedUsers`), module-level const |
+| `ShareProject.vue` | 537 | Computed get/set for v-model dialog, 14+ `ref()`, confirmation pattern (`showConfirm`/`executeConfirmedAction`/`pendingAction`), `watch(dialog)` for fetch on open |
+
+**Conflict resolutions (ported sharing logic into existing `<script setup>` components):**
+
+| Component | Changes Ported |
+|-----------|---------------|
+| `AddCollectionToProjectFilterDialog.vue` | Added `isShared`/`isPublic` props, `showPermissionConfirm` ref, `confirmAdd()` gating function, permission confirmation dialog |
+| `AddDatasetToProjectDialog.vue` | Same pattern as above for datasets |
+| `ShareDataset.vue` | Added `isResourceAdmin` computed (checks user level 2), conditional template for admin vs non-admin |
+| `ConfigurationInfo.vue` | Added sharing state refs, `fetchSharingInfoData()`, `getDatasetSharingInfo()`, `SharingStatusDisplay`/`SharingStatusIcon` integration |
+| `DatasetInfo.vue` | Same sharing integration pattern as ConfigurationInfo |
+| `ProjectInfo.vue` | Added `shareDialog`, `projectAccessInfo`, `isProjectPublic`/`isProjectShared` computeds, `fetchAccessInfo()`, `ShareProject` dialog |
+
+**New utility files (auto-merged from master):**
+- `src/utils/accessLevel.ts` — `accessLevelLabel()` and `accessLevelColor()` helpers
+- `src/utils/sharingInfo.ts` — `fetchSharingInfo()` for configuration/dataset sharing status
+
+**After this merge:** 124 of 124 components migrated to `<script setup>` (100%).
 
 ## Testing Strategy
 

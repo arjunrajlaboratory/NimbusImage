@@ -51,11 +51,31 @@
         color="primary"
         :disabled="selectedDatasets.length === 0"
         :loading="adding"
-        @click="addDatasets"
+        @click="confirmAdd"
       >
         Add {{ selectedDatasets.length }} Dataset(s)
       </v-btn>
     </v-card-actions>
+
+    <!-- Permission propagation confirmation -->
+    <v-dialog v-model="showPermissionConfirm" max-width="500" persistent>
+      <v-card>
+        <v-card-title>Update dataset permissions?</v-card-title>
+        <v-card-text>
+          This project is
+          <template v-if="isPublic">
+            <strong>public</strong>
+          </template>
+          <template v-else> <strong>shared with other users</strong> </template
+          >. Adding {{ selectedDatasets.length }} dataset(s) will update their
+          permissions to match the project's access settings.
+        </v-card-text>
+        <v-card-actions class="justify-end" style="gap: 8px">
+          <v-btn text @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn color="primary" @click="addDatasets">Continue</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-card>
 </template>
 
@@ -70,6 +90,8 @@ import CustomFileManager from "@/components/CustomFileManager.vue";
 
 const props = defineProps<{
   project: IProject;
+  isShared?: boolean;
+  isPublic?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -81,6 +103,7 @@ const selectLocation = ref<IGirderLocation | null>(null);
 const selectedDatasets = ref<IDataset[]>([]);
 const warnings = ref<string[]>([]);
 const adding = ref(false);
+const showPermissionConfirm = ref(false);
 
 const existingDatasetIds = computed<Set<string>>(() => {
   return new Set(props.project.meta.datasets.map((d) => d.datasetId));
@@ -132,7 +155,17 @@ async function onSelectDataset(selectedLocations: IGirderSelectAble[]) {
   warnings.value = currentWarnings;
 }
 
+function confirmAdd() {
+  if (selectedDatasets.value.length === 0) return;
+  if (props.isShared || props.isPublic) {
+    showPermissionConfirm.value = true;
+  } else {
+    addDatasets();
+  }
+}
+
 async function addDatasets() {
+  showPermissionConfirm.value = false;
   if (selectedDatasets.value.length === 0) return;
 
   adding.value = true;
@@ -159,8 +192,10 @@ defineExpose({
   selectedDatasets,
   warnings,
   adding,
+  showPermissionConfirm,
   existingDatasetIds,
   onSelectDataset,
+  confirmAdd,
   addDatasets,
 });
 </script>

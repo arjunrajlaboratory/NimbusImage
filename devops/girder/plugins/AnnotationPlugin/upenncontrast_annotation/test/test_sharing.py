@@ -6,6 +6,8 @@ in the DatasetView API.
 import pytest
 import random
 
+from pytest_girder.assertions import assertStatus, assertStatusOk
+
 from girder.constants import AccessType
 from girder.exceptions import AccessException
 from girder.models.folder import Folder
@@ -303,6 +305,123 @@ class TestGetDatasetAccess:
         )
         assert adminEntry is not None
         assert adminEntry["level"] == AccessType.ADMIN
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAccessEndpointPermissions:
+    """Tests that the access endpoints allow READ-level users."""
+
+    def testDatasetAccessAsOwner(self, admin, server):
+        """Owner (ADMIN) can call getDatasetAccess."""
+        dataset, config, dv = createDatasetWithView(admin)
+
+        resp = server.request(
+            path=f"/dataset_view/access/{dataset['_id']}",
+            method="GET",
+            user=admin,
+        )
+        assertStatusOk(resp)
+        assert resp.json["datasetId"] == str(dataset["_id"])
+        assert any(
+            u["id"] == str(admin["_id"]) and u["level"] == 2
+            for u in resp.json["users"]
+        )
+
+    def testDatasetAccessAsReadUser(self, admin, user, server):
+        """READ-level user can call getDatasetAccess."""
+        dataset, config, dv = createDatasetWithView(admin)
+        Folder().setUserAccess(
+            dataset, user, AccessType.READ, save=True
+        )
+
+        resp = server.request(
+            path=f"/dataset_view/access/{dataset['_id']}",
+            method="GET",
+            user=user,
+        )
+        assertStatusOk(resp)
+        assert resp.json["datasetId"] == str(dataset["_id"])
+
+        # Verify the response includes both users
+        ids = {u["id"] for u in resp.json["users"]}
+        assert str(admin["_id"]) in ids
+        assert str(user["_id"]) in ids
+
+    def testDatasetAccessDeniedWithoutAccess(
+        self, admin, user, server
+    ):
+        """User with no access gets 403 from getDatasetAccess."""
+        dataset, config, dv = createDatasetWithView(admin)
+        # Make private so non-shared user can't read
+        Folder().setPublic(dataset, False, save=True)
+
+        resp = server.request(
+            path=f"/dataset_view/access/{dataset['_id']}",
+            method="GET",
+            user=user,
+        )
+        assertStatus(resp, 403)
+
+    def testConfigAccessAsOwner(self, admin, server):
+        """Owner (ADMIN) can call getConfigurationAccess."""
+        dataset, config, dv = createDatasetWithView(admin)
+
+        resp = server.request(
+            path=(
+                "/dataset_view/configuration_access"
+                f"/{config['_id']}"
+            ),
+            method="GET",
+            user=admin,
+        )
+        assertStatusOk(resp)
+        assert resp.json["configurationId"] == str(
+            config["_id"]
+        )
+
+    def testConfigAccessAsReadUser(self, admin, user, server):
+        """READ-level user can call getConfigurationAccess."""
+        dataset, config, dv = createDatasetWithView(admin)
+        Collection().setUserAccess(
+            config, user, AccessType.READ, save=True
+        )
+
+        resp = server.request(
+            path=(
+                "/dataset_view/configuration_access"
+                f"/{config['_id']}"
+            ),
+            method="GET",
+            user=user,
+        )
+        assertStatusOk(resp)
+        assert resp.json["configurationId"] == str(
+            config["_id"]
+        )
+
+        ids = {u["id"] for u in resp.json["users"]}
+        assert str(admin["_id"]) in ids
+        assert str(user["_id"]) in ids
+
+    def testConfigAccessDeniedWithoutAccess(
+        self, admin, user, server
+    ):
+        """User with no access gets 403 from
+        getConfigurationAccess."""
+        dataset, config, dv = createDatasetWithView(admin)
+        # Make private so non-shared user can't read
+        Collection().setPublic(config, False, save=True)
+
+        resp = server.request(
+            path=(
+                "/dataset_view/configuration_access"
+                f"/{config['_id']}"
+            ),
+            method="GET",
+            user=user,
+        )
+        assertStatus(resp, 403)
 
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")

@@ -72,11 +72,31 @@
         color="primary"
         :disabled="selectedCollections.length === 0"
         :loading="adding"
-        @click="addCollections"
+        @click="confirmAdd"
       >
         Add {{ selectedCollections.length }} Collection(s)
       </v-btn>
     </v-card-actions>
+
+    <!-- Permission propagation confirmation -->
+    <v-dialog v-model="showPermissionConfirm" max-width="500" persistent>
+      <v-card>
+        <v-card-title>Update collection permissions?</v-card-title>
+        <v-card-text>
+          This project is
+          <template v-if="isPublic">
+            <strong>public</strong>
+          </template>
+          <template v-else> <strong>shared with other users</strong> </template
+          >. Adding {{ selectedCollections.length }} collection(s) will update
+          their permissions to match the project's access settings.
+        </v-card-text>
+        <v-card-actions class="justify-end" style="gap: 8px">
+          <v-btn text @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn color="primary" @click="addCollections">Continue</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-card>
 </template>
 
@@ -88,6 +108,8 @@ import projects from "@/store/projects";
 
 const props = defineProps<{
   project: IProject;
+  isShared?: boolean;
+  isPublic?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -100,6 +122,7 @@ const loading = ref(false);
 const adding = ref(false);
 const allCollections = ref<IDatasetConfiguration[]>([]);
 const selectedIndices = ref<number[]>([]);
+const showPermissionConfirm = ref(false);
 
 const existingCollectionIds = computed<Set<string>>(() => {
   return new Set(props.project.meta.collections.map((c) => c.collectionId));
@@ -136,7 +159,17 @@ async function fetchCollections() {
   }
 }
 
+function confirmAdd() {
+  if (selectedCollections.value.length === 0) return;
+  if (props.isShared || props.isPublic) {
+    showPermissionConfirm.value = true;
+  } else {
+    addCollections();
+  }
+}
+
 async function addCollections() {
+  showPermissionConfirm.value = false;
   if (selectedCollections.value.length === 0) return;
 
   adding.value = true;
@@ -174,11 +207,13 @@ defineExpose({
   adding,
   allCollections,
   selectedIndices,
+  showPermissionConfirm,
   existingCollectionIds,
   filteredCollections,
   selectedCollections,
   isInProject,
   fetchCollections,
+  confirmAdd,
   addCollections,
 });
 </script>

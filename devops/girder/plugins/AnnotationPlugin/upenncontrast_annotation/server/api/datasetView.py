@@ -10,6 +10,9 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 from girder.models.user import User
 
+from upenncontrast_annotation.server.helpers.access_helpers import (
+    formatAccessList
+)
 from upenncontrast_annotation.server.models.datasetView import \
     DatasetView as DatasetViewModel
 from upenncontrast_annotation.server.models.collection import \
@@ -32,6 +35,9 @@ class DatasetView(Resource):
         self.route("POST", ("share",), self.share)
         self.route("POST", ("set_public",), self.setDatasetPublic)
         self.route("GET", ("access", ":datasetId"), self.getDatasetAccess)
+        self.route(
+            "GET", ("configuration_access", ":configurationId"),
+            self.getConfigurationAccess)
         # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
         self.route("POST", ("map",), self.map)
 
@@ -340,79 +346,114 @@ class DatasetView(Resource):
             - Public status of the dataset
             - Associated configurations with their public status
 
-            Requires ADMIN access to the dataset folder.
+            Requires READ access to the dataset folder.
         """)
         .modelParam('datasetId', 'The dataset folder ID', model=Folder,
-                    level=AccessType.ADMIN, destName='dataset',
+                    level=AccessType.READ, destName='dataset',
                     paramType='path')
         .errorResponse('ID was invalid.')
-        .errorResponse('Admin access was denied for the dataset.', 403)
+        .errorResponse('Read access was denied for the dataset.', 403)
     )
     def getDatasetAccess(self, dataset):
-        """Return the full access list for a dataset and its configurations.
-
-        TODO: Consider allowing READ access users to view (but not modify) the
-        access list. Currently requires ADMIN, which means only the owner can
-        see who has access. Some systems allow viewing access lists at lower
-        permission levels.
-        """
-        # Get full access list from the dataset folder
-        # getFullAccessList returns users/groups with login and name populated
-        # but NOT email, so we need to fetch emails separately
-        accessList = Folder().getFullAccessList(dataset)
-
-        # Bulk fetch emails for all users
-        # (getFullAccessList doesn't include them)
-        userIds = [u['id'] for u in accessList.get('users', [])]
-        userEmails = {}
-        if userIds:
-            users = list(User().find(
-                {'_id': {'$in': userIds}},
-                fields=['email']
-            ))
-            userEmails = {u['_id']: u.get('email', '') for u in users}
+        """Return the full access list for a dataset
+        and its configurations."""
+        result = formatAccessList(Folder(), dataset)
+        result['datasetId'] = str(dataset['_id'])
 
         # Find all DatasetViews for this dataset
-        datasetViews = list(self._datasetViewModel.find({
-            'datasetId': dataset['_id']
-        }))
+        datasetViews = list(
+            self._datasetViewModel.find({
+                'datasetId': dataset['_id']
+            })
+        )
 
-        # Get unique configuration IDs
-        configIds = {dv['configurationId'] for dv in datasetViews}
-
-        # Bulk load all configurations at once (avoid N+1 queries)
-        # TODO: The UI currently doesn't expose per-configuration public status
-        # because configurations are confusing for most users. Most datasets
-        # have just one configuration anyway. Consider adding this UI later
-        # if users request more granular public/private control.
+        # Bulk load configurations (avoid N+1 queries)
+        configIds = {
+            dv['configurationId']
+            for dv in datasetViews
+        }
         configs = list(CollectionModel().find({
             '_id': {'$in': list(configIds)}
         }))
-        configurations = [
+        result['configurations'] = [
             {
                 'id': str(config['_id']),
                 'name': config.get('name', ''),
-                'public': config.get('public', False)
+                'public': config.get(
+                    'public', False
+                ),
             }
             for config in configs
         ]
+        return result
 
-        return {
-            'datasetId': str(dataset['_id']),
-            'public': dataset.get('public', False),
-            'users': [
-                {
-                    'id': str(u['id']),
-                    'login': u.get('login', ''),
-                    'name': u.get('name', ''),
-                    'email': userEmails.get(u['id'], ''),
-                    'level': u['level']
-                }
-                for u in accessList.get('users', [])
-            ],
-            'groups': accessList.get('groups', []),
-            'configurations': configurations
+    @access.user
+    @autoDescribeRoute(
+        Description(
+            "Get access list for a configuration and its "
+            "associated datasets"
+        )
+        .notes("""
+            Returns the current access list for a configuration,
+            including:
+            - List of users with their access levels
+            - Public status of the configuration
+            - Associated datasets with their public status
+
+            Requires READ access to the configuration.
+        """)
+        .modelParam(
+            'configurationId',
+            'The configuration ID',
+            model=CollectionModel,
+            level=AccessType.READ,
+            destName='configuration',
+            paramType='path',
+        )
+        .errorResponse('ID was invalid.')
+        .errorResponse(
+            'Read access was denied for the configuration.',
+            403,
+        )
+    )
+    def getConfigurationAccess(self, configuration):
+        """Return the access list for a configuration
+        and its datasets."""
+        result = formatAccessList(
+            CollectionModel(), configuration
+        )
+        result['configurationId'] = str(
+            configuration['_id']
+        )
+
+        # Find all DatasetViews for this configuration
+        datasetViews = list(self._datasetViewModel.find({
+            'configurationId': configuration['_id']
+        }))
+
+        # Get unique dataset IDs
+        datasetIds = {
+            dv['datasetId'] for dv in datasetViews
         }
+
+        # Bulk load all datasets at once
+        datasets = []
+        if datasetIds:
+            folders = list(Folder().find({
+                '_id': {'$in': list(datasetIds)}
+            }))
+            datasets = [
+                {
+                    'id': str(f['_id']),
+                    'name': f.get('name', ''),
+                    'public': f.get(
+                        'public', False
+                    ),
+                }
+                for f in folders
+            ]
+        result['datasets'] = datasets
+        return result
 
     @access.public
     @autoDescribeRoute(

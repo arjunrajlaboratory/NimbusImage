@@ -27,6 +27,11 @@
                 </tr>
               </tbody>
             </v-simple-table>
+            <sharing-status-display
+              :loading="sharingLoading"
+              :is-public="sharingIsPublic"
+              :access-users="sharingUsers"
+            />
             <div class="text-right mt-4 mr-2">
               <v-btn
                 color="primary"
@@ -159,12 +164,22 @@
                     ></v-radio>
                   </v-list-item-action>
                   <v-list-item-content>
-                    <v-list-item-title>
+                    <v-list-item-title class="d-flex align-center">
                       {{
                         d.configInfo
                           ? d.configInfo.name
                           : "Unnamed configuration"
                       }}
+                      <sharing-status-icon
+                        v-if="
+                          getConfigSharingInfo(d.datasetView.configurationId)
+                        "
+                        :is-public="
+                          getConfigSharingInfo(d.datasetView.configurationId)
+                            ?.public ?? false
+                        "
+                        :users="sharingUsers || []"
+                      />
                     </v-list-item-title>
                     <v-list-item-subtitle>
                       {{
@@ -328,16 +343,25 @@
 import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
-import { IDatasetView } from "@/store/model";
+import {
+  IDatasetView,
+  IDatasetAccessUser,
+  IDatasetAccessConfiguration,
+} from "@/store/model";
 import { IGirderItem, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
+import { fetchSharingInfo } from "@/utils/sharingInfo";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import AddToProjectDialog from "@/components/AddToProjectDialog.vue";
+import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
+import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
 
 // Suppress unused import warnings — auto-registered in <script setup>
 void GirderLocationChooser;
 void AddToProjectDialog;
+void SharingStatusDisplay;
+void SharingStatusIcon;
 
 const vm = getCurrentInstance()!.proxy;
 
@@ -359,6 +383,12 @@ const annotationCount = ref<number | null>(null);
 const connectionCount = ref<number | null>(null);
 const propertyCount = ref<number | null>(null);
 const propertyValueCount = ref<number | null>(null);
+
+// Sharing state
+const sharingLoading = ref(false);
+const sharingIsPublic = ref(false);
+const sharingUsers = ref<IDatasetAccessUser[] | null>(null);
+const sharingConfigurations = ref<IDatasetAccessConfiguration[]>([]);
 
 // Computed
 const dataset = computed(() => store.dataset);
@@ -425,6 +455,28 @@ function fetchConfigurationsInfo() {
   } else if (datasetViews.value.length > 0 && !selectedDatasetViewId.value) {
     selectedDatasetViewId.value = datasetViews.value[0].id;
   }
+}
+
+async function fetchSharingInfoData() {
+  if (!dataset.value) {
+    sharingUsers.value = null;
+    sharingConfigurations.value = [];
+    return;
+  }
+  sharingLoading.value = true;
+  const result = await fetchSharingInfo(() =>
+    store.api.getDatasetAccess(dataset.value!.id),
+  );
+  sharingIsPublic.value = result?.public ?? false;
+  sharingUsers.value = result?.users ?? null;
+  sharingConfigurations.value = result?.configurations ?? [];
+  sharingLoading.value = false;
+}
+
+function getConfigSharingInfo(
+  configurationId: string,
+): IDatasetAccessConfiguration | undefined {
+  return sharingConfigurations.value.find((c) => c.id === configurationId);
 }
 
 async function fetchCounts() {
@@ -699,6 +751,7 @@ function onAddedToProject() {
 // Watchers
 watch(dataset, () => {
   fetchCounts();
+  fetchSharingInfoData();
 });
 
 watch(dataset, () => {
@@ -727,6 +780,7 @@ onMounted(() => {
   updateDefaultConfigurationName();
   fetchDatasetParentFolder();
   fetchCounts();
+  fetchSharingInfoData();
 });
 
 defineExpose({
@@ -753,7 +807,13 @@ defineExpose({
   connectionCount,
   propertyCount,
   propertyValueCount,
+  sharingLoading,
+  sharingIsPublic,
+  sharingUsers,
+  sharingConfigurations,
   fetchConfigurationsInfo,
+  fetchSharingInfoData,
+  getConfigSharingInfo,
   fetchCounts,
   fetchPropertyCount,
   updateDatasetViews,
