@@ -90,9 +90,7 @@ const mockAnnotationLayer = () => {
   return {
     annotations: vi.fn(() => [...annotations]),
     addAnnotation: vi.fn((ann: any) => annotations.push(ann)),
-    addMultipleAnnotations: vi.fn((anns: any[]) =>
-      annotations.push(...anns),
-    ),
+    addMultipleAnnotations: vi.fn((anns: any[]) => annotations.push(...anns)),
     removeAnnotation: vi.fn((ann: any) => {
       const idx = annotations.indexOf(ann);
       if (idx !== -1) annotations.splice(idx, 1);
@@ -142,6 +140,7 @@ const mockFeatureLayer = () => {
       if (args.length === 0) return features;
       features.length = 0;
       features.push(...args[0]);
+      return undefined;
     }),
     clear: vi.fn(),
     draw: vi.fn(),
@@ -345,7 +344,10 @@ import {
   CombineToolStateSymbol,
   SamAnnotationToolStateSymbol,
 } from "@/store/model";
-import { mouseStateToSamPrompt, samPromptToAnnotation } from "@/pipelines/samPipeline";
+import {
+  mouseStateToSamPrompt,
+  samPromptToAnnotation,
+} from "@/pipelines/samPipeline";
 import { NoOutput } from "@/pipelines/computePipeline";
 import AnnotationViewer from "./AnnotationViewer.vue";
 
@@ -753,7 +755,10 @@ describe("AnnotationViewer", () => {
       });
 
       it("returns all annotations when filteredDraw is false", () => {
-        const all = [makeAnnotation({ id: "a1" }), makeAnnotation({ id: "a2" })];
+        const all = [
+          makeAnnotation({ id: "a1" }),
+          makeAnnotation({ id: "a2" }),
+        ];
         mockedAnnotationStore.annotations = all;
         mockedStore.filteredDraw = false;
         wrapper = mountComponent();
@@ -1016,7 +1021,9 @@ describe("AnnotationViewer", () => {
           zIndex: 0,
           tIndex: 0,
         });
-        mockedAnnotationStore.annotations = [makeAnnotation({ id: "a1", channel: 0 })];
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "a1", channel: 0 }),
+        ];
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
 
         const aLayer = wrapper.vm.annotationLayer;
@@ -1094,7 +1101,6 @@ describe("AnnotationViewer", () => {
         const ann1 = makeAnnotation({ id: "a1", channel: 0 });
         mockedAnnotationStore.annotations = [ann1];
 
-        
         const geoAnn = mockGeoJSAnnotation("point");
         (geojsAnnotationFactory as any).mockReturnValue(geoAnn);
 
@@ -1122,7 +1128,7 @@ describe("AnnotationViewer", () => {
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const drawnMap = new Map([["a1", [existingGeoAnn]]]);
-        
+
         vi.clearAllMocks();
         wrapper.vm.drawNewAnnotations(drawnMap);
 
@@ -1147,10 +1153,7 @@ describe("AnnotationViewer", () => {
         wrapper.vm.drawNewAnnotations(drawnMap);
 
         // Should update the style since isHovered changed
-        expect(geoAnn.options).toHaveBeenCalledWith(
-          "isHovered",
-          true,
-        );
+        expect(geoAnn.options).toHaveBeenCalledWith("isHovered", true);
       });
     });
   });
@@ -1209,8 +1212,7 @@ describe("AnnotationViewer", () => {
       });
 
       it("returns true when point is near a line segment", () => {
-
-        geojs.util.distance2dToLineSquared.mockReturnValue(1);
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);
         (pointDistance as any).mockReturnValue(100);
 
         const result = wrapper.vm.pointNearLine(
@@ -1226,8 +1228,7 @@ describe("AnnotationViewer", () => {
       });
 
       it("returns false when point is far from all segments", () => {
-
-        geojs.util.distance2dToLineSquared.mockReturnValue(100);
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(100);
         (pointDistance as any).mockReturnValue(100);
 
         const result = wrapper.vm.pointNearLine(
@@ -1243,8 +1244,7 @@ describe("AnnotationViewer", () => {
       });
 
       it("checks distance to last vertex specifically", () => {
-
-        geojs.util.distance2dToLineSquared.mockReturnValue(100);
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(100);
         (pointDistance as any).mockReturnValue(1); // Near last vertex
 
         const result = wrapper.vm.pointNearLine(
@@ -1282,8 +1282,7 @@ describe("AnnotationViewer", () => {
       });
 
       it("uses pointNearLine for point-vs-line", () => {
-
-        geojs.util.distance2dToLineSquared.mockReturnValue(1);
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);
         const ann = makeAnnotation({
           shape: "line",
           coordinates: [
@@ -1304,8 +1303,7 @@ describe("AnnotationViewer", () => {
       });
 
       it("uses pointInPolygon for point-vs-polygon", () => {
-
-        geojs.util.pointInPolygon.mockReturnValue(true);
+        (geojs.util.pointInPolygon as any).mockReturnValue(true);
         const ann = makeAnnotation({
           shape: "polygon",
           coordinates: [
@@ -1328,8 +1326,7 @@ describe("AnnotationViewer", () => {
       });
 
       it("uses pointInPolygon for polygon-vs-any annotation", () => {
-
-        geojs.util.pointInPolygon.mockReturnValue(true);
+        (geojs.util.pointInPolygon as any).mockReturnValue(true);
         const ann = makeAnnotation({
           shape: "point",
           coordinates: [{ x: 5, y: 5 }],
@@ -1372,7 +1369,8 @@ describe("AnnotationViewer", () => {
         selectAnn.type = vi.fn().mockReturnValue("point");
         selectAnn.coordinates = vi.fn().mockReturnValue([{ x: 10, y: 20 }]);
 
-        const result = wrapper.vm.getSelectedAnnotationsFromAnnotation(selectAnn);
+        const result =
+          wrapper.vm.getSelectedAnnotationsFromAnnotation(selectAnn);
         expect(result).toHaveLength(1);
         expect(result[0].id).toBe("a1");
       });
@@ -1386,7 +1384,8 @@ describe("AnnotationViewer", () => {
         wrapper.vm.annotationLayer.annotations = vi.fn(() => [geoAnn]);
 
         const selectAnn = mockGeoJSAnnotation("point");
-        const result = wrapper.vm.getSelectedAnnotationsFromAnnotation(selectAnn);
+        const result =
+          wrapper.vm.getSelectedAnnotationsFromAnnotation(selectAnn);
         expect(result).toHaveLength(0);
       });
 
@@ -1405,13 +1404,17 @@ describe("AnnotationViewer", () => {
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
-        wrapper.vm.annotationLayer.annotations = vi.fn(() => [geoAnn1, geoAnn2]);
+        wrapper.vm.annotationLayer.annotations = vi.fn(() => [
+          geoAnn1,
+          geoAnn2,
+        ]);
 
         const selectAnn = mockGeoJSAnnotation("point");
         selectAnn.type = vi.fn().mockReturnValue("point");
         selectAnn.coordinates = vi.fn().mockReturnValue([{ x: 10, y: 20 }]);
 
-        const result = wrapper.vm.getSelectedAnnotationsFromAnnotation(selectAnn);
+        const result =
+          wrapper.vm.getSelectedAnnotationsFromAnnotation(selectAnn);
         expect(result).toHaveLength(1);
       });
     });
@@ -1424,7 +1427,9 @@ describe("AnnotationViewer", () => {
         const geoAnn = mockGeoJSAnnotation("point");
         geoAnn.options("girderId", "a1");
         geoAnn.options("isConnection", false);
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -1464,16 +1469,18 @@ describe("AnnotationViewer", () => {
 
         const selectAnn = mockGeoJSAnnotation("point");
         wrapper.vm.selectAnnotations(selectAnn);
-        expect(wrapper.vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(
-          selectAnn,
-        );
+        expect(
+          wrapper.vm.interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(selectAnn);
       });
 
       it("returns early when selectAnnotation is null", () => {
         wrapper = mountComponent();
         wrapper.vm.selectAnnotations(null);
         expect(mockedAnnotationStore.selectAnnotations).not.toHaveBeenCalled();
-        expect(mockedAnnotationStore.unselectAnnotations).not.toHaveBeenCalled();
+        expect(
+          mockedAnnotationStore.unselectAnnotations,
+        ).not.toHaveBeenCalled();
         expect(mockedAnnotationStore.toggleSelected).not.toHaveBeenCalled();
       });
     });
@@ -1501,7 +1508,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
         wrapper.vm.setNewAnnotationMode();
         expect(mockedStore.setSelectedToolId).toHaveBeenCalledWith(null);
-        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith("polygon");
+        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith(
+          "polygon",
+        );
       });
 
       it("sets point mode for create tool with point shape", () => {
@@ -1529,7 +1538,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         wrapper.vm.setNewAnnotationMode();
-        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith("polygon");
+        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith(
+          "polygon",
+        );
       });
 
       it("sets ellipse mode for create tool with circle shape", () => {
@@ -1543,7 +1554,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         wrapper.vm.setNewAnnotationMode();
-        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith("ellipse");
+        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith(
+          "ellipse",
+        );
       });
 
       it("sets ellipse mode for create tool with ellipse shape", () => {
@@ -1557,7 +1570,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         wrapper.vm.setNewAnnotationMode();
-        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith("ellipse");
+        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith(
+          "ellipse",
+        );
       });
 
       it("sets point mode for tagging tool with tag_click action", () => {
@@ -1585,7 +1600,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         wrapper.vm.setNewAnnotationMode();
-        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith("polygon");
+        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith(
+          "polygon",
+        );
       });
 
       it("sets point mode for connection tool with click action", () => {
@@ -1613,7 +1630,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         wrapper.vm.setNewAnnotationMode();
-        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith("polygon");
+        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith(
+          "polygon",
+        );
       });
 
       it("sets point mode for select tool with pointer type", () => {
@@ -1641,7 +1660,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         wrapper.vm.setNewAnnotationMode();
-        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith("polygon");
+        expect(wrapper.vm.interactionLayer.mode).toHaveBeenCalledWith(
+          "polygon",
+        );
       });
 
       it("sets point mode for edit tool with combine_click action", () => {
@@ -1715,7 +1736,9 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "addAnnotationFromGeoJsAnnotation").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "addAnnotationFromGeoJsAnnotation")
+          .mockImplementation(() => {});
 
         const ann = mockGeoJSAnnotation("point");
         ann.layer = vi.fn().mockReturnValue(wrapper.vm.interactionLayer);
@@ -1736,7 +1759,9 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "handleAnnotationTagging").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "handleAnnotationTagging")
+          .mockImplementation(() => {});
 
         const ann = mockGeoJSAnnotation("point");
         ann.layer = vi.fn().mockReturnValue(wrapper.vm.interactionLayer);
@@ -1757,7 +1782,9 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "selectAnnotations").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "selectAnnotations")
+          .mockImplementation(() => {});
 
         const ann = mockGeoJSAnnotation("point");
         ann.layer = vi.fn().mockReturnValue(wrapper.vm.interactionLayer);
@@ -1778,7 +1805,9 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "handleAnnotationConnections").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "handleAnnotationConnections")
+          .mockImplementation(() => {});
 
         const ann = mockGeoJSAnnotation("point");
         ann.layer = vi.fn().mockReturnValue(wrapper.vm.interactionLayer);
@@ -1799,7 +1828,9 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "handleAnnotationCombine").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "handleAnnotationCombine")
+          .mockImplementation(() => {});
 
         const ann = mockGeoJSAnnotation("point");
         ann.layer = vi.fn().mockReturnValue(wrapper.vm.interactionLayer);
@@ -1820,7 +1851,9 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "handleAnnotationEdits").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "handleAnnotationEdits")
+          .mockImplementation(() => {});
 
         const ann = mockGeoJSAnnotation("point");
         ann.layer = vi.fn().mockReturnValue(wrapper.vm.interactionLayer);
@@ -1834,7 +1867,9 @@ describe("AnnotationViewer", () => {
       it("routes to handleNewROIFilter when no tool but roiFilter exists", () => {
         mockedFilterStore.emptyROIFilter = { id: "f1", roi: [] } as any;
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "handleNewROIFilter").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "handleNewROIFilter")
+          .mockImplementation(() => {});
 
         const ann = mockGeoJSAnnotation("polygon");
         ann.layer = vi.fn().mockReturnValue(wrapper.vm.interactionLayer);
@@ -1855,7 +1890,9 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "addAnnotationFromGeoJsAnnotation").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "addAnnotationFromGeoJsAnnotation")
+          .mockImplementation(() => {});
 
         const otherLayer = mockAnnotationLayer();
         const ann = mockGeoJSAnnotation("point");
@@ -1889,7 +1926,6 @@ describe("AnnotationViewer", () => {
       });
 
       it("converts circle shape to polygon", async () => {
-
         mockedStore.selectedTool = {
           configuration: {
             id: "t1",
@@ -1913,7 +1949,6 @@ describe("AnnotationViewer", () => {
       });
 
       it("converts ellipse shape to polygon", async () => {
-
         vi.clearAllMocks();
         mockedStore.selectedTool = {
           configuration: {
@@ -1949,7 +1984,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
 
         await wrapper.vm.addAnnotationFromGeoJsAnnotation(null);
-        expect(mockedAnnotationStore.addAnnotationFromTool).not.toHaveBeenCalled();
+        expect(
+          mockedAnnotationStore.addAnnotationFromTool,
+        ).not.toHaveBeenCalled();
       });
 
       it("returns early when no selectedToolConfiguration", async () => {
@@ -1957,7 +1994,9 @@ describe("AnnotationViewer", () => {
 
         const ann = mockGeoJSAnnotation("point");
         await wrapper.vm.addAnnotationFromGeoJsAnnotation(ann);
-        expect(mockedAnnotationStore.addAnnotationFromTool).not.toHaveBeenCalled();
+        expect(
+          mockedAnnotationStore.addAnnotationFromTool,
+        ).not.toHaveBeenCalled();
       });
     });
 
@@ -2013,7 +2052,6 @@ describe("AnnotationViewer", () => {
       });
 
       it("creates connection on add_click with selected annotation", async () => {
-
         mockedStore.selectedTool = {
           configuration: {
             id: "t1",
@@ -2040,7 +2078,9 @@ describe("AnnotationViewer", () => {
         } as any;
 
         const ann2 = makeAnnotation({ id: "ann2" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann2);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann2,
+        );
 
         wrapper = mountComponent();
         // Mock getSelectedAnnotationsFromAnnotation to return ann2
@@ -2087,16 +2127,15 @@ describe("AnnotationViewer", () => {
 
         const selectAnn = mockGeoJSAnnotation("polygon");
         await wrapper.vm.handleAnnotationConnections(selectAnn);
-        expect(wrapper.vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(
-          selectAnn,
-        );
+        expect(
+          wrapper.vm.interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(selectAnn);
       });
     });
 
     // --- handleAnnotationCombine ---
     describe("handleAnnotationCombine", () => {
       function setupCombineTool() {
-
         mockedStore.selectedTool = {
           configuration: {
             id: "t1",
@@ -2116,7 +2155,9 @@ describe("AnnotationViewer", () => {
       it("selects annotation on first click", async () => {
         setupCombineTool();
         const ann1 = makeAnnotation({ id: "a1", shape: "polygon" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -2134,7 +2175,6 @@ describe("AnnotationViewer", () => {
       });
 
       it("combines annotations on second click", async () => {
-
         mockedStore.selectedTool = {
           configuration: {
             id: "t1",
@@ -2151,7 +2191,9 @@ describe("AnnotationViewer", () => {
         } as any;
 
         const ann2 = makeAnnotation({ id: "a2", shape: "polygon" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann2);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann2,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -2173,7 +2215,6 @@ describe("AnnotationViewer", () => {
       });
 
       it("does not combine annotation with itself", async () => {
-
         mockedStore.selectedTool = {
           configuration: {
             id: "t1",
@@ -2190,7 +2231,9 @@ describe("AnnotationViewer", () => {
         } as any;
 
         const ann1 = makeAnnotation({ id: "a1", shape: "polygon" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -2210,7 +2253,9 @@ describe("AnnotationViewer", () => {
       it("filters non-polygon annotations", async () => {
         setupCombineTool();
         const ann1 = makeAnnotation({ id: "a1", shape: "point" }); // Not polygon
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -2242,9 +2287,9 @@ describe("AnnotationViewer", () => {
 
         const selectAnn = mockGeoJSAnnotation("point");
         await wrapper.vm.handleAnnotationCombine(selectAnn);
-        expect(wrapper.vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(
-          selectAnn,
-        );
+        expect(
+          wrapper.vm.interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(selectAnn);
       });
     });
 
@@ -2265,7 +2310,9 @@ describe("AnnotationViewer", () => {
         } as any;
 
         const ann1 = makeAnnotation({ id: "a1", tags: [] });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -2297,7 +2344,9 @@ describe("AnnotationViewer", () => {
         } as any;
 
         const ann1 = makeAnnotation({ id: "a1" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -2311,13 +2360,17 @@ describe("AnnotationViewer", () => {
         selectAnn.coordinates = vi.fn().mockReturnValue([{ x: 10, y: 20 }]);
 
         await wrapper.vm.handleAnnotationTagging(selectAnn);
-        expect(mockedAnnotationStore.setHoveredAnnotationId).toHaveBeenCalledWith("a1");
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("a1");
       });
 
       it("returns early when annotation is null", async () => {
         wrapper = mountComponent();
         await wrapper.vm.handleAnnotationTagging(null);
-        expect(mockedAnnotationStore.updateAnnotationsPerId).not.toHaveBeenCalled();
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).not.toHaveBeenCalled();
       });
     });
 
@@ -2331,7 +2384,8 @@ describe("AnnotationViewer", () => {
           false,
         );
         expect(mockedAnnotationStore.updateAnnotationsPerId).toHaveBeenCalled();
-        const call = (mockedAnnotationStore.updateAnnotationsPerId as any).mock.calls[0][0];
+        const call = (mockedAnnotationStore.updateAnnotationsPerId as any).mock
+          .calls[0][0];
         // Test the edit function
         const testAnn = { tags: ["tagToRemove", "keepMe"] };
         call.editFunction(testAnn);
@@ -2346,7 +2400,8 @@ describe("AnnotationViewer", () => {
           ["newTag"],
           true,
         );
-        const call = (mockedAnnotationStore.updateAnnotationsPerId as any).mock.calls[0][0];
+        const call = (mockedAnnotationStore.updateAnnotationsPerId as any).mock
+          .calls[0][0];
         const testAnn = { tags: ["oldTag"] };
         call.editFunction(testAnn);
         expect(testAnn.tags).toEqual(["newTag"]);
@@ -2360,7 +2415,8 @@ describe("AnnotationViewer", () => {
           ["newTag"],
           false,
         );
-        const call = (mockedAnnotationStore.updateAnnotationsPerId as any).mock.calls[0][0];
+        const call = (mockedAnnotationStore.updateAnnotationsPerId as any).mock
+          .calls[0][0];
         const testAnn = { tags: ["existingTag"] };
         call.editFunction(testAnn);
         expect(testAnn.tags).toContain("existingTag");
@@ -2381,7 +2437,9 @@ describe("AnnotationViewer", () => {
         } as any;
 
         const ann1 = makeAnnotation({ id: "a1", shape: "polygon" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
 
         wrapper = mountComponent();
         const geoAnn = mockGeoJSAnnotation("polygon");
@@ -2410,7 +2468,9 @@ describe("AnnotationViewer", () => {
 
         const selectAnn = mockGeoJSAnnotation("polygon");
         await wrapper.vm.handleAnnotationEdits(selectAnn);
-        expect(mockedAnnotationStore.updateAnnotationsPerId).not.toHaveBeenCalled();
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).not.toHaveBeenCalled();
       });
 
       it("removes selectAnnotation after processing", async () => {
@@ -2419,9 +2479,9 @@ describe("AnnotationViewer", () => {
 
         const selectAnn = mockGeoJSAnnotation("polygon");
         await wrapper.vm.handleAnnotationEdits(selectAnn);
-        expect(wrapper.vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(
-          selectAnn,
-        );
+        expect(
+          wrapper.vm.interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(selectAnn);
       });
     });
 
@@ -2442,7 +2502,9 @@ describe("AnnotationViewer", () => {
           { x: 0, y: 0 },
           { x: 10, y: 10 },
         ]);
-        expect(wrapper.vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(ann);
+        expect(
+          wrapper.vm.interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(ann);
       });
 
       it("returns early when no roiFilter", () => {
@@ -2473,7 +2535,6 @@ describe("AnnotationViewer", () => {
       });
 
       it("calls unrollIndexFromImages", () => {
-
         (unrollIndexFromImages as any).mockReturnValue(3);
         wrapper = mountComponent();
         const result = wrapper.vm.unrollIndex(1, 2, 3, false, false, false);
@@ -2623,7 +2684,7 @@ describe("AnnotationViewer", () => {
         ];
         const result = wrapper.vm.findConnectedComponents(connections);
         // Each component should have its own connection
-        const connCounts = result.map((c) => c.connections.length);
+        const connCounts = result.map((c: any) => c.connections.length);
         expect(connCounts.sort()).toEqual([1, 1]);
       });
     });
@@ -2701,7 +2762,9 @@ describe("AnnotationViewer", () => {
       it("clears previous tracks", () => {
         wrapper = mountComponent();
         wrapper.vm.drawTimelapseConnectionsAndCentroids();
-        expect(wrapper.vm.timelapseLayer.removeAllAnnotations).toHaveBeenCalled();
+        expect(
+          wrapper.vm.timelapseLayer.removeAllAnnotations,
+        ).toHaveBeenCalled();
       });
 
       it("exits early when showTimelapseMode is false", () => {
@@ -2844,7 +2907,10 @@ describe("AnnotationViewer", () => {
     describe("handleDragStart", () => {
       it("requires alt modifier", () => {
         wrapper = mountComponent();
-        wrapper.vm.handleDragStart({ geo: { x: 10, y: 20 }, modifiers: { alt: false } });
+        wrapper.vm.handleDragStart({
+          geo: { x: 10, y: 20 },
+          modifiers: { alt: false },
+        });
         expect(wrapper.vm.isDragging).toBe(false);
       });
 
@@ -2856,7 +2922,9 @@ describe("AnnotationViewer", () => {
 
       it("starts dragging when annotation is found", () => {
         const ann1 = makeAnnotation({ id: "a1", shape: "point" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -2880,7 +2948,9 @@ describe("AnnotationViewer", () => {
 
       it("creates ghost annotation and adds to interactionLayer", () => {
         const ann1 = makeAnnotation({ id: "a1", shape: "point" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -2896,11 +2966,15 @@ describe("AnnotationViewer", () => {
           modifiers: { alt: true },
         });
 
-        expect(wrapper.vm.interactionLayer.addAnnotation).toHaveBeenCalledWith(ghost);
+        expect(wrapper.vm.interactionLayer.addAnnotation).toHaveBeenCalledWith(
+          ghost,
+        );
       });
 
       it("does nothing when no annotation found under click", () => {
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(undefined);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
         wrapper = mountComponent();
         wrapper.vm.annotationLayer.annotations = vi.fn(() => []);
 
@@ -2967,7 +3041,9 @@ describe("AnnotationViewer", () => {
       it("returns early when not dragging", async () => {
         wrapper = mountComponent();
         await wrapper.vm.handleDragEnd({ geo: { x: 50, y: 50 } });
-        expect(mockedAnnotationStore.updateAnnotationsPerId).not.toHaveBeenCalled();
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).not.toHaveBeenCalled();
       });
 
       it("commits offset via updateAnnotationsPerId", async () => {
@@ -2980,7 +3056,9 @@ describe("AnnotationViewer", () => {
         wrapper.vm.dragOriginalCoordinates = [{ x: 100, y: 200 }];
 
         await wrapper.vm.handleDragEnd({ geo: { x: 10, y: 15 } });
-        expect(mockedAnnotationStore.updateAnnotationsPerId).toHaveBeenCalledWith(
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).toHaveBeenCalledWith(
           expect.objectContaining({
             annotationIds: ["a1"],
           }),
@@ -2997,7 +3075,9 @@ describe("AnnotationViewer", () => {
         wrapper.vm.dragOriginalCoordinates = [{ x: 100, y: 200 }];
 
         await wrapper.vm.handleDragEnd({ geo: { x: 10, y: 15 } });
-        expect(wrapper.vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(ghost);
+        expect(
+          wrapper.vm.interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(ghost);
         expect(wrapper.vm.isDragging).toBe(false);
         expect(wrapper.vm.dragStartPosition).toBeNull();
         expect(wrapper.vm.draggedAnnotation).toBeNull();
@@ -3013,7 +3093,9 @@ describe("AnnotationViewer", () => {
         wrapper.vm.dragOriginalCoordinates = [{ x: 5, y: 10 }];
 
         await wrapper.vm.handleDragEnd({});
-        expect(mockedAnnotationStore.updateAnnotationsPerId).not.toHaveBeenCalled();
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).not.toHaveBeenCalled();
       });
     });
 
@@ -3021,7 +3103,9 @@ describe("AnnotationViewer", () => {
     describe("onMousePathChanged", () => {
       it("calls consumeMouseState when newState is null and oldState was active", () => {
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "consumeMouseState").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "consumeMouseState")
+          .mockImplementation(() => {});
         const oldState = {
           isMouseMovePreviewState: false,
           path: [{ x: 10, y: 20 }],
@@ -3032,7 +3116,9 @@ describe("AnnotationViewer", () => {
 
       it("calls previewMouseState for non-null newState", () => {
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "previewMouseState").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "previewMouseState")
+          .mockImplementation(() => {});
         const newState = {
           isMouseMovePreviewState: true,
           path: [{ x: 10, y: 20 }],
@@ -3049,7 +3135,9 @@ describe("AnnotationViewer", () => {
         const prev = mockGeoJSAnnotation("line");
         wrapper.vm.selectionAnnotation = prev;
         wrapper.vm.previewMouseState(null);
-        expect(wrapper.vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(prev);
+        expect(
+          wrapper.vm.interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(prev);
       });
 
       it("creates line annotation for multi-point path", () => {
@@ -3083,7 +3171,9 @@ describe("AnnotationViewer", () => {
             { x: 10, y: 10 },
           ],
         });
-        expect(wrapper.vm.interactionLayer.addAnnotation).toHaveBeenCalledWith(lineAnn);
+        expect(wrapper.vm.interactionLayer.addAnnotation).toHaveBeenCalledWith(
+          lineAnn,
+        );
       });
     });
 
@@ -3092,18 +3182,24 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
         const prev = mockGeoJSAnnotation("line");
         wrapper.vm.selectionAnnotation = prev;
-        const spy = vi.spyOn(wrapper.vm, "selectAnnotations").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "selectAnnotations")
+          .mockImplementation(() => {});
 
         wrapper.vm.consumeMouseState({
           path: [{ x: 10, y: 20 }],
         });
-        expect(wrapper.vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(prev);
+        expect(
+          wrapper.vm.interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(prev);
         expect(wrapper.vm.selectionAnnotation).toBeNull();
       });
 
       it("returns early when path is empty", () => {
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm, "selectAnnotations").mockImplementation(() => {});
+        const spy = vi
+          .spyOn(wrapper.vm, "selectAnnotations")
+          .mockImplementation(() => {});
         wrapper.vm.consumeMouseState({ path: [] });
         expect(spy).not.toHaveBeenCalled();
       });
@@ -3124,7 +3220,9 @@ describe("AnnotationViewer", () => {
 
       it("sets annotation and shows context menu", () => {
         const ann1 = makeAnnotation({ id: "a1" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -3142,7 +3240,9 @@ describe("AnnotationViewer", () => {
 
       it("sets coordinates from mouse event", () => {
         const ann1 = makeAnnotation({ id: "a1" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          ann1,
+        );
         (pointDistance as any).mockReturnValue(1);
 
         wrapper = mountComponent();
@@ -3323,8 +3423,7 @@ describe("AnnotationViewer", () => {
       it("calls addHoverCallback on mount", () => {
         wrapper = mountComponent();
         // addHoverCallback registers a mouseclick handler on annotationLayer
-        const geoOnCalls = (wrapper.vm.annotationLayer.geoOn as any).mock
-          .calls;
+        const geoOnCalls = (wrapper.vm.annotationLayer.geoOn as any).mock.calls;
         const mouseclickCalls = geoOnCalls.filter(
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
@@ -3349,8 +3448,7 @@ describe("AnnotationViewer", () => {
     describe("bindAnnotationEvents", () => {
       it("registers mouseclick handler on annotationLayer", () => {
         wrapper = mountComponent();
-        const geoOnCalls = (wrapper.vm.annotationLayer.geoOn as any).mock
-          .calls;
+        const geoOnCalls = (wrapper.vm.annotationLayer.geoOn as any).mock.calls;
         const mouseclickCalls = geoOnCalls.filter(
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
@@ -3359,8 +3457,7 @@ describe("AnnotationViewer", () => {
 
       it("registers drag handlers on annotationLayer", () => {
         wrapper = mountComponent();
-        const geoOnCalls = (wrapper.vm.annotationLayer.geoOn as any).mock
-          .calls;
+        const geoOnCalls = (wrapper.vm.annotationLayer.geoOn as any).mock.calls;
         const eventTypes = geoOnCalls.map((call: any[]) => call[0]);
         expect(eventTypes).toContain("geojs.mousedown");
         expect(eventTypes).toContain("geojs.mousemove");
@@ -3418,8 +3515,7 @@ describe("AnnotationViewer", () => {
     describe("bindTimelapseEvents", () => {
       it("registers mouseclick handler on timelapseLayer", () => {
         wrapper = mountComponent();
-        const geoOnCalls = (wrapper.vm.timelapseLayer.geoOn as any).mock
-          .calls;
+        const geoOnCalls = (wrapper.vm.timelapseLayer.geoOn as any).mock.calls;
         const mouseclickCalls = geoOnCalls.filter(
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
@@ -3483,9 +3579,7 @@ describe("AnnotationViewer", () => {
         } as any;
         await wrapper.vm.$nextTick();
         expect(wrapper.vm.samToolState).not.toBeNull();
-        expect(wrapper.vm.samToolState.type).toBe(
-          SamAnnotationToolStateSymbol,
-        );
+        expect(wrapper.vm.samToolState.type).toBe(SamAnnotationToolStateSymbol);
       });
     });
 
@@ -3526,9 +3620,7 @@ describe("AnnotationViewer", () => {
 
         wrapper = mountComponent();
         const mapObj = wrapper.vm.map;
-        const mockPrompts = [
-          { type: "point", x: 10, y: 20, positive: true },
-        ];
+        const mockPrompts = [{ type: "point", x: 10, y: 20, positive: true }];
         mockedStore.selectedTool = {
           configuration: { type: "samAnnotation", values: {} },
           state: {
@@ -3593,9 +3685,7 @@ describe("AnnotationViewer", () => {
 
         expect(geojs.annotation.polygonAnnotation).toHaveBeenCalled();
         expect(wrapper.vm.samUnsubmittedAnnotation).not.toBeNull();
-        expect(
-          wrapper.vm.annotationLayer.addAnnotation,
-        ).toHaveBeenCalled();
+        expect(wrapper.vm.annotationLayer.addAnnotation).toHaveBeenCalled();
       });
 
       it("returns early when output is null", () => {
@@ -3735,10 +3825,7 @@ describe("AnnotationViewer", () => {
           { type: "point", x: 10, y: 20, positive: true },
         ]);
 
-        expect(newAnn.options).toHaveBeenCalledWith(
-          "specialAnnotation",
-          true,
-        );
+        expect(newAnn.options).toHaveBeenCalledWith("specialAnnotation", true);
       });
     });
   });
@@ -3947,9 +4034,7 @@ describe("AnnotationViewer", () => {
           },
         } as any;
         wrapper = mountComponent();
-        expect(wrapper.vm.toolHighlightedAnnotationIds.has("ann1")).toBe(
-          true,
-        );
+        expect(wrapper.vm.toolHighlightedAnnotationIds.has("ann1")).toBe(true);
       });
 
       it("returns annotation id for combine tool", () => {
@@ -3961,9 +4046,7 @@ describe("AnnotationViewer", () => {
           },
         } as any;
         wrapper = mountComponent();
-        expect(wrapper.vm.toolHighlightedAnnotationIds.has("ann2")).toBe(
-          true,
-        );
+        expect(wrapper.vm.toolHighlightedAnnotationIds.has("ann2")).toBe(true);
       });
     });
 
@@ -4043,10 +4126,12 @@ describe("AnnotationViewer", () => {
     describe("renderWorkerPreview", () => {
       it("renders preview data when displayWorkerPreview and image exist", () => {
         mockedPropertiesStore.displayWorkerPreview = true;
-        mockedPropertiesStore.getWorkerPreview = vi.fn().mockReturnValue({
-          text: null,
-          image: "data:image/png;base64,abc",
-        });
+        (mockedPropertiesStore as any).getWorkerPreview = vi
+          .fn()
+          .mockReturnValue({
+            text: null,
+            image: "data:image/png;base64,abc",
+          });
         mockedStore.selectedTool = {
           configuration: {
             type: "worker",
@@ -4064,9 +4149,7 @@ describe("AnnotationViewer", () => {
         mockedPropertiesStore.displayWorkerPreview = false;
         wrapper = mountComponent();
         wrapper.vm.renderWorkerPreview();
-        expect(wrapper.vm.workerPreviewFeature.data).toHaveBeenCalledWith(
-          [],
-        );
+        expect(wrapper.vm.workerPreviewFeature.data).toHaveBeenCalledWith([]);
         expect(wrapper.vm.workerPreviewFeature.draw).toHaveBeenCalled();
       });
     });
@@ -4098,13 +4181,8 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
         wrapper.vm.pendingAnnotationChanged();
 
-        expect(geoAnn.options).toHaveBeenCalledWith(
-          "specialAnnotation",
-          true,
-        );
-        expect(
-          wrapper.vm.interactionLayer.addAnnotation,
-        ).toHaveBeenCalled();
+        expect(geoAnn.options).toHaveBeenCalledWith("specialAnnotation", true);
+        expect(wrapper.vm.interactionLayer.addAnnotation).toHaveBeenCalled();
       });
     });
   });

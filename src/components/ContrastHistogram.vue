@@ -36,8 +36,8 @@
       />
       <div
         class="saved-min"
-        :style="{ left: toValue(configurationContrast, 'black') }"
-        :title="`Saved: ${toLabel(configurationContrast.blackPoint)}`"
+        :style="{ left: toValue(safeConfigContrast, 'black') }"
+        :title="`Saved: ${toLabel(safeConfigContrast.blackPoint)}`"
       />
       <div
         ref="max"
@@ -47,8 +47,8 @@
       />
       <div
         class="saved-max"
-        :style="{ right: toValue(configurationContrast, 'white') }"
-        :title="`Saved: ${toLabel(configurationContrast.whitePoint)}`"
+        :style="{ right: toValue(safeConfigContrast, 'white') }"
+        :title="`Saved: ${toLabel(safeConfigContrast.whitePoint)}`"
       />
       <resize-observer @notify="handleResize" />
     </div>
@@ -125,9 +125,9 @@ let uidCounter = 0;
 const componentId = uidCounter++;
 
 const props = defineProps<{
-  configurationContrast: IContrast;
+  configurationContrast: IContrast | null;
   viewContrast: IContrast | null;
-  histogram: Promise<ITileHistogram>;
+  histogram: Promise<ITileHistogram | null>;
 }>();
 
 const emit = defineEmits<{
@@ -157,10 +157,20 @@ const cachedWhitePoint = ref<number | null>(null);
 
 let _zoomBehavior: ZoomBehavior<HTMLElement, any> | null = null;
 
+const defaultContrast: IContrast = {
+  mode: "percentile",
+  blackPoint: 0,
+  whitePoint: 100,
+};
+
 // Computeds
-const currentContrast = computed(() => {
-  return props.viewContrast || props.configurationContrast;
+const currentContrast = computed((): IContrast => {
+  return props.viewContrast || props.configurationContrast || defaultContrast;
 });
+
+const safeConfigContrast = computed(
+  (): IContrast => props.configurationContrast || defaultContrast,
+);
 
 const editMin = computed(() => {
   return mode.value === "percentile" || !histData.value
@@ -230,7 +240,11 @@ const emitChange = throttle((value: IContrast) => {
 
 const mode = computed({
   get: () => {
-    return props.viewContrast?.mode || props.configurationContrast.mode;
+    return (
+      props.viewContrast?.mode ||
+      props.configurationContrast?.mode ||
+      "percentile"
+    );
   },
   set: (value: "percentile" | "absolute") => {
     const copy = Object.assign({}, currentContrast.value);
@@ -429,6 +443,7 @@ defineExpose({
   cachedBlackPoint,
   cachedWhitePoint,
   currentContrast,
+  safeConfigContrast,
   mode,
   editMin,
   editMax,

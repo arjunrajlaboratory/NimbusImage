@@ -169,7 +169,7 @@
                     <template
                       v-if="items.length === 1 && isDatasetFolder(items[0])"
                     >
-                      <v-list-item @click="location = items[0]">
+                      <v-list-item @click="setLocation(items[0])">
                         <v-list-item-title> Browse </v-list-item-title>
                       </v-list-item>
                     </template>
@@ -507,6 +507,10 @@ const location = computed({
   get: () => store.folderLocation,
   set: (loc: IGirderLocation) => store.setFolderLocation(loc),
 });
+
+function setLocation(loc: any) {
+  location.value = loc;
+}
 
 const locationName = computed(() => {
   // @ts-ignore: name or login may be undefined, but this case is checked
@@ -1198,6 +1202,7 @@ defineExpose({
   validateDatasetNames,
   getNameError,
   getUserDisplayName,
+  setLocation,
   onLocationUpdate,
   handleDrop,
   openFileSelector,

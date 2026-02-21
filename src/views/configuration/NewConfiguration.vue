@@ -23,7 +23,7 @@ import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { useRouteMapper } from "@/utils/useRouteMapper";
-import { IGirderSelectAble } from "@/girder";
+import { IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 
 const vm = getCurrentInstance()!.proxy;
@@ -42,7 +42,7 @@ useRouteMapper(
 const valid = ref(false);
 const name = ref("");
 const description = ref("");
-const path = ref<IGirderSelectAble | null>(null);
+const path = ref<IGirderLocation | null>(null);
 
 const dataset = computed(() => store.dataset);
 
@@ -65,7 +65,7 @@ async function fetchDefaultPath() {
 }
 
 function submit() {
-  const folderId = path.value?._id;
+  const folderId = (path.value as any)?._id;
   if (!valid.value || !folderId) {
     return;
   }

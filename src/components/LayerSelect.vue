@@ -25,12 +25,12 @@ const emit = defineEmits<{
   (e: "input", value: string | null): void;
 }>();
 
-const layer = computed({
+const layer = computed<string | null | undefined>({
   get() {
     return props.value;
   },
-  set(val: string | null) {
-    emit("input", val);
+  set(val: string | null | undefined) {
+    emit("input", val as string | null);
   },
 });
 

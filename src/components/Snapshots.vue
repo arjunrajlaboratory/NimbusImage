@@ -487,6 +487,7 @@
       </v-alert>
     </v-dialog>
     <movie-dialog
+      v-if="store.dataset"
       v-model="movieDialog"
       :current-time="store.time"
       :dataset="store.dataset"
@@ -2065,16 +2066,7 @@ async function getUrlsForMovieWithAnnotations(
   return dataUrls;
 }
 
-async function handleMovieDownload(params: {
-  startTime: number;
-  endTime: number;
-  fps: number;
-  format: MovieFormat;
-  shouldAddTimeStamp: boolean;
-  initialTimeStampTime: number;
-  timeStampStep: number;
-  timeStampUnits: string;
-}) {
+async function handleMovieDownload(params: any) {
   const dataset = store.dataset;
   if (!dataset) return;
 

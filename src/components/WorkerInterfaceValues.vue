@@ -127,7 +127,7 @@ const emit = defineEmits<{
   (e: "input", value: IWorkerInterfaceValues): void;
 }>();
 
-const interfaceValues = computed({
+const interfaceValues = computed<any>({
   get() {
     return props.value;
   },

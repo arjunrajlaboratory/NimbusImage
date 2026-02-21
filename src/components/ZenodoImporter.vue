@@ -119,7 +119,7 @@ const zenodoApi = new ZenodoAPI(store.girderRestProxy);
 
 // Reactive state
 const selectedDataset = ref<IZenodoRecord | null>(null);
-const _path = ref<IGirderSelectAble | null>(null);
+const _path = ref<IGirderLocation | null>(null);
 const importing = ref(false);
 const importProgress = ref(0);
 const currentFile = ref("");
@@ -128,10 +128,10 @@ const error = ref("");
 // Computed get/set for path
 const path = computed({
   get: () => _path.value,
-  set: (value: IGirderSelectAble | null) => {
+  set: (value: IGirderLocation | null) => {
     _path.value = value;
     if (value) {
-      store.setFolderLocation(value as IGirderLocation);
+      store.setFolderLocation(value);
     }
   },
 });
@@ -152,7 +152,7 @@ const canImport = computed<boolean>(() => {
 
 onMounted(() => {
   // Initialize path from store's folder location
-  _path.value = store.folderLocation as IGirderSelectAble | null;
+  _path.value = store.folderLocation;
 
   // Set the selected dataset from the prop
   if (props.dataset) {

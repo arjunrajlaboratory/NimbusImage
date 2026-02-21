@@ -32,18 +32,19 @@ import girderResources from "@/store/girderResources";
 import ConfigurationSelect from "@/components/ConfigurationSelect.vue";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import { IDatasetConfiguration } from "@/store/model";
-import { IGirderSelectAble } from "@/girder";
+import { IGirderLocation } from "@/girder";
 
 const vm = getCurrentInstance()!.proxy;
 
-const selectedFolder = ref<IGirderSelectAble | null>(null);
+const selectedFolder = ref<IGirderLocation | null>(null);
 const currentFolderName = ref("");
 
 const datasetName = computed(() => store.dataset?.name || "");
 
 const folderId = computed((): string | undefined => {
-  if (selectedFolder.value && selectedFolder.value._modelType === "folder") {
-    return selectedFolder.value._id;
+  const folder = selectedFolder.value as any;
+  if (folder && folder._modelType === "folder") {
+    return folder._id;
   }
   // Fallback to route query if folder not yet loaded
   const folderIdQuery = vm.$route.query.folderId;
@@ -57,8 +58,9 @@ const folderId = computed((): string | undefined => {
 });
 
 watch(selectedFolder, async () => {
-  if (selectedFolder.value && selectedFolder.value._modelType === "folder") {
-    const folder = await girderResources.getFolder(selectedFolder.value._id);
+  const sel = selectedFolder.value as any;
+  if (sel && sel._modelType === "folder") {
+    const folder = await girderResources.getFolder(sel._id);
     currentFolderName.value = folder?.name || "Unknown folder";
   } else {
     currentFolderName.value = "";

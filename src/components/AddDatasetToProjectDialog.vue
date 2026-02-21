@@ -65,7 +65,7 @@ import { IDataset, IProject } from "@/store/model";
 import girderResources from "@/store/girderResources";
 import projects from "@/store/projects";
 import { isDatasetFolder } from "@/utils/girderSelectable";
-import { IGirderSelectAble } from "@/girder";
+import { IGirderSelectAble, IGirderLocation } from "@/girder";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 
 const props = defineProps<{
@@ -77,7 +77,7 @@ const emit = defineEmits<{
   (e: "added", datasetIds: string[]): void;
 }>();
 
-const selectLocation = ref<IGirderSelectAble | null>(null);
+const selectLocation = ref<IGirderLocation | null>(null);
 const selectedDatasets = ref<IDataset[]>([]);
 const warnings = ref<string[]>([]);
 const adding = ref(false);

@@ -80,7 +80,7 @@
           <v-simple-checkbox v-model="option.editVariables" dense />
           Review variables
         </div>
-        <template v-if="option.configuring">
+        <template v-if="option.configuring && option.uploadedDatasetId">
           <multi-source-configuration
             ref="configurationRef"
             :datasetId="option.uploadedDatasetId"
@@ -135,7 +135,7 @@ type TAddDatasetOption =
       type: "add";
       datasets: IDataset[];
       warnings: string[];
-      datasetSelectLocation: IGirderSelectAble | null;
+      datasetSelectLocation: IGirderLocation | null;
     };
 
 function defaultDatasetUploadOption(): TAddDatasetOption {
@@ -178,7 +178,7 @@ onMounted(async () => {
   try {
     uploadLocation.value = await store.api.getUserPrivateFolder();
   } catch (error) {
-    uploadLocation.value = store.girderUser;
+    uploadLocation.value = store.girderUser as IGirderLocation | null;
   }
 });
 

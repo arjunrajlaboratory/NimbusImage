@@ -61,8 +61,9 @@ vi.mock("@/store/projects", () => ({
 
 vi.mock("@/store/Persister", () => ({
   default: {
-    get: (...args: any[]) => mockPersisterGet(...args),
-    set: (...args: any[]) => mockPersisterSet(...args),
+    get: (key: string, defaultValue?: any) =>
+      mockPersisterGet(key, defaultValue),
+    set: (key: string, value: any) => mockPersisterSet(key, value),
   },
 }));
 

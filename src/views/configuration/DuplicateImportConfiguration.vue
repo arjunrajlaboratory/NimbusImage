@@ -27,7 +27,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
 import { IDatasetConfiguration } from "@/store/model";
-import { IGirderSelectAble } from "@/girder";
+import { IGirderLocation } from "@/girder";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import ConfigurationSelect from "@/components/ConfigurationSelect.vue";
@@ -35,7 +35,7 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 
 const vm = getCurrentInstance()!.proxy;
 
-const path = ref<IGirderSelectAble | null>(null);
+const path = ref<IGirderLocation | null>(null);
 
 const dataset = computed(() => store.dataset);
 
@@ -64,7 +64,7 @@ async function submit(configurations: IDatasetConfiguration[]) {
   await Promise.all(
     configurations.map((configuration) =>
       store.api
-        .duplicateConfiguration(configuration, parentFolder?._id)
+        .duplicateConfiguration(configuration, (parentFolder as any)._id)
         .then((newConfiguration: any) =>
           store.createDatasetView({
             configurationId: newConfiguration.id,

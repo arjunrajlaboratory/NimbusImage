@@ -25,8 +25,8 @@ function mountComponent() {
 
 describe("ProgressBarGroup", () => {
   it("renders nothing when no active progresses or notifications", () => {
-    progressStore.hasActiveProgresses = false;
-    progressStore.activeNotifications = [];
+    (progressStore as any).hasActiveProgresses = false;
+    (progressStore as any).activeNotifications = [];
     const wrapper = mountComponent();
     expect(wrapper.find(".progress-container").exists()).toBe(false);
   });
@@ -35,7 +35,7 @@ describe("ProgressBarGroup", () => {
     (progressStore as any).activeNotifications = [
       { id: "n1", type: "success", title: "Done", message: "Task done" },
     ];
-    progressStore.hasActiveProgresses = false;
+    (progressStore as any).hasActiveProgresses = false;
     const wrapper = mountComponent();
     expect(wrapper.vm.hasNotifications).toBe(true);
     // Reset
@@ -58,7 +58,7 @@ describe("ProgressBarGroup", () => {
         title: "Fetching",
       },
     ];
-    progressStore.hasActiveProgresses = true;
+    (progressStore as any).hasActiveProgresses = true;
     const wrapper = mountComponent();
     const groups = wrapper.vm.progressGroups;
     expect(groups).toHaveLength(1);
@@ -66,7 +66,7 @@ describe("ProgressBarGroup", () => {
     expect(groups[0].display).toBe("single");
     // Reset
     (progressStore as any).activeProgresses = [];
-    progressStore.hasActiveProgresses = false;
+    (progressStore as any).hasActiveProgresses = false;
   });
 
   it("progressGroups shows stacked for multiple different progresses", () => {
@@ -74,7 +74,7 @@ describe("ProgressBarGroup", () => {
       { id: "p1", type: "generic", progress: 3, total: 10, title: "Task A" },
       { id: "p2", type: "generic", progress: 7, total: 20, title: "Task B" },
     ];
-    progressStore.hasActiveProgresses = true;
+    (progressStore as any).hasActiveProgresses = true;
     const wrapper = mountComponent();
     const groups = wrapper.vm.progressGroups;
     expect(groups).toHaveLength(1);
@@ -82,7 +82,7 @@ describe("ProgressBarGroup", () => {
     expect(groups[0].items).toHaveLength(2);
     // Reset
     (progressStore as any).activeProgresses = [];
-    progressStore.hasActiveProgresses = false;
+    (progressStore as any).hasActiveProgresses = false;
   });
 
   it("progressGroups shows single for multiple indeterminate with same title", () => {
@@ -90,7 +90,7 @@ describe("ProgressBarGroup", () => {
       { id: "p1", type: "generic", progress: 0, total: 0, title: "Loading" },
       { id: "p2", type: "generic", progress: 0, total: 0, title: "Loading" },
     ];
-    progressStore.hasActiveProgresses = true;
+    (progressStore as any).hasActiveProgresses = true;
     const wrapper = mountComponent();
     const groups = wrapper.vm.progressGroups;
     expect(groups).toHaveLength(1);
@@ -99,6 +99,6 @@ describe("ProgressBarGroup", () => {
     expect(groups[0].count).toBe(2);
     // Reset
     (progressStore as any).activeProgresses = [];
-    progressStore.hasActiveProgresses = false;
+    (progressStore as any).hasActiveProgresses = false;
   });
 });

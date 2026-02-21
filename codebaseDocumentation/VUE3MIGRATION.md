@@ -193,8 +193,9 @@ Once most components use Composition API and Vuetify wrappers are in place:
 2. Update Vuetify 2 → Vuetify 3
 3. Update wrapper components for new APIs
 4. Apply `markRaw()` protection to GeoJS objects (see below)
-5. Fix remaining incompatibilities
-6. Full regression testing
+5. **Remove `src/test-shims.d.ts`** — this file adds permissive `mount()`/`shallowMount()` overloads for `@vue/test-utils` v1 to work with `<script setup>` components. When upgrading to `@vue/test-utils` v2 (which natively supports `<script setup>`), delete this shim so tests get proper type checking again.
+6. Fix remaining incompatibilities
+7. Full regression testing
 
 ### GeoJS & Vue 3 Proxy Reactivity (Critical — Phase 5 Preparation)
 
@@ -758,6 +759,10 @@ vi.mock("@/store/annotation", () => ({
 - **"Multiple instances of Vue detected"**: Vuetify warning in test environments. Harmless; caused by module resolution in vitest. Using global `Vue.use(Vuetify)` instead of `createLocalVue` minimizes this.
 - **"Invalid prop type: null is not a constructor"**: Vue 2.7 SFC compiler cannot resolve DOM interface types (e.g., `Element`, `HTMLElement`) to runtime constructors in type-only `defineProps`. See "DOM types in `defineProps`" gotcha below.
 - **"Unable to locate target [data-app]"**: Vuetify dialog warning. Use the `attachTo` pattern above to fix.
+
+### Known Flaky Tests
+
+- **`Snapshots.test.ts` — `addTimeStampToCanvas` tests (2 tests):** The tests "draws timestamp text" (~line 1698) and "computes correct time for frame 0" (~line 1720) fail intermittently during full concurrent test suite runs (`pnpm test`), but pass reliably when run in isolation (`pnpm test -- --run src/components/Snapshots.test.ts`). **Root cause:** jsdom's `canvas.getContext("2d")` returns `null` during concurrent test execution due to resource contention, causing `vi.spyOn(ctx, "strokeText")` to fail with "TypeError: Cannot convert undefined or null to object". This is a jsdom environment limitation, not a code bug. These tests are pre-existing and unrelated to the `<script setup>` migration.
 
 ## Migration Patterns & Gotchas
 

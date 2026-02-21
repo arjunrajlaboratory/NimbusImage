@@ -31,31 +31,31 @@
 <script setup lang="ts">
 import { ref, computed, watch, getCurrentInstance } from "vue";
 import store from "@/store";
-import { IGirderSelectAble } from "@/girder";
+import { IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 
 const vm = getCurrentInstance()!.proxy;
 
 const valid = ref(false);
-const path = ref<IGirderSelectAble | null>(null);
+const path = ref<IGirderLocation | null>(null);
 const errorMessages = ref<string[]>([]);
 const successMessages = ref<string[]>([]);
 
 const pathName = computed(() => {
-  return path.value ? path.value.name : "";
+  return path.value ? (path.value as any).name : "";
 });
 
 const rules = computed(() => {
   return [(v: string) => v.trim().length > 0 || `value is required`];
 });
 
-watch(path, (value: IGirderSelectAble | null) => {
+watch(path, (value) => {
   errorMessages.value = [];
   successMessages.value = [];
 
   if (value) {
     store.api
-      .getImages(value._id)
+      .getImages((value as any)._id)
       .then((images: any[]) => {
         if (images.length > 0) {
           successMessages.value.push(
@@ -80,7 +80,7 @@ function submit() {
     return;
   }
 
-  store.importDataset(path.value!).then((ds: any) => {
+  store.importDataset(path.value as any).then((ds: any) => {
     if (ds) {
       vm.$router.push({
         name: "dataset",
