@@ -2,6 +2,7 @@
   <v-list-item
     density="compact"
     :value="tool.id"
+    :active="isToolSelected"
     :style="{ 'max-height': '32px' }"
     :id="getTourStepId(tool.name)"
     v-tour-trigger="getTourTriggerId(tool.name)"
@@ -18,6 +19,7 @@
         : []
     "
     v-bind="$attrs"
+    @click="toggleTool"
     @mouseover="isHovering = true"
     @mouseleave="isHovering = false"
   >

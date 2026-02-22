@@ -302,6 +302,11 @@ The layer row used 5 auto-sized `v-col` columns (icon, name, hover value, Z-merg
 
 - [x] `src/components/DisplayLayer.vue` — Consolidated icon, name, and hover value into a single `cols="7"` column with flex layout, matching the header proportions. The two switch columns now share the remaining space equally and align under their header labels.
 
+### R20. ToolItem click handler missing after v-list-item-group removal (ToolItem.vue) ✅
+In Vuetify 2, `v-list-item-group` automatically handled click-to-select on child `v-list-item` components. When `v-list-item-group` was removed in D5b (it doesn't exist in Vuetify 3), no replacement click handler was added. The `toggleTool()` function existed but was only bound to keyboard hotkeys via `v-mousetrap`. Clicking a tool in the sidebar showed a tooltip but never called `store.setSelectedToolId()`, so the interaction layer mode was never set and drawing on the image didn't work.
+
+- [x] `src/tools/toolsets/ToolItem.vue` — Added `@click="toggleTool"` and `:active="isToolSelected"` to `v-list-item`
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
