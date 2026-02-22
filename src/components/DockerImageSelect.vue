@@ -5,17 +5,14 @@
     density="compact"
     v-model="image"
     label="Algorithm"
-    item-title="text"
-    item-value="value"
     :menu-props="{ maxHeight: 500 }"
   >
-    <template v-slot:item="{ item }">
-      <div>
-        <div>{{ (item as any).raw?.text ?? item.title }}</div>
-        <div v-if="(item as any).raw?.description" :style="{ color: 'grey' }">
-          {{ (item as any).raw.description }}
-        </div>
-      </div>
+    <template v-slot:item="{ item, props: itemProps }">
+      <v-list-item v-bind="itemProps">
+        <v-list-item-subtitle v-if="'description' in item.raw && item.raw.description">
+          {{ item.raw.description }}
+        </v-list-item-subtitle>
+      </v-list-item>
     </template>
   </v-select>
 </template>
@@ -27,7 +24,7 @@ import propertiesStore from "@/store/properties";
 import { IWorkerLabels } from "@/store/model";
 
 interface IDockerImageSelectEntry {
-  text: string;
+  title: string;
   value: string;
   description: string | undefined;
 }
@@ -63,17 +60,17 @@ const items = computed(() => {
         imagesPerCategory[category] = [];
       }
       imagesPerCategory[category].push({
-        text: labels.interfaceName || img,
+        title: labels.interfaceName || img,
         value: img,
         description: labels.description,
       });
     }
   }
-  const result = [];
+  const result: (IDockerImageSelectEntry | { type: string; title: string })[] = [];
   for (const category in imagesPerCategory) {
     result.push(
-      { divider: true },
-      { header: category },
+      { type: "divider", title: "" },
+      { type: "subheader", title: category },
       ...imagesPerCategory[category],
     );
   }

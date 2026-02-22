@@ -307,6 +307,11 @@ In Vuetify 2, `v-list-item-group` automatically handled click-to-select on child
 
 - [x] `src/tools/toolsets/ToolItem.vue` — Added `@click="toggleTool"` and `:active="isToolSelected"` to `v-list-item`
 
+### R21. DockerImageSelect v-select divider/subheader migration ✅
+Vuetify 2 used `{ divider: true }` and `{ header: category }` objects in v-select items arrays to render separators and group headers. Vuetify 3 uses `{ type: "divider" }` and `{ type: "subheader", title: category }`. Also converted item shape from `{ text, value }` to `{ title, value }` (Vuetify 3 default), removing the need for `item-title`/`item-value` props.
+
+- [x] `src/components/DockerImageSelect.vue` — Replaced `{ divider: true }` → `{ type: "divider" }`, `{ header: category }` → `{ type: "subheader", title: category }`, `{ text, value }` → `{ title, value }`, removed `item-title`/`item-value` props, updated `#item` slot to Vuetify 3 `v-list-item` pattern
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
