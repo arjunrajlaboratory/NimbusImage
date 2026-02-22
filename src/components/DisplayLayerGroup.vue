@@ -40,16 +40,15 @@
       @start="startDragging"
       @end="endDragging"
       @update:model-value="update"
+      :item-key="(el: any) => el.layer.id"
     >
-      <transition-group type="transition">
+      <template #item="{ element: combinedLayer }">
         <v-card
-          v-for="combinedLayer in combinedLayers"
-          :key="combinedLayer.layer.id"
           class="mb-1 mx-1"
         >
           <display-layer ref="displayLayerRefs" :model-value="combinedLayer.layer" />
         </v-card>
-      </transition-group>
+      </template>
     </draggable>
   </div>
 </template>

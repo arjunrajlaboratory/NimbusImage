@@ -74,7 +74,7 @@ import store from "./root";
 import sync from "./sync";
 import { MAX_NUMBER_OF_RECENT_DATASET_VIEWS } from "./constants";
 export { default as store } from "./root";
-import { app, router } from "@/main";
+// NOTE: router is imported lazily where needed to avoid circular dependency with main.ts
 
 import { Debounce } from "@/utils/debounce";
 import { TCompositionMode } from "@/utils/compositionModes";
@@ -1299,6 +1299,7 @@ export class Main extends VuexModule {
       }
 
       const newLocation = datasetView.lastLocation;
+      const { router } = await import("@/main");
       const query = router.currentRoute.value.query;
       promises.push(
         this.setXY(query.xy == null ? newLocation.xy : Number(query.xy)),

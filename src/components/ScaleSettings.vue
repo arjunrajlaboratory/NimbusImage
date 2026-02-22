@@ -78,6 +78,7 @@ import {
 import { convertLength, convertTime } from "@/utils/conversion";
 import { getDatasetScales } from "@/store/GirderAPI";
 
+import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import PixelScaleBarSetting from "@/components/PixelScaleBarSetting.vue";
 
 interface IScaleItem {

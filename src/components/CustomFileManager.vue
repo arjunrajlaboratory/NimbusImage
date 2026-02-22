@@ -29,7 +29,7 @@
       v-model:location="currentLocation"
       new-folder-enabled
       :selectable="menuEnabled || selectable"
-      v-model="selected"
+      v-model:selected="selected"
       v-bind="$attrs"
     >
       <template v-if="menuEnabled" #headerwidget>
@@ -67,7 +67,7 @@
           Upload Non-Image File
         </v-btn>
       </template>
-      <template #row-widget="props">
+      <template #row="props">
         <span>{{ renderItem(props.item) }}</span>
         <file-item-row
           :item="props.item"

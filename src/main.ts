@@ -1,4 +1,4 @@
-import { createApp } from "vue";
+import { createApp, reactive, toRefs } from "vue";
 import "roboto-fontface/css/roboto/roboto-fontface.css";
 import "@mdi/font/css/materialdesignicons.min.css";
 
@@ -48,6 +48,28 @@ app.directive("description", descriptionDirective as any);
 app.directive("tour-trigger", tourTriggerDirective as any);
 
 app.provide("girderRest", main.girderRestProxy);
+
+// Provide 'girder' injection for @girder/components v4.0
+// Components like GirderFileManager, GirderSearch, GirderBreadcrumb use inject('girder')
+// expecting { rest, user, apiRoot, token }
+const girderRestClient = main.girderRest as any;
+const girderState = reactive({
+  apiRoot: girderRestClient.apiRoot as string,
+  user: girderRestClient.user as any,
+  token: (girderRestClient.token as string) || null,
+});
+const syncGirderState = () => {
+  girderState.user = girderRestClient.user;
+  girderState.token = girderRestClient.token;
+};
+girderRestClient.on("userLoggedIn", syncGirderState);
+girderRestClient.on("userLoggedOut", syncGirderState);
+girderRestClient.on("userFetched", syncGirderState);
+girderRestClient.on("apiRootUpdated", () => {
+  girderState.apiRoot = girderRestClient.apiRoot;
+  syncGirderState();
+});
+app.provide("girder", { rest: main.girderRestProxy, ...toRefs(girderState) });
 
 // Install tour plugin before mounting
 export const tourManager = installTour(app, router);

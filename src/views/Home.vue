@@ -186,10 +186,9 @@
           </v-col>
         </v-row>
       </v-container>
-    </template>
 
-    <!-- Upload Choice Dialog -->
-    <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
+      <!-- Upload Choice Dialog -->
+      <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
       <v-card>
         <v-card-title class="headline d-flex align-center">
           Create dataset
@@ -350,6 +349,7 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+    </template>
   </div>
 </template>
 
@@ -418,6 +418,7 @@ import {
   watch,
   onMounted,
   nextTick,
+  onErrorCaptured,
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import store from "@/store";
@@ -462,6 +463,13 @@ void RecentProjects;
 void ZenodoImporter;
 void ZenodoCommunityDisplay;
 void RecentDatasets;
+
+// DEBUG: Catch child component errors during mount/render
+onErrorCaptured((err, instance, info) => {
+  const name = instance?.type?.__name || instance?.type?.name || 'Unknown';
+  console.error(`[Home onErrorCaptured] Error in child "${name}": ${err.message}\nInfo: ${info}\nStack: ${err.stack?.split('\n').slice(0, 3).join('\n')}`);
+  return true; // propagate
+});
 
 const route = useRoute();
 const router = useRouter();

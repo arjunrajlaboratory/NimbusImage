@@ -153,6 +153,7 @@ import {
   compositionItems,
   advancedCompositionItems,
 } from "@/utils/compositionModes";
+import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import PixelScaleBarSetting from "@/components/PixelScaleBarSetting.vue";
 import UserColorSettings from "@/components/UserColorSettings.vue";
 

@@ -150,18 +150,16 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import ValueSlider from "./ValueSlider.vue";
-import SwitchToggle from "./SwitchToggle.vue";
 import Toolset from "@/tools/toolsets/Toolset.vue";
 import LargeImageDropdown from "./LargeImageDropdown.vue";
+import TagPicker from "./TagPicker.vue";
+import TagFilterEditor from "./AnnotationBrowser/TagFilterEditor.vue";
 import store from "@/store";
 import filterStore from "@/store/filters";
 import annotationStore from "@/store/annotation";
 import { ITagAnnotationFilter, TLayerMode } from "@/store/model";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { logError } from "@/utils/log";
-
-// Suppress unused import warnings for template-only components
-void SwitchToggle;
 
 const dimensionLabels = ref<{
   xy: string[] | null;

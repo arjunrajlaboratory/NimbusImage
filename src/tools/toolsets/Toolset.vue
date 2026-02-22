@@ -39,7 +39,6 @@
       <v-expansion-panel-text>
         <!-- List toolset tools -->
         <v-list v-if="toolsetTools.length" density="compact" class="tight-list">
-            <draggable>
               <template v-for="(tool, index) in toolsetTools" :key="index">
                 <v-tooltip
                   location="end"
@@ -108,7 +107,6 @@
                   </div>
                 </v-tooltip>
               </template>
-            </draggable>
           <circle-to-dot-menu
             :tool="selectedTool"
             v-if="
@@ -128,7 +126,6 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, mergeProps } from "vue";
-import draggable from "vuedraggable";
 import store from "@/store";
 import {
   AnnotationNames,

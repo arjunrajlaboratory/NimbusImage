@@ -3,7 +3,7 @@
     <v-list lines="two" class="scrollable py-0">
       <div v-for="d in datasetViewItems" :key="d.datasetView.id">
         <v-tooltip
-          top
+          location="top"
           :disabled="!d.datasetInfo.description && !d.configInfo.description"
         >
           <template v-slot:activator="{ props: activatorProps }">

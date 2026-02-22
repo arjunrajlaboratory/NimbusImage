@@ -15,8 +15,14 @@
               group="layerZoneElement"
               class="ma-1 pa-1 drop"
               :class="{ dragging: isDragging, 'not-dragging': !isDragging }"
+              :item-key="(el: any) => el.layer?.id || String(el)"
             >
-              Drag layer here to create group
+              <template #item="{ element }">
+                <div>{{ element }}</div>
+              </template>
+              <template #footer>
+                <span>Drag layer here to create group</span>
+              </template>
             </draggable>
           </v-col>
           <v-col
@@ -38,27 +44,31 @@
       :animation="200"
       :fallbackOnBody="true"
       :swapThreshold="0.65"
+      :item-key="(el: any) => el[0]"
     >
-      <transition-group type="transition">
-        <template v-for="[groupId, combinedLayers] in groupsArrayWithSpacers" :key="groupId + '_layers'">
-          <display-layer-group
-            v-if="combinedLayers"
-            group="layerZoneElement"
-            :single-layer="groupId.startsWith(singleLayerPrefix)"
-            :combined-layers="combinedLayers"
-            @start="isDragging = true"
-            @end="isDragging = false"
-            @update="changeLayersInGroup($event, groupId)"
-          />
-          <draggable
-            v-else
-            :model-value="[]"
-            @update:model-value="spacerUpdate($event, groupId)"
-            group="layerZoneElement"
-            class="group-spacer"
-          />
-        </template>
-      </transition-group>
+      <template #item="{ element }">
+        <display-layer-group
+          v-if="element[1]"
+          group="layerZoneElement"
+          :single-layer="element[0].startsWith(singleLayerPrefix)"
+          :combined-layers="element[1]"
+          @start="isDragging = true"
+          @end="isDragging = false"
+          @update="changeLayersInGroup($event, element[0])"
+        />
+        <draggable
+          v-else
+          :model-value="[]"
+          @update:model-value="spacerUpdate($event, element[0])"
+          group="layerZoneElement"
+          class="group-spacer"
+          :item-key="(el: any) => el.layer?.id || String(el)"
+        >
+          <template #item="{ element: spacerEl }">
+            <div>{{ spacerEl }}</div>
+          </template>
+        </draggable>
+      </template>
     </draggable>
     <v-expansion-panel readonly class="add-layer">
       <v-btn @click="addLayer" icon title="Add new layer">
