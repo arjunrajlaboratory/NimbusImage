@@ -21,17 +21,20 @@
     @mouseover="isHovering = true"
     @mouseleave="isHovering = false"
   >
-    <tool-icon :tool="tool" />
-      <v-list-item-title>
-        {{ tool.name }}
-        <v-progress-circular
-          v-if="isToolLoading"
-          indeterminate
-          width="4"
-          size="16"
-        />
-        <v-icon v-else-if="statusIcon">{{ statusIcon }}</v-icon>
-      </v-list-item-title>
+    <template #prepend>
+      <tool-icon :tool="tool" />
+    </template>
+    <v-list-item-title>
+      {{ tool.name }}
+      <v-progress-circular
+        v-if="isToolLoading"
+        indeterminate
+        width="4"
+        size="16"
+      />
+      <v-icon v-else-if="statusIcon">{{ statusIcon }}</v-icon>
+    </v-list-item-title>
+    <template #append>
       <v-btn
         icon
         :max-height="32"
@@ -40,6 +43,7 @@
       >
         <v-icon>mdi-pen</v-icon>
       </v-btn>
+    </template>
     <v-dialog v-model="editDialog">
       <tool-edition :tool="tool" @close="editDialog = false" />
     </v-dialog>

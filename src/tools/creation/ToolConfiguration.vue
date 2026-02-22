@@ -125,7 +125,7 @@ function initialize() {
 function reset() {
   advancedPanel.value = undefined;
   toolValues.value = props.defaultValues
-    ? structuredClone(props.defaultValues)
+    ? JSON.parse(JSON.stringify(props.defaultValues))
     : {};
   initialize();
   changed();

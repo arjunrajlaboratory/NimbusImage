@@ -282,6 +282,21 @@ The `<resize-observer>` component was from the `vue-resize` package removed in B
 
 - [x] `src/components/ContrastHistogram.vue` — Removed `<resize-observer>` component, replaced with native browser `ResizeObserver` API in `onMounted`/`onBeforeUnmount`
 
+### R16. Toolset tool list layout fix (ToolItem.vue) ✅
+In Vuetify 3, `v-list-item` uses named slots (`prepend`, default, `append`) for horizontal layout. Direct children no longer auto-flex in a row like Vuetify 2. Icons and edit buttons were stacking vertically.
+
+- [x] `src/tools/toolsets/ToolItem.vue` — Moved `<tool-icon>` into `<template #prepend>`, edit button into `<template #append>`
+
+### R17. structuredClone error on Vue reactive proxies (ToolConfiguration.vue) ✅
+`structuredClone()` cannot clone Vue reactive proxy objects, throwing `DataCloneError`. This crashed the "Add new tool" flow when selecting a tool type.
+
+- [x] `src/tools/creation/ToolConfiguration.vue` — Replaced `structuredClone(props.defaultValues)` with `JSON.parse(JSON.stringify(props.defaultValues))`
+
+### R18. v-dialog inside v-expansion-panel-title watcher error (Toolset.vue) ✅
+In Vuetify 3, placing a `v-dialog` (without activator) inside `v-expansion-panel-title` causes watcher callback errors due to conflicting internal state management.
+
+- [x] `src/tools/toolsets/Toolset.vue` — Moved tool creation `v-dialog` outside `v-expansion-panel-title` to be a sibling of `v-expansion-panels` (it's opened programmatically, so it doesn't need to be inside the title)
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)

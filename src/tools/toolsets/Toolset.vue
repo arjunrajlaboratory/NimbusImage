@@ -23,18 +23,6 @@
           </template>
           <tool-type-selection @selected="handleToolTypeSelected" />
         </v-dialog>
-        <!-- Tool creation -->
-        <v-dialog
-          v-model="toolCreationDialogOpen"
-          width="60%"
-          @update:model-value="onToolCreationDialogInput"
-        >
-          <tool-creation
-            @done="onToolCreationDone"
-            :open="toolCreationDialogOpen"
-            :initial-selected-tool="selectedToolType"
-          />
-        </v-dialog>
       </v-expansion-panel-title>
       <v-expansion-panel-text>
         <!-- List toolset tools -->
@@ -122,6 +110,18 @@
       </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
+  <!-- Tool creation dialog (outside expansion panels to avoid watcher conflicts) -->
+  <v-dialog
+    v-model="toolCreationDialogOpen"
+    width="60%"
+    @update:model-value="onToolCreationDialogInput"
+  >
+    <tool-creation
+      @done="onToolCreationDone"
+      :open="toolCreationDialogOpen"
+      :initial-selected-tool="selectedToolType"
+    />
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
