@@ -85,6 +85,8 @@
                           v-else
                           :model-value="user.level"
                           :items="accessLevelItems"
+                          item-title="text"
+                          item-value="value"
                           density="compact"
                           hide-details
                           :loading="userLoading === user.id"
@@ -145,6 +147,8 @@
                   <v-select
                     v-model="newUserAccessLevel"
                     :items="accessLevelItems"
+                    item-title="text"
+                    item-value="value"
                     label="Access"
                     density="compact"
                     variant="outlined"

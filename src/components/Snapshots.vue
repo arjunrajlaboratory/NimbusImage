@@ -226,6 +226,8 @@
               v-if="downloadMode === 'layers'"
               v-model="exportLayer"
               :items="layerItems"
+              item-title="text"
+              item-value="value"
               label="Layer"
               density="compact"
               hide-details
@@ -234,6 +236,8 @@
               v-if="downloadMode === 'channels'"
               v-model="exportChannel"
               :items="channelItems"
+              item-title="text"
+              item-value="value"
               label="Channel"
               density="compact"
               hide-details

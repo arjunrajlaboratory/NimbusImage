@@ -39,6 +39,8 @@
             <v-select
               v-model="filteringShape"
               :items="availableShapes"
+              item-title="text"
+              item-value="value"
               label="Shape"
               hide-details
               density="compact"

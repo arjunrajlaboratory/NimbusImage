@@ -105,6 +105,8 @@
             label="Compositing mode"
             v-model="compositionMode"
             :items="compositionItemsList"
+            item-title="text"
+            item-value="value"
           >
             <template #item="{ item: listItem }">
               <div style="width: 100%">
@@ -122,6 +124,8 @@
             label="Background color"
             v-model="backgroundColor"
             :items="backgroundItems"
+            item-title="text"
+            item-value="value"
           />
 
           <v-divider class="my-4" />

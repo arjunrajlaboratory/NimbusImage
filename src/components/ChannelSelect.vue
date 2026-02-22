@@ -3,6 +3,8 @@
   <v-select
     v-bind="$attrs"
     :items="channelItems"
+    item-title="text"
+    item-value="value"
     density="compact"
     v-model="channel"
     :label="label"

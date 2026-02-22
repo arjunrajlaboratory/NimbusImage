@@ -306,6 +306,8 @@
         <v-select
           v-model="metadata.license"
           :items="licenseOptions"
+          item-title="text"
+          item-value="value"
           label="License"
           variant="outlined"
           density="compact"

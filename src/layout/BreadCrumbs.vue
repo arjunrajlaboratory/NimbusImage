@@ -16,6 +16,8 @@
               single-line
               height="1em"
               :items="item.subItems"
+              item-title="text"
+              item-value="value"
               :menu-props="{
                 closeOnContentClick: true,
               }"
@@ -294,6 +296,9 @@ async function refreshItems(force = false) {
   let folder;
   if (resolvedDatasetId) {
     folder = await girderResources.getFolder(resolvedDatasetId);
+    if (folder && datasetItem) {
+      datasetItem.text = folder.name;
+    }
   }
 
   if (folder?.creatorId) {
@@ -333,10 +338,24 @@ async function refreshItems(force = false) {
       configurationId: resolvedConfigurationId,
     });
     if (views.length) {
-      const datasetItems = views.map((view: IDatasetView) => ({
-        text: "Unknown dataset",
-        value: view.id,
-      }));
+      // Pre-resolve dataset names for the dropdown items
+      const datasetItems = await Promise.all(
+        views.map(async (view: IDatasetView) => {
+          let text = "Unknown dataset";
+          try {
+            const resource = await girderResources.getResource({
+              id: view.datasetId,
+              type: "folder",
+            });
+            if (resource) {
+              text = resource.name;
+            }
+          } catch {
+            // Silently handle errors
+          }
+          return { text, value: view.id };
+        }),
+      );
 
       // Replace the datasetItem in items array with subItems added
       const idx = items.value.indexOf(datasetItem);
@@ -346,13 +365,6 @@ async function refreshItems(force = false) {
         newArr[idx] = updated;
         items.value = newArr;
       }
-
-      datasetItems.forEach((viewItem: { text: string; value: string }) => {
-        const view = views.find((v: IDatasetView) => v.id === viewItem.value);
-        if (view) {
-          setItemTextWithResourceName(viewItem, view.datasetId, "folder");
-        }
-      });
     }
   }
 }
@@ -468,12 +480,20 @@ defineExpose({
   white-space: nowrap;
 }
 
-.breadcrumb-select input {
-  width: 20px;
+.breadcrumb-select {
+  min-width: 8em;
+  max-width: 20em;
+  flex-shrink: 1;
 }
 
-.breadcrumb-select {
-  min-width: 0;
+.breadcrumb-select :deep(.v-field__input) {
+  padding-top: 0;
+  padding-bottom: 0;
+  min-height: auto;
+}
+
+.breadcrumb-select :deep(.v-field__append-inner) {
+  padding-top: 0;
 }
 
 .breadcrumb-span {

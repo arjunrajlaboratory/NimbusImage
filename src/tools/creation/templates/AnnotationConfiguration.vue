@@ -8,6 +8,8 @@
             <v-select
               label="Shape"
               :items="availableShapes"
+              item-title="text"
+              item-value="value"
               v-model="shape"
               @change="changed"
               density="compact"

@@ -5,6 +5,8 @@
     density="compact"
     v-model="image"
     label="Algorithm"
+    item-title="text"
+    item-value="value"
     :menu-props="{ maxHeight: 500 }"
   >
     <template v-slot:item="{ item }">
