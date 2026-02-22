@@ -297,6 +297,11 @@ In Vuetify 3, placing a `v-dialog` (without activator) inside `v-expansion-panel
 
 - [x] `src/tools/toolsets/Toolset.vue` — Moved tool creation `v-dialog` outside `v-expansion-panel-title` to be a sibling of `v-expansion-panels` (it's opened programmatically, so it doesn't need to be inside the title)
 
+### R19. DisplayLayer column alignment with header (DisplayLayer.vue) ✅
+The layer row used 5 auto-sized `v-col` columns (icon, name, hover value, Z-merge switch, visibility switch) which didn't match the header's `cols="7"` + 2 auto layout in DisplayLayers.vue. The switches overflowed into the expansion panel chevron area.
+
+- [x] `src/components/DisplayLayer.vue` — Consolidated icon, name, and hover value into a single `cols="7"` column with flex layout, matching the header proportions. The two switch columns now share the remaining space equally and align under their header labels.
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)

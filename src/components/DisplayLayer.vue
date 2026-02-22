@@ -3,16 +3,12 @@
     <v-expansion-panel>
       <v-expansion-panel-title class="displayLayerHeader">
       <v-row dense class="align-center">
-        <v-col class="denseCol">
+        <v-col cols="7" class="d-flex align-center">
           <v-icon :color="modelValue.color" start>mdi-circle</v-icon>
+          <div class="header pa-1 text-truncate">{{ modelValue.name }}</div>
+          <span v-if="hoverValue !== null" class="ml-auto text-no-wrap">{{ hoverValue }}</span>
         </v-col>
-        <v-col class="textCol">
-          <div class="header pa-1">{{ modelValue.name }}</div>
-        </v-col>
-        <v-col v-if="hoverValue !== null" class="denseCol">
-          {{ hoverValue }}
-        </v-col>
-        <v-col class="denseCol">
+        <v-col class="d-flex justify-center">
           <v-switch
             @click.stop
             @mousedown.stop
@@ -26,7 +22,7 @@
             hide-details
           />
         </v-col>
-        <v-col class="denseCol">
+        <v-col class="d-flex justify-center">
           <v-switch
             @click.stop
             @mousedown.stop
