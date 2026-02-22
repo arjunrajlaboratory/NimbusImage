@@ -1,11 +1,9 @@
 <template>
   <div class="custom-file-manager-wrapper">
     <div class="d-flex align-center ma-2 search-container">
-      <v-icon class="mr-2">mdi-magnify</v-icon>
       <div class="flex-grow-1">
         <girder-search
           @select="searchInput"
-          hide-search-icon
           :searchTypes="[
             'user',
             'folder',
@@ -68,12 +66,13 @@
         </v-btn>
       </template>
       <template #row="props">
-        <span>{{ renderItem(props.item) }}</span>
-        <file-item-row
-          :item="props.item"
-          :debouncedChipsPerItemId="debouncedChipsPerItemId"
-          :computedChipsIds="computedChipsIds"
-        >
+        <div class="d-flex align-center flex-grow-1 itemRow">
+          <span class="text-no-wrap mr-2">{{ renderItem(props.item) }}</span>
+          <file-item-row
+            :item="props.item"
+            :debouncedChipsPerItemId="debouncedChipsPerItemId"
+            :computedChipsIds="computedChipsIds"
+          >
           <template #actions>
             <v-menu v-model="rowOptionsMenu[props.item._id]" v-if="menuEnabled">
               <template v-slot:activator="{ props: activatorProps }">
@@ -93,6 +92,7 @@
             </v-menu>
           </template>
         </file-item-row>
+        </div>
       </template>
     </girder-file-manager>
     <alert-dialog ref="alertDialog"></alert-dialog>
@@ -270,7 +270,7 @@ function iconFromItem(selectable: IGirderSelectAble) {
   }
 }
 
-function renderItem(selectable: IGirderSelectAble) {
+function renderItem(selectable: IGirderSelectAble): string {
   const datasetFolder = toDatasetFolder(selectable);
   const configurationItem = toConfigurationItem(selectable);
   selectable.icon = iconFromItem(selectable);
@@ -279,6 +279,7 @@ function renderItem(selectable: IGirderSelectAble) {
     computedChipsIds.add(selectable._id);
     addChipPromise(selectable);
   }
+  return selectable.name || "";
 }
 
 function addChipPromise(item: IGirderSelectAble) {
@@ -571,6 +572,29 @@ onBeforeUnmount(() => {
 </style>
 
 <style lang="scss">
+// Fix girder-search layout: keep search input and filter button on same line
+.custom-file-manager-wrapper .search-container .data-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+// Fix file browser rows: icon and content on same line, vertically centered
+.custom-file-manager-wrapper .select-cursor {
+  display: flex !important;
+  align-items: center;
+}
+
+// Fix file manager header: checkbox, breadcrumb, and action buttons on same row
+.custom-file-manager-wrapper .data-table-header {
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  height: 48px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
 // Unscoped styles for search bar in dark mode
 .v-theme--dark {
   .custom-file-manager-wrapper {

@@ -6,7 +6,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status
 
-**Phase 3 Batches A–D complete. All source code compiles with 0 type errors. Batch E (test suite recovery) is next.**
+**Phase 3 Batches A–D + Runtime Fixes complete. App boots and renders most views correctly on Vue 3 + Vuetify 3. Batch E (test suite recovery) is next.**
 
 - **Phase 1:** 124/124 components migrated to `<script setup>` (Batches 1–19 + master merge)
 - **Phase 2:** `$refs` converted, directive state migrated, `markRaw()` applied to all GeoJS objects
@@ -14,8 +14,9 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Phase 3 Batch B:** All mechanical code fixes complete — `Vue.set`/`Vue.delete` removed (8 files, ~50 calls), `.sync` → `v-model:` (11 instances, 9 files), `$listeners` removed, `defineOptions()` + `useAttrs()` applied
 - **Phase 3 Batch C:** `getCurrentInstance()` eliminated from all components — replaced with `useRoute()`/`useRouter()`, `useTheme()`, `useTour()` composable, and direct function calls
 - **Phase 3 Batch D:** All Vuetify 3 template fixes complete — ~400+ changes across 60+ files. Activator slots, prop renames, structural component renames, v-data-table rewrites, v-model protocol, color/theme system, and all edge cases resolved.
+- **Runtime Fixes:** Visual walkthrough completed. Fixed @girder/components inject, vuedraggable 4.x compatibility, Vuetify icon aliases, missing component imports, v-select `item-title` migration (10 files), BreadCrumbs CSS/reactivity, home screen layout (file browser names, header row flex, row alignment, search bar, app bar title position, tab active indicator). See VUE3_STEPS.md "Runtime Fixes" section.
 - **TypeScript:** `pnpm tsc` has 0 non-test errors. Test file errors (~1983) are from Vue Test Utils v1 syntax (`.destroy()`, `Vue.use()`, `propsData`) — Batch E will update these.
-- **Dev server:** Needs visual walkthrough to verify all Vuetify 3 UI changes render correctly.
+- **Dev server:** App boots successfully. Home page (file browser with names, chips, search; recent datasets/projects tabs), dataset viewer, toolsets, layer controls, settings, and snapshots all render correctly. **Known issue:** AnnotationList v-data-table shows "No data available" with incorrect pagination — needs runtime debugging.
 - **Tests:** All test file failures are from Vue 3 package swap (test infrastructure needs Batch E update).
 
 ---

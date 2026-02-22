@@ -183,8 +183,68 @@
 ### Verification
 - [x] `pnpm tsc` — 0 non-test type errors
 - [x] All Vuetify 2 template patterns verified gone (activator slots, .native, expansion-panel-header/content, list-item-content, v-simple-table, grey darken, etc.)
-- [ ] `pnpm run dev` — needs visual walkthrough
+- [x] `pnpm run dev` — visual walkthrough complete (see Runtime Fixes below)
 - [ ] `pnpm build` — needs test
+
+---
+
+## Runtime Fixes (Post-Batch D Visual Walkthrough) ✅
+
+After Batch D achieved 0 tsc errors, the dev server was started and a visual walkthrough identified several runtime-only issues. These are fixes that TypeScript could not catch because they involve runtime API behavior differences.
+
+### R1. @girder/components v4 inject key ✅
+- [x] `src/main.ts` — Added `app.provide('girder', girderRest)` so GirderFileManager (which uses `inject('girder')`) receives the REST client
+
+### R2. vuedraggable 4.x compatibility ✅
+- [x] `src/components/DisplayLayers.vue` — Converted to `#item="{ element }"` slot pattern (vuedraggable 4.x)
+- [x] `src/components/DisplayLayerGroup.vue` — Removed `tag="transition-group"` and `:component-data` (causes `__draggable_context` null error in Vue 3.5)
+- [x] `src/tools/toolsets/Toolset.vue` — Converted to `#item` slot pattern
+
+### R3. Vuetify 3 icon aliases for @girder/components ✅
+- [x] `src/plugins/vuetify.ts` — Added icon aliases (`complete`, `cancel`, `close`, `delete`, `clear`, `success`, `info`, `warning`, `error`, `prev`, `next`, `checkboxOn`, `checkboxOff`, etc.) needed by @girder/components v4
+
+### R4. Missing component imports ✅
+- [x] `src/components/ViewerToolbar.vue` — Added explicit imports for `TagPicker` and `TagFilterEditor` (required by `<script setup>`)
+- [x] `src/components/ColorPickerMenu.vue` — Added missing import
+
+### R5. Vuetify 3 v-select `item-title` migration (10 files) ✅
+Vuetify 3 changed the default item display property from `text` to `title`. All v-select components using `{ text, value }` items needed `item-title="text" item-value="value"` props.
+
+- [x] `src/layout/BreadCrumbs.vue` — dataset dropdown
+- [x] `src/components/Snapshots.vue` — layer and channel dropdowns (was showing "[object Object]")
+- [x] `src/components/ViewerSettings.vue` — compositing mode and background color dropdowns
+- [x] `src/components/DockerImageSelect.vue` — algorithm dropdown
+- [x] `src/components/ChannelSelect.vue` — channel dropdown
+- [x] `src/components/ShareDataset.vue` — access level dropdowns (2 instances)
+- [x] `src/components/ShareProject.vue` — access level dropdowns (2 instances)
+- [x] `src/components/AnnotationBrowser/AnnotationProperties/PropertyCreation.vue` — shape dropdown
+- [x] `src/tools/creation/templates/AnnotationConfiguration.vue` — shape dropdown
+- [x] `src/views/project/ProjectInfo.vue` — license dropdown
+
+### R6. BreadCrumbs CSS + reactivity fixes ✅
+- [x] CSS: Changed `.breadcrumb-select` from `min-width: 0` to `min-width: 8em; max-width: 20em` (Vuetify 3 v-select collapsed to 0px width)
+- [x] Added `:deep()` selectors for Vuetify 3 v-field padding
+- [x] Pre-resolved dataset names with `Promise.all` before setting items (Vuetify 3 v-select doesn't react to deep property mutations on `:items`)
+
+### R7. CustomFileManager v-model + slot fixes ✅
+- [x] Fixed v-model binding for GirderFileManager
+- [x] Updated slot names for @girder/components v4
+
+### R8. Home screen layout fixes ✅
+@girder/components v4 changed internal component structure, requiring CSS overrides to restore the expected layout.
+
+- [x] `src/components/CustomFileManager.vue` — `renderItem()` now returns `selectable.name` (v4 `#row` slot replaces default content including name)
+- [x] `src/components/CustomFileManager.vue` — Wrapped row content in flex div for inline layout (icon + name + chips on one line)
+- [x] `src/components/CustomFileManager.vue` — Removed duplicate search icon (GirderSearch v4 has built-in icon)
+- [x] `src/components/CustomFileManager.vue` — CSS: `.data-table-header { display: flex }` (v4 lost flex layout on header row)
+- [x] `src/components/CustomFileManager.vue` — CSS: `.select-cursor { display: flex }` (icon and row content were stacking vertically)
+- [x] `src/components/CustomFileManager.vue` — CSS: `.data-search { display: flex }` (search input and filter icon on same line)
+- [x] `src/App.vue` — `.logo { flex: 0 0 auto }` (Vuetify 3 v-toolbar-title flex-grow:1 was pushing title to center)
+- [x] `src/views/Home.vue` — Added `color="primary"` to v-tabs (active tab indicator not visible in Vuetify 3 dark theme)
+
+### Known Runtime Issues (Not Yet Fixed)
+- [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
+- [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
 
 ## Batch E: Test Suite Recovery — NOT STARTED
 - [ ] E1. Update mounting patterns (@vue/test-utils v2)

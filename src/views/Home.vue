@@ -68,7 +68,7 @@
           </v-col>
           <v-col class="fill-height recent-dataset">
             <section class="mb-4 home-section">
-              <v-tabs v-model="datasetsTab">
+              <v-tabs v-model="datasetsTab" color="primary">
                 <v-tab>Recent Datasets</v-tab>
                 <v-tab>Recent Projects</v-tab>
                 <v-tab

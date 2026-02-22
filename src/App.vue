@@ -429,6 +429,7 @@ defineExpose({
   cursor: pointer;
   text-overflow: unset;
   overflow: unset;
+  flex: 0 0 auto !important;
 }
 </style>
 <style lang="scss">
