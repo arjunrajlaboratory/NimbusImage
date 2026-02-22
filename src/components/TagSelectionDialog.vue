@@ -5,7 +5,7 @@
         Add tags to or remove tags from selected objects
       </v-card-title>
       <tag-picker class="ma-4 pa-4" v-model="localTags"></tag-picker>
-      <v-radio-group v-model="localAddOrRemove" row class="ma-4">
+      <v-radio-group v-model="localAddOrRemove" inline class="ma-4">
         <v-radio label="Add tags to selected objects" value="add"></v-radio>
         <v-radio
           label="Remove tags from selected objects"

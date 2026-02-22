@@ -1,7 +1,7 @@
 <template>
   <div style="overflow-y: auto; scrollbar-width: none">
     <div v-mousetrap="mousetrapSliders" id="viewer-toolbar-tourstep">
-      <v-layout>
+      <div class="d-flex align-center">
         <value-slider
           v-model="xy"
           label="XY"
@@ -19,8 +19,8 @@
           label="Unroll"
           :disabled="!(maxXY > 0 || unrollXY)"
         />
-      </v-layout>
-      <v-layout>
+      </div>
+      <div class="d-flex align-center">
         <value-slider
           v-model="z"
           label="Z"
@@ -38,8 +38,8 @@
           label="Unroll"
           :disabled="!(maxZ > 0 || unrollZ)"
         />
-      </v-layout>
-      <v-layout>
+      </div>
+      <div class="d-flex align-center">
         <value-slider
           v-model="time"
           label="Time"
@@ -57,8 +57,8 @@
           label="Unroll"
           :disabled="!(maxTime > 0 || unrollT)"
         />
-      </v-layout>
-      <v-layout v-if="maxTime > 0 && !unrollT">
+      </div>
+      <div v-if="maxTime > 0 && !unrollT" class="d-flex align-center">
         <v-checkbox
           id="timelapse-mode-tourstep"
           v-tour-trigger="'timelapse-mode-tourtrigger'"
@@ -75,26 +75,26 @@
           :max="100"
           :title="'Track window size'"
         />
-      </v-layout>
+      </div>
       <!-- TODO: Only display if there is more than one large image -->
       <large-image-dropdown />
-      <v-layout v-if="timelapseMode">
+      <div v-if="timelapseMode" class="d-flex align-center">
         <tag-picker
           id="timelapse-tags-tourstep"
           class="ml-3"
           v-model="timelapseTags"
           style="max-width: 300px"
         />
-      </v-layout>
-      <v-layout v-if="timelapseMode">
+      </div>
+      <div v-if="timelapseMode" class="d-flex align-center">
         <v-checkbox
           id="timelapse-labels-tourstep"
           class="ml-3 my-checkbox"
           v-model="showTimelapseLabels"
           label="Show labels"
         />
-      </v-layout>
-      <v-layout v-if="timelapseMode">
+      </div>
+      <div v-if="timelapseMode" class="d-flex align-center">
         <v-btn
           class="ml-3"
           size="small"
@@ -102,7 +102,7 @@
         >
           Delete all timelapse connections
         </v-btn>
-      </v-layout>
+      </div>
     </div>
     <toolset></toolset>
     <v-radio-group
@@ -110,7 +110,7 @@
       label="Layers: "
       mandatory
       density="compact"
-      row
+      inline
       hide-details
       class="layer-mode-controls"
     >
@@ -126,6 +126,9 @@
 </template>
 
 <style lang="scss" scoped>
+.my-checkbox {
+  flex-shrink: 0;
+}
 .my-checkbox :deep(.v-input__control) {
   transform: scale(0.9) translateY(5%);
 }

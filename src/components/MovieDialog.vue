@@ -46,7 +46,7 @@
 
           <v-row class="mt-4">
             <v-col cols="12">
-              <v-radio-group v-model="downloadFormat" row>
+              <v-radio-group v-model="downloadFormat" inline>
                 <v-radio
                   label="Download zipped sequence of image files"
                   :value="MovieFormat.ZIP"

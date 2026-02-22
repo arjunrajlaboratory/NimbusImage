@@ -242,6 +242,35 @@ Vuetify 3 changed the default item display property from `text` to `title`. All 
 - [x] `src/App.vue` — `.logo { flex: 0 0 auto }` (Vuetify 3 v-toolbar-title flex-grow:1 was pushing title to center)
 - [x] `src/views/Home.vue` — Added `color="primary"` to v-tabs (active tab indicator not visible in Vuetify 3 dark theme)
 
+### R9. `v-layout` → plain flex divs (ViewerToolbar.vue) ✅
+In Vuetify 3, `<v-layout>` is the **application layout wrapper** (used with v-app-bar, v-navigation-drawer, v-main, etc.), NOT a simple flex row container as it was in Vuetify 2. All `<v-layout>` used as flex row wrappers must be replaced with `<div class="d-flex align-center">` or similar.
+
+- [x] `src/components/ViewerToolbar.vue` — Replaced 7 `<v-layout>` wrappers with `<div class="d-flex align-center">`
+
+### R10. `v-radio-group` `row` → `inline` prop (4 files) ✅
+In Vuetify 3, the `row` boolean prop on `<v-radio-group>` was renamed to `inline`. Without this fix, radio buttons stack vertically instead of rendering horizontally.
+
+- [x] `src/components/ViewerToolbar.vue` — layer mode radio group
+- [x] `src/components/MovieDialog.vue` — download format radio group
+- [x] `src/components/TagSelectionDialog.vue` — add/remove radio group
+- [x] `src/components/DisplayLayer.vue` — channel radio group
+
+### R11. Viewer sidebar hidden behind app bar (Viewer.vue) ✅
+In Vuetify 3, `<v-app-bar>` renders with `position: fixed` and `<v-main>` compensates with `padding-top: 64px`. However, `.viewer` in `Viewer.vue` used `position: absolute; top: 0` which positioned it relative to `.v-application__wrap`, ignoring v-main's padding. The top 64px of the sidebar was hidden behind the app bar.
+
+- [x] `src/views/datasetView/Viewer.vue` — Removed `position: absolute; left: 0; top: 0` from `.viewer`, replaced with `height: calc(100vh - 64px)` so it flows naturally within v-main's content area
+
+### R12. ValueSlider flex layout fix (ValueSlider.vue) ✅
+When ValueSlider sits alongside a checkbox in a flex row, `width: 100%` consumed all available space. Changed to `flex: 1; min-width: 0` so it shares space properly. Also added `flex-shrink: 0` to `.my-checkbox` in ViewerToolbar to prevent label text wrapping.
+
+- [x] `src/components/ValueSlider.vue` — `.value-slider` changed from `width: 100%` to `flex: 1; min-width: 0`
+- [x] `src/components/ViewerToolbar.vue` — Added `flex-shrink: 0` to `.my-checkbox`
+
+### R13. v-slider step prop for integer values (ValueSlider.vue) ✅
+Vuetify 3's `<v-slider>` defaults to continuous (fractional) values, unlike Vuetify 2 which defaulted to step 1. Without `step="1"`, dragging the slider produces values like 2.7, 4.3 instead of clean integers.
+
+- [x] `src/components/ValueSlider.vue` — Added `:step="1"` to `<v-slider>`
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)

@@ -62,7 +62,7 @@
         class="mb-4"
       />
       <v-radio-group
-        row
+        inline
         v-model="channel"
         label="Channel"
         density="compact"

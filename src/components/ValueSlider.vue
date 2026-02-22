@@ -54,6 +54,7 @@
             v-model="slider"
             :max="max + offset"
             :min="min + offset"
+            :step="1"
             hide-details
           />
         </v-col>
@@ -72,7 +73,8 @@
 
 <style scoped>
 .value-slider {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .label-column {
