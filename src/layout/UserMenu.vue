@@ -1,8 +1,8 @@
 <template>
   <div>
     <v-dialog v-model="userMenu" v-if="!store.isLoggedIn" max-width="400px">
-      <template #activator="{ on }">
-        <v-btn v-if="!store.isLoggedIn" v-on="on" color="primary">Login</v-btn>
+      <template #activator="{ props: activatorProps }">
+        <v-btn v-if="!store.isLoggedIn" v-bind="activatorProps" color="primary">Login</v-btn>
       </template>
       <v-container class="pa-0">
         <v-card class="pa-6">
@@ -46,11 +46,10 @@
       v-else
       v-model="userMenu"
       close-on-click
-      offset-y
       :close-on-content-click="false"
     >
-      <template #activator="{ on }">
-        <v-btn icon v-on="on">
+      <template #activator="{ props: activatorProps }">
+        <v-btn icon v-bind="activatorProps">
           <v-icon>mdi-account-circle</v-icon>
         </v-btn>
       </template>
@@ -62,14 +61,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, getCurrentInstance } from "vue";
+import { ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import UserProfileSettings from "@/layout/UserProfileSettings.vue";
 import UserMenuLoginForm from "@/layout/UserMenuLoginForm.vue";
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
 
-const userMenu = ref(vm.$route.name === "root");
+const userMenu = ref(route.name === "root");
 
 const isDomainLocked = !!import.meta.env.VITE_GIRDER_URL;
 

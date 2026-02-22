@@ -3,22 +3,20 @@
     <alert-dialog ref="alert" />
     <!-- The breadcrumbs (dataset and configuration) -->
     <v-breadcrumbs :items="items" divider="" class="py-0 mx-2">
-      <template #item="{ item }">
+      <template #item="{ item }: { item: any }">
         <v-breadcrumbs-item class="breadcrumb-item mx-0 px-1 breadcrumb-span">
           {{ item.title }}
           <!-- If the item has subitems, use a select and an "info" icon -->
           <template v-if="item.subItems">
             <v-select
-              :value="getCurrentViewItem(item.subItems)"
-              @input="goToView"
-              dense
+              :model-value="getCurrentViewItem(item.subItems)"
+              @update:model-value="onViewSelect"
+              density="compact"
               hide-details
               single-line
               height="1em"
               :items="item.subItems"
               :menu-props="{
-                offsetY: true,
-                closeOnClick: true,
                 closeOnContentClick: true,
               }"
               class="body-2 ml-2 breadcrumb-select"
@@ -43,11 +41,11 @@
             <v-btn
               v-if="item.title === 'Dataset:' && showExternalLink"
               icon
-              x-small
+              size="x-small"
               title="Open in Girder"
               @click="openGirderFolder"
             >
-              <v-icon small>mdi-open-in-new</v-icon>
+              <v-icon size="small">mdi-open-in-new</v-icon>
             </v-btn>
           </template>
           <!-- Otherwise, simply make the item clickable -->
@@ -63,11 +61,11 @@
             <v-btn
               v-if="item.title === 'Dataset:' && showExternalLink"
               icon
-              x-small
+              size="x-small"
               title="Open in Girder"
               @click="openGirderFolder"
             >
-              <v-icon small>mdi-open-in-new</v-icon>
+              <v-icon size="small">mdi-open-in-new</v-icon>
             </v-btn>
           </template>
         </v-breadcrumbs-item>
@@ -93,10 +91,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import girderResources from "@/store/girderResources";
-import { Location } from "vue-router";
+import type { RouteLocationRaw } from "vue-router";
 import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 
 import { IDatasetConfiguration, IDatasetView } from "@/store/model";
@@ -107,7 +106,7 @@ void AlertDialog;
 
 interface IBreadCrumbItem {
   title: string;
-  to: Location;
+  to: RouteLocationRaw;
   text: string;
   subItems?: {
     text: string;
@@ -115,7 +114,8 @@ interface IBreadCrumbItem {
   }[];
 }
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
+const router = useRouter();
 
 // Template ref
 const alert = ref<any>(null);
@@ -127,7 +127,7 @@ const currentDatasetId = ref<string | null>(null);
 const previousRefreshInfo = ref<{
   datasetId: string | null;
   configurationId: string | null;
-  routeName: string | null | undefined;
+  routeName: string | symbol | null | undefined;
 }>({
   datasetId: null,
   configurationId: null,
@@ -158,8 +158,8 @@ const addDatasetFlag = computed({
 });
 
 const datasetView = computed(() => {
-  const { datasetViewId } = vm.$route.params;
-  if (datasetViewId) {
+  const datasetViewId = route.params.datasetViewId;
+  if (datasetViewId && typeof datasetViewId === "string") {
     return store.api.getDatasetView(datasetViewId);
   }
   return null;
@@ -167,9 +167,10 @@ const datasetView = computed(() => {
 
 // eslint-disable-next-line vue/no-async-in-computed-properties
 const datasetId = computed((): Promise<string> | null => {
-  const paramsId = vm.$route.params.datasetId;
-  const queryId = vm.$route.query.datasetId;
-  if (paramsId) return Promise.resolve(paramsId);
+  const paramsId = route.params.datasetId;
+  const queryId = route.query.datasetId;
+  if (paramsId && typeof paramsId === "string")
+    return Promise.resolve(paramsId);
   if (queryId && typeof queryId === "string") return Promise.resolve(queryId);
   if (datasetView.value) {
     return datasetView.value.then(({ datasetId }) => datasetId);
@@ -179,12 +180,13 @@ const datasetId = computed((): Promise<string> | null => {
 
 // eslint-disable-next-line vue/no-async-in-computed-properties
 const configurationId = computed((): Promise<string> | null => {
-  const paramsId = vm.$route.params.configurationId;
-  const queryId = vm.$route.query.configurationId;
+  const paramsId = route.params.configurationId;
+  const queryId = route.query.configurationId;
   if (datasetView.value) {
     return datasetView.value.then(({ configurationId }) => configurationId);
   }
-  if (paramsId) return Promise.resolve(paramsId);
+  if (paramsId && typeof paramsId === "string")
+    return Promise.resolve(paramsId);
   if (queryId && typeof queryId === "string") return Promise.resolve(queryId);
   return null;
 });
@@ -259,14 +261,14 @@ async function refreshItems(force = false) {
     !force &&
     resolvedDatasetId === previousRefreshInfo.value.datasetId &&
     resolvedConfigurationId === previousRefreshInfo.value.configurationId &&
-    vm.$route.name === previousRefreshInfo.value.routeName
+    route.name === previousRefreshInfo.value.routeName
   ) {
     return;
   }
   previousRefreshInfo.value = {
     datasetId: resolvedDatasetId ?? null,
     configurationId: resolvedConfigurationId ?? null,
-    routeName: vm.$route.name,
+    routeName: route.name,
   };
 
   const newItems: IBreadCrumbItem[] = [];
@@ -297,7 +299,7 @@ async function refreshItems(force = false) {
   if (folder?.creatorId) {
     const ownerItem: IBreadCrumbItem = {
       title: "Owner:",
-      to: {} as Location,
+      to: {} as RouteLocationRaw,
       text: "Unknown owner",
     };
     newItems.push(ownerItem);
@@ -325,7 +327,7 @@ async function refreshItems(force = false) {
   if (
     datasetItem &&
     resolvedConfigurationId &&
-    vm.$route.name === "datasetview"
+    route.name === "datasetview"
   ) {
     const views = await store.api.findDatasetViews({
       configurationId: resolvedConfigurationId,
@@ -385,18 +387,23 @@ function openGirderFolder() {
 
 function getCurrentViewItem(subitems: IBreadCrumbItem["subItems"]) {
   if (!subitems) return null;
-  const { datasetViewId } = vm.$route.params;
+  const { datasetViewId } = route.params;
   if (!datasetViewId) return null;
   return subitems.find((subitem) => subitem.value === datasetViewId) || null;
 }
 
+function onViewSelect(val: unknown) {
+  const id = typeof val === "string" ? val : (val as any)?.value;
+  if (id) goToView(id);
+}
+
 function goToView(datasetViewId: string) {
-  const currentDatasetViewId = vm.$route.params?.datasetViewId;
+  const currentDatasetViewId = route.params?.datasetViewId;
   if (currentDatasetViewId === datasetViewId) return;
-  vm.$router.push({
+  router.push({
     name: "datasetview",
     params: { datasetViewId },
-    query: { ...vm.$route.query },
+    query: { ...route.query },
   });
 }
 

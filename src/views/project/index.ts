@@ -2,9 +2,9 @@ import Project from "./Project.vue";
 import ProjectInfo from "./ProjectInfo.vue";
 
 import projects from "@/store/projects";
-import { RouteConfig } from "vue-router";
+import type { RouteRecordRaw } from "vue-router";
 
-const routes: RouteConfig[] = [
+const routes: RouteRecordRaw[] = [
   {
     path: ":projectId",
     component: Project,

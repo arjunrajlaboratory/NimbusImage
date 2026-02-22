@@ -5,7 +5,7 @@
       <v-card-text>
         <v-progress-linear
           class="text-progress"
-          :value="totalProgressPercentage"
+          :model-value="totalProgressPercentage"
         />
       </v-card-text>
     </v-card>
@@ -29,7 +29,7 @@
         @filesChanged="filesChanged"
         @done="nextStep"
         @error="interruptedUpload"
-        @hook:mounted="uploadMounted"
+        @vue:mounted="uploadMounted"
       >
         <template #files="{ files }" v-if="quickupload && !pipelineError">
           <v-card>
@@ -42,7 +42,7 @@
 
       <file-dropzone
         v-if="(!quickupload || pipelineError) && files.length > 0"
-        @input="addMoreFiles"
+        @update:model-value="addMoreFiles"
         style="height: 150px"
         class="mb-2"
       >
@@ -85,12 +85,12 @@
         </v-card-text>
       </v-card>
 
-      <v-alert v-if="failedDataset" text type="error">
+      <v-alert v-if="failedDataset" variant="tonal" type="error">
         Could not create dataset <strong>{{ failedDataset }}</strong
         >. This might happen, for instance, if a dataset by that name already
         exists. Please update the dataset name field and try again.
       </v-alert>
-      <v-alert v-if="fileSizeExceeded" text type="error">
+      <v-alert v-if="fileSizeExceeded" variant="tonal" type="error">
         Total file size ({{ totalSizeString }}) exceeds the maximum allowed size
         of
         {{
@@ -99,7 +99,7 @@
             : maxTotalFileSizeString
         }}
       </v-alert>
-      <v-alert v-if="invalidLocation" text type="error">
+      <v-alert v-if="invalidLocation" variant="tonal" type="error">
         Cannot create datasets in this location. Please select a subfolder
         within your user directory or group folder.
       </v-alert>
@@ -140,7 +140,7 @@
     <!-- Batch mode progress header -->
     <v-card v-if="isBatchMode && !pipelineError" class="mb-4">
       <v-card-title>
-        <v-icon left>mdi-folder-multiple</v-icon>
+        <v-icon start>mdi-folder-multiple</v-icon>
         Creating Collection: {{ effectiveBatchName }}
       </v-card-title>
       <v-card-subtitle>
@@ -151,7 +151,7 @@
       </v-card-subtitle>
       <v-card-text>
         <v-progress-linear
-          :value="
+          :model-value="
             ((store.uploadWorkflow.currentDatasetIndex +
               (uploading || configuring ? 0.5 : 1)) /
               totalDatasets) *
@@ -171,7 +171,7 @@
                   ? 'primary'
                   : 'grey'
             "
-            small
+            size="small"
             class="mr-1"
           >
             {{ idx + 1 }}
@@ -182,7 +182,7 @@
 
     <!-- Advanced batch mode: Show config UI prominently for first dataset -->
     <template v-if="showConfigAtTop && datasetId">
-      <v-alert type="info" text class="mb-4">
+      <v-alert type="info" variant="tonal" class="mb-4">
         Configure the dimension assignments for the first dataset. These
         settings will be applied to all subsequent datasets.
       </v-alert>
@@ -224,25 +224,25 @@
               <div class="text-subtitle-1 mr-3">{{ progressStatusText }}</div>
               <v-spacer></v-spacer>
               <v-btn
-                small
-                text
+                size="small"
+                variant="text"
                 color="info"
                 @click="showLogDialog = true"
                 class="ml-2"
               >
-                <v-icon small left>mdi-text-box-outline</v-icon>
+                <v-icon size="small" start>mdi-text-box-outline</v-icon>
                 View Log
               </v-btn>
             </div>
             <v-progress-linear
               v-if="transcodeProgress !== undefined"
-              :value="transcodeProgress"
+              :model-value="transcodeProgress"
               height="20"
               striped
               color="primary"
             >
               <template v-slot:default>
-                <span class="white--text"
+                <span class="text-white"
                   >{{ Math.ceil(transcodeProgress) }}%</span
                 >
               </template>
@@ -266,9 +266,9 @@
         <v-card-title class="headline">
           Transcoding Log
           <v-spacer></v-spacer>
-          <v-tooltip bottom>
-            <template v-slot:activator="{ on, attrs }">
-              <v-btn icon v-bind="attrs" v-on="on" @click="copyLogToClipboard">
+          <v-tooltip location="bottom">
+            <template v-slot:activator="{ props: activatorProps }">
+              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
@@ -283,7 +283,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" text @click="showLogDialog = false"
+          <v-btn color="primary" variant="text" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -298,8 +298,8 @@
     <!-- Batch mode error dialog -->
     <v-dialog v-model="showBatchErrorDialog" persistent max-width="500">
       <v-card>
-        <v-card-title class="headline error--text">
-          <v-icon left color="error">mdi-alert-circle</v-icon>
+        <v-card-title class="headline text-error">
+          <v-icon start color="error">mdi-alert-circle</v-icon>
           Dataset Failed
         </v-card-title>
         <v-card-text>
@@ -309,7 +309,7 @@
             {{ totalDatasets }}:
             <strong>{{ currentDatasetName }}</strong>
           </p>
-          <v-alert type="error" text dense class="mt-3">
+          <v-alert type="error" variant="tonal" density="compact" class="mt-3">
             {{ batchErrorMessage }}
           </v-alert>
           <p class="mt-3">
@@ -319,13 +319,13 @@
           </p>
         </v-card-text>
         <v-card-actions>
-          <v-btn text @click="handleStopBatch">
-            <v-icon left>mdi-stop</v-icon>
+          <v-btn variant="text" @click="handleStopBatch">
+            <v-icon start>mdi-stop</v-icon>
             Stop and Review
           </v-btn>
           <v-spacer></v-spacer>
           <v-btn color="primary" @click="handleContinueBatch">
-            <v-icon left>mdi-skip-next</v-icon>
+            <v-icon start>mdi-skip-next</v-icon>
             Skip and Continue
           </v-btn>
         </v-card-actions>
@@ -334,19 +334,13 @@
   </v-container>
 </template>
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  watch,
-  onMounted,
-  nextTick,
-  getCurrentInstance,
-} from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
+import { useRouter } from "vue-router";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IGirderApiKey, IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
-import UploadManager from "@girder/components/src/utils/upload";
+import { UploadManager } from "@girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import { Upload as GirderUpload } from "@/girder/components";
 import { IDataset } from "@/store/model";
@@ -360,7 +354,7 @@ import datasetMetadataImport from "@/store/datasetMetadataImport";
 import { importAnnotationsFromData } from "@/utils/annotationImport";
 import { formatSize } from "@/utils/conversion";
 import { parseTranscodeOutput } from "@/utils/strings";
-import Vue from "vue";
+import type { ComponentPublicInstance } from "vue";
 
 const allTriggers = Object.values(triggersPerCategory).flat();
 
@@ -368,7 +362,7 @@ interface FileUpload {
   file: File;
 }
 
-type GWCUpload = Vue & {
+type GWCUpload = ComponentPublicInstance & {
   inputFilesChanged(files: File[]): void;
   startUpload(): any;
   totalProgressPercent: number;
@@ -452,7 +446,7 @@ const emit = defineEmits<{
   (e: "datasetUploaded", id: string): void;
 }>();
 
-const vm = getCurrentInstance()!.proxy;
+const router = useRouter();
 
 // --- Template refs ---
 const form = ref<HTMLFormElement>();
@@ -897,17 +891,17 @@ function navigateToCollection() {
 
   if (collection) {
     store.setSelectedConfiguration(collection.id);
-    vm.$router.push({
+    router.push({
       name: "configuration",
       params: { configurationId: collection.id },
     });
   } else if (datasets && datasets.length > 0) {
-    vm.$router.push({
+    router.push({
       name: "dataset",
       params: { datasetId: datasets[0].id },
     });
   } else {
-    vm.$router.push({
+    router.push({
       name: "root",
     });
   }
@@ -933,17 +927,17 @@ function handleStopBatch() {
   store.completeUploadWorkflow();
 
   if (collection && datasets.length > 0) {
-    vm.$router.push({
+    router.push({
       name: "configuration",
       params: { configurationId: collection.id },
     });
   } else if (datasets.length > 0) {
-    vm.$router.push({
+    router.push({
       name: "dataset",
       params: { datasetId: datasets[0].id },
     });
   } else {
-    vm.$router.push({ name: "root" });
+    router.push({ name: "root" });
   }
 }
 
@@ -1023,7 +1017,7 @@ function nextStep() {
   } else if (isQuickImport.value) {
     configureDataset();
   } else if (props.autoMultiConfig) {
-    vm.$router.push({
+    router.push({
       name: "multi",
       params: { datasetId: dsId },
     });
@@ -1141,7 +1135,7 @@ async function createView(jsonId: string | null) {
   const route = vc.toRoute(defaultView);
   creatingView.value = false;
 
-  vm.$router.push(route);
+  router.push(route);
 }
 
 function copyLogToClipboard() {

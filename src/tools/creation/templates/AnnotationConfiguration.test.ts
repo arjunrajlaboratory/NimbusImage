@@ -117,7 +117,7 @@ describe("AnnotationConfiguration", () => {
       shape: "polygon" as const,
       color: undefined,
     };
-    const wrapper = mountComponent({ value: valueProp });
+    const wrapper = mountComponent({ modelValue: valueProp });
     const vm = wrapper.vm as any;
 
     expect(vm.shape).toBe("polygon");
@@ -148,7 +148,7 @@ describe("AnnotationConfiguration", () => {
     vm.shape = "line";
     vm.changed();
 
-    const inputEvents = wrapper.emitted("input")!;
+    const inputEvents = wrapper.emitted("update:modelValue")!;
     expect(inputEvents).toBeTruthy();
     const lastInput = inputEvents[inputEvents.length - 1][0];
     expect(lastInput).toHaveProperty("tags");

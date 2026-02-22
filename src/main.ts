@@ -1,4 +1,4 @@
-import Vue from "vue";
+import { createApp } from "vue";
 import "roboto-fontface/css/roboto/roboto-fontface.css";
 import "@mdi/font/css/materialdesignicons.min.css";
 
@@ -6,10 +6,7 @@ import "reflect-metadata";
 import "./registerServiceWorker";
 import vuetify from "./plugins/vuetify";
 import VueAsyncComputed from "vue-async-computed";
-import VueRouter from "vue-router";
-import "./plugins/resize";
-
-Vue.use(VueRouter);
+import { createRouter, createWebHashHistory } from "vue-router";
 
 import main, { store } from "./store";
 
@@ -18,43 +15,44 @@ import App from "./App.vue";
 
 import "./style.scss";
 
+// Vuetify 3 styles
+import "vuetify/styles";
+
 // Mousetrap is configured for further imports (no need to import record plugin again)
 import "mousetrap";
 import "mousetrap/plugins/record/mousetrap-record.min.js";
-import vMousetrap from "@/utils/v-mousetrap";
-import vDescription from "@/utils/v-description";
+import { mousetrapDirective } from "@/utils/v-mousetrap";
+import { descriptionDirective } from "@/utils/v-description";
 import chat from "./store/chat";
-import VueTooltipDirective from "vue-tooltip-directive";
-import NimbusTooltip from "@/components/NimbusTooltip.vue";
 import { installTour } from "./plugins/tour";
-import "./plugins/tour-trigger.directive";
-
-Vue.config.productionTip = false;
-
-Vue.use(VueAsyncComputed);
-Vue.use(vMousetrap);
-Vue.use(vDescription);
-Vue.use(VueTooltipDirective, { component: NimbusTooltip });
+import { tourTriggerDirective } from "./plugins/tour-trigger.directive";
 
 main.initialize();
 main.setupWatchers();
 chat.initializeChatDatabase();
 
-const router = new VueRouter({
+const router = createRouter({
+  history: createWebHashHistory(),
   routes,
 });
 
-// Install tour plugin before creating Vue instance
-export const tourManager = installTour(router);
+const app = createApp(App);
 
-const app = new Vue({
-  provide: {
-    girderRest: main.girderRestProxy,
-  },
-  router,
-  store,
-  vuetify,
-  render: (h: any) => h(App),
-}).$mount("#app");
+app.use(router);
+app.use(store);
+app.use(vuetify);
+app.use(VueAsyncComputed);
 
-export { app };
+app.directive("mousetrap", mousetrapDirective as any);
+app.directive("description", descriptionDirective as any);
+app.directive("tour-trigger", tourTriggerDirective as any);
+
+app.provide("girderRest", main.girderRestProxy);
+
+// Install tour plugin before mounting
+export const tourManager = installTour(app, router);
+app.provide("tourManager", tourManager);
+
+app.mount("#app");
+
+export { app, router };

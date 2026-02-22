@@ -3,8 +3,8 @@
     ref="rootEl"
     :class="{
       histogram: true,
-      'theme--light': !$vuetify.theme.dark,
-      'theme--dark': $vuetify.theme.dark,
+      'v-theme--light': !$vuetify.theme.current.dark,
+      'v-theme--dark': $vuetify.theme.current.dark,
     }"
   >
     <switch-toggle
@@ -59,7 +59,7 @@
         @keydown="validateCachedBlackPoint"
         :append-icon="editIcon"
         hide-details
-        dense
+        density="compact"
       />
       <v-text-field
         type="number"
@@ -67,12 +67,12 @@
         @keydown="validateCachedWhitePoint"
         :append-icon="editIcon"
         hide-details
-        dense
+        density="compact"
       />
     </div>
     <div class="toolbar">
       <v-btn
-        x-small
+        size="x-small"
         @click="reset"
         color="secondary"
         title="Reset to histogram limits"
@@ -80,7 +80,7 @@
         Reset
       </v-btn>
       <v-btn
-        x-small
+        size="x-small"
         @click="revertSaved"
         color="secondary"
         title="Revert to saved points"
@@ -88,7 +88,7 @@
         Revert to saved
       </v-btn>
       <v-btn
-        x-small
+        size="x-small"
         @click="saveCurrent"
         color="secondary"
         title="Save current points"
@@ -565,7 +565,7 @@ $savedHint: 7px;
   }
 }
 
-.theme--dark {
+.v-theme--dark {
   .path {
     fill: #c2c2c2;
   }
@@ -595,7 +595,7 @@ $savedHint: 7px;
   }
 }
 
-.theme--light {
+.v-theme--light {
   .path {
     fill: #c2c2c2;
   }

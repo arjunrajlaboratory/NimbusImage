@@ -10,8 +10,8 @@
           :title="`Current tags selection mode: ${
             areTagsInclusive ? 'inclusive' : 'exclusive'
           }`"
-          x-small
-          fab
+          size="x-small"
+          icon
           @click="areTagsInclusive = !areTagsInclusive"
         >
           <v-icon>
@@ -46,7 +46,7 @@ interface IRestrictionSetup {
 
 const props = withDefaults(
   defineProps<{
-    value?: IRestrictionSetup;
+    modelValue?: IRestrictionSetup;
     inclusiveToggle?: boolean;
     template?: any;
     tagsLabel?: string;
@@ -58,7 +58,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: "input", value: IRestrictionSetup): void;
+  (e: "update:modelValue", value: IRestrictionSetup): void;
   (e: "change"): void;
 }>();
 
@@ -67,13 +67,13 @@ const areTagsInclusive = ref(true);
 const selectedLayer = ref<string | null>(null);
 
 function updateFromValue() {
-  if (!props.value) {
+  if (!props.modelValue) {
     reset();
     return;
   }
-  newTags.value = props.value.tags;
-  areTagsInclusive.value = !!props.value.tagsInclusive;
-  selectedLayer.value = props.value.layer;
+  newTags.value = props.modelValue.tags;
+  areTagsInclusive.value = !!props.modelValue.tagsInclusive;
+  selectedLayer.value = props.modelValue.layer;
 }
 
 function reset() {
@@ -108,14 +108,14 @@ function changed() {
   if (props.inclusiveToggle) {
     result.tagsInclusive = areTagsInclusive.value;
   }
-  emit("input", result);
+  emit("update:modelValue", result);
   emit("change");
 }
 
 watch(newTags, changed);
 watch(selectedLayer, changed);
 watch(areTagsInclusive, changed);
-watch(() => props.value, updateFromValue);
+watch(() => props.modelValue, updateFromValue);
 
 onMounted(() => {
   updateFromValue();

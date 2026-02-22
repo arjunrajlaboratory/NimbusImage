@@ -1,8 +1,8 @@
 <template>
   <v-card>
     <v-card-title>
-      <span class="text--secondary">Adding collection to project:</span>
-      <span class="text--primary ml-1">{{ project.name }}</span>
+      <span class="text-medium-emphasis">Adding collection to project:</span>
+      <span class="text-high-emphasis ml-1">{{ project.name }}</span>
     </v-card-title>
     <v-card-text>
       <v-text-field
@@ -10,8 +10,8 @@
         label="Search collections..."
         prepend-icon="mdi-magnify"
         clearable
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         class="mb-2"
       />
 
@@ -22,7 +22,7 @@
         class="text-center pa-4"
       >
         <v-icon size="48" color="grey">mdi-folder-multiple-outline</v-icon>
-        <div class="text-body-2 grey--text mt-2">
+        <div class="text-body-2 text-grey mt-2">
           {{
             searchQuery
               ? "No collections match your search"
@@ -31,26 +31,22 @@
         </div>
       </div>
 
-      <v-list v-else dense class="collection-list">
-        <v-list-item-group v-model="selectedIndices" multiple>
+      <v-list v-else density="compact" class="collection-list">
           <v-list-item
             v-for="(collection, index) in filteredCollections"
             :key="collection.id"
             :disabled="isInProject(collection.id)"
           >
-            <v-list-item-action>
               <v-checkbox
-                :input-value="selectedIndices.includes(index)"
+                :model-value="selectedIndices.includes(index)"
                 :disabled="isInProject(collection.id)"
                 color="primary"
               />
-            </v-list-item-action>
-            <v-list-item-content>
               <v-list-item-title>
                 {{ collection.name }}
                 <v-chip
                   v-if="isInProject(collection.id)"
-                  x-small
+                  size="x-small"
                   class="ml-2"
                   color="grey"
                 >
@@ -60,13 +56,11 @@
               <v-list-item-subtitle v-if="collection.description">
                 {{ collection.description }}
               </v-list-item-subtitle>
-            </v-list-item-content>
           </v-list-item>
-        </v-list-item-group>
       </v-list>
     </v-card-text>
     <v-card-actions>
-      <v-btn text @click="$emit('done')">Cancel</v-btn>
+      <v-btn variant="text" @click="$emit('done')">Cancel</v-btn>
       <v-spacer />
       <v-btn
         color="primary"
@@ -92,7 +86,7 @@
           their permissions to match the project's access settings.
         </v-card-text>
         <v-card-actions class="justify-end" style="gap: 8px">
-          <v-btn text @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showPermissionConfirm = false">Cancel</v-btn>
           <v-btn color="primary" @click="addCollections">Continue</v-btn>
         </v-card-actions>
       </v-card>

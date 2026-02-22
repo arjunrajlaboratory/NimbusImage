@@ -3,7 +3,7 @@
     <!-- First chip only -->
     <v-chip
       v-if="debouncedChipsPerItemId[item._id]?.chips?.[0]"
-      x-small
+      size="x-small"
       class="ma-1 type-indicator"
       v-bind="debouncedChipsPerItemId[item._id]?.chips?.[0]"
       @click.stop
@@ -12,31 +12,36 @@
     </v-chip>
     <v-chip
       v-else-if="computedChipsIds.has(item._id)"
-      x-small
+      size="x-small"
       class="ma-1 type-indicator"
-      color="grey darken-1"
+      color="grey-darken-1"
     >
       Loading info...
     </v-chip>
-    <v-btn
-      v-if="debouncedChipsPerItemId[item._id]?.type === 'dataset'"
-      x-small
-      icon
-      class="ml-1"
-      @click.stop="shareDialogVisible = true"
-      v-tooltip="'Share Dataset'"
-    >
-      <v-icon x-small>mdi-share-variant</v-icon>
-    </v-btn>
-    <span
-      class="text-caption grey--text mx-2"
-      v-tooltip="{
-        content: `Created: ${item.created ? formatDateString(item.created) : 'Unknown'}`,
-        position: 'right',
-      }"
-    >
-      Modified: {{ item.updated ? formatDateString(item.updated) : "Unknown" }}
-    </span>
+    <v-tooltip text="Share Dataset">
+      <template v-slot:activator="{ props: activatorProps }">
+        <v-btn
+          v-bind="activatorProps"
+          v-if="debouncedChipsPerItemId[item._id]?.type === 'dataset'"
+          size="x-small"
+          icon
+          class="ml-1"
+          @click.stop="shareDialogVisible = true"
+        >
+          <v-icon size="x-small">mdi-share-variant</v-icon>
+        </v-btn>
+      </template>
+    </v-tooltip>
+    <v-tooltip :text="`Created: ${item.created ? formatDateString(item.created) : 'Unknown'}`" location="end">
+      <template v-slot:activator="{ props: activatorProps }">
+        <span
+          v-bind="activatorProps"
+          class="text-caption text-grey mx-2"
+        >
+          Modified: {{ item.updated ? formatDateString(item.updated) : "Unknown" }}
+        </span>
+      </template>
+    </v-tooltip>
     <v-spacer />
     <span
       v-if="debouncedChipsPerItemId[item._id]?.type === 'configuration'"
@@ -51,7 +56,7 @@
     <div class="d-flex flex-wrap">
       <!-- Rest of the chips -->
       <v-chip
-        x-small
+        size="x-small"
         v-for="(chipItem, i) in debouncedChipsPerItemId[item._id]?.chips?.slice(
           1,
         )"

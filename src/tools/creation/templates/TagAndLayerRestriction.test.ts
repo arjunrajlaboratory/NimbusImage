@@ -49,7 +49,7 @@ function mountComponent(props = {}) {
 describe("TagAndLayerRestriction", () => {
   it("updateFromValue syncs from prop", () => {
     const wrapper = mountComponent({
-      value: {
+      modelValue: {
         tags: ["x", "y"],
         layer: "layer-1",
         tagsInclusive: false,
@@ -62,7 +62,7 @@ describe("TagAndLayerRestriction", () => {
 
   it("reset clears state and calls changed", () => {
     const wrapper = mountComponent({
-      value: {
+      modelValue: {
         tags: ["x"],
         layer: "layer-1",
         tagsInclusive: false,
@@ -72,7 +72,7 @@ describe("TagAndLayerRestriction", () => {
     expect(wrapper.vm.newTags).toEqual([]);
     expect(wrapper.vm.selectedLayer).toBeNull();
     expect(wrapper.vm.areTagsInclusive).toBe(true);
-    expect(wrapper.emitted("input")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
   });
 
   it("changed emits input and change with correct shape", () => {
@@ -81,7 +81,7 @@ describe("TagAndLayerRestriction", () => {
     wrapper.vm.selectedLayer = "layer-2";
     wrapper.vm.areTagsInclusive = true;
     wrapper.vm.changed();
-    const inputEvents = wrapper.emitted("input")!;
+    const inputEvents = wrapper.emitted("update:modelValue")!;
     const lastInput = inputEvents[inputEvents.length - 1][0];
     expect(lastInput).toEqual({
       tags: ["a"],
@@ -94,7 +94,7 @@ describe("TagAndLayerRestriction", () => {
   it("changed omits tagsInclusive when inclusiveToggle is false", () => {
     const wrapper = mountComponent({ inclusiveToggle: false });
     wrapper.vm.changed();
-    const inputEvents = wrapper.emitted("input")!;
+    const inputEvents = wrapper.emitted("update:modelValue")!;
     const lastInput = inputEvents[inputEvents.length - 1][0];
     expect(lastInput).not.toHaveProperty("tagsInclusive");
   });

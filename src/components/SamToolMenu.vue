@@ -2,10 +2,9 @@
   <v-card>
     <!-- Title and loading -->
     <v-menu
-      offset-x
       :closeOnClick="false"
       :closeOnContentClick="false"
-      :value="loadingMessages.length > 0"
+      :model-value="loadingMessages.length > 0"
       z-index="100"
     >
       <template #activator="{}">
@@ -71,13 +70,13 @@
 
     <!-- Error menu -->
     <v-card-text v-else-if="errorState">
-      <v-expansion-panel-content>
+      <v-expansion-panel-text>
         <div class="d-flex">
           <code class="code-block">{{
             errorState.error ? errorState.error.message : "Unknown error"
           }}</code>
         </div>
-      </v-expansion-panel-content>
+      </v-expansion-panel-text>
     </v-card-text>
   </v-card>
 </template>

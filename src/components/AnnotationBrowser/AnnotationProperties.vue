@@ -1,6 +1,6 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header
+    <v-expansion-panel-title
       id="properties-header-tourstep"
       v-tour-trigger="'properties-header-tourtrigger'"
     >
@@ -9,8 +9,8 @@
       <v-btn
         color="primary"
         dark
-        small
-        dense
+        size="small"
+        density="compact"
         @click.stop="showAnalyzeDialog = true"
         id="measure-objects-button-tourstep"
         v-tour-trigger="'measure-objects-button-tourtrigger'"
@@ -18,14 +18,14 @@
       >
         Measure objects
       </v-btn>
-    </v-expansion-panel-header>
+    </v-expansion-panel-title>
 
     <v-dialog
       v-model="showAnalyzeDialog"
       min-width="900px"
       max-width="1000px"
       width="80%"
-      @input="onDialogClose"
+      @update:model-value="onDialogClose"
     >
       <v-card>
         <v-card-title>Measure objects</v-card-title>
@@ -46,15 +46,15 @@
               batchProgress.cancelled
             }}
             / {{ batchProgress.total }} datasets
-            <span v-if="batchProgress.failed > 0" class="error--text">
+            <span v-if="batchProgress.failed > 0" class="text-error">
               ({{ batchProgress.failed }} failed)
             </span>
-            <span v-if="batchProgress.cancelled > 0" class="warning--text">
+            <span v-if="batchProgress.cancelled > 0" class="text-warning">
               ({{ batchProgress.cancelled }} cancelled)
             </span>
           </div>
           <v-progress-linear
-            :value="batchProgressPercent"
+            :model-value="batchProgressPercent"
             color="primary"
             height="20"
             striped
@@ -69,12 +69,12 @@
         </div>
         <v-card-actions>
           <v-tooltip
-            bottom
+            location="bottom"
             :disabled="!batchDisabledReason"
             v-if="canApplyToAllDatasets || batchDisabledReason"
           >
-            <template v-slot:activator="{ on, attrs }">
-              <div v-bind="attrs" v-on="on">
+            <template v-slot:activator="{ props: activatorProps }">
+              <div v-bind="activatorProps">
                 <v-checkbox
                   v-model="applyToAllDatasets"
                   :disabled="!canApplyToAllDatasets || !!batchProgress"
@@ -89,7 +89,7 @@
           <v-btn
             v-if="batchProgress"
             color="orange"
-            small
+            size="small"
             class="ml-4"
             @click="cancelBatch"
           >
@@ -107,50 +107,49 @@
       </v-card>
     </v-dialog>
 
-    <v-expansion-panel-content id="properties-content-tourstep">
+    <v-expansion-panel-text id="properties-content-tourstep">
       <v-text-field
         v-model="propFilter"
         label="Search properties"
         single-line
         clearable
       />
-      <v-tabs v-model="activeTabIndex" grow>
+      <v-tabs v-model="activeTabIndex">
         <v-tab v-for="{ key, text } in tabs" :key="key">{{ text }}</v-tab>
       </v-tabs>
       <div class="miller-columns-container">
         <div
           :class="{
             'miller-column': true,
-            dark: $vuetify.theme.dark,
+            dark: $vuetify.theme.current.dark,
           }"
           v-for="(column, colIndex) in columns"
           :key="colIndex"
         >
-          <v-list dense>
+          <v-list density="compact">
             <v-list-item
               v-for="item in column"
               :key="item.path.join('.')"
               @click="selectedPath = item.path"
               :class="{ 'v-list-item--active': item.isSelected }"
             >
-              <v-list-item-content>
-                <v-list-item-title>
-                  {{ item.name }}
-                </v-list-item-title>
-              </v-list-item-content>
-              <v-list-item-action class="my-2">
-                <v-simple-checkbox
+              <v-list-item-title>
+                {{ item.name }}
+              </v-list-item-title>
+              <span class="my-2">
+                <v-checkbox
                   v-if="item.isLeaf"
-                  :value="getPropertySettings(item.path)"
-                  @input="togglePropertySettings(item.path)"
+                  :model-value="getPropertySettings(item.path)"
+                  @update:model-value="togglePropertySettings(item.path)"
+                  hide-details
                 />
                 <v-icon v-else>mdi-chevron-right</v-icon>
-              </v-list-item-action>
+              </span>
             </v-list-item>
           </v-list>
         </div>
       </div>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 

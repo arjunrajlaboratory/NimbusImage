@@ -29,7 +29,7 @@
               v-model="bboxLeft"
               type="number"
               :max="store.dataset.width"
-              dense
+              density="compact"
               hide-details
             />
           </v-col>
@@ -39,7 +39,7 @@
               v-model="bboxTop"
               type="number"
               :max="store.dataset.height"
-              dense
+              density="compact"
               hide-details
             />
           </v-col>
@@ -49,7 +49,7 @@
               v-model="bboxWidth"
               type="number"
               :max="store.dataset.width"
-              dense
+              density="compact"
               hide-details
             />
           </v-col>
@@ -59,31 +59,30 @@
               v-model="bboxHeight"
               type="number"
               :max="store.dataset.height"
-              dense
+              density="compact"
               hide-details
             />
           </v-col>
         </v-row>
         <v-row class="pl-3">
           <v-btn
-            small
+            size="small"
             class="my-2"
             @click="setArea('viewport')"
             :disabled="isRotated()"
           >
             Set frame to current view
           </v-btn>
-          <v-btn small class="my-2" @click="setArea('full')">
+          <v-btn size="small" class="my-2" @click="setArea('full')">
             Set frame to maximum view size
           </v-btn>
         </v-row>
         <v-row class="pl-3">
           <v-dialog v-model="createDialog">
-            <template v-slot:activator="{ on, attrs }">
+            <template v-slot:activator="{ props: activatorProps }">
               <v-btn
                 color="primary"
-                v-on="on"
-                v-bind="attrs"
+                v-bind="activatorProps"
                 :disabled="!isLoggedIn"
                 v-description="{
                   section: 'Snapshots',
@@ -97,7 +96,6 @@
             <v-card>
               <v-card-title> Create New Snapshot </v-card-title>
               <v-form
-                lazy-validation
                 ref="saveSnapshotForm"
                 @input="updateFormValidation"
                 @submit.prevent="saveSnapshot"
@@ -110,7 +108,7 @@
                       <v-text-field
                         label="Snapshot name"
                         v-model="newName"
-                        dense
+                        density="compact"
                         hide-details
                         autofocus
                         :rules="nameRules"
@@ -128,7 +126,7 @@
                       <v-text-field
                         label="Snapshot description"
                         v-model="newDescription"
-                        dense
+                        density="compact"
                         hide-details
                       />
                     </v-col>
@@ -185,15 +183,15 @@
               v-for="t in item.record.tags"
               :key="'tag_' + item.name + '_' + t"
               @click.stop="snapshotSearch = t"
-              x-small
+              size="x-small"
               >{{ t }}</v-chip
             >
           </template>
           <!-- Delete icon -->
           <template v-slot:item.delete="{ item }">
             <v-btn
-              fab
-              small
+              icon
+              size="small"
               color="red"
               @click.stop="removeSnapshot(item.name)"
             >
@@ -229,7 +227,7 @@
               v-model="exportLayer"
               :items="layerItems"
               label="Layer"
-              dense
+              density="compact"
               hide-details
             />
             <v-select
@@ -237,7 +235,7 @@
               v-model="exportChannel"
               :items="channelItems"
               label="Channel"
-              dense
+              density="compact"
               hide-details
             />
           </v-col>
@@ -248,7 +246,7 @@
               v-model="format"
               :items="formatList"
               label="Format"
-              dense
+              density="compact"
               hide-details
             />
           </v-col>
@@ -290,7 +288,7 @@
                 prettyScalebarSettings(scalebarSettings)
               }}</span>
               <v-icon
-                small
+                size="small"
                 class="ml-2"
                 @click.stop="scalebarSettingsDialog = true"
                 >mdi-cog</v-icon
@@ -326,7 +324,7 @@
                         type="number"
                         step="0.1"
                         label="Pixel size"
-                        dense
+                        density="compact"
                         hide-details
                         class="mb-4"
                         :disabled="pixelSizeMode === 'dataset'"
@@ -335,7 +333,7 @@
                         v-model="manualPixelSizeUnit"
                         :items="pixelSizeUnitItems"
                         label="Unit"
-                        dense
+                        density="compact"
                         hide-details
                         :disabled="pixelSizeMode === 'dataset'"
                       />
@@ -362,7 +360,7 @@
                         type="number"
                         step="0.1"
                         label="Scalebar length"
-                        dense
+                        density="compact"
                         hide-details
                         class="mb-4"
                         :disabled="scalebarMode === 'automatic'"
@@ -371,7 +369,7 @@
                         v-model="manualScalebarSettingsUnit"
                         :items="scalebarSettingsUnitItems"
                         label="Unit"
-                        dense
+                        density="compact"
                         hide-details
                         :disabled="
                           scalebarMode === 'automatic' ||
@@ -392,7 +390,7 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn text @click="scalebarSettingsDialog = false">Close</v-btn>
+              <v-btn variant="text" @click="scalebarSettingsDialog = false">Close</v-btn>
             </v-card-actions>
           </v-card>
         </v-dialog>
@@ -658,28 +656,28 @@ const scalebarMode = ref<ScalebarMode>(ScalebarMode.AUTOMATIC);
 // --- Constants ---
 
 const tableHeaders: {
-  text: string;
-  value: string;
+  title: string;
+  key: string;
   sortable: boolean;
   sort?: (a: any, b: any) => number;
   class?: string;
 }[] = [
-  { text: "Name", value: "name", sortable: true, class: "text-no-wrap" },
+  { title: "Name", key: "name", sortable: true, class: "text-no-wrap" },
   {
-    text: "Dataset",
-    value: "datasetName",
+    title: "Dataset",
+    key: "datasetName",
     sortable: true,
     class: "text-no-wrap",
   },
   {
-    text: "Timestamp",
-    value: "modified",
+    title: "Timestamp",
+    key: "modified",
     sortable: true,
     sort: (a: any, b: any) => Date.parse(a) - Date.parse(b),
     class: "text-no-wrap",
   },
-  { text: "Tags", value: "tags", sortable: false, class: "text-no-wrap" },
-  { text: "Delete", value: "delete", sortable: false },
+  { title: "Tags", key: "tags", sortable: false, class: "text-no-wrap" },
+  { title: "Delete", key: "delete", sortable: false },
 ];
 
 const maxPixels = 4_000_000;
@@ -1358,7 +1356,7 @@ function overwriteConfigurationLayers() {
   layersOverwritePanel.value = false;
 }
 
-async function loadSnapshot(item: ISnapshotItem) {
+async function loadSnapshot(_event: Event, { item }: { item: ISnapshotItem }) {
   const snapshot = item.record;
   if (
     snapshot.datasetViewId &&
@@ -1832,7 +1830,7 @@ async function downloadUrls(urls: URL[], withScalebar: boolean = false) {
       if (!err) {
         zipChunks.push(data);
         if (final) {
-          resolve(new Blob(zipChunks));
+          resolve(new Blob(zipChunks as BlobPart[]));
         }
       } else {
         reject(err);
@@ -2143,7 +2141,7 @@ async function downloadMovieAsZippedImageSequence(
         if (!err) {
           zipChunks.push(data);
           if (final) {
-            resolve(new Blob(zipChunks));
+            resolve(new Blob(zipChunks as BlobPart[]));
           }
         } else {
           reject(err);

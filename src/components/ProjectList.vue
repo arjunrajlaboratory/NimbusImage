@@ -8,18 +8,18 @@
           placeholder="Search projects..."
           hide-details
           single-line
-          dense
+          density="compact"
           clearable
         />
       </div>
       <v-btn
         v-if="store.isLoggedIn"
         color="primary"
-        small
+        size="small"
         class="ml-2"
         @click="showCreateDialog = true"
       >
-        <v-icon left small>mdi-plus</v-icon>
+        <v-icon start size="small">mdi-plus</v-icon>
         New Project
       </v-btn>
     </div>
@@ -32,8 +32,8 @@
         class="text-center pa-4"
       >
         <v-icon size="64" color="grey">mdi-folder-star</v-icon>
-        <div class="text-h6 grey--text mt-2">No projects found</div>
-        <div class="text-body-2 grey--text">
+        <div class="text-h6 text-grey mt-2">No projects found</div>
+        <div class="text-body-2 text-grey">
           {{
             searchQuery
               ? "Try adjusting your search terms"
@@ -50,11 +50,8 @@
           :class="{ 'project-item-hover': !loading }"
           @click="navigateToProject(project)"
         >
-          <v-list-item-avatar>
-            <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
-          </v-list-item-avatar>
+          <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
 
-          <v-list-item-content>
             <v-list-item-title class="project-title">
               {{ project.name }}
             </v-list-item-title>
@@ -64,55 +61,48 @@
 
             <div class="d-flex align-center mt-1">
               <v-chip
-                x-small
-                outlined
+                size="x-small"
+                variant="outlined"
                 class="mr-1"
                 :color="getProjectStatusColor(project.meta.status)"
               >
                 {{ project.meta.status }}
               </v-chip>
-              <v-chip x-small outlined color="grey" class="mr-1">
+              <v-chip size="x-small" variant="outlined" color="grey" class="mr-1">
                 {{ project.meta.datasets.length }} dataset{{
                   project.meta.datasets.length !== 1 ? "s" : ""
                 }}
               </v-chip>
-              <v-chip x-small outlined color="grey">
+              <v-chip size="x-small" variant="outlined" color="grey">
                 {{ project.meta.collections.length }} collection{{
                   project.meta.collections.length !== 1 ? "s" : ""
                 }}
               </v-chip>
               <v-spacer />
-              <span class="text-caption grey--text">
+              <span class="text-caption text-grey">
                 Updated {{ formatDateString(project.updated) }}
               </span>
             </div>
-          </v-list-item-content>
 
-          <v-list-item-action>
-            <v-menu offset-y>
-              <template #activator="{ on, attrs }">
-                <v-btn icon small v-bind="attrs" v-on="on">
-                  <v-icon small>mdi-dots-vertical</v-icon>
+            <v-menu>
+              <template #activator="{ props: activatorProps }">
+                <v-btn icon size="small" v-bind="activatorProps">
+                  <v-icon size="small">mdi-dots-vertical</v-icon>
                 </v-btn>
               </template>
-              <v-list dense>
+              <v-list density="compact">
                 <v-list-item @click="editProject(project)">
-                  <v-list-item-icon>
-                    <v-icon small>mdi-pencil</v-icon>
-                  </v-list-item-icon>
+                    <v-icon size="small">mdi-pencil</v-icon>
                   <v-list-item-title>Edit</v-list-item-title>
                 </v-list-item>
                 <v-list-item @click="confirmDeleteProject(project)">
-                  <v-list-item-icon>
-                    <v-icon small color="error">mdi-delete</v-icon>
-                  </v-list-item-icon>
-                  <v-list-item-title class="error--text"
+                    <v-icon size="small" color="error">mdi-delete</v-icon>
+                  <v-list-item-title class="text-error"
                     >Delete</v-list-item-title
                   >
                 </v-list-item>
               </v-list>
             </v-menu>
-          </v-list-item-action>
         </v-list-item>
       </v-list>
     </div>
@@ -125,21 +115,21 @@
           <v-text-field
             v-model="newProjectName"
             label="Project Name"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             autofocus
           />
           <v-textarea
             v-model="newProjectDescription"
             label="Description (optional)"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             rows="3"
           />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="showCreateDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showCreateDialog = false">Cancel</v-btn>
           <v-btn
             color="primary"
             :disabled="!newProjectName.trim()"
@@ -160,20 +150,20 @@
           <v-text-field
             v-model="editProjectName"
             label="Project Name"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
           />
           <v-textarea
             v-model="editProjectDescription"
             label="Description"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             rows="3"
           />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="showEditDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showEditDialog = false">Cancel</v-btn>
           <v-btn
             color="primary"
             :disabled="!editProjectName.trim()"
@@ -196,7 +186,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="showDeleteDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showDeleteDialog = false">Cancel</v-btn>
           <v-btn color="error" :loading="deleting" @click="deleteProject">
             Delete
           </v-btn>
@@ -207,7 +197,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import store from "@/store";
 import projects from "@/store/projects";
 import { IProject, getProjectStatusColor } from "@/store/model";
@@ -231,7 +222,7 @@ const showDeleteDialog = ref(false);
 const projectToDelete = ref<IProject | null>(null);
 const deleting = ref(false);
 
-const vm = getCurrentInstance()!.proxy;
+const router = useRouter();
 
 const filteredProjects = computed<IProject[]>(() => {
   const allProjects = projects.projects;
@@ -317,7 +308,7 @@ async function deleteProject() {
 }
 
 function navigateToProject(project: IProject) {
-  vm.$router.push({
+  router.push({
     name: "project",
     params: { projectId: project.id },
   });

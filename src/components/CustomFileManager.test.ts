@@ -35,7 +35,7 @@ vi.mock("@/girder/components", () => ({
     name: "GirderFileManager",
     template:
       "<div><slot name='headerwidget' /><slot name='row-widget' /></div>",
-    props: ["location", "selectable", "value"],
+    props: ["location", "selectable", "modelValue"],
   },
 }));
 

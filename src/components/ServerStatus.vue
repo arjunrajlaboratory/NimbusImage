@@ -1,8 +1,8 @@
 <template>
   <div class="server-status">
-    <v-tooltip left>
-      <template #activator="{ on }">
-        <div v-on="on">
+    <v-tooltip location="start">
+      <template #activator="{ props: activatorProps }">
+        <div v-bind="activatorProps">
           <v-icon class="save" v-if="saving">mdi-database-sync</v-icon>
           <v-icon class="loading" v-else-if="loading">mdi-database-sync</v-icon>
           <v-icon v-else-if="lastError" color="error">

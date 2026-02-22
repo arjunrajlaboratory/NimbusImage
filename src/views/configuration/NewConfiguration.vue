@@ -19,14 +19,16 @@
   </v-container>
 </template>
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { useRouteMapper } from "@/utils/useRouteMapper";
 import { IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
+const router = useRouter();
 
 useRouteMapper(
   {},
@@ -86,13 +88,13 @@ function submit() {
           datasetId: store.dataset.id,
         });
       }
-      vm.$router.push({
+      router.push({
         name: "configuration",
         params: Object.assign(
           {
             configurationId: config.id,
           },
-          vm.$route.params,
+          route.params,
         ),
       });
     });

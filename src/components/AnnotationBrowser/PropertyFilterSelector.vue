@@ -1,7 +1,7 @@
 <template>
   <v-dialog v-model="dialog" max-width="500px">
-    <template v-slot:activator="{ on, attrs }">
-      <v-btn v-bind="attrs" v-on="on" class="filter-element" small>
+    <template v-slot:activator="{ props: activatorProps }">
+      <v-btn v-bind="activatorProps" class="filter-element" size="small">
         Add property value filter
       </v-btn>
     </template>
@@ -12,33 +12,29 @@
           v-model="searchQuery"
           label="Search properties"
           clearable
-          dense
+          density="compact"
           single-line
         />
-        <v-list dense>
+        <v-list density="compact">
           <v-list-item
             v-for="propertyPath in filteredPropertyPaths"
             :key="propertyPath.join('.')"
           >
-            <v-list-item-action>
               <v-checkbox
-                :input-value="isPropertyPathFiltered(propertyPath)"
+                :model-value="isPropertyPathFiltered(propertyPath)"
                 @change="togglePropertyPathFiltering(propertyPath)"
-                dense
+                density="compact"
                 hide-details
               />
-            </v-list-item-action>
-            <v-list-item-content>
               <v-list-item-title>
                 {{ getPropertyFullName(propertyPath) }}
               </v-list-item-title>
-            </v-list-item-content>
           </v-list-item>
         </v-list>
       </v-card-text>
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn text @click="dialog = false">Close</v-btn>
+        <v-btn variant="text" @click="dialog = false">Close</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

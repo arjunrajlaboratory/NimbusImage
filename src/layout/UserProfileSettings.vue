@@ -20,13 +20,13 @@
 </template>
 
 <script setup lang="ts">
-import { getCurrentInstance } from "vue";
+import { useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 
-const router = getCurrentInstance()?.proxy?.$router;
+const router = useRouter();
 
 async function logout() {
   await store.logout();
-  router?.push({ name: "root" });
+  router.push({ name: "root" });
 }
 </script>

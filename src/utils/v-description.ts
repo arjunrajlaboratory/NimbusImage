@@ -49,24 +49,22 @@ function shallowEqual(
   );
 }
 
-export default function install(Vue: any) {
-  Vue.directive("description", {
-    inserted(el: any, { value }: { value: IFeatureDescription }) {
-      bind(el, value);
-    },
-    update(
-      el: any,
-      {
-        value,
-        oldValue,
-      }: { value: IFeatureDescription; oldValue: IFeatureDescription },
-    ) {
-      if (shallowEqual(value, oldValue)) return;
-      unbind(el);
-      bind(el, value);
-    },
-    unbind(el: any) {
-      unbind(el);
-    },
-  });
-}
+export const descriptionDirective = {
+  mounted(el: any, { value }: { value: IFeatureDescription }) {
+    bind(el, value);
+  },
+  updated(
+    el: any,
+    {
+      value,
+      oldValue,
+    }: { value: IFeatureDescription; oldValue: IFeatureDescription },
+  ) {
+    if (shallowEqual(value, oldValue)) return;
+    unbind(el);
+    bind(el, value);
+  },
+  unmounted(el: any) {
+    unbind(el);
+  },
+};

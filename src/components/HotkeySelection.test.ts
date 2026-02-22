@@ -32,7 +32,7 @@ describe("HotkeySelection", () => {
   });
 
   it("displays the current hotkey when value is provided", () => {
-    const wrapper = mountComponent({ value: "ctrl+k" });
+    const wrapper = mountComponent({ modelValue: "ctrl+k" });
     expect(wrapper.text()).toContain("Current hotkey: ctrl+k");
   });
 
@@ -45,11 +45,11 @@ describe("HotkeySelection", () => {
   });
 
   it("emits input with null when Clear hotkey is clicked", async () => {
-    const wrapper = mountComponent({ value: "ctrl+k" });
+    const wrapper = mountComponent({ modelValue: "ctrl+k" });
     const clearButton = wrapper.findAll(".v-btn").at(1);
     await clearButton.trigger("click");
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0]).toEqual([null]);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0]).toEqual([null]);
   });
 
   it("emits recorded hotkey when Record is clicked (mocked)", async () => {
@@ -57,7 +57,7 @@ describe("HotkeySelection", () => {
     const recordButton = wrapper.findAll(".v-btn").at(0);
     await recordButton.trigger("click");
     // Mousetrap.record is mocked to immediately call back with ["ctrl+s"]
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0]).toEqual(["ctrl+s"]);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0]).toEqual(["ctrl+s"]);
   });
 });

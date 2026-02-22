@@ -1,16 +1,16 @@
 <template>
   <div class="body-1 d-flex flex-wrap">
-    <tag-cloud-picker v-model="tags" :allSelected.sync="allSelected" />
+    <tag-cloud-picker v-model="tags" v-model:allSelected="allSelected" />
     <div>
       Tag match:
       <v-select
-        dense
+        density="compact"
         hide-details
         single-line
         class="mx-2 select-exclusive-filter"
         v-model="exclusive"
         :items="exclusiveItems"
-        item-text="text"
+        item-title="text"
         item-value="value"
       />
     </div>
@@ -23,11 +23,11 @@ import { ITagAnnotationFilter } from "@/store/model";
 import TagCloudPicker from "@/components/TagCloudPicker.vue";
 
 const props = defineProps<{
-  value: ITagAnnotationFilter;
+  modelValue: ITagAnnotationFilter;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: ITagAnnotationFilter): void;
+  (e: "update:modelValue", value: ITagAnnotationFilter): void;
 }>();
 
 const exclusiveItems = [
@@ -43,29 +43,29 @@ const exclusiveItems = [
 
 const tags = computed({
   get() {
-    return props.value.tags;
+    return props.modelValue.tags;
   },
   set(newTags: string[]) {
-    emit("input", { ...props.value, tags: newTags });
+    emit("update:modelValue", { ...props.modelValue, tags: newTags });
   },
 });
 
 const allSelected = computed({
   get() {
-    return !props.value.enabled;
+    return !props.modelValue.enabled;
   },
   set(val: boolean) {
-    const exclusive = val ? false : props.value.exclusive;
-    emit("input", { ...props.value, enabled: !val, exclusive });
+    const exclusive = val ? false : props.modelValue.exclusive;
+    emit("update:modelValue", { ...props.modelValue, enabled: !val, exclusive });
   },
 });
 
 const exclusive = computed({
   get() {
-    return props.value.exclusive;
+    return props.modelValue.exclusive;
   },
   set(val: boolean) {
-    emit("input", { ...props.value, enabled: true, exclusive: val });
+    emit("update:modelValue", { ...props.modelValue, enabled: true, exclusive: val });
   },
 });
 

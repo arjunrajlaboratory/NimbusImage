@@ -31,8 +31,6 @@ import {
   TextFile,
   runPipeline,
 } from "itk-wasm";
-// Import Vue to set reactively the output of the state
-import { Vue } from "vue-property-decorator";
 
 type TensorF32 = TypedTensor<"float32">;
 
@@ -652,7 +650,7 @@ export function createSamToolStateFromToolConfiguration(
       !rawNodeOutput || rawNodeOutput === NoOutput || rawNodeOutput.length <= 0
         ? null
         : rawNodeOutput;
-    Vue.set(state, "output", stateOutput);
+    state.output = stateOutput;
   });
   // Preview output is reactive too
   const previewNode = state.nodes.output.previewOuput;
@@ -664,7 +662,7 @@ export function createSamToolStateFromToolConfiguration(
       rawNodePreview.length <= 0
         ? null
         : rawNodePreview;
-    Vue.set(state, "livePreview", statePreview);
+    state.livePreview = statePreview;
   });
   return state;
 }

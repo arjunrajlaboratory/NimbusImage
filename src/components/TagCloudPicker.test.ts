@@ -32,7 +32,7 @@ function mountComponent(props = {}) {
   return mount(TagCloudPicker, {
     vuetify: new Vuetify(),
     propsData: {
-      value: ["t1"],
+      modelValue: ["t1"],
       allSelected: false,
       ...props,
     },
@@ -74,9 +74,9 @@ describe("TagCloudPicker", () => {
   });
 
   it("selectNone empties tags", () => {
-    const wrapper = mountComponent({ value: ["t1", "t2"] });
+    const wrapper = mountComponent({ modelValue: ["t1", "t2"] });
     wrapper.vm.selectNone();
-    const emitted = wrapper.emitted("input");
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     const lastEmit = emitted![emitted!.length - 1][0];
     expect(lastEmit).toEqual([]);

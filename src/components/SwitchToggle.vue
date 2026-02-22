@@ -1,7 +1,7 @@
 <template>
   <v-switch
-    :value="value"
-    @input="emit('input', $event)"
+    :model-value="modelValue"
+    @update:model-value="emit('update:modelValue', $event)"
     :label="trueLabel"
     hide-details
     :id="id"
@@ -12,8 +12,8 @@
       <label
         :class="{
           'v-label': true,
-          'theme--light': !$vuetify.theme.dark,
-          'theme--dark': $vuetify.theme.dark,
+          'v-theme--light': !$vuetify.theme.current.dark,
+          'v-theme--dark': $vuetify.theme.current.dark,
         }"
         :for="id"
       >
@@ -36,7 +36,7 @@
 <script setup lang="ts">
 defineProps<{
   id?: string;
-  value?: string;
+  modelValue?: string;
   trueLabel?: string;
   trueValue?: string;
   falseLabel?: string;
@@ -45,6 +45,6 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: string): void;
+  (e: "update:modelValue", value: string | null): void;
 }>();
 </script>

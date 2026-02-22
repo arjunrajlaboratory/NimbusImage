@@ -1,11 +1,11 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header> Interface settings </v-expansion-panel-header>
-    <v-expansion-panel-content>
+    <v-expansion-panel-title> Interface settings </v-expansion-panel-title>
+    <v-expansion-panel-text>
       <v-container>
         <v-switch
           hide-details
-          dense
+          density="compact"
           v-model="darkMode"
           label="Dark mode"
           v-description="{
@@ -15,21 +15,20 @@
           }"
         />
       </v-container>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 
 <script setup lang="ts">
-import { computed, getCurrentInstance } from "vue";
+import { computed } from "vue";
+import { useTheme } from "vuetify";
 
-const vuetify = getCurrentInstance()?.proxy?.$vuetify;
+const theme = useTheme();
 
 const darkMode = computed({
-  get: () => vuetify?.theme.dark ?? false,
+  get: () => theme.global.name.value === "dark",
   set: (value: boolean) => {
-    if (vuetify) {
-      vuetify.theme.dark = value;
-    }
+    theme.global.name.value = value ? "dark" : "light";
   },
 });
 

@@ -18,7 +18,7 @@ vi.mock("vuedraggable", () => ({
   default: {
     name: "draggable",
     template: "<div><slot /></div>",
-    props: ["value", "animation", "fallbackOnBody", "swapThreshold"],
+    props: ["modelValue", "animation", "fallbackOnBody", "swapThreshold"],
   },
 }));
 
@@ -26,7 +26,7 @@ vi.mock("./DisplayLayer.vue", () => ({
   default: {
     name: "DisplayLayer",
     template: "<div class='display-layer-stub' />",
-    props: ["value"],
+    props: ["modelValue"],
   },
 }));
 

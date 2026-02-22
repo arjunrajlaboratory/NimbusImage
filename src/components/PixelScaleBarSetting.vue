@@ -1,7 +1,7 @@
 <template>
   <v-switch
     hide-details
-    dense
+    density="compact"
     v-model="showPixelScalebar"
     label="Show pixel scalebar"
     title="Show the scalebarwidget on top of the image for the number of pixels"

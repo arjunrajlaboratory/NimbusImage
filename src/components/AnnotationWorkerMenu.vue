@@ -3,16 +3,20 @@
     <v-card-title class="subtitle-1">
       {{ tool.name || "Worker menu" }}
       <v-spacer />
-      <v-btn small text class="mr-2" @click="resetInterfaceValues()">
-        <v-icon small left>mdi-refresh</v-icon>
+      <v-btn size="small" variant="text" class="mr-2" @click="resetInterfaceValues()">
+        <v-icon size="small" start>mdi-refresh</v-icon>
         Reset
       </v-btn>
-      <v-icon
-        @click="updateInterface(true)"
-        v-tooltip="'Refresh worker interface from the server'"
-      >
-        mdi-sync
-      </v-icon>
+      <v-tooltip text="Refresh worker interface from the server">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-icon
+            v-bind="activatorProps"
+            @click="updateInterface(true)"
+          >
+            mdi-sync
+          </v-icon>
+        </template>
+      </v-tooltip>
     </v-card-title>
     <v-card-subtitle v-if="tool.values.image.image" class="pt-0 pb-2">
       <small>Image: {{ tool.values.image.image }}</small>
@@ -25,7 +29,7 @@
         <v-row v-if="running">
           <v-progress-linear
             :indeterminate="!progressInfo.progress"
-            :value="100 * (progressInfo.progress || 0)"
+            :model-value="100 * (progressInfo.progress || 0)"
             class="text-progress"
           >
             <strong class="pr-4">
@@ -38,7 +42,7 @@
           v-for="(warning, index) in filteredWarnings"
           :key="'warning-' + index"
         >
-          <v-alert type="warning" dense class="mb-2">
+          <v-alert type="warning" density="compact" class="mb-2">
             <div class="error-main">
               {{ warning.title }}: {{ warning.warning }}
             </div>
@@ -46,7 +50,7 @@
           </v-alert>
         </v-row>
         <v-row v-for="(error, index) in filteredErrors" :key="'error-' + index">
-          <v-alert type="error" dense class="mb-2">
+          <v-alert type="error" density="compact" class="mb-2">
             <div class="error-main">{{ error.title }}: {{ error.error }}</div>
             <div v-if="error.info" class="error-info">{{ error.info }}</div>
           </v-alert>
@@ -65,13 +69,13 @@
           <v-spacer></v-spacer>
           <v-btn
             v-if="localJobLog"
-            small
-            text
+            size="small"
+            variant="text"
             color="info"
             class="mr-2"
             @click="showLogDialog = true"
           >
-            <v-icon small left>mdi-text-box-outline</v-icon>
+            <v-icon size="small" start>mdi-text-box-outline</v-icon>
             Log
           </v-btn>
           <v-btn @click="compute" v-if="!running">
@@ -98,9 +102,9 @@
         </v-row>
         <!-- Batch processing checkbox -->
         <v-row v-if="canApplyToAllDatasets || batchDisabledReason">
-          <v-tooltip bottom :disabled="!batchDisabledReason">
-            <template v-slot:activator="{ on, attrs }">
-              <div v-bind="attrs" v-on="on" style="width: 100%">
+          <v-tooltip location="bottom" :disabled="!batchDisabledReason">
+            <template v-slot:activator="{ props: activatorProps }">
+              <div v-bind="activatorProps" style="width: 100%">
                 <v-checkbox
                   v-model="applyToAllDatasets"
                   :disabled="!canApplyToAllDatasets || running"
@@ -123,15 +127,15 @@
                 batchProgress.cancelled
               }}
               / {{ batchProgress.total }} datasets
-              <span v-if="batchProgress.failed > 0" class="error--text">
+              <span v-if="batchProgress.failed > 0" class="text-error">
                 ({{ batchProgress.failed }} failed)
               </span>
-              <span v-if="batchProgress.cancelled > 0" class="warning--text">
+              <span v-if="batchProgress.cancelled > 0" class="text-warning">
                 ({{ batchProgress.cancelled }} cancelled)
               </span>
             </div>
             <v-progress-linear
-              :value="batchProgressPercent"
+              :model-value="batchProgressPercent"
               color="primary"
               height="20"
               striped
@@ -154,9 +158,9 @@
         <v-card-title class="headline">
           Job Log
           <v-spacer></v-spacer>
-          <v-tooltip bottom>
-            <template v-slot:activator="{ on, attrs }">
-              <v-btn icon v-bind="attrs" v-on="on" @click="copyLogToClipboard">
+          <v-tooltip location="bottom">
+            <template v-slot:activator="{ props: activatorProps }">
+              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
@@ -171,7 +175,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" text @click="showLogDialog = false"
+          <v-btn color="primary" variant="text" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>

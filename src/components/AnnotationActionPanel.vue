@@ -1,30 +1,30 @@
 <template>
   <div class="action-panel">
     <div class="selected-count">{{ selectedCount }} objects selected</div>
-    <v-btn small class="ma-1" @click="$emit('delete-selected')">
-      <v-icon left small>mdi-delete</v-icon>
+    <v-btn size="small" class="ma-1" @click="$emit('delete-selected')">
+      <v-icon start size="small">mdi-delete</v-icon>
       Delete Selected
     </v-btn>
-    <v-btn small class="ma-1" @click="$emit('delete-unselected')">
-      <v-icon left small>mdi-delete-sweep</v-icon>
+    <v-btn size="small" class="ma-1" @click="$emit('delete-unselected')">
+      <v-icon start size="small">mdi-delete-sweep</v-icon>
       Delete Unselected
     </v-btn>
-    <v-btn small class="ma-1" @click="$emit('tag-selected')">
-      <v-icon left small>mdi-tag</v-icon>
+    <v-btn size="small" class="ma-1" @click="$emit('tag-selected')">
+      <v-icon start size="small">mdi-tag</v-icon>
       Tag Selected
     </v-btn>
-    <v-btn small class="ma-1" @click="$emit('color-selected')">
-      <v-icon left small>mdi-palette</v-icon>
+    <v-btn size="small" class="ma-1" @click="$emit('color-selected')">
+      <v-icon start size="small">mdi-palette</v-icon>
       Color Selected
     </v-btn>
-    <v-btn small class="ma-1" @click="copyAnnotationIds">
-      <v-icon left small :color="copySuccess ? 'success' : undefined">
+    <v-btn size="small" class="ma-1" @click="copyAnnotationIds">
+      <v-icon start size="small" :color="copySuccess ? 'success' : undefined">
         {{ copySuccess ? "mdi-check" : "mdi-content-copy" }}
       </v-icon>
       Copy Selected IDs
     </v-btn>
-    <v-btn small class="ma-1" @click="$emit('deselect-all')">
-      <v-icon left small>mdi-select-off</v-icon>
+    <v-btn size="small" class="ma-1" @click="$emit('deselect-all')">
+      <v-icon start size="small">mdi-select-off</v-icon>
       Deselect All
     </v-btn>
   </div>

@@ -10,7 +10,7 @@
       <v-container class="pa-2">
         <v-row align="center" class="mb-1" dense>
           <v-col cols="3">
-            <v-subheader dense>Measure by tag:</v-subheader>
+            <v-list-subheader dense>Measure by tag:</v-list-subheader>
           </v-col>
           <v-col cols="6">
             <tag-picker
@@ -25,15 +25,15 @@
               v-model="areTagsExclusive"
               label="Exclusive"
               hide-details
-              dense
+              density="compact"
             ></v-checkbox>
           </v-col>
         </v-row>
         <v-row align="center" dense>
           <v-col cols="3">
-            <v-subheader dense id="shape-selection-tourstep">{{
+            <v-list-subheader dense id="shape-selection-tourstep">{{
               shapeSelectionString
-            }}</v-subheader>
+            }}</v-list-subheader>
           </v-col>
           <v-col cols="9">
             <v-select
@@ -41,7 +41,7 @@
               :items="availableShapes"
               label="Shape"
               hide-details
-              dense
+              density="compact"
               :disabled="filteringTags.length > 0"
             ></v-select>
           </v-col>
@@ -76,7 +76,7 @@
                 v-model="originalName"
                 label="Property name"
                 rows="1"
-                dense
+                density="compact"
                 hide-details
                 :append-icon="isNameGenerated ? '' : 'mdi-refresh'"
                 @click:append="isNameGenerated = true"
@@ -90,7 +90,7 @@
         v-model="computeUponCreation"
         label="Compute upon creation"
         class="mt-2"
-        dense
+        density="compact"
         hide-details
       />
       <div class="button-bar mt-2">
@@ -98,14 +98,14 @@
         <v-btn
           class="mr-2"
           color="primary"
-          small
+          size="small"
           @click="createProperty"
           id="create-property-button-tourstep"
           v-tour-trigger="'create-property-button-tourtrigger'"
         >
           Create Property
         </v-btn>
-        <v-btn class="mr-2" color="warning" small @click="reset">Reset</v-btn>
+        <v-btn class="mr-2" color="warning" size="small" @click="reset">Reset</v-btn>
       </div>
     </v-card-text>
   </v-card>

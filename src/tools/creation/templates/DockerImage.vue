@@ -21,12 +21,12 @@ interface IImageSetup {
 }
 
 const props = defineProps<{
-  value?: IImageSetup;
+  modelValue?: IImageSetup;
   template?: any;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: IImageSetup): void;
+  (e: "update:modelValue", value: IImageSetup): void;
   (e: "change"): void;
 }>();
 
@@ -37,11 +37,11 @@ function annotationImageFilter(labels: IWorkerLabels) {
 }
 
 function updateFromValue() {
-  if (!props.value) {
+  if (!props.modelValue) {
     reset();
     return;
   }
-  image.value = props.value.image;
+  image.value = props.modelValue.image;
 }
 
 function reset() {
@@ -51,7 +51,7 @@ function reset() {
 
 function changed() {
   const result: IImageSetup = { image: image.value };
-  emit("input", result);
+  emit("update:modelValue", result);
   emit("change");
 }
 

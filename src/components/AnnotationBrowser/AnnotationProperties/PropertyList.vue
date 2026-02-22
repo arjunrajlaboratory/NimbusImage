@@ -5,15 +5,15 @@
         <span class="text-subtitle-1">Object Properties</span>
         <v-spacer></v-spacer>
         <template v-if="uncomputedProperties.length <= 0">
-          <span class="text-none px-2 success--text">
+          <span class="text-none px-2 text-success">
             Computations done
-            <v-icon small color="success">mdi-check</v-icon>
+            <v-icon size="small" color="success">mdi-check</v-icon>
           </span>
         </template>
         <v-btn
           v-else
-          text
-          small
+          variant="text"
+          size="small"
           color="primary"
           class="text-none px-2"
           @click="computeUncomputedProperties"
@@ -33,7 +33,7 @@
             />
           </template>
           <template v-else>
-            <v-icon small right>mdi-play</v-icon>
+            <v-icon size="small" end>mdi-play</v-icon>
           </template>
         </v-btn>
       </div>
@@ -45,16 +45,16 @@
           v-for="(property, index) in properties"
           :key="`${property.id} ${index}`"
         >
-          <v-expansion-panel-header>
+          <v-expansion-panel-title>
             <annotation-property
               :property="property"
               :applyToAllDatasets="applyToAllDatasets"
               @compute-property-batch="$emit('compute-property-batch', $event)"
             />
-          </v-expansion-panel-header>
-          <v-expansion-panel-content>
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
             <annotation-property-body :property="property" />
-          </v-expansion-panel-content>
+          </v-expansion-panel-text>
         </v-expansion-panel>
       </v-expansion-panels>
     </div>

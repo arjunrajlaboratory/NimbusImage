@@ -1,9 +1,9 @@
 <template>
   <v-dialog v-model="dialogInternal" scrollable width="auto">
-    <template #activator="{ on }" v-if="activatorDisabled === false">
+    <template #activator="{ props: activatorProps }" v-if="activatorDisabled === false">
       <div class="d-flex">
-        <slot name="activator" v-bind="{ on }">
-          <v-btn v-on="on" :disabled="disabled"> Choose... </v-btn>
+        <slot name="activator" v-bind="{ props: activatorProps }">
+          <v-btn v-bind="activatorProps" :disabled="disabled"> Choose... </v-btn>
         </slot>
         <girder-breadcrumb
           v-if="breadcrumb && selected"
@@ -18,7 +18,7 @@
       <v-card-title>{{ title }}</v-card-title>
       <v-card-text style="height: 70vh">
         <custom-file-manager
-          :location.sync="selected"
+          v-model:location="selected"
           v-bind="$attrs"
           :initial-items-per-page="-1"
           :items-per-page-options="[-1]"
@@ -45,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 import { IGirderLocation } from "@/girder";
 
 import CustomFileManager from "@/components/CustomFileManager.vue";
@@ -53,7 +53,7 @@ import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
 
 const props = withDefaults(
   defineProps<{
-    value?: IGirderLocation | null;
+    modelValue?: IGirderLocation | null;
     title?: string;
     breadcrumb?: boolean;
     activatorDisabled?: boolean;
@@ -61,7 +61,7 @@ const props = withDefaults(
     dialog?: boolean | null;
   }>(),
   {
-    value: null,
+    modelValue: null,
     title: "Select a Folder",
     breadcrumb: false,
     activatorDisabled: false,
@@ -70,7 +70,10 @@ const props = withDefaults(
   },
 );
 
-const vm = getCurrentInstance()!.proxy;
+const emit = defineEmits<{
+  (e: "update:dialog", value: boolean): void;
+  (e: "update:modelValue", value: any): void;
+}>();
 
 const dialogInternalCache = ref(false);
 const selected = ref<IGirderLocation | null>(null);
@@ -79,7 +82,7 @@ const dialogInternal = computed({
   get: () => props.dialog ?? dialogInternalCache.value,
   set: (value: boolean) => {
     dialogInternalCache.value = value;
-    vm.$emit("update:dialog", value);
+    emit("update:dialog", value);
   },
 });
 
@@ -97,19 +100,19 @@ const selectedName = computed(() =>
 );
 
 onMounted(() => {
-  selected.value = props.value ?? null;
+  selected.value = props.modelValue ?? null;
 });
 
 watch(
-  () => props.value,
+  () => props.modelValue,
   () => {
-    selected.value = props.value ?? null;
+    selected.value = props.modelValue ?? null;
   },
 );
 
 function select() {
   dialogInternal.value = false;
-  vm.$emit("input", selected.value);
+  emit("update:modelValue", selected.value);
 }
 
 defineExpose({ dialogInternal, selectedName, select, selected });

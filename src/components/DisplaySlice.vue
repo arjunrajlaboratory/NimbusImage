@@ -1,10 +1,10 @@
 <template>
   <v-radio-group
-    :value="value.type"
-    @change="changeSlice($event, value.value)"
+    :model-value="modelValue.type"
+    @update:model-value="$event != null && changeSlice($event, modelValue.value)"
     :label="labelHint"
     hide-details
-    dense
+    density="compact"
   >
     <template v-if="maxValue > 0">
       <v-radio value="current" label="Current" class="smaller" />
@@ -13,14 +13,14 @@
         <template #label>
           <span>Constant</span>
           <v-text-field
-            v-show="value.type === 'constant'"
-            :value="(value.value || 0) + offset"
+            v-show="modelValue.type === 'constant'"
+            :model-value="(modelValue.value || 0) + offset"
             :min="offset"
             :max="maxValue + offset"
             type="number"
-            dense
+            density="compact"
             hide-details
-            @input="changeSlice('constant', $event)"
+            @update:model-value="changeSlice('constant', $event)"
           />
         </template>
       </v-radio>
@@ -32,14 +32,14 @@
         <template #label>
           <span>Offset</span>
           <v-text-field
-            v-show="value.type === 'offset'"
-            :value="value.value || 0"
+            v-show="modelValue.type === 'offset'"
+            :model-value="modelValue.value || 0"
             type="number"
-            dense
+            density="compact"
             :min="minOffsetValue"
             :max="maxOffsetValue"
             hide-details
-            @input="changeSlice('offset', $event)"
+            @update:model-value="changeSlice('offset', $event)"
           />
         </template>
       </v-radio>
@@ -58,7 +58,7 @@ import { computed } from "vue";
 import { IDisplaySlice, TDisplaySliceType } from "@/store/model";
 
 const props = defineProps<{
-  value: IDisplaySlice;
+  modelValue: IDisplaySlice;
   maxValue: number;
   label: string;
   displayed: number;
@@ -83,9 +83,9 @@ function changeSlice(type: TDisplaySliceType, value: string | number | null) {
   const inputValue =
     typeof value === "string" ? parseInt(value, 10) : value || 0;
 
-  const typeHasChanged = props.value.type !== type;
+  const typeHasChanged = props.modelValue.type !== type;
   if (
-    (!typeHasChanged && props.value.value === value) ||
+    (!typeHasChanged && props.modelValue.value === value) ||
     (!inputValue && inputValue !== 0)
   ) {
     return;
@@ -128,7 +128,7 @@ defineExpose({ maxOffsetValue, minOffsetValue, labelHint, changeSlice });
 .smaller {
   margin-bottom: 0 !important;
 
-  ::v-deep .v-label {
+  :deep(.v-label) {
     font-size: 14px;
     height: auto;
   }
@@ -143,7 +143,7 @@ defineExpose({ maxOffsetValue, minOffsetValue, labelHint, changeSlice });
     font-size: 12px;
     margin: 0;
 
-    ::v-deep input {
+    :deep(input) {
       padding: 0 !important;
     }
   }

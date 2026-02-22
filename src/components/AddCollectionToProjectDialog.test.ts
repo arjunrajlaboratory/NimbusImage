@@ -67,7 +67,7 @@ function mountComponent(props = {}) {
     vuetify: new Vuetify(),
     attachTo: app,
     propsData: {
-      value: false,
+      modelValue: false,
       collectionId: "col-new",
       collectionName: "New Collection",
       ...props,
@@ -81,13 +81,13 @@ describe("AddCollectionToProjectDialog", () => {
   });
 
   it("dialogModel get returns prop value", () => {
-    const wrapper = mountComponent({ value: true });
+    const wrapper = mountComponent({ modelValue: true });
     expect((wrapper.vm as any).dialogModel).toBe(true);
     wrapper.destroy();
   });
 
   it("dialogModel get returns false when value is false", () => {
-    const wrapper = mountComponent({ value: false });
+    const wrapper = mountComponent({ modelValue: false });
     expect((wrapper.vm as any).dialogModel).toBe(false);
     wrapper.destroy();
   });
@@ -95,8 +95,8 @@ describe("AddCollectionToProjectDialog", () => {
   it("dialogModel set emits input", () => {
     const wrapper = mountComponent();
     (wrapper.vm as any).dialogModel = true;
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0][0]).toBe(true);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0][0]).toBe(true);
     wrapper.destroy();
   });
 
@@ -285,19 +285,19 @@ describe("AddCollectionToProjectDialog", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.cancel();
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0][0]).toBe(false);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0][0]).toBe(false);
     wrapper.destroy();
   });
 
   it("watch on value loads projects and resets when opened", async () => {
     mockFetchProjects.mockResolvedValue(undefined);
-    const wrapper = mountComponent({ value: false });
+    const wrapper = mountComponent({ modelValue: false });
     const vm = wrapper.vm as any;
     vm.tab = 1;
     vm.newProjectName = "test";
 
-    await wrapper.setProps({ value: true });
+    await wrapper.setProps({ modelValue: true });
     await Vue.nextTick();
 
     expect(mockFetchProjects).toHaveBeenCalled();

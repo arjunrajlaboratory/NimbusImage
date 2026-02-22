@@ -1587,8 +1587,8 @@ export interface ITourConfig extends ITourMetadata {
   };
 }
 
-declare module "vue/types/vue" {
-  interface Vue {
+declare module "vue" {
+  interface ComponentCustomProperties {
     $startTour: (tourName: string) => Promise<void>;
     $nextStep: (targetElementId?: string) => Promise<void>;
     $loadAllTours: () => Promise<Record<string, ITourMetadata>>;

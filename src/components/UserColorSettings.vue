@@ -6,8 +6,8 @@
         Customize the default colors for your fluorescence channels. These
         preferences will be applied when creating new layers.
       </p>
-      <p class="text-caption mb-4 text--secondary">
-        <v-icon small class="mr-1">mdi-asterisk</v-icon>
+      <p class="text-caption mb-4 text-medium-emphasis">
+        <v-icon size="small" class="mr-1">mdi-asterisk</v-icon>
         Channels marked with * have custom overrides
       </p>
 
@@ -22,11 +22,11 @@
           <v-row align="center" no-gutters>
             <v-col cols="8">
               <v-text-field
-                :value="displayColors[channel]"
-                @input="onColorInput(String(channel), $event)"
+                :model-value="displayColors[channel]"
+                @update:model-value="onColorInput(String(channel), $event)"
                 :label="getChannelLabel(String(channel))"
-                dense
-                outlined
+                density="compact"
+                variant="outlined"
                 hide-details
                 :rules="[colorRule]"
               />
@@ -39,7 +39,7 @@
                     : '#FFFFFF'
                 "
                 block
-                small
+                size="small"
                 @click="openColorPicker(String(channel))"
               >
                 <v-icon>mdi-palette</v-icon>
@@ -49,7 +49,7 @@
               <v-btn
                 v-if="!isCustomChannel(String(channel))"
                 icon
-                small
+                size="small"
                 @click="resetColor(String(channel))"
                 title="Reset to default"
               >
@@ -58,7 +58,7 @@
               <v-btn
                 v-else
                 icon
-                small
+                size="small"
                 @click="resetColor(String(channel))"
                 title="Remove override"
               >
@@ -72,12 +72,12 @@
       <v-row class="mt-4">
         <v-col>
           <v-btn
-            outlined
+            variant="outlined"
             color="secondary"
             @click="showAddChannelDialog = true"
             class="mb-2"
           >
-            <v-icon left>mdi-plus</v-icon>
+            <v-icon start>mdi-plus</v-icon>
             Add New Channel Default
           </v-btn>
         </v-col>
@@ -89,7 +89,7 @@
             Save Preferences
           </v-btn>
           <v-btn class="ml-2" @click="resetAllColors"> Reset All </v-btn>
-          <v-btn class="ml-2" text @click="cancelChanges"> Cancel </v-btn>
+          <v-btn class="ml-2" variant="text" @click="cancelChanges"> Cancel </v-btn>
         </v-col>
       </v-row>
 
@@ -107,7 +107,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="colorPickerDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="colorPickerDialog = false">Cancel</v-btn>
           <v-btn color="primary" @click="applyPickerColor">Apply</v-btn>
         </v-card-actions>
       </v-card>
@@ -133,8 +133,8 @@
             :rules="[colorRule]"
             @keyup.enter="addNewChannel"
           >
-            <template #append-outer>
-              <v-btn icon small @click="openNewChannelColorPicker">
+            <template #append>
+              <v-btn icon size="small" @click="openNewChannelColorPicker">
                 <v-icon :color="newChannelColor">mdi-palette</v-icon>
               </v-btn>
             </template>
@@ -142,7 +142,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="cancelAddChannel">Cancel</v-btn>
+          <v-btn variant="text" @click="cancelAddChannel">Cancel</v-btn>
           <v-btn
             color="primary"
             @click="addNewChannel"
@@ -163,7 +163,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="newChannelColorPickerDialog = false"
+          <v-btn variant="text" @click="newChannelColorPickerDialog = false"
             >Cancel</v-btn
           >
           <v-btn color="primary" @click="applyNewChannelColor">Apply</v-btn>

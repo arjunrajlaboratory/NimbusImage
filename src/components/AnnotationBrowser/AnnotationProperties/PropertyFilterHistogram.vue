@@ -1,10 +1,10 @@
 <template>
   <v-container v-if="propertyFullName">
-    <v-row class="title text--primary d-flex align-center">
+    <v-row class="title text-high-emphasis d-flex align-center">
       <v-checkbox
         v-model="propertyFilter.enabled"
         class="ml-4"
-        dense
+        density="compact"
         hide-details
         @change="toggleFilterEnabled"
       ></v-checkbox>
@@ -13,14 +13,14 @@
         v-model="propertyFilter.valuesOrRange"
         mandatory
         class="ml-4"
-        dense
+        density="compact"
         @change="updateViewMode"
       >
-        <v-btn value="range" small>Histogram</v-btn>
-        <v-btn value="values" small>Values</v-btn>
+        <v-btn value="range" size="small">Histogram</v-btn>
+        <v-btn value="values" size="small">Values</v-btn>
       </v-btn-toggle>
       <v-spacer></v-spacer>
-      <v-btn icon small class="mr-2" @click="removeFilter">
+      <v-btn icon size="small" class="mr-2" @click="removeFilter">
         <v-icon>mdi-close</v-icon>
       </v-btn>
     </v-row>
@@ -53,7 +53,7 @@
       <v-row>
         <v-col class="pa-1">
           <v-text-field
-            dense
+            density="compact"
             hide-details
             label="Min"
             type="number"
@@ -62,7 +62,7 @@
         </v-col>
         <v-col class="pa-1">
           <v-text-field
-            dense
+            density="compact"
             hide-details
             type="number"
             label="Max"
@@ -77,7 +77,7 @@
         <v-col>
           <v-textarea
             v-model="valuesInput"
-            dense
+            density="compact"
             rows="4"
             hide-details
             placeholder="Enter values separated by spaces, commas, tabs, or newlines"
@@ -442,7 +442,7 @@ $savedHint: 7px;
   right: 0;
 }
 
-.theme--dark {
+.v-theme--dark {
   .path {
     fill: #c2c2c2;
   }
@@ -472,7 +472,7 @@ $savedHint: 7px;
   }
 }
 
-.theme--light {
+.v-theme--light {
   .path {
     fill: #c2c2c2;
   }

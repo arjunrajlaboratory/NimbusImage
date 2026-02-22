@@ -2,7 +2,7 @@
 <template>
   <div>
     <v-overlay
-      :value="isLoading"
+      :model-value="isLoading"
       absolute
       color="white"
       opacity="0.8"
@@ -29,12 +29,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRoute } from "vue-router";
 import store from "@/store";
 import sync from "@/store/sync";
 import { logError } from "@/utils/log";
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
 
 const isReady = ref(false);
 
@@ -47,7 +48,7 @@ const datasetReady = computed(() => {
 });
 
 async function loadDataset() {
-  const datasetId = vm.$route.params.datasetId;
+  const datasetId = route.params.datasetId as string;
   if (datasetId) {
     try {
       await store.setSelectedDataset(datasetId);
@@ -60,7 +61,7 @@ async function loadDataset() {
 }
 
 watch(
-  () => vm.$route,
+  route,
   () => {
     isReady.value = false;
     loadDataset();

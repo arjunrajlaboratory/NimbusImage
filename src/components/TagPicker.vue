@@ -3,28 +3,26 @@
   <v-combobox
     v-model="tags"
     :items="tagList"
-    :search-input.sync="tagSearchInput"
+    v-model:search="tagSearchInput"
     multiple
     hide-selected
     hide-details
-    small-chips
-    dense
+    chips
+    density="compact"
     label="Tags"
     :disabled="disabled"
     @change="onTagChange"
     ref="combobox"
   >
-    <template v-slot:selection="{ attrs, index, item, parent }">
+    <template v-slot:chip="{ item, props: chipProps }">
       <v-chip
-        :key="index"
+        v-bind="chipProps"
         class="pa-2"
-        v-bind="attrs"
-        close
+        closable
         pill
-        x-small
-        @click:close="parent.selectItem(item)"
+        size="x-small"
       >
-        {{ item }}
+        {{ item.raw }}
       </v-chip>
     </template>
   </v-combobox>
@@ -37,7 +35,7 @@ import annotationStore from "@/store/annotation";
 
 const props = withDefaults(
   defineProps<{
-    value: string[];
+    modelValue: string[];
     disabled?: boolean;
   }>(),
   {
@@ -46,15 +44,15 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: "input", value: string[]): void;
+  (e: "update:modelValue", value: string[]): void;
 }>();
 
 const tags = computed({
   get() {
-    return props.value;
+    return props.modelValue;
   },
   set(val: string[]) {
-    emit("input", val);
+    emit("update:modelValue", val);
   },
 });
 

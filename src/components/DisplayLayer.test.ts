@@ -41,7 +41,7 @@ vi.mock("./DisplaySlice.vue", () => ({
   default: {
     name: "DisplaySlice",
     template: "<div />",
-    props: ["value", "label", "maxValue", "displayed", "offset"],
+    props: ["modelValue", "label", "maxValue", "displayed", "offset"],
   },
 }));
 
@@ -57,7 +57,7 @@ vi.mock("./ColorPickerMenu.vue", () => ({
   default: {
     name: "ColorPickerMenu",
     template: "<div />",
-    props: ["value"],
+    props: ["modelValue"],
   },
 }));
 

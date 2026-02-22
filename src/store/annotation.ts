@@ -30,7 +30,7 @@ import {
   IDatasetView,
 } from "./model";
 
-import Vue, { markRaw } from "vue";
+import { markRaw } from "vue";
 import { simpleCentroid } from "@/utils/annotation";
 import { logError } from "@/utils/log";
 import progress from "./progress";
@@ -458,12 +458,8 @@ export class Annotations extends VuexModule {
   @Mutation
   private addAnnotationImpl(value: IAnnotation) {
     this.annotations.push(value);
-    Vue.set(
-      this.annotationCentroids,
-      value.id,
-      simpleCentroid(value.coordinates),
-    );
-    Vue.set(this.annotationIdToIdx, value.id, this.annotations.length - 1);
+    this.annotationCentroids[value.id] = simpleCentroid(value.coordinates);
+    this.annotationIdToIdx[value.id] = this.annotations.length - 1;
   }
 
   @Mutation
@@ -474,13 +470,9 @@ export class Annotations extends VuexModule {
     annotation: IAnnotation;
     index: number;
   }) {
-    Vue.set(this.annotations, index, annotation);
-    Vue.set(
-      this.annotationCentroids,
-      annotation.id,
-      simpleCentroid(annotation.coordinates),
-    );
-    Vue.set(this.annotationIdToIdx, annotation.id, index);
+    this.annotations.splice(index, 1, annotation);
+    this.annotationCentroids[annotation.id] = simpleCentroid(annotation.coordinates);
+    this.annotationIdToIdx[annotation.id] = index;
   }
 
   @Mutation
@@ -504,12 +496,8 @@ export class Annotations extends VuexModule {
     this.annotationIdToIdx = {};
     for (let idx = 0; idx < this.annotations.length; ++idx) {
       const annotation = this.annotations[idx];
-      Vue.set(
-        this.annotationCentroids,
-        annotation.id,
-        simpleCentroid(annotation.coordinates),
-      );
-      Vue.set(this.annotationIdToIdx, annotation.id, idx);
+      this.annotationCentroids[annotation.id] = simpleCentroid(annotation.coordinates);
+      this.annotationIdToIdx[annotation.id] = idx;
     }
   }
 
@@ -1235,8 +1223,8 @@ export class Annotations extends VuexModule {
     }
     const datasetId = main.dataset.id;
 
-    // Clear errors while maintaining reactivity
-    Vue.set(error, "errors", []);
+    // Clear errors
+    error.errors = [];
 
     // Create a progress entry using the new progress store
     const progressId = await progress.create({
@@ -1525,8 +1513,8 @@ export class Annotations extends VuexModule {
       return null;
     }
 
-    // Clear errors while maintaining reactivity
-    Vue.set(errorInfo, "errors", []);
+    // Clear errors
+    errorInfo.errors = [];
 
     // Get location and channel from tool configuration
     const { location, channel } =

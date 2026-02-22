@@ -25,11 +25,11 @@
           'overflow-y-auto': embedded,
         }"
       >
-        <v-alert v-if="loading" type="info" text>
+        <v-alert v-if="loading" type="info" variant="tonal">
           Loading sample datasets...
         </v-alert>
 
-        <v-alert v-if="error" type="error" text>
+        <v-alert v-if="error" type="error" variant="tonal">
           {{ error }}
         </v-alert>
 
@@ -58,7 +58,7 @@
           <v-card
             v-for="dataset in datasets"
             :key="dataset.id"
-            outlined
+            variant="outlined"
             hover
             class="sample-dataset-card mb-3"
             @click="selectDataset(dataset)"
@@ -68,7 +68,7 @@
             <v-card-title class="pb-2">{{ dataset.title }}</v-card-title>
             <v-card-subtitle class="pb-2">
               <v-chip
-                x-small
+                size="x-small"
                 class="mr-1"
                 v-for="(creator, index) in dataset.metadata.creators"
                 :key="index"
@@ -85,10 +85,10 @@
                 v-html="dataset.metadata.description"
               ></div>
               <div class="mt-2">
-                <v-chip small color="primary" class="mr-1">
+                <v-chip size="small" color="primary" class="mr-1">
                   {{ dataset.files.length }} files
                 </v-chip>
-                <v-chip small>
+                <v-chip size="small">
                   {{ formatSize(getTotalSize(dataset.files)) }}
                 </v-chip>
               </div>
@@ -101,7 +101,7 @@
           v-if="totalPages > 1"
           v-model="currentPage"
           :length="totalPages"
-          @input="fetchCommunityRecords"
+          @update:model-value="fetchCommunityRecords"
           total-visible="7"
           class="mt-4"
         ></v-pagination>

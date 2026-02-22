@@ -1,10 +1,9 @@
 <template>
   <div v-if="toolValues">
     <v-container v-if="basicInternalTemplate.length > 0">
-      <template v-for="(item, index) in basicInternalTemplate">
+      <template v-for="(item, index) in basicInternalTemplate" :key="index">
         <tool-configuration-item
           v-if="shouldShowConfigurationItem(item)"
-          :key="index"
           :item="item"
           :advanced="false"
           @change="changed"
@@ -18,15 +17,14 @@
       v-model="advancedPanel"
     >
       <v-expansion-panel>
-        <v-expansion-panel-header class="title">
+        <v-expansion-panel-title class="title">
           Advanced options
-        </v-expansion-panel-header>
-        <v-expansion-panel-content eager>
+        </v-expansion-panel-title>
+        <v-expansion-panel-text eager>
           <v-container>
-            <template v-for="(item, index) in advancedInternalTemplate">
+            <template v-for="(item, index) in advancedInternalTemplate" :key="index">
               <tool-configuration-item
                 v-if="shouldShowConfigurationItem(item)"
-                :key="index"
                 :item="item"
                 :advanced="true"
                 @change="changed"
@@ -35,7 +33,7 @@
               />
             </template>
           </v-container>
-        </v-expansion-panel-content>
+        </v-expansion-panel-text>
       </v-expansion-panel>
     </v-expansion-panels>
   </div>
@@ -43,19 +41,18 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
-import Vue from "vue";
 import store from "@/store";
 import propertiesStore from "@/store/properties";
 import ToolConfigurationItem from "@/tools/creation/ToolConfigurationItem.vue";
 
 const props = defineProps<{
-  value: Record<string, any>;
+  modelValue: Record<string, any>;
   template: any;
   defaultValues: any;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: Record<string, any> | null): void;
+  (e: "update:modelValue", value: Record<string, any> | null): void;
 }>();
 
 const advancedPanel = ref<number | undefined>();
@@ -138,7 +135,7 @@ function changed() {
   valueTemplates.value = {};
   updateInterface();
   setDefaultValues();
-  emit("input", toolValues.value);
+  emit("update:modelValue", toolValues.value);
 }
 
 function updateValues() {
@@ -152,7 +149,7 @@ function setDefaultValues() {
     }
     const capturedToolValues = toolValues.value;
     const setItemValue = (value: any) =>
-      Vue.set(capturedToolValues, item.id, value);
+      capturedToolValues[item.id] = value;
     switch (item.type) {
       case "select":
         if (item?.meta?.items.length) {

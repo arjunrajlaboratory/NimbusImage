@@ -6,8 +6,6 @@ import {
   VuexModule,
 } from "vuex-module-decorators";
 import store from "./root";
-import Vue from "vue";
-
 import {
   IComputeJob,
   IErrorInfo,
@@ -54,7 +52,7 @@ export function createProgressEventCallback(progressObject: IProgressInfo) {
         // The only required property is "progress"
         if (typeof progress.progress === "number") {
           for (const [k, v] of Object.entries(progress)) {
-            Vue.set(progressObject, k, v);
+            (progressObject as any)[k] = v;
           }
         }
       } catch {}
@@ -89,8 +87,7 @@ export function createErrorEventCallback(errorObject: IErrorInfoList) {
               error.type ||
               (error.error ? MessageType.ERROR : MessageType.WARNING),
           };
-          // Add to errors array while maintaining reactivity
-          Vue.set(errorObject.errors, errorObject.errors.length, newError);
+          errorObject.errors.push(newError);
           progress.createNotification({
             type:
               newError.type === MessageType.ERROR
@@ -190,7 +187,7 @@ export class Jobs extends VuexModule {
         successResolve,
         log: "",
       };
-      Vue.set(this.jobInfoMap, job.jobId, jobData);
+      this.jobInfoMap[job.jobId] = jobData;
     }
     jobData.listeners.push(job);
   }
@@ -206,7 +203,7 @@ export class Jobs extends VuexModule {
 
   @Mutation
   rawRemoveJob(jobId: string) {
-    Vue.delete(this.jobInfoMap, jobId);
+    delete this.jobInfoMap[jobId];
   }
 
   @Action
@@ -260,7 +257,7 @@ export class Jobs extends VuexModule {
 
     // Append to the log if there's text
     if (jobEvent.text && typeof jobEvent.text === "string") {
-      Vue.set(jobInfo, "log", jobInfo.log + jobEvent.text);
+      jobInfo.log = jobInfo.log + jobEvent.text;
     }
 
     for (const listener of jobInfo.listeners) {

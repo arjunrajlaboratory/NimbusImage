@@ -10,8 +10,8 @@
         <v-alert
           v-model="showError"
           type="error"
-          dense
-          dismissible
+          density="compact"
+          closable
           class="mb-4"
         >
           {{ errorString }}
@@ -37,7 +37,7 @@
                 :label="config.name"
                 :value="config.id"
                 :hide-details="true"
-                :dense="true"
+                density="compact"
               />
             </v-col>
           </v-row>
@@ -53,7 +53,7 @@
                 :loading="publicLoading"
                 :disabled="publicLoading"
                 hide-details
-                dense
+                density="compact"
                 @change="togglePublic"
               />
             </v-col>
@@ -63,11 +63,11 @@
           <v-row v-else>
             <v-col cols="12">
               <v-chip
-                small
+                size="small"
                 :color="isPublic ? 'green' : 'grey'"
                 text-color="white"
               >
-                <v-icon left small>
+                <v-icon start size="small">
                   {{ isPublic ? "mdi-earth" : "mdi-lock" }}
                 </v-icon>
                 {{ isPublic ? "Public" : "Private" }}
@@ -81,10 +81,10 @@
           <v-row>
             <v-col cols="12">
               <div class="subtitle-2 mb-2">Current Access:</div>
-              <div v-if="users.length === 0" class="text-body-2 grey--text">
+              <div v-if="users.length === 0" class="text-body-2 text-grey">
                 No users have been granted access yet.
               </div>
-              <v-simple-table v-else dense>
+              <v-table v-else density="compact">
                 <template #default>
                   <thead>
                     <tr>
@@ -107,7 +107,7 @@
                         <div class="font-weight-medium">
                           {{ user.name || user.login }}
                         </div>
-                        <div class="text-caption grey--text text-left">
+                        <div class="text-caption text-grey text-left">
                           {{ user.email || user.login }}
                         </div>
                       </td>
@@ -120,13 +120,13 @@
                         </span>
                         <template v-else-if="isResourceAdmin">
                           <v-select
-                            :value="user.level"
+                            :model-value="user.level"
                             :items="accessLevelItems"
-                            dense
+                            density="compact"
                             hide-details
                             :loading="userLoading === user.id"
                             :disabled="userLoading === user.id"
-                            @change="updateUserAccess(user, $event)"
+                            @update:model-value="updateUserAccess(user, $event)"
                           />
                         </template>
                         <span v-else class="font-weight-medium">
@@ -137,21 +137,20 @@
                         <v-btn
                           v-if="user.level !== 2"
                           icon
-                          small
+                          size="small"
                           color="error"
                           :loading="userLoading === user.id"
                           :disabled="userLoading === user.id"
                           @click="confirmRemoveUser(user)"
                         >
-                          <v-icon small>mdi-close</v-icon>
+                          <v-icon size="small">mdi-close</v-icon>
                         </v-btn>
                         <v-tooltip v-else bottom>
-                          <template #activator="{ on, attrs }">
+                          <template #activator="{ props: activatorProps }">
                             <v-icon
-                              small
-                              color="grey lighten-1"
-                              v-bind="attrs"
-                              v-on="on"
+                              size="small"
+                              color="grey-lighten-1"
+                              v-bind="activatorProps"
                             >
                               mdi-lock
                             </v-icon>
@@ -162,7 +161,7 @@
                     </tr>
                   </tbody>
                 </template>
-              </v-simple-table>
+              </v-table>
             </v-col>
           </v-row>
 
@@ -177,8 +176,8 @@
                     <v-text-field
                       v-model="newUserEmail"
                       label="Username or Email"
-                      dense
-                      outlined
+                      density="compact"
+                      variant="outlined"
                       hide-details
                       :disabled="addUserLoading"
                     />
@@ -188,8 +187,8 @@
                       v-model="newUserAccessLevel"
                       :items="accessLevelItems"
                       label="Access"
-                      dense
-                      outlined
+                      density="compact"
+                      variant="outlined"
                       hide-details
                       :disabled="addUserLoading"
                     />
@@ -201,7 +200,7 @@
                       :disabled="!newUserEmail || addUserLoading"
                       @click="addUser"
                     >
-                      <v-icon left small>mdi-plus</v-icon>
+                      <v-icon start size="small">mdi-plus</v-icon>
                       Add
                     </v-btn>
                   </v-col>
@@ -213,7 +212,7 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn color="primary" text @click="close">Done</v-btn>
+        <v-btn color="primary" variant="text" @click="close">Done</v-btn>
       </v-card-actions>
     </v-card>
 
@@ -228,8 +227,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="confirmDialog = false">Cancel</v-btn>
-          <v-btn color="error" text @click="removeUser">Remove</v-btn>
+          <v-btn variant="text" @click="confirmDialog = false">Cancel</v-btn>
+          <v-btn color="error" variant="text" @click="removeUser">Remove</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -250,16 +249,16 @@ import {
 
 const props = defineProps<{
   dataset: IGirderSelectAble | null;
-  value: boolean;
+  modelValue: boolean;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: boolean): void;
+  (e: "update:modelValue", value: boolean): void;
 }>();
 
 const dialog = computed({
-  get: () => props.value,
-  set: (val: boolean) => emit("input", val),
+  get: () => props.modelValue,
+  set: (val: boolean) => emit("update:modelValue", val),
 });
 
 const loading = ref(false);

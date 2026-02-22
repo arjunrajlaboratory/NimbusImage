@@ -97,7 +97,7 @@
       <v-layout v-if="timelapseMode">
         <v-btn
           class="ml-3"
-          small
+          size="small"
           @click="annotationStore.deleteAllTimelapseConnections"
         >
           Delete all timelapse connections
@@ -109,7 +109,7 @@
       v-model="layerMode"
       label="Layers: "
       mandatory
-      dense
+      density="compact"
       row
       hide-details
       class="layer-mode-controls"
@@ -126,7 +126,7 @@
 </template>
 
 <style lang="scss" scoped>
-.my-checkbox::v-deep .v-input__control {
+.my-checkbox :deep(.v-input__control) {
   transform: scale(0.9) translateY(5%);
 }
 .v-input--selection-controls {
@@ -139,7 +139,7 @@
 }
 .layer-mode-controls {
   margin: 10px 0;
-  ::v-deep .v-radio {
+  :deep(.v-radio) {
     margin-right: 10px;
     > .v-input--selection-controls__input {
       margin-right: 0;

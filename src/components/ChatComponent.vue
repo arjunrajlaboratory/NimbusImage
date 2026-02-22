@@ -1,4 +1,5 @@
 <template>
+  <div ref="rootEl">
   <v-card class="chat-component">
     <v-card-title>
       Nimbus chat
@@ -52,7 +53,7 @@
             class="current-image-container"
           >
             <img :src="image.data" alt="Current image" class="current-image" />
-            <v-btn icon small class="remove-image" @click="removeImage(index)">
+            <v-btn icon size="small" class="remove-image" @click="removeImage(index)">
               <v-icon>mdi-close</v-icon>
             </v-btn>
           </div>
@@ -67,7 +68,7 @@
             @keyup.enter="!$event.shiftKey ? sendMessage() : undefined"
             @paste="handlePaste"
           />
-          <v-btn @click="sendMessage" outlined>Send</v-btn>
+          <v-btn @click="sendMessage" variant="outlined">Send</v-btn>
           <v-btn icon @click="fileInput?.click()">
             <v-icon>mdi-image</v-icon>
           </v-btn>
@@ -83,10 +84,11 @@
       </template>
     </v-card-actions>
   </v-card>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { logError } from "@/utils/log";
 import store from "@/store";
 import chatStore from "@/store/chat";
@@ -106,7 +108,7 @@ const imagesInput = ref<IChatImage[]>([]);
 const isWaiting = ref(false);
 const isRefreshing = ref(false);
 
-const vm = getCurrentInstance()!.proxy;
+const rootEl = ref<HTMLElement>();
 
 const messages = computed(() => chatStore.messages);
 
@@ -225,7 +227,7 @@ async function refreshChat() {
 
 async function captureInterfaceScreenshot(): Promise<IChatImage | null> {
   try {
-    const el = vm.$el as HTMLElement;
+    const el = rootEl.value!;
     const canvas = await html2canvas(document.body, {
       ignoreElements: (element) => {
         return element === el || el.contains(element);

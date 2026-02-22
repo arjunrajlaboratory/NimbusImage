@@ -14,7 +14,7 @@
           <!-- Tool name with autofill -->
           <v-row dense>
             <v-col>
-              <div class="title white--text">Tool Name</div>
+              <div class="title text-white">Tool Name</div>
             </v-col>
           </v-row>
           <v-row dense class="px-4">
@@ -24,7 +24,7 @@
                 :append-icon="userToolName ? 'mdi-refresh' : ''"
                 @click:append="userToolName = false"
                 @input="userToolName = true"
-                dense
+                density="compact"
                 id="tool-name-tourstep"
               />
             </v-col>
@@ -32,7 +32,7 @@
           <!-- Tool hotkey -->
           <v-row dense>
             <v-col>
-              <div class="title white--text">Tool Hotkey</div>
+              <div class="title text-white">Tool Hotkey</div>
             </v-col>
           </v-row>
           <v-row dense class="px-4">

@@ -20,7 +20,7 @@ function mountComponent(props = {}) {
   return mount(LayerSelect, {
     vuetify: new Vuetify(),
     propsData: {
-      value: "l1",
+      modelValue: "l1",
       ...props,
     },
   });
@@ -31,7 +31,7 @@ describe("LayerSelect", () => {
     const wrapper = mountComponent();
     const items = wrapper.vm.layerItems;
     expect(items).toEqual([
-      { label: "Layer 1", value: "l1" },
+      { label: "Layer 1", modelValue: "l1" },
       { label: "Layer 2", value: "l2" },
     ]);
   });
@@ -50,16 +50,16 @@ describe("LayerSelect", () => {
   });
 
   it("ensureLayer sets first layer when value is null (no any)", () => {
-    const wrapper = mountComponent({ value: null });
+    const wrapper = mountComponent({ modelValue: null });
     // After mount, ensureLayer should have emitted input with first layer
-    const emitted = wrapper.emitted("input");
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     expect(emitted![0][0]).toBe("l1");
   });
 
   it("ensureLayer sets null when value is undefined (with any)", () => {
-    const wrapper = mountComponent({ value: undefined, any: true });
-    const emitted = wrapper.emitted("input");
+    const wrapper = mountComponent({ modelValue: undefined, any: true });
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     expect(emitted![0][0]).toBeNull();
   });

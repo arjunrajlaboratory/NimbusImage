@@ -1,9 +1,8 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="{ on, attrs }">
+    <template v-slot:activator="{ props: activatorProps }">
       <v-btn
-        v-bind="{ ...attrs, ...$attrs }"
-        v-on="on"
+        v-bind="{ ...activatorProps, ...$attrs }"
         v-description="{
           section: 'Object list actions',
           title: 'Download Index Conversions',
@@ -22,7 +21,7 @@
       </v-card-subtitle>
 
       <v-card-text>
-        <v-alert type="info" text class="mb-4">
+        <v-alert type="info" variant="tonal" class="mb-4">
           These CSV files map dimension indices to their labels. Each file
           contains three columns:
           <ul class="mt-2">
@@ -38,25 +37,25 @@
         </v-alert>
 
         <template v-if="!dataset">
-          <v-alert type="warning" text>
+          <v-alert type="warning" variant="tonal">
             No dataset loaded. Please select a dataset first.
           </v-alert>
         </template>
 
         <template v-else>
           <!-- XY Dimension -->
-          <v-card outlined class="mb-3" v-if="hasXYDimension">
+          <v-card variant="outlined" class="mb-3" v-if="hasXYDimension">
             <v-card-title class="text-h6">XY Positions</v-card-title>
             <v-card-text>
               <div class="d-flex align-center">
                 <div class="flex-grow-1">
                   <div>{{ xyCount }} positions</div>
-                  <div v-if="!hasXYLabels" class="text--secondary caption">
+                  <div v-if="!hasXYLabels" class="text-medium-emphasis caption">
                     No labels detected; index only
                   </div>
                 </div>
                 <v-btn color="primary" @click="downloadXY">
-                  <v-icon left>mdi-download</v-icon>
+                  <v-icon start>mdi-download</v-icon>
                   Download XY CSV
                 </v-btn>
               </div>
@@ -64,18 +63,18 @@
           </v-card>
 
           <!-- Z Dimension -->
-          <v-card outlined class="mb-3" v-if="hasZDimension">
+          <v-card variant="outlined" class="mb-3" v-if="hasZDimension">
             <v-card-title class="text-h6">Z Slices</v-card-title>
             <v-card-text>
               <div class="d-flex align-center">
                 <div class="flex-grow-1">
                   <div>{{ zCount }} slices</div>
-                  <div v-if="!hasZLabels" class="text--secondary caption">
+                  <div v-if="!hasZLabels" class="text-medium-emphasis caption">
                     No labels detected; index only
                   </div>
                 </div>
                 <v-btn color="primary" @click="downloadZ">
-                  <v-icon left>mdi-download</v-icon>
+                  <v-icon start>mdi-download</v-icon>
                   Download Z CSV
                 </v-btn>
               </div>
@@ -83,25 +82,25 @@
           </v-card>
 
           <!-- Time Dimension -->
-          <v-card outlined class="mb-3" v-if="hasTimeDimension">
+          <v-card variant="outlined" class="mb-3" v-if="hasTimeDimension">
             <v-card-title class="text-h6">Time Points</v-card-title>
             <v-card-text>
               <div class="d-flex align-center">
                 <div class="flex-grow-1">
                   <div>{{ timeCount }} time points</div>
-                  <div v-if="!hasTimeLabels" class="text--secondary caption">
+                  <div v-if="!hasTimeLabels" class="text-medium-emphasis caption">
                     No labels detected; index only
                   </div>
                 </div>
                 <v-btn color="primary" @click="downloadTime">
-                  <v-icon left>mdi-download</v-icon>
+                  <v-icon start>mdi-download</v-icon>
                   Download Time CSV
                 </v-btn>
               </div>
             </v-card-text>
           </v-card>
 
-          <v-alert v-if="!hasAnyDimension" type="info" text>
+          <v-alert v-if="!hasAnyDimension" type="info" variant="tonal">
             No multi-dimensional data available for this dataset.
           </v-alert>
         </template>
@@ -109,7 +108,7 @@
 
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn @click="dialog = false" text>Close</v-btn>
+        <v-btn @click="dialog = false" variant="text">Close</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

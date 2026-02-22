@@ -15,7 +15,7 @@ function mountComponent(props = {}) {
   return shallowMount(GirderLocationChooser, {
     vuetify: new Vuetify(),
     propsData: {
-      value: null,
+      modelValue: null,
       ...props,
     },
     stubs: {
@@ -45,37 +45,37 @@ describe("GirderLocationChooser", () => {
 
   it("selectedName returns name when selected", () => {
     const wrapper = mountComponent({
-      value: { name: "My Folder", _modelType: "folder" },
+      modelValue: { name: "My Folder", _modelType: "folder" },
     });
     expect(wrapper.vm.selectedName).toBe("My Folder");
   });
 
   it("selectedName returns fallback when not selected", () => {
-    const wrapper = mountComponent({ value: null });
+    const wrapper = mountComponent({ modelValue: null });
     expect(wrapper.vm.selectedName).toBe("Select a folder...");
   });
 
   it("select closes dialog and emits input", () => {
     const wrapper = mountComponent({
-      value: { name: "Folder", _modelType: "folder" },
+      modelValue: { name: "Folder", _modelType: "folder" },
     });
     wrapper.vm.dialogInternal = true;
     wrapper.vm.select();
     expect(wrapper.vm.dialogInternal).toBe(false);
-    expect(wrapper.emitted("input")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
   });
 
   it("mounted initializes selected from value", () => {
     const location = { name: "Test", _modelType: "folder" };
-    const wrapper = mountComponent({ value: location });
+    const wrapper = mountComponent({ modelValue: location });
     expect(wrapper.vm.selected).toEqual(location);
   });
 
   it("watch on value syncs selected", async () => {
-    const wrapper = mountComponent({ value: null });
+    const wrapper = mountComponent({ modelValue: null });
     expect(wrapper.vm.selected).toBeNull();
     const newVal = { name: "New Folder", _modelType: "folder" };
-    await wrapper.setProps({ value: newVal });
+    await wrapper.setProps({ modelValue: newVal });
     expect(wrapper.vm.selected).toEqual(newVal);
   });
 });

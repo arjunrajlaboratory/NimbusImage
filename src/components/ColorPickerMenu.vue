@@ -2,11 +2,10 @@
   <v-menu
     :close-on-content-click="false"
     transition="scale-transition"
-    offset-x
   >
-    <template #activator="{ on }">
+    <template #activator="{ props: activatorProps }">
       <div
-        v-on="on"
+        v-bind="activatorProps"
         :class="parentClass"
         :style="[{ cursor: 'pointer' }, parentStyle]"
         class="d-flex align-center"
@@ -15,42 +14,29 @@
         <span :style="{ backgroundColor: color }" class="color-bar"></span>
       </div>
     </template>
-    <v-color-picker :value="color" @input="emit('input', $event)" />
+    <v-color-picker :model-value="color" @update:model-value="emit('update:modelValue', $event)" />
   </v-menu>
 </template>
 
-<!-- Dual script blocks needed for inheritAttrs in Vue 2.7 -->
-<!-- In Vue 3.3+, can use defineOptions({ inheritAttrs: false }) instead -->
-<script lang="ts">
-export default {
-  inheritAttrs: false,
-};
-</script>
-
 <script setup lang="ts">
-import { computed, getCurrentInstance } from "vue";
+import { computed, useAttrs } from "vue";
 
-defineProps<{
-  value?: string;
+defineOptions({ inheritAttrs: false });
+
+const props = defineProps<{
+  modelValue?: string;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: string): void;
+  (e: "update:modelValue", value: string): void;
 }>();
 
-const instance = getCurrentInstance();
+const attrs = useAttrs();
 
-// Access the v-model value with fallback
-const color = computed(() => instance?.proxy?.$props?.value ?? "#FFFFFF");
+const color = computed(() => props.modelValue ?? "#FFFFFF");
 
-// Vue 2 specific: access parent-provided class/style from vnode
-// In Vue 3, these would be in useAttrs() instead
-const parentClass = computed(
-  () => (instance?.proxy as any)?.$vnode?.data?.staticClass,
-);
-const parentStyle = computed(
-  () => (instance?.proxy as any)?.$vnode?.data?.staticStyle,
-);
+const parentClass = computed(() => (attrs as any).class);
+const parentStyle = computed(() => (attrs as any).style);
 </script>
 
 <style lang="scss" scoped>

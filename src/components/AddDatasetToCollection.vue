@@ -1,8 +1,8 @@
 <template>
   <v-card class="smart-overflow">
     <v-card-title class="mb-4">
-      <span class="text--secondary">Adding dataset to collection:</span>
-      <span class="text--primary">{{ collection.name }}</span>
+      <span class="text-medium-emphasis">Adding dataset to collection:</span>
+      <span class="text-high-emphasis">{{ collection.name }}</span>
     </v-card-title>
     <v-card-text class="smart-overflow">
       <v-radio-group v-model="addDatasetOptionType">
@@ -22,7 +22,7 @@
           :breadcrumb="true"
           :selectable="true"
           @selected="selectAddDatasetFolder"
-          :location.sync="option.datasetSelectLocation"
+          v-model:location="option.datasetSelectLocation"
           :initial-items-per-page="-1"
           :items-per-page-options="[-1]"
           :menu-enabled="false"
@@ -34,7 +34,7 @@
           :key="iWarning + '-warning'"
           type="warning"
           class="my-2"
-          dense
+          density="compact"
         >
           {{ warning }}
         </v-alert>
@@ -42,7 +42,7 @@
           v-if="option.datasets.length > 0"
           type="success"
           class="my-2"
-          dense
+          density="compact"
         >
           Selected {{ option.datasets.length }} dataset(s):
           <v-divider />
@@ -77,7 +77,7 @@
           <div class="mt-2">Loading upload location...</div>
         </div>
         <div class="d-flex justify-end mt-2">
-          <v-simple-checkbox v-model="option.editVariables" dense />
+          <v-checkbox v-model="option.editVariables" density="compact" />
           Review variables
         </div>
         <template v-if="option.configuring && option.uploadedDatasetId">

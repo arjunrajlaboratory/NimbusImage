@@ -34,7 +34,7 @@ function mountComponent(props = {}) {
     vuetify: new Vuetify(),
     propsData: {
       item: { type: "text", name: "Test Field" },
-      value: "hello",
+      modelValue: "hello",
       ...props,
     },
     stubs: {
@@ -48,14 +48,14 @@ function mountComponent(props = {}) {
 
 describe("ToolConfigurationItem", () => {
   it("componentValue getter returns value prop", () => {
-    const wrapper = mountComponent({ value: "test-value" });
+    const wrapper = mountComponent({ modelValue: "test-value" });
     expect(wrapper.vm.componentValue).toBe("test-value");
   });
 
   it("componentValue setter emits input", async () => {
     const wrapper = mountComponent();
     wrapper.vm.componentValue = "new-value";
-    expect(wrapper.emitted("input")![0][0]).toBe("new-value");
+    expect(wrapper.emitted("update:modelValue")![0][0]).toBe("new-value");
   });
 
   it("changed emits change", () => {

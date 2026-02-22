@@ -1,3 +1,6 @@
-// note: will also import the vuetify.min.css even tho in the lib version the SASS one will be generated directly
-export { Upload, Breadcrumb, Search } from "@girder/components/src/components";
-export { FileManager } from "@girder/components/src/components/Snippet";
+export {
+  GirderUpload as Upload,
+  GirderBreadcrumb as Breadcrumb,
+  GirderSearch as Search,
+  GirderFileManager as FileManager,
+} from "@girder/components";

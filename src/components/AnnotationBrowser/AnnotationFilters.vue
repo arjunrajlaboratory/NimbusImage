@@ -9,14 +9,14 @@
       class="filter-element"
       label="Current frame only"
       v-model="onlyCurrentFrame"
-      dense
+      density="compact"
       hide-details
     />
     <v-switch
       class="filter-element"
       label="Show annotations from hidden layers"
       v-model="showAnnotationsFromHiddenLayers"
-      dense
+      density="compact"
       hide-details
     />
     <property-filter-selector class="filter-element" />

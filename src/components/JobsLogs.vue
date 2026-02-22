@@ -1,7 +1,7 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header>Jobs and Logs</v-expansion-panel-header>
-    <v-expansion-panel-content>
+    <v-expansion-panel-title>Jobs and Logs</v-expansion-panel-title>
+    <v-expansion-panel-text>
       <v-container>
         <v-btn
           color="primary"
@@ -25,12 +25,11 @@
             <v-card-title class="headline">
               Recent Jobs
               <v-spacer></v-spacer>
-              <v-tooltip bottom>
-                <template #activator="{ on, attrs }">
+              <v-tooltip location="bottom">
+                <template #activator="{ props: activatorProps }">
                   <v-btn
                     icon
-                    v-bind="attrs"
-                    v-on="on"
+                    v-bind="activatorProps"
                     @click="fetchJobs"
                     :loading="loading"
                   >
@@ -55,7 +54,7 @@
                   <v-chip
                     :color="getStatusColor(item.status)"
                     text-color="white"
-                    small
+                    size="small"
                   >
                     {{ getStatusText(item.status) }}
                   </v-chip>
@@ -73,8 +72,8 @@
                   {{ getDuration(item) }}
                 </template>
                 <template #[`item.actions`]="{ item }">
-                  <v-btn small text color="info" @click="viewJobLog(item)">
-                    <v-icon small left>mdi-text-box-outline</v-icon>
+                  <v-btn size="small" variant="text" color="info" @click="viewJobLog(item)">
+                    <v-icon size="small" start>mdi-text-box-outline</v-icon>
                     Log
                   </v-btn>
                 </template>
@@ -89,12 +88,11 @@
             <v-card-title class="headline">
               Job Log: {{ selectedJob ? selectedJob.title : "" }}
               <v-spacer></v-spacer>
-              <v-tooltip bottom>
-                <template #activator="{ on, attrs }">
+              <v-tooltip location="bottom">
+                <template #activator="{ props: activatorProps }">
                   <v-btn
                     icon
-                    v-bind="attrs"
-                    v-on="on"
+                    v-bind="activatorProps"
                     @click="copyLogToClipboard"
                   >
                     <v-icon>mdi-content-copy</v-icon>
@@ -102,12 +100,11 @@
                 </template>
                 <span>Copy to clipboard</span>
               </v-tooltip>
-              <v-tooltip bottom>
-                <template #activator="{ on, attrs }">
+              <v-tooltip location="bottom">
+                <template #activator="{ props: activatorProps }">
                   <v-btn
                     icon
-                    v-bind="attrs"
-                    v-on="on"
+                    v-bind="activatorProps"
                     @click="refreshLog"
                     :loading="refreshingLog"
                   >
@@ -125,7 +122,7 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn color="primary" text @click="showLogDialog = false"
+              <v-btn color="primary" variant="text" @click="showLogDialog = false"
                 >Close</v-btn
               >
             </v-card-actions>
@@ -142,7 +139,7 @@
           Log copied to clipboard
         </v-snackbar>
       </v-container>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 
@@ -199,14 +196,14 @@ const loading = ref(false);
 const refreshingLog = ref(false);
 
 const headers = [
-  { text: "Title", value: "title" },
-  { text: "Image", value: "firstArg" },
-  { text: "Type", value: "type" },
-  { text: "Status", value: "status" },
-  { text: "Started", value: "created" },
-  { text: "Ended", value: "endTime" },
-  { text: "Duration", value: "duration" },
-  { text: "Actions", value: "actions", sortable: false },
+  { title: "Title", key: "title" },
+  { title: "Image", key: "firstArg" },
+  { title: "Type", key: "type" },
+  { title: "Status", key: "status" },
+  { title: "Started", key: "created" },
+  { title: "Ended", key: "endTime" },
+  { title: "Duration", key: "duration" },
+  { title: "Actions", key: "actions", sortable: false },
 ];
 
 async function showJobs() {

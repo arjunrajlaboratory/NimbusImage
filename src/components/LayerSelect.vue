@@ -3,8 +3,8 @@
   <v-select
     v-bind="$attrs"
     :items="layerItems"
-    item-text="label"
-    dense
+    item-title="label"
+    density="compact"
     v-model="layer"
     :label="label"
   />
@@ -16,21 +16,21 @@ import type { PropType } from "vue";
 import store from "@/store";
 
 const props = defineProps({
-  value: { type: String as PropType<string | null> },
+  modelValue: { type: String as PropType<string | null> },
   any: { type: undefined as any, default: undefined },
   label: { type: undefined as any, default: undefined },
 });
 
 const emit = defineEmits<{
-  (e: "input", value: string | null): void;
+  (e: "update:modelValue", value: string | null): void;
 }>();
 
 const layer = computed<string | null | undefined>({
   get() {
-    return props.value;
+    return props.modelValue;
   },
   set(val: string | null | undefined) {
-    emit("input", val as string | null);
+    emit("update:modelValue", val as string | null);
   },
 });
 

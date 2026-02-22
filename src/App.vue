@@ -3,81 +3,86 @@
     <v-dialog v-model="helpPanelIsOpen" width="inherit">
       <help-panel />
     </v-dialog>
-    <v-app-bar class="elevation-1" app clipped-right>
-      <span v-tooltip="{ content: 'NimbusImage home', open_delay: 500 }">
-        <v-toolbar-title @click="goHome" class="logo">
-          <img
-            src="/img/icons/NimbusImageIcon.png"
-            alt="Icon"
-            class="logo-icon"
-          />
-        </v-toolbar-title>
-      </span>
+    <v-app-bar class="elevation-1">
+      <v-tooltip text="NimbusImage home" :open-delay="500">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-toolbar-title v-bind="activatorProps" @click="goHome" class="logo">
+            <img
+              src="/img/icons/NimbusImageIcon.png"
+              alt="Icon"
+              class="logo-icon"
+            />
+          </v-toolbar-title>
+        </template>
+      </v-tooltip>
       <h1 v-if="routeName === 'root'" class="text-h4 font-weight-bold ml-4">
         NimbusImage
       </h1>
       <bread-crumbs />
       <v-spacer />
-      <span v-tooltip="'Upload a new dataset'">
-        <v-btn
-          color="primary"
-          class="ml-4"
-          @click="goToNewDataset"
-          :disabled="!store.isLoggedIn || !store.girderUser"
-          :loading="isUploadLoading"
-        >
-          Upload Data
-        </v-btn>
-      </span>
+      <v-tooltip text="Upload a new dataset">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            color="primary"
+            class="ml-4"
+            @click="goToNewDataset"
+            :disabled="!store.isLoggedIn || !store.girderUser"
+            :loading="isUploadLoading"
+          >
+            Upload Data
+          </v-btn>
+        </template>
+      </v-tooltip>
       <v-divider class="ml-1" vertical />
       <template v-if="store.dataset && routeName === 'datasetview'">
-        <span
-          v-tooltip="
-            'List of all objects in the dataset, including their properties, and various actions on them'
-          "
-        >
-          <v-btn
-            class="ml-4"
-            @click.stop="toggleRightPanel('annotationPanel')"
-            id="object-list-button-tourstep"
-            v-tour-trigger="'object-list-button-tourtrigger'"
-          >
-            Object list
-          </v-btn>
-        </span>
+        <v-tooltip text="List of all objects in the dataset, including their properties, and various actions on them">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="ml-4"
+              @click.stop="toggleRightPanel('annotationPanel')"
+              id="object-list-button-tourstep"
+              v-tour-trigger="'object-list-button-tourtrigger'"
+            >
+              Object list
+            </v-btn>
+          </template>
+        </v-tooltip>
         <v-divider class="ml-4" vertical />
-        <span
-          v-tooltip="
-            'Snapshots for bookmarking and downloading cropped regions in your dataset'
-          "
-        >
-          <v-btn
-            class="ml-4"
-            @click.stop="toggleRightPanel('snapshotPanel')"
-            id="snapshots-button-tourstep"
-            v-tour-trigger="'snapshots-button-tourtrigger'"
-          >
-            Snapshots
-          </v-btn>
-        </span>
-        <span v-tooltip="'Image and object display settings'">
-          <v-btn
-            class="ml-4"
-            @click.stop="toggleRightPanel('settingsPanel')"
-            id="settings-button-tourstep"
-            v-tour-trigger="'settings-button-tourtrigger'"
-          >
-            Settings
-          </v-btn>
-        </span>
+        <v-tooltip text="Snapshots for bookmarking and downloading cropped regions in your dataset">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="ml-4"
+              @click.stop="toggleRightPanel('snapshotPanel')"
+              id="snapshots-button-tourstep"
+              v-tour-trigger="'snapshots-button-tourtrigger'"
+            >
+              Snapshots
+            </v-btn>
+          </template>
+        </v-tooltip>
+        <v-tooltip text="Image and object display settings">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="ml-4"
+              @click.stop="toggleRightPanel('settingsPanel')"
+              id="settings-button-tourstep"
+              v-tour-trigger="'settings-button-tourtrigger'"
+            >
+              Settings
+            </v-btn>
+          </template>
+        </v-tooltip>
       </template>
       <div class="mx-4 d-flex align-center">
-        <v-menu offset-y>
-          <template v-slot:activator="{ on, attrs }">
+        <v-menu>
+          <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               icon
-              v-bind="attrs"
-              v-on="on"
+              v-bind="activatorProps"
               id="help-button-tourstep"
               v-tour-trigger="'help-button-tourtrigger'"
             >
@@ -89,26 +94,18 @@
             <v-list>
               <!-- HUD Option -->
               <v-list-item @click="toggleHelpDialogUsingHotkey">
-                <v-list-item-icon>
-                  <v-icon>mdi-view-dashboard-outline</v-icon>
-                </v-list-item-icon>
-                <v-list-item-content>
-                  <v-list-item-title
-                    >Show heads up display (tab)</v-list-item-title
-                  >
-                </v-list-item-content>
+                <v-icon>mdi-view-dashboard-outline</v-icon>
+                <v-list-item-title
+                  >Show heads up display (tab)</v-list-item-title
+                >
               </v-list-item>
 
               <v-divider></v-divider>
 
               <!-- Documentation Link -->
               <v-list-item href="https://docs.nimbusimage.com" target="_blank">
-                <v-list-item-icon>
-                  <v-icon>mdi-book-open-variant</v-icon>
-                </v-list-item-icon>
-                <v-list-item-content>
-                  <v-list-item-title>Documentation</v-list-item-title>
-                </v-list-item-content>
+                <v-icon>mdi-book-open-variant</v-icon>
+                <v-list-item-title>Documentation</v-list-item-title>
               </v-list-item>
 
               <v-divider></v-divider>
@@ -118,7 +115,7 @@
                 <v-text-field
                   v-model="tourSearch"
                   label="Search tours"
-                  dense
+                  density="compact"
                   hide-details
                   prepend-inner-icon="mdi-magnify"
                   clearable
@@ -128,19 +125,15 @@
               </v-list-item>
 
               <!-- Tours List -->
-              <template v-for="(tours, category) in filteredToursByCategory">
-                <v-subheader :key="category">{{ category }}</v-subheader>
+              <template v-for="(tours, category) in filteredToursByCategory" :key="category">
+                <v-list-subheader>{{ category }}</v-list-subheader>
                 <v-list-item
                   v-for="(tour, tourId) in tours"
                   :key="tourId"
                   @click="handleTourStart(tourId)"
                 >
-                  <v-list-item-icon v-if="tour.popular">
-                    <v-icon color="yellow darken-2">mdi-star</v-icon>
-                  </v-list-item-icon>
-                  <v-list-item-content>
-                    <v-list-item-title>{{ tour.name }}</v-list-item-title>
-                  </v-list-item-content>
+                  <v-icon v-if="tour.popular" color="yellow-darken-2">mdi-star</v-icon>
+                  <v-list-item-title>{{ tour.name }}</v-list-item-title>
                 </v-list-item>
               </template>
             </v-list>
@@ -148,20 +141,19 @@
         </v-menu>
         <server-status />
         <user-menu />
-        <span
-          v-tooltip="
-            'Open NimbusImage chat for help with solving your particular image analysis problems'
-          "
-        >
-          <v-btn
-            icon
-            @click="chatbotOpen = !chatbotOpen"
-            id="chat-button-tourstep"
-            v-tour-trigger="'chat-button-tourtrigger'"
-          >
-            <v-icon>mdi-chat</v-icon>
-          </v-btn>
-        </span>
+        <v-tooltip text="Open NimbusImage chat for help with solving your particular image analysis problems">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              icon
+              @click="chatbotOpen = !chatbotOpen"
+              id="chat-button-tourstep"
+              v-tour-trigger="'chat-button-tourtrigger'"
+            >
+              <v-icon>mdi-chat</v-icon>
+            </v-btn>
+          </template>
+        </v-tooltip>
       </div>
     </v-app-bar>
 
@@ -173,11 +165,8 @@
 
     <v-navigation-drawer
       v-model="analyzePanel"
-      app
-      right
-      disable-resize-watcher
-      clipped
-      hide-overlay
+      location="right"
+      :scrim="false"
       :width="480"
     >
       <analyze-annotations />
@@ -185,11 +174,8 @@
 
     <v-navigation-drawer
       v-model="settingsPanel"
-      app
-      right
-      disable-resize-watcher
-      clipped
-      hide-overlay
+      location="right"
+      :scrim="false"
       :width="480"
     >
       <annotations-settings />
@@ -197,11 +183,8 @@
 
     <v-navigation-drawer
       v-model="snapshotPanel"
-      app
-      right
-      disable-resize-watcher
-      clipped
-      hide-overlay
+      location="right"
+      :scrim="false"
       :width="480"
       @transitionend="snapshotPanelFull = snapshotPanel"
     >
@@ -210,11 +193,8 @@
 
     <v-navigation-drawer
       v-model="annotationPanel"
-      app
-      right
-      disable-resize-watcher
-      clipped
-      hide-overlay
+      location="right"
+      :scrim="false"
       :width="640"
     >
       <annotation-browser></annotation-browser>
@@ -223,7 +203,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance, Ref } from "vue";
+import { ref, computed, watch, onMounted, Ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import axios from "axios";
 import UserMenu from "./layout/UserMenu.vue";
 import ServerStatus from "./components/ServerStatus.vue";
@@ -240,6 +221,7 @@ import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
+import { useTour } from "@/utils/useTour";
 
 // Suppress unused import warnings for template-only components
 void UserMenu;
@@ -252,7 +234,9 @@ void HelpPanel;
 void BreadCrumbs;
 void ChatComponent;
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
+const router = useRouter();
+const { startTour, loadAllTours: loadAllToursFromManager } = useTour();
 
 const tourSearch = ref("");
 const availableTours = ref<Record<string, ITourMetadata>>({});
@@ -302,11 +286,11 @@ function fetchConfig() {
 }
 
 async function loadAllTours() {
-  availableTours.value = await (vm as any).$loadAllTours();
+  availableTours.value = await loadAllToursFromManager();
 }
 
 function goHome() {
-  vm.$router.push({ name: "root" });
+  router.push({ name: "root" });
 }
 
 function toggleRightPanel(panel: string | null) {
@@ -322,7 +306,7 @@ function toggleRightPanel(panel: string | null) {
   lastModifiedRightPanel.value = panel;
 }
 
-const routeName = computed(() => vm.$route.name);
+const routeName = computed(() => route.name);
 
 const hasUncomputedProperties = computed(() => {
   const uncomputed = propertyStore.uncomputedAnnotationsPerProperty;
@@ -366,9 +350,9 @@ const filteredToursByCategory = computed(
 function handleTourStart(tourId: string) {
   const tour = availableTours.value[tourId];
   if (tour && tour.entryPoint !== routeName.value) {
-    vm.$router.push({ name: tour.entryPoint });
+    router.push({ name: tour.entryPoint });
   }
-  (vm as any).$startTour(tourId);
+  startTour(tourId);
 }
 
 async function goToNewDataset() {
@@ -385,7 +369,7 @@ async function goToNewDataset() {
   } catch (error) {
     logError(error);
   } finally {
-    vm.$router.push({
+    router.push({
       name: "newdataset",
       params: {
         quickupload: false,

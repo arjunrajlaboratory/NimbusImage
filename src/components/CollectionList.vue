@@ -3,7 +3,7 @@
     <!-- Current folder path display -->
     <div class="folder-path-display pa-2 grey lighten-5">
       <div class="d-flex align-center">
-        <v-icon class="mr-2" size="20" color="grey darken-2">mdi-folder</v-icon>
+        <v-icon class="mr-2" size="20" color="grey-darken-2">mdi-folder</v-icon>
         <span class="text-body-2 mr-2" style="color: #424242"
           >Collections in:</span
         >
@@ -28,7 +28,7 @@
           placeholder="Search collections..."
           hide-details
           single-line
-          dense
+          density="compact"
           clearable
         />
       </div>
@@ -42,8 +42,8 @@
         class="text-center pa-4"
       >
         <v-icon size="64" color="grey">mdi-file-tree</v-icon>
-        <div class="text-h6 grey--text mt-2">No collections found</div>
-        <div class="text-body-2 grey--text">
+        <div class="text-h6 text-grey mt-2">No collections found</div>
+        <div class="text-body-2 text-grey">
           {{
             searchQuery
               ? "Try adjusting your search terms"
@@ -60,11 +60,8 @@
           class="collection-item"
           :class="{ 'collection-item-hover': !loading }"
         >
-          <v-list-item-avatar>
-            <v-icon color="#4baeff" size="24">mdi-file-tree</v-icon>
-          </v-list-item-avatar>
+          <v-icon color="#4baeff" size="24">mdi-file-tree</v-icon>
 
-          <v-list-item-content>
             <v-list-item-title class="collection-title">
               {{ collection.name }}
             </v-list-item-title>
@@ -77,7 +74,6 @@
               :debouncedChipsPerItemId="debouncedChipsPerItemId"
               :computedChipsIds="computedChipsIds"
             />
-          </v-list-item-content>
         </v-list-item>
       </v-list>
     </div>
@@ -85,14 +81,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IUPennCollection } from "@/girder";
 import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
 import { formatDateString } from "@/utils/date";
 import CollectionItemRow from "./CollectionItemRow.vue";
-import { RawLocation } from "vue-router";
+import type { RouteLocationRaw } from "vue-router";
 import { logError, logWarning } from "@/utils/log";
 import { IDatasetView } from "@/store/model";
 
@@ -103,7 +100,7 @@ void formatDateString;
 interface IChipAttrs {
   text: string;
   color: string;
-  to?: RawLocation;
+  to?: RouteLocationRaw;
 }
 
 interface IChipsPerItemId {
@@ -111,7 +108,7 @@ interface IChipsPerItemId {
   type: string;
 }
 
-const vm = getCurrentInstance()!.proxy;
+const router = useRouter();
 
 const collections = ref<IUPennCollection[]>([]);
 const loading = ref(true);
@@ -220,7 +217,7 @@ async function fetchCollections() {
 }
 
 function navigateToCollection(configurationId: string) {
-  vm.$router.push({
+  router.push({
     name: "configuration",
     params: { configurationId },
   });
@@ -524,15 +521,15 @@ defineExpose({
   font-size: 14px;
 }
 
-.folder-breadcrumb ::v-deep .v-breadcrumbs__item {
+.folder-breadcrumb :deep(.v-breadcrumbs__item) {
   font-size: 14px;
 }
 
-.folder-breadcrumb ::v-deep .v-breadcrumbs__divider {
+.folder-breadcrumb :deep(.v-breadcrumbs__divider) {
   color: #999;
 }
 
-.folder-breadcrumb ::v-deep .v-breadcrumbs__item {
+.folder-breadcrumb :deep(.v-breadcrumbs__item) {
   color: #424242 !important;
 }
 </style>

@@ -9,13 +9,13 @@
         @click="showAddToProjectDialog = true"
         :disabled="!configuration"
       >
-        <v-icon left>mdi-folder-star</v-icon>
+        <v-icon start>mdi-folder-star</v-icon>
         Add Collection to Project...
       </v-btn>
       <v-dialog v-model="removeConfirm" max-width="33vw">
-        <template #activator="{ on }">
-          <v-btn color="red" v-on="on" :disabled="!configuration">
-            <v-icon left>mdi-close</v-icon>
+        <template #activator="{ props: activatorProps }">
+          <v-btn color="red" v-bind="activatorProps" :disabled="!configuration">
+            <v-icon start>mdi-close</v-icon>
             Delete Collection
           </v-btn>
         </template>
@@ -37,7 +37,7 @@
       @blur="onNameBlur"
       @keyup.enter="onNameEnter"
     />
-    <v-textarea :value="description" label="Description" readonly />
+    <v-textarea :model-value="description" label="Description" readonly />
     <sharing-status-display
       :loading="sharingLoading"
       :is-public="sharingIsPublic"
@@ -69,60 +69,56 @@
         </v-dialog>
         <v-list>
           <v-list-item v-for="d in datasetViewItems" :key="d.datasetView.id">
-            <v-list-item-content>
-              <v-list-item-title class="d-flex align-center">
-                {{ d.datasetInfo ? d.datasetInfo.name : "Unnamed dataset" }}
-                <sharing-status-icon
-                  v-if="getDatasetSharingInfo(d.datasetView.datasetId)"
-                  :is-public="
-                    getDatasetSharingInfo(d.datasetView.datasetId)?.public ??
-                    false
-                  "
-                  :users="sharingUsers || []"
-                />
-              </v-list-item-title>
-              <v-list-item-subtitle>
-                {{
-                  d.datasetInfo ? d.datasetInfo.description : "No description"
-                }}
-              </v-list-item-subtitle>
-              <div
-                v-if="
-                  datasetCompatibilityWarnings[d.datasetView.datasetId] &&
-                  datasetCompatibilityWarnings[d.datasetView.datasetId].length >
-                    0
+            <v-list-item-title class="d-flex align-center">
+              {{ d.datasetInfo ? d.datasetInfo.name : "Unnamed dataset" }}
+              <sharing-status-icon
+                v-if="getDatasetSharingInfo(d.datasetView.datasetId)"
+                :is-public="
+                  getDatasetSharingInfo(d.datasetView.datasetId)?.public ??
+                  false
                 "
-                class="compatibility-warnings mt-1"
+                :users="sharingUsers || []"
+              />
+            </v-list-item-title>
+            <v-list-item-subtitle>
+              {{
+                d.datasetInfo ? d.datasetInfo.description : "No description"
+              }}
+            </v-list-item-subtitle>
+            <div
+              v-if="
+                datasetCompatibilityWarnings[d.datasetView.datasetId] &&
+                datasetCompatibilityWarnings[d.datasetView.datasetId].length >
+                  0
+              "
+              class="compatibility-warnings mt-1"
+            >
+              <v-chip
+                v-for="(warning, index) in datasetCompatibilityWarnings[
+                  d.datasetView.datasetId
+                ]"
+                :key="index"
+                size="small"
+                color="warning"
+                text-color="white"
+                class="mr-1 mb-1"
               >
-                <v-chip
-                  v-for="(warning, index) in datasetCompatibilityWarnings[
-                    d.datasetView.datasetId
-                  ]"
-                  :key="index"
-                  small
-                  color="warning"
-                  text-color="white"
-                  class="mr-1 mb-1"
-                >
-                  <v-icon small left>mdi-alert</v-icon>
-                  {{ warning }}
-                </v-chip>
-              </div>
-            </v-list-item-content>
-            <v-list-item-action>
-              <span class="button-bar">
-                <v-btn
-                  color="warning"
-                  v-on:click.stop="openRemoveDatasetDialog(d.datasetView)"
-                >
-                  <v-icon left>mdi-close</v-icon>remove
-                </v-btn>
-                <v-btn color="primary" :to="toRoute(d.datasetView)">
-                  <v-icon left>mdi-eye</v-icon>
-                  view
-                </v-btn>
-              </span>
-            </v-list-item-action>
+                <v-icon size="small" start>mdi-alert</v-icon>
+                {{ warning }}
+              </v-chip>
+            </div>
+            <span class="button-bar">
+              <v-btn
+                color="warning"
+                v-on:click.stop="openRemoveDatasetDialog(d.datasetView)"
+              >
+                <v-icon start>mdi-close</v-icon>remove
+              </v-btn>
+              <v-btn color="primary" :to="toRoute(d.datasetView)">
+                <v-icon start>mdi-eye</v-icon>
+                view
+              </v-btn>
+            </span>
           </v-list-item>
         </v-list>
       </v-card-text>
@@ -151,21 +147,17 @@
     <v-card class="mb-4">
       <v-card-title> Layers </v-card-title>
       <v-card-text>
-        <v-list two-line>
+        <v-list lines="two">
           <v-list-item v-for="l in layers" :key="l.name">
-            <v-list-item-avatar>
-              <v-icon :color="l.color">mdi-circle</v-icon>
-            </v-list-item-avatar>
-            <v-list-item-content>
-              <v-list-item-title>
-                {{ l.name }}{{ !l.visible ? "(hidden)" : "" }}
-              </v-list-item-title>
-              <v-list-item-subtitle>
-                Channel: <code class="code">{{ l.channel }}</code> Z-Slice:
-                <code class="code">{{ toSlice(l.z) }}</code> Time-Slice:
-                <code class="code">{{ toSlice(l.time) }}</code>
-              </v-list-item-subtitle>
-            </v-list-item-content>
+            <v-icon :color="l.color">mdi-circle</v-icon>
+            <v-list-item-title>
+              {{ l.name }}{{ !l.visible ? "(hidden)" : "" }}
+            </v-list-item-title>
+            <v-list-item-subtitle>
+              Channel: <code class="code">{{ l.channel }}</code> Z-Slice:
+              <code class="code">{{ toSlice(l.z) }}</code> Time-Slice:
+              <code class="code">{{ toSlice(l.time) }}</code>
+            </v-list-item-subtitle>
           </v-list-item>
         </v-list>
       </v-card-text>
@@ -187,7 +179,8 @@
   </v-container>
 </template>
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import isEqual from "lodash/isEqual";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
@@ -216,7 +209,8 @@ void AddCollectionToProjectDialog;
 void SharingStatusDisplay;
 void SharingStatusIcon;
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
+const router = useRouter();
 
 // Template ref
 const alert = ref<any>(null);
@@ -417,7 +411,7 @@ async function checkDatasetsCompatibility() {
 function toRoute(datasetView: IDatasetView) {
   return {
     name: "datasetview",
-    params: Object.assign({}, vm.$route.params, {
+    params: Object.assign({}, route.params, {
       datasetViewId: datasetView.id,
     }),
   };
@@ -463,7 +457,7 @@ function toSlice(slice: IDisplaySlice) {
 function remove() {
   store.deleteConfiguration(store.configuration!).then(() => {
     removeConfirm.value = false;
-    vm.$router.back();
+    router.back();
   });
 }
 

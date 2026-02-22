@@ -1,24 +1,24 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header>
+    <v-expansion-panel-title>
       Object display and selection controls
-    </v-expansion-panel-header>
-    <v-expansion-panel-content>
-      <v-list dense class="py-0">
+    </v-expansion-panel-title>
+    <v-expansion-panel-text>
+      <v-list density="compact" class="py-0">
         <v-list-item>
           <v-checkbox
             hide-details
             v-model="drawAnnotations"
-            dense
+            density="compact"
             label="Show objects (hotkey A)"
           ></v-checkbox>
         </v-list-item>
         <v-list-item>
-          <v-list dense class="py-0">
+          <v-list density="compact" class="py-0">
             <v-list-item>
               <v-checkbox
                 hide-details
-                dense
+                density="compact"
                 :disabled="!drawAnnotations"
                 v-model="drawConnections"
                 label="Show connections between objects"
@@ -27,7 +27,7 @@
             <v-list-item>
               <v-switch
                 hide-details
-                dense
+                density="compact"
                 :disabled="!drawAnnotations"
                 v-model="filteredDraw"
                 label="Only show objects passing filters"
@@ -36,18 +36,18 @@
             <v-list-item>
               <v-checkbox
                 hide-details
-                dense
+                density="compact"
                 :disabled="!drawAnnotations"
                 v-model="showTooltips"
                 label="Show object tooltips (hotkey T)"
               ></v-checkbox>
             </v-list-item>
             <v-list-item>
-              <v-list dense class="py-0">
+              <v-list density="compact" class="py-0">
                 <v-list-item>
                   <v-switch
                     hide-details
-                    dense
+                    density="compact"
                     :disabled="!showTooltips || !drawAnnotations"
                     v-model="filteredAnnotationTooltips"
                     label="Show tooltips only for objects passing filters"
@@ -61,14 +61,14 @@
           <v-select
             v-model="annotationSelectionType"
             :items="annotationsSelectionTypeItems"
-            item-text="text"
+            item-title="text"
             item-value="value"
             label="Object selection mode"
             title="When adding to a selection, you can add, remove, or toggle the selection of objects"
           ></v-select>
         </v-list-item>
       </v-list>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 

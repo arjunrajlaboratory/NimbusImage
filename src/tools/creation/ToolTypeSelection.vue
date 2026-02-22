@@ -530,7 +530,7 @@ $color-featured: #fbbf24; // Gold for featured
 }
 
 // Theme-specific styles (theme class is on the v-card itself)
-.tool-selection-dialog.theme--dark {
+.tool-selection-dialog.v-theme--dark {
   .category-count {
     background: rgba(255, 255, 255, 0.05);
   }
@@ -544,7 +544,7 @@ $color-featured: #fbbf24; // Gold for featured
   }
 }
 
-.tool-selection-dialog.theme--light {
+.tool-selection-dialog.v-theme--light {
   .category-count {
     background: rgba(0, 0, 0, 0.05);
   }

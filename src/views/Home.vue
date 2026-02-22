@@ -2,7 +2,7 @@
   <div>
     <template v-if="store.isLoggedIn">
       <v-overlay
-        :value="isNavigating"
+        :model-value="isNavigating"
         absolute
         color="white"
         opacity="0.8"
@@ -34,12 +34,12 @@
                 @drop.prevent="handleDrop"
               >
                 <v-overlay
-                  :value="isDragging"
+                  :model-value="isDragging"
                   absolute
                   opacity="0.8"
                   class="d-flex align-center justify-center"
                 >
-                  <div class="text-h6 white--text text-center">
+                  <div class="text-h6 text-white text-center">
                     Drop files here to upload
                   </div>
                 </v-overlay>
@@ -79,8 +79,8 @@
                   Sample Datasets
                 </v-tab>
               </v-tabs>
-              <v-tabs-items v-model="datasetsTab" class="fill-height">
-                <v-tab-item class="fill-height">
+              <v-window v-model="datasetsTab" class="fill-height">
+                <v-window-item class="fill-height">
                   <recent-datasets
                     :dataset-view-items="datasetViewItems"
                     :get-user-display-name="getUserDisplayName"
@@ -88,8 +88,8 @@
                     @dataset-clicked="navigateToDatasetView"
                     class="fill-height"
                   />
-                </v-tab-item>
-                <v-tab-item class="fill-height">
+                </v-window-item>
+                <v-window-item class="fill-height">
                   <recent-projects
                     :projects="recentProjects"
                     :loading="loadingProjects"
@@ -97,8 +97,8 @@
                     @project-clicked="handleProjectClicked"
                     class="fill-height"
                   />
-                </v-tab-item>
-                <v-tab-item
+                </v-window-item>
+                <v-window-item
                   v-if="Boolean(zenodoCommunityId)"
                   class="fill-height"
                 >
@@ -108,8 +108,8 @@
                     @dataset-selected="handleSampleDatasetSelected"
                     class="fill-height"
                   />
-                </v-tab-item>
-              </v-tabs-items>
+                </v-window-item>
+              </v-window>
             </section>
           </v-col>
         </v-row>
@@ -118,25 +118,25 @@
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <div class="d-flex align-center mb-4">
-                <v-subheader class="headline section-title text-h5 pa-0 mr-4"
-                  >Browse</v-subheader
+                <v-list-subheader class="headline section-title text-h5 pa-0 mr-4"
+                  >Browse</v-list-subheader
                 >
                 <v-btn-toggle
                   v-model="browseMode"
                   mandatory
-                  dense
+                  density="compact"
                   class="browse-toggle"
                 >
-                  <v-btn value="files" small>
-                    <v-icon left small>mdi-folder</v-icon>
+                  <v-btn value="files" size="small">
+                    <v-icon start size="small">mdi-folder</v-icon>
                     Datasets and Files
                   </v-btn>
-                  <v-btn value="collections" small>
-                    <v-icon left small>mdi-file-tree</v-icon>
+                  <v-btn value="collections" size="small">
+                    <v-icon start size="small">mdi-file-tree</v-icon>
                     Collections
                   </v-btn>
-                  <v-btn value="projects" small>
-                    <v-icon left small>mdi-folder-star</v-icon>
+                  <v-btn value="projects" size="small">
+                    <v-icon start size="small">mdi-folder-star</v-icon>
                     Projects
                   </v-btn>
                 </v-btn-toggle>
@@ -195,11 +195,11 @@
           Create dataset
           <v-btn
             icon
-            small
+            size="small"
             class="ml-2"
             @click="showUploadInfo = !showUploadInfo"
           >
-            <v-icon small>mdi-information-outline</v-icon>
+            <v-icon size="small">mdi-information-outline</v-icon>
           </v-btn>
         </v-card-title>
 
@@ -208,7 +208,7 @@
           <v-alert
             v-if="showUploadInfo"
             type="info"
-            text
+            variant="tonal"
             class="mx-4 mb-4 text-body-2"
           >
             <div class="font-weight-bold mb-2">
@@ -261,7 +261,7 @@
           />
 
           <!-- Show file-to-dataset mapping when in batch mode -->
-          <v-card v-if="batchMode" outlined class="mb-4">
+          <v-card v-if="batchMode" variant="outlined" class="mb-4">
             <v-card-subtitle>
               Each file will become a separate dataset:
               <v-progress-circular
@@ -272,38 +272,34 @@
                 class="ml-2"
               />
             </v-card-subtitle>
-            <v-list dense>
+            <v-list density="compact">
               <v-list-item v-for="(file, idx) in pendingFiles" :key="idx">
-                <v-list-item-icon>
-                  <v-icon
-                    small
-                    :color="nameConflicts.includes(idx) ? 'error' : ''"
-                  >
-                    {{
-                      nameConflicts.includes(idx)
-                        ? "mdi-alert-circle"
-                        : "mdi-file"
-                    }}
-                  </v-icon>
-                </v-list-item-icon>
-                <v-list-item-content>
-                  <v-text-field
-                    v-model="datasetNames[idx]"
-                    :error="nameConflicts.includes(idx)"
-                    :error-messages="getNameError(idx)"
-                    dense
-                    hide-details="auto"
-                    @input="validateDatasetNamesDebounced"
-                  />
-                  <v-list-item-subtitle class="text--secondary mt-1">
-                    {{ file.name }}
-                  </v-list-item-subtitle>
-                </v-list-item-content>
+                <v-icon
+                  size="small"
+                  :color="nameConflicts.includes(idx) ? 'error' : ''"
+                >
+                  {{
+                    nameConflicts.includes(idx)
+                      ? "mdi-alert-circle"
+                      : "mdi-file"
+                  }}
+                </v-icon>
+                <v-text-field
+                  v-model="datasetNames[idx]"
+                  :error="nameConflicts.includes(idx)"
+                  :error-messages="getNameError(idx)"
+                  density="compact"
+                  hide-details="auto"
+                  @input="validateDatasetNamesDebounced"
+                />
+                <v-list-item-subtitle class="text-medium-emphasis mt-1">
+                  {{ file.name }}
+                </v-list-item-subtitle>
               </v-list-item>
             </v-list>
           </v-card>
 
-          <div class="mb-4 text-body-2 text--secondary">
+          <div class="mb-4 text-body-2 text-medium-emphasis">
             {{ pendingFiles.length }}
             {{ pendingFiles.length === 1 ? "file" : "files" }} selected
             <template v-if="batchMode">
@@ -311,7 +307,7 @@
             </template>
           </div>
 
-          <v-alert v-if="nameTaken" text type="error" class="mb-4">
+          <v-alert v-if="nameTaken" variant="tonal" type="error" class="mb-4">
             Could not create dataset <strong>{{ datasetName }}</strong
             >. This might happen, for instance, if a dataset by that name
             already exists. Please update the dataset name field and try again.
@@ -329,11 +325,11 @@
           </v-card>
         </v-card-text>
         <v-card-actions>
-          <v-btn text @click="closeUploadDialog">Cancel</v-btn>
+          <v-btn variant="text" @click="closeUploadDialog">Cancel</v-btn>
           <v-spacer></v-spacer>
           <v-btn
             id="configure-dataset-button-tourstep"
-            outlined
+            variant="outlined"
             color="primary"
             v-tour-trigger="'configure-dataset-tourtrigger'"
             :disabled="!isFormValid"
@@ -421,9 +417,9 @@ import {
   computed,
   watch,
   onMounted,
-  getCurrentInstance,
   nextTick,
 } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import store from "@/store";
 import {
   IGirderFolder,
@@ -453,6 +449,7 @@ import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
 import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
+import { useTour } from "@/utils/useTour";
 
 // Suppress unused-variable warnings for auto-registered components
 void GirderLocationChooser;
@@ -466,7 +463,9 @@ void ZenodoImporter;
 void ZenodoCommunityDisplay;
 void RecentDatasets;
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
+const router = useRouter();
+const { startTour } = useTour();
 
 // Normally, this environment variable would be set:
 // export VITE_ZENODO_SAMPLES="nimbusimagesampledatasets"
@@ -634,7 +633,7 @@ const datasetViewItems = computed(() => {
   return items;
 });
 
-const routeName = computed(() => vm.$route?.name);
+const routeName = computed(() => route.name);
 
 // Methods
 function getDatasetNameForFile(file: File): string {
@@ -860,12 +859,12 @@ function onLocationUpdate(
     return;
   }
   if (isDatasetFolder(selectable)) {
-    vm.$router.push({
+    router.push({
       name: "dataset",
       params: { datasetId: selectable._id },
     });
   } else if (isConfigurationItem(selectable)) {
-    vm.$router.push({
+    router.push({
       name: "configuration",
       params: { configurationId: selectable._id },
     });
@@ -891,7 +890,7 @@ function quickUpload(files: File[], name?: string, loc?: IGirderLocation) {
   });
 
   // Navigate without complex params
-  vm.$router.push({ name: "newdataset" });
+  router.push({ name: "newdataset" });
 }
 
 function comprehensiveUpload(
@@ -910,7 +909,7 @@ function comprehensiveUpload(
     initialDescription: "",
   });
 
-  vm.$router.push({ name: "newdataset" });
+  router.push({ name: "newdataset" });
 }
 
 function handleDrop(event: DragEvent) {
@@ -1035,7 +1034,7 @@ function handleProjectClicked() {
 
 function navigateToDatasetView(datasetViewId: string) {
   isNavigating.value = true;
-  vm.$router.push({
+  router.push({
     name: "datasetview",
     params: {
       datasetViewId: datasetViewId,
@@ -1058,7 +1057,7 @@ async function initializeWelcomeTour() {
   // If it was the default value of NOT_YET_RUN, then update the status and start tour
   if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
     Persister.set(WelcomeTourTypes.HOME, WelcomeTourStatus.ALREADY_RUN);
-    (vm as any).$startTour(WelcomeTourNames[WelcomeTourTypes.HOME]);
+    startTour(WelcomeTourNames[WelcomeTourTypes.HOME]);
   }
 }
 
@@ -1246,26 +1245,26 @@ defineExpose({
   max-width: 60%;
 }
 
-.recent-dataset .v-tabs-items {
+.recent-dataset .v-window {
   height: calc(100%);
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-.recent-dataset .v-tab-item {
+.recent-dataset .v-window-item {
   height: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-.recent-dataset .v-tab-item > div {
+.recent-dataset .v-window-item > div {
   height: 100%;
   overflow-y: auto;
 }
 
-.recent-dataset .v-tab-item > zenodo-community-display {
+.recent-dataset .v-window-item > zenodo-community-display {
   height: 100%;
   display: flex;
   flex-direction: column;

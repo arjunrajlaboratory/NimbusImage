@@ -31,17 +31,17 @@ import propertiesStore from "@/store/properties";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
 
 const props = defineProps<{
-  value: IWorkerInterfaceValues;
+  modelValue: IWorkerInterfaceValues;
   image: string | null;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: IWorkerInterfaceValues): void;
+  (e: "update:modelValue", value: IWorkerInterfaceValues): void;
 }>();
 
 const interfaceValues = computed({
-  get: () => props.value,
-  set: (val: IWorkerInterfaceValues) => emit("input", val),
+  get: () => props.modelValue,
+  set: (val: IWorkerInterfaceValues) => emit("update:modelValue", val),
 });
 
 const workerInterface = computed(() =>

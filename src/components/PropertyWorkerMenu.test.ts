@@ -26,7 +26,7 @@ function mountComponent(props = {}) {
   return shallowMount(PropertyWorkerMenu, {
     vuetify: new Vuetify(),
     propsData: {
-      value: {},
+      modelValue: {},
       image: null,
       ...props,
     },
@@ -59,6 +59,6 @@ describe("PropertyWorkerMenu", () => {
   it("emits input when interfaceValues changes", () => {
     const wrapper = mountComponent({ image: "img" });
     wrapper.vm.interfaceValues = { key: "value" };
-    expect(wrapper.emitted("input")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
   });
 });

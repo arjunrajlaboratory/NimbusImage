@@ -62,7 +62,7 @@ function mountComponent(props: any = {}) {
     vuetify: new Vuetify(),
     propsData: {
       dataset: { _id: "ds1", _modelType: "folder", name: "TestDataset" },
-      value: false,
+      modelValue: false,
       ...props,
     },
   });
@@ -78,34 +78,34 @@ describe("ShareDataset", () => {
   });
 
   it("dialog computed getter returns value prop", () => {
-    const wrapper = mountComponent({ value: true });
+    const wrapper = mountComponent({ modelValue: true });
     const vm = wrapper.vm as any;
     expect(vm.dialog).toBe(true);
     wrapper.destroy();
   });
 
   it("dialog computed getter returns false when value is false", () => {
-    const wrapper = mountComponent({ value: false });
+    const wrapper = mountComponent({ modelValue: false });
     const vm = wrapper.vm as any;
     expect(vm.dialog).toBe(false);
     wrapper.destroy();
   });
 
   it("dialog computed setter emits input event", () => {
-    const wrapper = mountComponent({ value: false });
+    const wrapper = mountComponent({ modelValue: false });
     const vm = wrapper.vm as any;
     vm.dialog = true;
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0][0]).toBe(true);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0][0]).toBe(true);
     wrapper.destroy();
   });
 
   it("close sets dialog to false", () => {
-    const wrapper = mountComponent({ value: true });
+    const wrapper = mountComponent({ modelValue: true });
     const vm = wrapper.vm as any;
     vm.close();
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0][0]).toBe(false);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0][0]).toBe(false);
     wrapper.destroy();
   });
 
@@ -125,7 +125,7 @@ describe("ShareDataset", () => {
   });
 
   it("resetState clears all fields", async () => {
-    const wrapper = mountComponent({ value: true });
+    const wrapper = mountComponent({ modelValue: true });
     const vm = wrapper.vm as any;
 
     // Set some state

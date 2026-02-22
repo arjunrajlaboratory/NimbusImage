@@ -1,17 +1,17 @@
 <template>
   <v-expansion-panels v-model="panels">
     <v-expansion-panel expand v-model="panels">
-      <v-expansion-panel-header class="pa-2">
+      <v-expansion-panel-title class="pa-2">
         <v-toolbar-title> Toolset </v-toolbar-title>
         <!-- Tool Type Selection -->
         <v-dialog v-model="toolTypeDialogOpen" max-width="1000px">
-          <template v-slot:activator="{ on: dialog }">
-            <v-tooltip top>
-              <template v-slot:activator="{ on: tooltip }">
+          <template v-slot:activator="{ props: dialogProps }">
+            <v-tooltip text="Browse tool types">
+              <template v-slot:activator="{ props: tooltipProps }">
                 <v-btn
                   class="ml-2"
                   color="primary"
-                  v-on="{ ...dialog, ...tooltip }"
+                  v-bind="mergeProps(dialogProps, tooltipProps)"
                   id="add-tool-tourstep"
                   v-tour-trigger="'add-tool-tourtrigger'"
                   :disabled="!isLoggedIn"
@@ -19,7 +19,6 @@
                   Add new tool
                 </v-btn>
               </template>
-              <span>Browse tool types</span>
             </v-tooltip>
           </template>
           <tool-type-selection @selected="handleToolTypeSelected" />
@@ -28,7 +27,7 @@
         <v-dialog
           v-model="toolCreationDialogOpen"
           width="60%"
-          @input="onToolCreationDialogInput"
+          @update:model-value="onToolCreationDialogInput"
         >
           <tool-creation
             @done="onToolCreationDone"
@@ -36,37 +35,33 @@
             :initial-selected-tool="selectedToolType"
           />
         </v-dialog>
-      </v-expansion-panel-header>
-      <v-expansion-panel-content>
+      </v-expansion-panel-title>
+      <v-expansion-panel-text>
         <!-- List toolset tools -->
-        <v-list v-if="toolsetTools.length" dense class="tight-list">
-          <v-list-item-group v-model="selectedToolId">
+        <v-list v-if="toolsetTools.length" density="compact" class="tight-list">
             <draggable>
-              <template v-for="(tool, index) in toolsetTools">
+              <template v-for="(tool, index) in toolsetTools" :key="index">
                 <v-tooltip
-                  right
+                  location="end"
                   transition="none"
                   z-index="100"
-                  :key="index"
                   v-if="tool"
                 >
-                  <template v-slot:activator="{ on, attrs }">
+                  <template v-slot:activator="{ props: activatorProps }">
                     <!-- If type === segmentation, add an annotation worker menu -->
                     <template v-if="tool.type === 'segmentation'">
                       <v-menu
                         :ref="setAnnotationMenuRef"
-                        offset-x
                         :closeOnClick="false"
                         :closeOnContentClick="false"
-                        :value="selectedTool && selectedTool.id === tool.id"
+                        :model-value="!!selectedTool && selectedTool.id === tool.id"
                         z-index="100"
                       >
                         <template #activator="{}">
                           <tool-item
                             :tool="tool"
                             :disabled="!isLoggedIn"
-                            v-bind="attrs"
-                            v-on="on"
+                            v-bind="activatorProps"
                           />
                         </template>
                         <annotation-worker-menu
@@ -81,8 +76,7 @@
                         <tool-item
                           :tool="tool"
                           :disabled="!isLoggedIn"
-                          v-bind="attrs"
-                          v-on="on"
+                          v-bind="activatorProps"
                         />
                         <template
                           v-if="selectedTool && selectedTool.id === tool.id"
@@ -96,8 +90,7 @@
                       <tool-item
                         :tool="tool"
                         :disabled="!isLoggedIn"
-                        v-bind="attrs"
-                        v-on="on"
+                        v-bind="activatorProps"
                       />
                     </template>
                   </template>
@@ -116,7 +109,6 @@
                 </v-tooltip>
               </template>
             </draggable>
-          </v-list-item-group>
           <circle-to-dot-menu
             :tool="selectedTool"
             v-if="
@@ -126,16 +118,16 @@
             "
           />
         </v-list>
-        <v-subheader v-if="!toolsetTools.length">
+        <v-list-subheader v-if="!toolsetTools.length">
           No tools in the current toolset.
-        </v-subheader>
-      </v-expansion-panel-content>
+        </v-list-subheader>
+      </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from "vue";
+import { ref, computed, nextTick, mergeProps } from "vue";
 import draggable from "vuedraggable";
 import store from "@/store";
 import {

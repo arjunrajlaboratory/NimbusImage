@@ -26,7 +26,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import ConfigurationSelect from "@/components/ConfigurationSelect.vue";
@@ -34,7 +35,8 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import { IDatasetConfiguration } from "@/store/model";
 import { IGirderLocation } from "@/girder";
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
+const router = useRouter();
 
 const selectedFolder = ref<IGirderLocation | null>(null);
 const currentFolderName = ref("");
@@ -47,7 +49,7 @@ const folderId = computed((): string | undefined => {
     return folder._id;
   }
   // Fallback to route query if folder not yet loaded
-  const folderIdQuery = vm.$route.query.folderId;
+  const folderIdQuery = route.query.folderId;
   if (Array.isArray(folderIdQuery)) {
     return folderIdQuery[0] || undefined;
   }
@@ -69,7 +71,7 @@ watch(selectedFolder, async () => {
 
 onMounted(async () => {
   // Initialize selectedFolder from route query
-  const folderIdQuery = vm.$route.query.folderId;
+  const folderIdQuery = route.query.folderId;
   const targetFolderId = Array.isArray(folderIdQuery)
     ? folderIdQuery[0]
     : folderIdQuery;
@@ -111,11 +113,11 @@ async function submit(configurations: IDatasetConfiguration[]) {
     ),
   );
 
-  vm.$router.back();
+  router.back();
 }
 
 function cancel() {
-  vm.$router.back();
+  router.back();
 }
 
 defineExpose({

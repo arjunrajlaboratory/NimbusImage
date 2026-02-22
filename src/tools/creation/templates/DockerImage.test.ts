@@ -48,7 +48,7 @@ describe("DockerImage", () => {
 
   it("updateFromValue syncs image from prop", async () => {
     const wrapper = mountComponent({
-      value: { image: "test-image:latest" },
+      modelValue: { image: "test-image:latest" },
     });
     expect(wrapper.vm.image).toBe("test-image:latest");
   });
@@ -65,14 +65,14 @@ describe("DockerImage", () => {
     wrapper.vm.image = "something";
     wrapper.vm.reset();
     expect(wrapper.vm.image).toBeNull();
-    expect(wrapper.emitted("input")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
   });
 
   it("changed emits input and change", () => {
     const wrapper = mountComponent();
     wrapper.vm.image = "my-image";
     wrapper.vm.changed();
-    const inputEvents = wrapper.emitted("input")!;
+    const inputEvents = wrapper.emitted("update:modelValue")!;
     expect(inputEvents[inputEvents.length - 1][0]).toEqual({
       image: "my-image",
     });
@@ -83,7 +83,7 @@ describe("DockerImage", () => {
     const wrapper = mountComponent();
     wrapper.vm.image = "new-image";
     await wrapper.vm.$nextTick();
-    const inputEvents = wrapper.emitted("input");
+    const inputEvents = wrapper.emitted("update:modelValue");
     expect(inputEvents).toBeTruthy();
     expect(inputEvents![inputEvents!.length - 1][0]).toEqual({
       image: "new-image",

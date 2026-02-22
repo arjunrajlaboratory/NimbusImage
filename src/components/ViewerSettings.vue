@@ -1,26 +1,26 @@
 <template>
   <div>
     <v-expansion-panel>
-      <v-expansion-panel-header> Viewer settings </v-expansion-panel-header>
-      <v-expansion-panel-content>
+      <v-expansion-panel-title> Viewer settings </v-expansion-panel-title>
+      <v-expansion-panel-text>
         <v-container>
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="showXYLabels"
             label="Show XY position labels"
             title="Display coordinate labels for XY positions"
           />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="showZLabels"
             label="Show Z position labels"
             title="Display coordinate labels for Z positions"
           />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="showTimeLabels"
             label="Show time labels"
             title="Display time labels"
@@ -28,7 +28,7 @@
           <v-divider class="my-2" />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="valueOnHover"
             label="Show channel values on hover"
             title="Show pixel intensity values when hovering cursor over image"
@@ -41,7 +41,7 @@
           />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="overview"
             label="Show minimap"
             v-description="{
@@ -52,7 +52,7 @@
           />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="showScalebar"
             label="Show scalebar"
             title="Show the scalebar on top of the image"
@@ -74,7 +74,7 @@
           </span>
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="scaleAnnotationsWithZoom"
             label="Scale points with zoom"
             title="Make point annotations scale with zoom level or stay a fixed size"
@@ -106,13 +106,13 @@
             v-model="compositionMode"
             :items="compositionItemsList"
           >
-            <template #item="{ item }">
+            <template #item="{ item: listItem }">
               <div style="width: 100%">
                 <strong>
-                  {{ item.text }}
+                  {{ (listItem as any).raw?.text ?? listItem.title }}
                 </strong>
-                <div class="body-2 text--secondary">
-                  {{ item.help }}
+                <div class="body-2 text-medium-emphasis">
+                  {{ (listItem as any).raw?.help }}
                 </div>
                 <v-divider />
               </div>
@@ -127,11 +127,11 @@
           <v-divider class="my-4" />
 
           <v-btn color="primary" @click="showColorDialog = true" block>
-            <v-icon left>mdi-palette</v-icon>
+            <v-icon start>mdi-palette</v-icon>
             Customize Default Channel Colors
           </v-btn>
         </v-container>
-      </v-expansion-panel-content>
+      </v-expansion-panel-text>
     </v-expansion-panel>
 
     <!-- Channel Color Customization Dialog -->
@@ -282,7 +282,7 @@ defineExpose({
 </script>
 
 <style lang="scss">
-.v-select-list .v-subheader {
+.v-select-list .v-list-subheader {
   justify-content: center;
   font-weight: bold;
   border-top: solid 2px;

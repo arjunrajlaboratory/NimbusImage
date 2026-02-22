@@ -4,27 +4,24 @@
 
     <div v-else-if="projects.length === 0" class="empty-state pa-4 text-center">
       <v-icon size="48" color="grey">mdi-folder-star-outline</v-icon>
-      <div class="text-body-2 grey--text mt-2">
+      <div class="text-body-2 text-grey mt-2">
         No projects yet. Create one to organize datasets for export.
       </div>
     </div>
 
-    <v-list v-else two-line class="scrollable py-0">
+    <v-list v-else lines="two" class="scrollable py-0">
       <div v-for="project in projects" :key="project.id">
-        <v-tooltip top :disabled="!project.description">
-          <template v-slot:activator="{ on, attrs }">
-            <v-list-item @click="handleProjectClick(project)">
-              <v-list-item-avatar>
+        <v-tooltip location="top" :disabled="!project.description">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-list-item @click="handleProjectClick(project)" v-bind="activatorProps">
                 <v-icon color="#8e24aa">mdi-folder-star</v-icon>
-              </v-list-item-avatar>
-              <v-list-item-content v-bind="attrs" v-on="on">
                 <v-list-item-title>
                   {{ project.name }}
                 </v-list-item-title>
                 <v-list-item-subtitle>
                   <v-chip
-                    x-small
-                    outlined
+                    size="x-small"
+                    variant="outlined"
                     class="mr-1"
                     :color="getStatusColor(project.meta.status)"
                   >
@@ -42,17 +39,16 @@
                     </span>
                   </template>
                 </v-list-item-subtitle>
-              </v-list-item-content>
-              <v-list-item-action
+              <span
                 class="my-0 d-flex flex-column justify-center"
               >
-                <div class="text-caption grey--text text-left">
+                <div class="text-caption text-grey text-left">
                   <div>Updated:</div>
                   <div style="line-height: 1.1">
                     {{ formatDate(project.updated) }}
                   </div>
                 </div>
-              </v-list-item-action>
+              </span>
             </v-list-item>
           </template>
           <div v-if="project.description">

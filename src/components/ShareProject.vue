@@ -9,15 +9,15 @@
         <v-alert
           v-model="showError"
           type="error"
-          dense
-          dismissible
+          density="compact"
+          closable
           class="mb-4"
         >
           {{ errorString }}
         </v-alert>
 
         <!-- Info Alert -->
-        <v-alert type="info" dense class="mb-4">
+        <v-alert type="info" density="compact" class="mb-4">
           Sharing this project will grant access to all datasets and collections
           within it.
         </v-alert>
@@ -38,7 +38,7 @@
                 :loading="publicLoading"
                 :disabled="publicLoading"
                 hide-details
-                dense
+                density="compact"
                 @change="confirmTogglePublic"
               />
             </v-col>
@@ -50,10 +50,10 @@
           <v-row>
             <v-col cols="12">
               <div class="subtitle-2 mb-2">Current Access:</div>
-              <div v-if="users.length === 0" class="text-body-2 grey--text">
+              <div v-if="users.length === 0" class="text-body-2 text-grey">
                 No users have been granted access yet.
               </div>
-              <v-simple-table v-else dense>
+              <v-table v-else density="compact">
                 <template #default>
                   <thead>
                     <tr>
@@ -70,7 +70,7 @@
                         <div class="font-weight-medium">
                           {{ user.name || user.login }}
                         </div>
-                        <div class="text-caption grey--text text-left">
+                        <div class="text-caption text-grey text-left">
                           {{ user.email || user.login }}
                         </div>
                       </td>
@@ -83,34 +83,33 @@
                         </span>
                         <v-select
                           v-else
-                          :value="user.level"
+                          :model-value="user.level"
                           :items="accessLevelItems"
-                          dense
+                          density="compact"
                           hide-details
                           :loading="userLoading === user.id"
                           :disabled="userLoading === user.id"
-                          @change="confirmUpdateUserAccess(user, $event)"
+                          @update:model-value="confirmUpdateUserAccess(user, $event)"
                         />
                       </td>
                       <td class="text-center">
                         <v-btn
                           v-if="user.level !== 2"
                           icon
-                          small
+                          size="small"
                           color="error"
                           :loading="userLoading === user.id"
                           :disabled="userLoading === user.id"
                           @click="confirmRemoveUser(user)"
                         >
-                          <v-icon small>mdi-close</v-icon>
+                          <v-icon size="small">mdi-close</v-icon>
                         </v-btn>
                         <v-tooltip v-else bottom>
-                          <template #activator="{ on, attrs }">
+                          <template #activator="{ props: activatorProps }">
                             <v-icon
-                              small
-                              color="grey lighten-1"
-                              v-bind="attrs"
-                              v-on="on"
+                              size="small"
+                              color="grey-lighten-1"
+                              v-bind="activatorProps"
                             >
                               mdi-lock
                             </v-icon>
@@ -121,7 +120,7 @@
                     </tr>
                   </tbody>
                 </template>
-              </v-simple-table>
+              </v-table>
             </v-col>
           </v-row>
 
@@ -136,8 +135,8 @@
                   <v-text-field
                     v-model="newUserEmail"
                     label="Username or Email"
-                    dense
-                    outlined
+                    density="compact"
+                    variant="outlined"
                     hide-details
                     :disabled="addUserLoading"
                   />
@@ -147,8 +146,8 @@
                     v-model="newUserAccessLevel"
                     :items="accessLevelItems"
                     label="Access"
-                    dense
-                    outlined
+                    density="compact"
+                    variant="outlined"
                     hide-details
                     :disabled="addUserLoading"
                   />
@@ -160,7 +159,7 @@
                     :disabled="!newUserEmail || addUserLoading"
                     @click="confirmAddUser"
                   >
-                    <v-icon left small>mdi-plus</v-icon>
+                    <v-icon start size="small">mdi-plus</v-icon>
                     Add
                   </v-btn>
                 </v-col>
@@ -171,7 +170,7 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn color="primary" text @click="close">Done</v-btn>
+        <v-btn color="primary" variant="text" @click="close">Done</v-btn>
       </v-card-actions>
     </v-card>
 
@@ -193,8 +192,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="confirmDialog = false">Cancel</v-btn>
-          <v-btn :color="confirmColor" text @click="executeConfirmedAction">
+          <v-btn variant="text" @click="confirmDialog = false">Cancel</v-btn>
+          <v-btn :color="confirmColor" variant="text" @click="executeConfirmedAction">
             {{ confirmActionLabel }}
           </v-btn>
         </v-card-actions>
@@ -212,16 +211,16 @@ import { IDatasetAccessUser, IProject } from "@/store/model";
 
 const props = defineProps<{
   project: IProject | null;
-  value: boolean;
+  modelValue: boolean;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: boolean): void;
+  (e: "update:modelValue", value: boolean): void;
 }>();
 
 const dialog = computed({
-  get: () => props.value,
-  set: (val: boolean) => emit("input", val),
+  get: () => props.modelValue,
+  set: (val: boolean) => emit("update:modelValue", val),
 });
 
 const loading = ref(false);

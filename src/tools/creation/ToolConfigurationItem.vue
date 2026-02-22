@@ -1,5 +1,5 @@
 <template>
-  <v-card flat class="pa-0 ma-0">
+  <v-card variant="flat" class="pa-0 ma-0">
     <v-card-title v-if="item.name && item.name.length" class="px-4 py-2 ma-0">
       {{ item.name }}
     </v-card-title>
@@ -16,8 +16,8 @@
               ref="innerComponent"
               return-object
               @change="changed"
-              dense
-              small
+              density="compact"
+              size="small"
             >
               <v-radio
                 v-for="(value, index) in item.values"
@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 // Manually import those vuetify components that might be used procedurally
-import { VSelect, VCheckbox, VTextField, VRadioGroup } from "vuetify/lib";
+import { VSelect, VCheckbox, VTextField, VRadioGroup } from "vuetify/components";
 import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
 import TagAndLayerRestriction from "@/tools/creation/templates/TagAndLayerRestriction.vue";
 import DockerImage from "@/tools/creation/templates/DockerImage.vue";
@@ -65,21 +65,21 @@ interface IItem {
 
 const props = defineProps<{
   item: IItem;
-  value: any;
+  modelValue: any;
   advanced?: boolean;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: any): void;
+  (e: "update:modelValue", value: any): void;
   (e: "change"): void;
 }>();
 
 const componentValue = computed({
   get() {
-    return props.value;
+    return props.modelValue;
   },
   set(newValue: any) {
-    emit("input", newValue);
+    emit("update:modelValue", newValue);
   },
 });
 

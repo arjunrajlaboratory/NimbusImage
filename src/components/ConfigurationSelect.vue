@@ -25,7 +25,7 @@
         </v-card>
       </template>
     </v-data-table>
-    <v-alert v-else color="orange darken-2" dark>
+    <v-alert v-else color="orange-darken-2" dark>
       No compatible collection were found for this dataset.
     </v-alert>
     <div class="button-bar">
@@ -81,8 +81,8 @@ const loading = ref(false);
 const search = ref("");
 
 const headers = [
-  { text: "Collection Name", value: "name" },
-  { text: "Collection Description", value: "description" },
+  { title: "Collection Name", key: "name" },
+  { title: "Collection Description", key: "description" },
 ];
 
 const dataset = computed(() => store.dataset);

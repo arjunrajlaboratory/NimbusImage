@@ -6,8 +6,8 @@
       <v-list-item-title> Move </v-list-item-title>
     </v-list-item>
     <girder-location-chooser
-      :dialog.sync="moveDialog"
-      @input="move"
+      v-model:dialog="moveDialog"
+      @update:model-value="move"
       :disabled="disableOptions"
       activator-disabled
     />
@@ -20,13 +20,13 @@
         <v-card-title>Delete items</v-card-title>
         <v-card-text>
           <p>You are about to delete these items:</p>
-          <v-simple-table dense>
+          <v-table density="compact">
             <tbody>
               <tr v-for="item in items" :key="item._id">
                 <td>{{ item.name }}</td>
               </tr>
             </tbody>
-          </v-simple-table>
+          </v-table>
         </v-card-text>
         <v-card-actions class="d-flex">
           <v-spacer />
@@ -60,7 +60,7 @@
       <template v-if="items[0]._modelType === 'folder' && store.isLoggedIn">
         <v-list-item @click.stop="addToProjectDialog = true">
           <v-list-item-title>
-            <v-icon left small color="#8e24aa">mdi-folder-star</v-icon>
+            <v-icon start size="small" color="#8e24aa">mdi-folder-star</v-icon>
             Add to Project
           </v-list-item-title>
         </v-list-item>
@@ -90,17 +90,16 @@
       </v-dialog>
       <template v-if="items[0]._modelType === 'folder'">
         <!-- Change assetstore -->
-        <template v-for="assetstore in assetstores">
+        <template v-for="assetstore in assetstores" :key="assetstore._id">
           <v-list-item
             @click.stop="moveFolderToAssetstore(items[0]._id, assetstore._id)"
-            :key="assetstore._id"
           >
             <v-list-item-title>
               Move to assetstore {{ assetstore.name }}
             </v-list-item-title>
           </v-list-item>
         </template>
-        <v-dialog :value="!!moveFolderToAssetstorResolve">
+        <v-dialog :model-value="!!moveFolderToAssetstorResolve">
           <v-card>
             <v-card-title>
               Move folder content to a different assetstore?

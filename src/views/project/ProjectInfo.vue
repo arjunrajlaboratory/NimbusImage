@@ -6,17 +6,17 @@
     <v-container class="d-flex align-center">
       <!-- TODO: Export workflow UI - not yet implemented
            Uncomment when Zenodo export integration is ready
-      <v-chip :color="statusColor" text-color="white" small class="mr-2">
+      <v-chip :color="statusColor" text-color="white" size="small" class="mr-2">
         {{ project.meta.status }}
       </v-chip>
       -->
-      <v-chip v-if="totalProjectSize > 0" outlined small class="mr-2">
-        <v-icon left small>mdi-database</v-icon>
+      <v-chip v-if="totalProjectSize > 0" variant="outlined" size="small" class="mr-2">
+        <v-icon start size="small">mdi-database</v-icon>
         {{ formatSize(totalProjectSize) }} total
       </v-chip>
       <v-spacer />
       <v-btn color="primary" class="mr-2" @click="shareDialog = true">
-        <v-icon left>mdi-share-variant</v-icon>
+        <v-icon start>mdi-share-variant</v-icon>
         Share Project
       </v-btn>
       <!-- TODO: Export workflow buttons - not yet implemented
@@ -27,7 +27,7 @@
         class="mr-2"
         @click="startExport"
       >
-        <v-icon left>mdi-export</v-icon>
+        <v-icon start>mdi-export</v-icon>
         Start Export
       </v-btn>
       <v-btn
@@ -36,14 +36,14 @@
         class="mr-2"
         @click="markExported"
       >
-        <v-icon left>mdi-check</v-icon>
+        <v-icon start>mdi-check</v-icon>
         Mark as Exported
       </v-btn>
       -->
       <v-dialog v-model="deleteConfirm" max-width="33vw">
-        <template #activator="{ on }">
-          <v-btn color="red" v-on="on">
-            <v-icon left>mdi-delete</v-icon>
+        <template #activator="{ props: activatorProps }">
+          <v-btn color="red" v-bind="activatorProps">
+            <v-icon start>mdi-delete</v-icon>
             Delete Project
           </v-btn>
         </template>
@@ -92,9 +92,9 @@
           placeholder="Filter datasets..."
           prepend-inner-icon="mdi-magnify"
           clearable
-          dense
+          density="compact"
           hide-details
-          outlined
+          variant="outlined"
           style="max-width: 250px"
           class="ml-2"
         />
@@ -103,7 +103,7 @@
         <v-progress-linear v-if="loadingDatasets" indeterminate />
         <div v-else-if="allDatasetItems.length === 0" class="text-center pa-4">
           <v-icon size="48" color="grey">mdi-folder-outline</v-icon>
-          <div class="text-body-2 grey--text mt-2">
+          <div class="text-body-2 text-grey mt-2">
             No datasets in this project yet.
           </div>
         </div>
@@ -112,28 +112,27 @@
           class="text-center pa-4"
         >
           <v-icon size="48" color="grey">mdi-magnify</v-icon>
-          <div class="text-body-2 grey--text mt-2">
+          <div class="text-body-2 text-grey mt-2">
             No datasets match "{{ datasetFilter }}"
           </div>
         </div>
         <v-list v-else class="pa-0">
-          <template v-for="(item, index) in filteredDatasetItems">
-            <v-list-item :key="item.datasetId" class="px-4">
-              <v-list-item-content>
+          <template v-for="(item, index) in filteredDatasetItems" :key="item.datasetId">
+            <v-list-item class="px-4">
                 <v-list-item-title
                   class="font-weight-medium d-flex align-center flex-wrap"
                 >
                   <span>{{ item.info?.name || "Loading..." }}</span>
                   <span
                     v-if="item.info?.size"
-                    class="ml-2 grey--text text-body-2"
+                    class="ml-2 text-grey text-body-2"
                   >
                     ({{ formatSize(item.info.size) }})
                   </span>
                   <v-chip
                     v-for="collId in item.collectionIds"
                     :key="collId"
-                    x-small
+                    size="x-small"
                     class="ml-2"
                     color="#4baeff"
                     text-color="white"
@@ -148,15 +147,13 @@
                 <v-list-item-subtitle v-if="item.info?.description">
                   {{ item.info.description }}
                 </v-list-item-subtitle>
-              </v-list-item-content>
-              <v-list-item-action>
-                <span class="button-bar">
+              <span class="button-bar">
                   <v-btn
                     v-if="item.source === 'direct'"
                     color="warning"
                     @click="confirmRemoveDataset(item.datasetId)"
                   >
-                    <v-icon left>mdi-close</v-icon>remove
+                    <v-icon start>mdi-close</v-icon>remove
                   </v-btn>
                   <v-btn
                     color="primary"
@@ -165,10 +162,9 @@
                       params: { datasetId: item.datasetId },
                     }"
                   >
-                    <v-icon left>mdi-eye</v-icon>view
+                    <v-icon start>mdi-eye</v-icon>view
                   </v-btn>
                 </span>
-              </v-list-item-action>
             </v-list-item>
             <v-divider
               v-if="index < filteredDatasetItems.length - 1"
@@ -196,9 +192,9 @@
           placeholder="Filter collections..."
           prepend-inner-icon="mdi-magnify"
           clearable
-          dense
+          density="compact"
           hide-details
-          outlined
+          variant="outlined"
           style="max-width: 250px"
           class="ml-2"
         />
@@ -207,7 +203,7 @@
         <v-progress-linear v-if="loadingCollections" indeterminate />
         <div v-else-if="collectionItems.length === 0" class="text-center pa-4">
           <v-icon size="48" color="grey">mdi-folder-multiple-outline</v-icon>
-          <div class="text-body-2 grey--text mt-2">
+          <div class="text-body-2 text-grey mt-2">
             No collections in this project yet.
           </div>
         </div>
@@ -216,15 +212,14 @@
           class="text-center pa-4"
         >
           <v-icon size="48" color="grey">mdi-magnify</v-icon>
-          <div class="text-body-2 grey--text mt-2">
+          <div class="text-body-2 text-grey mt-2">
             No collections match "{{ collectionFilter }}"
           </div>
         </div>
         <v-list v-else class="pa-0">
-          <template v-for="(item, index) in filteredCollectionItems">
-            <v-list-group :key="item.collectionId" no-action>
+          <template v-for="(item, index) in filteredCollectionItems" :key="item.collectionId">
+            <v-list-group no-action>
               <template #activator>
-                <v-list-item-content>
                   <v-list-item-title class="font-weight-medium">
                     {{ item.info?.name || "Loading..." }}
                   </v-list-item-title>
@@ -234,23 +229,20 @@
                       · {{ formatSize(collectionSizes[item.collectionId]) }}
                     </span>
                   </v-list-item-subtitle>
-                </v-list-item-content>
-                <v-list-item-action>
                   <span class="button-bar">
                     <v-btn
                       color="warning"
                       @click.stop="confirmRemoveCollection(item.collectionId)"
                     >
-                      <v-icon left>mdi-close</v-icon>remove
+                      <v-icon start>mdi-close</v-icon>remove
                     </v-btn>
                     <v-btn
                       color="primary"
                       @click.stop="navigateToCollection(item.collectionId)"
                     >
-                      <v-icon left>mdi-eye</v-icon>view
+                      <v-icon start>mdi-eye</v-icon>view
                     </v-btn>
                   </span>
-                </v-list-item-action>
               </template>
               <!-- Expanded: datasets in this collection -->
               <v-list-item
@@ -258,20 +250,17 @@
                 :key="dv.id"
                 class="pl-8"
               >
-                <v-list-item-content>
                   <v-list-item-title class="text-body-2">
                     {{ datasetInfoCache[dv.datasetId]?.name || "Loading..." }}
                     <span
                       v-if="datasetInfoCache[dv.datasetId]?.size"
-                      class="ml-2 grey--text"
+                      class="ml-2 text-grey"
                     >
                       ({{
                         formatSize(datasetInfoCache[dv.datasetId]?.size || 0)
                       }})
                     </span>
                   </v-list-item-title>
-                </v-list-item-content>
-                <v-list-item-action>
                   <v-btn
                     color="primary"
                     :to="{
@@ -279,9 +268,8 @@
                       params: { datasetId: dv.datasetId },
                     }"
                   >
-                    <v-icon left>mdi-eye</v-icon>view
+                    <v-icon start>mdi-eye</v-icon>view
                   </v-btn>
-                </v-list-item-action>
               </v-list-item>
             </v-list-group>
             <v-divider
@@ -307,58 +295,57 @@
     <v-card class="mb-4">
       <v-card-title>Publication Metadata</v-card-title>
       <v-card-text>
-        <v-text-field v-model="metadata.title" label="Title" outlined dense />
+        <v-text-field v-model="metadata.title" label="Title" variant="outlined" density="compact" />
         <v-textarea
           v-model="metadata.description"
           label="Description"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           rows="2"
         />
         <v-select
           v-model="metadata.license"
           :items="licenseOptions"
           label="License"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
         <v-combobox
           v-model="metadata.keywords"
           label="Keywords"
           multiple
           chips
-          small-chips
-          deletable-chips
-          outlined
-          dense
+          closable-chips
+          variant="outlined"
+          density="compact"
           hint="Press Enter to add a keyword"
         />
         <v-text-field
           v-model="metadata.authors"
           label="Authors"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           hint="Comma-separated list of authors"
         />
         <v-text-field
           v-model="metadata.doi"
           label="DOI"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           placeholder="10.xxxx/xxxxx"
         />
         <v-text-field
           v-model="metadata.publicationDate"
           label="Publication Date"
           type="date"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
         <v-text-field
           v-model="metadata.funding"
           label="Funding"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
       </v-card-text>
       <v-card-actions>
@@ -439,7 +426,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { isAxiosError } from "axios";
 import store from "@/store";
 import projects from "@/store/projects";
@@ -465,7 +453,7 @@ void AddDatasetToProjectDialog;
 void AddCollectionToProjectFilterDialog;
 void ShareProject;
 
-const vm = getCurrentInstance()!.proxy;
+const router = useRouter();
 
 interface IProjectMetadataForm {
   title: string;
@@ -936,7 +924,7 @@ async function deleteProject() {
   const success = await projects.deleteProject(project.value.id);
   if (success) {
     deleteConfirm.value = false;
-    vm.$router.push({ name: "home" });
+    router.push({ name: "home" });
   }
 }
 
@@ -971,7 +959,7 @@ async function removeCollection() {
 }
 
 function navigateToCollection(collectionId: string) {
-  vm.$router.push({
+  router.push({
     name: "configuration",
     params: { configurationId: collectionId },
   });
@@ -1110,17 +1098,17 @@ defineExpose({
 }
 
 // Only add hover effect to group headers as they are clickable
-::v-deep .v-list-group__header:hover {
+:deep(.v-list-group__header:hover) {
   background-color: rgba(255, 255, 255, 0.05);
 }
 
 // Ensure list item actions align properly with content
-::v-deep .v-list-item__action {
+:deep(.v-list-item__action) {
   align-self: center;
 }
 
 // Fix alignment in list groups
-::v-deep .v-list-group__header {
+:deep(.v-list-group__header) {
   align-items: center;
 }
 </style>

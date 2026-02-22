@@ -19,7 +19,7 @@
       />
       <div class="d-flex flex-column">
         <v-btn type="submit" color="primary">Login</v-btn>
-        <v-btn text class="align-self-end my-2" @click="switchToSignUp">
+        <v-btn variant="text" class="align-self-end my-2" @click="switchToSignUp">
           Sign up
         </v-btn>
       </div>
@@ -88,16 +88,16 @@
           >
             Sign up
           </v-btn>
-          <v-btn text class="align-self-end my-2" @click="switchToLogin">
+          <v-btn variant="text" class="align-self-end my-2" @click="switchToLogin">
             Back to login
           </v-btn>
         </div>
       </v-form>
     </template>
-    <v-alert :value="!!errorMessage" type="error">
+    <v-alert :model-value="!!errorMessage" type="error">
       {{ errorMessage }}
     </v-alert>
-    <v-alert :value="!!successMessage" type="success">
+    <v-alert :model-value="!!successMessage" type="success">
       {{ successMessage }}
     </v-alert>
   </div>
@@ -109,11 +109,11 @@ import store from "@/store";
 
 const props = defineProps<{
   domain: string;
-  value: boolean;
+  modelValue: boolean;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: boolean): void;
+  (e: "update:modelValue", value: boolean): void;
 }>();
 
 const username = ref(import.meta.env.VITE_DEFAULT_USER || "");

@@ -10,7 +10,7 @@ function mountComponent(props = {}) {
   return shallowMount(FileDropzone, {
     vuetify: new Vuetify(),
     propsData: {
-      value: [],
+      modelValue: [],
       ...props,
     },
   });
@@ -36,8 +36,8 @@ describe("FileDropzone", () => {
       value: [file],
     });
     input.trigger("change");
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0][0]).toEqual([file]);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0][0]).toEqual([file]);
   });
 
   it("initializes dropzoneClass as null", () => {

@@ -21,20 +21,19 @@
       <v-spacer />
       <v-btn
         v-if="currentJobId || localJobLog"
-        small
-        text
+        size="small"
+        variant="text"
         color="info"
         class="mr-2"
         @click="showLogDialog = true"
       >
-        <v-icon small left>mdi-text-box-outline</v-icon>
+        <v-icon size="small" start>mdi-text-box-outline</v-icon>
         Log
       </v-btn>
       <v-dialog v-model="deleteDialog">
-        <template v-slot:activator="{ on, attrs }">
+        <template v-slot:activator="{ props: activatorProps }">
           <v-btn
-            v-bind="attrs"
-            v-on="on"
+            v-bind="activatorProps"
             @click.stop="deleteComputedValues = true"
             color="red"
           >
@@ -59,7 +58,7 @@
                 <v-col>
                   <v-checkbox
                     hide-details
-                    dense
+                    density="compact"
                     label="Also delete the computed values for this property"
                     v-model="deleteComputedValues"
                   />
@@ -91,9 +90,9 @@
         <v-card-title class="headline">
           Job Log: {{ property.name }}
           <v-spacer></v-spacer>
-          <v-tooltip bottom>
-            <template v-slot:activator="{ on, attrs }">
-              <v-btn icon v-bind="attrs" v-on="on" @click="copyLogToClipboard">
+          <v-tooltip location="bottom">
+            <template v-slot:activator="{ props: activatorProps }">
+              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
@@ -108,7 +107,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" text @click="showLogDialog = false"
+          <v-btn color="primary" variant="text" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>

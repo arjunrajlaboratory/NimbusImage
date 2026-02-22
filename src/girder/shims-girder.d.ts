@@ -1,26 +1,15 @@
-declare module "@girder/components/src/components" {
-  import { Component } from "vue";
+declare module "@girder/components" {
+  import type { Component } from "vue";
+  import type { AxiosInstance } from "axios";
 
-  export const Upload: Component;
-  export const Breadcrumb: Component;
-  export const Search: Component;
-}
+  export const GirderUpload: Component;
+  export const GirderBreadcrumb: Component;
+  export const GirderSearch: Component;
+  export const GirderFileManager: Component;
 
-declare module "@girder/components/src/components/Snippet" {
-  import { Component } from "vue";
-
-  export const FileManager: Component;
-}
-
-declare module "@girder/components/src/utils" {
-  export const vuetifyConfig: any;
-}
-declare module "@girder/components/src/utils/upload" {
-  const UploadManager: any;
-  export default UploadManager;
-}
-declare module "@girder/components/src/rest" {
-  import { AxiosInstance } from "axios";
+  export class UploadManager {
+    constructor(file: File, options?: any);
+  }
 
   interface IRestClientOptions {
     apiRoot: string;
@@ -30,10 +19,9 @@ declare module "@girder/components/src/rest" {
   }
 
   export interface IGirderUser {
-    name: string; // TODO check
+    name: string;
     _modelType: "user";
     _id: string;
-
     login: string;
   }
 
@@ -60,17 +48,14 @@ declare module "@girder/components/src/rest" {
     new (options: Partial<IRestClientOptions>): RestClientInstance;
   }
 
-  const RestClient: RestClientStatic;
-
-  export default RestClient;
+  export const RestClient: RestClientStatic;
 }
 
 declare module "@/girder/components" {
-  // note: will also import the vuetify.min.css even tho in the lib version the SASS one will be generated directly
   export {
-    Upload,
-    Breadcrumb,
-    Search,
-  } from "@girder/components/src/components";
-  export { FileManager } from "@girder/components/src/components/Snippet";
+    GirderUpload as Upload,
+    GirderBreadcrumb as Breadcrumb,
+    GirderSearch as Search,
+    GirderFileManager as FileManager,
+  } from "@girder/components";
 }

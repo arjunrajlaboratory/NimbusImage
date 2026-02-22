@@ -3,7 +3,7 @@
     <v-card-title>
       <span class="headline">Edit tool:</span>
       <v-text-field
-        dense
+        density="compact"
         hide-details
         class="ma-0 ml-2 headline"
         v-model="toolName"
@@ -17,7 +17,7 @@
         ref="toolConfigurationRef"
       />
       <div class="ma-6 mb-0">
-        <div class="title white--text">Tool Hotkey</div>
+        <div class="title text-white">Tool Hotkey</div>
         <hotkey-selection v-model="toolHotkey" />
       </div>
     </v-card-text>

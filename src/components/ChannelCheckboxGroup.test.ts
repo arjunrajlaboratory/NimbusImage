@@ -22,7 +22,7 @@ function mountComponent(props = {}) {
   return mount(ChannelCheckboxGroup, {
     vuetify: new Vuetify(),
     propsData: {
-      value: {},
+      modelValue: {},
       ...props,
     },
   });
@@ -53,9 +53,9 @@ describe("ChannelCheckboxGroup", () => {
   });
 
   it("initializes missing channels on created", () => {
-    const wrapper = mountComponent({ value: { 0: true } });
+    const wrapper = mountComponent({ modelValue: { 0: true } });
     // created() should add missing channels (1, 2) as false
-    const emitted = wrapper.emitted("input");
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     const lastEmitted = emitted![emitted!.length - 1][0];
     expect(lastEmitted).toHaveProperty("0", true);

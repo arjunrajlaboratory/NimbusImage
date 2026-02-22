@@ -2,24 +2,24 @@
   <v-dialog v-model="dialogModel" max-width="500" persistent>
     <v-card>
       <v-card-title>
-        <v-icon left color="#8e24aa">mdi-folder-star</v-icon>
+        <v-icon start color="#8e24aa">mdi-folder-star</v-icon>
         Add to Project
       </v-card-title>
 
       <v-card-text>
         <div v-if="datasetName" class="mb-3">
-          <span class="text-body-2 grey--text">Dataset:</span>
+          <span class="text-body-2 text-grey">Dataset:</span>
           <span class="ml-1 font-weight-medium">{{ datasetName }}</span>
         </div>
 
-        <v-tabs v-model="tab" grow>
+        <v-tabs v-model="tab">
           <v-tab>Existing Project</v-tab>
           <v-tab>New Project</v-tab>
         </v-tabs>
 
-        <v-tabs-items v-model="tab">
+        <v-window v-model="tab">
           <!-- Existing Project Tab -->
-          <v-tab-item>
+          <v-window-item>
             <div class="pt-4">
               <v-progress-linear v-if="loadingProjects" indeterminate />
 
@@ -28,76 +28,67 @@
                 class="text-center pa-4"
               >
                 <v-icon size="48" color="grey">mdi-folder-star-outline</v-icon>
-                <div class="text-body-2 grey--text mt-2">
+                <div class="text-body-2 text-grey mt-2">
                   No projects available. Create one to get started.
                 </div>
               </div>
 
-              <v-list v-else dense class="project-select-list">
-                <v-list-item-group
-                  v-model="selectedProjectIndex"
-                  color="primary"
-                >
+              <v-list v-else density="compact" class="project-select-list">
                   <v-list-item
                     v-for="project in availableProjects"
                     :key="project.id"
                     :disabled="isDatasetInProject(project)"
                   >
-                    <v-list-item-icon>
-                      <v-icon
-                        :color="
-                          isDatasetInProject(project) ? 'grey' : '#8e24aa'
-                        "
-                      >
-                        {{
-                          isDatasetInProject(project)
-                            ? "mdi-check-circle"
-                            : "mdi-folder-star"
-                        }}
-                      </v-icon>
-                    </v-list-item-icon>
-                    <v-list-item-content>
-                      <v-list-item-title>{{ project.name }}</v-list-item-title>
-                      <v-list-item-subtitle>
-                        {{ project.meta.datasets.length }} dataset{{
-                          project.meta.datasets.length !== 1 ? "s" : ""
-                        }}
-                        <span v-if="isDatasetInProject(project)" class="ml-1">
-                          (already added)
-                        </span>
-                      </v-list-item-subtitle>
-                    </v-list-item-content>
+                    <v-icon
+                      :color="
+                        isDatasetInProject(project) ? 'grey' : '#8e24aa'
+                      "
+                    >
+                      {{
+                        isDatasetInProject(project)
+                          ? "mdi-check-circle"
+                          : "mdi-folder-star"
+                      }}
+                    </v-icon>
+                    <v-list-item-title>{{ project.name }}</v-list-item-title>
+                    <v-list-item-subtitle>
+                      {{ project.meta.datasets.length }} dataset{{
+                        project.meta.datasets.length !== 1 ? "s" : ""
+                      }}
+                      <span v-if="isDatasetInProject(project)" class="ml-1">
+                        (already added)
+                      </span>
+                    </v-list-item-subtitle>
                   </v-list-item>
-                </v-list-item-group>
               </v-list>
             </div>
-          </v-tab-item>
+          </v-window-item>
 
           <!-- New Project Tab -->
-          <v-tab-item>
+          <v-window-item>
             <div class="pt-4">
               <v-text-field
                 v-model="newProjectName"
                 label="Project Name"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 autofocus
               />
               <v-textarea
                 v-model="newProjectDescription"
                 label="Description (optional)"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 rows="3"
               />
             </div>
-          </v-tab-item>
-        </v-tabs-items>
+          </v-window-item>
+        </v-window>
       </v-card-text>
 
       <v-card-actions>
         <v-spacer />
-        <v-btn text @click="cancel">Cancel</v-btn>
+        <v-btn variant="text" @click="cancel">Cancel</v-btn>
         <v-btn
           color="primary"
           :disabled="!canAdd"
@@ -119,18 +110,18 @@ import { IProject } from "@/store/model";
 
 const props = withDefaults(
   defineProps<{
-    value?: boolean;
+    modelValue?: boolean;
     datasetId: string;
     datasetName?: string;
   }>(),
   {
-    value: false,
+    modelValue: false,
     datasetName: "",
   },
 );
 
 const emit = defineEmits<{
-  (e: "input", value: boolean): void;
+  (e: "update:modelValue", value: boolean): void;
   (e: "added", projectId: string): void;
 }>();
 
@@ -142,8 +133,8 @@ const newProjectDescription = ref("");
 const adding = ref(false);
 
 const dialogModel = computed({
-  get: () => props.value,
-  set: (val: boolean) => emit("input", val),
+  get: () => props.modelValue,
+  set: (val: boolean) => emit("update:modelValue", val),
 });
 
 const availableProjects = computed<IProject[]>(() => {
@@ -234,7 +225,7 @@ async function addToProject() {
 }
 
 watch(
-  () => props.value,
+  () => props.modelValue,
   (newVal: boolean) => {
     if (newVal) {
       loadProjects();

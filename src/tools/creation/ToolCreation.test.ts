@@ -27,7 +27,7 @@ vi.mock("@/tools/creation/ToolConfiguration.vue", () => ({
   default: {
     name: "ToolConfiguration",
     template: "<div />",
-    props: ["template", "defaultValues", "value"],
+    props: ["template", "defaultValues", "modelValue"],
     methods: { reset: vi.fn() },
   },
 }));
@@ -44,7 +44,7 @@ vi.mock("@/components/HotkeySelection.vue", () => ({
   default: {
     name: "HotkeySelection",
     template: "<div />",
-    props: ["value"],
+    props: ["modelValue"],
   },
 }));
 

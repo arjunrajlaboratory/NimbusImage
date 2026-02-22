@@ -63,32 +63,30 @@ function unbind(el: any) {
   }
 }
 
-export default function install(Vue: any) {
-  Vue.directive("mousetrap", {
-    inserted(
-      el: any,
-      { value, modifiers }: { value: IHotkey | IHotkey[]; modifiers: any },
-    ) {
-      bind(el, value, modifiers.element);
+export const mousetrapDirective = {
+  mounted(
+    el: any,
+    { value, modifiers }: { value: IHotkey | IHotkey[]; modifiers: any },
+  ) {
+    bind(el, value, modifiers.element);
+  },
+  updated(
+    el: any,
+    {
+      value,
+      oldValue,
+      modifiers,
+    }: {
+      value: IHotkey | IHotkey[];
+      oldValue: IHotkey | IHotkey[];
+      modifiers: any;
     },
-    update(
-      el: any,
-      {
-        value,
-        oldValue,
-        modifiers,
-      }: {
-        value: IHotkey | IHotkey[];
-        oldValue: IHotkey | IHotkey[];
-        modifiers: any;
-      },
-    ) {
-      if (value === oldValue) return;
-      unbind(el);
-      bind(el, value, modifiers.element);
-    },
-    unbind(el: any) {
-      unbind(el);
-    },
-  });
-}
+  ) {
+    if (value === oldValue) return;
+    unbind(el);
+    bind(el, value, modifiers.element);
+  },
+  unmounted(el: any) {
+    unbind(el);
+  },
+};

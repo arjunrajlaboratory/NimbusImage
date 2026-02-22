@@ -2,7 +2,7 @@
   <v-container>
     <v-form v-model="valid">
       <v-text-field
-        :value="pathName"
+        :model-value="pathName"
         label="Path"
         readonly
         required
@@ -29,12 +29,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, getCurrentInstance } from "vue";
+import { ref, computed, watch } from "vue";
+import { useRouter } from "vue-router";
 import store from "@/store";
 import { IGirderLocation } from "@/girder";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 
-const vm = getCurrentInstance()!.proxy;
+const router = useRouter();
 
 const valid = ref(false);
 const path = ref<IGirderLocation | null>(null);
@@ -82,7 +83,7 @@ function submit() {
 
   store.importDataset(path.value as any).then((ds: any) => {
     if (ds) {
-      vm.$router.push({
+      router.push({
         name: "dataset",
         params: { datasetId: ds.id },
       });

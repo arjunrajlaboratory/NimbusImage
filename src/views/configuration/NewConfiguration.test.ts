@@ -30,7 +30,7 @@ vi.mock("@/components/GirderLocationChooser.vue", () => ({
   default: {
     name: "GirderLocationChooser",
     template: "<div />",
-    props: ["value", "breadcrumb", "title"],
+    props: ["modelValue", "breadcrumb", "title"],
   },
 }));
 

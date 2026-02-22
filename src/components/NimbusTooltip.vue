@@ -1,11 +1,8 @@
 <template>
   <v-tooltip
     v-if="enabled"
-    :top="position === 'top'"
-    :right="position === 'right'"
-    :bottom="position === 'bottom'"
-    :left="position === 'left'"
-    :activator="activator"
+    :location="(position as any)"
+    :activator="(activator as any)"
     :open-delay="openDelay"
     content-class="nimbus-tooltip-overlay"
   >
@@ -14,13 +11,13 @@
 </template>
 
 <script setup lang="ts">
-defineProps({
-  activator: { required: true },
-  content: { type: String, required: true },
-  position: { type: String, default: "bottom" },
-  openDelay: { type: Number, default: 0 },
-  enabled: { type: Boolean, default: true },
-});
+defineProps<{
+  activator: Element | string;
+  content: string;
+  position?: string;
+  openDelay?: number;
+  enabled?: boolean;
+}>();
 
 function formattedTooltip(text: string): string {
   return text.replace(/\n/g, "<br>");

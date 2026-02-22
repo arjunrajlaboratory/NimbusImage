@@ -16,12 +16,12 @@
           {{ sectionName }}
         </span>
         <br />
-        <template v-for="({ key, description }, i) of sectionItems">
-          <code class="caption" :key="i + '_key'">{{ key }}</code>
-          <span class="text--primary pl-2" :key="i + '_description'">
+        <template v-for="({ key, description }, i) of sectionItems" :key="i">
+          <code class="caption">{{ key }}</code>
+          <span class="text-high-emphasis pl-2">
             {{ description }}
           </span>
-          <br :key="i + '_br'" />
+          <br />
         </template>
       </p>
     </v-card-text>
@@ -33,12 +33,12 @@
           {{ sectionName }}
         </span>
         <br />
-        <template v-for="({ title, description }, i) of sectionItems">
-          <code :key="i + '_title'" class="caption">{{ title }}</code>
-          <span :key="i + '_description'" class="text--primary pl-2">
+        <template v-for="({ title, description }, i) of sectionItems" :key="i">
+          <code class="caption">{{ title }}</code>
+          <span class="text-high-emphasis pl-2">
             {{ description }}
           </span>
-          <br :key="i + '_br'" />
+          <br />
         </template>
       </p>
     </v-card-text>

@@ -45,15 +45,15 @@ function mountComponent(props = {}) {
   return mount(WorkerInterfaceValues, {
     vuetify: new Vuetify(),
     propsData: {
-      value: {},
+      modelValue: {},
       workerInterface: sampleInterface,
       ...props,
     },
     stubs: {
-      "layer-select": { template: "<div></div>", props: ["value"] },
-      "channel-select": { template: "<div></div>", props: ["value"] },
-      "channel-checkbox-group": { template: "<div></div>", props: ["value"] },
-      "tag-picker": { template: "<div></div>", props: ["value"] },
+      "layer-select": { template: "<div></div>", props: ["modelValue"] },
+      "channel-select": { template: "<div></div>", props: ["modelValue"] },
+      "channel-checkbox-group": { template: "<div></div>", props: ["modelValue"] },
+      "tag-picker": { template: "<div></div>", props: ["modelValue"] },
     },
     directives: {
       tooltip: {},
@@ -86,7 +86,7 @@ describe("WorkerInterfaceValues", () => {
       },
     };
     const wrapper = mountComponent({ tool });
-    const emitted = wrapper.emitted("input");
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     const lastValues = emitted![emitted!.length - 1][0];
     expect(lastValues.threshold).toBe(75);
@@ -95,7 +95,7 @@ describe("WorkerInterfaceValues", () => {
 
   it("populateValues falls back to getDefault when no tool", () => {
     const wrapper = mountComponent({ tool: null });
-    const emitted = wrapper.emitted("input");
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     const lastValues = emitted![emitted!.length - 1][0];
     expect(lastValues.threshold).toBe(50); // default from interface

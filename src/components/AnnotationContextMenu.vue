@@ -1,5 +1,5 @@
 <template>
-  <v-menu v-model="showMenu" :position-x="x" :position-y="y" absolute offset-y>
+  <v-menu v-model="showMenu" :target="[x, y]">
     <v-card min-width="300" @click.stop :ripple="false">
       <v-card-title class="text-subtitle-1">Edit Annotation</v-card-title>
       <v-card-text>
@@ -30,9 +30,9 @@
           />
         </div>
         <div class="d-flex align-center position-relative">
-          <v-btn text small class="px-0" @click="copyAnnotationId">
+          <v-btn variant="text" size="small" class="px-0" @click="copyAnnotationId">
             <v-icon
-              small
+              size="small"
               class="mr-1"
               :color="copySuccess ? 'success' : undefined"
             >

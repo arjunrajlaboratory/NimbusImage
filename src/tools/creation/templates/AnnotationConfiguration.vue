@@ -10,7 +10,7 @@
               :items="availableShapes"
               v-model="shape"
               @change="changed"
-              dense
+              density="compact"
             >
             </v-select>
           </v-col>
@@ -37,7 +37,7 @@
             <tag-picker
               id="tool-creation-tag-picker-tourstep"
               v-model="tags"
-              @input="useAutoTags = false"
+              @update:model-value="useAutoTags = false"
             ></tag-picker>
           </v-col>
         </v-row>
@@ -56,7 +56,7 @@
               v-model="coordinateAssignments[coordinate].type"
               :key="`${index}Radio`"
               mandatory
-              dense
+              density="compact"
             >
               <v-radio
                 value="layer"
@@ -67,7 +67,7 @@
                 <template v-slot:label>
                   <span>Assign</span>
                   <v-text-field
-                    dense
+                    density="compact"
                     type="number"
                     :min="1"
                     class="pl-4"
@@ -132,14 +132,14 @@ import {
   computed,
   watch,
   onMounted,
-  getCurrentInstance,
   nextTick,
 } from "vue";
-import Vue from "vue";
+import type { ComponentPublicInstance } from "vue";
 import store from "@/store";
 import LayerSelect from "@/components/LayerSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import Persister from "@/store/Persister";
+import { useTour } from "@/utils/useTour";
 import {
   AnnotationNames,
   AnnotationShape,
@@ -148,7 +148,7 @@ import {
   WelcomeTourNames,
 } from "@/store/model";
 
-type VForm = Vue & { validate: () => boolean };
+type VForm = ComponentPublicInstance & { validate: () => boolean };
 
 function isSmallerThanRule(max: number) {
   return (val: string) => Number.parseInt(val) < max;
@@ -160,7 +160,7 @@ const props = withDefaults(
     hideLayer?: boolean;
     defaultShape?: AnnotationShape;
     advanced?: boolean;
-    value?: IAnnotationSetup;
+    modelValue?: IAnnotationSetup;
   }>(),
   {
     hideShape: false,
@@ -171,7 +171,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: "input", value: IAnnotationSetup): void;
+  (e: "update:modelValue", value: IAnnotationSetup): void;
   (e: "change"): void;
 }>();
 
@@ -220,7 +220,7 @@ const layer = computed({
     return coordinateAssignments.value.layer ?? null;
   },
   set: (value) => {
-    Vue.set(coordinateAssignments.value, "layer", value);
+    coordinateAssignments.value.layer = value;
   },
 });
 
@@ -253,14 +253,14 @@ function isMaxMerge(axis: string, layerId?: string) {
 }
 
 function updateFromValue() {
-  if (!props.value) {
+  if (!props.modelValue) {
     reset();
     return;
   }
-  updateCoordinateAssignement(props.value.coordinateAssignments);
-  shape.value = props.value.shape;
-  tagsInternal.value = props.value.tags;
-  color.value = props.value.color;
+  updateCoordinateAssignement(props.modelValue.coordinateAssignments);
+  shape.value = props.modelValue.shape;
+  tagsInternal.value = props.modelValue.tags;
+  color.value = props.modelValue.color;
 }
 
 function reset() {
@@ -311,12 +311,12 @@ function changed() {
     shape: shape.value,
     color: color.value,
   };
-  emit("input", result);
+  emit("update:modelValue", result);
   emit("change");
 }
 
 // Watches
-watch(() => props.value, updateFromValue);
+watch(() => props.modelValue, updateFromValue);
 watch(() => props.defaultShape, reset);
 watch(coordinateAssignments, changed, { deep: true });
 watch(layer, changed);
@@ -325,26 +325,26 @@ watch(shape, changed);
 watch(color, changed);
 
 onMounted(() => {
-  if (props.value?.tags) {
+  if (props.modelValue?.tags) {
     useAutoTags.value = false;
   }
   updateFromValue();
 
   // Tour logic to show the "Working with tags" tour
   // if the user has not seen it yet
-  const instance = getCurrentInstance()!.proxy;
+  const { isTourActive, startTour } = useTour();
   const tourStatus = Persister.get(
     WelcomeTourTypes.WORKING_WITH_TAGS,
     WelcomeTourStatus.NOT_YET_RUN,
   );
 
-  if (!((instance as any).$isTourActive && (instance as any).$isTourActive())) {
+  if (!isTourActive()) {
     if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
       Persister.set(
         WelcomeTourTypes.WORKING_WITH_TAGS,
         WelcomeTourStatus.ALREADY_RUN,
       );
-      (instance as any).$startTour(
+      startTour(
         WelcomeTourNames[WelcomeTourTypes.WORKING_WITH_TAGS],
       );
     }

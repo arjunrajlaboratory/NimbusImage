@@ -50,7 +50,7 @@ vi.mock("vuedraggable", () => ({
   default: {
     name: "draggable",
     template: "<div><slot /></div>",
-    props: ["value", "animation", "fallbackOnBody", "swapThreshold", "group"],
+    props: ["modelValue", "animation", "fallbackOnBody", "swapThreshold", "group"],
   },
 }));
 

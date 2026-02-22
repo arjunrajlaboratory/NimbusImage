@@ -42,7 +42,7 @@ function mountComponent(props = {}) {
     vuetify: new Vuetify(),
     attachTo: app,
     propsData: {
-      value: false,
+      modelValue: false,
       currentTime: 3,
       dataset: sampleDataset,
       ...props,
@@ -61,13 +61,13 @@ describe("MovieDialog", () => {
   });
 
   it("dialog computed get returns prop value", () => {
-    const wrapper = mountComponent({ value: true });
+    const wrapper = mountComponent({ modelValue: true });
     expect((wrapper.vm as any).dialog).toBe(true);
     wrapper.destroy();
   });
 
   it("dialog computed get returns false when value is false", () => {
-    const wrapper = mountComponent({ value: false });
+    const wrapper = mountComponent({ modelValue: false });
     expect((wrapper.vm as any).dialog).toBe(false);
     wrapper.destroy();
   });
@@ -75,8 +75,8 @@ describe("MovieDialog", () => {
   it("dialog computed set emits input", () => {
     const wrapper = mountComponent();
     (wrapper.vm as any).dialog = true;
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0][0]).toBe(true);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0][0]).toBe(true);
     wrapper.destroy();
   });
 
@@ -205,8 +205,8 @@ describe("MovieDialog", () => {
 
     vm.handleDownload();
 
-    expect(wrapper.emitted("input")).toBeTruthy();
-    expect(wrapper.emitted("input")![0][0]).toBe(false);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0][0]).toBe(false);
     wrapper.destroy();
   });
 
@@ -223,10 +223,10 @@ describe("MovieDialog", () => {
   });
 
   it("watch on value sets startTime and endTime when opened", async () => {
-    const wrapper = mountComponent({ value: false, currentTime: 3 });
+    const wrapper = mountComponent({ modelValue: false, currentTime: 3 });
     const vm = wrapper.vm as any;
 
-    await wrapper.setProps({ value: true });
+    await wrapper.setProps({ modelValue: true });
 
     expect(vm.startTime).toBe(3);
     expect(vm.endTime).toBe(9);
@@ -234,12 +234,12 @@ describe("MovieDialog", () => {
   });
 
   it("watch on value does not reset when closed", async () => {
-    const wrapper = mountComponent({ value: true, currentTime: 3 });
+    const wrapper = mountComponent({ modelValue: true, currentTime: 3 });
     const vm = wrapper.vm as any;
     vm.startTime = 1;
     vm.endTime = 4;
 
-    await wrapper.setProps({ value: false });
+    await wrapper.setProps({ modelValue: false });
 
     expect(vm.startTime).toBe(1);
     expect(vm.endTime).toBe(4);

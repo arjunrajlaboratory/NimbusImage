@@ -19,12 +19,12 @@
     />
 
     <tag-selection-dialog
-      :show.sync="showTagDialog"
+      v-model:show="showTagDialog"
       @submit="handleTagSubmit"
     />
 
     <color-selection-dialog
-      :show.sync="showColorDialog"
+      v-model:show="showColorDialog"
       @submit="handleColorSubmit"
     />
   </div>
@@ -38,7 +38,6 @@ import {
   onMounted,
   onBeforeUnmount,
   nextTick,
-  getCurrentInstance,
   markRaw,
 } from "vue";
 import store from "@/store";
@@ -179,8 +178,6 @@ const props = withDefaults(
   }>(),
   { maps: () => [] },
 );
-
-const _instance = getCurrentInstance();
 
 // ---- Refs (data fields) ----
 
@@ -1987,7 +1984,7 @@ function handleModeChange(evt: any) {
 
 function handleInteractionModeChange(evt: any) {
   if (evt.mode === null) {
-    (_instance!.proxy as any).refreshAnnotationMode();
+    refreshAnnotationMode();
   }
 }
 
@@ -2038,7 +2035,6 @@ function handleInteractionAnnotationChange(evt: any) {
     return;
   }
 
-  const proxy = _instance!.proxy as any;
   if (
     evt.event === "geo_annotation_state" &&
     evt.annotation?.layer() === props.interactionLayer
@@ -2046,33 +2042,33 @@ function handleInteractionAnnotationChange(evt: any) {
     if (selectedToolConfiguration.value) {
       switch (selectedToolConfiguration.value.type) {
         case "create":
-          proxy.addAnnotationFromGeoJsAnnotation(evt.annotation);
+          addAnnotationFromGeoJsAnnotation(evt.annotation);
           break;
         case "tagging":
-          proxy.handleAnnotationTagging(evt.annotation);
+          handleAnnotationTagging(evt.annotation);
           break;
         case "snap":
-          proxy.addAnnotationFromSnapping(evt.annotation);
+          addAnnotationFromSnapping(evt.annotation);
           break;
         case "select":
-          proxy.selectAnnotations(evt.annotation);
+          selectAnnotations(evt.annotation);
           break;
         case "connection":
-          proxy.handleAnnotationConnections(evt.annotation);
+          handleAnnotationConnections(evt.annotation);
           break;
         case "edit":
           if (
             selectedToolConfiguration.value?.values?.action?.value ===
             "combine_click"
           ) {
-            proxy.handleAnnotationCombine(evt.annotation);
+            handleAnnotationCombine(evt.annotation);
           } else {
-            proxy.handleAnnotationEdits(evt.annotation);
+            handleAnnotationEdits(evt.annotation);
           }
           break;
       }
     } else {
-      proxy.handleNewROIFilter(evt.annotation);
+      handleNewROIFilter(evt.annotation);
     }
   }
 }
@@ -2192,29 +2188,29 @@ function consumeMouseState(mouseState: IMouseState) {
 
 function onPrimaryChange() {
   handlingPrimaryChange.value = true;
-  (_instance!.proxy as any).drawAnnotationsAndTooltips();
+  drawAnnotationsAndTooltips();
   nextTick(() => {
     handlingPrimaryChange.value = false;
   });
 }
 
 function onTimelapseModeChanged() {
-  (_instance!.proxy as any).drawTimelapseConnectionsAndCentroids();
+  drawTimelapseConnectionsAndCentroids();
 }
 
 function onDisplayedAnnotationsChange() {
   if (!handlingPrimaryChange.value) {
-    (_instance!.proxy as any).drawAnnotationsAndTooltips();
+    drawAnnotationsAndTooltips();
   }
 }
 
 function onRestyleNeeded() {
-  (_instance!.proxy as any).restyleAnnotations();
+  restyleAnnotations();
 }
 
 function onUnrollChanged() {
-  (_instance!.proxy as any).clearOldAnnotations(true);
-  (_instance!.proxy as any).drawAnnotationsAndTooltips();
+  clearOldAnnotations(true);
+  drawAnnotationsAndTooltips();
 }
 
 function onDrawTooltipsChanged() {
@@ -2222,12 +2218,12 @@ function onDrawTooltipsChanged() {
 }
 
 function watchTool() {
-  (_instance!.proxy as any).refreshAnnotationMode();
+  refreshAnnotationMode();
 }
 
 function watchFilter() {
   if (roiFilter.value) {
-    (_instance!.proxy as any).refreshAnnotationMode();
+    refreshAnnotationMode();
   }
 }
 
@@ -2318,15 +2314,14 @@ function onMousePathChanged(
   newState: IMouseState | null,
   oldState: IMouseState | null,
 ) {
-  const proxy = _instance!.proxy as any;
   if (
     newState === null &&
     oldState !== null &&
     !oldState.isMouseMovePreviewState
   ) {
-    proxy.consumeMouseState(oldState);
+    consumeMouseState(oldState);
   } else {
-    proxy.previewMouseState(newState);
+    previewMouseState(newState);
   }
 }
 

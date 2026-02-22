@@ -3,7 +3,7 @@
   <v-select
     v-bind="$attrs"
     :items="channelItems"
-    dense
+    density="compact"
     v-model="channel"
     :label="label"
   />
@@ -15,7 +15,7 @@ import store from "@/store";
 
 const props = withDefaults(
   defineProps<{
-    value?: number | null;
+    modelValue?: number | null;
     any?: boolean;
     label?: string;
   }>(),
@@ -26,12 +26,12 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: "input", value: number | null): void;
+  (e: "update:modelValue", value: number | null): void;
 }>();
 
 const channel = computed({
-  get: () => props.value ?? null,
-  set: (value: number | null) => emit("input", value),
+  get: () => props.modelValue ?? null,
+  set: (value: number | null) => emit("update:modelValue", value),
 });
 
 const channelItems = computed(() => {

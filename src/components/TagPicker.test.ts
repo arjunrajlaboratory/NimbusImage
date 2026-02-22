@@ -24,7 +24,7 @@ function mountComponent(props = {}) {
   return mount(TagPicker, {
     vuetify: new Vuetify(),
     propsData: {
-      value: ["tag1"],
+      modelValue: ["tag1"],
       ...props,
     },
   });

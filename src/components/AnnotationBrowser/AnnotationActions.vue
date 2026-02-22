@@ -1,11 +1,11 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header> Actions </v-expansion-panel-header>
-    <v-expansion-panel-content>
+    <v-expansion-panel-title> Actions </v-expansion-panel-title>
+    <v-expansion-panel-text>
       <v-container>
         <v-row>
           <v-col class="pa-1">
-            <v-btn :disabled="!undoEntry || isDoing" @click.native="undo" block>
+            <v-btn :disabled="!undoEntry || isDoing" @click="undo" block>
               <template v-if="undoEntry">
                 Undo {{ undoEntry.actionName }}
               </template>
@@ -13,7 +13,7 @@
             </v-btn>
           </v-col>
           <v-col class="pa-1">
-            <v-btn :disabled="!redoEntry || isDoing" @click.native="redo" block>
+            <v-btn :disabled="!redoEntry || isDoing" @click="redo" block>
               <template v-if="redoEntry">
                 Redo {{ redoEntry.actionName }}
               </template>
@@ -30,12 +30,12 @@
           <v-col class="pa-1">
             <v-btn
               v-if="selectionFilterEnabled"
-              @click.native="clearSelection"
+              @click="clearSelection"
               block
             >
               Clear selection filter
             </v-btn>
-            <v-btn v-else @click.native="filterBySelection" block>
+            <v-btn v-else @click="filterBySelection" block>
               Use selection as filter
             </v-btn>
           </v-col>
@@ -64,7 +64,7 @@
           </v-col>
         </v-row>
       </v-container>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 

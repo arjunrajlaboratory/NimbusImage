@@ -2,7 +2,7 @@
   <div class="contrast-panel">
     <v-expansion-panels class="panel-flex">
       <v-expansion-panel v-for="(layer, index) in layers" :key="index">
-        <display-layer :value="layer" />
+        <display-layer :model-value="layer" />
       </v-expansion-panel>
     </v-expansion-panels>
   </div>

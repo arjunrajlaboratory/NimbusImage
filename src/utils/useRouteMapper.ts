@@ -1,6 +1,6 @@
-import { getCurrentInstance, watch, onMounted, computed } from "vue";
-import type VueRouter from "vue-router";
-import type { Route } from "vue-router";
+import { watch, onMounted, computed } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import type { Router, RouteLocationNormalized } from "vue-router";
 import { logError } from "./log";
 import { awaitPreviousCallsDecorator } from "./lock";
 
@@ -20,8 +20,8 @@ const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
     type: "query" | "params",
     key: string,
     value: string,
-    router: VueRouter,
-    route: Route,
+    router: Router,
+    route: RouteLocationNormalized,
   ) => {
     const stringifiedValue = String(value);
     if (stringifiedValue === route[type][key]) {
@@ -65,18 +65,19 @@ export function useRouteMapper(
   paramsMapper: Record<string, IMapper<any>>,
   queryMapper: Record<string, IMapper<any>> = {},
 ) {
-  const vm = getCurrentInstance()!.proxy;
+  const route = useRoute();
+  const router = useRouter();
 
   // URL → Store sync
-  async function syncFromRoute(route: Route) {
+  async function syncFromRoute(r: RouteLocationNormalized) {
     currentRouteChanges++;
     try {
       const promises = [
         ...Object.entries(paramsMapper).map(([key, mapper]) =>
-          setMapperValueFromUrl(mapper, route.params[key]),
+          setMapperValueFromUrl(mapper, r.params[key] as string | undefined),
         ),
         ...Object.entries(queryMapper).map(([key, mapper]) =>
-          setMapperValueFromUrl(mapper, route.query[key] as string | undefined),
+          setMapperValueFromUrl(mapper, r.query[key] as string | undefined),
         ),
       ];
       await Promise.all(promises);
@@ -92,23 +93,23 @@ export function useRouteMapper(
     const c = computed(() => mapper.get());
     watch(c, async (value: any) => {
       if (currentRouteChanges > 0) return;
-      await setUrlParamsOrQuery("params", key, value, vm.$router, vm.$route);
+      await setUrlParamsOrQuery("params", key, value, router, route);
     });
   }
   for (const [key, mapper] of Object.entries(queryMapper)) {
     const c = computed(() => mapper.get());
     watch(c, async (value: any) => {
       if (currentRouteChanges > 0) return;
-      await setUrlParamsOrQuery("query", key, value, vm.$router, vm.$route);
+      await setUrlParamsOrQuery("query", key, value, router, route);
     });
   }
 
   // Replace beforeRouteUpdate
   watch(
-    () => vm.$route,
-    (newRoute: Route) => syncFromRoute(newRoute),
+    () => route,
+    (newRoute) => syncFromRoute(newRoute),
   );
 
   // Replace beforeRouteEnter
-  onMounted(() => syncFromRoute(vm.$route));
+  onMounted(() => syncFromRoute(route));
 }

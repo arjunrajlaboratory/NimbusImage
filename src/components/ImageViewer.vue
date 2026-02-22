@@ -74,8 +74,8 @@
       v-model="showSamToolHelpAlert"
       class="viewer-alert"
       type="info"
-      dense
-      dismissible
+      density="compact"
+      closable
       transition="slide-x-transition"
     >
       Shift + left click to add a positive point<br />
@@ -88,7 +88,7 @@
         @click.capture.stop="
           submitPendingAnnotation && submitPendingAnnotation(false)
         "
-        small
+        size="small"
       >
         Cancel (ctrl-Z)
       </v-btn>
@@ -115,12 +115,12 @@
       </defs>
     </svg>
 
-    <v-menu offset-y top :close-on-content-click="false">
-      <template #activator="{ on }">
+    <v-menu location="top" :close-on-content-click="false">
+      <template #activator="{ props: activatorProps }">
         <v-btn
           id="layer-info-tourstep"
           icon
-          v-on="on"
+          v-bind="activatorProps"
           class="layer-info-btn"
           color="primary"
           :disabled="store.layers.length === 0"

@@ -6,40 +6,40 @@
       </v-col>
       <v-col class="denseCol">
         <v-switch
-          @click.native.stop
-          @mousedown.native.stop
-          @mouseup.native.stop
+          @click.stop
+          @mousedown.stop
+          @mouseup.stop
           class="toggleButton"
           v-model="isZMaxMerge"
           :title="`Toggle Z Max Merge for all layers`"
           v-show="hasMultipleZ"
-          dense
+          density="compact"
           hide-details
         />
       </v-col>
       <v-col class="denseCol">
         <v-switch
-          @click.native.stop
-          @mousedown.native.stop
-          @mouseup.native.stop
+          @click.stop
+          @mousedown.stop
+          @mouseup.stop
           class="toggleButton"
           v-model="visible"
           :title="`Toggle Visibility for all layers`"
-          dense
+          density="compact"
           hide-details
         />
       </v-col>
     </v-row>
     <draggable
       v-bind="$attrs"
-      :value="combinedLayers"
+      :model-value="combinedLayers"
       :class="{ 'draggable-group': !singleLayer }"
       :animation="200"
       :fallbackOnBody="true"
       :swapThreshold="0.65"
       @start="startDragging"
       @end="endDragging"
-      @input="update"
+      @update:model-value="update"
     >
       <transition-group type="transition">
         <v-card
@@ -47,7 +47,7 @@
           :key="combinedLayer.layer.id"
           class="mb-1 mx-1"
         >
-          <display-layer ref="displayLayerRefs" :value="combinedLayer.layer" />
+          <display-layer ref="displayLayerRefs" :model-value="combinedLayer.layer" />
         </v-card>
       </transition-group>
     </draggable>

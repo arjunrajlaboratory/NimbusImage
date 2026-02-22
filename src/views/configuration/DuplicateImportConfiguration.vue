@@ -25,7 +25,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { IDatasetConfiguration } from "@/store/model";
 import { IGirderLocation } from "@/girder";
 import store from "@/store";
@@ -33,7 +34,7 @@ import girderResources from "@/store/girderResources";
 import ConfigurationSelect from "@/components/ConfigurationSelect.vue";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 
-const vm = getCurrentInstance()!.proxy;
+const router = useRouter();
 
 const path = ref<IGirderLocation | null>(null);
 
@@ -74,11 +75,11 @@ async function submit(configurations: IDatasetConfiguration[]) {
     ),
   );
 
-  vm.$router.back();
+  router.back();
 }
 
 function cancel() {
-  vm.$router.back();
+  router.back();
 }
 
 watch(dataset, fetchParentFolder);

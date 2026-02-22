@@ -1,8 +1,8 @@
 <template>
   <v-card class="dataset-dialog-card">
     <v-card-title class="flex-shrink-0">
-      <span class="text--secondary">Adding dataset to project:</span>
-      <span class="text--primary ml-1">{{ project.name }}</span>
+      <span class="text-medium-emphasis">Adding dataset to project:</span>
+      <span class="text-high-emphasis ml-1">{{ project.name }}</span>
     </v-card-title>
     <v-card-text class="dataset-dialog-content">
       <custom-file-manager
@@ -11,7 +11,7 @@
         :breadcrumb="true"
         :selectable="true"
         @selected="onSelectDataset"
-        :location.sync="selectLocation"
+        v-model:location="selectLocation"
         :initial-items-per-page="-1"
         :items-per-page-options="[-1]"
         :menu-enabled="false"
@@ -23,7 +23,7 @@
         :key="index + '-warning'"
         type="warning"
         class="my-2"
-        dense
+        density="compact"
       >
         {{ warning }}
       </v-alert>
@@ -31,7 +31,7 @@
         v-if="selectedDatasets.length > 0"
         type="success"
         class="my-2"
-        dense
+        density="compact"
       >
         Selected {{ selectedDatasets.length }} dataset(s):
         <v-divider />
@@ -45,7 +45,7 @@
       </v-alert>
     </v-card-text>
     <v-card-actions class="ma-2">
-      <v-btn text @click="$emit('done')">Cancel</v-btn>
+      <v-btn variant="text" @click="$emit('done')">Cancel</v-btn>
       <v-spacer />
       <v-btn
         color="primary"
@@ -71,7 +71,7 @@
           permissions to match the project's access settings.
         </v-card-text>
         <v-card-actions class="justify-end" style="gap: 8px">
-          <v-btn text @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showPermissionConfirm = false">Cancel</v-btn>
           <v-btn color="primary" @click="addDatasets">Continue</v-btn>
         </v-card-actions>
       </v-card>
@@ -227,7 +227,7 @@ defineExpose({
 }
 
 // Ensure the girder file manager takes up available space
-::v-deep .custom-file-manager-wrapper {
+:deep(.custom-file-manager-wrapper) {
   display: flex;
   flex-direction: column;
   flex: 1;

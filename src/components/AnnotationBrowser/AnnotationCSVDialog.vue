@@ -1,9 +1,8 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="{ on, attrs }">
+    <template v-slot:activator="{ props: activatorProps }">
       <v-btn
-        v-bind="{ ...attrs, ...$attrs }"
-        v-on="on"
+        v-bind="{ ...activatorProps, ...$attrs }"
         v-description="{
           section: 'Object list actions',
           title: 'Export CSV',
@@ -22,13 +21,13 @@
       </v-card-subtitle>
 
       <v-card-text>
-        <v-alert type="info" text class="mb-4">
+        <v-alert type="info" variant="tonal" class="mb-4">
           Choose how you want to export your values and how to handle undefined
           values. The resulting CSV file can be opened in spreadsheet
           applications like Excel or Google Sheets.
         </v-alert>
 
-        <v-subheader>Property Export Options</v-subheader>
+        <v-list-subheader>Property Export Options</v-list-subheader>
         <v-radio-group v-model="propertyExportMode" class="mb-4">
           <v-radio label="Export all properties" value="all"></v-radio>
           <v-radio label="Export listed properties" value="listed"></v-radio>
@@ -38,7 +37,7 @@
           ></v-radio>
         </v-radio-group>
 
-        <v-subheader>Undefined Value Handling</v-subheader>
+        <v-list-subheader>Undefined Value Handling</v-list-subheader>
         <v-radio-group v-model="undefinedHandling" class="mb-4">
           <v-radio label="Empty string" value="empty"></v-radio>
           <v-radio label="NA" value="na"></v-radio>
@@ -55,7 +54,7 @@
 
           <v-data-table
             v-model="selectedPropertyPaths"
-            :headers="[{ text: 'Property Name', value: 'name' }]"
+            :headers="[{ title: 'Property Name', key: 'name' }]"
             :items="filteredPropertyItems"
             item-key="pathString"
             show-select
@@ -71,7 +70,7 @@
         </template>
 
         <template v-if="isTooLargeForPreview">
-          <v-alert type="info" text class="mb-4">
+          <v-alert type="info" variant="tonal" class="mb-4">
             Preview is not available for more than
             {{ PREVIEW_ANNOTATION_LIMIT }} annotations ({{ annotations.length }}
             annotations selected). Download will export all annotations using
@@ -112,7 +111,7 @@
           <div class="d-flex flex-column align-center">
             <p>Generating CSV...</p>
             <v-progress-circular
-              :value="processingProgress * 100"
+              :model-value="processingProgress * 100"
               :indeterminate="processingProgress === 0"
               class="mb-2"
             />
@@ -124,7 +123,7 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn @click="dialog = false" text>Close</v-btn>
+        <v-btn @click="dialog = false" variant="text">Close</v-btn>
         <v-btn
           @click="download"
           :disabled="!store.dataset || isDownloading"
@@ -151,7 +150,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
-import type Vue from "vue";
+import type { ComponentPublicInstance } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 
@@ -180,7 +179,7 @@ const props = defineProps<{
   propertyPaths: string[][];
 }>();
 
-const fieldToCopy = ref<InstanceType<typeof Vue>>();
+const fieldToCopy = ref<ComponentPublicInstance>();
 
 const filename = ref("");
 

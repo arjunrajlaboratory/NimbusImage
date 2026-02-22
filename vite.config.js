@@ -2,15 +2,12 @@ import fs from "fs";
 import { fileURLToPath, URL } from "node:url";
 
 import { defineConfig, normalizePath } from "vite";
-import vue from "@vitejs/plugin-vue2";
+import vue from "@vitejs/plugin-vue";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import { visualizer } from "rollup-plugin-visualizer";
 import path from "node:path";
 import yaml from "@rollup/plugin-yaml";
-
-// Shouldn't be needed after moving to Vue 3
-import { VuetifyResolver } from "unplugin-vue-components/resolvers";
-import Components from "unplugin-vue-components/vite";
+import vuetify from "vite-plugin-vuetify";
 
 function joinAndNormalizePath(...paths) {
   return normalizePath(path.join(...paths));
@@ -41,17 +38,9 @@ const overriddenComponentsToNodeModules = Object.fromEntries(
 export default defineConfig({
   plugins: [
     vue(),
+    vuetify({ autoImport: true }),
     yaml(),
     visualizer(),
-    Components({
-      resolvers: [VuetifyResolver()],
-      // Don't exclude girder web components
-      exclude: [
-        /[\\/]node_modules[\\/](?!(@girder[\\/]components[\\/]|\.pnpm[\\/]@girder.*))/,
-        /[\\/]\.git[\\/]/,
-        /[\\/]\.nuxt[\\/]/,
-      ],
-    }),
     viteStaticCopy({
       targets: [
         {

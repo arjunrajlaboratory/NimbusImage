@@ -1,9 +1,8 @@
 <template>
   <v-dialog v-model="importDialog">
-    <template v-slot:activator="{ on, attrs }">
+    <template v-slot:activator="{ props: activatorProps }">
       <v-btn
-        v-bind="{ ...attrs, ...$attrs }"
-        v-on="on"
+        v-bind="{ ...activatorProps, ...$attrs }"
         :disabled="!isLoggedIn"
         v-description="{
           section: 'Object list actions',

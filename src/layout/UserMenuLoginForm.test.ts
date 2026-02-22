@@ -20,7 +20,7 @@ function mountComponent(props = {}) {
     vuetify: new Vuetify(),
     propsData: {
       domain: "http://localhost:8080",
-      value: true,
+      modelValue: true,
       ...props,
     },
   });

@@ -27,7 +27,7 @@ function mountComponent(props = {}) {
   return mount(TagFilterEditor, {
     vuetify: new Vuetify(),
     propsData: {
-      value: {
+      modelValue: {
         id: "tagFilter",
         exclusive: false,
         enabled: false,
@@ -38,7 +38,7 @@ function mountComponent(props = {}) {
     stubs: {
       "tag-cloud-picker": {
         template: "<div></div>",
-        props: ["value", "allSelected"],
+        props: ["modelValue", "allSelected"],
       },
     },
   });
@@ -53,7 +53,7 @@ describe("TagFilterEditor", () => {
   it("tags setter emits input with updated tags", () => {
     const wrapper = mountComponent();
     wrapper.vm.tags = ["tag3"];
-    const emitted = wrapper.emitted("input");
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     expect(emitted![emitted!.length - 1][0].tags).toEqual(["tag3"]);
   });
@@ -67,7 +67,7 @@ describe("TagFilterEditor", () => {
   it("allSelected setter disables exclusive when all selected", () => {
     const wrapper = mountComponent();
     wrapper.vm.allSelected = true;
-    const emitted = wrapper.emitted("input");
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     const last = emitted![emitted!.length - 1][0];
     expect(last.enabled).toBe(false);
@@ -77,7 +77,7 @@ describe("TagFilterEditor", () => {
   it("exclusive setter enables filter", () => {
     const wrapper = mountComponent();
     wrapper.vm.exclusive = true;
-    const emitted = wrapper.emitted("input");
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     const last = emitted![emitted!.length - 1][0];
     expect(last.enabled).toBe(true);

@@ -2,16 +2,16 @@
   <!-- image -->
   <v-select
     :items="items"
-    dense
+    density="compact"
     v-model="image"
     label="Algorithm"
     :menu-props="{ maxHeight: 500 }"
   >
-    <template v-slot:item="item">
+    <template v-slot:item="{ item }">
       <div>
-        <div>{{ item.item.text }}</div>
-        <div v-if="item.item.description" :style="{ color: 'grey' }">
-          {{ item.item.description }}
+        <div>{{ (item as any).raw?.text ?? item.title }}</div>
+        <div v-if="(item as any).raw?.description" :style="{ color: 'grey' }">
+          {{ (item as any).raw.description }}
         </div>
       </div>
     </template>
@@ -31,7 +31,7 @@ interface IDockerImageSelectEntry {
 }
 
 const props = defineProps({
-  value: { type: String as PropType<string | null>, default: null },
+  modelValue: { type: String as PropType<string | null>, default: null },
   imageFilter: {
     type: Function as PropType<(labels: IWorkerLabels) => boolean>,
     required: true as const,
@@ -39,12 +39,12 @@ const props = defineProps({
 });
 
 const emit = defineEmits<{
-  (e: "input", value: string | null): void;
+  (e: "update:modelValue", value: string | null): void;
 }>();
 
 const image = computed({
-  get: () => props.value,
-  set: (val: string | null) => emit("input", val),
+  get: () => props.modelValue,
+  set: (val: string | null) => emit("update:modelValue", val),
 });
 
 const images = computed(() => propertiesStore.workerImageList);

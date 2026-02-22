@@ -14,33 +14,33 @@
         <v-col cols="10" class="text-left align-center value-column pa-0 pl-2">
           <div class="d-flex align-center">
             <v-text-field
-              :value="displayValue"
+              :model-value="displayValue"
               class="mt-0 pt-0 no-underline flex-grow-0"
               hide-details
               single-line
               type="text"
-              dense
-              @input="handleInput"
+              density="compact"
+              @update:model-value="handleInput"
               @blur="handleBlur"
             />
             <div class="step-arrows ml-1">
               <v-btn
-                x-small
+                size="x-small"
                 icon
                 class="step-btn"
-                :disabled="value >= max"
+                :disabled="modelValue >= max"
                 @click="increment"
               >
-                <v-icon x-small>mdi-chevron-up</v-icon>
+                <v-icon size="x-small">mdi-chevron-up</v-icon>
               </v-btn>
               <v-btn
-                x-small
+                size="x-small"
                 icon
                 class="step-btn"
-                :disabled="value <= min"
+                :disabled="modelValue <= min"
                 @click="decrement"
               >
-                <v-icon x-small>mdi-chevron-down</v-icon>
+                <v-icon size="x-small">mdi-chevron-down</v-icon>
               </v-btn>
             </div>
           </div>
@@ -62,7 +62,7 @@
           class="text-right align-center counter-column pa-0 pl-2"
         >
           <span class="caption font-weight-light">
-            {{ `${value + offset} of ${max + offset}` }}
+            {{ `${modelValue + offset} of ${max + offset}` }}
           </span>
         </v-col>
       </v-row>
@@ -89,17 +89,17 @@
 }
 
 /* Kill the v-text-field underline (normal and focused) */
-.no-underline ::v-deep .v-text-field__details {
+.no-underline :deep(.v-text-field__details) {
   display: none;
 }
 
-.no-underline ::v-deep .v-input__slot:before,
-.no-underline ::v-deep .v-input__slot:after {
+.no-underline :deep(.v-input__slot:before),
+.no-underline :deep(.v-input__slot:after) {
   display: none !important;
 }
 
 /* Keep vertical rhythm tight */
-.slider-column ::v-deep .v-slider {
+.slider-column :deep(.v-slider) {
   margin-top: 1px;
   margin-bottom: 0;
 }
@@ -123,11 +123,11 @@
 </style>
 
 <script setup lang="ts">
-import { ref, computed, watch, getCurrentInstance } from "vue";
+import { ref, computed, watch } from "vue";
 
 const props = withDefaults(
   defineProps<{
-    value: number;
+    modelValue: number;
     min: number;
     max: number;
     label: string;
@@ -142,7 +142,9 @@ const props = withDefaults(
   },
 );
 
-const vm = getCurrentInstance()!.proxy;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: number): void;
+}>();
 
 const internalValue = ref(0);
 
@@ -154,21 +156,21 @@ const slider = computed({
       return;
     }
     internalValue.value = numberValue;
-    vm.$emit("input", numberValue - props.offset);
+    emit("update:modelValue", numberValue - props.offset);
   },
 });
 
 const displayValue = computed(
-  () => props.valueLabel || (props.value + props.offset).toString(),
+  () => props.valueLabel || (props.modelValue + props.offset).toString(),
 );
 
 const unrolledMessage = computed(() => `${props.label} is unrolled`);
 
 function updateInternalValue() {
-  internalValue.value = props.value + props.offset;
+  internalValue.value = props.modelValue + props.offset;
 }
 
-watch(() => props.value, updateInternalValue, { immediate: true });
+watch(() => props.modelValue, updateInternalValue, { immediate: true });
 
 function handleInput(value: string) {
   const numValue = parseInt(value);
@@ -186,14 +188,14 @@ function handleBlur() {
 }
 
 function increment() {
-  if (props.value < props.max) {
-    vm.$emit("input", props.value + 1);
+  if (props.modelValue < props.max) {
+    emit("update:modelValue", props.modelValue + 1);
   }
 }
 
 function decrement() {
-  if (props.value > props.min) {
-    vm.$emit("input", props.value - 1);
+  if (props.modelValue > props.min) {
+    emit("update:modelValue", props.modelValue - 1);
   }
 }
 

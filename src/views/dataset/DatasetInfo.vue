@@ -14,19 +14,19 @@
               id="view-dataset-button-tourstep"
               v-tour-trigger="'view-dataset-button-tourtrigger'"
             >
-              <v-icon left>mdi-eye</v-icon>
+              <v-icon start>mdi-eye</v-icon>
               View
             </v-btn>
           </v-toolbar>
           <v-card-text>
-            <v-simple-table class="elevation-3 ma-2">
+            <v-table class="elevation-3 ma-2">
               <tbody>
                 <tr v-for="item in report" :key="item.name">
                   <td class="text-right" width="30%">{{ item.name }}</td>
                   <td width="70%">{{ item.value }}</td>
                 </tr>
               </tbody>
-            </v-simple-table>
+            </v-table>
             <sharing-status-display
               :loading="sharingLoading"
               :is-public="sharingIsPublic"
@@ -35,19 +35,19 @@
             <div class="text-right mt-4 mr-2">
               <v-btn
                 color="primary"
-                small
-                outlined
+                size="small"
+                variant="outlined"
                 class="mr-2"
                 @click="showAddToProjectDialog = true"
                 :disabled="!dataset"
               >
-                <v-icon left>mdi-folder-star</v-icon>
+                <v-icon start>mdi-folder-star</v-icon>
                 Add Dataset to Project...
               </v-btn>
               <v-dialog v-model="removeDatasetConfirm" max-width="33vw">
-                <template #activator="{ on }">
-                  <v-btn color="error" small outlined v-on="on">
-                    <v-icon left>mdi-close</v-icon>
+                <template #activator="{ props: activatorProps }">
+                  <v-btn color="error" size="small" variant="outlined" v-bind="activatorProps">
+                    <v-icon start>mdi-close</v-icon>
                     Remove Dataset
                   </v-btn>
                 </template>
@@ -72,7 +72,7 @@
           <v-toolbar>
             <v-toolbar-title>Select a collection</v-toolbar-title>
           </v-toolbar>
-          <v-alert type="info" text class="mb-4">
+          <v-alert type="info" variant="tonal" class="mb-4">
             Collections are a way to organize your datasets. Every dataset
             belongs to one or more collections. You can create a new collection
             (default), or add your dataset to an existing collection, or "copy"
@@ -119,7 +119,7 @@
                     v-tooltip
                     v-model="defaultConfigurationName"
                     label="New collection name"
-                    dense
+                    density="compact"
                     hide-details
                     class="ma-1 pb-2 important-field"
                   />
@@ -127,13 +127,13 @@
                 </div>
 
                 <!-- <div>
-                  <v-tooltip top max-width="50vh">
+                  <v-tooltip location="top" max-width="50vh">
                     <template v-slot:activator="{ on, attrs }">
                       <v-btn
                         v-on="on"
                         v-bind="attrs"
                         class="ma-1"
-                        small
+                        size="small"
                         color="primary"
                         :to="{
                           name: 'newconfiguration',
@@ -149,7 +149,7 @@
                 </div> -->
               </v-card-text>
             </v-card>
-            <v-list two-line>
+            <v-list lines="two">
               <v-radio-group v-model="selectedDatasetViewId">
                 <v-list-item
                   v-for="d in datasetViewItems"
@@ -157,49 +157,46 @@
                   @click.stop="selectedDatasetViewId = d.datasetView.id"
                   class="selectable-list-item"
                 >
-                  <v-list-item-action class="mr-2">
-                    <v-radio
-                      :value="d.datasetView.id"
-                      color="primary"
-                    ></v-radio>
-                  </v-list-item-action>
-                  <v-list-item-content>
-                    <v-list-item-title class="d-flex align-center">
-                      {{
-                        d.configInfo
-                          ? d.configInfo.name
-                          : "Unnamed configuration"
-                      }}
-                      <sharing-status-icon
-                        v-if="
-                          getConfigSharingInfo(d.datasetView.configurationId)
-                        "
-                        :is-public="
-                          getConfigSharingInfo(d.datasetView.configurationId)
-                            ?.public ?? false
-                        "
-                        :users="sharingUsers || []"
-                      />
-                    </v-list-item-title>
-                    <v-list-item-subtitle>
-                      {{
-                        d.configInfo
-                          ? d.configInfo.description
-                          : "No description"
-                      }}
-                    </v-list-item-subtitle>
-                  </v-list-item-content>
-                  <v-list-item-action @click.stop>
+                  <v-radio
+                    :value="d.datasetView.id"
+                    color="primary"
+                    class="mr-2"
+                  ></v-radio>
+                  <v-list-item-title class="d-flex align-center">
+                    {{
+                      d.configInfo
+                        ? d.configInfo.name
+                        : "Unnamed configuration"
+                    }}
+                    <sharing-status-icon
+                      v-if="
+                        getConfigSharingInfo(d.datasetView.configurationId)
+                      "
+                      :is-public="
+                        getConfigSharingInfo(d.datasetView.configurationId)
+                          ?.public ?? false
+                      "
+                      :users="sharingUsers || []"
+                    />
+                  </v-list-item-title>
+                  <v-list-item-subtitle>
+                    {{
+                      d.configInfo
+                        ? d.configInfo.description
+                        : "No description"
+                    }}
+                  </v-list-item-subtitle>
+                  <span @click.stop>
                     <span class="button-bar">
                       <girder-location-chooser
-                        @input="duplicateView(d.datasetView, $event)"
+                        @update:model-value="duplicateView(d.datasetView, $event)"
                         title="Select a folder for duplicated configuration"
                       >
-                        <template v-slot:activator="{ on }">
+                        <template v-slot:activator="{ props: activatorProps }">
                           <v-icon
                             class="action-icon mr-2"
                             color="primary"
-                            v-on="on"
+                            v-bind="activatorProps"
                           >
                             mdi-content-duplicate
                           </v-icon>
@@ -215,18 +212,17 @@
                         mdi-close
                       </v-icon>
                     </span>
-                  </v-list-item-action>
+                  </span>
                 </v-list-item>
               </v-radio-group>
             </v-list>
             <div>
-              <v-tooltip top max-width="50vh">
-                <template v-slot:activator="{ on, attrs }">
+              <v-tooltip location="top" max-width="50vh">
+                <template v-slot:activator="{ props: activatorProps }">
                   <v-btn
-                    v-on="on"
-                    v-bind="attrs"
+                    v-bind="activatorProps"
                     class="ma-1"
-                    small
+                    size="small"
                     color="primary"
                     :to="{
                       name: 'importconfiguration',
@@ -241,13 +237,12 @@
               </v-tooltip>
             </div>
             <div>
-              <v-tooltip top max-width="50vh">
-                <template v-slot:activator="{ on, attrs }">
+              <v-tooltip location="top" max-width="50vh">
+                <template v-slot:activator="{ props: activatorProps }">
                   <v-btn
-                    v-on="on"
-                    v-bind="attrs"
+                    v-bind="activatorProps"
                     class="ma-1"
-                    small
+                    size="small"
                     color="primary"
                     :to="{
                       name: 'duplicateimportconfiguration',
@@ -262,13 +257,12 @@
               </v-tooltip>
             </div>
             <div v-if="dataset && datasetViewItems.length > 0">
-              <v-tooltip top max-width="50vh">
-                <template v-slot:activator="{ on, attrs }">
+              <v-tooltip location="top" max-width="50vh">
+                <template v-slot:activator="{ props: activatorProps }">
                   <v-btn
-                    v-on="on"
-                    v-bind="attrs"
+                    v-bind="activatorProps"
                     class="ma-1"
-                    small
+                    size="small"
                     color="primary"
                     @click="showNewCollectionDialog = true"
                   >
@@ -287,13 +281,13 @@
                 <v-card-text>
                   <p>Choose where to store the new collection:</p>
                   <girder-location-chooser
-                    @input="handleLocationSelected"
+                    @update:model-value="handleLocationSelected"
                     title="Select a folder for the new collection"
                   />
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer></v-spacer>
-                  <v-btn text @click="showNewCollectionDialog = false"
+                  <v-btn variant="text" @click="showNewCollectionDialog = false"
                     >Cancel</v-btn
                   >
                 </v-card-actions>
@@ -308,14 +302,14 @@
                   <v-text-field
                     v-model="newCollectionName"
                     label="Collection Name"
-                    dense
+                    density="compact"
                     autofocus
                     :rules="nameRules"
                   />
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer></v-spacer>
-                  <v-btn text @click="showNewCollectionNameDialog = false"
+                  <v-btn variant="text" @click="showNewCollectionNameDialog = false"
                     >Cancel</v-btn
                   >
                   <v-btn color="success" @click="createNewCollection"
@@ -340,7 +334,8 @@
   </v-container>
 </template>
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import {
@@ -363,7 +358,8 @@ void AddToProjectDialog;
 void SharingStatusDisplay;
 void SharingStatusIcon;
 
-const vm = getCurrentInstance()!.proxy;
+const route = useRoute();
+const router = useRouter();
 
 // Local state
 const removeDatasetConfirm = ref(false);
@@ -554,7 +550,7 @@ async function fetchDatasetParentFolder() {
 function toRoute(datasetView: IDatasetView) {
   return {
     name: "datasetview",
-    params: Object.assign({}, vm.$route.params, {
+    params: Object.assign({}, route.params, {
       datasetViewId: datasetView.id,
       datasetId: datasetView.datasetId,
       configurationId: datasetView.configurationId,
@@ -565,7 +561,7 @@ function toRoute(datasetView: IDatasetView) {
 function removeDataset() {
   store.deleteDataset(dataset.value!).then(() => {
     removeDatasetConfirm.value = false;
-    vm.$router.push({ name: "root" });
+    router.push({ name: "root" });
   });
 }
 
@@ -625,9 +621,9 @@ async function duplicateView(
     datasetId: dataset.value.id,
   });
 
-  vm.$router.push({
+  router.push({
     name: "configuration",
-    params: Object.assign({ configurationId: config.id }, vm.$route.params),
+    params: Object.assign({ configurationId: config.id }, route.params),
   });
 }
 
@@ -638,14 +634,14 @@ async function goToDefaultView() {
       : datasetViews.value[0];
 
     if (selectedView) {
-      vm.$router.push(toRoute(selectedView));
+      router.push(toRoute(selectedView));
       return;
     }
   }
 
   const defaultView = await createDefaultView();
   if (defaultView) {
-    vm.$router.push(toRoute(defaultView));
+    router.push(toRoute(defaultView));
   }
 }
 
@@ -834,7 +830,7 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.important-field ::v-deep .v-label {
+.important-field :deep(.v-label) {
   font-size: 22px;
   font-weight: bold;
 }

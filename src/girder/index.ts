@@ -1,9 +1,15 @@
-export { vuetifyConfig } from "@girder/components/src/utils";
 export {
-  default as RestClient, //,
-} from "@girder/components/src/rest";
-import { RestClientInstance as RCInterface } from "@girder/components/src/rest";
-export interface RestClientInstance extends RCInterface {}
+  RestClient,
+} from "@girder/components";
+import type { RestClient as RCType } from "@girder/components";
+export type RestClientInstance = InstanceType<typeof RCType>;
+
+// Stub for vuetifyConfig icon mapping (was from @girder/components v2)
+export const vuetifyConfig = {
+  icons: {
+    values: {} as Record<string, string>,
+  },
+};
 
 export interface IGirderAssetstore {
   _id: string;

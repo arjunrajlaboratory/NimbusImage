@@ -4,47 +4,47 @@
       v-if="shouldShow"
       v-model="currentLargeImage"
       :items="formattedLargeImages"
-      item-text="displayName"
+      item-title="displayName"
       item-value="_id"
       label="Select Image"
-      dense
+      density="compact"
       style="width: auto; padding: 4px 0"
       hide-details
     >
-      <template v-slot:item="{ item }">
-        <v-list-item-content style="flex: 1 1 auto; min-width: 0">
-          <v-list-item-title>{{ item.displayName }}</v-list-item-title>
+      <template v-slot:item="{ item: listItem }">
+        <div style="flex: 1 1 auto; min-width: 0">
+          <v-list-item-title>{{ listItem.raw.displayName }}</v-list-item-title>
           <v-list-item-subtitle
-            v-if="item.meta"
-            class="text--secondary"
+            v-if="listItem.raw.meta"
+            class="text-medium-emphasis"
             style="font-size: 0.875rem; opacity: 0.7"
-            >{{ formatMeta(item.meta) }}</v-list-item-subtitle
+            >{{ formatMeta(listItem.raw.meta) }}</v-list-item-subtitle
           >
-        </v-list-item-content>
+        </div>
         <v-btn
-          v-if="item.name !== DEFAULT_LARGE_IMAGE_SOURCE"
+          v-if="listItem.raw.name !== DEFAULT_LARGE_IMAGE_SOURCE"
           icon
-          small
+          size="small"
           color="error"
           class="ml-2"
-          :loading="deletingImageId === item._id"
-          @click.stop="deleteImage(item)"
+          :loading="deletingImageId === listItem.raw._id"
+          @click.stop="deleteImage(listItem.raw)"
         >
-          <v-icon small>mdi-delete</v-icon>
+          <v-icon size="small">mdi-delete</v-icon>
         </v-btn>
       </template>
-      <template v-slot:selection="{ item }">
-        <v-list-item-content
+      <template v-slot:selection="{ item: listItem }">
+        <div
           style="flex: 1 1 auto; min-width: 0; white-space: normal"
         >
-          <v-list-item-title>{{ item.displayName }}</v-list-item-title>
+          <v-list-item-title>{{ listItem.raw.displayName }}</v-list-item-title>
           <v-list-item-subtitle
-            v-if="item.meta"
-            class="text--secondary"
+            v-if="listItem.raw.meta"
+            class="text-medium-emphasis"
             style="white-space: normal; font-size: 0.875rem; opacity: 0.7"
-            >{{ formatMeta(item.meta) }}</v-list-item-subtitle
+            >{{ formatMeta(listItem.raw.meta) }}</v-list-item-subtitle
           >
-        </v-list-item-content>
+        </div>
       </template>
     </v-select>
 

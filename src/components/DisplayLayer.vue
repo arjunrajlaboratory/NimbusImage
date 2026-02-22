@@ -1,51 +1,51 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header class="displayLayerHeader">
+    <v-expansion-panel-title class="displayLayerHeader">
       <v-row dense class="align-center">
         <v-col class="denseCol">
-          <v-icon :color="value.color" left>mdi-circle</v-icon>
+          <v-icon :color="modelValue.color" start>mdi-circle</v-icon>
         </v-col>
         <v-col class="textCol">
-          <div class="header pa-1">{{ value.name }}</div>
+          <div class="header pa-1">{{ modelValue.name }}</div>
         </v-col>
         <v-col v-if="hoverValue !== null" class="denseCol">
           {{ hoverValue }}
         </v-col>
         <v-col class="denseCol">
           <v-switch
-            @click.native.stop
-            @mousedown.native.stop
-            @mouseup.native.stop
+            @click.stop
+            @mousedown.stop
+            @mouseup.stop
             v-mousetrap="zMaxMergeHotkey"
             class="toggleButton"
             v-model="isZMaxMerge"
             v-show="hasMultipleZ"
             :title="`Toggle Z Max Merge (hotkey ${zMaxMergeBinding})`"
-            dense
+            density="compact"
             hide-details
           />
         </v-col>
         <v-col class="denseCol">
           <v-switch
-            @click.native.stop
-            @mousedown.native.stop
-            @mouseup.native.stop
+            @click.stop
+            @mousedown.stop
+            @mouseup.stop
             v-mousetrap="visibilityHotkey"
             class="toggleButton"
             v-model="visible"
             :title="`Toggle Visibility (hotkey ${index + 1})`"
-            dense
+            density="compact"
             hide-details
           />
         </v-col>
       </v-row>
-    </v-expansion-panel-header>
-    <v-expansion-panel-content :class="{ notVisible: !value.visible }">
+    </v-expansion-panel-title>
+    <v-expansion-panel-text :class="{ notVisible: !modelValue.visible }">
       <v-text-field
-        :value="value.name"
+        :model-value="modelValue.name"
         @change="changeProp('name', $event)"
         label="Name"
-        dense
+        density="compact"
         hide-details
       />
       <contrast-histogram
@@ -57,15 +57,15 @@
         :histogram="histogram"
       />
       <color-picker-menu
-        :value="value.color"
-        @input="changeProp('color', $event)"
+        :model-value="modelValue.color"
+        @update:model-value="changeProp('color', $event)"
         class="mb-4"
       />
       <v-radio-group
         row
         v-model="channel"
         label="Channel"
-        dense
+        density="compact"
         hide-details
         class="channel"
       >
@@ -77,12 +77,12 @@
         />
       </v-radio-group>
       <v-expansion-panel>
-        <v-expansion-panel-header
-          >Advanced layer options</v-expansion-panel-header
+        <v-expansion-panel-title
+          >Advanced layer options</v-expansion-panel-title
         >
-        <v-expansion-panel-content>
+        <v-expansion-panel-text>
           <display-slice
-            :value="value.xy"
+            :model-value="modelValue.xy"
             @change="changeProp('xy', $event)"
             label="XY-Slice"
             :max-value="maxXY"
@@ -91,7 +91,7 @@
             :offset="1"
           />
           <display-slice
-            :value="value.z"
+            :model-value="modelValue.z"
             @change="changeProp('z', $event)"
             label="Z-Slice"
             :max-value="maxZ"
@@ -100,7 +100,7 @@
             :offset="1"
           />
           <display-slice
-            :value="value.time"
+            :model-value="modelValue.time"
             @change="changeProp('time', $event)"
             label="Time-Slice"
             :max-value="maxTime"
@@ -109,13 +109,13 @@
             :offset="1"
           />
           <div class="buttons">
-            <v-btn color="warning" small @click="removeLayer"
+            <v-btn color="warning" size="small" @click="removeLayer"
               >Delete layer</v-btn
             >
           </div>
-        </v-expansion-panel-content>
+        </v-expansion-panel-text>
       </v-expansion-panel>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 
@@ -129,31 +129,31 @@ import store from "../store";
 import { IHotkey } from "@/utils/v-mousetrap";
 
 const props = defineProps<{
-  value: IDisplayLayer;
+  modelValue: IDisplayLayer;
 }>();
 
 const alternativeZSlice = ref<IDisplaySlice>({ type: "current", value: null });
 
 onMounted(() => {
   alternativeZSlice.value =
-    props.value.z.type === "max-merge"
+    props.modelValue.z.type === "max-merge"
       ? { type: "current", value: null }
-      : { ...props.value.z };
+      : { ...props.modelValue.z };
 });
 
-const index = computed(() => store.getLayerIndexFromId(props.value.id)!);
+const index = computed(() => store.getLayerIndexFromId(props.modelValue.id)!);
 
 const hoverValue = computed(() => {
-  const layerId = props.value.id;
+  const layerId = props.modelValue.id;
   return store.hoverValue?.[layerId]?.join(", ") ?? null;
 });
 
-const histogram = computed(() => store.getLayerHistogram(props.value));
+const histogram = computed(() => store.getLayerHistogram(props.modelValue));
 
 const channels = computed(() => (store.dataset ? store.dataset.channels : []));
 
 const configurationContrast = computed(() => {
-  const layerId = props.value.id;
+  const layerId = props.modelValue.id;
   const configuration = store.configuration;
   if (!configuration) {
     return null;
@@ -165,7 +165,7 @@ const configurationContrast = computed(() => {
   return configurationLayer.contrast;
 });
 
-const currentContrast = computed(() => props.value.contrast);
+const currentContrast = computed(() => props.modelValue.contrast);
 
 function channelName(channel: number): string {
   let result = channel.toString();
@@ -176,18 +176,18 @@ function channelName(channel: number): string {
 }
 
 const visible = computed({
-  get: () => props.value.visible,
+  get: () => props.modelValue.visible,
   set: (value: boolean) => {
-    if (props.value.visible === value) {
+    if (props.modelValue.visible === value) {
       return;
     }
-    store.toggleLayerVisibility(props.value.id);
+    store.toggleLayerVisibility(props.modelValue.id);
   },
 });
 
 const zMaxMergeBinding = computed(() => `shift+${index.value + 1}`);
 
-const zSlice = computed(() => props.value.z);
+const zSlice = computed(() => props.modelValue.z);
 
 const isZMaxMerge = computed({
   get: () => zSlice.value.type === "max-merge",
@@ -207,16 +207,16 @@ const zMaxMergeHotkey = computed<IHotkey>(() => ({
   handler: () => (isZMaxMerge.value = !isZMaxMerge.value),
   data: {
     section: "Layer control",
-    description: `Toggle Z max-merge for layer: ${props.value.name}`,
+    description: `Toggle Z max-merge for layer: ${props.modelValue.name}`,
   },
 }));
 
 const visibilityHotkey = computed<IHotkey>(() => ({
   bind: `${index.value + 1}`,
-  handler: () => store.toggleLayerVisibility(props.value.id),
+  handler: () => store.toggleLayerVisibility(props.modelValue.id),
   data: {
     section: "Layer control",
-    description: `Show/hide layer: ${props.value.name}`,
+    description: `Show/hide layer: ${props.modelValue.name}`,
   },
 }));
 
@@ -227,7 +227,7 @@ watch(zSlice, () => {
 });
 
 const channel = computed({
-  get: () => props.value.channel,
+  get: () => props.modelValue.channel,
   set: (value: number) => {
     // value can be undefined when going to another route:
     // routeMapper sets datasetId = null -> channels becomes [] -> channel = undefined
@@ -238,15 +238,15 @@ const channel = computed({
 });
 
 const maxXY = computed(() =>
-  store.dataset ? store.dataset.xy.length - 1 : props.value.xy.value || 0,
+  store.dataset ? store.dataset.xy.length - 1 : props.modelValue.xy.value || 0,
 );
 
 const maxZ = computed(() =>
-  store.dataset ? store.dataset.z.length - 1 : props.value.z.value || 0,
+  store.dataset ? store.dataset.z.length - 1 : props.modelValue.z.value || 0,
 );
 
 const maxTime = computed(() =>
-  store.dataset ? store.dataset.time.length - 1 : props.value.time.value || 0,
+  store.dataset ? store.dataset.time.length - 1 : props.modelValue.time.value || 0,
 );
 
 const displayXY = computed(() => store.xy);
@@ -260,11 +260,11 @@ const hasMultipleZ = computed(
 const displayTime = computed(() => store.time);
 
 function changeProp(prop: keyof IDisplayLayer, value: any) {
-  if (props.value[prop] === value) {
+  if (props.modelValue[prop] === value) {
     return;
   }
   store.changeLayer({
-    layerId: props.value.id,
+    layerId: props.modelValue.id,
     delta: {
       [prop]: value,
     },
@@ -274,20 +274,20 @@ function changeProp(prop: keyof IDisplayLayer, value: any) {
 function changeContrast(contrast: IContrast, syncConfiguration: boolean) {
   if (syncConfiguration) {
     store.saveContrastInConfiguration({
-      layerId: props.value.id,
+      layerId: props.modelValue.id,
       contrast,
     });
   } else {
-    store.saveContrastInView({ layerId: props.value.id, contrast });
+    store.saveContrastInView({ layerId: props.modelValue.id, contrast });
   }
 }
 
 function resetContrastInView() {
-  store.resetContrastInView(props.value.id);
+  store.resetContrastInView(props.modelValue.id);
 }
 
 function removeLayer() {
-  store.removeLayer(props.value.id);
+  store.removeLayer(props.modelValue.id);
 }
 
 defineExpose({
@@ -345,11 +345,11 @@ defineExpose({
 }
 
 .channel {
-  ::v-deep .v-label {
+  :deep(.v-label) {
     width: 100%;
   }
 
-  ::v-deep .v-radio {
+  :deep(.v-radio) {
     margin-right: 10px;
 
     > .v-label {

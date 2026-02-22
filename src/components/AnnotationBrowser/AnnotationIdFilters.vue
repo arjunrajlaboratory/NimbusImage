@@ -1,22 +1,21 @@
 <template>
   <div>
-    <v-btn small @click="openNewFilterDialog">Annotation ID filter</v-btn>
+    <v-btn size="small" @click="openNewFilterDialog">Annotation ID filter</v-btn>
     <div class="d-flex flex-column">
       <div
         v-for="filter in filters"
         :key="filter.id"
         class="d-flex justify-space-between align-center"
       >
-        <v-simple-checkbox
+        <v-checkbox
           class="d-inline ml-2"
-          :value="filter.enabled"
-          :input-value="filter.enabled"
+          :model-value="filter.enabled"
           @click="toggleEnabled(filter.id)"
         />
-        <v-btn text @click="editFilter(filter)">
+        <v-btn variant="text" @click="editFilter(filter)">
           {{ filter.id }} ({{ filter.annotationIds.length }} IDs)
         </v-btn>
-        <v-btn class="mx-2" icon small @click="removeFilter(filter.id)">
+        <v-btn class="mx-2" icon size="small" @click="removeFilter(filter.id)">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </div>
@@ -36,8 +35,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" text @click="saveFilter">
+          <v-btn variant="text" @click="dialog = false">Cancel</v-btn>
+          <v-btn color="primary" variant="text" @click="saveFilter">
             {{ editingFilter ? "Update" : "Add Filter" }}
           </v-btn>
         </v-card-actions>

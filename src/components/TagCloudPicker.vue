@@ -12,8 +12,8 @@
       class="ma-1"
     />
     <v-chip-group
-      @change="setTagsFromUserInput($event)"
-      :value="tags"
+      @update:model-value="setTagsFromUserInput($event)"
+      :model-value="tags"
       column
       multiple
       active-class="selected-chip"
@@ -25,20 +25,20 @@
         :class="{
           'selected-chip': tags.includes(tag),
         }"
-        outlined
-        x-small
+        variant="outlined"
+        size="x-small"
         class="d-flex align-center"
       >
         {{ tag }}
-        <v-menu offset-y :close-on-content-click="false" bottom>
-          <template v-slot:activator="{ on, attrs }">
-            <v-icon x-small class="ml-1" v-bind="attrs" v-on="on">
+        <v-menu :close-on-content-click="false" location="bottom">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-icon size="x-small" class="ml-1" v-bind="activatorProps">
               mdi-chevron-down
             </v-icon>
           </template>
           <v-card min-width="250" @click.stop :ripple="false">
             <v-card-text>
-              <v-list dense class="pa-0">
+              <v-list density="compact" class="pa-0">
                 <v-list-item @click="handleTagAddToAll(tag)">
                   <v-list-item-title
                     >Add tag to all annotations</v-list-item-title
@@ -90,25 +90,25 @@ import { IAnnotation } from "@/store/model";
 
 const props = withDefaults(
   defineProps<{
-    value: string[];
+    modelValue: string[];
     allSelected: boolean;
   }>(),
   {
-    value: () => [],
+    modelValue: () => [],
   },
 );
 
 const emit = defineEmits<{
-  (e: "input", value: string[]): void;
+  (e: "update:modelValue", value: string[]): void;
   (e: "update:allSelected", value: boolean): void;
 }>();
 
 const tags = computed({
   get() {
-    return props.value;
+    return props.modelValue;
   },
   set(val: string[]) {
-    emit("input", val);
+    emit("update:modelValue", val);
   },
 });
 

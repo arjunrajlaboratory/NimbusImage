@@ -1,6 +1,6 @@
 <template>
   <v-list-item
-    dense
+    density="compact"
     :value="tool.id"
     :style="{ 'max-height': '32px' }"
     :id="getTourStepId(tool.name)"
@@ -18,14 +18,10 @@
         : []
     "
     v-bind="$attrs"
-    v-on="$listeners"
     @mouseover="isHovering = true"
     @mouseleave="isHovering = false"
   >
-    <v-list-item-avatar>
-      <tool-icon :tool="tool" />
-    </v-list-item-avatar>
-    <v-list-item-content>
+    <tool-icon :tool="tool" />
       <v-list-item-title>
         {{ tool.name }}
         <v-progress-circular
@@ -36,8 +32,6 @@
         />
         <v-icon v-else-if="statusIcon">{{ statusIcon }}</v-icon>
       </v-list-item-title>
-    </v-list-item-content>
-    <v-list-item-action>
       <v-btn
         icon
         :max-height="32"
@@ -46,7 +40,6 @@
       >
         <v-icon>mdi-pen</v-icon>
       </v-btn>
-    </v-list-item-action>
     <v-dialog v-model="editDialog">
       <tool-edition :tool="tool" @close="editDialog = false" />
     </v-dialog>

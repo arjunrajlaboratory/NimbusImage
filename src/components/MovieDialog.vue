@@ -13,7 +13,7 @@
                 type="number"
                 :min="1"
                 :max="displayMaxTimePoint"
-                dense
+                density="compact"
                 hide-details
               />
             </v-col>
@@ -24,7 +24,7 @@
                 type="number"
                 :min="1"
                 :max="displayMaxTimePoint"
-                dense
+                density="compact"
                 hide-details
               />
             </v-col>
@@ -38,7 +38,7 @@
                 type="number"
                 :min="1"
                 :max="30"
-                dense
+                density="compact"
                 hide-details
               />
             </v-col>
@@ -74,7 +74,7 @@
               <v-checkbox
                 v-model="shouldAddTimeStamp"
                 label="Insert time stamp"
-                dense
+                density="compact"
                 hide-details
               />
             </v-col>
@@ -87,7 +87,7 @@
                   label="Initial time"
                   v-model.number="initialTimeStampTime"
                   type="number"
-                  dense
+                  density="compact"
                   hide-details
                 />
               </v-col>
@@ -96,7 +96,7 @@
                   label="Time step"
                   v-model.number="timeStampStep"
                   type="number"
-                  dense
+                  density="compact"
                   hide-details
                 />
               </v-col>
@@ -108,7 +108,7 @@
                   label="Units"
                   v-model="timeStampUnits"
                   :items="timeUnits"
-                  dense
+                  density="compact"
                   hide-details
                 />
               </v-col>
@@ -117,7 +117,7 @@
 
           <v-row v-if="warningText" class="mt-4">
             <v-col cols="12">
-              <v-alert type="warning" dense text class="mb-0">
+              <v-alert type="warning" density="compact" variant="tonal" class="mb-0">
                 {{ warningText }}
               </v-alert>
             </v-col>
@@ -127,7 +127,7 @@
 
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn text @click="dialog = false"> Cancel </v-btn>
+        <v-btn variant="text" @click="dialog = false"> Cancel </v-btn>
         <v-btn
           color="primary"
           @click="handleDownload"
@@ -146,13 +146,13 @@ import { IDataset } from "@/store/model";
 import { MovieFormat } from "./Snapshots.vue";
 
 const props = defineProps<{
-  value: boolean;
+  modelValue: boolean;
   currentTime: number;
   dataset: IDataset;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: boolean): void;
+  (e: "update:modelValue", value: boolean): void;
   (e: "download", payload: object): void;
 }>();
 
@@ -195,8 +195,8 @@ const webmSupported = computed<boolean>(() => {
 });
 
 const dialog = computed({
-  get: () => props.value,
-  set: (value: boolean) => emit("input", value),
+  get: () => props.modelValue,
+  set: (value: boolean) => emit("update:modelValue", value),
 });
 
 const maxTimePoint = computed<number>(() => {
@@ -244,7 +244,7 @@ const warningText = computed<string>(() => {
 });
 
 watch(
-  () => props.value,
+  () => props.modelValue,
   (newValue: boolean) => {
     if (newValue) {
       startTime.value = props.currentTime;

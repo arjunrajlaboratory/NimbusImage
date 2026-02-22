@@ -2,15 +2,15 @@
   <v-container fluid class="overflow-auto pa-2">
     <v-row v-if="layers.length > 0" no-gutters class="flex-nowrap">
       <v-col v-for="layer in layers" :key="layer.id" cols="auto" class="mr-2">
-        <v-card outlined width="300">
+        <v-card variant="outlined" width="300">
           <v-card-title class="text-subtitle-2">
-            <v-icon :color="layer.color" small left>mdi-circle</v-icon>
+            <v-icon :color="layer.color" size="small" start>mdi-circle</v-icon>
             {{ layer.name }}
             <v-spacer></v-spacer>
             <v-switch
               v-model="layer.visible"
               @change="toggleVisibility(layer.id)"
-              dense
+              density="compact"
               hide-details
               class="mt-0"
             />
@@ -25,8 +25,8 @@
               :histogram="getLayerHistogram(layer)"
             />
             <color-picker-menu
-              :value="layer.color"
-              @input="changeLayerColor(layer.id, $event)"
+              :model-value="layer.color"
+              @update:model-value="changeLayerColor(layer.id, $event)"
             />
           </v-card-text>
         </v-card>

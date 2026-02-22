@@ -1,8 +1,8 @@
 import DatasetView from "./DatasetView.vue";
 import Viewer from "./Viewer.vue";
-import { RouteConfig } from "vue-router";
+import type { RouteRecordRaw } from "vue-router";
 
-const routes: RouteConfig[] = [
+const routes: RouteRecordRaw[] = [
   {
     path: ":datasetViewId",
     component: DatasetView,

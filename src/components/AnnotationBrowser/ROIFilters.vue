@@ -1,20 +1,19 @@
 <template>
   <div>
-    <v-btn small @click="addNewFilter"> Region filter </v-btn>
+    <v-btn size="small" @click="addNewFilter"> Region filter </v-btn>
     <div class="d-flex flex-column">
       <div
         v-for="filter in filters"
         :key="filter.id"
         class="d-flex justify-space-between align-center"
       >
-        <v-simple-checkbox
+        <v-checkbox
           class="d-inline ml-2"
-          :value="filter.enabled"
-          :input-value="filter.enabled"
+          :model-value="filter.enabled"
           @click="toggleEnabled(filter.id)"
         />
         {{ filter.id }}
-        <v-btn class="mx-2" icon small @click="removeFilter(filter.id)">
+        <v-btn class="mx-2" icon size="small" @click="removeFilter(filter.id)">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </div>

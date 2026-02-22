@@ -6,17 +6,17 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status
 
-**Phases 1–2 complete. Ready for Phase 3 (Vue 3 + Vuetify 3 framework switch).**
+**Phase 3 Batches A–D complete. All source code compiles with 0 type errors. Batch E (test suite recovery) is next.**
 
-All prep work that can be done safely within Vue 2.7 is finished:
 - **Phase 1:** 124/124 components migrated to `<script setup>` (Batches 1–19 + master merge)
-- **Phase 2:** `$refs` converted, directive state migrated, `markRaw()` applied to all GeoJS objects in both `ImageViewer.vue` and `AnnotationViewer.vue`. Remaining items (`Vue.set`/`Vue.delete`, `.sync` modifier) are deferred to Phase 3 where they resolve automatically.
-- **TypeScript:** `pnpm tsc` reports **0 errors**. Type shim (`src/test-shims.d.ts`) to be removed during Phase 3.
-- **Build:** `pnpm build` succeeds. `pnpm test` passes (2 flaky canvas tests — see "Known Flaky Tests").
-
-### Known Runtime Issue
-
-**WebGL console warnings from `markRaw()`:** Cosmetic warnings in Vue 2.7 caused by `markRaw()` on GeoJS objects. Expected to resolve after Vue 3 upgrade where `markRaw` prevents Proxy wrapping entirely (its intended purpose).
+- **Phase 2:** `$refs` converted, directive state migrated, `markRaw()` applied to all GeoJS objects
+- **Phase 3 Batch A:** Package swap complete — Vue 3.5, Vuetify 3.12, Vue Router 4, Vuex 4, TypeScript 5.9, all init files rewritten
+- **Phase 3 Batch B:** All mechanical code fixes complete — `Vue.set`/`Vue.delete` removed (8 files, ~50 calls), `.sync` → `v-model:` (11 instances, 9 files), `$listeners` removed, `defineOptions()` + `useAttrs()` applied
+- **Phase 3 Batch C:** `getCurrentInstance()` eliminated from all components — replaced with `useRoute()`/`useRouter()`, `useTheme()`, `useTour()` composable, and direct function calls
+- **Phase 3 Batch D:** All Vuetify 3 template fixes complete — ~400+ changes across 60+ files. Activator slots, prop renames, structural component renames, v-data-table rewrites, v-model protocol, color/theme system, and all edge cases resolved.
+- **TypeScript:** `pnpm tsc` has 0 non-test errors. Test file errors (~1983) are from Vue Test Utils v1 syntax (`.destroy()`, `Vue.use()`, `propsData`) — Batch E will update these.
+- **Dev server:** Needs visual walkthrough to verify all Vuetify 3 UI changes render correctly.
+- **Tests:** All test file failures are from Vue 3 package swap (test infrastructure needs Batch E update).
 
 ---
 
@@ -54,9 +54,9 @@ All 124 components converted from Class API (`@Component` + decorators) to `<scr
   - `AnnotationList.vue`: `Map<string, Element>` for dynamic annotation refs
 - **Convert `.sync` to `v-model:`** (11 occurrences) — **Deferred to Phase 3.** `v-model:prop` syntax requires Vue 3's template compiler. The `.sync` modifier is the correct Vue 2 pattern and works fine in Vue 2.7.
 
-### Phase 3: Framework Switch & Testing Upgrade — NEXT
+### Phase 3: Framework Switch & Testing Upgrade — IN PROGRESS
 
-This is the core Vue 3 + Vuetify 3 upgrade. All prep work is done. Vuetify 3's API changes are extensive enough that most issues will need to be debugged after flipping the switch.
+This is the core Vue 3 + Vuetify 3 upgrade. Batches A–D are complete (package swap, mechanical code fixes, getCurrentInstance cleanup, Vuetify 3 template fixes). Batch E (test suite recovery) is next.
 
 #### Prerequisites (Hard Blockers) — ALL DONE
 
@@ -147,70 +147,75 @@ app.mount('#app');
 
 Let TypeScript be the guide. Run `pnpm tsc --noEmit` before trying to load the app.
 
+**`pnpm tsc` vs `vue-tsc`:** During iterative work, `pnpm tsc` is faster and checks `.ts` files only. `vue-tsc --noEmit` (installed as `vue-tsc@2.2.12`) is the Vue-aware checker powered by Volar — it also validates types inside `<template>` blocks (e.g., wrong prop types, missing slots). Run `vue-tsc` as a final gate once Batch D is complete. It's also what `vite build` uses internally for type-checked production builds.
+
 1. **Delete `src/test-shims.d.ts` immediately** — it will cause conflicting types with `@vue/test-utils` v2
 2. **Router/Store type fixes:** Vue Router 4 and Vuex 4 have different instantiation signatures (`createRouter`, `createWebHistory`, `createStore`). Fix these in their respective setup files
 3. **Vuetify prop errors:** Expect dozens of type errors for Vuetify components (removed props, changed event signatures). Fix at the compiler level first — e.g., `v-dialog`'s `.sync`/`@input` → `v-model`
 
-##### Step 4: Component Triage (Global Find & Replace)
+##### Step 4: Component Triage (Global Find & Replace) — Batches B & C DONE
 
-Once TypeScript is mostly quiet, handle the predictable Vue 3 breaking changes across `.vue` files.
-
-**`Vue.set` and `Vue.delete` removal (56 occurrences, 11 files):**
-Deferred from Phase 2 — now is the time. Vue 3's Proxy-based reactivity makes them unnecessary:
+**`Vue.set` and `Vue.delete` removal — DONE (Batch B1):**
+~50 calls across 8 files converted. `import Vue from "vue"` removed from all non-test source files. Where `Vue` was used only as a type, replaced with `import type { ComponentPublicInstance }`.
 - `Vue.set(obj, key, val)` → `obj[key] = val`
+- `Vue.set(arr, idx, val)` → `arr.splice(idx, 1, val)` (for element replacement)
+- `Vue.set(arr, arr.length, val)` → `arr.push(val)`
 - `Vue.delete(obj, key)` → `delete obj[key]`
-- For arrays: `Vue.set(arr, idx, val)` → `arr[idx] = val`
 
-Files: `annotation.ts`, `index.ts`, `properties.ts`, `girderResources.ts`, `jobs.ts`, `AnnotationConfiguration.vue`, `ToolConfiguration.vue`, `Property.vue`, `samPipeline.ts`
+**`.sync` modifier → `v-model:` — DONE (Batch B2):**
+11 instances across 9 files converted. ESLint `vue/no-v-model-argument` warnings expected until eslint config updated for Vue 3.
 
-**`.sync` modifier → `v-model:` (11 occurrences):**
-Global search for `\.sync="` and replace with `v-model:propName="`. The `.sync` modifier is removed in Vue 3 — `v-model:prop` is the replacement.
-
-**`$listeners` removal:**
-Vue 3 merges listeners into `$attrs`. Remove any `v-on="$listeners"` (e.g., `ToolItem.vue` from Batch 7). Components using `v-bind="$attrs"` already get listeners included.
+**`$listeners` removal — DONE (Batch B3):**
+Removed `v-on="$listeners"` from `ToolItem.vue` and `CustomFileManager.vue` (both already had `v-bind="$attrs"`).
 
 **`$scopedSlots` → `$slots`:**
-Vue 3 unifies `$scopedSlots` and `$slots`. Replace any `$scopedSlots` references with `$slots`.
+No instances found — already clean.
 
-**Dual `<script>` blocks → `defineOptions()`:**
-Components using dual `<script>` blocks for `inheritAttrs: false` (e.g., `ColorPickerMenu.vue`, `AnnotationConfiguration.vue`, `ToolTypeSelection.vue`) can now use `defineOptions({ inheritAttrs: false })` directly in `<script setup>` (available in Vue 3.3+).
+**Dual `<script>` blocks → `defineOptions()` — DONE (Batch B4):**
+`ColorPickerMenu.vue` converted.
 
-**`$vnode.data` access:**
-`ColorPickerMenu.vue` uses `$vnode.data` for class/style passthrough — this is Vue 2-only. Replace with `useAttrs()` in Vue 3.
+**`$vnode.data` access → `useAttrs()` — DONE (Batch B5):**
+`ColorPickerMenu.vue` converted.
 
-**`getCurrentInstance()` cleanup:**
-Many components use `getCurrentInstance()!.proxy` for `$route`/`$router`/`$emit`. In Vue 3:
+**`getCurrentInstance()` cleanup — DONE (Batch C):**
+All `getCurrentInstance()!.proxy` usage eliminated from components:
 - `$route`/`$router` → `useRoute()` / `useRouter()` from `vue-router`
-- `$emit` via `getCurrentInstance()` → should already be using `defineEmits` (verify)
-- Tour plugin methods → may need `app.config.globalProperties` registration
+- `$vuetify.theme` → `useTheme()` from `vuetify`
+- Tour plugin methods → `useTour()` composable (`src/utils/useTour.ts`)
+- `$emit` via `getCurrentInstance()` → already using `defineEmits`
 
-##### Step 5: Boot the Browser & Tackle Vuetify 3
+##### Step 5: Vuetify 3 Template Fixes — DONE (Batch D)
 
-Now run `pnpm dev` and open the browser. The app will likely load but look broken. Vuetify 3 is a near-complete rewrite — this is where the bulk of debugging time goes.
+All Vuetify 3 template incompatibilities resolved (~400+ changes across 60+ files):
 
-**Priority order:**
-1. **Heavy hitters first:** Views containing `v-data-table` (especially `AnnotationList.vue` with `$children` access). Scoped slots for tables changed entirely (`item.<name>` slots)
-2. **Dialogs and overlays:** `v-dialog` and `v-menu` — z-indexing, activation APIs, and default padding have shifted
-3. **Form validation:** Vuetify 3 removes built-in validation; will need VeeValidate or similar
-4. **Everything else:** Work through remaining console errors view by view
+- **D1:** Activator slot API (`{on, attrs}` → `{props: activatorProps}`) — 21 files
+- **D2:** Mechanical prop renames (size, variant, density, icon position, minor renames) — 50+ files
+- **D3:** Removed `.native` event modifier — 5 files
+- **D4:** v-tooltip directive → component, NimbusTooltip rewrite, location props — 20+ files
+- **D5:** Structural renames (expansion-panel, list-item, simple-table, tabs-items, subheader) — 30+ files
+- **D6:** Overlay prop updates (v-menu, v-dialog, v-navigation-drawer, v-app-bar) — 15 files
+- **D7:** Color/theme system (hyphenated colors, CSS utility classes, theme selectors) — 25+ files
+- **D8:** v-data-table rewrites (headers, slots, selection, click:row signature) — 5 tables
+- **D9:** v-model protocol (`value`/`input` → `modelValue`/`update:modelValue`) — 26+ components + all parents
+- **D10:** Edge cases, type error cleanup, verified 0 non-test `pnpm tsc` errors
 
-##### Step 6: Test Suite Recovery
+##### Step 6: Test Suite Recovery — Batch E (NEXT)
 
-Once the app is visually functional and navigable without console crashes:
+~1983 test file type errors from Vue Test Utils v1 → v2 migration:
 
-1. Update mounting functions to use `global.plugins` array (see "Testing Infrastructure Transition" above)
-2. Replace `propsData` with `props` in all test files
-3. Remove manual `wrapper.destroy()` calls (cleanup is automatic in v2)
-4. Run `pnpm test` and triage failures
+1. Update `@vue/test-utils` from v1 to v2
+2. Update mounting functions to use `global.plugins` array (see "Testing Infrastructure Transition" above)
+3. Replace `propsData` with `props` in all test files
+4. Remove `Vue.use()` calls and `createLocalVue` usage
+5. Remove manual `wrapper.destroy()` calls (cleanup is automatic in v2)
+6. Run `pnpm test` and triage failures
 
-#### Known Vuetify 3 Migration Challenges
+#### Known Vuetify 3 Migration Challenges — ALL RESOLVED (Batch D)
 
-These will need to be addressed after the framework switch, not as prep work:
-
-- **`v-data-table` (15 usages):** Requires complete rewrites, especially complex instances like `AnnotationList.vue`. Vue 3 removes the `$children` API (used for accessing inner table internals), and Vuetify 3 overhauls pagination, scoped slots, and the item rendering API.
-- **`v-dialog` (129 usages):** Event names change (`@input` → `@update:modelValue`, `.sync` → `v-model`). Dialog usage patterns are too varied to handle systematically — debug each individually.
-- **Form validation:** Vuetify 3 removes built-in validation; will need VeeValidate or similar.
-- **Icon migration:** Current `mdi-*` string usage works with `@mdi/js` in both versions (no change needed).
+- **`v-data-table`:** All 5 tables rewritten (D8). Headers use `{ title, key }`, slot syntax updated, `@click:row` signature updated for V3 `(event, { item })`.
+- **`v-dialog` / `v-menu`:** Activator slots (D1), overlay props (D6), and v-model protocol (D9) all converted.
+- **Form validation:** Vuetify 3's built-in validation still works for our use cases (no VeeValidate needed).
+- **Icon migration:** `mdi-*` string usage works in both versions — no changes needed (confirmed).
 
 #### GeoJS & Vue 3 Proxy Reactivity — DONE
 

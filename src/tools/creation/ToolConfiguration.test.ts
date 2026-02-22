@@ -57,7 +57,7 @@ function mountComponent(props = {}) {
         ],
       },
       defaultValues: {},
-      value: {},
+      modelValue: {},
       ...props,
     },
     stubs: {
@@ -207,7 +207,7 @@ describe("ToolConfiguration", () => {
 
     vm.changed();
 
-    const inputEvents = wrapper.emitted("input")!;
+    const inputEvents = wrapper.emitted("update:modelValue")!;
     expect(inputEvents).toBeTruthy();
     const lastInput = inputEvents[inputEvents.length - 1][0];
     expect(lastInput).toHaveProperty("textField");

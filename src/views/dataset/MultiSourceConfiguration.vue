@@ -1,8 +1,8 @@
 <template>
   <v-container>
     <v-card class="pa-4 my-4">
-      <v-subheader id="variables-tourstep" class="headline"
-        >Variables</v-subheader
+      <v-list-subheader id="variables-tourstep" class="headline"
+        >Variables</v-list-subheader
       >
       <v-divider class="my-2" />
       <!-- Summary stats -->
@@ -30,7 +30,7 @@
         v-if="highlightedFilenameSegments.length > 0"
         class="filename-highlight-container mb-4 pa-3"
       >
-        <div class="text-caption grey--text mb-1">
+        <div class="text-caption text-grey mb-1">
           Example filename with extracted variables:
         </div>
         <div class="filename-highlight-text">
@@ -55,7 +55,7 @@
             ></span>
             <span class="text-caption">
               {{ legend.label }}
-              <span v-if="legend.showGuess" class="grey--text text--darken-1">
+              <span v-if="legend.showGuess" class="text-grey-darken-1">
                 (guessed: {{ legend.guess }})
               </span>
             </span>
@@ -79,16 +79,14 @@
             <span>{{ item.values || `${item.size} values` }}</span>
             <v-menu
               v-if="item.allValues && item.allValues.length > 1"
-              offset-y
               :close-on-content-click="false"
               max-height="300"
             >
-              <template v-slot:activator="{ on, attrs }">
+              <template v-slot:activator="{ props: activatorProps }">
                 <v-icon
-                  x-small
+                  size="x-small"
                   class="variable-row__values-icon"
-                  v-bind="attrs"
-                  v-on="on"
+                  v-bind="activatorProps"
                 >
                   mdi-information-outline
                 </v-icon>
@@ -115,7 +113,7 @@
             </v-menu>
           </div>
           <div class="variable-row__source">
-            <v-icon x-small class="mr-1">{{
+            <v-icon size="x-small" class="mr-1">{{
               item.source === "filename" ? "mdi-file-document" : "mdi-image"
             }}</v-icon>
             {{ item.source }}
@@ -146,13 +144,13 @@
         label="Split RGB files into separate channels (otherwise, only the red channel will be used)"
         class="mt-4"
         hide-details
-        dense
+        density="compact"
       />
     </v-card>
     <v-card v-if="initializing" class="my-4">
       <v-card-title class="d-flex align-center">
         <v-progress-circular
-          :value="initProgressPercent"
+          :model-value="initProgressPercent"
           v-if="initTotal > 0 && !initError"
           class="mr-4"
         />
@@ -166,13 +164,13 @@
             initProgressPercent
           }}%)
         </span>
-        <span v-else class="red--text">
+        <span v-else class="text-red">
           Failed on {{ initError.name }}: {{ initError.message }}
         </span>
       </v-card-title>
       <v-card-text v-if="!initError && initPending.length">
         <div class="mb-2">Pending files ({{ initPending.length }}):</div>
-        <v-simple-table dense>
+        <v-table density="compact">
           <template v-slot:default>
             <tbody>
               <tr v-for="name in initPendingDisplay" :key="name">
@@ -197,18 +195,18 @@
               </tr>
             </tbody>
           </template>
-        </v-simple-table>
+        </v-table>
       </v-card-text>
       <v-card-text v-else-if="initError">
-        <v-alert type="error" text dense>
+        <v-alert type="error" variant="tonal" density="compact">
           Processing stopped due to error.
         </v-alert>
       </v-card-text>
     </v-card>
     <v-card class="pa-4 my-4" v-else>
       <div class="d-flex">
-        <v-subheader id="assignments-tourstep" class="headline"
-          >Assignments</v-subheader
+        <v-list-subheader id="assignments-tourstep" class="headline"
+          >Assignments</v-list-subheader
         >
         <v-spacer />
         <v-btn
@@ -260,15 +258,15 @@
                   ({{ getAssignmentSize(dimension) }})
                 </span>
                 <template v-if="shouldDoCompositing && dimension === 'XY'">
-                  <v-chip x-small outlined class="ml-2">composited</v-chip>
+                  <v-chip size="x-small" variant="outlined" class="ml-2">composited</v-chip>
                 </template>
                 <!-- Lock icon for immutable -->
                 <v-tooltip
                   v-if="isAssignmentImmutableForDimension(dimension)"
-                  bottom
+                  location="bottom"
                 >
-                  <template v-slot:activator="{ on, attrs }">
-                    <v-icon small class="ml-2" v-bind="attrs" v-on="on">
+                  <template v-slot:activator="{ props: activatorProps }">
+                    <v-icon size="small" class="ml-2" v-bind="activatorProps">
                       mdi-lock
                     </v-icon>
                   </template>
@@ -279,9 +277,9 @@
 
             <!-- Empty state: dropdown trigger -->
             <template v-else>
-              <v-menu offset-y :disabled="assignmentItems.length === 0">
-                <template v-slot:activator="{ on, attrs }">
-                  <div class="assignment-slot__empty" v-bind="attrs" v-on="on">
+              <v-menu :disabled="assignmentItems.length === 0">
+                <template v-slot:activator="{ props: activatorProps }">
+                  <div class="assignment-slot__empty" v-bind="activatorProps">
                     <span class="assignment-slot__placeholder">
                       {{
                         assignmentItems.length > 0
@@ -294,20 +292,18 @@
                     >
                   </div>
                 </template>
-                <v-list dense>
+                <v-list density="compact">
                   <v-list-item
                     v-for="item in assignmentItems"
                     :key="item.value.id"
                     @click="assignments[dimension] = item"
                   >
-                    <v-list-item-content>
-                      <div class="dropdown-item-content">
-                        <span class="dropdown-item-name">{{ item.text }}</span>
-                        <span class="dropdown-item-values">{{
-                          getItemValues(item.value)
-                        }}</span>
-                      </div>
-                    </v-list-item-content>
+                    <div class="dropdown-item-content">
+                      <span class="dropdown-item-name">{{ item.text }}</span>
+                      <span class="dropdown-item-values">{{
+                        getItemValues(item.value)
+                      }}</span>
+                    </div>
                   </v-list-item>
                 </v-list>
               </v-menu>
@@ -318,24 +314,23 @@
           <div class="assignment-slot__actions">
             <v-tooltip
               v-if="assignments[dimension] && !clearDisabled(dimension)"
-              bottom
+              location="bottom"
             >
-              <template v-slot:activator="{ on, attrs }">
+              <template v-slot:activator="{ props: activatorProps }">
                 <v-btn
                   icon
-                  small
-                  v-bind="attrs"
-                  v-on="on"
+                  size="small"
+                  v-bind="activatorProps"
                   @click="assignments[dimension] = null"
                 >
-                  <v-icon small>mdi-close</v-icon>
+                  <v-icon size="small">mdi-close</v-icon>
                 </v-btn>
               </template>
               <span>Clear assignment</span>
             </v-tooltip>
             <v-checkbox
               v-if="canDoCompositing && dimension === 'XY'"
-              dense
+              density="compact"
               hide-details
               label="Composite"
               class="mt-0 ml-4"
@@ -347,7 +342,7 @@
     </v-card>
     <v-row>
       <v-col class="d-flex">
-        <v-alert v-if="submitError" type="error" text dense class="mr-4">
+        <v-alert v-if="submitError" type="error" variant="tonal" density="compact" class="mr-4">
           {{ submitError }}
         </v-alert>
         <v-spacer />
@@ -355,7 +350,7 @@
       <v-col class="d-flex justify-end">
         <v-checkbox
           id="transcode-checkbox-tourstep"
-          dense
+          density="compact"
           hide-details
           class="mr-8"
           v-model="transcode"
@@ -381,25 +376,25 @@
           <div class="text-subtitle-1 mr-3">{{ progressStatusText }}</div>
           <v-spacer></v-spacer>
           <v-btn
-            small
-            text
+            size="small"
+            variant="text"
             color="info"
             @click="showLogDialog = true"
             class="ml-2"
           >
-            <v-icon small left>mdi-text-box-outline</v-icon>
+            <v-icon size="small" start>mdi-text-box-outline</v-icon>
             View Log
           </v-btn>
         </div>
         <v-progress-linear
           v-if="transcodeProgress !== undefined"
-          :value="transcodeProgress"
+          :model-value="transcodeProgress"
           height="20"
           striped
           color="primary"
         >
           <template v-slot:default>
-            <span class="white--text">{{ Math.ceil(transcodeProgress) }}%</span>
+            <span class="text-white">{{ Math.ceil(transcodeProgress) }}%</span>
           </template>
         </v-progress-linear>
       </v-card-text>
@@ -411,9 +406,9 @@
         <v-card-title class="headline">
           Transcoding Log
           <v-spacer></v-spacer>
-          <v-tooltip bottom>
-            <template v-slot:activator="{ on, attrs }">
-              <v-btn icon v-bind="attrs" v-on="on" @click="copyLogToClipboard">
+          <v-tooltip location="bottom">
+            <template v-slot:activator="{ props: activatorProps }">
+              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
@@ -428,7 +423,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" text @click="showLogDialog = false"
+          <v-btn color="primary" variant="text" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -447,14 +442,8 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ref,
-  reactive,
-  computed,
-  watch,
-  onMounted,
-  getCurrentInstance,
-} from "vue";
+import { ref, reactive, computed, watch, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import store from "@/store";
 
 import {
@@ -589,7 +578,7 @@ const emit = defineEmits<{
   (e: "log", logs: string): void;
 }>();
 
-const instance = getCurrentInstance()!.proxy!;
+const router = useRouter();
 
 // --- Reactive state ---
 
@@ -1505,7 +1494,7 @@ async function submit() {
     return;
   }
   if (props.autoDatasetRoute) {
-    (instance as any).$router.push({
+    router.push({
       name: "dataset",
       params: { datasetId: props.datasetId },
     });

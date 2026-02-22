@@ -26,21 +26,19 @@
     </div>
     <girder-file-manager
       v-if="currentLocation"
-      :location.sync="currentLocation"
+      v-model:location="currentLocation"
       new-folder-enabled
       :selectable="menuEnabled || selectable"
       v-model="selected"
       v-bind="$attrs"
-      v-on="$listeners"
     >
       <template v-if="menuEnabled" #headerwidget>
-        <v-menu v-model="selectedItemsOptionsMenu" bottom offset-y>
-          <template v-slot:activator="{ on, attrs }">
+        <v-menu v-model="selectedItemsOptionsMenu" location="bottom">
+          <template v-slot:activator="{ props: activatorProps }">
             <v-btn
-              v-bind="attrs"
-              v-on="on"
+              v-bind="activatorProps"
               :disabled="selected.length === 0"
-              outlined
+              variant="outlined"
               class="ghost-button"
             >
               Actions
@@ -63,9 +61,9 @@
           class="mx-2 ghost-button"
           @click="fileInput?.click()"
           :disabled="shouldDisableSingleFileUpload"
-          outlined
+          variant="outlined"
         >
-          <v-icon left>mdi-upload</v-icon>
+          <v-icon start>mdi-upload</v-icon>
           Upload Non-Image File
         </v-btn>
       </template>
@@ -78,8 +76,8 @@
         >
           <template #actions>
             <v-menu v-model="rowOptionsMenu[props.item._id]" v-if="menuEnabled">
-              <template v-slot:activator="{ on, attrs }">
-                <v-btn icon v-bind="attrs" v-on="on">
+              <template v-slot:activator="{ props: activatorProps }">
+                <v-btn icon v-bind="activatorProps">
                   <v-icon>mdi-dots-vertical</v-icon>
                 </v-btn>
               </template>
@@ -119,7 +117,7 @@ import {
   toDatasetFolder,
   unselectableLocations,
 } from "@/utils/girderSelectable";
-import { RawLocation } from "vue-router";
+import type { RouteLocationRaw } from "vue-router";
 import FileManagerOptions from "./FileManagerOptions.vue";
 import FileItemRow from "./FileItemRow.vue";
 import { Search as GirderSearch } from "@/girder/components";
@@ -131,7 +129,7 @@ import AlertDialog from "@/components/AlertDialog.vue";
 interface IChipAttrs {
   text: string;
   color: string;
-  to?: RawLocation;
+  to?: RouteLocationRaw;
 }
 
 interface IChipsPerItemId {
@@ -330,7 +328,7 @@ async function itemToChips(selectable: IGirderSelectAble) {
   const chipOption = chipOptions[type];
   const headerChip: IChipAttrs = {
     text: chipOption.text,
-    color: "grey darken-1",
+    color: "grey-darken-1",
   };
   if (props.clickableChips) {
     headerChip.to = {
@@ -574,7 +572,7 @@ onBeforeUnmount(() => {
 
 <style lang="scss">
 // Unscoped styles for search bar in dark mode
-.theme--dark {
+.v-theme--dark {
   .custom-file-manager-wrapper {
     .search-container {
       // Target v-autocomplete (girder-search likely uses this)
@@ -719,7 +717,7 @@ onBeforeUnmount(() => {
 }
 
 // Dark mode styles
-.theme--dark {
+.v-theme--dark {
   .ghost-button {
     border-color: rgba(255, 255, 255, 0.12) !important;
     color: rgba(255, 255, 255, 0.7) !important;
@@ -733,7 +731,7 @@ onBeforeUnmount(() => {
 }
 
 // Light mode styles
-.theme--light {
+.v-theme--light {
   .ghost-button {
     border-color: rgba(0, 0, 0, 0.12) !important;
     color: rgba(0, 0, 0, 0.7) !important;

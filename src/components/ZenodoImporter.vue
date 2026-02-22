@@ -9,7 +9,7 @@
       </v-card-title>
       <v-card-text>
         <!-- Selected Dataset Details -->
-        <v-card v-if="selectedDataset" class="my-4" outlined>
+        <v-card v-if="selectedDataset" class="my-4" variant="outlined">
           <v-card-title>{{ selectedDataset.title }}</v-card-title>
           <v-card-subtitle>
             <a
@@ -23,18 +23,16 @@
           <v-card-text>
             <p v-html="selectedDataset.metadata.description"></p>
 
-            <v-subheader
+            <v-list-subheader
               >{{ filteredFiles.length }} image files out of
               {{ selectedDataset.files.length }} total dataset files
-            </v-subheader>
-            <v-list dense>
+            </v-list-subheader>
+            <v-list density="compact">
               <v-list-item v-for="file in filteredFiles" :key="file.id">
-                <v-list-item-content>
-                  <v-list-item-title>{{ file.key }}</v-list-item-title>
-                  <v-list-item-subtitle
-                    >{{ formatSize(file.size) }}
-                  </v-list-item-subtitle>
-                </v-list-item-content>
+                <v-list-item-title>{{ file.key }}</v-list-item-title>
+                <v-list-item-subtitle
+                  >{{ formatSize(file.size) }}
+                </v-list-item-subtitle>
               </v-list-item>
             </v-list>
 
@@ -57,7 +55,7 @@
           <v-card-title>Importing Dataset</v-card-title>
           <v-card-text>
             <v-progress-linear
-              :value="importProgress"
+              :model-value="importProgress"
               height="25"
               color="primary"
               striped
@@ -92,7 +90,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import store from "@/store";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
@@ -114,7 +113,7 @@ defineEmits<{
   (e: "close"): void;
 }>();
 
-const instance = getCurrentInstance();
+const router = useRouter();
 const zenodoApi = new ZenodoAPI(store.girderRestProxy);
 
 // Reactive state
@@ -244,7 +243,7 @@ async function importSelectedDataset(): Promise<void> {
     importProgress.value = 100;
 
     // Pass the downloaded files to NewDataset.vue using the same approach as Home.vue
-    instance?.proxy?.$router.push({
+    router.push({
       name: "newdataset",
       params: {
         quickupload: true,

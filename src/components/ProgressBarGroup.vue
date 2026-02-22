@@ -9,8 +9,8 @@
         v-for="notification in activeNotifications"
         :key="notification.id"
         :type="notification.type"
-        dense
-        dismissible
+        density="compact"
+        closable
         class="mb-2 notification"
         @click:close="dismissNotification(notification.id)"
       >
@@ -34,7 +34,7 @@
       <template v-if="group.display === 'single'">
         <v-progress-linear
           :indeterminate="group.indeterminate"
-          :value="group.value"
+          :model-value="group.value"
           color="primary"
           height="16"
         >
@@ -57,7 +57,7 @@
             v-for="progress in group.items"
             :key="progress.id"
             :indeterminate="progress.total === 0"
-            :value="
+            :model-value="
               progress.total ? (100 * progress.progress) / progress.total : 0
             "
             color="primary"

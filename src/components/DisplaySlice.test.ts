@@ -15,7 +15,7 @@ function mountComponent(props = {}) {
   return mount(DisplaySlice, {
     vuetify: new Vuetify(),
     propsData: {
-      value: { type: "current", value: 0 },
+      modelValue: { type: "current", value: 0 },
       maxValue: 10,
       label: "Z",
       displayed: 5,
@@ -68,7 +68,7 @@ describe("DisplaySlice", () => {
 
   it("changeSlice clamps constant value within range when type is same", () => {
     const wrapper = mountComponent({
-      value: { type: "constant", value: 3 },
+      modelValue: { type: "constant", value: 3 },
       maxValue: 5,
       offset: 1,
     });
@@ -80,7 +80,7 @@ describe("DisplaySlice", () => {
 
   it("changeSlice clamps offset value within bounds when type is same", () => {
     const wrapper = mountComponent({
-      value: { type: "offset", value: 0 },
+      modelValue: { type: "offset", value: 0 },
       maxValue: 5,
     });
     wrapper.vm.changeSlice("offset", "100");
@@ -90,7 +90,7 @@ describe("DisplaySlice", () => {
 
   it("changeSlice does not emit when value unchanged and type unchanged", () => {
     const wrapper = mountComponent({
-      value: { type: "current", value: 0 },
+      modelValue: { type: "current", value: 0 },
     });
     wrapper.vm.changeSlice("current", 0);
     expect(wrapper.emitted("change")).toBeFalsy();

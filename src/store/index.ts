@@ -73,9 +73,8 @@ import persister from "./Persister";
 import store from "./root";
 import sync from "./sync";
 import { MAX_NUMBER_OF_RECENT_DATASET_VIEWS } from "./constants";
-import Vue from "vue";
 export { default as store } from "./root";
-import { app } from "@/main";
+import { app, router } from "@/main";
 
 import { Debounce } from "@/utils/debounce";
 import { TCompositionMode } from "@/utils/compositionModes";
@@ -660,7 +659,7 @@ export class Main extends VuexModule {
       this.selectedTool = null;
     } else if (this.selectedTool?.configuration.id === configuration.id) {
       // Update the configuration but not the state
-      Vue.set(this.selectedTool, "configuration", configuration);
+      this.selectedTool.configuration = configuration;
     } else {
       let state: TToolState;
       switch (configuration.type) {
@@ -756,7 +755,7 @@ export class Main extends VuexModule {
     if (toolIdx < 0) {
       return;
     }
-    Vue.set(configurationTools, toolIdx, tool);
+    configurationTools.splice(toolIdx, 1, tool);
     if (this.selectedTool?.configuration.id === tool.id) {
       this.setSelectedToolImpl(tool);
     }
@@ -820,8 +819,8 @@ export class Main extends VuexModule {
   private updateUserChannelColors(channelColors: { [key: string]: string }) {
     if (this.girderUser) {
       const meta = this.girderUser.meta || {};
-      Vue.set(meta, "channelColors", channelColors);
-      Vue.set(this.girderUser, "meta", meta);
+      meta.channelColors = channelColors;
+      this.girderUser.meta = meta;
     }
   }
 
@@ -1300,7 +1299,7 @@ export class Main extends VuexModule {
       }
 
       const newLocation = datasetView.lastLocation;
-      const query = app.$route.query;
+      const query = router.currentRoute.value.query;
       promises.push(
         this.setXY(query.xy == null ? newLocation.xy : Number(query.xy)),
         this.setZ(query.z == null ? newLocation.z : Number(query.z)),
@@ -1661,7 +1660,7 @@ export class Main extends VuexModule {
     if (!this.datasetView) {
       return;
     }
-    Vue.set(this.datasetView, "lastLocation", location);
+    this.datasetView.lastLocation = location;
   }
 
   @Action
@@ -1719,7 +1718,7 @@ export class Main extends VuexModule {
   private pushLayer(layer: IDisplayLayer) {
     if (this.configuration) {
       const layers = this.configuration.layers;
-      Vue.set(layers, layers.length, Object.assign({}, layer));
+      layers.push(Object.assign({}, layer));
     }
   }
 
@@ -1740,7 +1739,7 @@ export class Main extends VuexModule {
           break;
         }
         layers[index].visible = !layers[index].visible;
-        Vue.set(layers, index, layers[index]);
+        layers.splice(index, 1, layers[index]);
         break;
     }
   }
@@ -1988,7 +1987,7 @@ export class Main extends VuexModule {
   }) {
     this.changeLayer({ layerId, delta: { contrast }, sync: true });
     if (this.datasetView) {
-      Vue.delete(this.datasetView.layerContrasts, layerId);
+      delete this.datasetView.layerContrasts[layerId];
       if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
@@ -2004,7 +2003,7 @@ export class Main extends VuexModule {
     contrast: IContrast;
   }) {
     if (this.datasetView) {
-      Vue.set(this.datasetView.layerContrasts, layerId, contrast);
+      this.datasetView.layerContrasts[layerId] = contrast;
       if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
@@ -2014,7 +2013,7 @@ export class Main extends VuexModule {
   @Action
   async resetContrastInView(layerId: string) {
     if (this.datasetView) {
-      Vue.delete(this.datasetView.layerContrasts, layerId);
+      delete this.datasetView.layerContrasts[layerId];
       if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
@@ -2030,7 +2029,7 @@ export class Main extends VuexModule {
     scale: IScaleInformation<TUnitLength | TUnitTime>;
   }) {
     if (this.configuration) {
-      Vue.set(this.configuration.scales, itemId, scale);
+      (this.configuration.scales as any)[itemId] = scale;
       this.syncConfiguration("scales");
     }
   }
@@ -2044,7 +2043,7 @@ export class Main extends VuexModule {
     scale: IScaleInformation<TUnitLength | TUnitTime>;
   }) {
     if (this.datasetView) {
-      Vue.set(this.datasetView.scales, itemId, scale);
+      (this.datasetView.scales as any)[itemId] = scale;
       if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
@@ -2054,7 +2053,7 @@ export class Main extends VuexModule {
   @Action
   resetScalesInView(itemId: keyof IScales) {
     if (this.datasetView) {
-      Vue.delete(this.datasetView.scales, itemId);
+      delete this.datasetView.scales[itemId];
       if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
@@ -2078,7 +2077,7 @@ export class Main extends VuexModule {
       return;
     }
     const layer = confLayers[index];
-    Vue.set(confLayers, index, Object.assign({}, layer, delta));
+    confLayers.splice(index, 1, Object.assign({}, layer, delta));
   }
 
   @Action
@@ -2425,7 +2424,7 @@ export class Main extends VuexModule {
     if (!this.datasetView) {
       return;
     }
-    Vue.set(this.datasetView, "layerContrasts", {});
+    this.datasetView.layerContrasts = {};
     if (this.canEditDatasetView) {
       this.api.updateDatasetView(this.datasetView);
     }
@@ -2436,7 +2435,7 @@ export class Main extends VuexModule {
     if (!this.datasetView) {
       return;
     }
-    Vue.set(this.datasetView, "layerContrasts", contrasts);
+    this.datasetView.layerContrasts = contrasts;
     if (this.canEditDatasetView) {
       this.api.updateDatasetView(this.datasetView);
     }

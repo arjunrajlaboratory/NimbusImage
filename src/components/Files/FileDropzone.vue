@@ -37,13 +37,13 @@ import { computed, ref } from "vue";
 
 const props = withDefaults(
   defineProps<{
-    value?: File[];
+    modelValue?: File[];
     message?: string;
     multiple?: boolean;
     accept?: string;
   }>(),
   {
-    value: () => [],
+    modelValue: () => [],
     message: "",
     multiple: true,
     accept: undefined,
@@ -51,12 +51,12 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: "input", files: File[]): void;
+  (e: "update:modelValue", files: File[]): void;
 }>();
 
 const files = computed({
-  get: () => props.value,
-  set: (val: File[]) => emit("input", val),
+  get: () => props.modelValue,
+  set: (val: File[]) => emit("update:modelValue", val),
 });
 
 const dropzoneClass = ref<string | null>(null);
@@ -161,7 +161,7 @@ $overlayLight: linear-gradient(
   background-repeat: no-repeat;
 }
 
-.theme--dark .dropzone-overlay {
+.v-theme--dark .dropzone-overlay {
   background:
     $overlayDark top left,
     $overlayDark top left,

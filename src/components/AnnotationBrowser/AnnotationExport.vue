@@ -1,9 +1,8 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="{ on, attrs }">
+    <template v-slot:activator="{ props: activatorProps }">
       <v-btn
-        v-bind="{ ...attrs, ...$attrs }"
-        v-on="on"
+        v-bind="{ ...activatorProps, ...$attrs }"
         v-description="{
           section: 'Object list actions',
           title: 'Export to JSON',
@@ -22,7 +21,7 @@
       </v-card-subtitle>
 
       <v-card-text class="pt-2 pb-0">
-        <v-alert type="info" text class="mb-4">
+        <v-alert type="info" variant="tonal" class="mb-4">
           An exported JSON file contains a complete specification of your
           annotation data. That includes coordinates of points and polygons,
           color, property values, connections between annotations, and more. The
@@ -50,12 +49,12 @@
           <v-alert
             v-else-if="collectionDatasets.length === 0"
             type="warning"
-            text
+            variant="tonal"
             class="my-4"
           >
             No datasets found in this collection.
           </v-alert>
-          <v-alert v-else type="success" text dense class="my-4">
+          <v-alert v-else type="success" variant="tonal" density="compact" class="my-4">
             Found {{ collectionDatasets.length }} dataset{{
               collectionDatasets.length === 1 ? "" : "s"
             }}
@@ -103,7 +102,7 @@
             Exporting {{ exportProgress }} of {{ collectionDatasets.length }}...
           </div>
           <v-progress-linear
-            :value="(exportProgress / collectionDatasets.length) * 100"
+            :model-value="(exportProgress / collectionDatasets.length) * 100"
             class="mb-2"
           />
         </template>

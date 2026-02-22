@@ -94,8 +94,8 @@ defineExpose({
 }
 </style>
 <style>
-.toolbar .v-expansion-panel-content__wrap,
-.toolbar .v-expansion-panel-header {
+.toolbar .v-expansion-panel-text__wrapper,
+.toolbar .v-expansion-panel-title {
   padding-left: 1px;
   padding-right: 5px;
 }

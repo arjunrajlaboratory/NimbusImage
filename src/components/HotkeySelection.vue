@@ -18,17 +18,17 @@ import { ref, computed } from "vue";
 import Mousetrap from "mousetrap";
 
 const props = defineProps<{
-  value?: string | null;
+  modelValue?: string | null;
 }>();
 
 const emit = defineEmits<{
-  (e: "input", value: string | null): void;
+  (e: "update:modelValue", value: string | null): void;
 }>();
 
-// v-model binding (Vue 2 uses value/input)
+// v-model binding (Vue 3 uses modelValue/update:modelValue)
 const hotkey = computed({
-  get: () => props.value ?? null,
-  set: (val: string | null) => emit("input", val),
+  get: () => props.modelValue ?? null,
+  set: (val: string | null) => emit("update:modelValue", val),
 });
 
 const isRecordingHotkey = ref(false);
