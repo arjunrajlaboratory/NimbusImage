@@ -1,12 +1,10 @@
 <template>
-  <v-expansion-panels
+  <div
     id="layer-controls-tourstep"
     class="d-block mt-2"
-    multiple
-    accordion
     v-mousetrap="mousetrapGlobalToggles"
   >
-    <v-expansion-panel>
+    <div>
       <div class="pr-8">
         <v-row dense>
           <v-col cols="7">
@@ -37,7 +35,7 @@
           </v-col>
         </v-row>
       </div>
-    </v-expansion-panel>
+    </div>
     <v-divider />
     <draggable
       v-model="groupsArrayWithSpacers"
@@ -70,12 +68,12 @@
         </draggable>
       </template>
     </draggable>
-    <v-expansion-panel readonly class="add-layer">
+    <div class="add-layer">
       <v-btn @click="addLayer" icon title="Add new layer">
         <v-icon>mdi-plus-circle</v-icon>
       </v-btn>
-    </v-expansion-panel>
-  </v-expansion-panels>
+    </div>
+  </div>
 </template>
 <script setup lang="ts">
 import { ref, computed } from "vue";

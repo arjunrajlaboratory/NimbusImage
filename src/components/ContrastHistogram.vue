@@ -50,7 +50,6 @@
         :style="{ right: toValue(safeConfigContrast, 'white') }"
         :title="`Saved: ${toLabel(safeConfigContrast.whitePoint)}`"
       />
-      <resize-observer @notify="handleResize" />
     </div>
     <div class="sub">
       <v-text-field
@@ -99,7 +98,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import SwitchToggle from "./SwitchToggle.vue";
 import { IContrast } from "../store/model";
 import { ITileHistogram } from "../store/images";
@@ -156,6 +155,7 @@ const cachedBlackPoint = ref<number | null>(null);
 const cachedWhitePoint = ref<number | null>(null);
 
 let _zoomBehavior: ZoomBehavior<HTMLElement, any> | null = null;
+let _resizeObserver: ResizeObserver | null = null;
 
 const defaultContrast: IContrast = {
   mode: "percentile",
@@ -420,6 +420,11 @@ props.histogram.then((data) => (histData.value = data));
 onMounted(() => {
   handleResize();
 
+  if (rootEl.value) {
+    _resizeObserver = new ResizeObserver(handleResize);
+    _resizeObserver.observe(rootEl.value);
+  }
+
   selectAll([min.value!, max.value!])
     .data(["blackPoint", "whitePoint"])
     .call(
@@ -433,6 +438,11 @@ onMounted(() => {
     );
 
   select(svg.value!).call(getZoomBehavior());
+});
+
+onBeforeUnmount(() => {
+  _resizeObserver?.disconnect();
+  _resizeObserver = null;
 });
 
 defineExpose({

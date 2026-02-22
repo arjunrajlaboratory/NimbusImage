@@ -271,6 +271,17 @@ Vuetify 3's `<v-slider>` defaults to continuous (fractional) values, unlike Vuet
 
 - [x] `src/components/ValueSlider.vue` — Added `:step="1"` to `<v-slider>`
 
+### R14. v-expansion-panel group context fix (DisplayLayers/DisplayLayer) ✅
+In Vuetify 3, `v-expansion-panel` strictly requires a parent `v-expansion-panels` to provide the group context via provide/inject. The old structure had a single `<v-expansion-panels>` in DisplayLayers.vue with `v-expansion-panel` components deeply nested through draggable chains in DisplayLayer.vue, causing `TypeError: group.isSelected is not a function`.
+
+- [x] `src/components/DisplayLayer.vue` — Wrapped root `<v-expansion-panel>` in its own `<v-expansion-panels>`, and wrapped nested "Advanced layer options" panel in a separate `<v-expansion-panels>`
+- [x] `src/components/DisplayLayers.vue` — Replaced outer `<v-expansion-panels>` with plain `<div>` (header row and add-button aren't real expansion panels)
+
+### R15. ContrastHistogram resize-observer replacement ✅
+The `<resize-observer>` component was from the `vue-resize` package removed in Batch A. Without it, the histogram SVG width stayed at 0 (component mounts while expansion panel is collapsed), rendering an invisible path.
+
+- [x] `src/components/ContrastHistogram.vue` — Removed `<resize-observer>` component, replaced with native browser `ResizeObserver` API in `onMounted`/`onBeforeUnmount`
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)

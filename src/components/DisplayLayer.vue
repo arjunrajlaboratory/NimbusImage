@@ -1,6 +1,7 @@
 <template>
-  <v-expansion-panel>
-    <v-expansion-panel-title class="displayLayerHeader">
+  <v-expansion-panels>
+    <v-expansion-panel>
+      <v-expansion-panel-title class="displayLayerHeader">
       <v-row dense class="align-center">
         <v-col class="denseCol">
           <v-icon :color="modelValue.color" start>mdi-circle</v-icon>
@@ -76,11 +77,12 @@
           :label="channelName(channel)"
         />
       </v-radio-group>
-      <v-expansion-panel>
-        <v-expansion-panel-title
-          >Advanced layer options</v-expansion-panel-title
-        >
-        <v-expansion-panel-text>
+      <v-expansion-panels>
+        <v-expansion-panel>
+          <v-expansion-panel-title
+            >Advanced layer options</v-expansion-panel-title
+          >
+          <v-expansion-panel-text>
           <display-slice
             :model-value="modelValue.xy"
             @change="changeProp('xy', $event)"
@@ -113,10 +115,12 @@
               >Delete layer</v-btn
             >
           </div>
-        </v-expansion-panel-text>
-      </v-expansion-panel>
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+      </v-expansion-panels>
     </v-expansion-panel-text>
-  </v-expansion-panel>
+    </v-expansion-panel>
+  </v-expansion-panels>
 </template>
 
 <script setup lang="ts">
