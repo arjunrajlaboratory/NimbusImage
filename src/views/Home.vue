@@ -1,12 +1,13 @@
 <template>
-  <div>
+  <div class="home-root">
     <template v-if="store.isLoggedIn">
       <v-overlay
         :model-value="isNavigating"
-        absolute
-        color="white"
-        opacity="0.8"
+        contained
+        scrim="white"
+        :opacity="0.8"
         z-index="9999"
+        class="d-flex align-center justify-center"
       >
         <div class="loading-container">
           <v-progress-circular
@@ -1234,6 +1235,11 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
+.home-root {
+  position: relative;
+  min-height: calc(100vh - 64px);
+}
+
 .home-container {
   height: calc(100vh - 64px);
   display: flex;

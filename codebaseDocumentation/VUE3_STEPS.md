@@ -375,6 +375,12 @@ Vuetify 3's `v-table` internal styles caused user name, email, and access chip t
 
 - [x] `src/components/SharingStatusDisplay.vue` — Replaced `v-table` with `d-flex align-center` divs per user row
 
+### R31. Loading overlay centering fix (Home.vue, Dataset.vue) ✅
+In Vuetify 3, `v-overlay` with `absolute` still teleports to the app root, breaking positioning and centering. The `color` prop no longer controls the scrim (backdrop) color.
+
+- [x] `src/views/Home.vue` — Changed `absolute` → `contained`, `color="white"` → `scrim="white"`, added `.home-root` with `position: relative; min-height: calc(100vh - 64px)`
+- [x] `src/views/dataset/Dataset.vue` — Same changes with `.dataset-root` class
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
 

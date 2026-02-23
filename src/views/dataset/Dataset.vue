@@ -1,12 +1,13 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
-  <div>
+  <div class="dataset-root">
     <v-overlay
       :model-value="isLoading"
-      absolute
-      color="white"
-      opacity="0.8"
+      contained
+      scrim="white"
+      :opacity="0.8"
       z-index="9999"
+      class="d-flex align-center justify-center"
     >
       <div class="loading-container">
         <v-progress-circular
@@ -76,6 +77,11 @@ defineExpose({ isReady, isLoading, datasetReady, loadDataset });
 </script>
 
 <style scoped>
+.dataset-root {
+  position: relative;
+  min-height: calc(100vh - 64px);
+}
+
 .loading-container {
   display: flex;
   flex-direction: column;
