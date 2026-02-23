@@ -41,7 +41,7 @@ function setMapperValueFromUrl(
   obj: IMapper<any>,
   urlValue: string | undefined,
 ) {
-  if (urlValue === undefined) {
+  if (urlValue == null) {
     return;
   }
   const parsedUrlValue = obj.parse(urlValue);

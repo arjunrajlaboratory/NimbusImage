@@ -388,8 +388,19 @@ Same issue as R24 (AnnotationList): selected/unselected chips were nearly indist
 
 **Note:** This selected/unselected chip styling pattern is now duplicated in `AnnotationList.vue` (R24) and `TagCloudPicker.vue` (R32). Could be factorized into a shared utility component or global CSS class (e.g., `.chip-selected` / `.chip-unselected`) to keep it consistent in one place.
 
-### Known Runtime Issues (Not Yet Fixed)
-- [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
+### R33. Vue Router "Discarded invalid param(s)" warnings ✅
+Vue Router 4 warns about invalid params passed to `router-link` `to` props. Two root causes:
+
+1. **BreadCrumbs.vue** — Built one shared `params` object containing both `datasetId` and `configurationId`, then passed it to both the "dataset" and "configuration" route links. The "dataset" route (`/dataset/:datasetId`) got `configurationId` (invalid), and the "configuration" route (`/configuration/:configurationId`) got `datasetId` (invalid). Every re-render triggered warnings.
+
+2. **DatasetAndConfigurationRouter.vue** — Declared `configurationId` as a params mapper, but this component mounts at `/dataset/:datasetId` (no `:configurationId` in path). Store→URL sync tried to `router.replace()` with `configurationId` as a path param on a route that doesn't define it.
+
+3. **useRouteMapper.ts** — `setMapperValueFromUrl` only skipped `undefined` values (`=== undefined`), not `null`. When `route.params` contained `null` for an unmatched param, `String(null)` produced the string `"null"`, which was passed to `setDatasetViewId("null")` → API call to `/dataset_view/null` → 400 error.
+
+**Fixes:**
+- [x] `src/layout/BreadCrumbs.vue` — Split shared `params` into `datasetParams` (only `datasetId`) and `configParams` (only `configurationId`), each passed only to the appropriate route link
+- [x] `src/views/DatasetAndConfigurationRouter.vue` — Moved `configurationId` from params mapper to query mapper (safe: on `/dataset` routes it becomes a query param; on `/configuration` routes, `Configuration.vue` handles it as a path param)
+- [x] `src/utils/useRouteMapper.ts` — Changed `urlValue === undefined` to `urlValue == null` to also skip `null` values
 
 ## Batch E: Test Suite Recovery ✅
 

@@ -274,12 +274,13 @@ async function refreshItems(force = false) {
   };
 
   const newItems: IBreadCrumbItem[] = [];
-  const params: { [key: string]: string } = {};
+  const datasetParams: Record<string, string> = {};
+  const configParams: Record<string, string> = {};
   if (resolvedDatasetId) {
-    params.datasetId = resolvedDatasetId;
+    datasetParams.datasetId = resolvedDatasetId;
   }
   if (resolvedConfigurationId) {
-    params.configurationId = resolvedConfigurationId;
+    configParams.configurationId = resolvedConfigurationId;
   }
 
   let datasetItem: IBreadCrumbItem | undefined;
@@ -287,7 +288,7 @@ async function refreshItems(force = false) {
     const cached = girderResources.watchFolder(resolvedDatasetId);
     datasetItem = {
       title: "Dataset:",
-      to: { name: "dataset", params },
+      to: { name: "dataset", params: datasetParams },
       text: cached?.name ?? "Unknown dataset",
     };
     newItems.push(datasetItem);
@@ -314,7 +315,7 @@ async function refreshItems(force = false) {
     const cached = girderResources.watchCollection(resolvedConfigurationId);
     const configurationItem: IBreadCrumbItem = {
       title: "Collection:",
-      to: { name: "configuration", params },
+      to: { name: "configuration", params: configParams },
       text: cached?.name ?? "Unknown configuration",
     };
     newItems.push(configurationItem);
