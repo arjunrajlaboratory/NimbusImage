@@ -271,14 +271,14 @@ export default class AnnotationsAPI {
 
   toConnection = (item: any): IAnnotationConnection => {
     const { label, tags, _id, parentId, childId, datasetId } = item;
-    return {
+    return markRaw({
       label,
       tags,
       id: _id,
       parentId,
       childId,
       datasetId,
-    };
+    });
   };
 
   // Count endpoints

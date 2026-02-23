@@ -959,16 +959,22 @@ const dataTableInner = computed(() => {
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
 - **Template ref typing**: Mixed Class + Composition components cause type mismatches during incremental migration.
 - **Vuetify v-data-table**: Significant API differences in v3. Complex usages (especially `AnnotationList.vue` with `$children` access) require complete rewrites. See Phase 3 notes.
-- ~~**Vue 3 Proxy performance on large arrays**~~ (Resolved): `markRaw()` is already applied to all annotation objects in `AnnotationsAPI.ts:135` (API responses) and `annotation.ts:865` (cloned for editing). This is **better than `shallowRef`** — individual annotation items are permanently excluded from Vue's proxy system (`__v_skip: true`), while the array container remains reactive so Vue detects add/remove operations. Measured with 26K annotations: proxy overhead is ~2MB, annotation data is ~9.4MB raw JSON. The `propertyValues` store (22MB, ~182K nested objects) and `annotationCentroids` (1.8MB, 26K entries) are NOT `markRaw()`'d and remain fully reactive, but could be opted out similarly since they are computed read-only data. See "Annotation Store `markRaw()` Strategy" below.
+- ~~**Vue 3 Proxy performance on large arrays**~~ (Resolved): `markRaw()` is applied to all annotation objects in `AnnotationsAPI.ts:135` (API responses) and `annotation.ts:865` (cloned for editing), plus `propertyValues` (in `properties.ts:166`), `annotationCentroids` (in `annotation.ts:461/474/495/499`), and `annotationConnections` (in `AnnotationsAPI.ts:274` via `toConnection`). All large read-only data structures are now excluded from Vue's proxy system. See "Annotation Store `markRaw()` Strategy" below.
 
 ### Annotation Store `markRaw()` Strategy
 
 **Status: Applied and verified with 26K annotations on Vue 3.**
 
-The annotation store uses `markRaw()` on individual annotation objects to prevent Vue 3's Proxy system from wrapping them. This is the optimal pattern for large collections of read-mostly data:
+The annotation store uses `markRaw()` on all large read-only data structures to prevent Vue 3's Proxy system from wrapping them. This is the optimal pattern for large collections of read-mostly data:
 
 - **`AnnotationsAPI.ts:135`** — Every annotation parsed from API responses is wrapped with `markRaw()` before entering the store
+- **`AnnotationsAPI.ts:274`** — Every connection parsed from API responses is wrapped with `markRaw()` via `toConnection()`
 - **`annotation.ts:865`** — Annotations cloned for editing (`structuredClone`) are re-wrapped with `markRaw()`
+- **`annotation.ts:461/474/499`** — Each centroid entry is wrapped with `markRaw()` when added
+- **`annotation.ts:495`** — The `annotationCentroids` dict itself is marked raw on reset (`markRaw({})`) to prevent proxy traps during bulk 26K key assignments
+- **`properties.ts:166`** — The entire `propertyValues` object is wrapped with `markRaw()` in `updatePropertyValues` (single mutation chokepoint)
+
+**NOT marked raw:** `propertyStatuses` — has direct in-place mutations (`status.running = true`) that require reactivity.
 
 **Why `markRaw()` is better than `shallowRef` for this use case:**
 - `shallowRef` on the array would still create Proxy wrappers for items when accessed through the reactive array (lazy but cumulative)
@@ -981,10 +987,11 @@ The annotation store uses `markRaw()` on individual annotation objects to preven
 | Data | Raw Size | Proxy Overhead | `markRaw`? |
 |------|----------|---------------|------------|
 | `annotations` (26K items) | 9.4 MB | ~0 MB | Yes |
-| `propertyValues` (26K entries, 5 nested each) | 22.2 MB | ~2 MB (182K proxies) | No |
-| `annotationCentroids` (26K entries) | 1.8 MB | <1 MB (26K proxies) | No |
+| `propertyValues` (26K entries, 5 nested each) | 22.2 MB | ~0 MB | Yes |
+| `annotationCentroids` (26K entries) | 1.8 MB | ~0 MB | Yes |
+| `annotationConnections` | variable | ~0 MB | Yes |
 | `annotationIdToIdx` (26K entries) | 0.8 MB | ~0 MB (primitive values) | No |
-| Total store data | ~42 MB | ~2 MB | — |
+| Total store data | ~42 MB | ~0 MB | — |
 | Total JS heap | ~530 MB | — | — |
 
-The ~530MB heap is dominated by GeoJS tile caches (~400MB+), canvas rendering (~42MB), and Vue's dependency tracking infrastructure (~35MB est.), not by proxy overhead. The `markRaw()` strategy on annotations is working as intended — no further optimization needed for annotation reactivity.
+The ~530MB heap is dominated by GeoJS tile caches (~400MB+), canvas rendering (~42MB), and Vue's dependency tracking infrastructure (~35MB est.), not by proxy overhead. The `markRaw()` strategy eliminates virtually all proxy overhead on store data.

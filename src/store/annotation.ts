@@ -458,7 +458,9 @@ export class Annotations extends VuexModule {
   @Mutation
   private addAnnotationImpl(value: IAnnotation) {
     this.annotations.push(value);
-    this.annotationCentroids[value.id] = simpleCentroid(value.coordinates);
+    this.annotationCentroids[value.id] = markRaw(
+      simpleCentroid(value.coordinates),
+    );
     this.annotationIdToIdx[value.id] = this.annotations.length - 1;
   }
 
@@ -471,7 +473,9 @@ export class Annotations extends VuexModule {
     index: number;
   }) {
     this.annotations.splice(index, 1, annotation);
-    this.annotationCentroids[annotation.id] = simpleCentroid(annotation.coordinates);
+    this.annotationCentroids[annotation.id] = markRaw(
+      simpleCentroid(annotation.coordinates),
+    );
     this.annotationIdToIdx[annotation.id] = index;
   }
 
@@ -492,11 +496,13 @@ export class Annotations extends VuexModule {
       }
     }
     this.annotations = values;
-    this.annotationCentroids = {};
+    this.annotationCentroids = markRaw({});
     this.annotationIdToIdx = {};
     for (let idx = 0; idx < this.annotations.length; ++idx) {
       const annotation = this.annotations[idx];
-      this.annotationCentroids[annotation.id] = simpleCentroid(annotation.coordinates);
+      this.annotationCentroids[annotation.id] = markRaw(
+        simpleCentroid(annotation.coordinates),
+      );
       this.annotationIdToIdx[annotation.id] = idx;
     }
   }

@@ -6,6 +6,7 @@ import {
   VuexModule,
 } from "vuex-module-decorators";
 import store from "./root";
+import { markRaw } from "vue";
 
 import {
   IAnnotationProperty,
@@ -163,7 +164,7 @@ export class Properties extends VuexModule {
   @Mutation
   updatePropertyValues(values: IAnnotationPropertyValues) {
     // TODO(performance): merge instead
-    this.propertyValues = values;
+    this.propertyValues = markRaw(values);
   }
 
   @Mutation

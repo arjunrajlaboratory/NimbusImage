@@ -345,6 +345,17 @@ The chat store (`src/store/chat.ts`) had two Vue 3 reactivity issues, and the ch
 - [x] `src/components/ChatComponent.vue` — Restyled message bubbles: rounded corners with directional tails, blue-tinted user bubbles vs subtle light assistant bubbles, 8px gap between messages.
 - [x] `src/components/ChatComponent.vue` — Redesigned input area: compact outlined textarea, icon buttons for image upload and send (mdi-send), tighter layout with border-top separator.
 
+### R26. markRaw() for propertyValues, annotationCentroids, and annotationConnections ✅
+Memory profiling with 26K annotations showed three data structures had unnecessary reactive proxy wrapping (~182K proxies for propertyValues, ~26K for centroids). All three are read-only after storage — safe to mark raw.
+
+- [x] `src/store/properties.ts` — Added `import { markRaw } from "vue"`, wrapped `this.propertyValues = markRaw(values)` in `updatePropertyValues` mutation (single chokepoint for all property value updates)
+- [x] `src/store/annotation.ts` — `addAnnotationImpl`: wrapped centroid with `markRaw()`
+- [x] `src/store/annotation.ts` — `setAnnotation`: wrapped centroid with `markRaw()`
+- [x] `src/store/annotation.ts` — `setAnnotations`: marked reset dict raw (`markRaw({})`) to prevent proxy traps on all 26K key assignments, and wrapped each centroid with `markRaw()`
+- [x] `src/store/AnnotationsAPI.ts` — Wrapped `toConnection` return with `markRaw()`, mirroring the existing `toAnnotation` pattern
+
+**NOT touched:** `propertyStatuses` (has direct in-place mutations like `status.running = true`).
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
 
