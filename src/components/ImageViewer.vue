@@ -1319,7 +1319,14 @@ watch(backgroundColor, updateBackgroundColor);
 watch(
   () => sync.datasetLoading,
   (loading) => {
-    if (!loading) {
+    if (loading) {
+      // Immediately hide old tiles when dataset transition starts
+      maps.value.forEach((mapentry) => {
+        mapentry.imageLayers.forEach((layer) => {
+          layer.node().css("visibility", "hidden");
+        });
+      });
+    } else {
       draw();
     }
   },

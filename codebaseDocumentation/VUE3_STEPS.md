@@ -402,6 +402,19 @@ Vue Router 4 warns about invalid params passed to `router-link` `to` props. Two 
 - [x] `src/views/DatasetAndConfigurationRouter.vue` — Moved `configurationId` from params mapper to query mapper (safe: on `/dataset` routes it becomes a query param; on `/configuration` routes, `Configuration.vue` handles it as a path param)
 - [x] `src/utils/useRouteMapper.ts` — Changed `urlValue === undefined` to `urlValue == null` to also skip `null` values
 
+### R34. ImageViewer stale tile flicker during dataset transitions ✅
+When navigating between datasets, old tiles remained visible briefly before new tiles loaded. Three layered fixes:
+
+1. **`src/utils/useRouteMapper.ts`** (root cause) — Changed `syncFromRoute(route)` from `onMounted` to run during `setup()`. Vue 3 lifecycle order is: parent setup → child setup → child onMounted → parent onMounted. When `syncFromRoute` ran in `onMounted`, child components (ImageViewer) mounted and called `draw()` with stale store data before the parent's `onMounted` fired `setDatasetViewId`. Moving to setup ensures store setters run before child components exist.
+
+2. **`src/store/index.ts`** — Set `sync.setDatasetLoading(true)` at the very start of `setDatasetViewId`, before any `await`. Without this, the first `await getDatasetView()` yields to the microtask queue, pending watchers fire, and `draw()` renders stale tiles because `datasetLoading` is still `false`. Also added `sync.setDatasetLoading(false)` in the error catch path and after `Promise.all` to prevent stuck loading state.
+
+3. **`src/components/ImageViewer.vue`** — Extended the `datasetLoading` watcher to handle `true` (not just `false`). When `datasetLoading` becomes `true`, immediately hides all tile layers via CSS `visibility: hidden`. This is defense-in-depth for cases where ImageViewer is reused without remounting.
+
+- [x] `src/utils/useRouteMapper.ts` — `onMounted(() => syncFromRoute(route))` → `syncFromRoute(route)` in setup
+- [x] `src/store/index.ts` — Early `sync.setDatasetLoading(true)` before async work in `setDatasetViewId`
+- [x] `src/components/ImageViewer.vue` — `datasetLoading` watcher hides tiles on `true`, draws on `false`
+
 ## Batch E: Test Suite Recovery ✅
 
 Migrated all 118 test files from Vue Test Utils v1 / Vue 2 patterns to Vue Test Utils v2 / Vue 3 patterns. Eliminated ~1982 tsc errors in test files and restored the full test suite.

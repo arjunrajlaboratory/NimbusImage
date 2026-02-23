@@ -1,4 +1,4 @@
-import { watch, onMounted, computed } from "vue";
+import { watch, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { Router, RouteLocationNormalized } from "vue-router";
 import { logError } from "./log";
@@ -110,6 +110,11 @@ export function useRouteMapper(
     (newRoute) => syncFromRoute(newRoute),
   );
 
-  // Replace beforeRouteEnter
-  onMounted(() => syncFromRoute(route));
+  // Sync from route during setup (not onMounted) so that store setters
+  // (e.g., setDatasetViewId which sets datasetLoading=true) run before
+  // child components mount. Vue lifecycle order is: parent setup → child
+  // setup → child onMounted → parent onMounted. If we wait for onMounted,
+  // child components (like ImageViewer) mount and draw stale data before
+  // the store knows a transition is happening.
+  syncFromRoute(route);
 }

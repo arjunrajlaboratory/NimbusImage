@@ -1278,6 +1278,11 @@ export class Main extends VuexModule {
     if (!id) {
       this.setDatasetViewImpl(null);
     } else {
+      // Set datasetLoading immediately BEFORE any async work.
+      // Without this, the first await yields to the microtask queue,
+      // pending watchers fire, and draw() renders stale tiles because
+      // datasetLoading is still false.
+      sync.setDatasetLoading(true);
       let datasetView: IDatasetView;
       try {
         datasetView = await this.api.getDatasetView(id);
@@ -1287,6 +1292,7 @@ export class Main extends VuexModule {
           `Failed to fetch dataset view ${id}.\nIt may be because it has been deleted or that you don't have the access is forbidden.\n`,
           err,
         );
+        sync.setDatasetLoading(false);
         return;
       }
       datasetView.lastViewed = Date.now();
@@ -1318,6 +1324,9 @@ export class Main extends VuexModule {
         );
       }
       await Promise.all(promises);
+      // Ensure datasetLoading is cleared even if setSelectedDataset wasn't called
+      // (e.g., same dataset, different config/view settings)
+      sync.setDatasetLoading(false);
     }
   }
 
