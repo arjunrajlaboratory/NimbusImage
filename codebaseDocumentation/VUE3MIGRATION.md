@@ -918,7 +918,7 @@ addMultipleConnections(value: IAnnotationConnection[]) {
 
 **Rule of thumb:** In any Vuex mutation that modifies an array watched by a `<script setup>` component's `watch()`, always replace the array (`this.arr = [...this.arr, item]`) rather than mutating in place (`this.arr.push(item)`). This is safe for both Vue 2.7 and Vue 3.
 
-**Future-proofing note (`shallowRef`):** This array-replacement pattern is also strictly required when we eventually transition large state arrays (annotations, connections, properties) to `shallowRef` for performance optimization post-Vue 3 migration. `shallowRef` only tracks `.value` reassignment — it completely ignores internal mutations like `.push()` or `.splice()`. By enforcing the spread/replacement pattern now to fix the Vue 2.7 `watch()` bug, the state management code is already compatible with `shallowRef`.
+**Future-proofing note (array replacement):** This array-replacement pattern is also strictly required for any future transition to `shallowRef`. `shallowRef` only tracks `.value` reassignment — it completely ignores internal mutations like `.push()` or `.splice()`. By enforcing the spread/replacement pattern now, the state management code is already compatible. Note: for annotations specifically, `markRaw()` is already applied to individual items (see "Annotation Store `markRaw()` Strategy" in Risk Areas), so `shallowRef` is not needed — the items are already excluded from Vue's proxy system.
 
 **Test coverage:** `src/store/annotation-mutations.test.ts` includes regression tests proving that array replacement triggers `watch()` and that `.push()` does not.
 
@@ -959,4 +959,32 @@ const dataTableInner = computed(() => {
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
 - **Template ref typing**: Mixed Class + Composition components cause type mismatches during incremental migration.
 - **Vuetify v-data-table**: Significant API differences in v3. Complex usages (especially `AnnotationList.vue` with `$children` access) require complete rewrites. See Phase 3 notes.
-- **Vue 3 Proxy performance on large arrays**: Rendering massive arrays of annotations will initially cause performance regressions due to deep Proxy wrapping. This is a known issue to be resolved after getting the app running by transitioning annotation, connection, and property arrays to `shallowRef`, which avoids deep Proxy wrapping while still tracking reassignment.
+- ~~**Vue 3 Proxy performance on large arrays**~~ (Resolved): `markRaw()` is already applied to all annotation objects in `AnnotationsAPI.ts:135` (API responses) and `annotation.ts:865` (cloned for editing). This is **better than `shallowRef`** — individual annotation items are permanently excluded from Vue's proxy system (`__v_skip: true`), while the array container remains reactive so Vue detects add/remove operations. Measured with 26K annotations: proxy overhead is ~2MB, annotation data is ~9.4MB raw JSON. The `propertyValues` store (22MB, ~182K nested objects) and `annotationCentroids` (1.8MB, 26K entries) are NOT `markRaw()`'d and remain fully reactive, but could be opted out similarly since they are computed read-only data. See "Annotation Store `markRaw()` Strategy" below.
+
+### Annotation Store `markRaw()` Strategy
+
+**Status: Applied and verified with 26K annotations on Vue 3.**
+
+The annotation store uses `markRaw()` on individual annotation objects to prevent Vue 3's Proxy system from wrapping them. This is the optimal pattern for large collections of read-mostly data:
+
+- **`AnnotationsAPI.ts:135`** — Every annotation parsed from API responses is wrapped with `markRaw()` before entering the store
+- **`annotation.ts:865`** — Annotations cloned for editing (`structuredClone`) are re-wrapped with `markRaw()`
+
+**Why `markRaw()` is better than `shallowRef` for this use case:**
+- `shallowRef` on the array would still create Proxy wrappers for items when accessed through the reactive array (lazy but cumulative)
+- `markRaw()` on each item permanently marks it with `__v_skip: true`, so Vue never creates a Proxy regardless of access path
+- The array container itself stays reactive, so `watch()` on the array still fires when annotations are added/removed (via array replacement pattern)
+- Trade-off: mutations to individual annotation properties are not reactive — but this is correct, because annotations are always replaced wholesale (never mutated in place)
+
+**Memory profile (26K annotations, measured on Vue 3):**
+
+| Data | Raw Size | Proxy Overhead | `markRaw`? |
+|------|----------|---------------|------------|
+| `annotations` (26K items) | 9.4 MB | ~0 MB | Yes |
+| `propertyValues` (26K entries, 5 nested each) | 22.2 MB | ~2 MB (182K proxies) | No |
+| `annotationCentroids` (26K entries) | 1.8 MB | <1 MB (26K proxies) | No |
+| `annotationIdToIdx` (26K entries) | 0.8 MB | ~0 MB (primitive values) | No |
+| Total store data | ~42 MB | ~2 MB | — |
+| Total JS heap | ~530 MB | — | — |
+
+The ~530MB heap is dominated by GeoJS tile caches (~400MB+), canvas rendering (~42MB), and Vue's dependency tracking infrastructure (~35MB est.), not by proxy overhead. The `markRaw()` strategy on annotations is working as intended — no further optimization needed for annotation reactivity.
