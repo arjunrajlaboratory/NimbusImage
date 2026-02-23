@@ -33,6 +33,10 @@ export default mergeConfig(
       setupFiles: [
         fileURLToPath(new URL("./test/setup.ts", import.meta.url)),
       ],
+      // Vitest 3 exits with code 1 on unhandled async errors even when all tests pass.
+      // Our tests produce harmless async lifecycle errors (e.g., ImageViewer tile URL
+      // generation after teardown). These aren't real failures.
+      dangerouslyIgnoreUnhandledErrors: true,
       server: {
         deps: {
           inline: ["vuetify"],

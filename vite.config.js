@@ -102,6 +102,15 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ["itk-wasm"],
   },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        // Vuetify 3 still uses the legacy Sass JS API internally.
+        // Silence the deprecation warning until Vuetify migrates to the modern API.
+        silenceDeprecations: ["legacy-js-api"],
+      },
+    },
+  },
   build: {
     sourcemap: true,
   },

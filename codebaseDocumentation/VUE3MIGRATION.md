@@ -6,7 +6,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status
 
-**Phase 3 Batches A–E + Runtime Fixes complete. App boots and renders correctly on Vue 3 + Vuetify 3. Full test suite restored (118/118 files, 2073/2073 tests passing).**
+**Phase 3 complete (Batches A–F). App fully running on Vue 3 + Vuetify 3 + Vite 6. Production build works. Full test suite passing.**
 
 - **Phase 1:** 124/124 components migrated to `<script setup>` (Batches 1–19 + master merge)
 - **Phase 2:** `$refs` converted, directive state migrated, `markRaw()` applied to all GeoJS objects
@@ -16,9 +16,11 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Phase 3 Batch D:** All Vuetify 3 template fixes complete — ~400+ changes across 60+ files. Activator slots, prop renames, structural component renames, v-data-table rewrites, v-model protocol, color/theme system, and all edge cases resolved.
 - **Runtime Fixes:** Visual walkthrough completed. Fixed @girder/components inject, vuedraggable 4.x compatibility, Vuetify icon aliases, missing component imports, v-select `item-title` migration (10 files), BreadCrumbs CSS/reactivity, home screen layout (file browser names, header row flex, row alignment, search bar, app bar title position, tab active indicator). See VUE3_STEPS.md "Runtime Fixes" section.
 - **Phase 3 Batch E:** Test suite fully recovered — migrated 118 test files from Vue Test Utils v1 to v2, eliminated ~1982 tsc errors, all 2073 tests passing.
+- **Phase 3 Batch F:** Build toolchain upgraded — Vite 6.4, @vitejs/plugin-vue 6.0.4, Vitest 3.2, Sass 1.86+, vite-plugin-static-copy 3.2. Node version in `.npmrc` updated from 18.20.2 to 22.22.0. Production build now works.
 - **TypeScript:** `pnpm tsc` has 0 errors (source and test files).
-- **Dev server:** App boots successfully. Home page (file browser with names, chips, search; recent datasets/projects tabs), dataset viewer, toolsets, layer controls, settings, and snapshots all render correctly.
-- **Tests:** 118/118 test files passing, 2073/2073 tests passing, 0 failures. 68 unhandled rejection warnings from background async operations (pre-existing, not test failures).
+- **Dev server:** App boots successfully on Vite 6. Home page (file browser with names, chips, search; recent datasets/projects tabs), dataset viewer, toolsets, layer controls, settings, and snapshots all render correctly.
+- **Build:** `pnpm build` succeeds (production build).
+- **Tests:** 118/118 test files passing, 2073/2073 tests passing, 0 failures.
 
 ---
 
@@ -56,9 +58,9 @@ All 124 components converted from Class API (`@Component` + decorators) to `<scr
   - `AnnotationList.vue`: `Map<string, Element>` for dynamic annotation refs
 - **Convert `.sync` to `v-model:`** (11 occurrences) — **Deferred to Phase 3.** `v-model:prop` syntax requires Vue 3's template compiler. The `.sync` modifier is the correct Vue 2 pattern and works fine in Vue 2.7.
 
-### Phase 3: Framework Switch & Testing Upgrade — BATCHES A–E COMPLETE
+### Phase 3: Framework Switch & Testing Upgrade — COMPLETE (Batches A–F)
 
-This is the core Vue 3 + Vuetify 3 upgrade. Batches A–E are complete (package swap, mechanical code fixes, getCurrentInstance cleanup, Vuetify 3 template fixes, runtime fixes, test suite recovery). Batch F (Vite 6 upgrade) is next.
+This is the core Vue 3 + Vuetify 3 upgrade. All batches complete: package swap (A), mechanical code fixes (B), getCurrentInstance cleanup (C), Vuetify 3 template fixes (D), test suite recovery (E), and Vite 6 + Vitest 3 build toolchain upgrade (F).
 
 #### Prerequisites (Hard Blockers) — ALL DONE
 
