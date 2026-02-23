@@ -312,6 +312,12 @@ Vuetify 2 used `{ divider: true }` and `{ header: category }` objects in v-selec
 
 - [x] `src/components/DockerImageSelect.vue` — Replaced `{ divider: true }` → `{ type: "divider" }`, `{ header: category }` → `{ type: "subheader", title: category }`, `{ text, value }` → `{ title, value }`, removed `item-title`/`item-value` props, updated `#item` slot to Vuetify 3 `v-list-item` pattern
 
+### R22. Property miller columns font size and layout fix (AnnotationProperties.vue) ✅
+In Vuetify 3, the default font size and list item layout caused text wrapping in the narrow miller columns. The chevron icons and checkboxes were in the default slot, rendering below the title text instead of inline.
+
+- [x] `src/components/AnnotationBrowser/AnnotationProperties.vue` — Reduced font size to `0.8rem` on miller columns and `v-list-item-title`
+- [x] `src/components/AnnotationBrowser/AnnotationProperties.vue` — Moved checkbox/chevron from default slot to `#append` slot for inline layout, added `density="compact"` to checkbox and `size="small"` to chevron icon
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)

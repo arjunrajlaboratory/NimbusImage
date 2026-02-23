@@ -136,15 +136,16 @@
               <v-list-item-title>
                 {{ item.name }}
               </v-list-item-title>
-              <span class="my-2">
+              <template #append>
                 <v-checkbox
                   v-if="item.isLeaf"
                   :model-value="getPropertySettings(item.path)"
                   @update:model-value="togglePropertySettings(item.path)"
                   hide-details
+                  density="compact"
                 />
-                <v-icon v-else>mdi-chevron-right</v-icon>
-              </span>
+                <v-icon v-else size="small">mdi-chevron-right</v-icon>
+              </template>
             </v-list-item>
           </v-list>
         </div>
@@ -437,10 +438,15 @@ defineExpose({
   max-width: 300px;
   padding: 0px 2px;
   border-right: 1px solid;
+  font-size: 0.8rem;
 
   border-color: rgba(0, 0, 0, 0.12);
   &.dark {
     border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  :deep(.v-list-item-title) {
+    font-size: 0.8rem;
   }
 }
 </style>
