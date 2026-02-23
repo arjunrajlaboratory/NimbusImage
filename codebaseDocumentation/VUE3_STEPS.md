@@ -318,8 +318,19 @@ In Vuetify 3, the default font size and list item layout caused text wrapping in
 - [x] `src/components/AnnotationBrowser/AnnotationProperties.vue` — Reduced font size to `0.8rem` on miller columns and `v-list-item-title`
 - [x] `src/components/AnnotationBrowser/AnnotationProperties.vue` — Moved checkbox/chevron from default slot to `#append` slot for inline layout, added `density="compact"` to checkbox and `size="small"` to chevron icon
 
+### R23. AnnotationList v-data-table pagination fix ✅
+Vuetify 3's `v-data-table` uses 1-based page numbers. The code initialized `page` to `0` (correct for Vuetify 2), which caused the table to display "No data available" with pagination showing "-9-0 of 431". Also `item-key` was renamed to `item-value` in Vuetify 3.
+
+- [x] `src/components/AnnotationBrowser/AnnotationList.vue` — Changed `page = ref(0)` to `ref(1)` (Vuetify 3 uses 1-based pages)
+- [x] `src/components/AnnotationBrowser/AnnotationList.vue` — Changed `item-key` to `item-value` (Vuetify 3 prop rename)
+- [x] `src/components/AnnotationBrowser/AnnotationList.vue` — Fixed `getPageFromItemId` to return `1` instead of `0` for edge cases
+
+### R24. AnnotationList column chip contrast ✅
+Selected and unselected column filter chips were nearly indistinguishable (both white-outlined on dark background). Improved visual contrast.
+
+- [x] `src/components/AnnotationBrowser/AnnotationList.vue` — Selected chips use `variant="flat"` with `color="white"` (filled), unselected use `variant="outlined"` with `opacity: 0.4` (dimmed)
+
 ### Known Runtime Issues (Not Yet Fixed)
-- [ ] **AnnotationList v-data-table** — Shows "No data available" with incorrect pagination ("-9-0 of 466"). Headers format or slot syntax needs runtime debugging despite passing tsc. This is a D8 item that needs further investigation at runtime.
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
 
 ## Batch E: Test Suite Recovery — NOT STARTED

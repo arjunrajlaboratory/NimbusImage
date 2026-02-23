@@ -78,16 +78,15 @@
             v-model="selectedColumns"
             column
             multiple
-            active-class="selected-chip"
+            selected-class=""
           >
             <v-chip
               v-for="option in columnOptions"
               :key="option.key"
               :value="option.key"
-              :class="{
-                'selected-chip': selectedColumns.includes(option.key),
-              }"
-              variant="outlined"
+              :variant="selectedColumns.includes(option.key) ? 'flat' : 'outlined'"
+              :color="selectedColumns.includes(option.key) ? 'white' : undefined"
+              :style="selectedColumns.includes(option.key) ? {} : { opacity: 0.4 }"
               size="x-small"
             >
               {{ option.title }}
@@ -107,7 +106,7 @@
         :items="filteredItems"
         :headers="headers"
         show-select
-        item-key="annotation.id"
+        item-value="annotation.id"
         v-model="selectedItems"
         :page="page"
         :items-per-page-options="[10, 50, 200]"
@@ -296,7 +295,7 @@ const localIdFilter = ref<string | undefined>("");
 const addOrRemove = ref<"add" | "remove">("add");
 
 // These are "from" or "to" v-data-table
-const page = ref(0);
+const page = ref(1);
 const itemsPerPage = ref(10);
 const groupBy = ref<string | string[]>([]);
 const sortBy = ref<{ key: string; order: "asc" | "desc" }[]>([]);
@@ -456,11 +455,11 @@ const getPageFromItemId = computed(() => {
       ({ annotation }) => annotation.id === itemId,
     );
     if (entryIndex <= 0) {
-      return 0;
+      return 1;
     }
     const perPage = itemsPerPage.value;
     if (perPage <= 0) {
-      return 0;
+      return 1;
     } else {
       return (Math.floor(entryIndex / perPage) || 0) + 1;
     }
@@ -608,14 +607,11 @@ tbody tr.is-hovered:hover {
   justify-content: center;
 }
 
-.selected-chip {
-  border-color: #ffffff !important; /* Change to your preferred color */
-}
-
 .v-chip {
   transition:
     background-color 0.3s,
-    color 0.3s; /* Smooth transition */
+    color 0.3s,
+    opacity 0.3s;
 }
 
 td span {
