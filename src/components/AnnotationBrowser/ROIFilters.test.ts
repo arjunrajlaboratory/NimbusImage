@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store/filters", () => ({
   default: {
@@ -17,11 +15,8 @@ vi.mock("@/store/filters", () => ({
 import ROIFilters from "./ROIFilters.vue";
 import filterStore from "@/store/filters";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return mount(ROIFilters, {
-    vuetify: new Vuetify(),
   });
 }
 

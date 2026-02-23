@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockGetDatasetAccess = vi.fn();
 const mockFindDatasetViews = vi.fn();
@@ -25,8 +23,6 @@ vi.mock("@/utils/log", () => ({
 }));
 
 import ShareDataset from "./ShareDataset.vue";
-
-Vue.use(Vuetify);
 
 const defaultAccessList = {
   public: false,
@@ -59,8 +55,7 @@ const defaultViews = [
 
 function mountComponent(props: any = {}) {
   return shallowMount(ShareDataset, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       dataset: { _id: "ds1", _modelType: "folder", name: "TestDataset" },
       modelValue: false,
       ...props,
@@ -81,14 +76,12 @@ describe("ShareDataset", () => {
     const wrapper = mountComponent({ modelValue: true });
     const vm = wrapper.vm as any;
     expect(vm.dialog).toBe(true);
-    wrapper.destroy();
   });
 
   it("dialog computed getter returns false when value is false", () => {
     const wrapper = mountComponent({ modelValue: false });
     const vm = wrapper.vm as any;
     expect(vm.dialog).toBe(false);
-    wrapper.destroy();
   });
 
   it("dialog computed setter emits input event", () => {
@@ -97,7 +90,6 @@ describe("ShareDataset", () => {
     vm.dialog = true;
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0][0]).toBe(true);
-    wrapper.destroy();
   });
 
   it("close sets dialog to false", () => {
@@ -106,7 +98,6 @@ describe("ShareDataset", () => {
     vm.close();
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0][0]).toBe(false);
-    wrapper.destroy();
   });
 
   it("initializes with default state values", () => {
@@ -121,7 +112,6 @@ describe("ShareDataset", () => {
     expect(vm.selectedConfigIds).toEqual([]);
     expect(vm.newUserEmail).toBe("");
     expect(vm.newUserAccessLevel).toBe(0);
-    wrapper.destroy();
   });
 
   it("resetState clears all fields", async () => {
@@ -149,7 +139,6 @@ describe("ShareDataset", () => {
     expect(vm.newUserEmail).toBe("");
     expect(vm.newUserAccessLevel).toBe(0);
     expect(vm.userToRemove).toBeNull();
-    wrapper.destroy();
   });
 
   it("fetchAccessInfo populates state from API", async () => {
@@ -164,7 +153,6 @@ describe("ShareDataset", () => {
     expect(vm.configurations).toHaveLength(2);
     expect(vm.selectedConfigIds).toEqual(["cfg1", "cfg2"]);
     expect(vm.loading).toBe(false);
-    wrapper.destroy();
   });
 
   it("fetchAccessInfo handles error gracefully", async () => {
@@ -176,7 +164,6 @@ describe("ShareDataset", () => {
     expect(vm.showError).toBe(true);
     expect(vm.errorString).toBe("Failed to load access information");
     expect(vm.loading).toBe(false);
-    wrapper.destroy();
   });
 
   it("togglePublic calls setDatasetPublic API", async () => {
@@ -187,7 +174,6 @@ describe("ShareDataset", () => {
     expect(mockSetDatasetPublic).toHaveBeenCalledWith("ds1", true);
     expect(vm.isPublic).toBe(true);
     expect(vm.publicLoading).toBe(false);
-    wrapper.destroy();
   });
 
   it("togglePublic reverts isPublic on error", async () => {
@@ -200,7 +186,6 @@ describe("ShareDataset", () => {
     expect(vm.isPublic).toBe(false);
     expect(vm.showError).toBe(true);
     expect(vm.publicLoading).toBe(false);
-    wrapper.destroy();
   });
 
   it("togglePublic does nothing when dataset is null", async () => {
@@ -208,7 +193,6 @@ describe("ShareDataset", () => {
     const vm = wrapper.vm as any;
     await vm.togglePublic(true);
     expect(mockSetDatasetPublic).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("updateUserAccess calls shareDatasetView with correct args", async () => {
@@ -224,7 +208,6 @@ describe("ShareDataset", () => {
       user.login,
       1,
     );
-    wrapper.destroy();
   });
 
   it("updateUserAccess shows error when no configs selected", async () => {
@@ -238,7 +221,6 @@ describe("ShareDataset", () => {
     expect(vm.showError).toBe(true);
     expect(vm.errorString).toBe("Please select at least one collection");
     expect(mockShareDatasetView).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("updateUserAccess handles badEmailOrUsername response", async () => {
@@ -251,7 +233,6 @@ describe("ShareDataset", () => {
 
     expect(vm.showError).toBe(true);
     expect(vm.errorString).toBe("User not found");
-    wrapper.destroy();
   });
 
   it("removeUser calls shareDatasetView with level -1", async () => {
@@ -268,7 +249,6 @@ describe("ShareDataset", () => {
       user.login,
       -1,
     );
-    wrapper.destroy();
   });
 
   it("removeUser removes user from local state on success", async () => {
@@ -281,7 +261,6 @@ describe("ShareDataset", () => {
     await vm.removeUser();
 
     expect(vm.users.find((u: any) => u.id === user.id)).toBeUndefined();
-    wrapper.destroy();
   });
 
   it("removeUser does nothing when userToRemove is null", async () => {
@@ -290,7 +269,6 @@ describe("ShareDataset", () => {
     vm.userToRemove = null;
     await vm.removeUser();
     expect(mockShareDatasetView).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("addUser calls shareDatasetView and refreshes access", async () => {
@@ -314,7 +292,6 @@ describe("ShareDataset", () => {
     // Form cleared
     expect(vm.newUserEmail).toBe("");
     expect(vm.newUserAccessLevel).toBe(0);
-    wrapper.destroy();
   });
 
   it("addUser does nothing when email is empty", async () => {
@@ -323,7 +300,6 @@ describe("ShareDataset", () => {
     vm.newUserEmail = "";
     await vm.addUser();
     expect(mockShareDatasetView).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("addUser shows error when no configs selected", async () => {
@@ -337,7 +313,6 @@ describe("ShareDataset", () => {
 
     expect(vm.showError).toBe(true);
     expect(vm.errorString).toBe("Please select at least one collection");
-    wrapper.destroy();
   });
 
   it("addUser handles badEmailOrUsername response", async () => {
@@ -353,7 +328,6 @@ describe("ShareDataset", () => {
     expect(vm.errorString).toBe(
       "Unknown user. Please check the username or email.",
     );
-    wrapper.destroy();
   });
 
   it("confirmRemoveUser sets userToRemove and opens confirm dialog", () => {
@@ -363,7 +337,6 @@ describe("ShareDataset", () => {
     vm.confirmRemoveUser(user);
     expect(vm.userToRemove).toEqual(user);
     expect(vm.confirmDialog).toBe(true);
-    wrapper.destroy();
   });
 
   it("getSelectedViews filters views by selectedConfigIds", async () => {
@@ -375,7 +348,6 @@ describe("ShareDataset", () => {
     const views = vm.getSelectedViews();
     expect(views).toHaveLength(1);
     expect(views[0].configurationId).toBe("cfg1");
-    wrapper.destroy();
   });
 
   it("accessLevelItems contains Read and Write options", () => {
@@ -385,6 +357,5 @@ describe("ShareDataset", () => {
       { text: "Read", value: 0 },
       { text: "Write", value: 1 },
     ]);
-    wrapper.destroy();
   });
 });

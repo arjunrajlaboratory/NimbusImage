@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -37,8 +35,6 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import { SamAnnotationToolStateSymbol } from "@/store/model";
 
-Vue.use(Vuetify);
-
 function createSamState(overrides: any = {}) {
   const mockSetValue = vi.fn();
   return {
@@ -63,8 +59,7 @@ function createSamState(overrides: any = {}) {
 
 function mountComponent(props = {}) {
   return mount(SamToolMenu, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       toolConfiguration: {
         id: "tool1",
         name: "SAM Tool",

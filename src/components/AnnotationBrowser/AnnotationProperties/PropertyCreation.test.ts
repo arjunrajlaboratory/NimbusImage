@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -44,14 +42,9 @@ vi.mock("@/utils/annotation", () => ({
 import PropertyCreation from "./PropertyCreation.vue";
 import propertyStore from "@/store/properties";
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-Vue.directive("tour-trigger", {});
-
 function mountComponent(props = {}) {
   return shallowMount(PropertyCreation, {
-    vuetify: new Vuetify(),
-    propsData: props,
+    props: props,
   });
 }
 

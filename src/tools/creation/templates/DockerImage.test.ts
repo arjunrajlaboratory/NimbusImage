@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -16,14 +14,13 @@ vi.mock("@/store/properties", () => ({
 
 import DockerImage from "./DockerImage.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(DockerImage, {
-    vuetify: new Vuetify(),
-    propsData: props,
-    stubs: {
-      DockerImageSelect: true,
+    props: props,
+    global: {
+      stubs: {
+        DockerImageSelect: true,
+      },
     },
   });
 }
@@ -31,47 +28,47 @@ function mountComponent(props = {}) {
 describe("DockerImage", () => {
   it("image starts as null", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.image).toBeNull();
+    expect((wrapper.vm as any).image).toBeNull();
   });
 
   it("annotationImageFilter returns true when isAnnotationWorker is defined", () => {
     const wrapper = mountComponent();
     expect(
-      wrapper.vm.annotationImageFilter({ isAnnotationWorker: "true" }),
+      (wrapper.vm as any).annotationImageFilter({ isAnnotationWorker: "true" }),
     ).toBe(true);
   });
 
   it("annotationImageFilter returns false when isAnnotationWorker is undefined", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.annotationImageFilter({} as any)).toBe(false);
+    expect((wrapper.vm as any).annotationImageFilter({} as any)).toBe(false);
   });
 
   it("updateFromValue syncs image from prop", async () => {
     const wrapper = mountComponent({
       modelValue: { image: "test-image:latest" },
     });
-    expect(wrapper.vm.image).toBe("test-image:latest");
+    expect((wrapper.vm as any).image).toBe("test-image:latest");
   });
 
   it("updateFromValue resets when value is undefined", () => {
     const wrapper = mountComponent();
-    wrapper.vm.image = "something";
-    wrapper.vm.updateFromValue();
-    expect(wrapper.vm.image).toBeNull();
+    (wrapper.vm as any).image = "something";
+    (wrapper.vm as any).updateFromValue();
+    expect((wrapper.vm as any).image).toBeNull();
   });
 
   it("reset sets image to null and calls changed", () => {
     const wrapper = mountComponent();
-    wrapper.vm.image = "something";
-    wrapper.vm.reset();
-    expect(wrapper.vm.image).toBeNull();
+    (wrapper.vm as any).image = "something";
+    (wrapper.vm as any).reset();
+    expect((wrapper.vm as any).image).toBeNull();
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
   });
 
   it("changed emits input and change", () => {
     const wrapper = mountComponent();
-    wrapper.vm.image = "my-image";
-    wrapper.vm.changed();
+    (wrapper.vm as any).image = "my-image";
+    (wrapper.vm as any).changed();
     const inputEvents = wrapper.emitted("update:modelValue")!;
     expect(inputEvents[inputEvents.length - 1][0]).toEqual({
       image: "my-image",
@@ -81,7 +78,7 @@ describe("DockerImage", () => {
 
   it("watch on image triggers changed", async () => {
     const wrapper = mountComponent();
-    wrapper.vm.image = "new-image";
+    (wrapper.vm as any).image = "new-image";
     await wrapper.vm.$nextTick();
     const inputEvents = wrapper.emitted("update:modelValue");
     expect(inputEvents).toBeTruthy();

@@ -1,10 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { routerProvider } from "@/test/helpers";
 import CollectionItemRow from "./CollectionItemRow.vue";
-
-Vue.use(Vuetify);
 
 const sampleCollection = {
   _id: "col1",
@@ -34,15 +31,16 @@ const sampleChips = {
 function mountComponent(props = {}) {
   const mockRouter = { push: vi.fn() };
   return mount(CollectionItemRow, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       collection: sampleCollection,
       debouncedChipsPerItemId: sampleChips,
       computedChipsIds: new Set<string>(),
       ...props,
     },
-    mocks: {
-      $router: mockRouter,
+    global: {
+      provide: {
+        ...routerProvider(mockRouter),
+      },
     },
   });
 }
@@ -62,13 +60,14 @@ describe("CollectionItemRow", () => {
   it("navigateToChip calls $router.push when chip has to", async () => {
     const mockRouter = { push: vi.fn() };
     const wrapper = mount(CollectionItemRow, {
-      vuetify: new Vuetify(),
-      propsData: {
+      props: {
         collection: sampleCollection,
         debouncedChipsPerItemId: sampleChips,
         computedChipsIds: new Set<string>(),
       },
-      mocks: { $router: mockRouter },
+      global: {
+        provide: { ...routerProvider(mockRouter) },
+      },
     });
     wrapper.vm.navigateToChip(sampleChips.col1.chips[0]);
     expect(mockRouter.push).toHaveBeenCalledWith(sampleChips.col1.chips[0].to);
@@ -77,13 +76,14 @@ describe("CollectionItemRow", () => {
   it("navigateToChip does nothing when chip has no to", () => {
     const mockRouter = { push: vi.fn() };
     const wrapper = mount(CollectionItemRow, {
-      vuetify: new Vuetify(),
-      propsData: {
+      props: {
         collection: sampleCollection,
         debouncedChipsPerItemId: sampleChips,
         computedChipsIds: new Set<string>(),
       },
-      mocks: { $router: mockRouter },
+      global: {
+        provide: { ...routerProvider(mockRouter) },
+      },
     });
     wrapper.vm.navigateToChip(sampleChips.col1.chips[1]);
     expect(mockRouter.push).not.toHaveBeenCalled();

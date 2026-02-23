@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -27,21 +25,20 @@ vi.mock("@/store/properties", () => ({
 
 import ToolConfigurationItem from "./ToolConfigurationItem.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(ToolConfigurationItem, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       item: { type: "text", name: "Test Field" },
       modelValue: "hello",
       ...props,
     },
-    stubs: {
-      AnnotationConfiguration: true,
-      TagAndLayerRestriction: true,
-      DockerImage: true,
-      TagPicker: true,
+    global: {
+      stubs: {
+        AnnotationConfiguration: true,
+        TagAndLayerRestriction: true,
+        DockerImage: true,
+        TagPicker: true,
+      },
     },
   });
 }

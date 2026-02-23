@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -42,15 +40,14 @@ vi.mock("@/store/filters", () => ({
 import propertyStore from "@/store/properties";
 import PropertyList from "./PropertyList.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(PropertyList, {
-    vuetify: new Vuetify(),
-    propsData: props,
-    stubs: {
-      AnnotationProperty: true,
-      AnnotationPropertyBody: true,
+    props: props,
+    global: {
+      stubs: {
+        AnnotationProperty: true,
+        AnnotationPropertyBody: true,
+      },
     },
   });
 }

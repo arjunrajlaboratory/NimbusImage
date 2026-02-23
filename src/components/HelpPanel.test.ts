@@ -1,20 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { ref } from "vue";
 
 vi.mock("@/utils/v-mousetrap", () => ({
   default: vi.fn(),
-  boundKeys: {
+  boundKeys: ref({
     "ctrl+z": { section: "General", description: "Undo" },
     "ctrl+y": { section: "General", description: "Redo" },
     d: { section: "Annotation", description: "Delete selected" },
-  },
+  }),
 }));
 
 vi.mock("@/utils/v-description", () => ({
   default: vi.fn(),
-  descriptions: {
+  descriptions: ref({
     0: {
       section: "Layers",
       title: "Visibility",
@@ -30,16 +29,13 @@ vi.mock("@/utils/v-description", () => ({
       title: "Color",
       description: "Change layer color",
     },
-  },
+  }),
 }));
 
 import HelpPanel from "./HelpPanel.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return mount(HelpPanel, {
-    vuetify: new Vuetify(),
   });
 }
 
@@ -80,11 +76,11 @@ describe("HelpPanel", () => {
     const generalSection = items.find(
       ([name]: [string, any]) => name === "General",
     );
-    expect(generalSection[1]).toHaveLength(2);
+    expect(generalSection![1]).toHaveLength(2);
     const annotationSection = items.find(
       ([name]: [string, any]) => name === "Annotation",
     );
-    expect(annotationSection[1]).toHaveLength(1);
+    expect(annotationSection![1]).toHaveLength(1);
   });
 
   it("has correct number of items per feature section", () => {
@@ -93,6 +89,6 @@ describe("HelpPanel", () => {
     const layersSection = items.find(
       ([name]: [string, any]) => name === "Layers",
     );
-    expect(layersSection[1]).toHaveLength(2);
+    expect(layersSection![1]).toHaveLength(2);
   });
 });

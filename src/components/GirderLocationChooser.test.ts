@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -9,18 +7,17 @@ vi.mock("@/store", () => ({
 
 import GirderLocationChooser from "./GirderLocationChooser.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return shallowMount(GirderLocationChooser, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: null,
       ...props,
     },
-    stubs: {
-      CustomFileManager: true,
-      GirderBreadcrumb: true,
+    global: {
+      stubs: {
+        CustomFileManager: true,
+        GirderBreadcrumb: true,
+      },
     },
   });
 }
@@ -75,7 +72,7 @@ describe("GirderLocationChooser", () => {
     const wrapper = mountComponent({ modelValue: null });
     expect(wrapper.vm.selected).toBeNull();
     const newVal = { name: "New Folder", _modelType: "folder" };
-    await wrapper.setProps({ modelValue: newVal });
+    await wrapper.setProps({ modelValue: newVal as any });
     expect(wrapper.vm.selected).toEqual(newVal);
   });
 });

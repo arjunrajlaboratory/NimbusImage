@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -18,8 +16,6 @@ vi.mock("@/store", () => ({
 
 import LayerInfoGrid from "./LayerInfoGrid.vue";
 import store from "@/store";
-
-Vue.use(Vuetify);
 
 const sampleLayers = [
   {
@@ -38,14 +34,19 @@ const sampleLayers = [
 
 function mountComponent(props = {}) {
   return shallowMount(LayerInfoGrid, {
-    vuetify: new Vuetify(),
-    propsData: {
-      layers: sampleLayers,
+    props: {
+      layers: sampleLayers as any,
       ...props,
     },
-    stubs: {
-      ContrastHistogram: true,
-      ColorPickerMenu: true,
+    global: {
+      stubs: {
+        ContrastHistogram: true,
+        ColorPickerMenu: true,
+        VContainer: { template: "<div><slot /></div>" },
+        VRow: { template: "<div><slot /></div>" },
+        VCol: { template: "<div><slot /></div>" },
+        VAlert: { template: "<div><slot /></div>", props: ["type"] },
+      },
     },
   });
 }
@@ -53,13 +54,13 @@ function mountComponent(props = {}) {
 describe("LayerInfoGrid", () => {
   it("delegates toggleVisibility to store", () => {
     const wrapper = mountComponent();
-    wrapper.vm.toggleVisibility("l1");
+    (wrapper.vm as any).toggleVisibility("l1");
     expect(store.toggleLayerVisibility).toHaveBeenCalledWith("l1");
   });
 
   it("delegates getLayerHistogram to store", () => {
     const wrapper = mountComponent();
-    wrapper.vm.getLayerHistogram(sampleLayers[0]);
+    (wrapper.vm as any).getLayerHistogram(sampleLayers[0]);
     expect(store.getLayerHistogram).toHaveBeenCalledWith(sampleLayers[0]);
   });
 
@@ -67,21 +68,21 @@ describe("LayerInfoGrid", () => {
     const origConfig = store.configuration;
     (store as any).configuration = null;
     const wrapper = mountComponent();
-    expect(wrapper.vm.getConfigurationContrast("l1")).toBeNull();
+    expect((wrapper.vm as any).getConfigurationContrast("l1")).toBeNull();
     (store as any).configuration = origConfig;
   });
 
   it("getConfigurationContrast returns null when layer not found", () => {
     (store.getConfigurationLayerFromId as any).mockReturnValue(null);
     const wrapper = mountComponent();
-    expect(wrapper.vm.getConfigurationContrast("l1")).toBeNull();
+    expect((wrapper.vm as any).getConfigurationContrast("l1")).toBeNull();
   });
 
   it("getConfigurationContrast returns contrast when layer found", () => {
     const contrast = { mode: "percentile", blackPoint: 0, whitePoint: 100 };
     (store.getConfigurationLayerFromId as any).mockReturnValue({ contrast });
     const wrapper = mountComponent();
-    expect(wrapper.vm.getConfigurationContrast("l1")).toEqual(contrast);
+    expect((wrapper.vm as any).getConfigurationContrast("l1")).toEqual(contrast);
   });
 
   it("changeContrast calls saveContrastInConfiguration when syncConfiguration is true", () => {
@@ -91,7 +92,7 @@ describe("LayerInfoGrid", () => {
       blackPoint: 10,
       whitePoint: 90,
     };
-    wrapper.vm.changeContrast("l1", contrast, true);
+    (wrapper.vm as any).changeContrast("l1", contrast, true);
     expect(store.saveContrastInConfiguration).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
@@ -105,7 +106,7 @@ describe("LayerInfoGrid", () => {
       blackPoint: 10,
       whitePoint: 90,
     };
-    wrapper.vm.changeContrast("l1", contrast, false);
+    (wrapper.vm as any).changeContrast("l1", contrast, false);
     expect(store.saveContrastInView).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
@@ -114,13 +115,13 @@ describe("LayerInfoGrid", () => {
 
   it("delegates resetContrastInView to store", () => {
     const wrapper = mountComponent();
-    wrapper.vm.resetContrastInView("l1");
+    (wrapper.vm as any).resetContrastInView("l1");
     expect(store.resetContrastInView).toHaveBeenCalledWith("l1");
   });
 
   it("delegates changeLayerColor to store.changeLayer", () => {
     const wrapper = mountComponent();
-    wrapper.vm.changeLayerColor("l1", "#FF0000");
+    (wrapper.vm as any).changeLayerColor("l1", "#FF0000");
     expect(store.changeLayer).toHaveBeenCalledWith({
       layerId: "l1",
       delta: { color: "#FF0000" },
@@ -129,6 +130,6 @@ describe("LayerInfoGrid", () => {
 
   it("shows no layers alert when layers is empty", () => {
     const wrapper = mountComponent({ layers: [] });
-    expect(wrapper.text()).toContain("No layers available");
+    expect(wrapper.html()).toContain("No layers available");
   });
 });

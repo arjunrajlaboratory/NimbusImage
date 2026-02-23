@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import HotkeySelection from "./HotkeySelection.vue";
 
 // Mock Mousetrap to avoid DOM key event dependencies
@@ -14,12 +12,9 @@ vi.mock("mousetrap", () => ({
   },
 }));
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(HotkeySelection, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       ...props,
     },
   });
@@ -46,7 +41,7 @@ describe("HotkeySelection", () => {
 
   it("emits input with null when Clear hotkey is clicked", async () => {
     const wrapper = mountComponent({ modelValue: "ctrl+k" });
-    const clearButton = wrapper.findAll(".v-btn").at(1);
+    const clearButton = wrapper.findAll(".v-btn").at(1)!;
     await clearButton.trigger("click");
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0]).toEqual([null]);
@@ -54,7 +49,7 @@ describe("HotkeySelection", () => {
 
   it("emits recorded hotkey when Record is clicked (mocked)", async () => {
     const wrapper = mountComponent();
-    const recordButton = wrapper.findAll(".v-btn").at(0);
+    const recordButton = wrapper.findAll(".v-btn").at(0)!;
     await recordButton.trigger("click");
     // Mousetrap.record is mocked to immediately call back with ["ctrl+s"]
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();

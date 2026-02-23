@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockFindDatasetViews = vi.fn();
 const mockDuplicateConfiguration = vi.fn();
@@ -73,28 +71,29 @@ vi.mock("@/store/annotation", () => ({ default: {} }));
 vi.mock("@/store/properties", () => ({ default: {} }));
 vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
 import store from "@/store";
 import DatasetInfo from "./DatasetInfo.vue";
 
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
+const mockRouter = { push: vi.fn(), back: vi.fn() };
 
 function mountComponent() {
   const app = document.createElement("div");
   app.setAttribute("data-app", "true");
   document.body.appendChild(app);
   return shallowMount(DatasetInfo, {
-    vuetify: new Vuetify(),
     attachTo: app,
-    mocks: {
-      $route: {
-        params: { datasetId: "ds-1", configurationId: "config-1" },
+    global: {
+      provide: {
+        ...routeProvider({
+          params: { datasetId: "ds-1", configurationId: "config-1" },
+        }),
+        ...routerProvider(mockRouter),
       },
-      $router: { push: vi.fn(), back: vi.fn() },
-    },
-    stubs: {
-      GirderLocationChooser: true,
-      AddToProjectDialog: true,
+      stubs: {
+        GirderLocationChooser: true,
+        AddToProjectDialog: true,
+      },
     },
   });
 }
@@ -127,26 +126,22 @@ describe("DatasetInfo", () => {
   it("dataset computed returns store.dataset", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).dataset).toEqual((store as any).dataset);
-    wrapper.destroy();
   });
 
   it("datasetName computed returns dataset name", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).datasetName).toBe("Test Dataset");
-    wrapper.destroy();
   });
 
   it("datasetName returns empty string when no dataset", () => {
     (store as any).dataset = null;
     const wrapper = mountComponent();
     expect((wrapper.vm as any).datasetName).toBe("");
-    wrapper.destroy();
   });
 
   it("datasetId computed returns dataset id", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).datasetId).toBe("ds-1");
-    wrapper.destroy();
   });
 
   it("report generates correct rows", async () => {
@@ -160,7 +155,6 @@ describe("DatasetInfo", () => {
     expect(report[3]).toEqual({ name: "XY Slices", value: 1 });
     expect(report[4]).toEqual({ name: "Z Slices", value: 2 });
     expect(report[5]).toEqual({ name: "Channels", value: 3 });
-    wrapper.destroy();
   });
 
   it("report shows Loading... for counts when null", () => {
@@ -179,7 +173,6 @@ describe("DatasetInfo", () => {
       name: "Property Values",
       value: "Loading...",
     });
-    wrapper.destroy();
   });
 
   it("nameRules validates non-empty", () => {
@@ -187,14 +180,12 @@ describe("DatasetInfo", () => {
     const rules = (wrapper.vm as any).nameRules;
     expect(rules[0]("")).toBe("Name is required");
     expect(rules[0]("valid")).toBe(true);
-    wrapper.destroy();
   });
 
   it("updateDefaultConfigurationName builds name from dataset name", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.defaultConfigurationName).toBe("Test Dataset collection");
-    wrapper.destroy();
   });
 
   it("fetchCounts calls 4 APIs in parallel", async () => {
@@ -203,7 +194,6 @@ describe("DatasetInfo", () => {
     expect(mockGetAnnotationCount).toHaveBeenCalledWith("ds-1");
     expect(mockGetConnectionCount).toHaveBeenCalledWith("ds-1");
     expect(mockGetPropertyValueCount).toHaveBeenCalledWith("ds-1");
-    wrapper.destroy();
   });
 
   it("fetchCounts resets when no dataset", async () => {
@@ -213,7 +203,6 @@ describe("DatasetInfo", () => {
     const vm = wrapper.vm as any;
     expect(vm.annotationCount).toBeNull();
     expect(vm.connectionCount).toBeNull();
-    wrapper.destroy();
   });
 
   it("toRoute constructs correct route", () => {
@@ -228,7 +217,6 @@ describe("DatasetInfo", () => {
     expect(route.params.datasetViewId).toBe("view-1");
     expect(route.params.datasetId).toBe("ds-1");
     expect(route.params.configurationId).toBe("config-1");
-    wrapper.destroy();
   });
 
   it("removeDataset calls deleteDataset and navigates to root", async () => {
@@ -238,8 +226,7 @@ describe("DatasetInfo", () => {
     vm.removeDataset();
     await flushPromises();
     expect(mockDeleteDataset).toHaveBeenCalledWith((store as any).dataset);
-    expect(wrapper.vm.$router.push).toHaveBeenCalledWith({ name: "root" });
-    wrapper.destroy();
+    expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
   });
 
   it("openRemoveConfigurationDialog sets dialog state", () => {
@@ -249,7 +236,6 @@ describe("DatasetInfo", () => {
     vm.openRemoveConfigurationDialog(view);
     expect(vm.removeDatasetViewConfirm).toBe(true);
     expect(vm.viewToRemove).toEqual(view);
-    wrapper.destroy();
   });
 
   it("closeRemoveConfigurationDialog clears dialog state", () => {
@@ -260,7 +246,6 @@ describe("DatasetInfo", () => {
     vm.closeRemoveConfigurationDialog();
     expect(vm.removeDatasetViewConfirm).toBe(false);
     expect(vm.viewToRemove).toBeNull();
-    wrapper.destroy();
   });
 
   it("datasetViewItems maps views with cached config info", async () => {
@@ -273,7 +258,6 @@ describe("DatasetInfo", () => {
     const vm = wrapper.vm as any;
     expect(vm.datasetViewItems).toHaveLength(1);
     expect(vm.datasetViewItems[0].datasetView.id).toBe("view-1");
-    wrapper.destroy();
   });
 
   it("showAddToProjectDialog toggles state", () => {
@@ -282,7 +266,6 @@ describe("DatasetInfo", () => {
     expect(vm.showAddToProjectDialog).toBe(false);
     vm.showAddToProjectDialog = true;
     expect(vm.showAddToProjectDialog).toBe(true);
-    wrapper.destroy();
   });
 
   it("removeDatasetConfirm toggles state", () => {
@@ -291,6 +274,5 @@ describe("DatasetInfo", () => {
     expect(vm.removeDatasetConfirm).toBe(false);
     vm.removeDatasetConfirm = true;
     expect(vm.removeDatasetConfirm).toBe(true);
-    wrapper.destroy();
   });
 });

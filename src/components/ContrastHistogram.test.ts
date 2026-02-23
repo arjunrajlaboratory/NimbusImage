@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const { d3Chain, d3DragChain, d3ZoomChain } = vi.hoisted(() => {
   const d3Chain: any = {};
@@ -69,8 +68,6 @@ vi.mock("@/store/properties", () => ({
 
 import ContrastHistogram from "./ContrastHistogram.vue";
 
-Vue.use(Vuetify);
-
 const defaultContrast = {
   mode: "percentile" as const,
   blackPoint: 10,
@@ -93,16 +90,17 @@ const sampleHistData = {
 
 function mountComponent(propsOverrides: any = {}) {
   return shallowMount(ContrastHistogram, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       configurationContrast: defaultContrast,
       viewContrast: null,
       histogram: Promise.resolve(sampleHistData),
       ...propsOverrides,
     },
-    stubs: {
-      "switch-toggle": true,
-      "resize-observer": true,
+    global: {
+      stubs: {
+        "switch-toggle": true,
+        "resize-observer": true,
+      },
     },
   });
 }
@@ -116,7 +114,6 @@ describe("ContrastHistogram", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentContrast).toEqual(defaultContrast);
-    wrapper.destroy();
   });
 
   it("currentContrast prefers viewContrast when provided", () => {
@@ -128,7 +125,6 @@ describe("ContrastHistogram", () => {
     const wrapper = mountComponent({ viewContrast });
     const vm = wrapper.vm as any;
     expect(vm.currentContrast).toEqual(viewContrast);
-    wrapper.destroy();
   });
 
   it("mode getter returns viewContrast mode when present", () => {
@@ -140,14 +136,12 @@ describe("ContrastHistogram", () => {
     const wrapper = mountComponent({ viewContrast });
     const vm = wrapper.vm as any;
     expect(vm.mode).toBe("absolute");
-    wrapper.destroy();
   });
 
   it("mode getter falls back to configurationContrast mode", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.mode).toBe("percentile");
-    wrapper.destroy();
   });
 
   it("mode setter emits change with converted values", () => {
@@ -156,22 +150,19 @@ describe("ContrastHistogram", () => {
     vm.mode = "absolute";
     const emitted = wrapper.emitted("change");
     expect(emitted).toBeTruthy();
-    expect(emitted![0][0].mode).toBe("absolute");
-    wrapper.destroy();
+    expect((emitted![0][0] as any).mode).toBe("absolute");
   });
 
   it("editMin returns 0 in percentile mode", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.editMin).toBe(0);
-    wrapper.destroy();
   });
 
   it("editMax returns 100 in percentile mode", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.editMax).toBe(100);
-    wrapper.destroy();
   });
 
   it("editMin returns histData.min in absolute mode with data", async () => {
@@ -183,10 +174,9 @@ describe("ContrastHistogram", () => {
     const wrapper = mountComponent({ viewContrast });
     const vm = wrapper.vm as any;
     // Wait for histogram promise to resolve
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     expect(vm.editMin).toBe(0);
-    wrapper.destroy();
   });
 
   it("editMax returns histData.max in absolute mode with data", async () => {
@@ -197,17 +187,15 @@ describe("ContrastHistogram", () => {
     };
     const wrapper = mountComponent({ viewContrast });
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     expect(vm.editMax).toBe(255);
-    wrapper.destroy();
   });
 
   it("editBlackPoint getter returns currentContrast blackPoint", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.editBlackPoint).toBe(10);
-    wrapper.destroy();
   });
 
   it("editBlackPoint setter emits change when valid", () => {
@@ -216,8 +204,7 @@ describe("ContrastHistogram", () => {
     vm.editBlackPoint = 5;
     const emitted = wrapper.emitted("change");
     expect(emitted).toBeTruthy();
-    expect(emitted![0][0].blackPoint).toBe(5);
-    wrapper.destroy();
+    expect((emitted![0][0] as any).blackPoint).toBe(5);
   });
 
   it("editBlackPoint setter caches value when blackPoint > whitePoint", () => {
@@ -225,14 +212,12 @@ describe("ContrastHistogram", () => {
     const vm = wrapper.vm as any;
     vm.editBlackPoint = 95;
     expect(vm.cachedBlackPoint).toBe(95);
-    wrapper.destroy();
   });
 
   it("editWhitePoint getter returns currentContrast whitePoint", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.editWhitePoint).toBe(90);
-    wrapper.destroy();
   });
 
   it("editWhitePoint setter emits change when valid", () => {
@@ -241,8 +226,7 @@ describe("ContrastHistogram", () => {
     vm.editWhitePoint = 95;
     const emitted = wrapper.emitted("change");
     expect(emitted).toBeTruthy();
-    expect(emitted![0][0].whitePoint).toBe(95);
-    wrapper.destroy();
+    expect((emitted![0][0] as any).whitePoint).toBe(95);
   });
 
   it("editWhitePoint setter caches value when whitePoint < blackPoint", () => {
@@ -250,7 +234,6 @@ describe("ContrastHistogram", () => {
     const vm = wrapper.vm as any;
     vm.editWhitePoint = 5;
     expect(vm.cachedWhitePoint).toBe(5);
-    wrapper.destroy();
   });
 
   it("validateCachedBlackPoint clamps on Enter when cached exceeds white", () => {
@@ -262,7 +245,6 @@ describe("ContrastHistogram", () => {
     // Should have been clamped to whitePoint (90)
     const emitted = wrapper.emitted("change");
     expect(emitted).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("validateCachedBlackPoint does nothing for non-Enter key", () => {
@@ -274,7 +256,6 @@ describe("ContrastHistogram", () => {
     const emittedAfter = wrapper.emitted("change");
     // No new emission from Tab key
     expect(emittedAfter?.length ?? 0).toBe(emittedBefore?.length ?? 0);
-    wrapper.destroy();
   });
 
   it("validateCachedWhitePoint clamps on Enter when cached below black", () => {
@@ -284,7 +265,6 @@ describe("ContrastHistogram", () => {
     vm.validateCachedWhitePoint({ key: "Enter" });
     const emitted = wrapper.emitted("change");
     expect(emitted).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("pixelRange computed uses translation and scale", () => {
@@ -294,19 +274,17 @@ describe("ContrastHistogram", () => {
     // pixelRange = [translation, translation + scale * width]
     const expectedEnd = vm.translation + vm.scale * vm.width;
     expect(vm.pixelRange).toEqual([vm.translation, expectedEnd]);
-    wrapper.destroy();
   });
 
   it("histToPixel returns a d3 scale function", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     const scale = vm.histToPixel;
     expect(typeof scale).toBe("function");
     // With histData loaded, domain should be [0, 255]
     expect(scale.domain()).toEqual([0, 255]);
-    wrapper.destroy();
   });
 
   it("percentageToPixel returns a d3 scale from 0-100", () => {
@@ -314,7 +292,6 @@ describe("ContrastHistogram", () => {
     const vm = wrapper.vm as any;
     const scale = vm.percentageToPixel;
     expect(scale.domain()).toEqual([0, 100]);
-    wrapper.destroy();
   });
 
   it("toValue returns pixel string for black point in percentile mode", () => {
@@ -322,7 +299,6 @@ describe("ContrastHistogram", () => {
     const vm = wrapper.vm as any;
     const result = vm.toValue(defaultContrast, "black");
     expect(result).toMatch(/^\d+(\.\d+)?px$/);
-    wrapper.destroy();
   });
 
   it("toValue returns pixel string for white point", () => {
@@ -330,14 +306,12 @@ describe("ContrastHistogram", () => {
     const vm = wrapper.vm as any;
     const result = vm.toValue(defaultContrast, "white");
     expect(result).toMatch(/^\d+(\.\d+)?px$/);
-    wrapper.destroy();
   });
 
   it("toLabel formats as percentage in percentile mode", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.toLabel(50.123)).toBe("50.12%");
-    wrapper.destroy();
   });
 
   it("toLabel formats as integer in absolute mode", () => {
@@ -349,7 +323,6 @@ describe("ContrastHistogram", () => {
     const wrapper = mountComponent({ viewContrast });
     const vm = wrapper.vm as any;
     expect(vm.toLabel(123.7)).toBe("124");
-    wrapper.destroy();
   });
 
   it("areaPath returns empty string when no histData", () => {
@@ -358,18 +331,16 @@ describe("ContrastHistogram", () => {
     const wrapper = mountComponent({ histogram: neverResolve });
     const vm = wrapper.vm as any;
     expect(vm.areaPath).toBe("");
-    wrapper.destroy();
   });
 
   it("areaPath returns a path string when histData is present", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     expect(vm.areaPath).toBeTruthy();
     expect(typeof vm.areaPath).toBe("string");
     expect(vm.areaPath.length).toBeGreaterThan(0);
-    wrapper.destroy();
   });
 
   it("reset emits change with edges of range", () => {
@@ -378,7 +349,6 @@ describe("ContrastHistogram", () => {
     vm.reset();
     const emitted = wrapper.emitted("change");
     expect(emitted).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("revertSaved emits revert", () => {
@@ -386,7 +356,6 @@ describe("ContrastHistogram", () => {
     const vm = wrapper.vm as any;
     vm.revertSaved();
     expect(wrapper.emitted("revert")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("saveCurrent emits commit with current contrast", () => {
@@ -395,9 +364,8 @@ describe("ContrastHistogram", () => {
     vm.saveCurrent();
     const emitted = wrapper.emitted("commit");
     expect(emitted).toBeTruthy();
-    expect(emitted![0][0].blackPoint).toBe(10);
-    expect(emitted![0][0].whitePoint).toBe(90);
-    wrapper.destroy();
+    expect((emitted![0][0] as any).blackPoint).toBe(10);
+    expect((emitted![0][0] as any).whitePoint).toBe(90);
   });
 
   it("handleResize updates width from rootEl", () => {
@@ -410,24 +378,21 @@ describe("ContrastHistogram", () => {
     vm.handleResize();
     // width might be 0 if rootEl isn't available in jsdom
     expect(typeof vm.width).toBe("number");
-    wrapper.destroy();
   });
 
   it("histogram watcher sets histData to null then resolves", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     // Initially, histData should be resolved from the prop promise
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     expect(vm.histData).toEqual(sampleHistData);
-    wrapper.destroy();
   });
 
   it("editIcon returns mdi-percent in percentile mode", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.editIcon).toBe("mdi-percent");
-    wrapper.destroy();
   });
 
   it("editIcon returns undefined in absolute mode", () => {
@@ -439,6 +404,5 @@ describe("ContrastHistogram", () => {
     const wrapper = mountComponent({ viewContrast });
     const vm = wrapper.vm as any;
     expect(vm.editIcon).toBeUndefined();
-    wrapper.destroy();
   });
 });

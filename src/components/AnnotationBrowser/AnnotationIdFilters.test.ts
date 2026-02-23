@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store/filters", () => ({
   default: {
@@ -23,11 +21,8 @@ vi.mock("@/store/filters", () => ({
 import AnnotationIdFilters from "./AnnotationIdFilters.vue";
 import filterStore from "@/store/filters";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return mount(AnnotationIdFilters, {
-    vuetify: new Vuetify(),
   });
 }
 
@@ -56,7 +51,7 @@ describe("AnnotationIdFilters", () => {
     };
     wrapper.vm.editFilter(filter);
     expect(wrapper.vm.dialog).toBe(true);
-    expect(wrapper.vm.editingFilter).toBe(filter);
+    expect(wrapper.vm.editingFilter).toStrictEqual(filter);
     expect(wrapper.vm.annotationIdsInput).toBe("a1\na2");
   });
 

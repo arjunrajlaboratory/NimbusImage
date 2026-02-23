@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -35,12 +34,8 @@ import IndexConversionDialog from "./IndexConversionDialog.vue";
 import store from "@/store";
 import { downloadToClient } from "@/utils/download";
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-
 function mountComponent() {
   return shallowMount(IndexConversionDialog, {
-    vuetify: new Vuetify(),
   });
 }
 
@@ -108,7 +103,7 @@ describe("IndexConversionDialog", () => {
   it("watch on dialog calls loadDimensionLabels", async () => {
     const wrapper = mountComponent();
     wrapper.vm.dialog = true;
-    await Vue.nextTick();
+    await nextTick();
     expect(store.girderResources.getFolder).toHaveBeenCalledWith("ds1");
   });
 });

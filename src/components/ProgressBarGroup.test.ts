@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store/progress", () => ({
   default: {
@@ -15,11 +13,8 @@ vi.mock("@/store/progress", () => ({
 import ProgressBarGroup from "./ProgressBarGroup.vue";
 import progressStore from "@/store/progress";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return shallowMount(ProgressBarGroup, {
-    vuetify: new Vuetify(),
   });
 }
 

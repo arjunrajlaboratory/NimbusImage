@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -31,8 +30,6 @@ vi.mock("@/utils/log", () => ({
 import AnnotationContextMenu from "./AnnotationContextMenu.vue";
 import annotationStore from "@/store/annotation";
 
-Vue.use(Vuetify);
-
 const baseAnnotation = {
   id: "ann-1",
   name: "Test Annotation",
@@ -50,9 +47,8 @@ function mountComponent(props = {}) {
   document.body.appendChild(div);
 
   return shallowMount(AnnotationContextMenu, {
-    vuetify: new Vuetify(),
     attachTo: div,
-    propsData: {
+    props: {
       show: false,
       x: 100,
       y: 200,
@@ -74,21 +70,18 @@ describe("AnnotationContextMenu", () => {
   it("showMenu get returns prop value", () => {
     const wrapper = mountComponent({ show: true });
     expect((wrapper.vm as any).showMenu).toBe(true);
-    wrapper.destroy();
   });
 
   it("showMenu get returns false when prop is false", () => {
     const wrapper = mountComponent({ show: false });
     expect((wrapper.vm as any).showMenu).toBe(false);
-    wrapper.destroy();
   });
 
   it("showMenu set to false emits cancel", async () => {
     const wrapper = mountComponent({ show: true });
     (wrapper.vm as any).showMenu = false;
-    await Vue.nextTick();
+    await nextTick();
     expect(wrapper.emitted("cancel")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("watch on annotation sets colorOption and selectedTags", async () => {
@@ -97,7 +90,6 @@ describe("AnnotationContextMenu", () => {
     expect(vm.colorOption).toBe("defined");
     expect(vm.selectedColor).toBe("#FF0000");
     expect(vm.selectedTags).toEqual(["tag1", "tag2"]);
-    wrapper.destroy();
   });
 
   it("watch on annotation with null color sets colorOption to layer", async () => {
@@ -106,7 +98,6 @@ describe("AnnotationContextMenu", () => {
     const vm = wrapper.vm as any;
     expect(vm.colorOption).toBe("layer");
     expect(vm.selectedColor).toBe("#FFFFFF");
-    wrapper.destroy();
   });
 
   it("save with single annotation calls colorAnnotationIds and replaceTagsByAnnotationIds", async () => {
@@ -126,7 +117,6 @@ describe("AnnotationContextMenu", () => {
       annotationIds: ["ann-1"],
       tags: ["newTag"],
     });
-    wrapper.destroy();
   });
 
   it("deleteAnnotation calls deleteAnnotations and emits cancel", async () => {
@@ -135,6 +125,5 @@ describe("AnnotationContextMenu", () => {
     vm.deleteAnnotation();
     expect(annotationStore.deleteAnnotations).toHaveBeenCalledWith(["ann-1"]);
     expect(wrapper.emitted("cancel")).toBeTruthy();
-    wrapper.destroy();
   });
 });

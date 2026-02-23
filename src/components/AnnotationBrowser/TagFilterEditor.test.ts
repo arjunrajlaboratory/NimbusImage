@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -21,12 +19,9 @@ vi.mock("@/store/annotation", () => ({
 
 import TagFilterEditor from "./TagFilterEditor.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(TagFilterEditor, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: {
         id: "tagFilter",
         exclusive: false,
@@ -35,10 +30,12 @@ function mountComponent(props = {}) {
       },
       ...props,
     },
-    stubs: {
-      "tag-cloud-picker": {
-        template: "<div></div>",
-        props: ["modelValue", "allSelected"],
+    global: {
+      stubs: {
+        "tag-cloud-picker": {
+          template: "<div></div>",
+          props: ["modelValue", "allSelected"],
+        },
       },
     },
   });
@@ -47,46 +44,46 @@ function mountComponent(props = {}) {
 describe("TagFilterEditor", () => {
   it("tags getter reads filter.tags", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.tags).toEqual(["tag1", "tag2"]);
+    expect((wrapper.vm as any).tags).toEqual(["tag1", "tag2"]);
   });
 
   it("tags setter emits input with updated tags", () => {
     const wrapper = mountComponent();
-    wrapper.vm.tags = ["tag3"];
+    (wrapper.vm as any).tags = ["tag3"];
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
-    expect(emitted![emitted!.length - 1][0].tags).toEqual(["tag3"]);
+    expect((emitted![emitted!.length - 1][0] as any).tags).toEqual(["tag3"]);
   });
 
   it("allSelected getter inversely maps filter.enabled", () => {
     const wrapper = mountComponent();
     // filter.enabled is false, so allSelected should be true
-    expect(wrapper.vm.allSelected).toBe(true);
+    expect((wrapper.vm as any).allSelected).toBe(true);
   });
 
   it("allSelected setter disables exclusive when all selected", () => {
     const wrapper = mountComponent();
-    wrapper.vm.allSelected = true;
+    (wrapper.vm as any).allSelected = true;
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
-    const last = emitted![emitted!.length - 1][0];
+    const last = emitted![emitted!.length - 1][0] as any;
     expect(last.enabled).toBe(false);
     expect(last.exclusive).toBe(false);
   });
 
   it("exclusive setter enables filter", () => {
     const wrapper = mountComponent();
-    wrapper.vm.exclusive = true;
+    (wrapper.vm as any).exclusive = true;
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
-    const last = emitted![emitted!.length - 1][0];
+    const last = emitted![emitted!.length - 1][0] as any;
     expect(last.enabled).toBe(true);
     expect(last.exclusive).toBe(true);
   });
 
   it("exclusiveItems has Any and Only options", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.exclusiveItems).toEqual([
+    expect((wrapper.vm as any).exclusiveItems).toEqual([
       { text: "Any", value: false },
       { text: "Only", value: true },
     ]);

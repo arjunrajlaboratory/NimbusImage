@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import UserProfileSettings from "./UserProfileSettings.vue";
 
 vi.mock("@/store", () => ({
@@ -13,15 +12,17 @@ vi.mock("@/store", () => ({
   girderUrlFromApiRoot: (apiRoot: string) => apiRoot.replace("/api/v1", ""),
 }));
 
+import { routerProvider } from "@/test/helpers";
 import store from "@/store";
 
-Vue.use(Vuetify);
+const mockRouter = { push: vi.fn() };
 
 function mountComponent() {
   return mount(UserProfileSettings, {
-    vuetify: new Vuetify(),
-    mocks: {
-      $router: { push: vi.fn() },
+    global: {
+      provide: {
+        ...routerProvider(mockRouter),
+      },
     },
   });
 }
@@ -40,8 +41,8 @@ describe("UserProfileSettings", () => {
   it("calls logout and navigates on logout button click", async () => {
     const wrapper = mountComponent();
     await wrapper.find(".v-btn").trigger("click");
-    await Vue.nextTick();
+    await nextTick();
     expect(store.logout).toHaveBeenCalled();
-    expect(wrapper.vm.$router.push).toHaveBeenCalledWith({ name: "root" });
+    expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
   });
 });

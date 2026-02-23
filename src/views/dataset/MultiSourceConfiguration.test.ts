@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { shallowMount, Wrapper } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { nextTick } from "vue";
+import { shallowMount } from "@vue/test-utils";
 
 // --- Top-level mock fn handles (hoisted before vi.mock calls) ---
 const mockGetItems = vi.fn().mockResolvedValue([]);
@@ -87,12 +86,10 @@ vi.mock("p-retry", () => ({
 }));
 
 // Import after mocks (real parsing is NOT mocked)
+import { routerProvider } from "@/test/helpers";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import store from "@/store";
 import { collectFilenameMetadata2 } from "@/utils/parsing";
-
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
 
 // --- Test Fixtures ---
 
@@ -303,7 +300,7 @@ function makeND2TileMeta(nC: number = 3, nZ: number = 5, nT: number = 4): any {
 const mockRouter = { push: vi.fn() };
 
 function mountComponent(
-  propsData: any = {},
+  props: any = {},
   { skipInitialize = true }: { skipInitialize?: boolean } = {},
 ) {
   const app = document.createElement("div");
@@ -318,41 +315,42 @@ function mountComponent(
   }
 
   const wrapper = shallowMount(MultiSourceConfiguration as any, {
-    vuetify: new Vuetify(),
     attachTo: app,
-    propsData: {
+    props: {
       datasetId: "ds-1",
-      ...propsData,
+      ...props,
     },
-    mocks: {
-      $router: mockRouter,
-    },
-    stubs: {
-      VContainer: true,
-      VCard: true,
-      VCardTitle: true,
-      VCardText: true,
-      VCardActions: true,
-      VSubheader: true,
-      VDivider: true,
-      VBtn: true,
-      VIcon: true,
-      VMenu: true,
-      VList: true,
-      VListItem: true,
-      VListItemContent: true,
-      VCheckbox: true,
-      VRow: true,
-      VCol: true,
-      VSpacer: true,
-      VProgressCircular: true,
-      VProgressLinear: true,
-      VAlert: true,
-      VSimpleTable: true,
-      VDialog: true,
-      VSnackbar: true,
-      VTooltip: true,
-      VChip: true,
+    global: {
+      provide: {
+        ...routerProvider(mockRouter),
+      },
+      stubs: {
+        VContainer: true,
+        VCard: true,
+        VCardTitle: true,
+        VCardText: true,
+        VCardActions: true,
+        VSubheader: true,
+        VDivider: true,
+        VBtn: true,
+        VIcon: true,
+        VMenu: true,
+        VList: true,
+        VListItem: true,
+        VListItemContent: true,
+        VCheckbox: true,
+        VRow: true,
+        VCol: true,
+        VSpacer: true,
+        VProgressCircular: true,
+        VProgressLinear: true,
+        VAlert: true,
+        VSimpleTable: true,
+        VDialog: true,
+        VSnackbar: true,
+        VTooltip: true,
+        VChip: true,
+      },
     },
   });
 
@@ -398,14 +396,12 @@ describe("MultiSourceConfiguration", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.initializing).toBe(true); // mounted() sets initializing=true
-      wrapper.destroy();
     });
 
     it("has empty dimensions array", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.dimensions).toEqual([]);
-      wrapper.destroy();
     });
 
     it("has null assignments for all dimensions", () => {
@@ -415,14 +411,12 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.assignments.Z).toBeNull();
       expect(vm.assignments.T).toBeNull();
       expect(vm.assignments.C).toBeNull();
-      wrapper.destroy();
     });
 
     it("has transcode=false initially", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.transcode).toBe(false);
-      wrapper.destroy();
     });
 
     it("has enableCompositing=false and splitRGBBands=true", () => {
@@ -430,7 +424,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       expect(vm.enableCompositing).toBe(false);
       expect(vm.splitRGBBands).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -443,7 +436,6 @@ describe("MultiSourceConfiguration", () => {
       vm.isRGBFile = true;
       vm.rgbBandCount = 3;
       expect(vm.isMultiBandRGBFile).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when isRGBFile but rgbBandCount <= 1", () => {
@@ -452,7 +444,6 @@ describe("MultiSourceConfiguration", () => {
       vm.isRGBFile = true;
       vm.rgbBandCount = 1;
       expect(vm.isMultiBandRGBFile).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false when not isRGBFile", () => {
@@ -461,7 +452,6 @@ describe("MultiSourceConfiguration", () => {
       vm.isRGBFile = false;
       vm.rgbBandCount = 3;
       expect(vm.isMultiBandRGBFile).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -472,7 +462,6 @@ describe("MultiSourceConfiguration", () => {
       vm.initTotal = 0;
       vm.initCompleted = 0;
       expect(vm.initProgressPercent).toBe(0);
-      wrapper.destroy();
     });
 
     it("returns 50 when half complete", () => {
@@ -481,7 +470,6 @@ describe("MultiSourceConfiguration", () => {
       vm.initTotal = 10;
       vm.initCompleted = 5;
       expect(vm.initProgressPercent).toBe(50);
-      wrapper.destroy();
     });
 
     it("returns 100 when all complete", () => {
@@ -490,7 +478,6 @@ describe("MultiSourceConfiguration", () => {
       vm.initTotal = 10;
       vm.initCompleted = 10;
       expect(vm.initProgressPercent).toBe(100);
-      wrapper.destroy();
     });
   });
 
@@ -501,7 +488,6 @@ describe("MultiSourceConfiguration", () => {
       vm.initPending = ["a", "b", "c", "d", "e", "f", "g"];
       expect(vm.initPendingDisplay).toHaveLength(5);
       expect(vm.initPendingDisplay).toEqual(["a", "b", "c", "d", "e"]);
-      wrapper.destroy();
     });
   });
 
@@ -512,7 +498,6 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesInternalMetadata = [{ nd2_frame_metadata: [{}] }];
       vm.tilesMetadata = [makeBasicTileMeta()];
       expect(vm.canDoCompositing).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when multiple files", () => {
@@ -524,7 +509,6 @@ describe("MultiSourceConfiguration", () => {
       ];
       vm.tilesMetadata = [makeBasicTileMeta(), makeBasicTileMeta()];
       expect(vm.canDoCompositing).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false when tilesInternalMetadata is null", () => {
@@ -533,7 +517,6 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesInternalMetadata = null;
       vm.tilesMetadata = [makeBasicTileMeta()];
       expect(vm.canDoCompositing).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false when no nd2_frame_metadata", () => {
@@ -542,7 +525,6 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesInternalMetadata = [{}];
       vm.tilesMetadata = [makeBasicTileMeta()];
       expect(vm.canDoCompositing).toBeFalsy();
-      wrapper.destroy();
     });
   });
 
@@ -554,7 +536,6 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesMetadata = [makeBasicTileMeta()];
       vm.enableCompositing = true;
       expect(vm.shouldDoCompositing).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when canDoCompositing but not enableCompositing", () => {
@@ -564,7 +545,6 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesMetadata = [makeBasicTileMeta()];
       vm.enableCompositing = false;
       expect(vm.shouldDoCompositing).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -574,7 +554,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.girderItems = [{ name: "a" }, { name: "b" }, { name: "c" }];
       expect(vm.fileCount).toBe(3);
-      wrapper.destroy();
     });
 
     it("returns 0 when no items", () => {
@@ -582,7 +561,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.girderItems = [];
       expect(vm.fileCount).toBe(0);
-      wrapper.destroy();
     });
   });
 
@@ -596,7 +574,6 @@ describe("MultiSourceConfiguration", () => {
         { frames: [1] },
       ];
       expect(vm.framesPerFile).toBe(5);
-      wrapper.destroy();
     });
 
     it("returns 1 when tilesMetadata is null", () => {
@@ -604,7 +581,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.tilesMetadata = null;
       expect(vm.framesPerFile).toBe(1);
-      wrapper.destroy();
     });
 
     it("returns 1 for tiles without frames", () => {
@@ -612,7 +588,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.tilesMetadata = [{ frames: null }, {}];
       expect(vm.framesPerFile).toBe(1);
-      wrapper.destroy();
     });
   });
 
@@ -622,7 +597,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.tilesMetadata = [{ frames: [1, 2, 3] }, { frames: [1, 2] }];
       expect(vm.datasetTotalFrames).toBe(5);
-      wrapper.destroy();
     });
 
     it("returns fileCount when tilesMetadata is null", () => {
@@ -631,7 +605,6 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesMetadata = null;
       vm.girderItems = [{ name: "a" }, { name: "b" }];
       expect(vm.datasetTotalFrames).toBe(2);
-      wrapper.destroy();
     });
   });
 
@@ -659,7 +632,6 @@ describe("MultiSourceConfiguration", () => {
       ];
       expect(vm.items).toHaveLength(1);
       expect(vm.items[0].name).toBe("Channels");
-      wrapper.destroy();
     });
 
     it("produces values for filename source", () => {
@@ -676,7 +648,6 @@ describe("MultiSourceConfiguration", () => {
         },
       ];
       expect(vm.items[0].values).toBe("red, green");
-      wrapper.destroy();
     });
 
     it("produces numeric labels for images source", () => {
@@ -695,7 +666,6 @@ describe("MultiSourceConfiguration", () => {
       const item = vm.items[0];
       expect(item.allValues).toEqual(["1", "2", "3"]);
       expect(item.values).toBe("");
-      wrapper.destroy();
     });
   });
 
@@ -705,7 +675,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.girderItems = [];
       expect(vm.filenameVariables).toEqual([]);
-      wrapper.destroy();
     });
 
     it("extracts variables from filename-sourced dimensions", () => {
@@ -731,7 +700,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vars).toHaveLength(1);
       expect(vars[0].value).toBe("red");
       expect(vars[0].tokenIndex).toBe(0);
-      wrapper.destroy();
     });
   });
 
@@ -763,7 +731,6 @@ describe("MultiSourceConfiguration", () => {
       const items = vm.assignmentItems;
       expect(items).toHaveLength(1);
       expect(items[0].text).toBe("Z-depth");
-      wrapper.destroy();
     });
 
     it("returns all items when nothing assigned", () => {
@@ -780,7 +747,6 @@ describe("MultiSourceConfiguration", () => {
         },
       ];
       expect(vm.assignmentItems).toHaveLength(1);
-      wrapper.destroy();
     });
   });
 
@@ -790,7 +756,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       // No dimensions, no items => submitEnabled() is false
       expect(vm.submitError).toBe("Not all variables are assigned");
-      wrapper.destroy();
     });
 
     it("returns RGB error when splitRGBBands with C assigned", () => {
@@ -815,7 +780,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.submitError).toBe(
         "If splitting RGB file into channels, then filenames must be assigned to another variable",
       );
-      wrapper.destroy();
     });
 
     it("returns null when valid", () => {
@@ -825,7 +789,6 @@ describe("MultiSourceConfiguration", () => {
       // No dimensions, so 0 items, and 0 >= 0 filledAssignments >= 0
       // This means submitEnabled() returns true (0 >= 0)
       expect(vm.submitError).toBeNull();
-      wrapper.destroy();
     });
   });
 
@@ -836,7 +799,6 @@ describe("MultiSourceConfiguration", () => {
       vm.isRGBFile = false;
       vm.rgbBandCount = 1;
       expect(vm.isRGBAssignmentValid).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns true when multi-band RGB with splitRGBBands and C is null", () => {
@@ -847,7 +809,6 @@ describe("MultiSourceConfiguration", () => {
       vm.splitRGBBands = true;
       vm.assignments.C = null;
       expect(vm.isRGBAssignmentValid).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when multi-band RGB with splitRGBBands and C is assigned", () => {
@@ -858,7 +819,6 @@ describe("MultiSourceConfiguration", () => {
       vm.splitRGBBands = true;
       vm.assignments.C = { text: "Ch", value: { id: 0 } };
       expect(vm.isRGBAssignmentValid).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -882,7 +842,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.dimensions.length).toBeGreaterThanOrEqual(2);
       // Transcode should be true for .ome.tif files
       expect(vm.transcode).toBe(true);
-      wrapper.destroy();
     });
 
     it("Set C: single ND2 file sets transcode=false", async () => {
@@ -903,7 +862,6 @@ describe("MultiSourceConfiguration", () => {
       // Should have file-source dimensions from IndexRange
       const fileDims = vm.dimensions.filter((d: any) => d.source === "file");
       expect(fileDims.length).toBeGreaterThan(0);
-      wrapper.destroy();
     });
 
     it("Set C: processes IndexRange and IndexStride from tile metadata", async () => {
@@ -934,7 +892,6 @@ describe("MultiSourceConfiguration", () => {
       expect(zDim.size).toBe(5);
       expect(tDim).toBeDefined();
       expect(tDim.size).toBe(4);
-      wrapper.destroy();
     });
 
     it("Set D: detects 1 variable from two files with varying digit", async () => {
@@ -953,7 +910,6 @@ describe("MultiSourceConfiguration", () => {
         (d: any) => d.source === "filename",
       );
       expect(filenameDims.length).toBeGreaterThanOrEqual(1);
-      wrapper.destroy();
     });
 
     it("detects RGB via photometricInterpretation", async () => {
@@ -974,7 +930,6 @@ describe("MultiSourceConfiguration", () => {
 
       expect(vm.isRGBFile).toBe(true);
       expect(vm.rgbBandCount).toBe(3);
-      wrapper.destroy();
     });
 
     it("handles OIB files by calling createLargeImage", async () => {
@@ -1002,7 +957,6 @@ describe("MultiSourceConfiguration", () => {
       await vm.initialized;
 
       expect(mockCreateLargeImage).toHaveBeenCalledWith(items[0]);
-      wrapper.destroy();
       vi.useRealTimers();
     });
 
@@ -1027,7 +981,7 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
 
       // Wait a tick for initializeImplementation to start
-      await Vue.nextTick();
+      await nextTick();
       await new Promise((r) => setTimeout(r, 10));
 
       expect(vm.initTotal).toBe(2);
@@ -1042,7 +996,6 @@ describe("MultiSourceConfiguration", () => {
 
       expect(vm.initCompleted).toBe(2);
       expect(vm.initPending).toHaveLength(0);
-      wrapper.destroy();
     });
 
     it("sets initError on failure", async () => {
@@ -1064,7 +1017,6 @@ describe("MultiSourceConfiguration", () => {
 
       expect(vm.initError).not.toBeNull();
       expect(vm.initError.name).toBe("bad_file.tif");
-      wrapper.destroy();
     });
 
     it("calls resetDimensionsToDefault after initialization", async () => {
@@ -1082,7 +1034,6 @@ describe("MultiSourceConfiguration", () => {
       // After init, assignments should have been set to defaults
       // C should be assigned since there's a file source with guess=C
       expect(vm.assignments.C).not.toBeNull();
-      wrapper.destroy();
     });
 
     it("adds Images dimension when no file variables found", async () => {
@@ -1105,7 +1056,6 @@ describe("MultiSourceConfiguration", () => {
       expect(imagesDim).toBeDefined();
       expect(imagesDim.name).toBe("All frames per item");
       expect(imagesDim.size).toBe(3);
-      wrapper.destroy();
     });
   });
 
@@ -1123,7 +1073,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.dimensions[0].guess).toBe("C");
       expect(vm.dimensions[0].size).toBe(3);
       expect(vm.dimensions[0].source).toBe("filename");
-      wrapper.destroy();
     });
 
     it("adds new dimension for file source", () => {
@@ -1136,7 +1085,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.dimensions).toHaveLength(1);
       expect(vm.dimensions[0].guess).toBe("Z");
       expect(vm.dimensions[0].source).toBe("file");
-      wrapper.destroy();
     });
 
     it("adds new dimension for images source", () => {
@@ -1145,7 +1093,6 @@ describe("MultiSourceConfiguration", () => {
       vm.addSizeToDimension("Z", 10, { source: "images", data: null });
       expect(vm.dimensions).toHaveLength(1);
       expect(vm.dimensions[0].source).toBe("images");
-      wrapper.destroy();
     });
 
     it("merges file-source dimensions with same guess", () => {
@@ -1164,7 +1111,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.dimensions[0].size).toBe(7); // max(5, 7)
       expect(vm.dimensions[0].data[0]).toBeDefined();
       expect(vm.dimensions[0].data[1]).toBeDefined();
-      wrapper.destroy();
     });
 
     it("does not merge filename-source dimensions with same guess", () => {
@@ -1179,7 +1125,6 @@ describe("MultiSourceConfiguration", () => {
         data: { values: ["x", "y"], valueIdxPerFilename: {} },
       });
       expect(vm.dimensions).toHaveLength(2);
-      wrapper.destroy();
     });
 
     it("skips when size is 0", () => {
@@ -1190,7 +1135,6 @@ describe("MultiSourceConfiguration", () => {
         data: { values: [], valueIdxPerFilename: {} },
       });
       expect(vm.dimensions).toHaveLength(0);
-      wrapper.destroy();
     });
 
     it("auto-generates name for filename source", () => {
@@ -1201,7 +1145,6 @@ describe("MultiSourceConfiguration", () => {
         data: { values: ["a", "b"], valueIdxPerFilename: {} },
       });
       expect(vm.dimensions[0].name).toBe("Filename variable 1");
-      wrapper.destroy();
     });
 
     it("auto-generates name for file source", () => {
@@ -1212,7 +1155,6 @@ describe("MultiSourceConfiguration", () => {
         data: { 0: { stride: 1, range: 3, values: null } },
       });
       expect(vm.dimensions[0].name).toBe("Metadata 1 (Time)");
-      wrapper.destroy();
     });
 
     it("uses provided name when given", () => {
@@ -1225,7 +1167,6 @@ describe("MultiSourceConfiguration", () => {
         "All frames per item",
       );
       expect(vm.dimensions[0].name).toBe("All frames per item");
-      wrapper.destroy();
     });
   });
 
@@ -1274,7 +1215,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.assignments.Z.value.guess).toBe("Z");
       expect(vm.assignments.T).not.toBeNull();
       expect(vm.assignments.T.value.guess).toBe("T");
-      wrapper.destroy();
     });
 
     it("areDimensionsSetToDefault returns true when matching defaults", () => {
@@ -1283,7 +1223,6 @@ describe("MultiSourceConfiguration", () => {
       setupDimensions(vm);
       vm.resetDimensionsToDefault();
       expect(vm.areDimensionsSetToDefault()).toBe(true);
-      wrapper.destroy();
     });
 
     it("areDimensionsSetToDefault returns false when modified", () => {
@@ -1293,7 +1232,6 @@ describe("MultiSourceConfiguration", () => {
       vm.resetDimensionsToDefault();
       vm.assignments.C = null;
       expect(vm.areDimensionsSetToDefault()).toBe(false);
-      wrapper.destroy();
     });
 
     it("isVariableAssigned checks if variable is assigned to any dimension", () => {
@@ -1306,7 +1244,6 @@ describe("MultiSourceConfiguration", () => {
       // Unassign C
       vm.assignments.C = null;
       expect(vm.isVariableAssigned(vm.dimensions[0])).toBe(false);
-      wrapper.destroy();
     });
 
     it("getAssignedDimension returns dimension key for variable", () => {
@@ -1317,7 +1254,6 @@ describe("MultiSourceConfiguration", () => {
 
       expect(vm.getAssignedDimension(vm.dimensions[0])).toBe("C");
       expect(vm.getAssignedDimension(vm.dimensions[1])).toBe("Z");
-      wrapper.destroy();
     });
 
     it("getAssignedDimension returns null for unassigned variable", () => {
@@ -1325,7 +1261,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       setupDimensions(vm);
       expect(vm.getAssignedDimension(vm.dimensions[0])).toBeNull();
-      wrapper.destroy();
     });
 
     it("assignmentDisabled returns true for immutable ND2 assignments", () => {
@@ -1337,7 +1272,6 @@ describe("MultiSourceConfiguration", () => {
 
       // File source + ND2 file = immutable
       expect(vm.assignmentDisabled("C")).toBe(true);
-      wrapper.destroy();
     });
 
     it("assignmentDisabled returns false for non-ND2 files with available items", () => {
@@ -1368,7 +1302,6 @@ describe("MultiSourceConfiguration", () => {
 
       // C is assigned (file source from .tif, not ND2) and there are unassigned items
       expect(vm.assignmentDisabled("C")).toBe(false);
-      wrapper.destroy();
     });
 
     it("clearDisabled returns true for immutable assignments", () => {
@@ -1378,14 +1311,12 @@ describe("MultiSourceConfiguration", () => {
       vm.girderItems = [{ name: "experiment.nd2" }];
       vm.resetDimensionsToDefault();
       expect(vm.clearDisabled("C")).toBe(true);
-      wrapper.destroy();
     });
 
     it("clearDisabled returns true when no assignment", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.clearDisabled("C")).toBe(true);
-      wrapper.destroy();
     });
 
     it("submitEnabled returns false when initializing", () => {
@@ -1393,7 +1324,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.initializing = true;
       expect(vm.submitEnabled()).toBe(false);
-      wrapper.destroy();
     });
 
     it("submitEnabled returns true when all items assigned", () => {
@@ -1403,7 +1333,6 @@ describe("MultiSourceConfiguration", () => {
       vm.initializing = false;
       vm.resetDimensionsToDefault();
       expect(vm.submitEnabled()).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -1445,7 +1374,6 @@ describe("MultiSourceConfiguration", () => {
       expect(strategy.XY).toBeNull();
       expect(strategy.T).toBeNull();
       expect(strategy.transcode).toBe(true);
-      wrapper.destroy();
     });
 
     it("saveDimensionStrategyToStore does nothing when not in batch mode", () => {
@@ -1455,7 +1383,6 @@ describe("MultiSourceConfiguration", () => {
 
       vm.saveDimensionStrategyToStore();
       expect(mockSetUploadDimensionStrategy).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("saveDimensionStrategyToStore saves when in batch mode for first dataset", () => {
@@ -1499,7 +1426,6 @@ describe("MultiSourceConfiguration", () => {
           origFirstDataset,
         );
       }
-      wrapper.destroy();
     });
 
     it("applyDimensionStrategy applies exact match", () => {
@@ -1540,7 +1466,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.assignments.Z).not.toBeNull();
       expect(vm.assignments.Z.value.id).toBe(1);
       expect(vm.transcode).toBe(false);
-      wrapper.destroy();
     });
 
     it("applyDimensionStrategy falls back to guess-only match", () => {
@@ -1572,7 +1497,6 @@ describe("MultiSourceConfiguration", () => {
       // Should fall back to guess match (same guess "C")
       expect(vm.assignments.C).not.toBeNull();
       expect(vm.assignments.C.value.id).toBe(0);
-      wrapper.destroy();
     });
 
     it("applyDimensionStrategy falls back to source-only match", () => {
@@ -1604,7 +1528,6 @@ describe("MultiSourceConfiguration", () => {
       // Should fall back to source match (same source "file")
       expect(vm.assignments.C).not.toBeNull();
       expect(vm.assignments.C.value.id).toBe(0);
-      wrapper.destroy();
     });
 
     it("applyDimensionStrategy falls back to default when no match", () => {
@@ -1636,7 +1559,6 @@ describe("MultiSourceConfiguration", () => {
       // Z should fall back to default (getDefaultAssignmentItem)
       // Since the only dimension has guess "XY", default for Z is null
       expect(vm.assignments.Z).toBeNull();
-      wrapper.destroy();
     });
 
     it("reinitializeAndApplyStrategy resets state and re-initializes", async () => {
@@ -1665,7 +1587,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.assignments.Z).not.toBeNull();
       expect(vm.assignments.T).not.toBeNull();
       expect(vm.transcode).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -1676,7 +1597,6 @@ describe("MultiSourceConfiguration", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.getValueFromAssignments("XY", 0, 0)).toBe(0);
-      wrapper.destroy();
     });
 
     it("returns correct index for file source", () => {
@@ -1696,7 +1616,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.getValueFromAssignments("C", 0, 1)).toBe(1);
       // frameIdx=5 => floor(5/1) % 3 = 2
       expect(vm.getValueFromAssignments("C", 0, 5)).toBe(2);
-      wrapper.destroy();
     });
 
     it("returns correct index for filename source", () => {
@@ -1715,7 +1634,6 @@ describe("MultiSourceConfiguration", () => {
       };
       expect(vm.getValueFromAssignments("C", 0, 0)).toBe(0);
       expect(vm.getValueFromAssignments("C", 1, 0)).toBe(1);
-      wrapper.destroy();
     });
 
     it("returns frameIdx for images source", () => {
@@ -1726,7 +1644,6 @@ describe("MultiSourceConfiguration", () => {
         value: { id: 0, source: "images", data: null },
       };
       expect(vm.getValueFromAssignments("Z", 0, 7)).toBe(7);
-      wrapper.destroy();
     });
 
     it("returns 0 when file data missing for item index", () => {
@@ -1742,7 +1659,6 @@ describe("MultiSourceConfiguration", () => {
       };
       // itemIdx=1 has no data entry
       expect(vm.getValueFromAssignments("Z", 1, 5)).toBe(0);
-      wrapper.destroy();
     });
   });
 
@@ -1760,7 +1676,6 @@ describe("MultiSourceConfiguration", () => {
       };
       // frameIdx=30, stride=15, range=4 => floor(30/15) % 4 = 2
       expect(vm.getCompositingValueFromAssignments("T", 0, 30)).toBe(2);
-      wrapper.destroy();
     });
   });
 
@@ -1824,7 +1739,6 @@ describe("MultiSourceConfiguration", () => {
       const result = await vm.generateJson();
 
       expect(result).toBe("item-123");
-      wrapper.destroy();
     });
 
     it("calls addMultiSourceMetadata with correct params", async () => {
@@ -1846,7 +1760,6 @@ describe("MultiSourceConfiguration", () => {
       expect(metadata.channels).toContain("DAPI");
       expect(metadata.channels).toContain("GFP");
       expect(metadata.sources).toHaveLength(1);
-      wrapper.destroy();
     });
 
     it("emits configData event", async () => {
@@ -1857,10 +1770,9 @@ describe("MultiSourceConfiguration", () => {
       await vm.generateJson();
 
       expect(wrapper.emitted("configData")).toBeTruthy();
-      const configData = wrapper.emitted("configData")![0][0];
+      const configData = wrapper.emitted("configData")![0][0] as any;
       expect(configData.channels).toEqual(["DAPI", "GFP"]);
       expect(configData.sources).toBeDefined();
-      wrapper.destroy();
     });
 
     it("calls updateDatasetMetadata with dimension labels", async () => {
@@ -1876,7 +1788,6 @@ describe("MultiSourceConfiguration", () => {
           dimensionLabels: expect.any(Object),
         }),
       );
-      wrapper.destroy();
     });
 
     it("schedules caches after successful upload", async () => {
@@ -1889,7 +1800,6 @@ describe("MultiSourceConfiguration", () => {
       expect(mockScheduleTileFramesComputation).toHaveBeenCalledWith("ds-1");
       expect(mockScheduleMaxMergeCache).toHaveBeenCalledWith("ds-1");
       expect(mockScheduleHistogramCache).toHaveBeenCalledWith("ds-1");
-      wrapper.destroy();
     });
 
     it("returns null on addMultiSourceMetadata failure", async () => {
@@ -1901,7 +1811,6 @@ describe("MultiSourceConfiguration", () => {
 
       const result = await vm.generateJson();
       expect(result).toBeNull();
-      wrapper.destroy();
     });
 
     it("handles channel names from filename source", async () => {
@@ -1939,7 +1848,6 @@ describe("MultiSourceConfiguration", () => {
       const callArg = mockAddMultiSourceMetadata.mock.calls[0][0];
       const metadata = JSON.parse(callArg.metadata);
       expect(metadata.channels).toEqual(["red", "green"]);
-      wrapper.destroy();
     });
 
     it("handles RGB expansion with splitRGBBands", async () => {
@@ -1966,7 +1874,6 @@ describe("MultiSourceConfiguration", () => {
         "Default - Green",
         "Default - Blue",
       ]);
-      wrapper.destroy();
     });
 
     it("uses Default channel names for images source", async () => {
@@ -1999,7 +1906,6 @@ describe("MultiSourceConfiguration", () => {
         "Default 1",
         "Default 2",
       ]);
-      wrapper.destroy();
     });
   });
 
@@ -2019,7 +1925,6 @@ describe("MultiSourceConfiguration", () => {
 
       expect(wrapper.emitted("generatedJson")).toBeTruthy();
       expect(wrapper.emitted("generatedJson")![0][0]).toBe("item-123");
-      wrapper.destroy();
     });
 
     it("routes to dataset page when autoDatasetRoute is true", async () => {
@@ -2039,7 +1944,6 @@ describe("MultiSourceConfiguration", () => {
         name: "dataset",
         params: { datasetId: "ds-1" },
       });
-      wrapper.destroy();
     });
 
     it("does NOT route when autoDatasetRoute is false", async () => {
@@ -2056,7 +1960,6 @@ describe("MultiSourceConfiguration", () => {
       await vm.submit();
 
       expect(mockRouter.push).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("does NOT route when generateJson returns null", async () => {
@@ -2075,7 +1978,6 @@ describe("MultiSourceConfiguration", () => {
       await vm.submit();
 
       expect(mockRouter.push).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -2086,7 +1988,6 @@ describe("MultiSourceConfiguration", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.sliceAndJoin(["foo", "bar"], 10)).toBe("foo, bar");
-      wrapper.destroy();
     });
 
     it("truncates when first element is too long", () => {
@@ -2095,7 +1996,6 @@ describe("MultiSourceConfiguration", () => {
       const result = vm.sliceAndJoin(["very_long_string_here"], 10);
       expect(result).toMatch(/…$/);
       expect(result.length).toBeLessThanOrEqual(10);
-      wrapper.destroy();
     });
 
     it("appends ellipsis when values exceed limit", () => {
@@ -2103,21 +2003,18 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       const result = vm.sliceAndJoin(["foo", "bar", "baz", "qux", "quux"], 16);
       expect(result).toMatch(/…$/);
-      wrapper.destroy();
     });
 
     it("returns empty string for empty array", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.sliceAndJoin([])).toBe("");
-      wrapper.destroy();
     });
 
     it("returns whole string when it fits exactly", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.sliceAndJoin(["ab", "cd"], 6)).toBe("ab, cd");
-      wrapper.destroy();
     });
   });
 
@@ -2132,7 +2029,6 @@ describe("MultiSourceConfiguration", () => {
       };
       const result = vm.getItemValues(item);
       expect(result).toBe("a, b, c");
-      wrapper.destroy();
     });
 
     it("returns 'N values' for images source", () => {
@@ -2140,7 +2036,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       const item = { source: "images", data: null, size: 5 };
       expect(vm.getItemValues(item)).toBe("5 values");
-      wrapper.destroy();
     });
 
     it("returns extracted values for file source with values", () => {
@@ -2152,7 +2047,6 @@ describe("MultiSourceConfiguration", () => {
         size: 2,
       };
       expect(vm.getItemValues(item)).toBe("Ch0, Ch1");
-      wrapper.destroy();
     });
 
     it("returns 'N values' for file source without named values", () => {
@@ -2164,7 +2058,6 @@ describe("MultiSourceConfiguration", () => {
         size: 3,
       };
       expect(vm.getItemValues(item)).toBe("3 values");
-      wrapper.destroy();
     });
   });
 
@@ -2179,7 +2072,6 @@ describe("MultiSourceConfiguration", () => {
       const classes = vm.getSlotClasses("C");
       expect(classes["assignment-slot--filled"]).toBe(true);
       expect(classes["assignment-slot--empty-available"]).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns empty-available when no assignment but items available", () => {
@@ -2197,7 +2089,6 @@ describe("MultiSourceConfiguration", () => {
       ];
       const classes = vm.getSlotClasses("C");
       expect(classes["assignment-slot--empty-available"]).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns empty-none when no assignment and no items", () => {
@@ -2206,7 +2097,6 @@ describe("MultiSourceConfiguration", () => {
       vm.dimensions = [];
       const classes = vm.getSlotClasses("C");
       expect(classes["assignment-slot--empty-none"]).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -2220,7 +2110,6 @@ describe("MultiSourceConfiguration", () => {
           metadata: { photometricInterpretation: 2 },
         }),
       ).toBe(true);
-      wrapper.destroy();
     });
 
     it("detects RGB from photometricInterpretation='RGB'", () => {
@@ -2232,7 +2121,6 @@ describe("MultiSourceConfiguration", () => {
           metadata: { photometricInterpretation: "RGB" },
         }),
       ).toBe(true);
-      wrapper.destroy();
     });
 
     it("overrides to not-RGB when IndexRange.IndexC > 1", () => {
@@ -2245,21 +2133,18 @@ describe("MultiSourceConfiguration", () => {
           IndexRange: { IndexC: 4 },
         }),
       ).toBe(false);
-      wrapper.destroy();
     });
 
     it("fallback: bandCount=3 treated as color", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.detectColorVsChannels({ bandCount: 3 })).toBe(true);
-      wrapper.destroy();
     });
 
     it("fallback: bandCount=1 not treated as color", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.detectColorVsChannels({ bandCount: 1 })).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -2278,7 +2163,6 @@ describe("MultiSourceConfiguration", () => {
 
       expect(mockWriteText).toHaveBeenCalledWith("some log output");
       expect(vm.showCopySnackbar).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -2316,7 +2200,7 @@ describe("MultiSourceConfiguration", () => {
         value: { id: 0, source: "file", data: {} },
       };
 
-      await Vue.nextTick();
+      await nextTick();
 
       expect(mockSetUploadDimensionStrategy).toHaveBeenCalled();
 
@@ -2331,7 +2215,6 @@ describe("MultiSourceConfiguration", () => {
           origFirstDataset,
         );
       }
-      wrapper.destroy();
     });
 
     it("transcode watcher calls saveDimensionStrategyToStore", async () => {
@@ -2361,7 +2244,7 @@ describe("MultiSourceConfiguration", () => {
       mockSetUploadDimensionStrategy.mockClear();
 
       vm.transcode = true;
-      await Vue.nextTick();
+      await nextTick();
 
       expect(mockSetUploadDimensionStrategy).toHaveBeenCalled();
 
@@ -2376,7 +2259,6 @@ describe("MultiSourceConfiguration", () => {
           origFirstDataset,
         );
       }
-      wrapper.destroy();
     });
   });
 
@@ -2439,7 +2321,6 @@ describe("MultiSourceConfiguration", () => {
 
       const labels = vm.extractDimensionLabels("C");
       expect(labels).toEqual(["red", "green", "blue"]);
-      wrapper.destroy();
     });
 
     it("returns numeric labels for images-sourced assignment", () => {
@@ -2459,7 +2340,6 @@ describe("MultiSourceConfiguration", () => {
 
       const labels = vm.extractDimensionLabels("Z");
       expect(labels).toEqual(["1", "2", "3"]);
-      wrapper.destroy();
     });
 
     it("returns null when dimension not assigned", () => {
@@ -2467,7 +2347,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.assignments.XY = null;
       expect(vm.extractDimensionLabels("XY")).toBeNull();
-      wrapper.destroy();
     });
 
     it("returns file source values joined with /", () => {
@@ -2490,7 +2369,6 @@ describe("MultiSourceConfiguration", () => {
 
       const labels = vm.extractDimensionLabels("C");
       expect(labels).toEqual(["DAPI", "GFP"]);
-      wrapper.destroy();
     });
   });
 
@@ -2504,7 +2382,6 @@ describe("MultiSourceConfiguration", () => {
       vm.assignments.C = { text: "Ch", value: dim };
 
       expect(vm.getAssignedDimensionColor(dim)).toBe("#9C27B0"); // Purple for C
-      wrapper.destroy();
     });
 
     it("getAssignedDimensionColor returns default for unassigned", () => {
@@ -2514,7 +2391,6 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.getAssignedDimensionColor(dim)).toBe(
         "rgba(255, 255, 255, 0.3)",
       );
-      wrapper.destroy();
     });
 
     it("getAssignmentText returns text for assigned dimension", () => {
@@ -2522,14 +2398,12 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.assignments.Z = { text: "Z-depth", value: { id: 0 } };
       expect(vm.getAssignmentText("Z")).toBe("Z-depth");
-      wrapper.destroy();
     });
 
     it("getAssignmentText returns empty string for unassigned", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.getAssignmentText("Z")).toBe("");
-      wrapper.destroy();
     });
 
     it("getAssignmentSize returns size for assigned dimension", () => {
@@ -2537,14 +2411,12 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.assignments.Z = { text: "Z", value: { id: 0, size: 5 } };
       expect(vm.getAssignmentSize("Z")).toBe(5);
-      wrapper.destroy();
     });
 
     it("getAssignmentSize returns 0 for unassigned", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.getAssignmentSize("Z")).toBe(0);
-      wrapper.destroy();
     });
 
     it("getSlotStyle returns faded color when no assignment and no items", () => {
@@ -2553,7 +2425,6 @@ describe("MultiSourceConfiguration", () => {
       vm.dimensions = [];
       const style = vm.getSlotStyle("C");
       expect(style.backgroundColor).toContain("#9C27B0");
-      wrapper.destroy();
     });
 
     it("getSlotStyle returns empty when assignment exists", () => {
@@ -2565,7 +2436,6 @@ describe("MultiSourceConfiguration", () => {
       };
       const style = vm.getSlotStyle("C");
       expect(style).toEqual({});
-      wrapper.destroy();
     });
 
     it("getAssignmentBadgeStyleForSlot uses dimension color", () => {
@@ -2578,14 +2448,12 @@ describe("MultiSourceConfiguration", () => {
       const style = vm.getAssignmentBadgeStyleForSlot("XY");
       // Should use XY color (#4CAF50), not the variable's guess color
       expect(style.borderLeftColor).toBe("#4CAF50");
-      wrapper.destroy();
     });
 
     it("isAssignmentImmutableForDimension returns false when not assigned", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isAssignmentImmutableForDimension("Z")).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -2597,7 +2465,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.girderItems = [];
       expect(vm.highlightedFilenameSegments).toEqual([]);
-      wrapper.destroy();
     });
 
     it("returns empty array when no filename variables", () => {
@@ -2606,7 +2473,6 @@ describe("MultiSourceConfiguration", () => {
       vm.girderItems = [{ name: "test.tif" }];
       vm.dimensions = [];
       expect(vm.highlightedFilenameSegments).toEqual([]);
-      wrapper.destroy();
     });
   });
 
@@ -2635,7 +2501,6 @@ describe("MultiSourceConfiguration", () => {
       if (legend.length > 0) {
         expect(legend[0].color).toBe("#4CAF50"); // XY color
       }
-      wrapper.destroy();
     });
   });
 
@@ -2656,7 +2521,6 @@ describe("MultiSourceConfiguration", () => {
       const item = vm.assignmentOptionToAssignmentItem(dim);
       expect(item.text).toBe("Channels");
       expect(item.value).toBe(dim);
-      wrapper.destroy();
     });
   });
 
@@ -2687,7 +2551,6 @@ describe("MultiSourceConfiguration", () => {
       const item = vm.getDefaultAssignmentItem("C");
       expect(item).not.toBeNull();
       expect(item.value.source).toBe("file");
-      wrapper.destroy();
     });
 
     it("returns null when no matching dimension", () => {
@@ -2695,7 +2558,6 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       vm.dimensions = [];
       expect(vm.getDefaultAssignmentItem("C")).toBeNull();
-      wrapper.destroy();
     });
 
     it("falls back to any source when no file source", () => {
@@ -2714,7 +2576,6 @@ describe("MultiSourceConfiguration", () => {
       const item = vm.getDefaultAssignmentItem("C");
       expect(item).not.toBeNull();
       expect(item.value.source).toBe("filename");
-      wrapper.destroy();
     });
   });
 
@@ -2734,7 +2595,6 @@ describe("MultiSourceConfiguration", () => {
         },
       };
       expect(vm.isAssignmentImmutable(assignment)).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false for file source from non-ND2 files", () => {
@@ -2750,7 +2610,6 @@ describe("MultiSourceConfiguration", () => {
         },
       };
       expect(vm.isAssignmentImmutable(assignment)).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false for filename source", () => {
@@ -2765,7 +2624,6 @@ describe("MultiSourceConfiguration", () => {
         },
       };
       expect(vm.isAssignmentImmutable(assignment)).toBe(false);
-      wrapper.destroy();
     });
   });
 });

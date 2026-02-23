@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockGetAllConfigurations = vi.fn();
 const mockAddCollectionToProject = vi.fn();
@@ -23,8 +22,6 @@ vi.mock("@/store/projects", () => ({
 }));
 
 import AddCollectionToProjectFilterDialog from "./AddCollectionToProjectFilterDialog.vue";
-
-Vue.use(Vuetify);
 
 const sampleProject = {
   id: "proj1",
@@ -105,16 +102,15 @@ async function mountComponent(props = {}) {
   mockGetAllConfigurations.mockResolvedValue([]);
 
   const wrapper = shallowMount(AddCollectionToProjectFilterDialog, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       project: sampleProject,
       ...props,
     },
   });
 
   // Wait for mounted() async fetchCollections to complete
-  await Vue.nextTick();
-  await Vue.nextTick();
+  await nextTick();
+  await nextTick();
 
   return wrapper;
 }
@@ -132,7 +128,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     expect(ids.has("existing-col-1")).toBe(true);
     expect(ids.has("existing-col-2")).toBe(true);
     expect(ids.has("col-3")).toBe(false);
-    wrapper.destroy();
   });
 
   it("filteredCollections returns all collections when searchQuery is empty", async () => {
@@ -141,7 +136,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     vm.allCollections = sampleCollections;
     vm.searchQuery = "";
     expect(vm.filteredCollections).toEqual(sampleCollections);
-    wrapper.destroy();
   });
 
   it("filteredCollections filters by searchQuery on name", async () => {
@@ -151,7 +145,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     vm.searchQuery = "beta";
     expect(vm.filteredCollections).toHaveLength(1);
     expect(vm.filteredCollections[0].id).toBe("col-3");
-    wrapper.destroy();
   });
 
   it("filteredCollections filters by searchQuery on description", async () => {
@@ -161,7 +154,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     vm.searchQuery = "alpha description";
     expect(vm.filteredCollections).toHaveLength(1);
     expect(vm.filteredCollections[0].id).toBe("existing-col-1");
-    wrapper.destroy();
   });
 
   it("isInProject checks existingCollectionIds Set", async () => {
@@ -171,7 +163,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     expect(vm.isInProject("existing-col-2")).toBe(true);
     expect(vm.isInProject("col-3")).toBe(false);
     expect(vm.isInProject("nonexistent")).toBe(false);
-    wrapper.destroy();
   });
 
   it("selectedCollections maps from selectedIndices, filtering out already-in-project", async () => {
@@ -183,7 +174,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     vm.selectedIndices = [0, 1];
     expect(vm.selectedCollections).toHaveLength(1);
     expect(vm.selectedCollections[0].id).toBe("col-3");
-    wrapper.destroy();
   });
 
   it("selectedCollections returns empty when no indices selected", async () => {
@@ -192,7 +182,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     vm.allCollections = sampleCollections;
     vm.selectedIndices = [];
     expect(vm.selectedCollections).toHaveLength(0);
-    wrapper.destroy();
   });
 
   it("addCollections calls store for each selected collection and emits added", async () => {
@@ -217,7 +206,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     });
     expect(wrapper.emitted("added")).toBeTruthy();
     expect(wrapper.emitted("added")![0][0]).toEqual(["col-3", "col-4"]);
-    wrapper.destroy();
   });
 
   it("addCollections does nothing when selectedCollections is empty", async () => {
@@ -230,7 +218,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
 
     expect(mockAddCollectionToProject).not.toHaveBeenCalled();
     expect(wrapper.emitted("added")).toBeFalsy();
-    wrapper.destroy();
   });
 
   it("addCollections resets selectedIndices after adding", async () => {
@@ -244,7 +231,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     await vm.addCollections();
 
     expect(vm.selectedIndices).toEqual([]);
-    wrapper.destroy();
   });
 
   it("watch on project resets selectedIndices", async () => {
@@ -260,6 +246,5 @@ describe("AddCollectionToProjectFilterDialog", () => {
     await wrapper.setProps({ project: newProject });
 
     expect(vm.selectedIndices).toEqual([]);
-    wrapper.destroy();
   });
 });

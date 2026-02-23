@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import AnnotationActionPanel from "./AnnotationActionPanel.vue";
 
 vi.mock("@/store/annotation", () => ({
@@ -10,12 +8,9 @@ vi.mock("@/store/annotation", () => ({
   },
 }));
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(AnnotationActionPanel, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       selectedCount: 3,
       ...props,
     },
@@ -35,28 +30,28 @@ describe("AnnotationActionPanel", () => {
   it("emits delete-selected on button click", async () => {
     const wrapper = mountComponent();
     const buttons = wrapper.findAll(".v-btn");
-    await buttons.at(0).trigger("click");
+    await buttons.at(0)!.trigger("click");
     expect(wrapper.emitted("delete-selected")).toBeTruthy();
   });
 
   it("emits delete-unselected on button click", async () => {
     const wrapper = mountComponent();
     const buttons = wrapper.findAll(".v-btn");
-    await buttons.at(1).trigger("click");
+    await buttons.at(1)!.trigger("click");
     expect(wrapper.emitted("delete-unselected")).toBeTruthy();
   });
 
   it("emits tag-selected on button click", async () => {
     const wrapper = mountComponent();
     const buttons = wrapper.findAll(".v-btn");
-    await buttons.at(2).trigger("click");
+    await buttons.at(2)!.trigger("click");
     expect(wrapper.emitted("tag-selected")).toBeTruthy();
   });
 
   it("emits color-selected on button click", async () => {
     const wrapper = mountComponent();
     const buttons = wrapper.findAll(".v-btn");
-    await buttons.at(3).trigger("click");
+    await buttons.at(3)!.trigger("click");
     expect(wrapper.emitted("color-selected")).toBeTruthy();
   });
 
@@ -67,14 +62,14 @@ describe("AnnotationActionPanel", () => {
     });
     const wrapper = mountComponent();
     const buttons = wrapper.findAll(".v-btn");
-    await buttons.at(4).trigger("click");
+    await buttons.at(4)!.trigger("click");
     expect(writeText).toHaveBeenCalledWith("id1\nid2\nid3");
   });
 
   it("emits deselect-all on button click", async () => {
     const wrapper = mountComponent();
     const buttons = wrapper.findAll(".v-btn");
-    await buttons.at(5).trigger("click");
+    await buttons.at(5)!.trigger("click");
     expect(wrapper.emitted("deselect-all")).toBeTruthy();
   });
 });

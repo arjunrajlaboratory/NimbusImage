@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import ChannelSelect from "./ChannelSelect.vue";
 
 vi.mock("@/store", () => ({
@@ -16,12 +14,9 @@ vi.mock("@/store", () => ({
   },
 }));
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(ChannelSelect, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       value: 0,
       ...props,
     },

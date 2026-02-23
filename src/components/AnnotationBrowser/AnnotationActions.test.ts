@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -40,17 +38,16 @@ import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return shallowMount(AnnotationActions, {
-    vuetify: new Vuetify(),
-    stubs: {
-      AnnotationCsvDialog: true,
-      AnnotationExport: true,
-      AnnotationImport: true,
-      DeleteConnections: true,
-      IndexConversionDialog: true,
+    global: {
+      stubs: {
+        AnnotationCsvDialog: true,
+        AnnotationExport: true,
+        AnnotationImport: true,
+        DeleteConnections: true,
+        IndexConversionDialog: true,
+      },
     },
   });
 }

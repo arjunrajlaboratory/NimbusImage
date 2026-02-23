@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -12,19 +10,19 @@ vi.mock("@/store", () => ({
   },
 }));
 
+import { routerProvider } from "@/test/helpers";
 import store from "@/store";
 import ImportDataset from "./ImportDataset.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return mount(ImportDataset, {
-    vuetify: new Vuetify(),
-    mocks: {
-      $router: { push: vi.fn() },
-    },
-    stubs: {
-      GirderLocationChooser: true,
+    global: {
+      provide: {
+        ...routerProvider(),
+      },
+      stubs: {
+        GirderLocationChooser: true,
+      },
     },
   });
 }

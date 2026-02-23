@@ -1,15 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import FileDropzone from "./FileDropzone.vue";
-
-Vue.use(Vuetify);
 
 function mountComponent(props = {}) {
   return shallowMount(FileDropzone, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: [],
       ...props,
     },

@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -29,12 +27,15 @@ vi.mock("@/store/progress", () => ({
 
 import SettingsPanel from "./SettingsPanel.vue";
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-
 function mountComponent() {
   return shallowMount(SettingsPanel, {
-    vuetify: new Vuetify(),
+    global: {
+      stubs: {
+        VCard: { template: "<div><slot /></div>" },
+        VCardTitle: { template: "<div><slot /></div>" },
+        VCardText: { template: "<div><slot /></div>" },
+      },
+    },
   });
 }
 
@@ -46,6 +47,6 @@ describe("SettingsPanel", () => {
 
   it("renders NimbusImage settings title", () => {
     const wrapper = mountComponent();
-    expect(wrapper.text()).toContain("NimbusImage settings");
+    expect(wrapper.html()).toContain("NimbusImage settings");
   });
 });

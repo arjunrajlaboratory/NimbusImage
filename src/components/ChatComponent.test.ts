@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 // Mock store
 vi.mock("@/store", () => ({
@@ -40,20 +38,19 @@ import ChatComponent from "./ChatComponent.vue";
 import store from "@/store";
 import chatStore from "@/store/chat";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   // Ensure messages are populated so onMounted won't trigger refreshChat
   (chatStore as any).messages = [
     { type: "assistant", content: "Hello", visible: true },
   ];
   return shallowMount(ChatComponent, {
-    vuetify: new Vuetify(),
-    stubs: {
-      "v-card": { template: "<div><slot /></div>" },
-      "v-card-title": { template: "<div><slot /></div>" },
-      "v-card-text": { template: "<div><slot /></div>" },
-      "v-card-actions": { template: "<div><slot /></div>" },
+    global: {
+      stubs: {
+        "v-card": { template: "<div><slot /></div>" },
+        "v-card-title": { template: "<div><slot /></div>" },
+        "v-card-text": { template: "<div><slot /></div>" },
+        "v-card-actions": { template: "<div><slot /></div>" },
+      },
     },
   });
 }
@@ -73,14 +70,12 @@ describe("ChatComponent", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.messages).toEqual(chatStore.messages);
-    wrapper.destroy();
   });
 
   it("firstMap returns undefined when no maps", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.firstMap).toBeUndefined();
-    wrapper.destroy();
   });
 
   it("firstMap returns the first map when maps exist", () => {
@@ -92,7 +87,6 @@ describe("ChatComponent", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.firstMap).toBe(mockMap);
-    wrapper.destroy();
   });
 
   it("visibleImagesInput filters out hidden images", () => {
@@ -105,7 +99,6 @@ describe("ChatComponent", () => {
     ];
     // visible !== false means undefined is visible
     expect(vm.visibleImagesInput).toHaveLength(2);
-    wrapper.destroy();
   });
 
   it("addImageFile does nothing when already at 4 images", () => {
@@ -120,7 +113,6 @@ describe("ChatComponent", () => {
     const file = new File(["x"], "test.png", { type: "image/png" });
     vm.addImageFile(file);
     expect(vm.imagesInput).toHaveLength(4);
-    wrapper.destroy();
   });
 
   it("addImageFile reads file and pushes to imagesInput", async () => {
@@ -146,7 +138,6 @@ describe("ChatComponent", () => {
     expect(vm.imagesInput[0].data).toBe(mockResult);
 
     globalThis.FileReader = originalFileReader;
-    wrapper.destroy();
   });
 
   it("removeImage splices the image at given index", () => {
@@ -161,7 +152,6 @@ describe("ChatComponent", () => {
     expect(vm.imagesInput).toHaveLength(2);
     expect(vm.imagesInput[0].data).toBe("a");
     expect(vm.imagesInput[1].data).toBe("c");
-    wrapper.destroy();
   });
 
   it("sendMessage does nothing when isWaiting is true", async () => {
@@ -171,7 +161,6 @@ describe("ChatComponent", () => {
     vm.textInput = "hello";
     await vm.sendMessage();
     expect(chatStore.sendMessage).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("sendMessage does nothing when input is empty", async () => {
@@ -180,7 +169,6 @@ describe("ChatComponent", () => {
     vm.textInput = "   ";
     await vm.sendMessage();
     expect(chatStore.sendMessage).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("sendMessage calls chatStore.sendMessage with user message", async () => {
@@ -194,7 +182,6 @@ describe("ChatComponent", () => {
     expect(call.type).toBe("user");
     expect(call.content).toBe("Hello bot");
     expect(call.visible).toBe(true);
-    wrapper.destroy();
   });
 
   it("sendMessage clears textInput after sending", async () => {
@@ -203,7 +190,6 @@ describe("ChatComponent", () => {
     vm.textInput = "Hello bot";
     await vm.sendMessage();
     expect(vm.textInput).toBe("");
-    wrapper.destroy();
   });
 
   it("sendMessage sets isWaiting to true during send and false after", async () => {
@@ -217,7 +203,6 @@ describe("ChatComponent", () => {
     await vm.sendMessage();
     expect(waitingDuringSend).toBe(true);
     expect(vm.isWaiting).toBe(false);
-    wrapper.destroy();
   });
 
   it("sendMessage with customInput uses that instead of textInput", async () => {
@@ -228,7 +213,6 @@ describe("ChatComponent", () => {
     expect(chatStore.sendMessage).toHaveBeenCalledTimes(1);
     const call = (chatStore.sendMessage as any).mock.calls[0][0];
     expect(call.content).toBe("custom text");
-    wrapper.destroy();
   });
 
   it("handleFileUpload does nothing when no files", async () => {
@@ -237,7 +221,6 @@ describe("ChatComponent", () => {
     const event = { target: { files: null } };
     await vm.handleFileUpload(event);
     expect(vm.imagesInput).toHaveLength(0);
-    wrapper.destroy();
   });
 
   it("handleFileUpload processes files from input", async () => {
@@ -264,7 +247,6 @@ describe("ChatComponent", () => {
     expect(mockFileReader.readAsDataURL).toHaveBeenCalled();
 
     globalThis.FileReader = originalFileReader;
-    wrapper.destroy();
   });
 
   it("refreshChat clears inputs, calls clearAll, and sends hidden message", async () => {
@@ -281,7 +263,6 @@ describe("ChatComponent", () => {
     const call = (chatStore.sendMessage as any).mock.calls[0][0];
     expect(call.visible).toBe(false);
     expect(vm.isRefreshing).toBe(false);
-    wrapper.destroy();
   });
 
   it("captureViewportScreenshot returns null when no map", async () => {
@@ -289,7 +270,6 @@ describe("ChatComponent", () => {
     const vm = wrapper.vm as any;
     const result = await vm.captureViewportScreenshot();
     expect(result).toBeNull();
-    wrapper.destroy();
   });
 
   it("captureViewportScreenshot takes screenshot when map exists", async () => {
@@ -313,7 +293,6 @@ describe("ChatComponent", () => {
     expect(result).not.toBeNull();
     expect(result!.type).toBe("image/png");
     expect(result!.visible).toBe(false);
-    wrapper.destroy();
   });
 
   it("filterVisibleImages removes images with visible=false", () => {
@@ -328,7 +307,6 @@ describe("ChatComponent", () => {
     expect(result).toHaveLength(2);
     expect(result[0].data).toBe("a");
     expect(result[1].data).toBe("c");
-    wrapper.destroy();
   });
 
   it("filterVisibleMessages removes hidden messages and reverses", () => {
@@ -344,7 +322,6 @@ describe("ChatComponent", () => {
     // reversed: second comes first
     expect(result[0].content).toBe("second");
     expect(result[1].content).toBe("first");
-    wrapper.destroy();
   });
 
   it("emits close event", async () => {
@@ -352,6 +329,5 @@ describe("ChatComponent", () => {
     // Find the close button - it emits 'close'
     wrapper.vm.$emit("close");
     expect(wrapper.emitted("close")).toBeTruthy();
-    wrapper.destroy();
   });
 });

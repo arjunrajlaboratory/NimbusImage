@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockFindDatasetViews = vi.fn();
 const mockGetAllConfigurations = vi.fn();
@@ -57,12 +55,9 @@ vi.mock("@/utils/log", () => ({
 
 import ConfigurationSelect from "./ConfigurationSelect.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return shallowMount(ConfigurationSelect, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       ...props,
     },
   });
@@ -110,7 +105,6 @@ describe("ConfigurationSelect", () => {
     // conf-linked is excluded (already linked), conf-incompatible is excluded (not compatible)
     expect(vm.compatibleConfigurations).toHaveLength(1);
     expect(vm.compatibleConfigurations[0].id).toBe("conf-compatible");
-    wrapper.destroy();
   });
 
   it("updateCompatibleConfigurations passes folderId to getAllConfigurations", async () => {
@@ -123,7 +117,6 @@ describe("ConfigurationSelect", () => {
     await vm.updateCompatibleConfigurations();
 
     expect(mockGetAllConfigurations).toHaveBeenCalledWith("folder123");
-    wrapper.destroy();
   });
 
   it("updateCompatibleConfigurations clears list when dataset is null", async () => {
@@ -140,7 +133,6 @@ describe("ConfigurationSelect", () => {
     expect(mockFindDatasetViews).not.toHaveBeenCalled();
 
     mockDataset = originalDataset;
-    wrapper.destroy();
   });
 
   it("updateCompatibleConfigurations clears list and sets loading false on error", async () => {
@@ -153,7 +145,6 @@ describe("ConfigurationSelect", () => {
 
     expect(vm.compatibleConfigurations).toEqual([]);
     expect(vm.loading).toBe(false);
-    wrapper.destroy();
   });
 
   it("submit emits selected configurations", () => {
@@ -170,7 +161,6 @@ describe("ConfigurationSelect", () => {
 
     expect(wrapper.emitted("submit")).toBeTruthy();
     expect(wrapper.emitted("submit")![0][0]).toEqual(configs);
-    wrapper.destroy();
   });
 
   it("submit emits empty array when no configurations selected", () => {
@@ -181,7 +171,6 @@ describe("ConfigurationSelect", () => {
 
     expect(wrapper.emitted("submit")).toBeTruthy();
     expect(wrapper.emitted("submit")![0][0]).toEqual([]);
-    wrapper.destroy();
   });
 
   it("cancel emits cancel event", () => {
@@ -191,7 +180,6 @@ describe("ConfigurationSelect", () => {
     vm.cancel();
 
     expect(wrapper.emitted("cancel")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("loading state is managed properly during updateCompatibleConfigurations", async () => {
@@ -211,44 +199,38 @@ describe("ConfigurationSelect", () => {
     await updatePromise;
 
     expect(vm.loading).toBe(false);
-    wrapper.destroy();
   });
 
   it("default title prop is 'Select collections'", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.$props.title).toBe("Select collections");
-    wrapper.destroy();
   });
 
   it("custom title prop is passed through", () => {
     const wrapper = mountComponent({ title: "Pick configurations" });
     const vm = wrapper.vm as any;
     expect(vm.$props.title).toBe("Pick configurations");
-    wrapper.destroy();
   });
 
   it("headers has correct structure", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.headers).toEqual([
-      { text: "Collection Name", value: "name" },
-      { text: "Collection Description", value: "description" },
+      { title: "Collection Name", key: "name" },
+      { title: "Collection Description", key: "description" },
     ]);
-    wrapper.destroy();
   });
 
   it("search starts empty", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.search).toBe("");
-    wrapper.destroy();
   });
 
   it("selectedConfigurations starts empty", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.selectedConfigurations).toEqual([]);
-    wrapper.destroy();
   });
 });

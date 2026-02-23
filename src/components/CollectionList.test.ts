@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockClientGet = vi.fn();
 const mockGetUserPrivateFolder = vi.fn();
@@ -47,24 +46,24 @@ vi.mock("@/utils/date", () => ({
   formatDateString: vi.fn(() => "formatted-date"),
 }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
 import CollectionList from "./CollectionList.vue";
 import store from "@/store";
 
-Vue.use(Vuetify);
+const mockRouter = { push: vi.fn() };
 
 function mountComponent() {
-  const mockRouter = { push: vi.fn() };
-  const mockRoute = { params: {}, query: {} };
   return shallowMount(CollectionList, {
-    vuetify: new Vuetify(),
-    stubs: {
-      "girder-breadcrumb": true,
-      "collection-item-row": true,
-      CollectionItemRow: true,
-    },
-    mocks: {
-      $router: mockRouter,
-      $route: mockRoute,
+    global: {
+      stubs: {
+        "girder-breadcrumb": true,
+        "collection-item-row": true,
+        CollectionItemRow: true,
+      },
+      provide: {
+        ...routeProvider({ params: {}, query: {} }),
+        ...routerProvider(mockRouter),
+      },
     },
   });
 }
@@ -91,7 +90,6 @@ describe("CollectionList", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentFolderLocation).toBeNull();
-    wrapper.destroy();
   });
 
   it("currentFolderLocation returns location when it has _id and name", () => {
@@ -105,7 +103,6 @@ describe("CollectionList", () => {
       _id: "folder1",
       name: "My Folder",
     });
-    wrapper.destroy();
   });
 
   it("currentFolderLocation returns null when location missing _id", () => {
@@ -113,7 +110,6 @@ describe("CollectionList", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentFolderLocation).toBeNull();
-    wrapper.destroy();
   });
 
   // --- fallbackFolderPath ---
@@ -123,7 +119,6 @@ describe("CollectionList", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.fallbackFolderPath).toBe("Unknown location");
-    wrapper.destroy();
   });
 
   it("fallbackFolderPath returns name when folderLocation has name", () => {
@@ -131,24 +126,20 @@ describe("CollectionList", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.fallbackFolderPath).toBe("Some Folder");
-    wrapper.destroy();
   });
 
   it("fallbackFolderPath returns type label for root/users/collections", () => {
     (store as any).folderLocation = { type: "root" };
     const wrapper = mountComponent();
     expect((wrapper.vm as any).fallbackFolderPath).toBe("Root");
-    wrapper.destroy();
 
     (store as any).folderLocation = { type: "users" };
     const wrapper2 = mountComponent();
     expect((wrapper2.vm as any).fallbackFolderPath).toBe("Users");
-    wrapper2.destroy();
 
     (store as any).folderLocation = { type: "collections" };
     const wrapper3 = mountComponent();
     expect((wrapper3.vm as any).fallbackFolderPath).toBe("Collections");
-    wrapper3.destroy();
   });
 
   it("fallbackFolderPath returns login's folder for login-based location", () => {
@@ -156,7 +147,6 @@ describe("CollectionList", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.fallbackFolderPath).toBe("testuser's folder");
-    wrapper.destroy();
   });
 
   it("fallbackFolderPath returns 'Current folder' as final fallback", () => {
@@ -164,7 +154,6 @@ describe("CollectionList", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.fallbackFolderPath).toBe("Current folder");
-    wrapper.destroy();
   });
 
   // --- filteredCollections ---
@@ -178,7 +167,6 @@ describe("CollectionList", () => {
     ];
     vm.searchQuery = "";
     expect(vm.filteredCollections).toHaveLength(2);
-    wrapper.destroy();
   });
 
   it("filteredCollections filters by name (case-insensitive)", () => {
@@ -191,7 +179,6 @@ describe("CollectionList", () => {
     vm.searchQuery = "alpha";
     expect(vm.filteredCollections).toHaveLength(1);
     expect(vm.filteredCollections[0].name).toBe("Alpha Project");
-    wrapper.destroy();
   });
 
   it("filteredCollections filters by description", () => {
@@ -204,7 +191,6 @@ describe("CollectionList", () => {
     vm.searchQuery = "important";
     expect(vm.filteredCollections).toHaveLength(1);
     expect(vm.filteredCollections[0]._id).toBe("c1");
-    wrapper.destroy();
   });
 
   // --- fetchCollections ---
@@ -223,7 +209,6 @@ describe("CollectionList", () => {
     expect(vm.collections).toHaveLength(2);
     expect(vm.collections[0]._modelType).toBe("upenn_collection");
     expect(vm.loading).toBe(false);
-    wrapper.destroy();
   });
 
   it("fetchCollections handles error and sets empty collections", async () => {
@@ -234,7 +219,6 @@ describe("CollectionList", () => {
     await vm.fetchCollections();
     expect(vm.collections).toEqual([]);
     expect(vm.loading).toBe(false);
-    wrapper.destroy();
   });
 
   it("fetchCollections falls back to private folder when no _id in folderLocation", async () => {
@@ -256,7 +240,6 @@ describe("CollectionList", () => {
         sortdir: -1,
       },
     });
-    wrapper.destroy();
   });
 
   it("fetchCollections sets empty collections when no folderId available", async () => {
@@ -267,7 +250,6 @@ describe("CollectionList", () => {
     await vm.fetchCollections();
     expect(vm.collections).toEqual([]);
     expect(vm.loading).toBe(false);
-    wrapper.destroy();
   });
 
   // --- navigateToCollection ---
@@ -276,11 +258,10 @@ describe("CollectionList", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.navigateToCollection("config123");
-    expect(vm.$router.push).toHaveBeenCalledWith({
+    expect(mockRouter.push).toHaveBeenCalledWith({
       name: "configuration",
       params: { configurationId: "config123" },
     });
-    wrapper.destroy();
   });
 
   // --- collectionToChips ---
@@ -295,7 +276,6 @@ describe("CollectionList", () => {
     });
     expect(result.chips).toEqual([]);
     expect(result.type).toBe("collection");
-    wrapper.destroy();
   });
 
   it("collectionToChips creates chips from views with folder info", async () => {
@@ -322,7 +302,6 @@ describe("CollectionList", () => {
       name: "dataset",
       params: { datasetId: "ds1" },
     });
-    wrapper.destroy();
   });
 
   it("collectionToChips handles empty folder info by skipping missing datasets", async () => {
@@ -339,7 +318,6 @@ describe("CollectionList", () => {
       name: "Test",
     });
     expect(result.chips).toEqual([]);
-    wrapper.destroy();
   });
 
   // --- addChipPromise ---
@@ -351,11 +329,10 @@ describe("CollectionList", () => {
     vm.addChipPromise({ _id: "col1", name: "Test" });
     // pendingChips was incremented (may have already resolved)
     // Wait for all promises to complete
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     await new Promise((r) => setTimeout(r, 10));
     expect(vm.chipsPerItemId).toHaveProperty("col1");
-    wrapper.destroy();
   });
 
   // --- bulkCollectionsToChips ---
@@ -365,7 +342,6 @@ describe("CollectionList", () => {
     const vm = wrapper.vm as any;
     const result = await vm.bulkCollectionsToChips([]);
     expect(result).toEqual({});
-    wrapper.destroy();
   });
 
   it("bulkCollectionsToChips batches view fetching for multiple collections", async () => {
@@ -391,7 +367,6 @@ describe("CollectionList", () => {
     expect(result.col1.chips[0].text).toBe("Dataset A");
     expect(result.col2.chips).toHaveLength(1);
     expect(result.col2.chips[0].text).toBe("Dataset B");
-    wrapper.destroy();
   });
 
   it("bulkCollectionsToChips falls back to individual collectionToChips on error", async () => {
@@ -406,7 +381,6 @@ describe("CollectionList", () => {
     expect(result).toHaveProperty("col1");
     expect(result.col1.chips).toEqual([]);
     expect(result.col1.type).toBe("collection");
-    wrapper.destroy();
   });
 
   // --- watcher: filteredCollections -> chips ---
@@ -425,11 +399,10 @@ describe("CollectionList", () => {
         _modelType: "upenn_collection",
       },
     ];
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     // The watcher should have added c1 to computedChipsIds
     expect(vm.computedChipsIds.has("c1")).toBe(true);
-    wrapper.destroy();
   });
 
   it("fetchCollections retries without folderId on folder error", async () => {
@@ -437,8 +410,8 @@ describe("CollectionList", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     // Wait for initial mount fetchCollections to complete
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     mockClientGet.mockReset();
     mockClientGet
       .mockRejectedValueOnce(new Error("Folder not accessible"))
@@ -449,6 +422,5 @@ describe("CollectionList", () => {
     expect(mockClientGet).toHaveBeenCalledTimes(2);
     expect(vm.collections).toHaveLength(1);
     expect(vm.collections[0].name).toBe("Fallback Collection");
-    wrapper.destroy();
   });
 });

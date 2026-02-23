@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 // --- Top-level mock fn handles ---
 const mockGetUserApiKeys = vi.fn().mockResolvedValue([]);
@@ -137,13 +136,11 @@ vi.mock("@/utils/strings", () => ({
   })),
 }));
 
-vi.mock("@girder/components/src/utils/upload", () => {
-  return {
-    default: class MockUploadManager {
-      constructor() {}
-    },
-  };
-});
+vi.mock("@girder/components", () => ({
+  UploadManager: class MockUploadManager {
+    constructor() {}
+  },
+}));
 
 vi.mock("@/girder/components", () => ({
   Upload: {
@@ -158,11 +155,9 @@ vi.mock("@/girder/components", () => ({
   },
 }));
 
+import { routerProvider } from "@/test/helpers";
 import NewDataset from "./NewDataset.vue";
 import { parseTranscodeOutput } from "@/utils/strings";
-
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
 
 const GirderUploadStub = {
   name: "GirderUpload",
@@ -181,22 +176,33 @@ function createFile(name: string, size = 100): File {
   return file;
 }
 
+const mockRouter = { push: vi.fn() };
+
 function mountComponent(props: Record<string, any> = {}, options: any = {}) {
   return shallowMount(NewDataset, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       initialUploadLocation: { _id: "folder1", _modelType: "folder" },
       ...props,
     },
-    stubs: {
-      GirderLocationChooser: true,
-      FileDropzone: true,
-      MultiSourceConfiguration: true,
-      DatasetInfo: true,
-      GirderUpload: GirderUploadStub,
-    },
-    mocks: {
-      $router: { push: vi.fn() },
+    global: {
+      stubs: {
+        GirderLocationChooser: true,
+        FileDropzone: true,
+        MultiSourceConfiguration: true,
+        DatasetInfo: true,
+        GirderUpload: GirderUploadStub,
+        // Vuetify 3 layout stubs need to render slot content for DOM tests
+        VContainer: { template: "<div><slot /></div>" },
+        VCard: { template: "<div><slot /></div>" },
+        VCardTitle: { template: "<div><slot /></div>" },
+        VCardText: { template: "<div><slot /></div>" },
+        VCardSubtitle: { template: "<div><slot /></div>" },
+        VAlert: { template: "<div><slot /></div>", props: ["type", "variant"] },
+        VForm: { template: "<form><slot /></form>", props: ["modelValue", "disabled"], emits: ["submit"] },
+      },
+      provide: {
+        ...routerProvider(mockRouter),
+      },
     },
     ...options,
   });
@@ -224,6 +230,7 @@ function resetUploadWorkflow() {
 describe("NewDataset", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockRouter.push = vi.fn();
     resetUploadWorkflow();
     mockGetUserApiKeys.mockResolvedValue([]);
     mockCreateDataset.mockResolvedValue(null);
@@ -241,35 +248,30 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.configuring).toBe(false);
-      wrapper.destroy();
     });
 
     it("has uploading=false by default", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.uploading).toBe(false);
-      wrapper.destroy();
     });
 
     it("has dataset=null by default", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.dataset).toBeNull();
-      wrapper.destroy();
     });
 
     it("has pipelineError=false by default", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.pipelineError).toBe(false);
-      wrapper.destroy();
     });
 
     it("has hideUploader=false by default", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.hideUploader).toBe(false);
-      wrapper.destroy();
     });
 
     it("has empty name and description by default", () => {
@@ -277,7 +279,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       expect(vm.name).toBe("");
       expect(vm.description).toBe("");
-      wrapper.destroy();
     });
   });
 
@@ -290,7 +291,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.maxApiKeyFileSize = 5000;
       expect(vm.maxTotalFileSize).toBe(5000);
-      wrapper.destroy();
     });
 
     it("falls back to env var when maxApiKeyFileSize is null", () => {
@@ -299,7 +299,6 @@ describe("NewDataset", () => {
       vm.maxApiKeyFileSize = null;
       // Without env var set, should return Infinity
       expect(vm.maxTotalFileSize).toBe(Infinity);
-      wrapper.destroy();
     });
   });
 
@@ -309,7 +308,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.path = { _id: "folder1", _modelType: "folder" };
       expect(vm.invalidLocation).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns true for unselectable _modelType", () => {
@@ -317,7 +315,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.path = { _id: "root1", _modelType: "root" };
       expect(vm.invalidLocation).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns true for unselectable type property", () => {
@@ -325,7 +322,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.path = { type: "collections" };
       expect(vm.invalidLocation).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when path is null", () => {
@@ -333,7 +329,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.path = null;
       expect(vm.invalidLocation).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -343,14 +338,12 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.dataset = { id: "ds-123" };
       expect(vm.datasetId).toBe("ds-123");
-      wrapper.destroy();
     });
 
     it("returns null when dataset is null", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.datasetId).toBeNull();
-      wrapper.destroy();
     });
   });
 
@@ -363,7 +356,6 @@ describe("NewDataset", () => {
       const progress = vm.totalProgressPercentage;
       expect(progress).toBeGreaterThanOrEqual(0);
       expect(progress).toBeLessThan(100);
-      wrapper.destroy();
     });
 
     it("returns progress based on configuring logs", () => {
@@ -374,7 +366,6 @@ describe("NewDataset", () => {
       const progress = vm.totalProgressPercentage;
       // Should be at step 2 (configuring) with some progress
       expect(progress).toBeGreaterThan(0);
-      wrapper.destroy();
     });
 
     it("returns progress when creatingView", () => {
@@ -383,7 +374,6 @@ describe("NewDataset", () => {
       vm.creatingView = true;
       const progress = vm.totalProgressPercentage;
       expect(progress).toBeGreaterThan(0);
-      wrapper.destroy();
     });
   });
 
@@ -393,14 +383,12 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.dataset = { id: "ds-1" };
       expect(vm.pageTwo).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when dataset is null", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.pageTwo).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -411,7 +399,6 @@ describe("NewDataset", () => {
       const rule = vm.rules[0];
       expect(rule("")).not.toBe(true);
       expect(rule("  ")).not.toBe(true);
-      wrapper.destroy();
     });
 
     it("validation passes for non-empty string", () => {
@@ -419,7 +406,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       const rule = vm.rules[0];
       expect(rule("test")).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -430,14 +416,12 @@ describe("NewDataset", () => {
       });
       const vm = wrapper.vm as any;
       expect(vm.filesSelected).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when no files", () => {
       const wrapper = mountComponent({ defaultFiles: [] });
       const vm = wrapper.vm as any;
       expect(vm.filesSelected).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -446,7 +430,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ defaultFiles: [] });
       const vm = wrapper.vm as any;
       expect(vm.recommendedName).toBe("");
-      wrapper.destroy();
     });
 
     it("returns basename for single file", () => {
@@ -455,7 +438,6 @@ describe("NewDataset", () => {
       });
       const vm = wrapper.vm as any;
       expect(vm.recommendedName).toBe("image");
-      wrapper.destroy();
     });
 
     it("returns common prefix for multiple files", () => {
@@ -470,7 +452,6 @@ describe("NewDataset", () => {
       const name = vm.recommendedName;
       expect(typeof name).toBe("string");
       expect(name.length).toBeGreaterThan(0);
-      wrapper.destroy();
     });
   });
 
@@ -481,7 +462,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ quickupload: false });
       const vm = wrapper.vm as any;
       expect(vm.isQuickImport).toBe(true);
-      wrapper.destroy();
     });
 
     it("falls back to prop when store inactive", () => {
@@ -489,7 +469,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ quickupload: true });
       const vm = wrapper.vm as any;
       expect(vm.isQuickImport).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when both store and prop are false", () => {
@@ -497,7 +476,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ quickupload: false });
       const vm = wrapper.vm as any;
       expect(vm.isQuickImport).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -508,7 +486,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ batchMode: false });
       const vm = wrapper.vm as any;
       expect(vm.isBatchMode).toBe(true);
-      wrapper.destroy();
     });
 
     it("falls back to prop when store inactive", () => {
@@ -516,7 +493,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ batchMode: true });
       const vm = wrapper.vm as any;
       expect(vm.isBatchMode).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -526,7 +502,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ batchName: "Prop Batch" });
       const vm = wrapper.vm as any;
       expect(vm.effectiveBatchName).toBe("Store Batch");
-      wrapper.destroy();
     });
 
     it("falls back to prop batchName", () => {
@@ -534,7 +509,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ batchName: "Prop Batch" });
       const vm = wrapper.vm as any;
       expect(vm.effectiveBatchName).toBe("Prop Batch");
-      wrapper.destroy();
     });
 
     it("returns empty string when neither is set", () => {
@@ -542,7 +516,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.effectiveBatchName).toBe("");
-      wrapper.destroy();
     });
   });
 
@@ -557,7 +530,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.totalDatasets).toBe(3);
-      wrapper.destroy();
     });
 
     it("uses fileGroups prop when store inactive", () => {
@@ -567,7 +539,6 @@ describe("NewDataset", () => {
       });
       const vm = wrapper.vm as any;
       expect(vm.totalDatasets).toBe(2);
-      wrapper.destroy();
     });
 
     it("returns 1 for single defaultFiles when no fileGroups", () => {
@@ -578,7 +549,6 @@ describe("NewDataset", () => {
       });
       const vm = wrapper.vm as any;
       expect(vm.totalDatasets).toBe(1);
-      wrapper.destroy();
     });
   });
 
@@ -589,7 +559,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isFirstDataset).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false for non-zero index from store", () => {
@@ -599,7 +568,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isFirstDataset).toBe(false);
-      wrapper.destroy();
     });
 
     it("uses local index when store inactive", () => {
@@ -607,7 +575,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isFirstDataset).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -619,7 +586,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isLastDataset).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when not at last index", () => {
@@ -632,7 +598,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isLastDataset).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -646,7 +611,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.configuring = true;
       expect(vm.showConfigAtTop).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when not batch mode", () => {
@@ -656,7 +620,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.configuring = true;
       expect(vm.showConfigAtTop).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false when quick import", () => {
@@ -668,7 +631,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.configuring = true;
       expect(vm.showConfigAtTop).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false when not configuring", () => {
@@ -680,7 +642,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.configuring = false;
       expect(vm.showConfigAtTop).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -694,7 +655,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.currentFiles).toEqual(files);
-      wrapper.destroy();
     });
 
     it("returns prop fileGroups in prop-based batch mode", () => {
@@ -706,7 +666,6 @@ describe("NewDataset", () => {
       });
       const vm = wrapper.vm as any;
       expect(vm.currentFiles).toEqual(files);
-      wrapper.destroy();
     });
 
     it("returns defaultFiles in single mode", () => {
@@ -715,7 +674,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ defaultFiles: files });
       const vm = wrapper.vm as any;
       expect(vm.currentFiles).toEqual(files);
-      wrapper.destroy();
     });
   });
 
@@ -729,7 +687,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.files).toEqual(files);
-      wrapper.destroy();
     });
 
     it("returns uploadedFiles when set in single mode", () => {
@@ -738,7 +695,6 @@ describe("NewDataset", () => {
       const files = [createFile("manual.tif")];
       vm.uploadedFiles = files;
       expect(vm.files).toEqual(files);
-      wrapper.destroy();
     });
 
     it("checks store when upload workflow active and no uploadedFiles", () => {
@@ -749,7 +705,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.files).toEqual([createFile("store.tif")]);
-      wrapper.destroy();
     });
 
     it("falls back to defaultFiles prop", () => {
@@ -758,7 +713,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent({ defaultFiles: files });
       const vm = wrapper.vm as any;
       expect(vm.files).toEqual(files);
-      wrapper.destroy();
     });
   });
 
@@ -775,7 +729,7 @@ describe("NewDataset", () => {
       mockUploadWorkflow.initialName = "Store Name";
       mockUploadWorkflow.initialDescription = "Store Desc";
       const wrapper = mountComponent();
-      await Vue.nextTick();
+      await nextTick();
       const vm = wrapper.vm as any;
       expect(vm.path).toEqual({
         _id: "store-folder",
@@ -783,7 +737,6 @@ describe("NewDataset", () => {
       });
       expect(vm.name).toBe("Store Name");
       expect(vm.description).toBe("Store Desc");
-      wrapper.destroy();
     });
 
     it("sets from props when store inactive", async () => {
@@ -793,21 +746,19 @@ describe("NewDataset", () => {
         initialName: "Prop Name",
         initialDescription: "Prop Desc",
       });
-      await Vue.nextTick();
+      await nextTick();
       const vm = wrapper.vm as any;
       expect(vm.path).toEqual({ _id: "prop-folder", _modelType: "folder" });
       expect(vm.name).toBe("Prop Name");
       expect(vm.description).toBe("Prop Desc");
-      wrapper.destroy();
     });
 
     it("calls getMaxUploadSize on mount", async () => {
       mockGetUserApiKeys.mockResolvedValue([]);
       const wrapper = mountComponent();
-      await Vue.nextTick();
-      await Vue.nextTick();
+      await nextTick();
+      await nextTick();
       expect(mockGetUserApiKeys).toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -819,7 +770,6 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.convertScopeToBytes(null)).toBeNull();
-      wrapper.destroy();
     });
 
     it("returns correct bytes for recognized scope", () => {
@@ -831,14 +781,12 @@ describe("NewDataset", () => {
       expect(vm.convertScopeToBytes(["nimbus.upload.limit.500mb"])).toBe(
         500 * 1024 * 1024,
       );
-      wrapper.destroy();
     });
 
     it("returns null for unrecognized scope", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.convertScopeToBytes(["unknown.scope"])).toBeNull();
-      wrapper.destroy();
     });
 
     it("returns first matching scope value", () => {
@@ -851,7 +799,6 @@ describe("NewDataset", () => {
           "nimbus.upload.limit.5gb",
         ]),
       ).toBe(2 * 1024 * 1024 * 1024);
-      wrapper.destroy();
     });
   });
 
@@ -864,7 +811,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       const result = await vm.getMaxUploadSize();
       expect(result).toBeNull();
-      wrapper.destroy();
     });
 
     it("returns max size from active keys with matching scopes", async () => {
@@ -877,7 +823,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       const result = await vm.getMaxUploadSize();
       expect(result).toBe(5 * 1024 * 1024 * 1024);
-      wrapper.destroy();
     });
 
     it("returns null when active keys have no matching scopes", async () => {
@@ -888,7 +833,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       const result = await vm.getMaxUploadSize();
       expect(result).toBeNull();
-      wrapper.destroy();
     });
   });
 
@@ -899,7 +843,6 @@ describe("NewDataset", () => {
       const file = createFile("test.tif", 50);
       vm.filesChanged([{ file }]);
       expect(vm.uploadedFiles).toEqual([file]);
-      wrapper.destroy();
     });
 
     it("sets uploadedFiles from raw File format", () => {
@@ -908,7 +851,6 @@ describe("NewDataset", () => {
       const file = createFile("test.tif", 50);
       vm.filesChanged([file]);
       expect(vm.uploadedFiles).toEqual([file]);
-      wrapper.destroy();
     });
 
     it("detects file size exceeded", () => {
@@ -919,7 +861,6 @@ describe("NewDataset", () => {
       vm.filesChanged([{ file: largeFile }]);
       expect(vm.fileSizeExceeded).toBe(true);
       expect(vm.uploadedFiles).toBeNull();
-      wrapper.destroy();
     });
 
     it("sets pipelineError when quick import and size exceeded", () => {
@@ -931,7 +872,6 @@ describe("NewDataset", () => {
       const largeFile = createFile("big.tif", 200);
       vm.filesChanged([{ file: largeFile }]);
       expect(vm.pipelineError).toBe(true);
-      wrapper.destroy();
     });
 
     it("updates name from recommendedName when name is empty", () => {
@@ -941,7 +881,6 @@ describe("NewDataset", () => {
       const file = createFile("myimage.tif", 50);
       vm.filesChanged([{ file }]);
       expect(vm.name).toBe("myimage");
-      wrapper.destroy();
     });
 
     it("does not overwrite existing name", () => {
@@ -951,7 +890,6 @@ describe("NewDataset", () => {
       const file = createFile("myimage.tif", 50);
       vm.filesChanged([{ file }]);
       expect(vm.name).toBe("Existing Name");
-      wrapper.destroy();
     });
   });
 
@@ -964,7 +902,6 @@ describe("NewDataset", () => {
       vm.allFiles = [file1];
       vm.addMoreFiles([file2]);
       expect(vm.allFiles).toEqual([file1, file2]);
-      wrapper.destroy();
     });
   });
 
@@ -977,7 +914,6 @@ describe("NewDataset", () => {
       vm.interruptedUpload();
       expect(vm.uploading).toBe(false);
       expect(vm.hideUploader).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -990,7 +926,6 @@ describe("NewDataset", () => {
       vm.nextStep();
       expect(vm.hideUploader).toBe(true);
       expect(vm.uploading).toBe(false);
-      wrapper.destroy();
     });
 
     it("emits datasetUploaded with dataset id", () => {
@@ -1000,7 +935,6 @@ describe("NewDataset", () => {
       vm.nextStep();
       expect(wrapper.emitted("datasetUploaded")).toBeTruthy();
       expect(wrapper.emitted("datasetUploaded")![0][0]).toBe("ds-1");
-      wrapper.destroy();
     });
 
     it("sets pipelineError when dataset is null", () => {
@@ -1009,7 +943,6 @@ describe("NewDataset", () => {
       vm.dataset = null;
       vm.nextStep();
       expect(vm.pipelineError).toBe(true);
-      wrapper.destroy();
     });
 
     it("routes to multi in autoMultiConfig single mode", () => {
@@ -1022,11 +955,10 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.dataset = { id: "ds-1" };
       vm.nextStep();
-      expect(vm.$router.push).toHaveBeenCalledWith({
+      expect(mockRouter.push).toHaveBeenCalledWith({
         name: "multi",
         params: { datasetId: "ds-1" },
       });
-      wrapper.destroy();
     });
   });
 
@@ -1037,7 +969,6 @@ describe("NewDataset", () => {
       vm.pipelineError = true;
       await vm.submit();
       expect(mockCreateDataset).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("returns early when form is not valid", async () => {
@@ -1046,7 +977,6 @@ describe("NewDataset", () => {
       vm.valid = false;
       await vm.submit();
       expect(mockCreateDataset).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("returns early when path has no _id", async () => {
@@ -1056,7 +986,6 @@ describe("NewDataset", () => {
       vm.path = { type: "root" };
       await vm.submit();
       expect(mockCreateDataset).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("sets pipelineError when fileSizeExceeded", async () => {
@@ -1067,7 +996,6 @@ describe("NewDataset", () => {
       vm.fileSizeExceeded = true;
       await vm.submit();
       expect(vm.pipelineError).toBe(true);
-      wrapper.destroy();
     });
 
     it("creates dataset and starts upload on success", async () => {
@@ -1082,9 +1010,9 @@ describe("NewDataset", () => {
       vm.path = { _id: "folder1", _modelType: "folder" };
       vm.name = "Test Dataset";
       vm.description = "desc";
-      await Vue.nextTick();
+      await nextTick();
       await vm.submit();
-      await Vue.nextTick();
+      await nextTick();
       expect(mockCreateDataset).toHaveBeenCalledWith({
         name: "Test Dataset",
         description: "desc",
@@ -1092,7 +1020,6 @@ describe("NewDataset", () => {
       });
       expect(vm.dataset).toEqual(mockDataset);
       expect(vm.uploading).toBe(true);
-      wrapper.destroy();
     });
 
     it("sets failedDataset when createDataset returns null", async () => {
@@ -1104,7 +1031,6 @@ describe("NewDataset", () => {
       vm.name = "Bad Dataset";
       await vm.submit();
       expect(vm.failedDataset).toBe("Bad Dataset");
-      wrapper.destroy();
     });
 
     it("adds dataset to store in batch mode", async () => {
@@ -1126,11 +1052,10 @@ describe("NewDataset", () => {
       vi.spyOn(vm, "uploadMounted").mockResolvedValue(undefined);
       vm.valid = true;
       vm.path = { _id: "folder1", _modelType: "folder" };
-      await Vue.nextTick();
+      await nextTick();
       await vm.submit();
-      await Vue.nextTick();
+      await nextTick();
       expect(mockAddUploadedDataset).toHaveBeenCalledWith(mockDataset);
-      wrapper.destroy();
     });
   });
 
@@ -1141,7 +1066,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.handleBatchError("Something went wrong");
       expect(vm.pipelineError).toBe(true);
-      wrapper.destroy();
     });
 
     it("shows dialog in batch mode", () => {
@@ -1152,7 +1076,6 @@ describe("NewDataset", () => {
       vm.handleBatchError("Batch error");
       expect(vm.showBatchErrorDialog).toBe(true);
       expect(vm.batchErrorMessage).toBe("Batch error");
-      wrapper.destroy();
     });
   });
 
@@ -1168,11 +1091,10 @@ describe("NewDataset", () => {
       expect(vm.showBatchErrorDialog).toBe(false);
       expect(vm.pipelineError).toBe(true);
       expect(mockCompleteUploadWorkflow).toHaveBeenCalled();
-      expect(vm.$router.push).toHaveBeenCalledWith({
+      expect(mockRouter.push).toHaveBeenCalledWith({
         name: "configuration",
         params: { configurationId: "col-1" },
       });
-      wrapper.destroy();
     });
 
     it("navigates to dataset when no collection but has datasets", () => {
@@ -1182,11 +1104,10 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.handleStopBatch();
-      expect(vm.$router.push).toHaveBeenCalledWith({
+      expect(mockRouter.push).toHaveBeenCalledWith({
         name: "dataset",
         params: { datasetId: "ds-1" },
       });
-      wrapper.destroy();
     });
 
     it("navigates to root when no collection or datasets", () => {
@@ -1196,8 +1117,7 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.handleStopBatch();
-      expect(vm.$router.push).toHaveBeenCalledWith({ name: "root" });
-      wrapper.destroy();
+      expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
     });
   });
 
@@ -1221,7 +1141,6 @@ describe("NewDataset", () => {
       expect(vm.skippedDatasets).toContain(2);
       expect(vm.pipelineError).toBe(false);
       expect(vm.batchErrorMessage).toBe("");
-      wrapper.destroy();
     });
   });
 
@@ -1237,7 +1156,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.advanceToNextDataset();
       expect(mockCompleteUploadWorkflow).toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("resets state when not last dataset", () => {
@@ -1261,7 +1179,6 @@ describe("NewDataset", () => {
       expect(vm.dataset).toBeNull();
       expect(vm.configuring).toBe(false);
       expect(vm.hideUploader).toBe(false);
-      wrapper.destroy();
     });
 
     it("sets pipelineError when originalPath missing", () => {
@@ -1277,7 +1194,6 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.advanceToNextDataset();
       expect(vm.pipelineError).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -1290,11 +1206,10 @@ describe("NewDataset", () => {
       vm.navigateToCollection();
       expect(mockCompleteUploadWorkflow).toHaveBeenCalled();
       expect(mockSetSelectedConfiguration).toHaveBeenCalledWith("col-1");
-      expect(vm.$router.push).toHaveBeenCalledWith({
+      expect(mockRouter.push).toHaveBeenCalledWith({
         name: "configuration",
         params: { configurationId: "col-1" },
       });
-      wrapper.destroy();
     });
 
     it("navigates to first dataset when no collection", () => {
@@ -1303,11 +1218,10 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.navigateToCollection();
-      expect(vm.$router.push).toHaveBeenCalledWith({
+      expect(mockRouter.push).toHaveBeenCalledWith({
         name: "dataset",
         params: { datasetId: "ds-1" },
       });
-      wrapper.destroy();
     });
 
     it("navigates to root when no collection or datasets", () => {
@@ -1316,8 +1230,7 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.navigateToCollection();
-      expect(vm.$router.push).toHaveBeenCalledWith({ name: "root" });
-      wrapper.destroy();
+      expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
     });
   });
 
@@ -1333,7 +1246,6 @@ describe("NewDataset", () => {
       vm.copyLogToClipboard();
       expect(mockWriteText).toHaveBeenCalledWith("some log text");
       expect(vm.showCopySnackbar).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -1349,7 +1261,6 @@ describe("NewDataset", () => {
       await vm.generationDone("json-id");
       // setSelectedDataset should be called in createView path
       expect(mockSetSelectedDataset).toHaveBeenCalledWith("ds-1");
-      wrapper.destroy();
     });
 
     it("returns for non-quick non-batch mode", () => {
@@ -1362,7 +1273,6 @@ describe("NewDataset", () => {
       // Should return without error
       vm.generationDone("json-id");
       expect(mockSetSelectedDataset).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -1375,13 +1285,12 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.configuring = true;
       vm.configurationLogs = "new log line";
-      await Vue.nextTick();
+      await nextTick();
       expect(parseTranscodeOutput).toHaveBeenCalledWith("new log line");
       expect(vm.progressStatusText).toBe("Processing...");
       expect(vm.transcodeProgress).toBe(50);
       expect(vm.currentFrame).toBe(5);
       expect(vm.totalFrames).toBe(10);
-      wrapper.destroy();
     });
 
     it("does not update when not configuring", async () => {
@@ -1389,10 +1298,9 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.configuring = false;
       vm.configurationLogs = "new log line";
-      await Vue.nextTick();
+      await nextTick();
       // parseTranscodeOutput should not be called since configuring is false
       expect(vm.progressStatusText).toBe("");
-      wrapper.destroy();
     });
   });
 
@@ -1408,7 +1316,6 @@ describe("NewDataset", () => {
       const emitted = wrapper.emitted("datasetUploaded");
       expect(emitted).toBeTruthy();
       expect(emitted![0][0]).toBe("ds-emit");
-      wrapper.destroy();
     });
 
     it("does not emit datasetUploaded when dataset is null", () => {
@@ -1417,7 +1324,6 @@ describe("NewDataset", () => {
       vm.dataset = null;
       vm.nextStep();
       expect(wrapper.emitted("datasetUploaded")).toBeFalsy();
-      wrapper.destroy();
     });
   });
 
@@ -1430,28 +1336,23 @@ describe("NewDataset", () => {
       mockUploadWorkflow.quickupload = true;
       const wrapper = mountComponent({ quickupload: true });
       expect(wrapper.find(".text-progress").exists()).toBe(true);
-      wrapper.destroy();
     });
 
     it("shows error alert for failedDataset", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.failedDataset = "Bad Dataset";
-      await Vue.nextTick();
-      const alerts = wrapper.findAll("v-alert-stub");
-      const texts = alerts.wrappers.map((w: any) => w.text());
-      expect(texts.some((t: string) => t.includes("Bad Dataset"))).toBe(true);
-      wrapper.destroy();
+      await nextTick();
+      expect(wrapper.html()).toContain("Bad Dataset");
     });
 
     it("shows error alert for fileSizeExceeded", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.fileSizeExceeded = true;
-      await Vue.nextTick();
-      const alerts = wrapper.findAll("v-alert-stub");
-      expect(alerts.length).toBeGreaterThan(0);
-      wrapper.destroy();
+      await nextTick();
+      // With custom VAlert stubs, check rendered HTML for the alert content
+      expect(wrapper.html()).toContain("exceeds the maximum");
     });
 
     it("shows batch mode header when isBatchMode", async () => {
@@ -1460,9 +1361,8 @@ describe("NewDataset", () => {
       mockUploadWorkflow.fileGroups = [[createFile("a.tif")]];
       mockUploadWorkflow.currentDatasetIndex = 0;
       const wrapper = mountComponent();
-      await Vue.nextTick();
+      await nextTick();
       expect(wrapper.text()).toContain("Creating Collection");
-      wrapper.destroy();
     });
 
     it("hides form when showConfigAtTop is true", async () => {
@@ -1474,13 +1374,12 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       vm.configuring = true;
       vm.dataset = { id: "ds-1" };
-      await Vue.nextTick();
+      await nextTick();
       // The form should have v-show=false (display:none) when showConfigAtTop
       const form = wrapper.find("form");
       if (form.exists()) {
         expect((form.element as HTMLElement).style.display).toBe("none");
       }
-      wrapper.destroy();
     });
   });
 });

@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("uuid", () => ({
   v4: vi.fn(() => "test-uuid-1234"),
@@ -52,13 +50,9 @@ import store from "@/store";
 import propertiesStore from "@/store/properties";
 import ToolCreation from "./ToolCreation.vue";
 
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
-
 function mountComponent(propsData = {}) {
   return mount(ToolCreation, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       open: false,
       ...propsData,
     },

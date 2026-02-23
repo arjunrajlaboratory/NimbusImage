@@ -391,9 +391,70 @@ Same issue as R24 (AnnotationList): selected/unselected chips were nearly indist
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
 
-## Batch E: Test Suite Recovery — NOT STARTED
-- [ ] E1. Update mounting patterns (@vue/test-utils v2)
-- [ ] E2. Triage test failures
+## Batch E: Test Suite Recovery ✅
+
+Migrated all 118 test files from Vue Test Utils v1 / Vue 2 patterns to Vue Test Utils v2 / Vue 3 patterns. Eliminated ~1982 tsc errors in test files and restored the full test suite.
+
+**Result: 118/118 test files passing, 2073/2073 tests passing, 0 failures.**
+
+### E0. Test Infrastructure Setup ✅
+- [x] Created `test/setup.ts` — Vitest setupFile loaded before every test
+  - Vuetify 3 plugin via `createVuetify()`
+  - Global directive stubs (`mousetrap`, `tour-trigger`, `tooltip`, `description`)
+  - `tourManager` provide mock
+  - `visualViewport` polyfill for jsdom (required by Vuetify 3 overlays)
+  - `ResizeObserver` polyfill for jsdom (required by Vuetify 3 components)
+  - vue-router mock via `importOriginal` + `inject()` with real `routeLocationKey`/`routerKey` symbols
+  - Default reactive route and router provided via `config.global.provide`
+- [x] Created `test/helpers.ts` — `routeProvider()` and `routerProvider()` helpers for per-test route/router overrides
+- [x] Updated `vitest.config.js` — Added `setupFiles`, `server.deps.inline: ["vuetify"]`
+
+### E1. Remove Vue 2 Imports & Global Registrations (~113 files) ✅
+- [x] Removed `import Vue from "vue"` and `import Vuetify from "vuetify"` from all test files
+- [x] Removed `Vue.use(Vuetify)`, `Vue.use(Vuex)`, `Vue.directive(...)` calls
+- [x] All handled by global `test/setup.ts` instead
+
+### E2. Mount Option Transforms (~116 files) ✅
+- [x] Removed `vuetify: new Vuetify()` from mount options (global setup provides it)
+- [x] Renamed `propsData:` → `props:` (~70 files)
+- [x] Moved `mocks:` → `global: { mocks: {} }` (~19 files)
+- [x] Moved `stubs:` → `global: { stubs: {} }` (~51 files)
+
+### E3. Cleanup (~40 files) ✅
+- [x] Removed `wrapper.destroy()` calls (~39 files, 982 occurrences)
+- [x] Replaced `Vue.nextTick()` → `nextTick()` from `vue` (~28 files)
+
+### E4. Special Cases (4 files) ✅
+- [x] `annotation-mutations.test.ts` — `new Vuex.Store()` → `createStore()`, `new Vue()` → `defineComponent()` + VTU `mount()`
+- [x] `useRouteMapper.test.ts` — Dynamic imports → static imports, `Vue.extend()` → `defineComponent()`
+- [x] `DisplayLayers.test.ts` — Dynamic imports → static imports, extracted `mountComponent()` helper
+- [x] `DisplayLayerGroup.test.ts` — Same pattern as DisplayLayers
+
+### E5. Vue-Router Mock Migration (18 files) ✅
+The `getCurrentInstance()?.proxy?.$route` bridge approach doesn't work in VTU v2 (mocks aren't on proxy during `setup()`). Switched to provide/inject with real vue-router symbols.
+
+- [x] Updated `test/setup.ts` — mock vue-router via `importOriginal`, override `useRoute`/`useRouter` to use `inject()` with actual `routeLocationKey`/`routerKey`
+- [x] Migrated 18 test files from `global.mocks.$route/$router` to `global.provide` with `routeProvider()`/`routerProvider()` helpers
+- [x] Converted `wrapper.vm.$router.push` assertions to reference `mockRouter` variable directly
+
+### E6. Fix Test Failures ✅
+Systematic fixes across remaining failing test files:
+
+| Category | Files | Fix |
+|----------|-------|-----|
+| `Vue.observable` → `reactive()` | 4 files (AnnotationViewer, ImageViewer, ImageOverview test mocks) | `const Vue = require("vue")` → `const { reactive } = require("vue")` |
+| `vi.hoisted()` for mock variables | DisplayLayers.test.ts | Wrapped `mockStore` in `vi.hoisted()` to avoid temporal dead zone |
+| `mount` → `shallowMount` for v-expansion-panel | ViewerSettings, UISettings | Vuetify 3 `v-expansion-panel` requires parent group injection |
+| `vue-router` already loaded conflict | UserMenu.test.ts | Removed local `vi.mock("vue-router")`, use `routeProvider()` instead |
+| Missing `@girder/components` subpath | NewDataset.test.ts | Changed mock path to top-level `@girder/components` with `UploadManager` |
+| `wrapper.text()` empty in shallowMount | SettingsPanel, UISettings, AnalyzePanel, LayerInfoGrid, etc. | Use `wrapper.html()` or add custom stubs with `<slot />` for layout components |
+| `toBe` → `toStrictEqual` for reactive proxies | Property.test.ts, ImageViewer.test.ts | Vue 3 reactive proxy creates new object references |
+| Vuetify 3 shallowMount stubs don't render slots | ~12 files | Added custom stubs: `{ template: "<div><slot /></div>" }` for `VContainer`, `VCard`, `VRow`, `VCol`, etc. |
+| `flushPromises` for async operations | Dataset.test.ts | Replaced `$nextTick` chains with `flushPromises()` |
+| NimbusTooltip `enabled` prop default | NimbusTooltip.test.ts | Vue 3 `defineProps` without `withDefaults` defaults to `undefined` (falsy) |
+
+### Known: 68 Unhandled Rejection Warnings
+The test suite reports 68 "errors" that are unhandled promise rejections from background async operations in components (not test failures). All 2073 test assertions pass. These are pre-existing and would need component-level async cleanup to resolve.
 
 ## Batch F: Vite 6 Upgrade — NOT STARTED
 - [ ] F1. Upgrade `vite` from 5.x to 6.x

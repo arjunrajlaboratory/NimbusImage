@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -13,12 +11,9 @@ vi.mock("@/store", () => ({
 import store from "@/store";
 import UserMenuLoginForm from "./UserMenuLoginForm.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(UserMenuLoginForm, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       domain: "http://localhost:8080",
       modelValue: true,
       ...props,

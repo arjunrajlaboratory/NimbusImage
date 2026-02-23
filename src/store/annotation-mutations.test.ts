@@ -1,9 +1,8 @@
 /**
  * Tests for annotation store mutation reactivity.
  *
- * Vue 2.7's Composition API watch() uses Object.is() for change detection,
- * unlike Vue 2's @Watch decorator which fires for any object regardless of
- * reference identity. Mutations that use .push() (same array reference) won't
+ * Vue 3's watch() uses Object.is() for change detection.
+ * Mutations that use .push() (same array reference) won't
  * trigger watch() callbacks, while mutations that replace the array (new
  * reference) will.
  *
@@ -11,17 +10,17 @@
  * so that watch() in <script setup> components detects the change.
  */
 import { describe, it, expect, vi } from "vitest";
-import Vue from "vue";
-import Vuex from "vuex";
-import { watch, computed, nextTick } from "vue";
-
-Vue.use(Vuex);
+import { createStore } from "vuex";
+import { defineComponent, watch, computed, nextTick, h } from "vue";
+import { mount } from "@vue/test-utils";
 
 // Minimal mock of the annotation store's connection state and mutations
 function createTestStore() {
-  return new Vuex.Store({
-    state: {
-      annotationConnections: [] as any[],
+  return createStore({
+    state() {
+      return {
+        annotationConnections: [] as any[],
+      };
     },
     mutations: {
       // Reproduces the FIXED mutation (array replacement)
@@ -48,7 +47,7 @@ function createTestStore() {
   });
 }
 
-describe("connection mutation reactivity with Vue 2.7 watch()", () => {
+describe("connection mutation reactivity with watch()", () => {
   it("addMultipleConnections creates a new array reference", () => {
     const store = createTestStore();
     const oldRef = store.state.annotationConnections;
@@ -58,7 +57,7 @@ describe("connection mutation reactivity with Vue 2.7 watch()", () => {
 
     expect(store.state.annotationConnections).not.toBe(oldRef);
     expect(store.state.annotationConnections).toHaveLength(1);
-    expect(store.state.annotationConnections[0]).toBe(conn);
+    expect(store.state.annotationConnections[0]).toStrictEqual(conn);
   });
 
   it("addConnectionImpl creates a new array reference", () => {
@@ -70,7 +69,7 @@ describe("connection mutation reactivity with Vue 2.7 watch()", () => {
 
     expect(store.state.annotationConnections).not.toBe(oldRef);
     expect(store.state.annotationConnections).toHaveLength(1);
-    expect(store.state.annotationConnections[0]).toBe(conn);
+    expect(store.state.annotationConnections[0]).toStrictEqual(conn);
   });
 
   it("addMultipleConnections preserves existing connections", () => {
@@ -82,24 +81,25 @@ describe("connection mutation reactivity with Vue 2.7 watch()", () => {
     store.commit("addMultipleConnections", [conn2]);
 
     expect(store.state.annotationConnections).toHaveLength(2);
-    expect(store.state.annotationConnections[0]).toBe(conn1);
-    expect(store.state.annotationConnections[1]).toBe(conn2);
+    expect(store.state.annotationConnections[0]).toStrictEqual(conn1);
+    expect(store.state.annotationConnections[1]).toStrictEqual(conn2);
   });
 
   it("fixed mutation triggers watch() callback", async () => {
     const store = createTestStore();
-    const connections = computed(() => store.state.annotationConnections);
     const callback = vi.fn();
 
-    // Mount a temporary component to enable watchers
-    const vm = new Vue({
-      store,
+    const TestComponent = defineComponent({
       setup() {
+        const connections = computed(() => store.state.annotationConnections);
         watch(connections, callback);
-        return {};
+        return () => h("div");
       },
-      render: (h: any) => h("div"),
-    }).$mount();
+    });
+
+    mount(TestComponent, {
+      global: { plugins: [store] },
+    });
 
     store.commit("addMultipleConnections", [
       { id: "c1", parentId: "a1", childId: "a2" },
@@ -107,23 +107,23 @@ describe("connection mutation reactivity with Vue 2.7 watch()", () => {
 
     await nextTick();
     expect(callback).toHaveBeenCalledTimes(1);
-
-    vm.$destroy();
   });
 
   it("buggy push mutation does NOT trigger watch() callback", async () => {
     const store = createTestStore();
-    const connections = computed(() => store.state.annotationConnections);
     const callback = vi.fn();
 
-    const vm = new Vue({
-      store,
+    const TestComponent = defineComponent({
       setup() {
+        const connections = computed(() => store.state.annotationConnections);
         watch(connections, callback);
-        return {};
+        return () => h("div");
       },
-      render: (h: any) => h("div"),
-    }).$mount();
+    });
+
+    mount(TestComponent, {
+      global: { plugins: [store] },
+    });
 
     store.commit("addMultipleConnectionsBuggy", [
       { id: "c1", parentId: "a1", childId: "a2" },
@@ -132,7 +132,5 @@ describe("connection mutation reactivity with Vue 2.7 watch()", () => {
     await nextTick();
     // This demonstrates the bug: push() doesn't trigger watch()
     expect(callback).not.toHaveBeenCalled();
-
-    vm.$destroy();
   });
 });

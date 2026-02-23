@@ -30,6 +30,14 @@ export default mergeConfig(
       environment: "jsdom",
       exclude: [...configDefaults.exclude, "e2e/*", "db/**"],
       root: fileURLToPath(new URL("./", import.meta.url)),
+      setupFiles: [
+        fileURLToPath(new URL("./test/setup.ts", import.meta.url)),
+      ],
+      server: {
+        deps: {
+          inline: ["vuetify"],
+        },
+      },
     },
   }),
 );

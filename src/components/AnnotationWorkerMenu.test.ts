@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { nextTick } from "vue";
+import { shallowMount, flushPromises } from "@vue/test-utils";
 
 // Mock lodash/debounce to invoke immediately
 vi.mock("lodash", () => ({
@@ -78,9 +77,7 @@ import propertiesStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
 import { getDefault } from "@/utils/workerInterface";
 
-Vue.use(Vuetify);
-
-function makeTool(overrides: Record<string, any> = {}) {
+function makeTool(overrides: Record<string, any> = {}): any {
   return {
     id: "tool-1",
     name: "Test Worker",
@@ -102,13 +99,14 @@ function makeTool(overrides: Record<string, any> = {}) {
 
 function mountComponent(props: Record<string, any> = {}) {
   return shallowMount(AnnotationWorkerMenu, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       tool: makeTool(),
       ...props,
     },
-    stubs: {
-      WorkerInterfaceValues: true,
+    global: {
+      stubs: {
+        WorkerInterfaceValues: true,
+      },
     },
   });
 }
@@ -155,7 +153,6 @@ describe("AnnotationWorkerMenu", () => {
     expect(vm.workerInterface).toEqual({
       param1: { type: "number", default: 5 },
     });
-    wrapper.destroy();
   });
 
   // -- Computed: image --
@@ -163,7 +160,6 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.image).toBe("worker-image:latest");
-    wrapper.destroy();
   });
 
   // -- Computed: hasPreview --
@@ -171,7 +167,6 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasPreview).toBe(false);
-    wrapper.destroy();
   });
 
   it("hasPreview returns true when propertiesStore.hasPreview is true", () => {
@@ -179,7 +174,6 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasPreview).toBe(true);
-    wrapper.destroy();
   });
 
   // -- Computed: displayWorkerPreview --
@@ -188,7 +182,6 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.displayWorkerPreview).toBe(true);
-    wrapper.destroy();
   });
 
   // -- Computed: currentJobId --
@@ -197,7 +190,6 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentJobId).toBeUndefined();
-    wrapper.destroy();
   });
 
   it("currentJobId returns job ID when tool has matching entry", () => {
@@ -205,7 +197,6 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentJobId).toBe("job-abc");
-    wrapper.destroy();
   });
 
   // -- Computed: canApplyToAllDatasets --
@@ -213,20 +204,17 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     // Wait for onMounted fetchCollectionDatasetCount to resolve
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(vm.collectionDatasetCount).toBe(3);
     expect(vm.canApplyToAllDatasets).toBe(true);
-    wrapper.destroy();
   });
 
   it("canApplyToAllDatasets is false when no selectedConfigurationId", async () => {
     (store as any).selectedConfigurationId = null;
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
+    await nextTick();
     expect(vm.canApplyToAllDatasets).toBe(false);
-    wrapper.destroy();
   });
 
   // -- Computed: batchDisabledReason --
@@ -235,27 +223,23 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.batchDisabledReason).toBeNull();
-    wrapper.destroy();
   });
 
   it("batchDisabledReason returns limit message when count > 10", async () => {
     (store as any).getCollectionDatasetCount = vi.fn().mockResolvedValue(15);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(vm.batchDisabledReason).toContain("more than 10 datasets");
-    wrapper.destroy();
   });
 
   it("batchDisabledReason returns null when count <= 1", async () => {
     (store as any).getCollectionDatasetCount = vi.fn().mockResolvedValue(1);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     expect(vm.batchDisabledReason).toBeNull();
-    wrapper.destroy();
   });
 
   // -- Computed: batchProgressPercent --
@@ -263,7 +247,6 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.batchProgressPercent).toBe(0);
-    wrapper.destroy();
   });
 
   it("batchProgressPercent computes correct percentage", () => {
@@ -277,7 +260,6 @@ describe("AnnotationWorkerMenu", () => {
       currentDatasetName: "test",
     };
     expect(vm.batchProgressPercent).toBe(50);
-    wrapper.destroy();
   });
 
   // -- Computed: filteredErrors / filteredWarnings --
@@ -293,7 +275,6 @@ describe("AnnotationWorkerMenu", () => {
     };
     expect(vm.filteredErrors).toHaveLength(2);
     expect(vm.filteredErrors[0].error).toBe("err1");
-    wrapper.destroy();
   });
 
   it("filteredWarnings returns only items with type WARNING", () => {
@@ -307,7 +288,6 @@ describe("AnnotationWorkerMenu", () => {
     };
     expect(vm.filteredWarnings).toHaveLength(1);
     expect(vm.filteredWarnings[0].warning).toBe("warn1");
-    wrapper.destroy();
   });
 
   // -- Computed: jobLog --
@@ -317,7 +297,6 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.jobLog).toBe("log from store");
-    wrapper.destroy();
   });
 
   it("jobLog returns localJobLog when no currentJobId", () => {
@@ -325,7 +304,6 @@ describe("AnnotationWorkerMenu", () => {
     const vm = wrapper.vm as any;
     vm.localJobLog = "local log data";
     expect(vm.jobLog).toBe("local log data");
-    wrapper.destroy();
   });
 
   // -- Method: compute --
@@ -337,7 +315,6 @@ describe("AnnotationWorkerMenu", () => {
     expect(
       annotationsStore.computeAnnotationsWithWorker,
     ).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("compute calls computeAnnotationsWithWorker for single dataset", async () => {
@@ -350,7 +327,6 @@ describe("AnnotationWorkerMenu", () => {
     const callArgs = (annotationsStore.computeAnnotationsWithWorker as any).mock
       .calls[0][0];
     expect(callArgs.tool.id).toBe("tool-1");
-    wrapper.destroy();
   });
 
   it("compute calls computeBatch when applyToAllDatasets is true", async () => {
@@ -362,7 +338,6 @@ describe("AnnotationWorkerMenu", () => {
     expect(
       annotationsStore.computeAnnotationsWithWorkerBatch,
     ).toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   // -- Method: cancel --
@@ -374,7 +349,6 @@ describe("AnnotationWorkerMenu", () => {
     vm.cancel();
     expect(mockCancel).toHaveBeenCalled();
     expect(store.api.cancelJob).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("cancel calls api.cancelJob when currentJob has jobId", () => {
@@ -384,7 +358,6 @@ describe("AnnotationWorkerMenu", () => {
     vm.currentJob = { jobId: "job-xyz", datasetId: "ds-1" };
     vm.cancel();
     expect(store.api.cancelJob).toHaveBeenCalledWith("job-xyz");
-    wrapper.destroy();
   });
 
   it("cancel does nothing when no batchCancel and no currentJob", () => {
@@ -394,7 +367,6 @@ describe("AnnotationWorkerMenu", () => {
     vm.currentJob = null;
     vm.cancel();
     expect(store.api.cancelJob).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   // -- Method: preview --
@@ -408,7 +380,6 @@ describe("AnnotationWorkerMenu", () => {
       tool: expect.objectContaining({ id: "tool-1" }),
       workerInterface: { key: "val" },
     });
-    wrapper.destroy();
   });
 
   // -- Method: resetInterfaceValues --
@@ -417,7 +388,6 @@ describe("AnnotationWorkerMenu", () => {
     const vm = wrapper.vm as any;
     vm.resetInterfaceValues();
     expect(getDefault).toHaveBeenCalledWith("number", 5);
-    wrapper.destroy();
   });
 
   it("resetInterfaceValues sets empty object when workerInterface is null", () => {
@@ -426,7 +396,6 @@ describe("AnnotationWorkerMenu", () => {
     const vm = wrapper.vm as any;
     vm.resetInterfaceValues();
     expect(vm.interfaceValues).toEqual({});
-    wrapper.destroy();
   });
 
   // -- Method: updateInterface --
@@ -442,7 +411,6 @@ describe("AnnotationWorkerMenu", () => {
       image: "worker-image:latest",
       force: undefined,
     });
-    wrapper.destroy();
   });
 
   it("updateInterface fetches when force=true even if workerInterface exists", async () => {
@@ -455,7 +423,6 @@ describe("AnnotationWorkerMenu", () => {
       image: "worker-image:latest",
       force: true,
     });
-    wrapper.destroy();
   });
 
   it("updateInterface skips fetch when workerInterface exists and not forced", async () => {
@@ -468,7 +435,6 @@ describe("AnnotationWorkerMenu", () => {
     expect(propertiesStore.fetchWorkerInterface).not.toHaveBeenCalled();
     // fetchWorkerImageList is always called
     expect(propertiesStore.fetchWorkerImageList).toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   // -- Method: fetchCollectionDatasetCount --
@@ -479,7 +445,6 @@ describe("AnnotationWorkerMenu", () => {
     await vm.fetchCollectionDatasetCount();
     expect(vm.collectionDatasetCount).toBe(7);
     expect(vm.loadingDatasetCount).toBe(false);
-    wrapper.destroy();
   });
 
   it("fetchCollectionDatasetCount sets 0 on error", async () => {
@@ -491,7 +456,6 @@ describe("AnnotationWorkerMenu", () => {
     await vm.fetchCollectionDatasetCount();
     expect(vm.collectionDatasetCount).toBe(0);
     expect(vm.loadingDatasetCount).toBe(false);
-    wrapper.destroy();
   });
 
   // -- Method: copyLogToClipboard --
@@ -505,7 +469,6 @@ describe("AnnotationWorkerMenu", () => {
     vm.localJobLog = "some log";
     vm.copyLogToClipboard();
     expect(writeText).toHaveBeenCalledWith("some log");
-    wrapper.destroy();
   });
 
   // -- Watcher: tool prop triggers updateInterface --
@@ -515,8 +478,7 @@ describe("AnnotationWorkerMenu", () => {
     (propertiesStore.fetchWorkerImageList as any).mockClear();
     const newTool = makeTool({ image: { image: "new-image:latest" } });
     await wrapper.setProps({ tool: newTool });
-    await Vue.nextTick();
+    await nextTick();
     expect(propertiesStore.fetchWorkerImageList).toHaveBeenCalled();
-    wrapper.destroy();
   });
 });

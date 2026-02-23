@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { shallowMount } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
   default: {
@@ -30,6 +31,8 @@ vi.mock("./DisplayLayer.vue", () => ({
   },
 }));
 
+import DisplayLayerGroup from "./DisplayLayerGroup.vue";
+
 const sampleCombinedLayers = [
   {
     layer: {
@@ -59,96 +62,52 @@ const sampleCombinedLayers = [
   },
 ];
 
-async function setup() {
-  const Vue = (await import("vue")).default;
-  const Vuetify = (await import("vuetify")).default;
-  Vue.use(Vuetify);
-  const { shallowMount } = await import("@vue/test-utils");
-  const mod = await import("./DisplayLayerGroup.vue");
-  return { shallowMount, Vuetify, Component: mod.default };
+function mountComponent(props: Record<string, any> = {}) {
+  return shallowMount(DisplayLayerGroup as any, {
+    props: {
+      singleLayer: true,
+      combinedLayers: sampleCombinedLayers,
+      ...props,
+    },
+    global: {
+      stubs: {
+        "transition-group": { template: "<div><slot /></div>" },
+      },
+    },
+  });
 }
 
 describe("DisplayLayerGroup", () => {
   // Mount with singleLayer=true to avoid the group header with v-model
   // computed get/set that depends on $refs which don't work in test env
-  it("hasMultipleZ returns true when dataset has multiple z values", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = shallowMount(Component, {
-      vuetify: new Vuetify(),
-      propsData: {
-        singleLayer: true,
-        combinedLayers: sampleCombinedLayers,
-      },
-      stubs: {
-        "transition-group": { template: "<div><slot /></div>" },
-      },
-    });
-    expect(wrapper.vm.hasMultipleZ).toBe(true);
+  it("hasMultipleZ returns true when dataset has multiple z values", () => {
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).hasMultipleZ).toBe(true);
   });
 
-  it("emits update event", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = shallowMount(Component, {
-      vuetify: new Vuetify(),
-      propsData: {
-        singleLayer: true,
-        combinedLayers: sampleCombinedLayers,
-      },
-      stubs: {
-        "transition-group": { template: "<div><slot /></div>" },
-      },
-    });
-    wrapper.vm.update(sampleCombinedLayers);
+  it("emits update event", () => {
+    const wrapper = mountComponent();
+    (wrapper.vm as any).update(sampleCombinedLayers);
     expect(wrapper.emitted("update")).toBeTruthy();
     expect(wrapper.emitted("update")![0][0]).toEqual(sampleCombinedLayers);
   });
 
-  it("emits start event", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = shallowMount(Component, {
-      vuetify: new Vuetify(),
-      propsData: {
-        singleLayer: true,
-        combinedLayers: sampleCombinedLayers,
-      },
-      stubs: {
-        "transition-group": { template: "<div><slot /></div>" },
-      },
-    });
+  it("emits start event", () => {
+    const wrapper = mountComponent();
     const mockEvent = { oldIndex: 0 } as any;
-    wrapper.vm.startDragging(mockEvent);
+    (wrapper.vm as any).startDragging(mockEvent);
     expect(wrapper.emitted("start")).toBeTruthy();
   });
 
-  it("emits end event", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = shallowMount(Component, {
-      vuetify: new Vuetify(),
-      propsData: {
-        singleLayer: true,
-        combinedLayers: sampleCombinedLayers,
-      },
-      stubs: {
-        "transition-group": { template: "<div><slot /></div>" },
-      },
-    });
+  it("emits end event", () => {
+    const wrapper = mountComponent();
     const mockEvent = { newIndex: 1 } as any;
-    wrapper.vm.endDragging(mockEvent);
+    (wrapper.vm as any).endDragging(mockEvent);
     expect(wrapper.emitted("end")).toBeTruthy();
   });
 
-  it("does not render background class when singleLayer is true", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = shallowMount(Component, {
-      vuetify: new Vuetify(),
-      propsData: {
-        singleLayer: true,
-        combinedLayers: sampleCombinedLayers,
-      },
-      stubs: {
-        "transition-group": { template: "<div><slot /></div>" },
-      },
-    });
+  it("does not render background class when singleLayer is true", () => {
+    const wrapper = mountComponent();
     expect(wrapper.classes()).not.toContain("background");
   });
 });

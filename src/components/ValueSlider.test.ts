@@ -1,15 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import ValueSlider from "./ValueSlider.vue";
-
-Vue.use(Vuetify);
 
 function mountComponent(props = {}) {
   return mount(ValueSlider, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: 5,
       min: 0,
       max: 10,

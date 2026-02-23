@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -18,12 +17,9 @@ vi.mock("@/store/annotation", () => ({
 
 import TagPicker from "./TagPicker.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(TagPicker, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: ["tag1"],
       ...props,
     },
@@ -46,6 +42,6 @@ describe("TagPicker", () => {
     // In script setup, template refs are managed internally
     // Just verify onTagChange doesn't throw
     expect(() => wrapper.vm.onTagChange()).not.toThrow();
-    await Vue.nextTick();
+    await nextTick();
   });
 });

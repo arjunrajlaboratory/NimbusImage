@@ -6,7 +6,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status
 
-**Phase 3 Batches A–D + Runtime Fixes complete. App boots and renders most views correctly on Vue 3 + Vuetify 3. Batch E (test suite recovery) is next.**
+**Phase 3 Batches A–E + Runtime Fixes complete. App boots and renders correctly on Vue 3 + Vuetify 3. Full test suite restored (118/118 files, 2073/2073 tests passing).**
 
 - **Phase 1:** 124/124 components migrated to `<script setup>` (Batches 1–19 + master merge)
 - **Phase 2:** `$refs` converted, directive state migrated, `markRaw()` applied to all GeoJS objects
@@ -15,9 +15,10 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Phase 3 Batch C:** `getCurrentInstance()` eliminated from all components — replaced with `useRoute()`/`useRouter()`, `useTheme()`, `useTour()` composable, and direct function calls
 - **Phase 3 Batch D:** All Vuetify 3 template fixes complete — ~400+ changes across 60+ files. Activator slots, prop renames, structural component renames, v-data-table rewrites, v-model protocol, color/theme system, and all edge cases resolved.
 - **Runtime Fixes:** Visual walkthrough completed. Fixed @girder/components inject, vuedraggable 4.x compatibility, Vuetify icon aliases, missing component imports, v-select `item-title` migration (10 files), BreadCrumbs CSS/reactivity, home screen layout (file browser names, header row flex, row alignment, search bar, app bar title position, tab active indicator). See VUE3_STEPS.md "Runtime Fixes" section.
-- **TypeScript:** `pnpm tsc` has 0 non-test errors. Test file errors (~1983) are from Vue Test Utils v1 syntax (`.destroy()`, `Vue.use()`, `propsData`) — Batch E will update these.
-- **Dev server:** App boots successfully. Home page (file browser with names, chips, search; recent datasets/projects tabs), dataset viewer, toolsets, layer controls, settings, and snapshots all render correctly. **Known issue:** AnnotationList v-data-table shows "No data available" with incorrect pagination — needs runtime debugging.
-- **Tests:** All test file failures are from Vue 3 package swap (test infrastructure needs Batch E update).
+- **Phase 3 Batch E:** Test suite fully recovered — migrated 118 test files from Vue Test Utils v1 to v2, eliminated ~1982 tsc errors, all 2073 tests passing.
+- **TypeScript:** `pnpm tsc` has 0 errors (source and test files).
+- **Dev server:** App boots successfully. Home page (file browser with names, chips, search; recent datasets/projects tabs), dataset viewer, toolsets, layer controls, settings, and snapshots all render correctly.
+- **Tests:** 118/118 test files passing, 2073/2073 tests passing, 0 failures. 68 unhandled rejection warnings from background async operations (pre-existing, not test failures).
 
 ---
 
@@ -55,9 +56,9 @@ All 124 components converted from Class API (`@Component` + decorators) to `<scr
   - `AnnotationList.vue`: `Map<string, Element>` for dynamic annotation refs
 - **Convert `.sync` to `v-model:`** (11 occurrences) — **Deferred to Phase 3.** `v-model:prop` syntax requires Vue 3's template compiler. The `.sync` modifier is the correct Vue 2 pattern and works fine in Vue 2.7.
 
-### Phase 3: Framework Switch & Testing Upgrade — IN PROGRESS
+### Phase 3: Framework Switch & Testing Upgrade — BATCHES A–E COMPLETE
 
-This is the core Vue 3 + Vuetify 3 upgrade. Batches A–D are complete (package swap, mechanical code fixes, getCurrentInstance cleanup, Vuetify 3 template fixes). Batch E (test suite recovery) is next.
+This is the core Vue 3 + Vuetify 3 upgrade. Batches A–E are complete (package swap, mechanical code fixes, getCurrentInstance cleanup, Vuetify 3 template fixes, runtime fixes, test suite recovery). Batch F (Vite 6 upgrade) is next.
 
 #### Prerequisites (Hard Blockers) — ALL DONE
 
@@ -200,16 +201,21 @@ All Vuetify 3 template incompatibilities resolved (~400+ changes across 60+ file
 - **D9:** v-model protocol (`value`/`input` → `modelValue`/`update:modelValue`) — 26+ components + all parents
 - **D10:** Edge cases, type error cleanup, verified 0 non-test `pnpm tsc` errors
 
-##### Step 6: Test Suite Recovery — Batch E (NEXT)
+##### Step 6: Test Suite Recovery — Batch E ✅
 
-~1983 test file type errors from Vue Test Utils v1 → v2 migration:
+Migrated all 118 test files from Vue Test Utils v1 / Vue 2 patterns to Vue Test Utils v2 / Vue 3 patterns. Eliminated ~1982 tsc errors in test files. **Result: 118/118 test files passing, 2073/2073 tests passing, 0 failures.**
 
-1. Update `@vue/test-utils` from v1 to v2
-2. Update mounting functions to use `global.plugins` array (see "Testing Infrastructure Transition" above)
-3. Replace `propsData` with `props` in all test files
-4. Remove `Vue.use()` calls and `createLocalVue` usage
-5. Remove manual `wrapper.destroy()` calls (cleanup is automatic in v2)
-6. Run `pnpm test` and triage failures
+Key changes:
+1. Created `test/setup.ts` — global Vuetify 3 plugin, directive stubs, `visualViewport`/`ResizeObserver` polyfills, vue-router mock via `importOriginal` + `inject()` with real symbols
+2. Created `test/helpers.ts` — `routeProvider()`/`routerProvider()` helpers for per-test route/router overrides
+3. Removed `import Vue from "vue"`, `Vue.use(Vuetify)`, `Vue.use(Vuex)`, `Vue.directive(...)` from all test files (~113 files)
+4. Renamed `propsData:` → `props:` (~70 files), moved `mocks:`/`stubs:` → `global: {}` (~70 files)
+5. Removed `wrapper.destroy()` calls (~39 files, 982 occurrences)
+6. Replaced `Vue.nextTick()` → `nextTick()` from `vue` (~28 files)
+7. Migrated 18 test files from `global.mocks.$route/$router` to `global.provide` with real vue-router symbols
+8. Fixed Vuetify 3-specific test issues: `shallowMount` stubs not rendering slots (custom stubs with `<slot />`), `Vue.observable` → `reactive()`, `toBe` → `toStrictEqual` for reactive proxies
+
+See VUE3_STEPS.md "Batch E" section for full details.
 
 #### Known Vuetify 3 Migration Challenges — ALL RESOLVED (Batch D)
 

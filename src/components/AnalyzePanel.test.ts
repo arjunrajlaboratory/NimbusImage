@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -21,17 +19,17 @@ vi.mock("@/store/filters", () => ({
 
 import AnalyzePanel from "./AnalyzePanel.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return shallowMount(AnalyzePanel, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       ...props,
     },
-    stubs: {
-      PropertyCreation: true,
-      PropertyList: true,
+    global: {
+      stubs: {
+        PropertyCreation: true,
+        PropertyList: true,
+        VCard: { template: "<div><slot /></div>" },
+      },
     },
   });
 }
@@ -55,8 +53,11 @@ describe("AnalyzePanel", () => {
   it("renders property-creation and property-list stubs", () => {
     const wrapper = mountComponent();
     // Both PropertyCreation and PropertyList are <script setup> components,
-    // so shallowMount renders them as anonymous stubs or named stubs.
-    // Verify the container exists.
-    expect(wrapper.find(".property-list-scroll").exists()).toBe(true);
+    // so shallowMount renders them as stubs.
+    // In Vuetify 3 shallowMount, v-card is also stubbed which may not render
+    // its slot content. Verify the stubs exist in the rendered HTML.
+    const html = wrapper.html();
+    expect(html).toContain("property-creation-stub");
+    expect(html).toContain("property-list-stub");
   });
 });

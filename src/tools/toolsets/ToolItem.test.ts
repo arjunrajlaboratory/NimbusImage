@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -23,10 +21,6 @@ import store from "@/store";
 import jobs from "@/store/jobs";
 import ToolItem from "./ToolItem.vue";
 
-Vue.use(Vuetify);
-Vue.directive("mousetrap", {});
-Vue.directive("tour-trigger", {});
-
 const baseTool = {
   id: "tool-1",
   name: "Test Tool",
@@ -34,18 +28,19 @@ const baseTool = {
   type: "create" as const,
   template: { name: "test" },
   values: {},
-};
+} as any;
 
 function mountComponent(props = {}) {
   return mount(ToolItem, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       tool: baseTool,
       ...props,
     },
-    stubs: {
-      ToolIcon: true,
-      ToolEdition: true,
+    global: {
+      stubs: {
+        ToolIcon: true,
+        ToolEdition: true,
+      },
     },
   });
 }

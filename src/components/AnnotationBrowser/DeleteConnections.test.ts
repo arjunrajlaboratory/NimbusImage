@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -31,12 +29,8 @@ import DeleteConnections from "./DeleteConnections.vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-
 function mountComponent() {
   return shallowMount(DeleteConnections, {
-    vuetify: new Vuetify(),
   });
 }
 

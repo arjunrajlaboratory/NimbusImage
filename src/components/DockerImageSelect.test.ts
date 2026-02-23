@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -33,13 +31,10 @@ vi.mock("@/store/properties", () => ({
 import DockerImageSelect from "./DockerImageSelect.vue";
 import propertiesStore from "@/store/properties";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return shallowMount(DockerImageSelect, {
-    vuetify: new Vuetify(),
-    propsData: {
-      value: "",
+    props: {
+      modelValue: "",
       imageFilter: () => true,
       ...props,
     },
@@ -49,15 +44,15 @@ function mountComponent(props = {}) {
 describe("DockerImageSelect", () => {
   it("images reads from propertiesStore.workerImageList", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.images).toBe(propertiesStore.workerImageList);
+    expect((wrapper.vm as any).images).toBe(propertiesStore.workerImageList);
   });
 
-  it("items groups images by category with dividers and headers", () => {
+  it("items groups images by category with dividers and subheaders", () => {
     const wrapper = mountComponent();
-    const items = wrapper.vm.items;
-    const headers = items.filter((i: any) => i.header);
-    expect(headers.length).toBe(2);
-    const headerNames = headers.map((h: any) => h.header);
+    const items = (wrapper.vm as any).items;
+    const subheaders = items.filter((i: any) => i.type === "subheader");
+    expect(subheaders.length).toBe(2);
+    const headerNames = subheaders.map((h: any) => h.title);
     expect(headerNames).toContain("Segmentation");
     expect(headerNames).toContain("Detection");
   });
@@ -66,10 +61,10 @@ describe("DockerImageSelect", () => {
     const wrapper = mountComponent({
       imageFilter: (labels: any) => labels.interfaceCategory === "Detection",
     });
-    const items = wrapper.vm.items;
-    const headers = items.filter((i: any) => i.header);
-    expect(headers.length).toBe(1);
-    expect(headers[0].header).toBe("Detection");
+    const items = (wrapper.vm as any).items;
+    const subheaders = items.filter((i: any) => i.type === "subheader");
+    expect(subheaders.length).toBe(1);
+    expect(subheaders[0].title).toBe("Detection");
   });
 
   it("mounted calls fetchWorkerImageList", () => {

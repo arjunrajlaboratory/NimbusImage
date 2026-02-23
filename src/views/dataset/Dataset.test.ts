@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { mount, flushPromises } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
   default: {
@@ -20,20 +18,20 @@ vi.mock("@/utils/log", () => ({
   logError: vi.fn(),
 }));
 
+import { routeProvider } from "@/test/helpers";
 import store from "@/store";
 import sync from "@/store/sync";
 import Dataset from "./Dataset.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(routeParams = { datasetId: "ds-1" }) {
   return mount(Dataset, {
-    vuetify: new Vuetify(),
-    mocks: {
-      $route: { params: routeParams },
-    },
-    stubs: {
-      "router-view": true,
+    global: {
+      provide: {
+        ...routeProvider({ params: routeParams }),
+      },
+      stubs: {
+        "router-view": true,
+      },
     },
   });
 }
@@ -53,8 +51,7 @@ describe("Dataset", () => {
 
   it("datasetReady is true when store.dataset and isReady", async () => {
     const wrapper = mountComponent();
-    await wrapper.vm.$nextTick();
-    await wrapper.vm.$nextTick();
+    await flushPromises();
     expect((wrapper.vm as any).datasetReady).toBe(true);
   });
 

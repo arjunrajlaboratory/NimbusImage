@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockFindDatasetViews = vi.fn();
 const mockRenameConfiguration = vi.fn();
@@ -61,29 +59,31 @@ vi.mock("@/store/model", async () => {
 vi.mock("@/store/annotation", () => ({ default: {} }));
 vi.mock("@/store/properties", () => ({ default: {} }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
 import store from "@/store";
 import ConfigurationInfo from "./ConfigurationInfo.vue";
 
-Vue.use(Vuetify);
+const mockRouter = { back: vi.fn(), push: vi.fn() };
 
 function mountComponent() {
   const app = document.createElement("div");
   app.setAttribute("data-app", "true");
   document.body.appendChild(app);
   return shallowMount(ConfigurationInfo, {
-    vuetify: new Vuetify(),
     attachTo: app,
-    mocks: {
-      $route: {
-        params: { configurationId: "config-1", datasetId: "ds-1" },
+    global: {
+      provide: {
+        ...routeProvider({
+          params: { configurationId: "config-1", datasetId: "ds-1" },
+        }),
+        ...routerProvider(mockRouter),
       },
-      $router: { back: vi.fn(), push: vi.fn() },
-    },
-    stubs: {
-      AlertDialog: true,
-      ScaleSettings: true,
-      AddDatasetToCollection: true,
-      AddCollectionToProjectDialog: true,
+      stubs: {
+        AlertDialog: true,
+        ScaleSettings: true,
+        AddDatasetToCollection: true,
+        AddCollectionToProjectDialog: true,
+      },
     },
   });
 }
@@ -121,34 +121,29 @@ describe("ConfigurationInfo", () => {
     mockWatchCollection.mockReturnValue({ name: "Cached Name" });
     const wrapper = mountComponent();
     expect((wrapper.vm as any).name).toBe("Cached Name");
-    wrapper.destroy();
   });
 
   it("name computed falls back to store.configuration.name", () => {
     mockWatchCollection.mockReturnValue(null);
     const wrapper = mountComponent();
     expect((wrapper.vm as any).name).toBe("Test Config");
-    wrapper.destroy();
   });
 
   it("name returns empty string when no configuration", () => {
     (store as any).configuration = null;
     const wrapper = mountComponent();
     expect((wrapper.vm as any).name).toBe("");
-    wrapper.destroy();
   });
 
   it("description computed returns configuration description", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).description).toBe("A test configuration");
-    wrapper.destroy();
   });
 
   it("layers computed returns store layers", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).layers).toHaveLength(1);
     expect((wrapper.vm as any).layers[0].name).toBe("Layer 1");
-    wrapper.destroy();
   });
 
   it("datasetViewItems maps views with cached config info", async () => {
@@ -163,7 +158,6 @@ describe("ConfigurationInfo", () => {
     expect(vm.datasetViewItems).toHaveLength(2);
     expect(vm.datasetViewItems[0].datasetView.id).toBe("view-1");
     expect(vm.datasetViewItems[1].datasetView.id).toBe("view-2");
-    wrapper.destroy();
   });
 
   it("tryRename calls store when name differs", () => {
@@ -172,7 +166,6 @@ describe("ConfigurationInfo", () => {
     vm.nameInput = "New Name";
     vm.tryRename();
     expect(mockRenameConfiguration).toHaveBeenCalledWith("New Name");
-    wrapper.destroy();
   });
 
   it("tryRename no-ops when name is same", () => {
@@ -182,7 +175,6 @@ describe("ConfigurationInfo", () => {
     vm.nameInput = "Test Config";
     vm.tryRename();
     expect(mockRenameConfiguration).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("tryRename no-ops when name is empty", () => {
@@ -191,35 +183,30 @@ describe("ConfigurationInfo", () => {
     vm.nameInput = "";
     vm.tryRename();
     expect(mockRenameConfiguration).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("toSlice formats current slice", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.toSlice({ type: "current", value: 0 })).toBe("Current");
-    wrapper.destroy();
   });
 
   it("toSlice formats constant slice", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.toSlice({ type: "constant", value: 5 })).toBe("5");
-    wrapper.destroy();
   });
 
   it("toSlice formats max-merge slice", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.toSlice({ type: "max-merge", value: 0 })).toBe("Max Merge");
-    wrapper.destroy();
   });
 
   it("toSlice formats offset slice", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.toSlice({ type: "offset", value: 3 })).toBe("Offset by 3");
-    wrapper.destroy();
   });
 
   it("toRoute builds correct route from $route.params", () => {
@@ -233,7 +220,6 @@ describe("ConfigurationInfo", () => {
     expect(route.name).toBe("datasetview");
     expect(route.params.datasetViewId).toBe("view-1");
     expect(route.params.configurationId).toBe("config-1");
-    wrapper.destroy();
   });
 
   it("openRemoveDatasetDialog sets dialog state", () => {
@@ -243,7 +229,6 @@ describe("ConfigurationInfo", () => {
     vm.openRemoveDatasetDialog(view);
     expect(vm.removeDatasetViewConfirm).toBe(true);
     expect(vm.viewToRemove).toEqual(view);
-    wrapper.destroy();
   });
 
   it("closeRemoveDatasetDialog clears dialog state", () => {
@@ -254,7 +239,6 @@ describe("ConfigurationInfo", () => {
     vm.closeRemoveDatasetDialog();
     expect(vm.removeDatasetViewConfirm).toBe(false);
     expect(vm.viewToRemove).toBeNull();
-    wrapper.destroy();
   });
 
   it("remove calls deleteConfiguration and $router.back()", async () => {
@@ -266,8 +250,7 @@ describe("ConfigurationInfo", () => {
     expect(mockDeleteConfiguration).toHaveBeenCalledWith(
       (store as any).configuration,
     );
-    expect(wrapper.vm.$router.back).toHaveBeenCalled();
-    wrapper.destroy();
+    expect(mockRouter.back).toHaveBeenCalled();
   });
 
   it("removeConfirm dialog toggles state", () => {
@@ -276,7 +259,6 @@ describe("ConfigurationInfo", () => {
     expect(vm.removeConfirm).toBe(false);
     vm.removeConfirm = true;
     expect(vm.removeConfirm).toBe(true);
-    wrapper.destroy();
   });
 
   it("showAddToProjectDialog toggles state", () => {
@@ -285,6 +267,5 @@ describe("ConfigurationInfo", () => {
     expect(vm.showAddToProjectDialog).toBe(false);
     vm.showAddToProjectDialog = true;
     expect(vm.showAddToProjectDialog).toBe(true);
-    wrapper.destroy();
   });
 });

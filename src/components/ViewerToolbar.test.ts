@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockSetXY = vi.fn();
 const mockSetZ = vi.fn();
@@ -82,20 +80,17 @@ import ViewerToolbar from "./ViewerToolbar.vue";
 import store from "@/store";
 import filterStore from "@/store/filters";
 
-Vue.use(Vuetify);
-Vue.directive("mousetrap", {});
-Vue.directive("tour-trigger", {});
-
 function mountComponent() {
   return shallowMount(ViewerToolbar, {
-    vuetify: new Vuetify(),
-    stubs: {
-      ValueSlider: true,
-      SwitchToggle: true,
-      Toolset: true,
-      LargeImageDropdown: true,
-      TagPicker: true,
-      TagFilterEditor: true,
+    global: {
+      stubs: {
+        ValueSlider: true,
+        SwitchToggle: true,
+        Toolset: true,
+        LargeImageDropdown: true,
+        TagPicker: true,
+        TagFilterEditor: true,
+      },
     },
   });
 }
@@ -131,7 +126,6 @@ describe("ViewerToolbar", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.xy).toBe(2);
-    wrapper.destroy();
   });
 
   it("xy setter calls store.setXY", () => {
@@ -139,14 +133,12 @@ describe("ViewerToolbar", () => {
     const vm = wrapper.vm as any;
     vm.xy = 3;
     expect(mockSetXY).toHaveBeenCalledWith(3);
-    wrapper.destroy();
   });
 
   it("z getter returns store.z", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.z).toBe(1);
-    wrapper.destroy();
   });
 
   it("z setter calls store.setZ", () => {
@@ -154,14 +146,12 @@ describe("ViewerToolbar", () => {
     const vm = wrapper.vm as any;
     vm.z = 0;
     expect(mockSetZ).toHaveBeenCalledWith(0);
-    wrapper.destroy();
   });
 
   it("time getter returns store.time", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.time).toBe(3);
-    wrapper.destroy();
   });
 
   it("time setter calls store.setTime", () => {
@@ -169,28 +159,24 @@ describe("ViewerToolbar", () => {
     const vm = wrapper.vm as any;
     vm.time = 5;
     expect(mockSetTime).toHaveBeenCalledWith(5);
-    wrapper.destroy();
   });
 
   it("maxXY is computed from dataset.xy.length - 1", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.maxXY).toBe(4); // 5 items, index 0-4
-    wrapper.destroy();
   });
 
   it("maxZ is computed from dataset.z.length - 1", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.maxZ).toBe(2); // 3 items, index 0-2
-    wrapper.destroy();
   });
 
   it("maxTime is computed from dataset.time.length - 1", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.maxTime).toBe(9); // 10 items, index 0-9
-    wrapper.destroy();
   });
 
   it("maxXY falls back to xy value when dataset is null", () => {
@@ -203,14 +189,12 @@ describe("ViewerToolbar", () => {
       z: [0, 1, 2],
       time: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
     };
-    wrapper.destroy();
   });
 
   it("unrollXY getter returns store.unrollXY", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.unrollXY).toBe(false);
-    wrapper.destroy();
   });
 
   it("unrollXY setter calls store.setUnrollXY", () => {
@@ -218,7 +202,6 @@ describe("ViewerToolbar", () => {
     const vm = wrapper.vm as any;
     vm.unrollXY = true;
     expect(mockSetUnrollXY).toHaveBeenCalledWith(true);
-    wrapper.destroy();
   });
 
   it("unrollZ setter calls store.setUnrollZ", () => {
@@ -226,7 +209,6 @@ describe("ViewerToolbar", () => {
     const vm = wrapper.vm as any;
     vm.unrollZ = true;
     expect(mockSetUnrollZ).toHaveBeenCalledWith(true);
-    wrapper.destroy();
   });
 
   it("unrollT setter calls store.setUnrollT", () => {
@@ -234,14 +216,12 @@ describe("ViewerToolbar", () => {
     const vm = wrapper.vm as any;
     vm.unrollT = true;
     expect(mockSetUnrollT).toHaveBeenCalledWith(true);
-    wrapper.destroy();
   });
 
   it("layerMode getter returns store.layerMode", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.layerMode).toBe("multiple");
-    wrapper.destroy();
   });
 
   it("layerMode setter calls store.setLayerMode", () => {
@@ -249,7 +229,6 @@ describe("ViewerToolbar", () => {
     const vm = wrapper.vm as any;
     vm.layerMode = "single";
     expect(mockSetLayerMode).toHaveBeenCalledWith("single");
-    wrapper.destroy();
   });
 
   it("tagFilter getter returns filterStore.tagFilter", () => {
@@ -258,7 +237,6 @@ describe("ViewerToolbar", () => {
     expect(vm.tagFilter).toEqual(
       expect.objectContaining({ id: "tag", tags: [] }),
     );
-    wrapper.destroy();
   });
 
   it("tagFilter setter calls filterStore.setTagFilter", () => {
@@ -272,14 +250,12 @@ describe("ViewerToolbar", () => {
     };
     vm.tagFilter = newFilter;
     expect(filterStore.setTagFilter).toHaveBeenCalledWith(newFilter);
-    wrapper.destroy();
   });
 
   it("mousetrapSliders has 6 hotkey bindings", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.mousetrapSliders).toHaveLength(6);
-    wrapper.destroy();
   });
 
   it("mousetrapSliders w decreases xy by 1 (clamped at 0)", () => {
@@ -289,7 +265,6 @@ describe("ViewerToolbar", () => {
     const wBinding = vm.mousetrapSliders.find((h: any) => h.bind === "w");
     wBinding.handler();
     expect(mockSetXY).toHaveBeenCalledWith(1);
-    wrapper.destroy();
   });
 
   it("mousetrapSliders w clamps xy to 0", () => {
@@ -299,7 +274,6 @@ describe("ViewerToolbar", () => {
     const wBinding = vm.mousetrapSliders.find((h: any) => h.bind === "w");
     wBinding.handler();
     expect(mockSetXY).toHaveBeenCalledWith(0);
-    wrapper.destroy();
   });
 
   it("mousetrapSliders r increases xy by 1 (clamped at maxXY)", () => {
@@ -309,7 +283,6 @@ describe("ViewerToolbar", () => {
     const rBinding = vm.mousetrapSliders.find((h: any) => h.bind === "r");
     rBinding.handler();
     expect(mockSetXY).toHaveBeenCalledWith(3);
-    wrapper.destroy();
   });
 
   it("mousetrapSliders d decreases z", () => {
@@ -319,7 +292,6 @@ describe("ViewerToolbar", () => {
     const dBinding = vm.mousetrapSliders.find((h: any) => h.bind === "d");
     dBinding.handler();
     expect(mockSetZ).toHaveBeenCalledWith(0);
-    wrapper.destroy();
   });
 
   it("mousetrapSliders e increases z", () => {
@@ -329,7 +301,6 @@ describe("ViewerToolbar", () => {
     const eBinding = vm.mousetrapSliders.find((h: any) => h.bind === "e");
     eBinding.handler();
     expect(mockSetZ).toHaveBeenCalledWith(2);
-    wrapper.destroy();
   });
 
   it("mousetrapSliders s decreases time", () => {
@@ -339,7 +310,6 @@ describe("ViewerToolbar", () => {
     const sBinding = vm.mousetrapSliders.find((h: any) => h.bind === "s");
     sBinding.handler();
     expect(mockSetTime).toHaveBeenCalledWith(2);
-    wrapper.destroy();
   });
 
   it("mousetrapSliders f increases time", () => {
@@ -349,27 +319,23 @@ describe("ViewerToolbar", () => {
     const fBinding = vm.mousetrapSliders.find((h: any) => h.bind === "f");
     fBinding.handler();
     expect(mockSetTime).toHaveBeenCalledWith(4);
-    wrapper.destroy();
   });
 
   it("xyLabel returns null when showXYLabels is false", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.xyLabel).toBeNull();
-    wrapper.destroy();
   });
 
   it("zLabel returns null when showZLabels is false", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.zLabel).toBeNull();
-    wrapper.destroy();
   });
 
   it("timeLabel returns null when showTimeLabels is false", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.timeLabel).toBeNull();
-    wrapper.destroy();
   });
 });

@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -30,12 +28,9 @@ vi.mock("@/tools/creation/templates/DockerImage.vue", () => ({
 import ToolConfiguration from "./ToolConfiguration.vue";
 import propertiesStore from "@/store/properties";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(ToolConfiguration, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       template: {
         name: "Test Tool",
         type: "create",
@@ -60,8 +55,10 @@ function mountComponent(props = {}) {
       modelValue: {},
       ...props,
     },
-    stubs: {
-      ToolConfigurationItem: true,
+    global: {
+      stubs: {
+        ToolConfigurationItem: true,
+      },
     },
   });
 }

@@ -4,8 +4,7 @@ import Persister from "@/store/Persister";
 
 const vuetify = createVuetify({
   theme: {
-    defaultTheme:
-      Persister.get("theme", "dark") === "dark" ? "dark" : "light",
+    defaultTheme: Persister.get("theme", "dark") === "dark" ? "dark" : "light",
   },
   icons: {
     defaultSet: "mdi",

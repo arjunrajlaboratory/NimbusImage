@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockSetXY = vi.fn();
 const mockSetZ = vi.fn();
@@ -84,8 +82,6 @@ import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 
-Vue.use(Vuetify);
-
 function makeAnnotation(overrides: any = {}) {
   return {
     id: "ann1",
@@ -103,18 +99,19 @@ function makeAnnotation(overrides: any = {}) {
 
 function mountComponent() {
   return shallowMount(AnnotationList, {
-    vuetify: new Vuetify(),
-    stubs: {
-      TagSelectionDialog: true,
-      ColorSelectionDialog: true,
-      VExpansionPanel: {
-        template: "<div><slot /></div>",
-      },
-      VExpansionPanelHeader: {
-        template: "<div><slot /></div>",
-      },
-      VExpansionPanelContent: {
-        template: "<div><slot /></div>",
+    global: {
+      stubs: {
+        TagSelectionDialog: true,
+        ColorSelectionDialog: true,
+        VExpansionPanel: {
+          template: "<div><slot /></div>",
+        },
+        VExpansionPanelHeader: {
+          template: "<div><slot /></div>",
+        },
+        VExpansionPanelContent: {
+          template: "<div><slot /></div>",
+        },
       },
     },
   });
@@ -174,7 +171,6 @@ describe("AnnotationList", () => {
       expect(vm.selectedColumns).toContain("annotation.location.XY");
       expect(vm.selectedColumns).toContain("annotation.location.Z");
       expect(vm.selectedColumns).toContain("annotation.location.Time");
-      wrapper.destroy();
     });
   });
 
@@ -183,7 +179,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isDeletingAnnotations).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns true when annotationStore.isDeleting is true", () => {
@@ -191,7 +186,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isDeletingAnnotations).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -202,7 +196,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.listedAnnotations).toHaveLength(1);
-      wrapper.destroy();
     });
 
     it("filters by localIdFilter", () => {
@@ -214,7 +207,6 @@ describe("AnnotationList", () => {
       vm.localIdFilter = "abc";
       expect(vm.listedAnnotations).toHaveLength(1);
       expect(vm.listedAnnotations[0].id).toBe("abc123");
-      wrapper.destroy();
     });
 
     it("returns all when localIdFilter is empty string", () => {
@@ -225,7 +217,6 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       vm.localIdFilter = "";
       expect(vm.listedAnnotations).toHaveLength(2);
-      wrapper.destroy();
     });
   });
 
@@ -241,7 +232,6 @@ describe("AnnotationList", () => {
       expect(items[0].annotation).toEqual(ann);
       expect(items[0].index).toBe(0);
       expect(items[0].shapeName).toBe("Point"); // shape 0 = Point
-      wrapper.destroy();
     });
 
     it("includes isSelected from annotationStore", () => {
@@ -251,7 +241,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.filteredItems[0].isSelected).toBe(true);
-      wrapper.destroy();
     });
   });
 
@@ -259,11 +248,10 @@ describe("AnnotationList", () => {
     it("includes only selected columns", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      const headerValues = vm.headers.map((h: any) => h.value);
-      expect(headerValues).toContain("index");
-      expect(headerValues).toContain("annotation.tags");
-      expect(headerValues).not.toContain("annotation.id");
-      wrapper.destroy();
+      const headerKeys = vm.headers.map((h: any) => h.key);
+      expect(headerKeys).toContain("index");
+      expect(headerKeys).toContain("annotation.tags");
+      expect(headerKeys).not.toContain("annotation.id");
     });
 
     it("includes property headers from displayedPropertyPaths", () => {
@@ -271,11 +259,10 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       const propHeader = vm.headers.find(
-        (h: any) => h.value === "properties.prop1.subA",
+        (h: any) => h.key === "properties.prop1.subA",
       );
       expect(propHeader).toBeDefined();
-      expect(propHeader.text).toBe("prop1.subA");
-      wrapper.destroy();
+      expect(propHeader.title).toBe("prop1.subA");
     });
   });
 
@@ -285,7 +272,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.propertyHeaders).toEqual([]);
-      wrapper.destroy();
     });
 
     it("generates headers from displayedPropertyPaths", () => {
@@ -296,8 +282,7 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.propertyHeaders).toHaveLength(2);
-      expect(vm.propertyHeaders[0].value).toBe("properties.p1.a");
-      wrapper.destroy();
+      expect(vm.propertyHeaders[0].key).toBe("properties.p1.a");
     });
   });
 
@@ -311,7 +296,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.selectAllValue).toBe(true);
-      wrapper.destroy();
     });
 
     it("selectAllValue is false when no items selected", () => {
@@ -321,7 +305,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.selectAllValue).toBe(false);
-      wrapper.destroy();
     });
 
     it("selectAllIndeterminate is true when some but not all selected", () => {
@@ -336,7 +319,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.selectAllIndeterminate).toBe(true);
-      wrapper.destroy();
     });
 
     it("selectAllCallback deselects all when all are selected", () => {
@@ -349,7 +331,6 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       vm.selectAllCallback();
       expect(mockSetSelected).toHaveBeenCalledWith([]);
-      wrapper.destroy();
     });
 
     it("selectAllCallback selects all when not all selected", () => {
@@ -362,7 +343,6 @@ describe("AnnotationList", () => {
       vm.selectAllCallback();
       // Should set all filteredItems' annotations
       expect(mockSetSelected).toHaveBeenCalledWith([ann]);
-      wrapper.destroy();
     });
   });
 
@@ -373,7 +353,6 @@ describe("AnnotationList", () => {
       const ann = makeAnnotation();
       vm.toggleAnnotationSelection(ann);
       expect(mockToggleSelected).toHaveBeenCalledWith([ann]);
-      wrapper.destroy();
     });
   });
 
@@ -394,7 +373,6 @@ describe("AnnotationList", () => {
       expect(mockSetTime).toHaveBeenCalledWith(4);
       expect(mockSetCameraInfo).toHaveBeenCalled();
       expect(mockSetHoveredAnnotationId).toHaveBeenCalledWith("ann1");
-      wrapper.destroy();
     });
 
     it("does nothing when annotation not found", () => {
@@ -403,7 +381,6 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       vm.goToAnnotationIdLocation("nonexistent");
       expect(mockSetXY).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -414,7 +391,6 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       vm.hover("ann1");
       expect(mockSetHoveredAnnotationId).toHaveBeenCalledWith("ann1");
-      wrapper.destroy();
     });
 
     it("does not set hoveredAnnotationId when annotations >= 5000", () => {
@@ -423,7 +399,6 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       vm.hover("ann1");
       expect(mockSetHoveredAnnotationId).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("hover with null clears hovered", () => {
@@ -432,7 +407,6 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       vm.hover(null);
       expect(mockSetHoveredAnnotationId).toHaveBeenCalledWith(null);
-      wrapper.destroy();
     });
   });
 
@@ -443,7 +417,6 @@ describe("AnnotationList", () => {
       vm.clickedTag("myTag");
       expect(wrapper.emitted("clickedTag")).toBeTruthy();
       expect(wrapper.emitted("clickedTag")![0][0]).toBe("myTag");
-      wrapper.destroy();
     });
   });
 
@@ -460,7 +433,6 @@ describe("AnnotationList", () => {
         tags: ["tag1"],
         replace: false,
       });
-      wrapper.destroy();
     });
 
     it("calls tagSelectedAnnotations with replace when replaceExisting is true", () => {
@@ -475,7 +447,6 @@ describe("AnnotationList", () => {
         tags: ["tag1"],
         replace: true,
       });
-      wrapper.destroy();
     });
 
     it("calls removeTagsFromSelectedAnnotations when addOrRemove is remove", () => {
@@ -489,7 +460,6 @@ describe("AnnotationList", () => {
       expect(mockRemoveTagsFromSelectedAnnotations).toHaveBeenCalledWith([
         "tag1",
       ]);
-      wrapper.destroy();
     });
   });
 
@@ -505,7 +475,6 @@ describe("AnnotationList", () => {
         color: "#ff0000",
         randomize: undefined,
       });
-      wrapper.destroy();
     });
 
     it("calls colorSelectedAnnotations with null when useColorFromLayer is true", () => {
@@ -519,7 +488,6 @@ describe("AnnotationList", () => {
         color: null,
         randomize: undefined,
       });
-      wrapper.destroy();
     });
 
     it("passes randomize flag through", () => {
@@ -534,7 +502,6 @@ describe("AnnotationList", () => {
         color: "#00ff00",
         randomize: true,
       });
-      wrapper.destroy();
     });
   });
 
@@ -544,7 +511,6 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       vm.deleteSelected();
       expect(mockDeleteSelectedAnnotations).toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -554,7 +520,6 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       vm.deleteUnselected();
       expect(mockDeleteUnselectedAnnotations).toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -567,16 +532,14 @@ describe("AnnotationList", () => {
         name: "New Name",
         id: "ann1",
       });
-      wrapper.destroy();
     });
   });
 
   describe("getPageFromItemId", () => {
-    it("returns 0 when dataTableItems is empty", () => {
+    it("returns 1 when dataTableItems is empty", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.getPageFromItemId("ann1")).toBe(0);
-      wrapper.destroy();
+      expect(vm.getPageFromItemId("ann1")).toBe(1);
     });
   });
 
@@ -586,7 +549,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.hoveredId).toBe("ann1");
-      wrapper.destroy();
     });
 
     it("returns null when no annotation is hovered", () => {
@@ -594,7 +556,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.hoveredId).toBeNull();
-      wrapper.destroy();
     });
   });
 
@@ -604,7 +565,6 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.displayedPropertyPaths).toEqual([["p1", "a"]]);
-      wrapper.destroy();
     });
   });
 });

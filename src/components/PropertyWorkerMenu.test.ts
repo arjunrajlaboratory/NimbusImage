@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -20,18 +18,20 @@ vi.mock("@/store/properties", () => ({
 import PropertyWorkerMenu from "./PropertyWorkerMenu.vue";
 import propertiesStore from "@/store/properties";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return shallowMount(PropertyWorkerMenu, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: {},
       image: null,
       ...props,
     },
-    stubs: {
-      WorkerInterfaceValues: true,
+    global: {
+      stubs: {
+        WorkerInterfaceValues: true,
+        VContainer: { template: "<div><slot /></div>" },
+        VRow: { template: "<div><slot /></div>" },
+        VCol: { template: "<div><slot /></div>" },
+      },
     },
   });
 }
@@ -44,10 +44,12 @@ describe("PropertyWorkerMenu", () => {
 
   it("workerInterface returns store value when image is set", () => {
     const wrapper = mountComponent({ image: "my-image:latest" });
+    // Access the computed to ensure it's evaluated
+    const result = wrapper.vm.workerInterface;
     expect(propertiesStore.getWorkerInterface).toHaveBeenCalledWith(
       "my-image:latest",
     );
-    expect(wrapper.vm.workerInterface).toEqual({ some: "interface" });
+    expect(result).toEqual({ some: "interface" });
   });
 
   it("renders progress when workerInterface is undefined", () => {
@@ -56,9 +58,10 @@ describe("PropertyWorkerMenu", () => {
     expect(wrapper.find("v-progress-circular-stub").exists()).toBe(true);
   });
 
-  it("emits input when interfaceValues changes", () => {
+  it("emits update:modelValue when interfaceValues setter is called", () => {
     const wrapper = mountComponent({ image: "img" });
-    wrapper.vm.interfaceValues = { key: "value" };
+    // Directly invoke the computed setter via the exposed property
+    (wrapper.vm as any).interfaceValues = { key: "value" };
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
   });
 });

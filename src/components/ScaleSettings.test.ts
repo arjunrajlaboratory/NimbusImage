@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store/index", () => ({
   default: {
@@ -46,18 +44,16 @@ import ScaleSettings from "./ScaleSettings.vue";
 import store from "@/store/index";
 import { getDatasetScales } from "@/store/GirderAPI";
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-
 function mountComponent(props = {}) {
   return mount(ScaleSettings, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       ...props,
     },
-    stubs: {
-      PixelScaleBarSetting: true,
-      ColorPickerMenu: true,
+    global: {
+      stubs: {
+        PixelScaleBarSetting: true,
+        ColorPickerMenu: true,
+      },
     },
   });
 }

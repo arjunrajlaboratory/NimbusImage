@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { shallowMount } from "@vue/test-utils";
 
 vi.mock("@/store/index", () => ({
   default: {
@@ -50,16 +48,14 @@ vi.mock("@/utils/compositionModes", () => ({
 import ViewerSettings from "./ViewerSettings.vue";
 import store from "@/store/index";
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-
 function mountComponent() {
-  return mount(ViewerSettings, {
-    vuetify: new Vuetify(),
-    stubs: {
-      PixelScaleBarSetting: true,
-      UserColorSettings: true,
-      ColorPickerMenu: true,
+  return shallowMount(ViewerSettings, {
+    global: {
+      stubs: {
+        PixelScaleBarSetting: true,
+        UserColorSettings: true,
+        ColorPickerMenu: true,
+      },
     },
   });
 }

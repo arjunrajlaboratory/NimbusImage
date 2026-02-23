@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockFindDatasetViews = vi.fn();
 const mockUpdateProject = vi.fn();
@@ -71,26 +69,28 @@ vi.mock("@/store/annotation", () => ({ default: {} }));
 vi.mock("@/store/properties", () => ({ default: {} }));
 vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
 import projects from "@/store/projects";
 import ProjectInfo from "./ProjectInfo.vue";
 
-Vue.use(Vuetify);
+const mockRouter = { push: vi.fn() };
 
 function mountComponent() {
   const app = document.createElement("div");
   app.setAttribute("data-app", "true");
   document.body.appendChild(app);
   return shallowMount(ProjectInfo, {
-    vuetify: new Vuetify(),
     attachTo: app,
-    mocks: {
-      $route: { params: { projectId: "proj-1" } },
-      $router: { push: vi.fn() },
-    },
-    stubs: {
-      AlertDialog: true,
-      AddDatasetToProjectDialog: true,
-      AddCollectionToProjectFilterDialog: true,
+    global: {
+      provide: {
+        ...routeProvider({ params: { projectId: "proj-1" } }),
+        ...routerProvider(mockRouter),
+      },
+      stubs: {
+        AlertDialog: true,
+        AddDatasetToProjectDialog: true,
+        AddCollectionToProjectFilterDialog: true,
+      },
     },
   });
 }
@@ -136,40 +136,34 @@ describe("ProjectInfo", () => {
     expect((wrapper.vm as any).project).toEqual(
       (projects as any).currentProject,
     );
-    wrapper.destroy();
   });
 
   it("statusColor returns correct color for draft", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).statusColor).toBe("grey");
-    wrapper.destroy();
   });
 
   it("statusColor returns correct color for exporting", () => {
     (projects as any).currentProject.meta.status = "exporting";
     const wrapper = mountComponent();
     expect((wrapper.vm as any).statusColor).toBe("warning");
-    wrapper.destroy();
   });
 
   it("statusColor returns correct color for exported", () => {
     (projects as any).currentProject.meta.status = "exported";
     const wrapper = mountComponent();
     expect((wrapper.vm as any).statusColor).toBe("success");
-    wrapper.destroy();
   });
 
   it("canStartExport returns true for draft", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).canStartExport).toBe(true);
-    wrapper.destroy();
   });
 
   it("canMarkExported returns true for exporting", () => {
     (projects as any).currentProject.meta.status = "exporting";
     const wrapper = mountComponent();
     expect((wrapper.vm as any).canMarkExported).toBe(true);
-    wrapper.destroy();
   });
 
   it("hasMetadataChanges detects field differences", async () => {
@@ -179,7 +173,6 @@ describe("ProjectInfo", () => {
     expect(vm.hasMetadataChanges).toBe(false);
     vm.metadata.title = "Changed Title";
     expect(vm.hasMetadataChanges).toBe(true);
-    wrapper.destroy();
   });
 
   it("hasMetadataChanges detects array differences", async () => {
@@ -189,7 +182,6 @@ describe("ProjectInfo", () => {
     expect(vm.hasMetadataChanges).toBe(false);
     vm.metadata.keywords = ["test", "new"];
     expect(vm.hasMetadataChanges).toBe(true);
-    wrapper.destroy();
   });
 
   it("allDatasetItems deduplicates direct + collection datasets", async () => {
@@ -205,7 +197,6 @@ describe("ProjectInfo", () => {
     // ds-1 appears in both direct and collection, should be deduplicated
     const datasetIds = items.map((i: any) => i.datasetId);
     expect(new Set(datasetIds).size).toBe(datasetIds.length);
-    wrapper.destroy();
   });
 
   it("filteredDatasetItems filters by search", async () => {
@@ -215,7 +206,6 @@ describe("ProjectInfo", () => {
     // With no filter, should return all
     vm.datasetFilter = "";
     expect(vm.filteredDatasetItems.length).toBe(vm.allDatasetItems.length);
-    wrapper.destroy();
   });
 
   it("filteredCollectionItems filters by search", async () => {
@@ -224,7 +214,6 @@ describe("ProjectInfo", () => {
     const vm = wrapper.vm as any;
     vm.collectionFilter = "";
     expect(vm.filteredCollectionItems.length).toBe(vm.collectionItems.length);
-    wrapper.destroy();
   });
 
   it("totalProjectSize sums unique dataset sizes", async () => {
@@ -233,7 +222,6 @@ describe("ProjectInfo", () => {
     const vm = wrapper.vm as any;
     // With no cached info, total should be 0
     expect(vm.totalProjectSize).toBe(0);
-    wrapper.destroy();
   });
 
   it("initializeMetadata populates form with fallbacks", async () => {
@@ -243,7 +231,6 @@ describe("ProjectInfo", () => {
     expect(vm.metadata.title).toBe("Project Title");
     expect(vm.metadata.license).toBe("CC-BY-4.0");
     expect(vm.metadata.keywords).toEqual(["test"]);
-    wrapper.destroy();
   });
 
   it("tryUpdateName no-ops when unchanged", async () => {
@@ -253,7 +240,6 @@ describe("ProjectInfo", () => {
     vm.nameInput = "Test Project";
     await vm.tryUpdateName();
     expect(mockUpdateProject).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("tryUpdateName calls API when different", async () => {
@@ -267,7 +253,6 @@ describe("ProjectInfo", () => {
       projectId: "proj-1",
       name: "New Name",
     });
-    wrapper.destroy();
   });
 
   it("deleteProject calls store and navigates to home", async () => {
@@ -276,8 +261,7 @@ describe("ProjectInfo", () => {
     const vm = wrapper.vm as any;
     await vm.deleteProject();
     expect(mockDeleteProject).toHaveBeenCalledWith("proj-1");
-    expect(wrapper.vm.$router.push).toHaveBeenCalledWith({ name: "home" });
-    wrapper.destroy();
+    expect(mockRouter.push).toHaveBeenCalledWith({ name: "home" });
   });
 
   it("deleteProject does not navigate on failure", async () => {
@@ -285,8 +269,7 @@ describe("ProjectInfo", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     await vm.deleteProject();
-    expect(wrapper.vm.$router.push).not.toHaveBeenCalled();
-    wrapper.destroy();
+    expect(mockRouter.push).not.toHaveBeenCalled();
   });
 
   it("confirmRemoveDataset sets dialog state", () => {
@@ -295,7 +278,6 @@ describe("ProjectInfo", () => {
     vm.confirmRemoveDataset("ds-1");
     expect(vm.datasetToRemove).toBe("ds-1");
     expect(vm.removeDatasetConfirm).toBe(true);
-    wrapper.destroy();
   });
 
   it("removeDataset calls store and clears dialog", async () => {
@@ -311,7 +293,6 @@ describe("ProjectInfo", () => {
     });
     expect(vm.removeDatasetConfirm).toBe(false);
     expect(vm.datasetToRemove).toBeNull();
-    wrapper.destroy();
   });
 
   it("confirmRemoveCollection sets dialog state", () => {
@@ -320,7 +301,6 @@ describe("ProjectInfo", () => {
     vm.confirmRemoveCollection("coll-1");
     expect(vm.collectionToRemove).toBe("coll-1");
     expect(vm.removeCollectionConfirm).toBe(true);
-    wrapper.destroy();
   });
 
   it("removeCollection calls store and clears dialog", async () => {
@@ -336,7 +316,6 @@ describe("ProjectInfo", () => {
     });
     expect(vm.removeCollectionConfirm).toBe(false);
     expect(vm.collectionToRemove).toBeNull();
-    wrapper.destroy();
   });
 
   it("dialog state toggles", () => {
@@ -345,6 +324,5 @@ describe("ProjectInfo", () => {
     expect(vm.deleteConfirm).toBe(false);
     vm.deleteConfirm = true;
     expect(vm.deleteConfirm).toBe(true);
-    wrapper.destroy();
   });
 });

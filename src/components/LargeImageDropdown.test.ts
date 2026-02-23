@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -22,11 +20,8 @@ vi.mock("@/girder/index", () => ({
 import LargeImageDropdown from "./LargeImageDropdown.vue";
 import store from "@/store";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return shallowMount(LargeImageDropdown, {
-    vuetify: new Vuetify(),
   });
 }
 

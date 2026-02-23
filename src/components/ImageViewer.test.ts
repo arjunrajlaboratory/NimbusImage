@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
-import { markRaw } from "vue";
+import { markRaw , nextTick } from "vue";
 
 // ---- Hoisted mocks ----
 
@@ -80,11 +78,11 @@ const mockLayer = () => ({
   displayToLevel: vi.fn((pt: any) => pt),
 });
 
-// Use Vue.observable so the computed properties are reactive
+// Use reactive() so the computed properties are reactive
 vi.mock("@/store", () => {
-  const Vue = require("vue");
+  const { reactive } = require("vue");
   return {
-    default: Vue.observable({
+    default: reactive({
       maps: [] as any[],
       dataset: {
         id: "dataset1",
@@ -122,9 +120,9 @@ vi.mock("@/store", () => {
 });
 
 vi.mock("@/store/annotation", () => {
-  const Vue = require("vue");
+  const { reactive } = require("vue");
   return {
-    default: Vue.observable({
+    default: reactive({
       selectedAnnotationIds: [],
       submitPendingAnnotation: null as Function | null,
       deleteSelectedAnnotations: vi.fn(),
@@ -209,10 +207,6 @@ const mockedStore = vi.mocked(store);
 const mockedAnnotationStore = vi.mocked(annotationStore);
 const mockedProgressStore = vi.mocked(progressStore);
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-Vue.directive("mousetrap", {});
-
 function createLayerStackImage(overrides: any = {}): any {
   return {
     layer: {
@@ -255,14 +249,15 @@ function mountComponent(propsData: Record<string, unknown> = {}) {
   mapLayout.classList.add("map-layout");
 
   const w = shallowMount(ImageViewer as any, {
-    vuetify: new Vuetify(),
-    propsData,
-    stubs: {
-      AnnotationViewer: true,
-      ImageOverview: true,
-      ScaleSettings: true,
-      ProgressBarGroup: true,
-      LayerInfoGrid: true,
+    props: propsData,
+    global: {
+      stubs: {
+        AnnotationViewer: true,
+        ImageOverview: true,
+        ScaleSettings: true,
+        ProgressBarGroup: true,
+        LayerInfoGrid: true,
+      },
     },
     attachTo: app,
   });
@@ -314,7 +309,6 @@ describe("ImageViewer", () => {
   afterEach(() => {
     vi.useRealTimers();
     if (wrapper) {
-      wrapper.destroy();
     }
   });
 
@@ -328,10 +322,10 @@ describe("ImageViewer", () => {
 
     it("sets refsMounted on mount", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.refsMounted).toBe(true);
+      expect((wrapper.vm as any).refsMounted).toBe(true);
     });
 
-    it("cleans up maps on beforeDestroy", () => {
+    it("cleans up maps on beforeUnmount", () => {
       const map1 = mockMap();
       const map2 = mockMap();
       mockedStore.maps = [
@@ -339,7 +333,12 @@ describe("ImageViewer", () => {
         { map: map2, imageLayers: [], params: {} } as any,
       ];
       wrapper = mountComponent();
-      wrapper.destroy();
+      // Clear any calls from mount
+      map1.exit.mockClear();
+      map2.exit.mockClear();
+      (mockedStore.setMaps as any).mockClear();
+      // Trigger onBeforeUnmount
+      wrapper.unmount();
       expect(map1.exit).toHaveBeenCalled();
       expect(map2.exit).toHaveBeenCalled();
       expect(mockedStore.setMaps).toHaveBeenCalledWith([]);
@@ -350,7 +349,7 @@ describe("ImageViewer", () => {
       wrapper = mountComponent();
       // draw would have been called - since it modifies tileWidth/tileHeight
       // we can check that tileWidth got updated
-      expect(wrapper.vm.tileWidth).toBeDefined();
+      expect((wrapper.vm as any).tileWidth).toBeDefined();
     });
   });
 
@@ -364,17 +363,17 @@ describe("ImageViewer", () => {
     it("maps getter returns store.maps", () => {
       const testMaps = [{ map: mockMap() }] as any;
       mockedStore.maps = testMaps;
-      expect(wrapper.vm.maps).toBe(testMaps);
+      expect((wrapper.vm as any).maps).toStrictEqual(testMaps);
     });
 
     it("maps setter calls store.setMaps", () => {
       const newMaps = [{ map: mockMap() }] as any;
-      wrapper.vm.maps = newMaps;
+      (wrapper.vm as any).maps = newMaps;
       expect(mockedStore.setMaps).toHaveBeenCalledWith(newMaps);
     });
 
     it("cameraInfo getter returns store.cameraInfo", () => {
-      expect(wrapper.vm.cameraInfo).toBe(mockedStore.cameraInfo);
+      expect((wrapper.vm as any).cameraInfo).toBe(mockedStore.cameraInfo);
     });
 
     it("cameraInfo setter calls store.setCameraInfo", () => {
@@ -384,80 +383,80 @@ describe("ImageViewer", () => {
         center: { x: 0, y: 0 },
         gcsBounds: [],
       };
-      wrapper.vm.cameraInfo = newInfo;
+      (wrapper.vm as any).cameraInfo = newInfo;
       expect(mockedStore.setCameraInfo).toHaveBeenCalledWith(newInfo);
     });
 
     it("overview returns store.overview", () => {
       mockedStore.overview = true;
-      expect(wrapper.vm.overview).toBe(true);
+      expect((wrapper.vm as any).overview).toBe(true);
     });
 
     it("dataset returns store.dataset", () => {
-      expect(wrapper.vm.dataset).toBe(mockedStore.dataset);
+      expect((wrapper.vm as any).dataset).toBe(mockedStore.dataset);
     });
 
     it("unrolling returns store.unroll", () => {
       mockedStore.unroll = true;
-      expect(wrapper.vm.unrolling).toBe(true);
+      expect((wrapper.vm as any).unrolling).toBe(true);
     });
 
     it("width returns dataset width or 1 if no dataset", () => {
-      expect(wrapper.vm.width).toBe(1000);
+      expect((wrapper.vm as any).width).toBe(1000);
     });
 
     it("width returns 1 when no dataset", () => {
       mockedStore.dataset = null as any;
-      expect(wrapper.vm.width).toBe(1);
+      expect((wrapper.vm as any).width).toBe(1);
     });
 
     it("height returns dataset height or 1 if no dataset", () => {
-      expect(wrapper.vm.height).toBe(800);
+      expect((wrapper.vm as any).height).toBe(800);
     });
 
     it("compositionMode returns store.compositionMode", () => {
-      expect(wrapper.vm.compositionMode).toBe("lighten");
+      expect((wrapper.vm as any).compositionMode).toBe("lighten");
     });
 
     it("backgroundColor returns store.backgroundColor", () => {
-      expect(wrapper.vm.backgroundColor).toBe("black");
+      expect((wrapper.vm as any).backgroundColor).toBe("black");
     });
 
     it("pixelSize returns store.scales.pixelSize", () => {
-      expect(wrapper.vm.pixelSize).toEqual({ value: 0.5, unit: "µm" });
+      expect((wrapper.vm as any).pixelSize).toEqual({ value: 0.5, unit: "µm" });
     });
 
     it("showScalebar returns store.showScalebar", () => {
-      expect(wrapper.vm.showScalebar).toBe(false);
+      expect((wrapper.vm as any).showScalebar).toBe(false);
     });
 
     it("showPixelScalebar returns store.showPixelScalebar", () => {
-      expect(wrapper.vm.showPixelScalebar).toBe(false);
+      expect((wrapper.vm as any).showPixelScalebar).toBe(false);
     });
 
     it("scalebarColor returns store.scalebarColor", () => {
-      expect(wrapper.vm.scalebarColor).toBe("#ffffff");
+      expect((wrapper.vm as any).scalebarColor).toBe("#ffffff");
     });
 
     it("selectedTool returns store.selectedTool", () => {
-      expect(wrapper.vm.selectedTool).toBeNull();
+      expect((wrapper.vm as any).selectedTool).toBeNull();
     });
 
     it("layerStackImages returns store.layerStackImages when configuration exists", () => {
       const lsi = [createLayerStackImage()];
       mockedStore.layerStackImages = lsi;
-      expect(wrapper.vm.layerStackImages).toBe(lsi);
+      expect((wrapper.vm as any).layerStackImages).toStrictEqual(lsi);
     });
 
     it("layerStackImages returns empty array when no configuration", () => {
       mockedStore.configuration = null as any;
-      expect(wrapper.vm.layerStackImages).toEqual([]);
+      expect((wrapper.vm as any).layerStackImages).toEqual([]);
     });
 
     it("submitPendingAnnotation returns annotationStore value", () => {
       const fn = vi.fn();
       mockedAnnotationStore.submitPendingAnnotation = fn;
-      expect(wrapper.vm.submitPendingAnnotation).toBe(fn);
+      expect((wrapper.vm as any).submitPendingAnnotation).toBe(fn);
     });
   });
 
@@ -469,33 +468,33 @@ describe("ImageViewer", () => {
     });
 
     it("readyLayersCount counts true values in readyLayers", () => {
-      wrapper.vm.readyLayers = [true, false, true, true];
-      expect(wrapper.vm.readyLayersCount).toBe(3);
+      (wrapper.vm as any).readyLayers = [true, false, true, true];
+      expect((wrapper.vm as any).readyLayersCount).toBe(3);
     });
 
     it("readyLayersCount returns 0 for empty array", () => {
-      wrapper.vm.readyLayers = [];
-      expect(wrapper.vm.readyLayersCount).toBe(0);
+      (wrapper.vm as any).readyLayers = [];
+      expect((wrapper.vm as any).readyLayersCount).toBe(0);
     });
 
     it("readyLayersTotal returns readyLayers length", () => {
-      wrapper.vm.readyLayers = [true, false, true];
-      expect(wrapper.vm.readyLayersTotal).toBe(3);
+      (wrapper.vm as any).readyLayers = [true, false, true];
+      expect((wrapper.vm as any).readyLayersTotal).toBe(3);
     });
 
     it("layersReady returns true when all layers are ready", () => {
-      wrapper.vm.readyLayers = [true, true, true];
-      expect(wrapper.vm.layersReady).toBe(true);
+      (wrapper.vm as any).readyLayers = [true, true, true];
+      expect((wrapper.vm as any).layersReady).toBe(true);
     });
 
     it("layersReady returns false when some layers not ready", () => {
-      wrapper.vm.readyLayers = [true, false, true];
-      expect(wrapper.vm.layersReady).toBe(false);
+      (wrapper.vm as any).readyLayers = [true, false, true];
+      expect((wrapper.vm as any).layersReady).toBe(false);
     });
 
     it("layersReady returns true for empty array", () => {
-      wrapper.vm.readyLayers = [];
-      expect(wrapper.vm.layersReady).toBe(true);
+      (wrapper.vm as any).readyLayers = [];
+      expect((wrapper.vm as any).layersReady).toBe(true);
     });
 
     it("selectedToolType returns tool state type", () => {
@@ -503,19 +502,19 @@ describe("ImageViewer", () => {
         configuration: { id: "tool1" },
         state: { type: Symbol("test") },
       } as any;
-      expect(wrapper.vm.selectedToolType).toBeDefined();
+      expect((wrapper.vm as any).selectedToolType).toBeDefined();
     });
 
     it("selectedToolType returns null when no tool", () => {
       mockedStore.selectedTool = null;
-      expect(wrapper.vm.selectedToolType).toBeNull();
+      expect((wrapper.vm as any).selectedToolType).toBeNull();
     });
 
     it("mapLayerList returns single group in multiple mode", () => {
       const lsi = [createLayerStackImage()];
       mockedStore.layerStackImages = lsi;
       mockedStore.layerMode = "multiple" as any;
-      expect(wrapper.vm.mapLayerList).toEqual([lsi]);
+      expect((wrapper.vm as any).mapLayerList).toEqual([lsi]);
     });
 
     it("mapLayerList groups by layerGroup in unroll mode", () => {
@@ -530,7 +529,7 @@ describe("ImageViewer", () => {
       });
       mockedStore.layerStackImages = [lsi1, lsi2, lsi3];
       mockedStore.layerMode = "unroll" as any;
-      const result = wrapper.vm.mapLayerList;
+      const result = (wrapper.vm as any).mapLayerList;
       // groupA gets one array, ungrouped gets one array each
       expect(result.length).toBe(2);
       expect(result[0]).toEqual([lsi1, lsi2]);
@@ -546,7 +545,7 @@ describe("ImageViewer", () => {
       });
       mockedStore.layerStackImages = [lsi1, lsi2];
       mockedStore.layerMode = "unroll" as any;
-      const result = wrapper.vm.mapLayerList;
+      const result = (wrapper.vm as any).mapLayerList;
       expect(result.length).toBe(1);
       expect(result[0]).toEqual([lsi1]);
     });
@@ -559,14 +558,14 @@ describe("ImageViewer", () => {
       mockedStore.layerStackImages = [createLayerStackImage()];
       wrapper = mountComponent({ shouldResetMaps: false });
       await wrapper.setProps({ shouldResetMaps: true });
-      await Vue.nextTick();
+      await nextTick();
       expect(wrapper.emitted("reset-complete")).toBeTruthy();
     });
 
     it("readyLayersCount/readyLayersTotal changes update progress store", async () => {
       wrapper = mountComponent();
-      wrapper.vm.readyLayers = [false, false];
-      await Vue.nextTick();
+      (wrapper.vm as any).readyLayers = [false, false];
+      await nextTick();
       expect(mockedProgressStore.updateReactiveProgress).toHaveBeenCalled();
     });
 
@@ -579,7 +578,7 @@ describe("ImageViewer", () => {
       ];
       wrapper = mountComponent();
       mockedStore.compositionMode = "screen" as any;
-      await Vue.nextTick();
+      await nextTick();
       // The watcher should apply the new mode to each layer
       expect(layer1.node().css).toHaveBeenCalled();
       expect(layer2.node().css).toHaveBeenCalled();
@@ -609,9 +608,9 @@ describe("ImageViewer", () => {
         buttons: 1,
       });
       Object.defineProperty(evt, "target", { value: target });
-      wrapper.vm.mouseDown(evt, 0);
-      expect(wrapper.vm.mouseState).not.toBeNull();
-      expect(wrapper.vm.mouseState.mapEntry).toBe(mockedStore.maps[0]);
+      (wrapper.vm as any).mouseDown(evt, 0);
+      expect((wrapper.vm as any).mouseState).not.toBeNull();
+      expect((wrapper.vm as any).mouseState.mapEntry).toStrictEqual(mockedStore.maps[0]);
     });
 
     it("mouseDown without shift does not set mouseState (active)", () => {
@@ -621,9 +620,9 @@ describe("ImageViewer", () => {
         buttons: 1,
       });
       Object.defineProperty(evt, "target", { value: target });
-      wrapper.vm.mouseDown(evt, 0);
+      (wrapper.vm as any).mouseDown(evt, 0);
       // Should be null or preview state
-      const state = wrapper.vm.mouseState;
+      const state = (wrapper.vm as any).mouseState;
       expect(state === null || state.isMouseMovePreviewState === true).toBe(
         true,
       );
@@ -636,9 +635,9 @@ describe("ImageViewer", () => {
         buttons: 1,
       });
       Object.defineProperty(evt, "target", { value: target });
-      wrapper.vm.mouseDown(evt, 999); // invalid index
+      (wrapper.vm as any).mouseDown(evt, 999); // invalid index
       // mouseState should remain null or preview
-      const state = wrapper.vm.mouseState;
+      const state = (wrapper.vm as any).mouseState;
       expect(state === null || state.isMouseMovePreviewState === true).toBe(
         true,
       );
@@ -651,9 +650,9 @@ describe("ImageViewer", () => {
       Object.defineProperty(evt, "target", { value: target });
       Object.defineProperty(evt, "x", { value: 50 });
       Object.defineProperty(evt, "y", { value: 50 });
-      wrapper.vm.mouseMove(evt, 0);
-      expect(wrapper.vm.mouseState).not.toBeNull();
-      expect(wrapper.vm.mouseState.isMouseMovePreviewState).toBe(true);
+      (wrapper.vm as any).mouseMove(evt, 0);
+      expect((wrapper.vm as any).mouseState).not.toBeNull();
+      expect((wrapper.vm as any).mouseState.isMouseMovePreviewState).toBe(true);
     });
 
     it("mouseMove appends to path during active drag", () => {
@@ -661,7 +660,7 @@ describe("ImageViewer", () => {
       target.getBoundingClientRect = vi.fn().mockReturnValue({ x: 0, y: 0 });
 
       // Setup active state
-      wrapper.vm.mouseState = {
+      (wrapper.vm as any).mouseState = {
         isMouseMovePreviewState: false,
         mapEntry: mockedStore.maps[0],
         target,
@@ -674,14 +673,14 @@ describe("ImageViewer", () => {
       Object.defineProperty(evt, "y", { value: 150 });
       const stopPropagation = vi.spyOn(evt, "stopPropagation");
 
-      wrapper.vm.mouseMove(evt, 0);
-      expect(wrapper.vm.mouseState.path.length).toBe(1);
+      (wrapper.vm as any).mouseMove(evt, 0);
+      expect((wrapper.vm as any).mouseState.path.length).toBe(1);
       expect(stopPropagation).toHaveBeenCalled();
     });
 
     it("mouseUp clears mouseState during active drag", () => {
       const target = document.createElement("div");
-      wrapper.vm.mouseState = {
+      (wrapper.vm as any).mouseState = {
         isMouseMovePreviewState: false,
         mapEntry: mockedStore.maps[0],
         target,
@@ -690,12 +689,12 @@ describe("ImageViewer", () => {
       };
 
       const evt = new MouseEvent("mouseup");
-      wrapper.vm.mouseUp(evt);
-      expect(wrapper.vm.mouseState).toBeNull();
+      (wrapper.vm as any).mouseUp(evt);
+      expect((wrapper.vm as any).mouseState).toBeNull();
     });
 
     it("mouseUp does nothing during preview state", () => {
-      wrapper.vm.mouseState = {
+      (wrapper.vm as any).mouseState = {
         isMouseMovePreviewState: true,
         mapEntry: mockedStore.maps[0],
         target: document.createElement("div"),
@@ -704,33 +703,33 @@ describe("ImageViewer", () => {
       };
 
       const evt = new MouseEvent("mouseup");
-      wrapper.vm.mouseUp(evt);
+      (wrapper.vm as any).mouseUp(evt);
       // mouseState stays as is (preview)
-      expect(wrapper.vm.mouseState).not.toBeNull();
+      expect((wrapper.vm as any).mouseState).not.toBeNull();
     });
 
     it("mouseLeave clears mouseState when in preview state", () => {
-      wrapper.vm.mouseState = {
+      (wrapper.vm as any).mouseState = {
         isMouseMovePreviewState: true,
         mapEntry: mockedStore.maps[0],
         target: document.createElement("div"),
         path: [],
         initialMouseEvent: new MouseEvent("mousedown"),
       };
-      wrapper.vm.mouseLeave();
-      expect(wrapper.vm.mouseState).toBeNull();
+      (wrapper.vm as any).mouseLeave();
+      expect((wrapper.vm as any).mouseState).toBeNull();
     });
 
     it("mouseLeave does not clear mouseState during active drag", () => {
-      wrapper.vm.mouseState = {
+      (wrapper.vm as any).mouseState = {
         isMouseMovePreviewState: false,
         mapEntry: mockedStore.maps[0],
         target: document.createElement("div"),
         path: [{ x: 0, y: 0 }],
         initialMouseEvent: new MouseEvent("mousedown"),
       };
-      wrapper.vm.mouseLeave();
-      expect(wrapper.vm.mouseState).not.toBeNull();
+      (wrapper.vm as any).mouseLeave();
+      expect((wrapper.vm as any).mouseState).not.toBeNull();
     });
   });
 
@@ -747,24 +746,24 @@ describe("ImageViewer", () => {
 
     it("setCenter calls map.center with provided center", () => {
       const center = { x: 200, y: 300 };
-      wrapper.vm.setCenter(center);
+      (wrapper.vm as any).setCenter(center);
       expect(map1.center).toHaveBeenCalledWith(center);
     });
 
     it("setCenter does nothing when no maps", () => {
       mockedStore.maps = [];
-      wrapper.vm.setCenter({ x: 0, y: 0 });
+      (wrapper.vm as any).setCenter({ x: 0, y: 0 });
       // Should not throw
     });
 
     it("resetRotation sets map rotation to 0", () => {
-      wrapper.vm.resetRotation();
+      (wrapper.vm as any).resetRotation();
       expect(map1.rotation).toHaveBeenCalledWith(0);
     });
 
     it("resetRotation does nothing when no maps", () => {
       mockedStore.maps = [];
-      wrapper.vm.resetRotation();
+      (wrapper.vm as any).resetRotation();
       // Should not throw
     });
 
@@ -784,7 +783,7 @@ describe("ImageViewer", () => {
         gcsBounds: [],
       };
       mockedStore.cameraInfo = newInfo as any;
-      await Vue.nextTick();
+      await nextTick();
 
       // Both maps should have zoom/rotation/center called
       expect(map1.zoom).toHaveBeenCalled();
@@ -792,9 +791,9 @@ describe("ImageViewer", () => {
     });
 
     it("synchronisationEnabled prevents circular updates", () => {
-      wrapper.vm.synchronisationEnabled = false;
+      (wrapper.vm as any).synchronisationEnabled = false;
       // When disabled, the sync callback won't update cameraInfo
-      expect(wrapper.vm.synchronisationEnabled).toBe(false);
+      expect((wrapper.vm as any).synchronisationEnabled).toBe(false);
     });
   });
 
@@ -810,28 +809,28 @@ describe("ImageViewer", () => {
     });
 
     it("toggleViewLock flips isViewLocked", () => {
-      expect(wrapper.vm.isViewLocked).toBe(false);
-      wrapper.vm.toggleViewLock();
-      expect(wrapper.vm.isViewLocked).toBe(true);
-      wrapper.vm.toggleViewLock();
-      expect(wrapper.vm.isViewLocked).toBe(false);
+      expect((wrapper.vm as any).isViewLocked).toBe(false);
+      (wrapper.vm as any).toggleViewLock();
+      expect((wrapper.vm as any).isViewLocked).toBe(true);
+      (wrapper.vm as any).toggleViewLock();
+      expect((wrapper.vm as any).isViewLocked).toBe(false);
     });
 
     it("lock stores default actions", () => {
-      wrapper.vm.toggleViewLock();
-      expect(wrapper.vm.defaultActions).toBeDefined();
+      (wrapper.vm as any).toggleViewLock();
+      expect((wrapper.vm as any).defaultActions).toBeDefined();
     });
 
     it("lock sets empty actions on interactor", () => {
-      wrapper.vm.toggleViewLock();
+      (wrapper.vm as any).toggleViewLock();
       const interactor = map1.interactor();
       expect(interactor.options).toHaveBeenCalledWith({ actions: [] });
     });
 
     it("unlock restores default actions", () => {
-      wrapper.vm.toggleViewLock(); // lock
-      const savedActions = wrapper.vm.defaultActions;
-      wrapper.vm.toggleViewLock(); // unlock
+      (wrapper.vm as any).toggleViewLock(); // lock
+      const savedActions = (wrapper.vm as any).defaultActions;
+      (wrapper.vm as any).toggleViewLock(); // unlock
       const interactor = map1.interactor();
       expect(interactor.options).toHaveBeenCalledWith({
         actions: savedActions,
@@ -847,11 +846,11 @@ describe("ImageViewer", () => {
     });
 
     it("does not create scale widget when showScalebar is false", () => {
-      expect(wrapper.vm.scaleWidget).toBeNull();
+      expect((wrapper.vm as any).scaleWidget).toBeNull();
     });
 
     it("does not create pixel scale widget when showPixelScalebar is false", () => {
-      expect(wrapper.vm.scalePixelWidget).toBeNull();
+      expect((wrapper.vm as any).scalePixelWidget).toBeNull();
     });
   });
 
@@ -863,7 +862,7 @@ describe("ImageViewer", () => {
     });
 
     it("mousetrapAnnotations has correct bindings", () => {
-      const bindings = wrapper.vm.mousetrapAnnotations;
+      const bindings = (wrapper.vm as any).mousetrapAnnotations;
       expect(bindings).toBeInstanceOf(Array);
       const bindKeys = bindings.map((b: any) => b.bind);
       expect(bindKeys).toContain("a");
@@ -877,7 +876,7 @@ describe("ImageViewer", () => {
     });
 
     it("'a' hotkey toggles drawAnnotations", () => {
-      const binding = wrapper.vm.mousetrapAnnotations.find(
+      const binding = (wrapper.vm as any).mousetrapAnnotations.find(
         (b: any) => b.bind === "a",
       );
       binding.handler();
@@ -885,7 +884,7 @@ describe("ImageViewer", () => {
     });
 
     it("'t' hotkey toggles showTooltips", () => {
-      const binding = wrapper.vm.mousetrapAnnotations.find(
+      const binding = (wrapper.vm as any).mousetrapAnnotations.find(
         (b: any) => b.bind === "t",
       );
       binding.handler();
@@ -893,16 +892,16 @@ describe("ImageViewer", () => {
     });
 
     it("'l' hotkey toggles view lock", () => {
-      const binding = wrapper.vm.mousetrapAnnotations.find(
+      const binding = (wrapper.vm as any).mousetrapAnnotations.find(
         (b: any) => b.bind === "l",
       );
-      expect(wrapper.vm.isViewLocked).toBe(false);
+      expect((wrapper.vm as any).isViewLocked).toBe(false);
       binding.handler();
-      expect(wrapper.vm.isViewLocked).toBe(true);
+      expect((wrapper.vm as any).isViewLocked).toBe(true);
     });
 
     it("'mod+backspace' hotkey deletes selected annotations", () => {
-      const binding = wrapper.vm.mousetrapAnnotations.find(
+      const binding = (wrapper.vm as any).mousetrapAnnotations.find(
         (b: any) => b.bind === "mod+backspace",
       );
       binding.handler();
@@ -912,7 +911,7 @@ describe("ImageViewer", () => {
     });
 
     it("'mod+z' hotkey calls undoOrRedo(true)", () => {
-      const binding = wrapper.vm.mousetrapAnnotations.find(
+      const binding = (wrapper.vm as any).mousetrapAnnotations.find(
         (b: any) => b.bind === "mod+z",
       );
       binding.handler();
@@ -920,7 +919,7 @@ describe("ImageViewer", () => {
     });
 
     it("'mod+shift+z' hotkey calls undoOrRedo(false)", () => {
-      const binding = wrapper.vm.mousetrapAnnotations.find(
+      const binding = (wrapper.vm as any).mousetrapAnnotations.find(
         (b: any) => b.bind === "mod+shift+z",
       );
       binding.handler();
@@ -932,7 +931,7 @@ describe("ImageViewer", () => {
       vi.spyOn(window, "getSelection").mockReturnValue({
         toString: () => "",
       } as any);
-      const binding = wrapper.vm.mousetrapAnnotations.find(
+      const binding = (wrapper.vm as any).mousetrapAnnotations.find(
         (b: any) => b.bind === "mod+c",
       );
       binding.handler();
@@ -940,7 +939,7 @@ describe("ImageViewer", () => {
     });
 
     it("'mod+v' pastes annotations when not in editable element", () => {
-      const binding = wrapper.vm.mousetrapAnnotations.find(
+      const binding = (wrapper.vm as any).mousetrapAnnotations.find(
         (b: any) => b.bind === "mod+v",
       );
       binding.handler();
@@ -948,7 +947,7 @@ describe("ImageViewer", () => {
     });
 
     it("hotkey data includes section and description", () => {
-      const bindings = wrapper.vm.mousetrapAnnotations;
+      const bindings = (wrapper.vm as any).mousetrapAnnotations;
       bindings.forEach((b: any) => {
         expect(b.data).toBeDefined();
         expect(b.data.section).toBeDefined();
@@ -962,21 +961,21 @@ describe("ImageViewer", () => {
   describe("markRaw and reactivity", () => {
     it("readyLayers array triggers reactivity on updates", async () => {
       wrapper = mountComponent();
-      wrapper.vm.readyLayers = [false, false, false];
-      await Vue.nextTick();
-      expect(wrapper.vm.readyLayersCount).toBe(0);
-      expect(wrapper.vm.readyLayersTotal).toBe(3);
+      (wrapper.vm as any).readyLayers = [false, false, false];
+      await nextTick();
+      expect((wrapper.vm as any).readyLayersCount).toBe(0);
+      expect((wrapper.vm as any).readyLayersTotal).toBe(3);
     });
 
     it("readyLayers splice triggers readyLayersCount recomputation", async () => {
       wrapper = mountComponent();
-      wrapper.vm.readyLayers = [false, false];
-      await Vue.nextTick();
-      expect(wrapper.vm.readyLayersCount).toBe(0);
+      (wrapper.vm as any).readyLayers = [false, false];
+      await nextTick();
+      expect((wrapper.vm as any).readyLayersCount).toBe(0);
 
-      wrapper.vm.readyLayers.splice(0, 1, true);
-      await Vue.nextTick();
-      expect(wrapper.vm.readyLayersCount).toBe(1);
+      (wrapper.vm as any).readyLayers.splice(0, 1, true);
+      await nextTick();
+      expect((wrapper.vm as any).readyLayersCount).toBe(1);
     });
 
     it("maps array itself remains reactive", async () => {
@@ -984,8 +983,8 @@ describe("ImageViewer", () => {
       const initialMaps = mockedStore.maps;
       const newMap = { map: mockMap(), imageLayers: [], params: {} } as any;
       mockedStore.maps = [...initialMaps, newMap];
-      await Vue.nextTick();
-      expect(wrapper.vm.maps.length).toBe(1);
+      await nextTick();
+      expect((wrapper.vm as any).maps.length).toBe(1);
     });
   });
 
@@ -995,7 +994,7 @@ describe("ImageViewer", () => {
     it("returns early when map element not found", () => {
       wrapper = mountComponent();
       // No ref for map-0 exists, so should return without error
-      wrapper.vm._setupMap(0, createLayerStackImage().images[0], false);
+      (wrapper.vm as any)._setupMap(0, createLayerStackImage().images[0], false);
       // Should not throw
     });
   });
@@ -1019,7 +1018,7 @@ describe("ImageViewer", () => {
 
       const mll = [createLayerStackImage()];
       const someImage = mll[0].images[0];
-      wrapper.vm._setupTileLayers(mll, 0, someImage, 0);
+      (wrapper.vm as any)._setupTileLayers(mll, 0, someImage, 0);
 
       // 2 layers per logical layer
       expect(mapentry.imageLayers.length).toBe(2);
@@ -1046,7 +1045,7 @@ describe("ImageViewer", () => {
       // Now setup with only 1 logical layer (needs 2 tile layers)
       const mll = [createLayerStackImage()];
       const someImage = mll[0].images[0];
-      wrapper.vm._setupTileLayers(mll, 0, someImage, 0);
+      (wrapper.vm as any)._setupTileLayers(mll, 0, someImage, 0);
 
       expect(mapentry.imageLayers.length).toBe(2);
       expect(map1.deleteLayer).toHaveBeenCalledTimes(2);
@@ -1069,7 +1068,7 @@ describe("ImageViewer", () => {
 
       const mll = [createLayerStackImage()];
       const someImage = mll[0].images[0];
-      wrapper.vm._setupTileLayers(mll, 0, someImage, 0);
+      (wrapper.vm as any)._setupTileLayers(mll, 0, someImage, 0);
 
       // Each new layer should get composition mode set
       mapentry.imageLayers.forEach((layer: any) => {
@@ -1087,19 +1086,19 @@ describe("ImageViewer", () => {
       mockedStore.dataset = { id: "d1", width: 1, height: 1 } as any;
       wrapper = mountComponent();
       // draw is called on mount but should return early
-      expect(wrapper.vm.tileWidth).toBe(0);
+      expect((wrapper.vm as any).tileWidth).toBe(0);
     });
 
     it("returns early when no dataset", () => {
       mockedStore.dataset = null as any;
       wrapper = mountComponent();
-      expect(wrapper.vm.tileWidth).toBe(0);
+      expect((wrapper.vm as any).tileWidth).toBe(0);
     });
 
     it("returns early when no layerStackImages", () => {
       mockedStore.layerStackImages = [];
       wrapper = mountComponent();
-      expect(wrapper.vm.tileWidth).toBe(0);
+      expect((wrapper.vm as any).tileWidth).toBe(0);
     });
 
     it("returns early when no images have data", () => {
@@ -1107,7 +1106,7 @@ describe("ImageViewer", () => {
         { ...createLayerStackImage(), images: [] },
       ];
       wrapper = mountComponent();
-      expect(wrapper.vm.tileWidth).toBe(0);
+      expect((wrapper.vm as any).tileWidth).toBe(0);
     });
 
     it("sets tileWidth and tileHeight from image", () => {
@@ -1115,8 +1114,8 @@ describe("ImageViewer", () => {
       mockedStore.layerStackImages = [lsi];
       wrapper = mountComponent();
       // draw runs on mount
-      expect(wrapper.vm.tileWidth).toBe(256);
-      expect(wrapper.vm.tileHeight).toBe(256);
+      expect((wrapper.vm as any).tileWidth).toBe(256);
+      expect((wrapper.vm as any).tileHeight).toBe(256);
     });
   });
 
@@ -1125,7 +1124,7 @@ describe("ImageViewer", () => {
   describe("SAM tool help alert", () => {
     it("showSamToolHelpAlert is initially false", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.showSamToolHelpAlert).toBe(false);
+      expect((wrapper.vm as any).showSamToolHelpAlert).toBe(false);
     });
   });
 
@@ -1134,66 +1133,66 @@ describe("ImageViewer", () => {
   describe("data initialization", () => {
     it("isViewLocked starts as false", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.isViewLocked).toBe(false);
+      expect((wrapper.vm as any).isViewLocked).toBe(false);
     });
 
     it("scaleDialog starts as false", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.scaleDialog).toBe(false);
+      expect((wrapper.vm as any).scaleDialog).toBe(false);
     });
 
     it("mouseState starts as null", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.mouseState).toBeNull();
+      expect((wrapper.vm as any).mouseState).toBeNull();
     });
 
     it("tileWidth starts as 0", () => {
       wrapper = mountComponent();
       // draw may update it, but initial is 0
-      expect(typeof wrapper.vm.tileWidth).toBe("number");
+      expect(typeof (wrapper.vm as any).tileWidth).toBe("number");
     });
 
     it("unrollW starts as 1", () => {
       wrapper = mountComponent();
-      expect(typeof wrapper.vm.unrollW).toBe("number");
+      expect(typeof (wrapper.vm as any).unrollW).toBe("number");
     });
 
     it("synchronisationEnabled starts as true", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.synchronisationEnabled).toBe(true);
+      expect((wrapper.vm as any).synchronisationEnabled).toBe(true);
     });
 
     it("scaleWidget starts as null", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.scaleWidget).toBeNull();
+      expect((wrapper.vm as any).scaleWidget).toBeNull();
     });
 
     it("scalePixelWidget starts as null", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.scalePixelWidget).toBeNull();
+      expect((wrapper.vm as any).scalePixelWidget).toBeNull();
     });
 
     it("defaultActions starts as undefined", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.defaultActions).toBeUndefined();
+      expect((wrapper.vm as any).defaultActions).toBeUndefined();
     });
 
     it("resetMapsOnDraw starts as false", () => {
       wrapper = mountComponent();
       // It's set true during dataset watcher but reset in draw
-      expect(typeof wrapper.vm.resetMapsOnDraw).toBe("boolean");
+      expect(typeof (wrapper.vm as any).resetMapsOnDraw).toBe("boolean");
     });
 
     it("samMapEntry starts as null or first map", () => {
       wrapper = mountComponent();
       // On mount, mapsChanged sets it to maps[0] ?? null
-      const val = wrapper.vm.samMapEntry;
+      const val = (wrapper.vm as any).samMapEntry;
       expect(val === null || typeof val === "object").toBe(true);
     });
 
     it("blankUrl is a valid data URL", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.blankUrl).toContain("data:image/png;base64,");
+      expect((wrapper.vm as any).blankUrl).toContain("data:image/png;base64,");
     });
   });
 
@@ -1205,7 +1204,7 @@ describe("ImageViewer", () => {
       mockedStore.maps = [{ map: map1, imageLayers: [], params: {} } as any];
       wrapper = mountComponent();
 
-      wrapper.vm.setCorners({
+      (wrapper.vm as any).setCorners({
         lowerLeftGcs: { x: 0, y: 100 },
         upperRightGcs: { x: 100, y: 0 },
       });
@@ -1217,7 +1216,7 @@ describe("ImageViewer", () => {
     it("setCorners does nothing when no maps", () => {
       mockedStore.maps = [];
       wrapper = mountComponent();
-      wrapper.vm.setCorners({
+      (wrapper.vm as any).setCorners({
         lowerLeftGcs: { x: 0, y: 100 },
         upperRightGcs: { x: 100, y: 0 },
       });
@@ -1261,15 +1260,15 @@ describe("ImageViewer", () => {
       mockedStore.overview = true;
       mockedStore.unroll = false;
       wrapper = mountComponent();
-      expect(wrapper.vm.overview).toBe(true);
-      expect(wrapper.vm.unrolling).toBe(false);
+      expect((wrapper.vm as any).overview).toBe(true);
+      expect((wrapper.vm as any).unrolling).toBe(false);
     });
 
     it("unrolling reflects store.unroll", () => {
       mockedStore.overview = true;
       mockedStore.unroll = true;
       wrapper = mountComponent();
-      expect(wrapper.vm.unrolling).toBe(true);
+      expect((wrapper.vm as any).unrolling).toBe(true);
     });
 
     it("renders map divs matching mapLayerList length", () => {
@@ -1277,7 +1276,7 @@ describe("ImageViewer", () => {
       wrapper = mountComponent();
       // mapLayerList wraps layerStackImages in a single group in "multiple" mode
       // The template renders one div per mapLayerList entry
-      expect(wrapper.vm.mapLayerList.length).toBe(1);
+      expect((wrapper.vm as any).mapLayerList.length).toBe(1);
     });
   });
 
@@ -1286,11 +1285,11 @@ describe("ImageViewer", () => {
   describe("dataset watcher", () => {
     it("dataset change sets resetMapsOnDraw true", async () => {
       wrapper = mountComponent();
-      wrapper.vm.resetMapsOnDraw = false;
+      (wrapper.vm as any).resetMapsOnDraw = false;
       mockedStore.dataset = { id: "dataset2", width: 500, height: 500 } as any;
-      await Vue.nextTick();
+      await nextTick();
       // The watcher should set resetMapsOnDraw
-      expect(wrapper.vm.resetMapsOnDraw).toBe(true);
+      expect((wrapper.vm as any).resetMapsOnDraw).toBe(true);
     });
   });
 
@@ -1299,8 +1298,8 @@ describe("ImageViewer", () => {
   describe("mapSynchronizationCallbacks", () => {
     it("starts as empty Map", () => {
       wrapper = mountComponent();
-      expect(wrapper.vm.mapSynchronizationCallbacks).toBeInstanceOf(Map);
-      expect(wrapper.vm.mapSynchronizationCallbacks.size).toBe(0);
+      expect((wrapper.vm as any).mapSynchronizationCallbacks).toBeInstanceOf(Map);
+      expect((wrapper.vm as any).mapSynchronizationCallbacks.size).toBe(0);
     });
   });
 });

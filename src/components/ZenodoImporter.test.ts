@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 
 const {
   mockSetFolderLocation,
@@ -77,12 +78,8 @@ vi.mock("@/utils/log", () => ({
 }));
 
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { routerProvider } from "@/test/helpers";
 import ZenodoImporter from "./ZenodoImporter.vue";
-
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
 
 const sampleFiles = [
   {
@@ -138,12 +135,13 @@ const sampleDataset = {
 function mountComponent(props = {}) {
   const mockRouter = { push: vi.fn() };
   return shallowMount(ZenodoImporter, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       ...props,
     },
-    mocks: {
-      $router: mockRouter,
+    global: {
+      provide: {
+        ...routerProvider(mockRouter),
+      },
     },
   });
 }
@@ -168,7 +166,7 @@ describe("ZenodoImporter", () => {
 
   it("filteredFiles returns only image files", async () => {
     const wrapper = mountComponent({ dataset: sampleDataset });
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     expect(vm.filteredFiles).toHaveLength(2);
     expect(vm.filteredFiles[0].key).toBe("image1.tiff");
@@ -183,7 +181,7 @@ describe("ZenodoImporter", () => {
 
   it("canImport is true when dataset, files, and path are present", async () => {
     const wrapper = mountComponent({ dataset: sampleDataset });
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     // Path is initialized from store.folderLocation in onMounted
     expect(vm.canImport).toBe(true);
@@ -197,10 +195,10 @@ describe("ZenodoImporter", () => {
 
   it("canImport is false when importing", async () => {
     const wrapper = mountComponent({ dataset: sampleDataset });
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     vm.importing = true;
-    await Vue.nextTick();
+    await nextTick();
     expect(vm.canImport).toBe(false);
   });
 
@@ -216,43 +214,43 @@ describe("ZenodoImporter", () => {
 
   it("initializes path from store on mount", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     expect(vm.path).toEqual({ _id: "folder1", _modelType: "folder" });
   });
 
   it("sets selectedDataset from prop on mount", async () => {
     const wrapper = mountComponent({ dataset: sampleDataset });
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     expect(vm.selectedDataset).toEqual(sampleDataset);
   });
 
   it("updates selectedDataset when dataset prop changes", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     expect(vm.selectedDataset).toBeNull();
 
     await wrapper.setProps({ dataset: sampleDataset });
-    await Vue.nextTick();
+    await nextTick();
     expect(vm.selectedDataset).toEqual(sampleDataset);
   });
 
   it("clears error when dataset prop changes", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     vm.error = "Some error";
 
     await wrapper.setProps({ dataset: sampleDataset });
-    await Vue.nextTick();
+    await nextTick();
     expect(vm.error).toBe("");
   });
 
   it("setting path calls store.setFolderLocation", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
 
     const newPath = { _id: "folder2", _modelType: "folder" };
@@ -262,7 +260,7 @@ describe("ZenodoImporter", () => {
 
   it("setting path to null does not call store.setFolderLocation", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     mockSetFolderLocation.mockClear();
 
     const vm = wrapper.vm as any;
@@ -272,7 +270,7 @@ describe("ZenodoImporter", () => {
 
   it("emits close event", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     // The close button has @click="$emit('close')" in the template.
     // With shallowMount, we verify the emit works via the vm.
     wrapper.vm.$emit("close");
@@ -281,7 +279,7 @@ describe("ZenodoImporter", () => {
 
   it("importSelectedDataset returns early when canImport is false", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     await vm.importSelectedDataset();
     expect(mockDownloadFile).not.toHaveBeenCalled();
@@ -290,11 +288,12 @@ describe("ZenodoImporter", () => {
   it("importSelectedDataset downloads files and navigates", async () => {
     const mockRouter = { push: vi.fn() };
     const wrapper = shallowMount(ZenodoImporter, {
-      vuetify: new Vuetify(),
-      propsData: { dataset: sampleDataset },
-      mocks: { $router: mockRouter },
+      props: { dataset: sampleDataset },
+      global: {
+        provide: { ...routerProvider(mockRouter) },
+      },
     });
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
 
     await vm.importSelectedDataset();
@@ -312,7 +311,7 @@ describe("ZenodoImporter", () => {
   it("importSelectedDataset sets error on failure", async () => {
     mockDownloadFile.mockRejectedValueOnce(new Error("Network error"));
     const wrapper = mountComponent({ dataset: sampleDataset });
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
 
     await vm.importSelectedDataset();

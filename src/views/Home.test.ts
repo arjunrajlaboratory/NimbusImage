@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 // --- Top-level mock fn handles (hoisted before vi.mock calls) ---
 const mockSetFolderLocation = vi.fn();
@@ -86,18 +85,24 @@ vi.mock("@/utils/parsing", () => ({
   triggersPerCategory: {},
 }));
 
+// --- Tour mock ---
+vi.mock("@/utils/useTour", () => ({
+  useTour: () => ({
+    startTour: (...args: any[]) => mockStartTour(...args),
+  }),
+}));
+
 // --- Child component / girder mocks ---
 vi.mock("@/girder/components", () => ({
   Upload: { name: "GirderUpload", template: "<div />" },
 }));
 
 // Import after mocks
+import { routeProvider, routerProvider } from "@/test/helpers";
 import Home from "./Home.vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { isDatasetFolder, isConfigurationItem } from "@/utils/girderSelectable";
-
-Vue.use(Vuetify);
 
 // --- Helper ---
 const mockRouter = { push: vi.fn() };
@@ -109,24 +114,24 @@ function mountComponent() {
   document.body.appendChild(app);
 
   return shallowMount(Home, {
-    vuetify: new Vuetify(),
     attachTo: app,
-    mocks: {
-      $route: { name: "root", params: {} },
-      $router: mockRouter,
-      $startTour: mockStartTour,
-    },
-    stubs: {
-      "custom-file-manager": true,
-      "recent-datasets": true,
-      "recent-projects": true,
-      "collection-list": true,
-      "project-list": true,
-      "zenodo-importer": true,
-      "zenodo-community-display": true,
-      "girder-location-chooser": true,
-      "girder-upload": true,
-      "file-dropzone": true,
+    global: {
+      provide: {
+        ...routeProvider({ name: "root", params: {} }),
+        ...routerProvider(mockRouter),
+      },
+      stubs: {
+        "custom-file-manager": true,
+        "recent-datasets": true,
+        "recent-projects": true,
+        "collection-list": true,
+        "project-list": true,
+        "zenodo-importer": true,
+        "zenodo-community-display": true,
+        "girder-location-chooser": true,
+        "girder-upload": true,
+        "file-dropzone": true,
+      },
     },
   });
 }
@@ -176,7 +181,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       vm.pendingFiles = [new File([""], "file.tif")];
       expect(vm.recommendedName).toBe("file");
-      wrapper.destroy();
     });
 
     it("handles filename with no extension", () => {
@@ -184,7 +188,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       vm.pendingFiles = [new File([""], "file")];
       expect(vm.recommendedName).toBe("file");
-      wrapper.destroy();
     });
 
     it("handles filename with multiple dots", () => {
@@ -192,7 +195,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       vm.pendingFiles = [new File([""], "file.ome.tif")];
       expect(vm.recommendedName).toBe("file.ome");
-      wrapper.destroy();
     });
   });
 
@@ -202,7 +204,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       vm.pendingFiles = [];
       expect(vm.recommendedName).toBe("");
-      wrapper.destroy();
     });
 
     it("returns single string for single file", () => {
@@ -210,7 +211,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       vm.pendingFiles = [new File([""], "abc.tif")];
       expect(vm.recommendedName).toBe("abc");
-      wrapper.destroy();
     });
   });
 
@@ -231,7 +231,6 @@ describe("Home", () => {
       expect(vm.nameTaken).toBe(false);
       expect(vm.datasetName).toBe("");
       expect(vm.selectedLocation).toBe(null);
-      wrapper.destroy();
     });
 
     it("has empty arrays for pending/batch state", () => {
@@ -240,7 +239,6 @@ describe("Home", () => {
       expect(vm.pendingFiles).toEqual([]);
       expect(vm.datasetNames).toEqual([]);
       expect(vm.nameConflicts).toEqual([]);
-      wrapper.destroy();
     });
   });
 
@@ -252,7 +250,6 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.location).toEqual(store.folderLocation);
-      wrapper.destroy();
     });
 
     it("setter calls setFolderLocation", () => {
@@ -261,7 +258,6 @@ describe("Home", () => {
       const newLoc = { _id: "new1", _modelType: "folder" };
       vm.location = newLoc;
       expect(mockSetFolderLocation).toHaveBeenCalledWith(newLoc);
-      wrapper.destroy();
     });
   });
 
@@ -274,7 +270,6 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.locationName).toBe("TestFolder");
-      wrapper.destroy();
     });
 
     it("falls back to login when no name", () => {
@@ -282,7 +277,6 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.locationName).toBe("jdoe");
-      wrapper.destroy();
     });
 
     it("falls back to type capitalized when no name/login", () => {
@@ -290,7 +284,6 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.locationName).toBe("Root");
-      wrapper.destroy();
     });
 
     it("falls back to _modelType capitalized", () => {
@@ -298,7 +291,6 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.locationName).toBe("Folder");
-      wrapper.destroy();
     });
 
     it("returns fallback for empty location", () => {
@@ -306,7 +298,6 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.locationName).toBe("Unknown location name");
-      wrapper.destroy();
     });
   });
 
@@ -319,7 +310,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       vm.pendingFiles = [];
       expect(vm.recommendedName).toBe("");
-      wrapper.destroy();
     });
 
     it("strips extension for single file", () => {
@@ -327,7 +317,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       vm.pendingFiles = [new File([""], "img.tif")];
       expect(vm.recommendedName).toBe("img");
-      wrapper.destroy();
     });
 
     it("uses first basename when no common prefix found", () => {
@@ -339,7 +328,6 @@ describe("Home", () => {
       // When prefix is empty, recommendedName falls back to basename(first).
       vm.pendingFiles = [new File([""], "abc.tif"), new File([""], "xyz.tif")];
       expect(vm.recommendedName).toBe("abc");
-      wrapper.destroy();
     });
   });
 
@@ -355,7 +343,6 @@ describe("Home", () => {
       vm.pendingFiles = [f1, f2];
       vm.batchMode = false;
       expect(vm.fileGroups).toEqual([[f1, f2]]);
-      wrapper.destroy();
     });
 
     it("creates per-file groups in batch mode", () => {
@@ -366,7 +353,6 @@ describe("Home", () => {
       vm.pendingFiles = [f1, f2];
       vm.batchMode = true;
       expect(vm.fileGroups).toEqual([[f1], [f2]]);
-      wrapper.destroy();
     });
   });
 
@@ -382,7 +368,6 @@ describe("Home", () => {
       vm.nameTaken = false;
       vm.checkingName = false;
       expect(vm.isFormValid).toBe(true);
-      wrapper.destroy();
     });
 
     it("returns false when name is empty", () => {
@@ -391,7 +376,6 @@ describe("Home", () => {
       vm.datasetName = "  ";
       vm.selectedLocation = { _id: "loc1" };
       expect(vm.isFormValid).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false when location is null", () => {
@@ -400,7 +384,6 @@ describe("Home", () => {
       vm.datasetName = "Dataset";
       vm.selectedLocation = null;
       expect(vm.isFormValid).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false when nameTaken is true", () => {
@@ -410,7 +393,6 @@ describe("Home", () => {
       vm.selectedLocation = { _id: "loc1" };
       vm.nameTaken = true;
       expect(vm.isFormValid).toBe(false);
-      wrapper.destroy();
     });
 
     it("returns false in batch mode with empty names", () => {
@@ -422,7 +404,6 @@ describe("Home", () => {
       vm.datasetNames = ["good", ""];
       vm.nameConflicts = [];
       expect(vm.isFormValid).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -441,7 +422,6 @@ describe("Home", () => {
       expect(vm.datasetViews).toHaveLength(2);
       expect(vm.datasetViews[0].id).toBe("dv1");
       expect(vm.datasetViews[1].id).toBe("dv2");
-      wrapper.destroy();
     });
 
     it("preserves first occurrence order", () => {
@@ -454,7 +434,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       expect(vm.datasetViews[0].id).toBe("dv2");
       expect(vm.datasetViews[1].id).toBe("dv1");
-      wrapper.destroy();
     });
   });
 
@@ -475,7 +454,6 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.datasetViewItems).toHaveLength(0);
-      wrapper.destroy();
     });
 
     it("includes entries when both configInfo and datasetInfo present", () => {
@@ -496,7 +474,6 @@ describe("Home", () => {
       expect(vm.datasetViewItems).toHaveLength(1);
       expect(vm.datasetViewItems[0].datasetInfo.name).toBe("Dataset");
       expect(vm.datasetViewItems[0].configInfo.name).toBe("Config");
-      wrapper.destroy();
     });
   });
 
@@ -512,7 +489,6 @@ describe("Home", () => {
       // recommendedName → "sample", formatDate mocked → "2026-01-01"
       expect(vm.datasetName).toBe("sample - 2026-01-01");
       expect(vm.selectedLocation).toEqual(store.folderLocation);
-      wrapper.destroy();
     });
   });
 
@@ -548,7 +524,6 @@ describe("Home", () => {
       expect(vm.datasetNames).toEqual([]);
       expect(vm.nameConflicts).toEqual([]);
       expect(vm.validatingNames).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -568,7 +543,6 @@ describe("Home", () => {
         expect.objectContaining({ quickupload: true }),
       );
       expect(mockRouter.push).toHaveBeenCalledWith({ name: "newdataset" });
-      wrapper.destroy();
     });
 
     it("does nothing when form is invalid", () => {
@@ -581,7 +555,6 @@ describe("Home", () => {
 
       expect(mockInitializeUploadWorkflow).not.toHaveBeenCalled();
       expect(mockRouter.push).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -599,7 +572,6 @@ describe("Home", () => {
       vm.initializeDatasetNames();
       expect(vm.datasetNames).toEqual(["img1", "img2"]);
       expect(vm.nameConflicts).toEqual([]);
-      wrapper.destroy();
     });
   });
 
@@ -610,7 +582,6 @@ describe("Home", () => {
       vm.nameConflicts = [];
       vm.datasetNames = ["name1"];
       expect(vm.getNameError(0)).toBe("");
-      wrapper.destroy();
     });
 
     it("returns duplicate message when same name appears twice", () => {
@@ -619,7 +590,6 @@ describe("Home", () => {
       vm.datasetNames = ["same", "same"];
       vm.nameConflicts = [0, 1];
       expect(vm.getNameError(0)).toBe("Duplicate name in batch");
-      wrapper.destroy();
     });
 
     it("returns exists message for single occurrence conflict", () => {
@@ -630,7 +600,6 @@ describe("Home", () => {
       expect(vm.getNameError(0)).toBe(
         "Dataset already exists in this location",
       );
-      wrapper.destroy();
     });
   });
 
@@ -650,7 +619,6 @@ describe("Home", () => {
 
       expect(vm.nameConflicts).toContain(0);
       expect(vm.nameConflicts).toContain(1);
-      wrapper.destroy();
     });
 
     it("detects API conflicts", async () => {
@@ -666,7 +634,6 @@ describe("Home", () => {
       await vm.validateDatasetNames();
 
       expect(vm.nameConflicts).toContain(0);
-      wrapper.destroy();
     });
 
     it("skips when not batch mode", async () => {
@@ -679,7 +646,6 @@ describe("Home", () => {
 
       // No conflicts set, checkDatasetNameExists not called
       expect(mockCheckDatasetNameExists).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -696,7 +662,6 @@ describe("Home", () => {
         name: "datasetview",
         params: { datasetViewId: "dv123" },
       });
-      wrapper.destroy();
     });
   });
 
@@ -710,7 +675,6 @@ describe("Home", () => {
         name: "dataset",
         params: { datasetId: "ds1" },
       });
-      wrapper.destroy();
     });
 
     it("routes to configuration for configuration items", () => {
@@ -723,7 +687,6 @@ describe("Home", () => {
         name: "configuration",
         params: { configurationId: "cfg1" },
       });
-      wrapper.destroy();
     });
 
     it("sets location for plain folders", () => {
@@ -734,7 +697,6 @@ describe("Home", () => {
       const folder = { _id: "f1", _modelType: "folder" };
       vm.onLocationUpdate(folder);
       expect(mockSetFolderLocation).toHaveBeenCalledWith(folder);
-      wrapper.destroy();
     });
 
     it("ignores file model types", () => {
@@ -745,7 +707,6 @@ describe("Home", () => {
       vm.onLocationUpdate({ _id: "f1", _modelType: "file" });
       expect(mockSetFolderLocation).not.toHaveBeenCalled();
       expect(mockRouter.push).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("ignores upenn_collection model type", () => {
@@ -754,7 +715,6 @@ describe("Home", () => {
       vm.onLocationUpdate({ _id: "uc1", _modelType: "upenn_collection" });
       expect(mockSetFolderLocation).not.toHaveBeenCalled();
       expect(mockRouter.push).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -767,7 +727,6 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       const result = vm.getUserDisplayName("user1");
       expect(result).toBe("Loading...");
-      wrapper.destroy();
     });
 
     it("caches and returns name after fetch", async () => {
@@ -784,10 +743,9 @@ describe("Home", () => {
 
       // Flush the microtask queue so the .then() callback runs
       await new Promise((r) => setTimeout(r, 0));
-      await Vue.nextTick();
+      await nextTick();
 
       expect(vm.userDisplayNames["user1"]).toBe("John Doe (jdoe@test.com)");
-      wrapper.destroy();
     });
   });
 
@@ -805,7 +763,6 @@ describe("Home", () => {
 
       expect(mockPersisterSet).toHaveBeenCalled();
       expect(mockStartTour).toHaveBeenCalledWith("WelcomeTourHome");
-      wrapper.destroy();
     });
 
     it("skips when not logged in", async () => {
@@ -816,7 +773,6 @@ describe("Home", () => {
       await vm.initializeWelcomeTour();
 
       expect(mockStartTour).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
 
     it("skips when tour already run", async () => {
@@ -827,10 +783,9 @@ describe("Home", () => {
       // mounted() calls initializeWelcomeTour, so we need to verify
       // that $startTour was NOT called even after mount
       const wrapper = mountComponent();
-      await Vue.nextTick();
+      await nextTick();
 
       expect(mockStartTour).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -852,7 +807,6 @@ describe("Home", () => {
         }),
       );
       expect(mockRouter.push).toHaveBeenCalledWith({ name: "newdataset" });
-      wrapper.destroy();
     });
   });
 
@@ -870,7 +824,6 @@ describe("Home", () => {
         }),
       );
       expect(mockRouter.push).toHaveBeenCalledWith({ name: "newdataset" });
-      wrapper.destroy();
     });
   });
 
@@ -891,7 +844,6 @@ describe("Home", () => {
         expect.objectContaining({ quickupload: false }),
       );
       expect(mockRouter.push).toHaveBeenCalledWith({ name: "newdataset" });
-      wrapper.destroy();
     });
 
     it("does nothing when form is invalid", () => {
@@ -902,7 +854,6 @@ describe("Home", () => {
       vm.handleConfigureDataset();
 
       expect(mockInitializeUploadWorkflow).not.toHaveBeenCalled();
-      wrapper.destroy();
     });
   });
 
@@ -916,7 +867,6 @@ describe("Home", () => {
       expect(vm.browseMode).toBe("files");
       vm.handleProjectClicked();
       expect(vm.browseMode).toBe("projects");
-      wrapper.destroy();
     });
   });
 
@@ -941,7 +891,6 @@ describe("Home", () => {
       expect(vm.pendingFiles).toHaveLength(1);
       expect(vm.pendingFiles[0].name).toBe("dropped.tif");
       expect(vm.showUploadDialog).toBe(true);
-      wrapper.destroy();
     });
 
     it("does nothing when no files in drop event", () => {
@@ -954,7 +903,6 @@ describe("Home", () => {
 
       expect(vm.isDragging).toBe(false);
       expect(vm.showUploadDialog).toBe(false);
-      wrapper.destroy();
     });
   });
 
@@ -963,7 +911,7 @@ describe("Home", () => {
   // =========================================================================
   describe("mounted", () => {
     it("calls fetchRecentDatasetViews on mount", async () => {
-      mountComponent().destroy();
+      mountComponent();
       expect(mockFetchRecentDatasetViews).toHaveBeenCalled();
     });
 
@@ -971,7 +919,6 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isNavigating).toBe(false);
-      wrapper.destroy();
     });
   });
 });

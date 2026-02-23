@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { nextTick } from "vue";
+import { shallowMount, flushPromises } from "@vue/test-utils";
 
 vi.mock("@/utils/log", () => ({
   logError: vi.fn(),
@@ -48,16 +47,12 @@ vi.mock("@/utils/v-mousetrap", () => ({
   boundKeys: {},
 }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
 import App from "./App.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import axios from "axios";
 import { logError } from "@/utils/log";
-
-Vue.use(Vuetify);
-Vue.directive("mousetrap", {});
-Vue.directive("tour-trigger", {});
-Vue.directive("tooltip", {});
 
 const mockRoute = {
   name: "root",
@@ -70,24 +65,27 @@ const mockRouter = {
 
 function mountComponent(routeOverrides: Record<string, any> = {}) {
   return shallowMount(App, {
-    vuetify: new Vuetify(),
-    mocks: {
-      $route: { ...mockRoute, ...routeOverrides },
-      $router: mockRouter,
-      $loadAllTours: vi.fn().mockResolvedValue({}),
-      $startTour: vi.fn(),
-    },
-    stubs: {
-      "user-menu": true,
-      "server-status": true,
-      "analyze-annotations": true,
-      "annotations-settings": true,
-      snapshots: true,
-      "annotation-browser": true,
-      "help-panel": true,
-      "bread-crumbs": true,
-      "chat-component": true,
-      "router-view": true,
+    global: {
+      mocks: {
+        $loadAllTours: vi.fn().mockResolvedValue({}),
+        $startTour: vi.fn(),
+      },
+      provide: {
+        ...routeProvider({ ...mockRoute, ...routeOverrides }),
+        ...routerProvider(mockRouter),
+      },
+      stubs: {
+        "user-menu": true,
+        "server-status": true,
+        "analyze-annotations": true,
+        "annotations-settings": true,
+        snapshots: true,
+        "annotation-browser": true,
+        "help-panel": true,
+        "bread-crumbs": true,
+        "chat-component": true,
+        "router-view": true,
+      },
     },
   });
 }
@@ -116,14 +114,12 @@ describe("App", () => {
     const wrapper = mountComponent({ name: "datasetview" });
     const vm = wrapper.vm as any;
     expect(vm.routeName).toBe("datasetview");
-    wrapper.destroy();
   });
 
   it("routeName returns root when route name is root", () => {
     const wrapper = mountComponent({ name: "root" });
     const vm = wrapper.vm as any;
     expect(vm.routeName).toBe("root");
-    wrapper.destroy();
   });
 
   // -- Method: toggleRightPanel --
@@ -133,7 +129,6 @@ describe("App", () => {
     expect(vm.annotationPanel).toBe(false);
     vm.toggleRightPanel("annotationPanel");
     expect(vm.annotationPanel).toBe(true);
-    wrapper.destroy();
   });
 
   it("toggleRightPanel closes a panel that is already open", () => {
@@ -143,7 +138,6 @@ describe("App", () => {
     vm.lastModifiedRightPanel = "annotationPanel";
     vm.toggleRightPanel("annotationPanel");
     expect(vm.annotationPanel).toBe(false);
-    wrapper.destroy();
   });
 
   it("toggleRightPanel closes previous panel when switching", () => {
@@ -154,7 +148,6 @@ describe("App", () => {
     vm.toggleRightPanel("settingsPanel");
     expect(vm.settingsPanel).toBe(true);
     expect(vm.annotationPanel).toBe(false);
-    wrapper.destroy();
   });
 
   // -- Method: toggleHelpDialogUsingHotkey --
@@ -164,7 +157,6 @@ describe("App", () => {
     expect(vm.helpPanelIsOpen).toBe(false);
     vm.toggleHelpDialogUsingHotkey();
     expect(vm.helpPanelIsOpen).toBe(true);
-    wrapper.destroy();
   });
 
   it("toggleHelpDialogUsingHotkey closes the help panel when already open", () => {
@@ -173,7 +165,6 @@ describe("App", () => {
     vm.helpPanelIsOpen = true;
     vm.toggleHelpDialogUsingHotkey();
     expect(vm.helpPanelIsOpen).toBe(false);
-    wrapper.destroy();
   });
 
   // -- appHotkeys --
@@ -182,7 +173,6 @@ describe("App", () => {
     const vm = wrapper.vm as any;
     expect(vm.appHotkeys.bind).toBe("tab");
     expect(typeof vm.appHotkeys.handler).toBe("function");
-    wrapper.destroy();
   });
 
   // -- Computed: hasUncomputedProperties --
@@ -191,7 +181,6 @@ describe("App", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasUncomputedProperties).toBe(false);
-    wrapper.destroy();
   });
 
   it("hasUncomputedProperties returns true when there are uncomputed entries", () => {
@@ -201,7 +190,6 @@ describe("App", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasUncomputedProperties).toBe(true);
-    wrapper.destroy();
   });
 
   it("hasUncomputedProperties returns false when all arrays are empty", () => {
@@ -212,7 +200,6 @@ describe("App", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasUncomputedProperties).toBe(false);
-    wrapper.destroy();
   });
 
   // -- Computed: filteredToursByCategory --
@@ -232,7 +219,6 @@ describe("App", () => {
     expect(Object.keys(result)).toContain("Basics");
     expect(Object.keys(result)).toContain("Advanced");
     expect(Object.keys(result.Basics)).toHaveLength(2);
-    wrapper.destroy();
   });
 
   it("filteredToursByCategory filters by search text", () => {
@@ -250,7 +236,6 @@ describe("App", () => {
     const result = vm.filteredToursByCategory;
     expect(Object.keys(result.Basics)).toHaveLength(1);
     expect(result.Basics.tour1).toBeDefined();
-    wrapper.destroy();
   });
 
   it("filteredToursByCategory hides dataset-only tours on non-dataset routes", () => {
@@ -268,7 +253,6 @@ describe("App", () => {
     expect(Object.keys(result.Basics)).toHaveLength(1);
     expect(result.Basics.tour1).toBeDefined();
     expect(result.Basics.tour2).toBeUndefined();
-    wrapper.destroy();
   });
 
   // -- Method: handleTourStart --
@@ -284,7 +268,6 @@ describe("App", () => {
     };
     vm.handleTourStart("myTour");
     expect(mockRouter.push).toHaveBeenCalledWith({ name: "datasetview" });
-    wrapper.destroy();
   });
 
   it("handleTourStart does not navigate when already on the correct route", () => {
@@ -299,7 +282,6 @@ describe("App", () => {
     };
     vm.handleTourStart("myTour");
     expect(mockRouter.push).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   // -- Method: fetchConfig --
@@ -307,13 +289,11 @@ describe("App", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.fetchConfig();
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(axios.get).toHaveBeenCalledWith("config/templates.json");
     expect(store.setToolTemplateList).toHaveBeenCalledWith([
       { name: "Tool1", type: "create" },
     ]);
-    wrapper.destroy();
   });
 
   // -- Method: goHome --
@@ -322,7 +302,6 @@ describe("App", () => {
     const vm = wrapper.vm as any;
     vm.goHome();
     expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
-    wrapper.destroy();
   });
 
   // -- Method: goToNewDataset --
@@ -340,7 +319,6 @@ describe("App", () => {
       }),
     );
     expect(vm.isUploadLoading).toBe(false);
-    wrapper.destroy();
   });
 
   it("goToNewDataset handles error and still navigates", async () => {
@@ -360,7 +338,6 @@ describe("App", () => {
       }),
     );
     expect(vm.isUploadLoading).toBe(false);
-    wrapper.destroy();
   });
 
   it("goToNewDataset returns early when already loading", async () => {
@@ -369,7 +346,6 @@ describe("App", () => {
     vm.isUploadLoading = true;
     await vm.goToNewDataset();
     expect(store.api.getUserPrivateFolder).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   // -- Watcher: annotationPanel --
@@ -377,9 +353,8 @@ describe("App", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.annotationPanel = true;
-    await Vue.nextTick();
+    await nextTick();
     expect(store.setIsAnnotationPanelOpen).toHaveBeenCalledWith(true);
-    wrapper.destroy();
   });
 
   // -- Watcher: routeName --
@@ -398,6 +373,5 @@ describe("App", () => {
     // The watcher calls toggleRightPanel(null) which closes panels
     // Simulate what the watcher does when route != datasetview
     // We cannot easily change $route in shallowMount, so test the logic directly
-    wrapper.destroy();
   });
 });

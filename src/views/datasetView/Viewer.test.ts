@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/components/ImageViewer.vue", () => ({
   default: { template: "<div></div>", name: "ImageViewer" },
@@ -33,11 +31,8 @@ import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import Viewer from "./Viewer.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return shallowMount(Viewer, {
-    vuetify: new Vuetify(),
   });
 }
 

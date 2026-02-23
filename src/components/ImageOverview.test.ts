@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("geojs", () => {
   const mockDraw = vi.fn();
@@ -58,11 +56,11 @@ vi.mock("geojs", () => {
   };
 });
 
-// Use Vue.observable so the computed properties are reactive
+// Use reactive() so the computed properties are reactive
 vi.mock("@/store", () => {
-  const Vue = require("vue");
+  const { reactive } = require("vue");
   return {
-    default: Vue.observable({
+    default: reactive({
       dataset: null as any,
       layers: [] as any[],
       currentLocation: {},
@@ -81,13 +79,10 @@ vi.mock("@/utils/screenshot", () => ({
 import ImageOverview from "./ImageOverview.vue";
 import store from "@/store";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   (store as any).dataset = null;
   return shallowMount(ImageOverview, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       parentCameraInfo: {
         center: { x: 0, y: 0 },
         zoom: 1,
@@ -115,7 +110,6 @@ describe("ImageOverview", () => {
     expect(vm.cornerToIcon({ top: true, left: true })).toBe(
       "mdi-arrow-top-left",
     );
-    wrapper.destroy();
   });
 
   it("cornerToIcon returns top-right icon", () => {
@@ -124,7 +118,6 @@ describe("ImageOverview", () => {
     expect(vm.cornerToIcon({ top: true, left: false })).toBe(
       "mdi-arrow-top-right",
     );
-    wrapper.destroy();
   });
 
   it("cornerToIcon returns bottom-left icon", () => {
@@ -133,7 +126,6 @@ describe("ImageOverview", () => {
     expect(vm.cornerToIcon({ top: false, left: true })).toBe(
       "mdi-arrow-bottom-left",
     );
-    wrapper.destroy();
   });
 
   it("cornerToIcon returns bottom-right icon", () => {
@@ -142,7 +134,6 @@ describe("ImageOverview", () => {
     expect(vm.cornerToIcon({ top: false, left: false })).toBe(
       "mdi-arrow-bottom-right",
     );
-    wrapper.destroy();
   });
 
   it("moveOverviewToCorner sets top-left styles", () => {
@@ -151,7 +142,6 @@ describe("ImageOverview", () => {
     const result = vm.moveOverviewToCorner({ top: true, left: true });
     // The function returns { top, left } when overviewWrapper exists
     expect(result).toEqual({ top: true, left: true });
-    wrapper.destroy();
   });
 
   it("moveOverviewToCorner sets bottom-right styles", () => {
@@ -159,7 +149,6 @@ describe("ImageOverview", () => {
     const vm = wrapper.vm as any;
     const result = vm.moveOverviewToCorner({ top: false, left: false });
     expect(result).toEqual({ top: false, left: false });
-    wrapper.destroy();
   });
 
   it("dataset computed reflects store.dataset", () => {
@@ -168,15 +157,13 @@ describe("ImageOverview", () => {
     expect(vm.dataset).toBeNull();
     const mockDataset = { name: "test", anyImage: vi.fn() };
     (store as any).dataset = mockDataset;
-    expect(vm.dataset).toBe(mockDataset);
-    wrapper.destroy();
+    expect(vm.dataset).toStrictEqual(mockDataset);
   });
 
   it("dataset computed returns null when store has no dataset", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.dataset).toBeNull();
-    wrapper.destroy();
   });
 
   it("create returns early when no dataset", () => {
@@ -184,7 +171,6 @@ describe("ImageOverview", () => {
     const vm = wrapper.vm as any;
     vm.create();
     expect(vm.map).toBeNull();
-    wrapper.destroy();
   });
 
   it("create returns early when dataset has no image", () => {
@@ -193,7 +179,6 @@ describe("ImageOverview", () => {
     (store as any).dataset = { anyImage: vi.fn().mockReturnValue(null) };
     vm.create();
     expect(vm.map).toBeNull();
-    wrapper.destroy();
   });
 
   it("create sets map when dataset and element exist", () => {
@@ -214,7 +199,6 @@ describe("ImageOverview", () => {
     expect(vm.osmLayer).toBeTruthy();
     expect(vm.featureLayer).toBeTruthy();
     expect(vm.outlineFeature).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("onParentPan updates outline feature data", () => {
@@ -225,7 +209,6 @@ describe("ImageOverview", () => {
     vm.outlineFeature = { data: mockOutlineData };
     vm.onParentPan();
     expect(mockOutlineData).toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("onParentPan sets rotation when map rotation differs from parent", () => {
@@ -252,7 +235,6 @@ describe("ImageOverview", () => {
     vm.onParentPan();
     expect(rotation).toHaveBeenCalledWith(1.5);
     expect(zoom).toHaveBeenCalledWith(-Infinity);
-    wrapper.destroy();
   });
 
   it("onUrlChanged does nothing when osmLayer is null", async () => {
@@ -260,7 +242,6 @@ describe("ImageOverview", () => {
     const vm = wrapper.vm as any;
     vm.osmLayer = null;
     await vm.onUrlChanged();
-    wrapper.destroy();
   });
 
   it("onUrlChanged sets empty url when no urlPromise (no dataset)", async () => {
@@ -270,20 +251,17 @@ describe("ImageOverview", () => {
     vm.osmLayer = { url: urlFn };
     await vm.onUrlChanged();
     expect(urlFn).toHaveBeenCalledWith("");
-    wrapper.destroy();
   });
 
   it("map is initially null when no dataset", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.map).toBeNull();
-    wrapper.destroy();
   });
 
   it("osmLayer is initially null when no dataset", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.osmLayer).toBeNull();
-    wrapper.destroy();
   });
 });

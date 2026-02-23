@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { shallowMount } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
   default: {
@@ -61,6 +62,9 @@ vi.mock("./ColorPickerMenu.vue", () => ({
   },
 }));
 
+import store from "@/store";
+import DisplayLayer from "./DisplayLayer.vue";
+
 const sampleLayer = {
   id: "l1",
   name: "DAPI",
@@ -74,48 +78,29 @@ const sampleLayer = {
   layerGroup: null,
 };
 
-async function setup(propsOverrides = {}) {
-  const Vue = (await import("vue")).default;
-  const Vuetify = (await import("vuetify")).default;
-  Vue.use(Vuetify);
-  Vue.directive("mousetrap", {});
-  const { shallowMount } = await import("@vue/test-utils");
-  const mod = await import("./DisplayLayer.vue");
-  return { shallowMount, Vuetify, Component: mod.default, propsOverrides };
-}
-
-function mountComponent(
-  shallowMount: any,
-  Vuetify: any,
-  Component: any,
-  propsOverrides = {},
-) {
-  return shallowMount(Component, {
-    vuetify: new Vuetify(),
-    propsData: {
-      value: { ...sampleLayer, ...propsOverrides },
+function mountComponent(propsOverrides = {}) {
+  return shallowMount(DisplayLayer, {
+    props: {
+      modelValue: { ...sampleLayer, ...propsOverrides } as any,
     },
   });
 }
 
 describe("DisplayLayer", () => {
   it("index returns store layer index", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.index).toBe(0);
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).index).toBe(0);
   });
 
   it("visible getter returns layer visibility", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.visible).toBe(true);
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).visible).toBe(true);
   });
 
   it("changeProp calls store.changeLayer", async () => {
-    const store = (await import("@/store")).default;
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    wrapper.vm.changeProp("name", "NewName");
+
+    const wrapper = mountComponent();
+    (wrapper.vm as any).changeProp("name", "NewName");
     expect(store.changeLayer).toHaveBeenCalledWith({
       layerId: "l1",
       delta: { name: "NewName" },
@@ -123,45 +108,39 @@ describe("DisplayLayer", () => {
   });
 
   it("changeProp does not call store when value is the same", async () => {
-    const store = (await import("@/store")).default;
+
     (store.changeLayer as any).mockClear();
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    wrapper.vm.changeProp("name", "DAPI");
+    const wrapper = mountComponent();
+    (wrapper.vm as any).changeProp("name", "DAPI");
     expect(store.changeLayer).not.toHaveBeenCalled();
   });
 
   it("removeLayer calls store.removeLayer", async () => {
-    const store = (await import("@/store")).default;
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    wrapper.vm.removeLayer();
+
+    const wrapper = mountComponent();
+    (wrapper.vm as any).removeLayer();
     expect(store.removeLayer).toHaveBeenCalledWith("l1");
   });
 
   it("channelName returns name from dataset", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.channelName(0)).toBe("DAPI");
-    expect(wrapper.vm.channelName(1)).toBe("GFP");
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).channelName(0)).toBe("DAPI");
+    expect((wrapper.vm as any).channelName(1)).toBe("GFP");
   });
 
   it("channelName falls back to channel number string", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.channelName(99)).toBe("99");
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).channelName(99)).toBe("99");
   });
 
   it("channels returns dataset channels", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.channels).toEqual([0, 1]);
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).channels).toEqual([0, 1]);
   });
 
   it("currentContrast returns layer contrast", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.currentContrast).toEqual({
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).currentContrast).toEqual({
       mode: "percentile",
       blackPoint: 0,
       whitePoint: 100,
@@ -169,37 +148,32 @@ describe("DisplayLayer", () => {
   });
 
   it("hasMultipleZ returns true when dataset has multiple z values", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.hasMultipleZ).toBe(true);
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).hasMultipleZ).toBe(true);
   });
 
   it("maxZ returns dataset z length minus 1", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.maxZ).toBe(2);
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).maxZ).toBe(2);
   });
 
   it("isZMaxMerge returns false for current slice type", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.isZMaxMerge).toBe(false);
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).isZMaxMerge).toBe(false);
   });
 
   it("isZMaxMerge returns true for max-merge slice type", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component, {
+    const wrapper = mountComponent({
       z: { type: "max-merge", value: null },
     });
-    expect(wrapper.vm.isZMaxMerge).toBe(true);
+    expect((wrapper.vm as any).isZMaxMerge).toBe(true);
   });
 
   it("changeContrast with syncConfiguration calls saveContrastInConfiguration", async () => {
-    const store = (await import("@/store")).default;
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
+
+    const wrapper = mountComponent();
     const contrast = { mode: "absolute", blackPoint: 10, whitePoint: 200 };
-    wrapper.vm.changeContrast(contrast, true);
+    (wrapper.vm as any).changeContrast(contrast, true);
     expect(store.saveContrastInConfiguration).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
@@ -207,11 +181,10 @@ describe("DisplayLayer", () => {
   });
 
   it("changeContrast without syncConfiguration calls saveContrastInView", async () => {
-    const store = (await import("@/store")).default;
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
+
+    const wrapper = mountComponent();
     const contrast = { mode: "absolute", blackPoint: 10, whitePoint: 200 };
-    wrapper.vm.changeContrast(contrast, false);
+    (wrapper.vm as any).changeContrast(contrast, false);
     expect(store.saveContrastInView).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
@@ -219,16 +192,14 @@ describe("DisplayLayer", () => {
   });
 
   it("resetContrastInView calls store.resetContrastInView", async () => {
-    const store = (await import("@/store")).default;
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    wrapper.vm.resetContrastInView();
+
+    const wrapper = mountComponent();
+    (wrapper.vm as any).resetContrastInView();
     expect(store.resetContrastInView).toHaveBeenCalledWith("l1");
   });
 
   it("zMaxMergeBinding includes the index", async () => {
-    const { shallowMount, Vuetify, Component } = await setup();
-    const wrapper = mountComponent(shallowMount, Vuetify, Component);
-    expect(wrapper.vm.zMaxMergeBinding).toBe("shift+1");
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).zMaxMergeBinding).toBe("shift+1");
   });
 });

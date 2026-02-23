@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -13,8 +11,6 @@ vi.mock("@/store", () => ({
 import store from "@/store";
 import ToolEdition from "./ToolEdition.vue";
 
-Vue.use(Vuetify);
-
 const baseTool = {
   id: "tool-1",
   name: "Test Tool",
@@ -22,21 +18,22 @@ const baseTool = {
   type: "create" as const,
   template: { name: "test" },
   values: { foo: "bar" },
-};
+} as any;
 
 function mountComponent(props = {}) {
   return mount(ToolEdition, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       tool: baseTool,
       ...props,
     },
-    stubs: {
-      ToolConfiguration: {
-        template: "<div></div>",
-        methods: { reset: vi.fn() },
+    global: {
+      stubs: {
+        ToolConfiguration: {
+          template: "<div></div>",
+          methods: { reset: vi.fn() },
+        },
+        HotkeySelection: true,
       },
-      HotkeySelection: true,
     },
   });
 }

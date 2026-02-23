@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store/sync", () => ({
   default: {
@@ -14,11 +12,8 @@ vi.mock("@/store/sync", () => ({
 import ServerStatus from "./ServerStatus.vue";
 import sync from "@/store/sync";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return mount(ServerStatus, {
-    vuetify: new Vuetify(),
   });
 }
 

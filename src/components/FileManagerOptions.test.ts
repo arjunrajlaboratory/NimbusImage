@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockMoveItems = vi.fn();
 const mockRenameItem = vi.fn();
@@ -40,8 +39,6 @@ vi.mock("@/utils/download", () => ({
 
 import FileManagerOptions from "./FileManagerOptions.vue";
 
-Vue.use(Vuetify);
-
 // Mock URL.createObjectURL for download tests
 globalThis.URL.createObjectURL = vi.fn(() => "blob:mock-url");
 
@@ -56,14 +53,15 @@ function makeItem(overrides: any = {}) {
 
 function mountComponent(props: any = {}) {
   return shallowMount(FileManagerOptions, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       items: [makeItem()],
       ...props,
     },
-    stubs: {
-      GirderLocationChooser: true,
-      AddToProjectDialog: true,
+    global: {
+      stubs: {
+        GirderLocationChooser: true,
+        AddToProjectDialog: true,
+      },
     },
   });
 }
@@ -82,14 +80,12 @@ describe("FileManagerOptions", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.disableOptions).toBe(false);
-    wrapper.destroy();
   });
 
   it("initializes with isLoading false", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.isLoading).toBe(false);
-    wrapper.destroy();
   });
 
   it("initializes dialogs as closed", () => {
@@ -98,7 +94,6 @@ describe("FileManagerOptions", () => {
     expect(vm.moveDialog).toBe(false);
     expect(vm.renameDialog).toBe(false);
     expect(vm.deleteDialog).toBe(false);
-    wrapper.destroy();
   });
 
   it("computes assetstores from store", () => {
@@ -106,14 +101,12 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     expect(vm.assetstores).toHaveLength(2);
     expect(vm.assetstores[0].name).toBe("Default");
-    wrapper.destroy();
   });
 
   it("isADialogOpen returns false when all dialogs are closed", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.isADialogOpen).toBe(false);
-    wrapper.destroy();
   });
 
   it("isADialogOpen returns true when moveDialog is open", () => {
@@ -121,7 +114,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     vm.moveDialog = true;
     expect(vm.isADialogOpen).toBe(true);
-    wrapper.destroy();
   });
 
   it("isADialogOpen returns true when deleteDialog is open", () => {
@@ -129,7 +121,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     vm.deleteDialog = true;
     expect(vm.isADialogOpen).toBe(true);
-    wrapper.destroy();
   });
 
   it("isADialogOpen returns true when renameDialog is open", () => {
@@ -137,7 +128,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     vm.renameDialog = true;
     expect(vm.isADialogOpen).toBe(true);
-    wrapper.destroy();
   });
 
   it("sets newName from items on mount", () => {
@@ -146,7 +136,6 @@ describe("FileManagerOptions", () => {
     });
     const vm = wrapper.vm as any;
     expect(vm.newName).toBe("MyDataset");
-    wrapper.destroy();
   });
 
   it("closeMenu emits closeMenu event", () => {
@@ -154,7 +143,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     vm.closeMenu();
     expect(wrapper.emitted("closeMenu")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("move calls api.moveItems and emits itemsChanged", async () => {
@@ -166,7 +154,6 @@ describe("FileManagerOptions", () => {
     expect(mockMoveItems).toHaveBeenCalledWith(items, "target-folder");
     expect(mockRessourceChanged).toHaveBeenCalledWith("item1");
     expect(wrapper.emitted("itemsChanged")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("move does nothing when location is null", async () => {
@@ -174,7 +161,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     await vm.move(null);
     expect(mockMoveItems).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("rename calls api.renameItem and emits itemsChanged", async () => {
@@ -187,7 +173,6 @@ describe("FileManagerOptions", () => {
     expect(wrapper.emitted("itemsChanged")).toBeTruthy();
     expect(vm.newName).toBe("");
     expect(vm.renameDialog).toBe(false);
-    wrapper.destroy();
   });
 
   it("rename does nothing when items length is not 1", async () => {
@@ -197,7 +182,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     await vm.rename();
     expect(mockRenameItem).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("rename does nothing for unsupported model types", async () => {
@@ -207,7 +191,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     await vm.rename();
     expect(mockRenameItem).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("deleteItems calls api.deleteItems and emits itemsChanged", async () => {
@@ -219,7 +202,6 @@ describe("FileManagerOptions", () => {
     expect(mockDeleteItems).toHaveBeenCalledWith(items);
     expect(vm.deleteDialog).toBe(false);
     expect(wrapper.emitted("itemsChanged")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("downloadResource calls api.downloadResource for file items", async () => {
@@ -229,7 +211,6 @@ describe("FileManagerOptions", () => {
     await vm.downloadResource();
     expect(mockDownloadResource).toHaveBeenCalledWith(item);
     expect(wrapper.emitted("closeMenu")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("downloadResource calls api.downloadResource for item modelType", async () => {
@@ -238,7 +219,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     await vm.downloadResource();
     expect(mockDownloadResource).toHaveBeenCalledWith(item);
-    wrapper.destroy();
   });
 
   it("downloadResource does nothing when items length is not 1", async () => {
@@ -248,7 +228,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     await vm.downloadResource();
     expect(mockDownloadResource).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("downloadResource does nothing for folder modelType", async () => {
@@ -258,7 +237,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     await vm.downloadResource();
     expect(mockDownloadResource).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("onAddedToProject closes dialog and emits closeMenu", () => {
@@ -266,7 +244,6 @@ describe("FileManagerOptions", () => {
     const vm = wrapper.vm as any;
     vm.onAddedToProject();
     expect(wrapper.emitted("closeMenu")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("watcher updates newName when items change", async () => {
@@ -277,8 +254,7 @@ describe("FileManagerOptions", () => {
     expect(vm.newName).toBe("Original");
 
     wrapper.setProps({ items: [makeItem({ name: "Updated" })] });
-    await Vue.nextTick();
+    await nextTick();
     expect(vm.newName).toBe("Updated");
-    wrapper.destroy();
   });
 });

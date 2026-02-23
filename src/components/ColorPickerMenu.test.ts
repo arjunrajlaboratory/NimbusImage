@@ -1,15 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import ColorPickerMenu from "./ColorPickerMenu.vue";
-
-Vue.use(Vuetify);
 
 function mountComponent(props = {}) {
   return mount(ColorPickerMenu, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       value: "#FF0000",
       ...props,
     },

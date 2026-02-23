@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -21,21 +19,23 @@ vi.mock("@/store/girderResources", () => ({
   },
 }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
 import store from "@/store";
 import ImportConfiguration from "./ImportConfiguration.vue";
 
-Vue.use(Vuetify);
+const mockRouter = { back: vi.fn() };
 
 function mountComponent(routeQuery = {}) {
   return mount(ImportConfiguration, {
-    vuetify: new Vuetify(),
-    mocks: {
-      $route: { query: routeQuery },
-      $router: { back: vi.fn() },
-    },
-    stubs: {
-      ConfigurationSelect: true,
-      GirderLocationChooser: true,
+    global: {
+      provide: {
+        ...routeProvider({ query: routeQuery }),
+        ...routerProvider(mockRouter),
+      },
+      stubs: {
+        ConfigurationSelect: true,
+        GirderLocationChooser: true,
+      },
     },
   });
 }
@@ -53,7 +53,7 @@ describe("ImportConfiguration", () => {
   it("cancel calls router.back", () => {
     const wrapper = mountComponent();
     (wrapper.vm as any).cancel();
-    expect(wrapper.vm.$router.back).toHaveBeenCalled();
+    expect(mockRouter.back).toHaveBeenCalled();
   });
 
   it("folderId derives from selectedFolder", async () => {

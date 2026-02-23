@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockGetDatasetView = vi.fn();
 const mockFindDatasetViews = vi.fn();
@@ -65,33 +63,29 @@ vi.mock("@/components/AddDatasetToCollection.vue", () => ({
   },
 }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
 import BreadCrumbs from "./BreadCrumbs.vue";
 import store from "@/store";
 
-Vue.use(Vuetify);
+const mockRouter = { push: vi.fn() };
 
 function mountComponent(
   routeParams: any = {},
   routeQuery: any = {},
   routeName = "home",
 ) {
-  const mockRouter = { push: vi.fn() };
-  const mockRoute = {
-    params: routeParams,
-    query: routeQuery,
-    name: routeName,
-  };
   return shallowMount(BreadCrumbs, {
-    vuetify: new Vuetify(),
-    stubs: {
-      "alert-dialog": true,
-      "add-dataset-to-collection": true,
-      AlertDialog: true,
-      AddDatasetToCollection: true,
-    },
-    mocks: {
-      $router: mockRouter,
-      $route: mockRoute,
+    global: {
+      stubs: {
+        "alert-dialog": true,
+        "add-dataset-to-collection": true,
+        AlertDialog: true,
+        AddDatasetToCollection: true,
+      },
+      provide: {
+        ...routeProvider({ params: routeParams, query: routeQuery, name: routeName }),
+        ...routerProvider(mockRouter),
+      },
     },
   });
 }
@@ -99,6 +93,7 @@ function mountComponent(
 describe("BreadCrumbs", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockRouter.push = vi.fn();
     (store as any).isAdmin = false;
     (store as any).girderRest = { apiRoot: "http://localhost:8080/api/v1" };
     mockGetDatasetView.mockResolvedValue({
@@ -121,7 +116,6 @@ describe("BreadCrumbs", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.addDatasetFlag).toBe(false);
-    wrapper.destroy();
   });
 
   it("addDatasetFlag get returns true when addDatasetCollection is set", () => {
@@ -129,7 +123,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     vm.addDatasetCollection = { _id: "cfg1", name: "Test Config" };
     expect(vm.addDatasetFlag).toBe(true);
-    wrapper.destroy();
   });
 
   it("addDatasetFlag set to false clears addDatasetCollection", () => {
@@ -139,7 +132,6 @@ describe("BreadCrumbs", () => {
     expect(vm.addDatasetFlag).toBe(true);
     vm.addDatasetFlag = false;
     expect(vm.addDatasetCollection).toBeNull();
-    wrapper.destroy();
   });
 
   // --- showExternalLink ---
@@ -150,7 +142,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     vm.currentDatasetId = "ds1";
     expect(vm.showExternalLink).toBe(false);
-    wrapper.destroy();
   });
 
   it("showExternalLink returns true when admin and datasetId is set", () => {
@@ -159,7 +150,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     vm.currentDatasetId = "ds1";
     expect(vm.showExternalLink).toBe(true);
-    wrapper.destroy();
   });
 
   it("showExternalLink returns false when admin but no datasetId", () => {
@@ -168,7 +158,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     vm.currentDatasetId = null;
     expect(vm.showExternalLink).toBe(false);
-    wrapper.destroy();
   });
 
   // --- girderDatasetUrl ---
@@ -178,7 +167,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     vm.currentDatasetId = null;
     expect(vm.girderDatasetUrl).toBeNull();
-    wrapper.destroy();
   });
 
   it("girderDatasetUrl returns null when datasetResource has no creatorId", () => {
@@ -187,7 +175,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     vm.currentDatasetId = "ds1";
     expect(vm.girderDatasetUrl).toBeNull();
-    wrapper.destroy();
   });
 
   it("girderDatasetUrl constructs correct URL when datasetResource has creatorId", () => {
@@ -201,7 +188,6 @@ describe("BreadCrumbs", () => {
     expect(vm.girderDatasetUrl).toBe(
       "http://localhost:8080/#user/creator1/folder/ds1",
     );
-    wrapper.destroy();
   });
 
   // --- openGirderFolder ---
@@ -221,7 +207,6 @@ describe("BreadCrumbs", () => {
       "_blank",
     );
     openSpy.mockRestore();
-    wrapper.destroy();
   });
 
   it("openGirderFolder does nothing when girderDatasetUrl is null", () => {
@@ -232,7 +217,6 @@ describe("BreadCrumbs", () => {
     vm.openGirderFolder();
     expect(openSpy).not.toHaveBeenCalled();
     openSpy.mockRestore();
-    wrapper.destroy();
   });
 
   // --- getCurrentViewItem ---
@@ -246,7 +230,6 @@ describe("BreadCrumbs", () => {
     ];
     const result = vm.getCurrentViewItem(subitems);
     expect(result).toEqual({ text: "Dataset A", value: "v1" });
-    wrapper.destroy();
   });
 
   it("getCurrentViewItem returns null when no datasetViewId in route", () => {
@@ -254,7 +237,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     const subitems = [{ text: "Dataset A", value: "v1" }];
     expect(vm.getCurrentViewItem(subitems)).toBeNull();
-    wrapper.destroy();
   });
 
   it("getCurrentViewItem returns null when subitems is null/undefined", () => {
@@ -262,7 +244,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     expect(vm.getCurrentViewItem(null)).toBeNull();
     expect(vm.getCurrentViewItem(undefined)).toBeNull();
-    wrapper.destroy();
   });
 
   it("getCurrentViewItem returns null when no match found", () => {
@@ -270,7 +251,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     const subitems = [{ text: "Dataset A", value: "v1" }];
     expect(vm.getCurrentViewItem(subitems)).toBeNull();
-    wrapper.destroy();
   });
 
   // --- goToView ---
@@ -279,20 +259,18 @@ describe("BreadCrumbs", () => {
     const wrapper = mountComponent({}, { foo: "bar" });
     const vm = wrapper.vm as any;
     vm.goToView("view123");
-    expect(vm.$router.push).toHaveBeenCalledWith({
+    expect(mockRouter.push).toHaveBeenCalledWith({
       name: "datasetview",
       params: { datasetViewId: "view123" },
       query: { foo: "bar" },
     });
-    wrapper.destroy();
   });
 
   it("goToView skips push when datasetViewId matches current", () => {
     const wrapper = mountComponent({ datasetViewId: "view123" });
     const vm = wrapper.vm as any;
     vm.goToView("view123");
-    expect(vm.$router.push).not.toHaveBeenCalled();
-    wrapper.destroy();
+    expect(mockRouter.push).not.toHaveBeenCalled();
   });
 
   // --- refreshItems ---
@@ -311,7 +289,6 @@ describe("BreadCrumbs", () => {
     const itemTitles = vm.items.map((i: any) => i.title);
     expect(itemTitles).toContain("Dataset:");
     expect(itemTitles).toContain("Collection:");
-    wrapper.destroy();
   });
 
   it("refreshItems builds owner item when folder has creatorId", async () => {
@@ -322,7 +299,6 @@ describe("BreadCrumbs", () => {
     await vm.refreshItems(true);
     const itemTitles = vm.items.map((i: any) => i.title);
     expect(itemTitles).toContain("Owner:");
-    wrapper.destroy();
   });
 
   it("refreshItems deduplicates when called with same params and not forced", async () => {
@@ -335,7 +311,6 @@ describe("BreadCrumbs", () => {
     await vm.refreshItems(false);
     // Should not have called getFolder again since params are the same
     expect(mockGetFolder.mock.calls.length).toBe(initialCallCount);
-    wrapper.destroy();
   });
 
   it("refreshItems forces refresh even when params are the same", async () => {
@@ -348,7 +323,6 @@ describe("BreadCrumbs", () => {
     await vm.refreshItems(true);
     // Should have called getFolder again since force=true
     expect(mockGetFolder.mock.calls.length).toBeGreaterThan(initialCallCount);
-    wrapper.destroy();
   });
 
   // --- addedDatasets ---
@@ -362,13 +336,12 @@ describe("BreadCrumbs", () => {
       ["ds1"],
       [{ id: "view1", datasetId: "ds1", configurationId: "cfg1" }],
     );
-    expect(vm.$router.push).toHaveBeenCalledWith(
+    expect(mockRouter.push).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "datasetview",
         params: { datasetViewId: "view1" },
       }),
     );
-    wrapper.destroy();
   });
 
   // --- datasetId computed ---
@@ -378,7 +351,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     const result = await vm.datasetId;
     expect(result).toBe("ds1");
-    wrapper.destroy();
   });
 
   it("datasetId returns null when no params or query", () => {
@@ -386,7 +358,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     // No datasetViewId either, so datasetView is null
     expect(vm.datasetId).toBeNull();
-    wrapper.destroy();
   });
 
   it("datasetId uses query.datasetId when no params", async () => {
@@ -394,7 +365,6 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     const result = await vm.datasetId;
     expect(result).toBe("ds-from-query");
-    wrapper.destroy();
   });
 
   // --- configurationId computed ---
@@ -404,13 +374,11 @@ describe("BreadCrumbs", () => {
     const vm = wrapper.vm as any;
     const result = await vm.configurationId;
     expect(result).toBe("cfg1");
-    wrapper.destroy();
   });
 
   it("configurationId returns null when no route params or query", () => {
     const wrapper = mountComponent({}, {});
     const vm = wrapper.vm as any;
     expect(vm.configurationId).toBeNull();
-    wrapper.destroy();
   });
 });

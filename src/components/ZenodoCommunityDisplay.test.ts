@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockGetCommunity = vi.fn();
 const mockGetCommunityRecords = vi.fn();
@@ -30,13 +29,9 @@ vi.mock("@/utils/strings", () => ({
 
 import ZenodoCommunityDisplay from "./ZenodoCommunityDisplay.vue";
 
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
-
 function mountComponent(props = {}) {
   return shallowMount(ZenodoCommunityDisplay, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       ...props,
     },
   });
@@ -62,7 +57,7 @@ describe("ZenodoCommunityDisplay", () => {
 
   it("formatSize returns correct human-readable strings", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     expect(vm.formatSize(500)).toBe("500 B");
     expect(vm.formatSize(1024)).toBe("1.00 KB");
@@ -72,7 +67,7 @@ describe("ZenodoCommunityDisplay", () => {
 
   it("getTotalSize sums file sizes", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     const files = [
       {
@@ -102,7 +97,7 @@ describe("ZenodoCommunityDisplay", () => {
 
   it("selectDataset emits dataset-selected", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     const dataset = { id: "rec-1", title: "Test" };
     vm.selectDataset(dataset);
@@ -113,11 +108,11 @@ describe("ZenodoCommunityDisplay", () => {
   it("mounted fetches community and records", async () => {
     const wrapper = mountComponent();
     // Wait for the async mounted() to complete
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
     // Flush all pending promises
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await Vue.nextTick();
+    await nextTick();
 
     expect(mockGetCommunity).toHaveBeenCalledWith("nimbusimagesampledatasets");
     expect(mockGetCommunityRecords).toHaveBeenCalledWith(
@@ -129,7 +124,7 @@ describe("ZenodoCommunityDisplay", () => {
 
   it("formatDate returns formatted date string", async () => {
     const wrapper = mountComponent();
-    await Vue.nextTick();
+    await nextTick();
     const vm = wrapper.vm as any;
     const result = vm.formatDate("2024-01-15T00:00:00Z");
     expect(typeof result).toBe("string");

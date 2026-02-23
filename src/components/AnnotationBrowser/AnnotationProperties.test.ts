@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { nextTick } from "vue";
+import { shallowMount, flushPromises } from "@vue/test-utils";
 
 const mockGetCollectionDatasetCount = vi.fn();
 const mockComputePropertyBatch = vi.fn();
@@ -54,22 +53,20 @@ import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
-
 function mountComponent() {
   return shallowMount(AnnotationProperties, {
-    vuetify: new Vuetify(),
-    stubs: {
-      AnalyzePanel: true,
-      VExpansionPanel: {
-        template: "<div><slot /></div>",
-      },
-      VExpansionPanelHeader: {
-        template: "<div><slot /></div>",
-      },
-      VExpansionPanelContent: {
-        template: "<div><slot /></div>",
+    global: {
+      stubs: {
+        AnalyzePanel: true,
+        VExpansionPanel: {
+          template: "<div><slot /></div>",
+        },
+        VExpansionPanelHeader: {
+          template: "<div><slot /></div>",
+        },
+        VExpansionPanelContent: {
+          template: "<div><slot /></div>",
+        },
       },
     },
   });
@@ -98,7 +95,6 @@ describe("AnnotationProperties", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.activeTabIndex).toBe(0);
-    wrapper.destroy();
   });
 
   it("activeTabIndex setter updates activeTabKey", () => {
@@ -106,7 +102,6 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     vm.activeTabIndex = 1;
     expect(vm.activeTabKey).toBe("filter");
-    wrapper.destroy();
   });
 
   it("activeTabIndex getter reflects activeTabKey", () => {
@@ -114,14 +109,12 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     vm.activeTabKey = "filter";
     expect(vm.activeTabIndex).toBe(1);
-    wrapper.destroy();
   });
 
   it("isLoggedIn reflects store.isLoggedIn", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.isLoggedIn).toBe(true);
-    wrapper.destroy();
   });
 
   it("filteredPaths returns all paths when propFilter is null", () => {
@@ -129,7 +122,6 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     vm.propFilter = null;
     expect(vm.filteredPaths).toHaveLength(3);
-    wrapper.destroy();
   });
 
   it("filteredPaths filters by propFilter text", () => {
@@ -139,7 +131,6 @@ describe("AnnotationProperties", () => {
     // getFullNameFromPath returns path.join('.'), so "prop1.subA" includes "subA"
     expect(vm.filteredPaths).toHaveLength(1);
     expect(vm.filteredPaths[0]).toEqual(["prop1", "subA"]);
-    wrapper.destroy();
   });
 
   it("filteredPaths is case insensitive", () => {
@@ -147,7 +138,6 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     vm.propFilter = "SUBA";
     expect(vm.filteredPaths).toHaveLength(1);
-    wrapper.destroy();
   });
 
   it("columns builds miller column structure", () => {
@@ -158,7 +148,6 @@ describe("AnnotationProperties", () => {
     // First column should have unique top-level segments: prop1, prop2
     expect(cols).toHaveLength(1);
     expect(cols[0]).toHaveLength(2); // prop1, prop2
-    wrapper.destroy();
   });
 
   it("columns expands when selectedPath is set", () => {
@@ -169,7 +158,6 @@ describe("AnnotationProperties", () => {
     expect(cols.length).toBeGreaterThanOrEqual(2);
     // Second column should have subA and subB
     expect(cols[1]).toHaveLength(2);
-    wrapper.destroy();
   });
 
   it("getPropertySettings returns true for displayed property in display tab", () => {
@@ -177,7 +165,6 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     vm.activeTabKey = "display";
     expect(vm.getPropertySettings(["prop1", "subA"])).toBe(true);
-    wrapper.destroy();
   });
 
   it("getPropertySettings returns false for non-displayed property in display tab", () => {
@@ -185,7 +172,6 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     vm.activeTabKey = "display";
     expect(vm.getPropertySettings(["prop2", "subC"])).toBe(false);
-    wrapper.destroy();
   });
 
   it("getPropertySettings returns true for filtered property in filter tab", () => {
@@ -193,7 +179,6 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     vm.activeTabKey = "filter";
     expect(vm.getPropertySettings(["prop2", "subC"])).toBe(true);
-    wrapper.destroy();
   });
 
   it("getPropertySettings returns false for non-filtered property in filter tab", () => {
@@ -201,7 +186,6 @@ describe("AnnotationProperties", () => {
     const vm = wrapper.vm as any;
     vm.activeTabKey = "filter";
     expect(vm.getPropertySettings(["prop1", "subA"])).toBe(false);
-    wrapper.destroy();
   });
 
   it("togglePropertySettings calls togglePropertyPathVisibility in display tab", () => {
@@ -213,7 +197,6 @@ describe("AnnotationProperties", () => {
       "prop1",
       "subA",
     ]);
-    wrapper.destroy();
   });
 
   it("togglePropertySettings calls togglePropertyPathFiltering in filter tab", () => {
@@ -225,75 +208,61 @@ describe("AnnotationProperties", () => {
       "prop2",
       "subC",
     ]);
-    wrapper.destroy();
   });
 
   it("canApplyToAllDatasets is true when conditions met", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     // Wait for onMounted fetchCollectionDatasetCount
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(vm.collectionDatasetCount).toBe(3);
     expect(vm.canApplyToAllDatasets).toBe(true);
-    wrapper.destroy();
   });
 
   it("canApplyToAllDatasets is false when count is 1", async () => {
     mockGetCollectionDatasetCount.mockResolvedValue(1);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(vm.canApplyToAllDatasets).toBe(false);
-    wrapper.destroy();
   });
 
   it("canApplyToAllDatasets is false when count exceeds limit", async () => {
     mockGetCollectionDatasetCount.mockResolvedValue(11);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(vm.canApplyToAllDatasets).toBe(false);
-    wrapper.destroy();
   });
 
   it("canApplyToAllDatasets is false when no configurationId", async () => {
     (store as any).selectedConfigurationId = null;
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(vm.canApplyToAllDatasets).toBe(false);
     (store as any).selectedConfigurationId = "cfg1";
-    wrapper.destroy();
   });
 
   it("batchDisabledReason returns message when count exceeds limit", async () => {
     mockGetCollectionDatasetCount.mockResolvedValue(11);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(vm.batchDisabledReason).toBe("Collection has more than 10 datasets");
-    wrapper.destroy();
   });
 
   it("batchDisabledReason returns null when conditions met", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     expect(vm.batchDisabledReason).toBeNull();
-    wrapper.destroy();
   });
 
   it("batchProgressPercent returns 0 when no batchProgress", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.batchProgressPercent).toBe(0);
-    wrapper.destroy();
   });
 
   it("batchProgressPercent computes correctly", () => {
@@ -307,7 +276,6 @@ describe("AnnotationProperties", () => {
       currentDatasetName: "DS5",
     };
     expect(vm.batchProgressPercent).toBe(50);
-    wrapper.destroy();
   });
 
   it("cancelBatch calls batchCancelFunction when set", () => {
@@ -317,7 +285,6 @@ describe("AnnotationProperties", () => {
     vm.batchCancelFunction = mockCancel;
     vm.cancelBatch();
     expect(mockCancel).toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("cancelBatch does nothing when batchCancelFunction is null", () => {
@@ -326,7 +293,6 @@ describe("AnnotationProperties", () => {
     vm.batchCancelFunction = null;
     // Should not throw
     vm.cancelBatch();
-    wrapper.destroy();
   });
 
   it("fetchCollectionDatasetCount sets collectionDatasetCount", async () => {
@@ -336,7 +302,6 @@ describe("AnnotationProperties", () => {
     await vm.fetchCollectionDatasetCount();
     expect(vm.collectionDatasetCount).toBe(5);
     expect(vm.loadingDatasetCount).toBe(false);
-    wrapper.destroy();
   });
 
   it("fetchCollectionDatasetCount handles error", async () => {
@@ -346,7 +311,6 @@ describe("AnnotationProperties", () => {
     await vm.fetchCollectionDatasetCount();
     expect(vm.collectionDatasetCount).toBe(0);
     expect(vm.loadingDatasetCount).toBe(false);
-    wrapper.destroy();
   });
 
   it("onDialogClose sets showAnalyzeDialog false and emits expand", () => {
@@ -356,7 +320,6 @@ describe("AnnotationProperties", () => {
     vm.onDialogClose(false);
     expect(vm.showAnalyzeDialog).toBe(false);
     expect(wrapper.emitted("expand")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("onDialogClose does nothing when value is true", () => {
@@ -365,6 +328,5 @@ describe("AnnotationProperties", () => {
     vm.showAnalyzeDialog = true;
     vm.onDialogClose(true);
     expect(vm.showAnalyzeDialog).toBe(true);
-    wrapper.destroy();
   });
 });

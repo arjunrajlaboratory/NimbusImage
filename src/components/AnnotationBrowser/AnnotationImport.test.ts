@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -31,12 +29,8 @@ import AnnotationImport from "./AnnotationImport.vue";
 import store from "@/store";
 import { importAnnotationsFromData } from "@/utils/annotationImport";
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-
 function mountComponent() {
   return shallowMount(AnnotationImport, {
-    vuetify: new Vuetify(),
   });
 }
 

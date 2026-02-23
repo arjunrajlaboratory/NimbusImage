@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockGetFolder = vi.fn();
 
@@ -34,20 +32,22 @@ vi.mock("@/components/GirderLocationChooser.vue", () => ({
   },
 }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
 import store from "@/store";
 import NewConfiguration from "./NewConfiguration.vue";
 
-Vue.use(Vuetify);
+const mockRouter = { push: vi.fn() };
 
 function mountComponent() {
   return mount(NewConfiguration, {
-    vuetify: new Vuetify(),
-    mocks: {
-      $route: { params: { datasetId: "ds-1" } },
-      $router: { push: vi.fn() },
-    },
-    stubs: {
-      GirderLocationChooser: true,
+    global: {
+      provide: {
+        ...routeProvider({ params: { datasetId: "ds-1" } }),
+        ...routerProvider(mockRouter),
+      },
+      stubs: {
+        GirderLocationChooser: true,
+      },
     },
   });
 }
@@ -200,7 +200,7 @@ describe("NewConfiguration", () => {
       configurationId: "config-new",
       datasetId: "ds-1",
     });
-    expect(wrapper.vm.$router.push).toHaveBeenCalledWith({
+    expect(mockRouter.push).toHaveBeenCalledWith({
       name: "configuration",
       params: {
         configurationId: "config-new",

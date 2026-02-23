@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -24,19 +22,17 @@ vi.mock("vuedraggable", () => ({
 import store from "@/store";
 import Toolset from "./Toolset.vue";
 
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
-
 function mountComponent() {
   return mount(Toolset, {
-    vuetify: new Vuetify(),
-    stubs: {
-      ToolCreation: true,
-      ToolTypeSelection: true,
-      ToolItem: true,
-      AnnotationWorkerMenu: true,
-      SamToolMenu: true,
-      CircleToDotMenu: true,
+    global: {
+      stubs: {
+        ToolCreation: true,
+        ToolTypeSelection: true,
+        ToolItem: true,
+        AnnotationWorkerMenu: true,
+        SamToolMenu: true,
+        CircleToDotMenu: true,
+      },
     },
   });
 }

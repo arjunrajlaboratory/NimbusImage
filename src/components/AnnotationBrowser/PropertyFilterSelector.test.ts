@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store/filters", () => ({
   default: {
@@ -25,11 +23,8 @@ import PropertyFilterSelector from "./PropertyFilterSelector.vue";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return mount(PropertyFilterSelector, {
-    vuetify: new Vuetify(),
   });
 }
 

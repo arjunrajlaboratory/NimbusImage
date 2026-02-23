@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const { d3Chain } = vi.hoisted(() => {
   const d3Chain: any = {};
@@ -102,17 +100,16 @@ import PropertyFilterHistogram from "./PropertyFilterHistogram.vue";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 
-Vue.use(Vuetify);
-
 function mountComponent(propsOverrides: any = {}) {
   return shallowMount(PropertyFilterHistogram, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       propertyPath: ["propA", "sub1"],
       ...propsOverrides,
     },
-    stubs: {
-      TagFilterEditor: true,
+    global: {
+      stubs: {
+        TagFilterEditor: true,
+      },
     },
   });
 }
@@ -143,14 +140,12 @@ describe("PropertyFilterHistogram", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.propertyFullName).toBe("Property A > Sub1");
-    wrapper.destroy();
   });
 
   it("propertyFullName returns null for unknown paths", () => {
     const wrapper = mountComponent({ propertyPath: ["unknown", "path"] });
     const vm = wrapper.vm as any;
     expect(vm.propertyFullName).toBeNull();
-    wrapper.destroy();
   });
 
   it("values extracts numeric values from propertyStore.propertyValues", () => {
@@ -158,7 +153,6 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     expect(vm.values).toEqual(expect.arrayContaining([10, 20, 30]));
     expect(vm.values).toHaveLength(3);
-    wrapper.destroy();
   });
 
   it("values returns empty array when no matching property values", () => {
@@ -166,21 +160,18 @@ describe("PropertyFilterHistogram", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.values).toEqual([]);
-    wrapper.destroy();
   });
 
   it("defaultMin returns minimum of values", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.defaultMin).toBe(10);
-    wrapper.destroy();
   });
 
   it("defaultMax returns maximum of values", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.defaultMax).toBe(30);
-    wrapper.destroy();
   });
 
   it("minValue getter returns defaultMin when defaultMinMax is true", () => {
@@ -188,14 +179,12 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     expect(vm.defaultMinMax).toBe(true);
     expect(vm.minValue).toBe(vm.defaultMin);
-    wrapper.destroy();
   });
 
   it("maxValue getter returns defaultMax when defaultMinMax is true", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.maxValue).toBe(vm.defaultMax);
-    wrapper.destroy();
   });
 
   it("minValue setter rejects values greater than maxValue", () => {
@@ -205,7 +194,6 @@ describe("PropertyFilterHistogram", () => {
     vm.minValue = 999;
     // Should not have called updatePropertyFilter for invalid value
     expect(vm.minValue).toBe(initialMin);
-    wrapper.destroy();
   });
 
   it("minValue setter rejects values less than defaultMin", () => {
@@ -216,7 +204,6 @@ describe("PropertyFilterHistogram", () => {
     vm.minValue = -999;
     // Should be rejected (value < defaultMin)
     expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("minValue setter calls filterStore.updatePropertyFilter for valid values", () => {
@@ -224,7 +211,6 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     vm.minValue = 15;
     expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("maxValue setter calls filterStore.updatePropertyFilter for valid values", () => {
@@ -232,7 +218,6 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     vm.maxValue = 25;
     expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("maxValue setter rejects values less than minValue", () => {
@@ -246,7 +231,6 @@ describe("PropertyFilterHistogram", () => {
     (filterStore.updatePropertyFilter as any).mockClear();
     vm.maxValue = -999;
     expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("histToPixel returns a scale function", () => {
@@ -255,7 +239,6 @@ describe("PropertyFilterHistogram", () => {
     const scale = vm.histToPixel;
     expect(typeof scale).toBe("function");
     expect(scale.domain()).toEqual([vm.defaultMin, vm.defaultMax]);
-    wrapper.destroy();
   });
 
   it("toValue returns pixel string for normal value", () => {
@@ -263,7 +246,6 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     const result = vm.toValue(20);
     expect(result).toMatch(/^\d+(\.\d+)?px$/);
-    wrapper.destroy();
   });
 
   it("toValue returns inverted pixel string for max", () => {
@@ -271,7 +253,6 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     const result = vm.toValue(20, true);
     expect(result).toMatch(/^\d+(\.\d+)?px$/);
-    wrapper.destroy();
   });
 
   it("propertyFilter creates a new filter when none exists", () => {
@@ -282,7 +263,6 @@ describe("PropertyFilterHistogram", () => {
     expect(filter).toBeTruthy();
     expect(filter.propertyPath).toEqual(["propA", "sub1"]);
     expect(filter.enabled).toBe(true);
-    wrapper.destroy();
   });
 
   it("propertyFilter returns existing filter when one matches", () => {
@@ -298,7 +278,6 @@ describe("PropertyFilterHistogram", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.propertyFilter.id).toBe("existing-id");
-    wrapper.destroy();
   });
 
   it("hist returns histogram from filterStore", () => {
@@ -310,7 +289,6 @@ describe("PropertyFilterHistogram", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hist).toEqual(histData);
-    wrapper.destroy();
   });
 
   it("area returns empty string when hist is empty", () => {
@@ -318,7 +296,6 @@ describe("PropertyFilterHistogram", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.area).toBe("");
-    wrapper.destroy();
   });
 
   it("area returns path string when hist has data", () => {
@@ -332,7 +309,6 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     expect(vm.area).toBeTruthy();
     expect(typeof vm.area).toBe("string");
-    wrapper.destroy();
   });
 
   it("area with CDF mode accumulates densities", () => {
@@ -347,7 +323,6 @@ describe("PropertyFilterHistogram", () => {
     vm.useCDF = true;
     expect(vm.area).toBeTruthy();
     expect(typeof vm.area).toBe("string");
-    wrapper.destroy();
   });
 
   it("area with log mode uses symlog scale", () => {
@@ -362,7 +337,6 @@ describe("PropertyFilterHistogram", () => {
     vm.useLog = true;
     expect(vm.area).toBeTruthy();
     expect(typeof vm.area).toBe("string");
-    wrapper.destroy();
   });
 
   it("toggleFilterEnabled calls filterStore.updatePropertyFilter", () => {
@@ -373,7 +347,6 @@ describe("PropertyFilterHistogram", () => {
     expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
     const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
     expect(call.enabled).toBe(false);
-    wrapper.destroy();
   });
 
   it("removeFilter calls filterStore.togglePropertyPathFiltering", () => {
@@ -384,7 +357,6 @@ describe("PropertyFilterHistogram", () => {
       "propA",
       "sub1",
     ]);
-    wrapper.destroy();
   });
 
   it("updateViewMode with range mode calls updatePropertyFilter", () => {
@@ -396,7 +368,6 @@ describe("PropertyFilterHistogram", () => {
     const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
     expect(call.valuesOrRange).toBe("range");
     expect(call.values).toBeUndefined();
-    wrapper.destroy();
   });
 
   it("updateViewMode with values mode retains existing values", () => {
@@ -418,7 +389,6 @@ describe("PropertyFilterHistogram", () => {
     const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
     expect(call.valuesOrRange).toBe("values");
     expect(call.values).toEqual([15, 25]);
-    wrapper.destroy();
   });
 
   it("updateValuesFilter parses valuesInput and updates filter", () => {
@@ -430,7 +400,6 @@ describe("PropertyFilterHistogram", () => {
     expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
     const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
     expect(call.values).toEqual([1, 2, 3]);
-    wrapper.destroy();
   });
 
   it("updateValuesFilter does not update when input is empty", () => {
@@ -440,7 +409,6 @@ describe("PropertyFilterHistogram", () => {
     vm.valuesInput = "";
     vm.updateValuesFilter();
     expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("updateValuesFilter handles tab/newline/semicolon separators", () => {
@@ -452,13 +420,11 @@ describe("PropertyFilterHistogram", () => {
     expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
     const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
     expect(call.values).toEqual([1, 2, 3, 4, 5]);
-    wrapper.destroy();
   });
 
   it("onMounted calls filterStore.updateHistograms", () => {
     const wrapper = mountComponent();
     expect(filterStore.updateHistograms).toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("onBeforeUnmount disables filter if it was enabled", () => {
@@ -473,7 +439,8 @@ describe("PropertyFilterHistogram", () => {
     (filterStore as any).propertyFilters = [existingFilter];
     const wrapper = mountComponent();
     (filterStore.updatePropertyFilter as any).mockClear();
-    wrapper.destroy();
+    // Trigger onBeforeUnmount
+    wrapper.unmount();
     // Should have been called to disable the filter
     expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
     const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];

@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store/filters", () => ({
   default: {
@@ -24,11 +22,8 @@ vi.mock("@/store/properties", () => ({
 import AnnotationBrowser from "./AnnotationBrowser.vue";
 import filterStore from "@/store/filters";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return shallowMount(AnnotationBrowser, {
-    vuetify: new Vuetify(),
   });
 }
 

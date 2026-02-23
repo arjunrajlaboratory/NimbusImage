@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { nextTick } from "vue";
+import { shallowMount, flushPromises } from "@vue/test-utils";
 
 const mockGetUserPrivateFolder = vi.fn();
 const mockFindDatasetViews = vi.fn();
@@ -91,8 +90,6 @@ vi.mock("@/views/dataset/NewDataset.vue", () => ({
 
 import AddDatasetToCollection from "./AddDatasetToCollection.vue";
 
-Vue.use(Vuetify);
-
 const sampleCollection = {
   id: "c1",
   name: "Test Collection",
@@ -108,12 +105,11 @@ const sampleCollection = {
   snapshots: [],
   propertyIds: [],
   scales: {},
-};
+} as any;
 
 function mountComponent(props = {}) {
   return shallowMount(AddDatasetToCollection, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       collection: sampleCollection,
       ...props,
     },
@@ -136,7 +132,6 @@ describe("AddDatasetToCollection", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.addDatasetOptionType).toBe("upload");
-    wrapper.destroy();
   });
 
   it("addDatasetOptionType setter switches to add", () => {
@@ -146,7 +141,6 @@ describe("AddDatasetToCollection", () => {
     expect(vm.option.type).toBe("add");
     expect(vm.option.datasets).toEqual([]);
     expect(vm.option.warnings).toEqual([]);
-    wrapper.destroy();
   });
 
   it("addDatasetOptionType setter switches to upload", () => {
@@ -158,7 +152,6 @@ describe("AddDatasetToCollection", () => {
     expect(vm.option.type).toBe("upload");
     expect(vm.option.editVariables).toBe(false);
     expect(vm.option.configuring).toBe(false);
-    wrapper.destroy();
   });
 
   it("canAddDatasetToCollection returns false when no datasets selected (add mode)", () => {
@@ -166,7 +159,6 @@ describe("AddDatasetToCollection", () => {
     const vm = wrapper.vm as any;
     vm.addDatasetOptionType = "add";
     expect(vm.canAddDatasetToCollection).toBe(false);
-    wrapper.destroy();
   });
 
   it("canAddDatasetToCollection returns true when datasets are selected (add mode)", () => {
@@ -175,7 +167,6 @@ describe("AddDatasetToCollection", () => {
     vm.addDatasetOptionType = "add";
     vm.option.datasets = [{ id: "ds1", name: "Dataset 1" }];
     expect(vm.canAddDatasetToCollection).toBe(true);
-    wrapper.destroy();
   });
 
   it("canAddDatasetToCollection returns false in upload mode", () => {
@@ -183,31 +174,26 @@ describe("AddDatasetToCollection", () => {
     const vm = wrapper.vm as any;
     expect(vm.option.type).toBe("upload");
     expect(vm.canAddDatasetToCollection).toBe(false);
-    wrapper.destroy();
   });
 
   it("initializes upload location on mount", async () => {
     mockGetUserPrivateFolder.mockResolvedValue({ _id: "private-folder" });
     const wrapper = mountComponent();
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     const vm = wrapper.vm as any;
     expect(mockGetUserPrivateFolder).toHaveBeenCalled();
     expect(vm.uploadLocation).toEqual({ _id: "private-folder" });
-    wrapper.destroy();
   });
 
   it("falls back to girderUser if getUserPrivateFolder fails", async () => {
     mockGetUserPrivateFolder.mockRejectedValue(new Error("fail"));
     const wrapper = mountComponent();
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await flushPromises();
     const vm = wrapper.vm as any;
     expect(vm.uploadLocation).toEqual({
       _id: "user1",
       _modelType: "user",
     });
-    wrapper.destroy();
   });
 
   it("resets option when collection prop changes", async () => {
@@ -219,10 +205,9 @@ describe("AddDatasetToCollection", () => {
     await wrapper.setProps({
       collection: { ...sampleCollection, id: "c2", name: "Other" },
     });
-    await Vue.nextTick();
+    await nextTick();
 
     expect(vm.option.type).toBe("upload");
-    wrapper.destroy();
   });
 
   it("selectAddDatasetFolder clears datasets when empty locations", async () => {
@@ -235,7 +220,6 @@ describe("AddDatasetToCollection", () => {
 
     expect(vm.option.datasets).toEqual([]);
     expect(vm.option.warnings).toEqual([]);
-    wrapper.destroy();
   });
 
   it("selectAddDatasetFolder processes selected dataset folders", async () => {
@@ -251,7 +235,6 @@ describe("AddDatasetToCollection", () => {
     expect(mockGetDataset).toHaveBeenCalledWith({ id: "ds1" });
     expect(vm.option.datasets).toHaveLength(1);
     expect(vm.option.datasets[0].id).toBe("ds1");
-    wrapper.destroy();
   });
 
   it("selectAddDatasetFolder warns about non-dataset items", async () => {
@@ -265,7 +248,6 @@ describe("AddDatasetToCollection", () => {
 
     expect(vm.option.datasets).toEqual([]);
     expect(vm.option.warnings).toContain("1 selected items are not datasests");
-    wrapper.destroy();
   });
 
   it("selectAddDatasetFolder warns about incompatible datasets", async () => {
@@ -282,7 +264,6 @@ describe("AddDatasetToCollection", () => {
     expect(vm.option.warnings).toContain(
       "1 selected items are not compatible with the current configuration",
     );
-    wrapper.destroy();
   });
 
   it("selectAddDatasetFolder excludes already-added datasets", async () => {
@@ -296,7 +277,6 @@ describe("AddDatasetToCollection", () => {
     await vm.selectAddDatasetFolder([{ _id: "ds1", _modelType: "folder" }]);
 
     expect(vm.option.datasets).toEqual([]);
-    wrapper.destroy();
   });
 
   it("addDatasetToCollection creates views and emits addedDatasets", async () => {
@@ -325,7 +305,6 @@ describe("AddDatasetToCollection", () => {
     expect(wrapper.emitted("addedDatasets")![0][0]).toEqual(["ds1", "ds2"]);
     // Option should reset to upload after adding
     expect(vm.option.type).toBe("upload");
-    wrapper.destroy();
   });
 
   it("addDatasetToCollection in upload mode uses uploadedDatasetId", async () => {
@@ -353,7 +332,6 @@ describe("AddDatasetToCollection", () => {
     // Option should reset to upload defaults after adding
     expect(vm.option.type).toBe("upload");
     expect(vm.option.uploadedDatasetId).toBeNull();
-    wrapper.destroy();
   });
 
   it("selectAddDatasetFolder returns early when option type is not add", async () => {
@@ -365,7 +343,6 @@ describe("AddDatasetToCollection", () => {
     await vm.selectAddDatasetFolder([{ _id: "ds1", _modelType: "folder" }]);
 
     expect(mockIsDatasetFolder).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("addDatasetConfigurationDone returns early when type is not upload", async () => {
@@ -376,7 +353,6 @@ describe("AddDatasetToCollection", () => {
     await vm.addDatasetConfigurationDone("json1");
 
     expect(mockSetSelectedDataset).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("addDatasetConfigurationDone emits error when no configCompat", async () => {
@@ -402,7 +378,6 @@ describe("AddDatasetToCollection", () => {
       "DatasetConfiguration missing",
     );
     expect(wrapper.emitted("done")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("addDatasetConfigurationDone emits error when dataset not found", async () => {
@@ -423,7 +398,6 @@ describe("AddDatasetToCollection", () => {
     expect(wrapper.emitted("error")).toBeTruthy();
     expect(wrapper.emitted("error")![0][0]).toContain("Dataset missing");
     expect(wrapper.emitted("done")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("addDatasetConfigurationDone emits warning when dataset incompatible", async () => {
@@ -447,7 +421,6 @@ describe("AddDatasetToCollection", () => {
       "Incompatible dataset uploaded",
     );
     expect(wrapper.emitted("done")).toBeTruthy();
-    wrapper.destroy();
   });
 
   it("addDatasetConfigurationDone sets editVariables when jsonId is null", async () => {
@@ -465,7 +438,6 @@ describe("AddDatasetToCollection", () => {
 
     expect(vm.option.editVariables).toBe(true);
     expect(vm.option.configuring).toBe(false);
-    wrapper.destroy();
   });
 
   it("addDatasetToCollectionUploaded returns early when type is not upload", async () => {
@@ -477,6 +449,5 @@ describe("AddDatasetToCollection", () => {
 
     // Should not modify the option since it's in "add" mode
     expect(vm.option.type).toBe("add");
-    wrapper.destroy();
   });
 });

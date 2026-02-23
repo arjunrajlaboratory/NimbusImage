@@ -1,10 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import RecentProjects from "./RecentProjects.vue";
-
-Vue.use(Vuetify);
 
 const sampleProjects = [
   {
@@ -39,9 +35,8 @@ const sampleProjects = [
 
 function mountComponent(props = {}) {
   return mount(RecentProjects, {
-    vuetify: new Vuetify(),
-    propsData: {
-      projects: sampleProjects,
+    props: {
+      projects: sampleProjects as any,
       loading: false,
       getUserDisplayName: vi.fn((id: string) => `User ${id}`),
       ...props,
@@ -77,7 +72,7 @@ describe("RecentProjects", () => {
   it("emits project-clicked when a project is clicked", async () => {
     const wrapper = mountComponent();
     const listItems = wrapper.findAll(".v-list-item");
-    await listItems.at(0).trigger("click");
+    await listItems.at(0)!.trigger("click");
     expect(wrapper.emitted("project-clicked")).toBeTruthy();
     expect(wrapper.emitted("project-clicked")![0][0]).toEqual(
       sampleProjects[0],

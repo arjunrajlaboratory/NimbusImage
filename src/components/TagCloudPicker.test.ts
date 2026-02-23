@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -26,21 +25,20 @@ vi.mock("@/store/annotation", () => ({
 import TagCloudPicker from "./TagCloudPicker.vue";
 import annotationStore from "@/store/annotation";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(TagCloudPicker, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: ["t1"],
       allSelected: false,
       ...props,
     },
-    stubs: {
-      "select-all-none-chips": {
-        template: '<div class="stub-chips"><slot></slot></div>',
+    global: {
+      stubs: {
+        "select-all-none-chips": {
+          template: '<div class="stub-chips"><slot></slot></div>',
+        },
+        "color-picker-menu": { template: "<div></div>" },
       },
-      "color-picker-menu": { template: "<div></div>" },
     },
   });
 }
@@ -92,7 +90,7 @@ describe("TagCloudPicker", () => {
   it("emits update:allSelected when allSelectedInternal changes", async () => {
     const wrapper = mountComponent();
     wrapper.vm.allSelectedInternal = true;
-    await Vue.nextTick();
+    await nextTick();
     const emitted = wrapper.emitted("update:allSelected");
     expect(emitted).toBeTruthy();
     expect(emitted![emitted!.length - 1][0]).toBe(true);

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockFetchProjects = vi.fn();
 const mockCreateProject = vi.fn();
@@ -55,17 +54,14 @@ vi.mock("@/store/projects", () => ({
 
 import AddToProjectDialog from "./AddToProjectDialog.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   const app = document.createElement("div");
   app.setAttribute("data-app", "true");
   document.body.appendChild(app);
 
   return shallowMount(AddToProjectDialog, {
-    vuetify: new Vuetify(),
     attachTo: app,
-    propsData: {
+    props: {
       modelValue: false,
       datasetId: "ds-new",
       datasetName: "New Dataset",
@@ -82,13 +78,11 @@ describe("AddToProjectDialog", () => {
   it("dialogModel get returns prop value", () => {
     const wrapper = mountComponent({ modelValue: true });
     expect((wrapper.vm as any).dialogModel).toBe(true);
-    wrapper.destroy();
   });
 
   it("dialogModel get returns false when value is false", () => {
     const wrapper = mountComponent({ modelValue: false });
     expect((wrapper.vm as any).dialogModel).toBe(false);
-    wrapper.destroy();
   });
 
   it("dialogModel set emits input", () => {
@@ -96,7 +90,6 @@ describe("AddToProjectDialog", () => {
     (wrapper.vm as any).dialogModel = true;
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0][0]).toBe(true);
-    wrapper.destroy();
   });
 
   it("canAdd returns false when no project selected on tab 0", () => {
@@ -105,7 +98,6 @@ describe("AddToProjectDialog", () => {
     vm.tab = 0;
     vm.selectedProjectIndex = null;
     expect(vm.canAdd).toBe(false);
-    wrapper.destroy();
   });
 
   it("canAdd returns true when valid project selected on tab 0", () => {
@@ -115,7 +107,6 @@ describe("AddToProjectDialog", () => {
     // Select Project Two (index 1) which does not have ds-new
     vm.selectedProjectIndex = 1;
     expect(vm.canAdd).toBe(true);
-    wrapper.destroy();
   });
 
   it("canAdd returns false when selected project already has the dataset", () => {
@@ -125,7 +116,6 @@ describe("AddToProjectDialog", () => {
     // Select Project One (index 0) which has ds1
     vm.selectedProjectIndex = 0;
     expect(vm.canAdd).toBe(false);
-    wrapper.destroy();
   });
 
   it("canAdd returns false when empty name on tab 1", () => {
@@ -134,7 +124,6 @@ describe("AddToProjectDialog", () => {
     vm.tab = 1;
     vm.newProjectName = "";
     expect(vm.canAdd).toBe(false);
-    wrapper.destroy();
   });
 
   it("canAdd returns false when whitespace-only name on tab 1", () => {
@@ -143,7 +132,6 @@ describe("AddToProjectDialog", () => {
     vm.tab = 1;
     vm.newProjectName = "   ";
     expect(vm.canAdd).toBe(false);
-    wrapper.destroy();
   });
 
   it("canAdd returns true when name entered on tab 1", () => {
@@ -152,14 +140,12 @@ describe("AddToProjectDialog", () => {
     vm.tab = 1;
     vm.newProjectName = "My New Project";
     expect(vm.canAdd).toBe(true);
-    wrapper.destroy();
   });
 
   it("availableProjects returns projects from store", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.availableProjects).toEqual(mockProjects);
-    wrapper.destroy();
   });
 
   it("selectedProject returns null when no index selected", () => {
@@ -167,7 +153,6 @@ describe("AddToProjectDialog", () => {
     const vm = wrapper.vm as any;
     vm.selectedProjectIndex = null;
     expect(vm.selectedProject).toBeNull();
-    wrapper.destroy();
   });
 
   it("selectedProject returns correct project by index", () => {
@@ -175,21 +160,18 @@ describe("AddToProjectDialog", () => {
     const vm = wrapper.vm as any;
     vm.selectedProjectIndex = 1;
     expect(vm.selectedProject).toEqual(mockProjects[1]);
-    wrapper.destroy();
   });
 
   it("isDatasetInProject returns true when dataset is in project", () => {
     const wrapper = mountComponent({ datasetId: "ds1" });
     const vm = wrapper.vm as any;
     expect(vm.isDatasetInProject(mockProjects[0])).toBe(true);
-    wrapper.destroy();
   });
 
   it("isDatasetInProject returns false when dataset is not in project", () => {
     const wrapper = mountComponent({ datasetId: "ds-new" });
     const vm = wrapper.vm as any;
     expect(vm.isDatasetInProject(mockProjects[0])).toBe(false);
-    wrapper.destroy();
   });
 
   it("addToProject (tab 0) calls addDatasetToProject with selected project", async () => {
@@ -207,7 +189,6 @@ describe("AddToProjectDialog", () => {
     });
     expect(wrapper.emitted("added")).toBeTruthy();
     expect(wrapper.emitted("added")![0][0]).toBe("proj2");
-    wrapper.destroy();
   });
 
   it("addToProject (tab 1) calls createProject then addDatasetToProject", async () => {
@@ -232,7 +213,6 @@ describe("AddToProjectDialog", () => {
     });
     expect(wrapper.emitted("added")).toBeTruthy();
     expect(wrapper.emitted("added")![0][0]).toBe("proj-new");
-    wrapper.destroy();
   });
 
   it("addToProject (tab 1) returns early if createProject returns null", async () => {
@@ -247,7 +227,6 @@ describe("AddToProjectDialog", () => {
     expect(mockCreateProject).toHaveBeenCalled();
     expect(mockAddDatasetToProject).not.toHaveBeenCalled();
     expect(wrapper.emitted("added")).toBeFalsy();
-    wrapper.destroy();
   });
 
   it("addToProject does nothing when canAdd is false", async () => {
@@ -260,7 +239,6 @@ describe("AddToProjectDialog", () => {
 
     expect(mockAddDatasetToProject).not.toHaveBeenCalled();
     expect(wrapper.emitted("added")).toBeFalsy();
-    wrapper.destroy();
   });
 
   it("reset clears all fields", () => {
@@ -277,7 +255,6 @@ describe("AddToProjectDialog", () => {
     expect(vm.selectedProjectIndex).toBeNull();
     expect(vm.newProjectName).toBe("");
     expect(vm.newProjectDescription).toBe("");
-    wrapper.destroy();
   });
 
   it("cancel closes dialog", () => {
@@ -286,7 +263,6 @@ describe("AddToProjectDialog", () => {
     vm.cancel();
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0][0]).toBe(false);
-    wrapper.destroy();
   });
 
   it("watch on value loads projects and resets when opened", async () => {
@@ -298,11 +274,10 @@ describe("AddToProjectDialog", () => {
 
     await wrapper.setProps({ modelValue: true });
     // Allow async operations to settle
-    await Vue.nextTick();
+    await nextTick();
 
     expect(mockFetchProjects).toHaveBeenCalled();
     expect(vm.tab).toBe(0);
     expect(vm.newProjectName).toBe("");
-    wrapper.destroy();
   });
 });

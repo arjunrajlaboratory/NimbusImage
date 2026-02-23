@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -14,12 +12,9 @@ vi.mock("@/store", () => ({
 
 import LayerSelect from "./LayerSelect.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(LayerSelect, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: "l1",
       ...props,
     },
@@ -31,7 +26,7 @@ describe("LayerSelect", () => {
     const wrapper = mountComponent();
     const items = wrapper.vm.layerItems;
     expect(items).toEqual([
-      { label: "Layer 1", modelValue: "l1" },
+      { label: "Layer 1", value: "l1" },
       { label: "Layer 2", value: "l2" },
     ]);
   });

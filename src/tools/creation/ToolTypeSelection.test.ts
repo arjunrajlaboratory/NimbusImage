@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -69,16 +67,12 @@ vi.mock("@/tools/creation/templates/AnnotationConfiguration.vue", () => ({
 
 import ToolTypeSelection from "./ToolTypeSelection.vue";
 
-Vue.use(Vuetify);
-Vue.directive("tour-trigger", {});
-
 // Mock global fetch
 const mockFetch = vi.fn().mockResolvedValue({ ok: false });
 vi.stubGlobal("fetch", mockFetch);
 
 function mountComponent() {
   return mount(ToolTypeSelection, {
-    vuetify: new Vuetify(),
   });
 }
 
@@ -144,7 +138,7 @@ describe("ToolTypeSelection", () => {
     vm.selectItem(item);
 
     expect(vm.computedTemplate).not.toBeNull();
-    expect(vm.selectedItem).toBe(item);
+    expect(vm.selectedItem).toStrictEqual(item);
   });
 
   it("reset clears state", () => {

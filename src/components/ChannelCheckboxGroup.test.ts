@@ -1,7 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { describe, it, expect, vi } from "vitest";
+import { shallowMount } from "@vue/test-utils";
 import ChannelCheckboxGroup from "./ChannelCheckboxGroup.vue";
 
 vi.mock("@/store", () => ({
@@ -16,14 +14,19 @@ vi.mock("@/store", () => ({
   },
 }));
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
-  return mount(ChannelCheckboxGroup, {
-    vuetify: new Vuetify(),
-    propsData: {
+  return shallowMount(ChannelCheckboxGroup, {
+    props: {
       modelValue: {},
       ...props,
+    },
+    global: {
+      stubs: {
+        VContainer: { template: "<div><slot /></div>" },
+        VRow: { template: "<div><slot /></div>" },
+        VCol: { template: "<div><slot /></div>" },
+        VListSubheader: { template: "<div><slot /></div>" },
+      },
     },
   });
 }
@@ -31,25 +34,28 @@ function mountComponent(props = {}) {
 describe("ChannelCheckboxGroup", () => {
   it("renders channel items as checkboxes", () => {
     const wrapper = mountComponent();
-    const checkboxes = wrapper.findAll(".v-input--checkbox");
+    const checkboxes = wrapper.findAll("v-checkbox-stub");
     expect(checkboxes.length).toBe(3);
   });
 
   it("displays channel names", () => {
     const wrapper = mountComponent();
-    expect(wrapper.text()).toContain("DAPI");
-    expect(wrapper.text()).toContain("GFP");
-    expect(wrapper.text()).toContain("Channel 2");
+    // With shallowMount, v-checkbox is stubbed; check attributes for labels
+    const html = wrapper.html();
+    expect(html).toContain("DAPI");
+    expect(html).toContain("GFP");
+    expect(html).toContain("Channel 2");
   });
 
   it("renders label when provided", () => {
     const wrapper = mountComponent({ label: "Select channels" });
-    expect(wrapper.text()).toContain("Select channels");
+    expect(wrapper.html()).toContain("Select channels");
   });
 
   it("does not render label when empty", () => {
     const wrapper = mountComponent({ label: "" });
-    expect(wrapper.find(".v-subheader").exists()).toBe(false);
+    // v-list-subheader has v-if="label" which is falsy for empty string
+    expect(wrapper.find("v-list-subheader-stub").exists()).toBe(false);
   });
 
   it("initializes missing channels on created", () => {

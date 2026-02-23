@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store/properties", () => ({
   default: {
@@ -25,8 +23,6 @@ import PropertyBody from "./PropertyBody.vue";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
 
-Vue.use(Vuetify);
-
 const baseProperty = {
   id: "prop-1",
   name: "Test Property",
@@ -34,7 +30,7 @@ const baseProperty = {
   tags: { tags: ["tag1"], exclusive: false },
   shape: "point",
   workerInterface: { param1: "value1" },
-};
+} as any;
 
 function mountComponent(props = {}) {
   const div = document.createElement("div");
@@ -42,9 +38,8 @@ function mountComponent(props = {}) {
   document.body.appendChild(div);
 
   return mount(PropertyBody, {
-    vuetify: new Vuetify(),
     attachTo: div,
-    propsData: {
+    props: {
       property: baseProperty,
       ...props,
     },
@@ -64,7 +59,6 @@ describe("PropertyBody", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentJobId).toBeUndefined();
-    wrapper.destroy();
   });
 
   it("currentJobId returns jobId from store when property exists in mapping", () => {
@@ -72,7 +66,6 @@ describe("PropertyBody", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentJobId).toBe("job-123");
-    wrapper.destroy();
   });
 
   it("deleteProperty calls propertyStore.deleteProperty", () => {
@@ -82,7 +75,6 @@ describe("PropertyBody", () => {
     vm.deleteProperty();
     expect(propertyStore.deleteProperty).toHaveBeenCalledWith("prop-1");
     expect(propertyStore.deletePropertyValues).not.toHaveBeenCalled();
-    wrapper.destroy();
   });
 
   it("deleteProperty with deleteComputedValues calls deletePropertyValues too", () => {
@@ -92,7 +84,6 @@ describe("PropertyBody", () => {
     vm.deleteProperty();
     expect(propertyStore.deleteProperty).toHaveBeenCalledWith("prop-1");
     expect(propertyStore.deletePropertyValues).toHaveBeenCalledWith("prop-1");
-    wrapper.destroy();
   });
 
   it("copyLogToClipboard uses navigator.clipboard", async () => {
@@ -108,6 +99,5 @@ describe("PropertyBody", () => {
     const vm = wrapper.vm as any;
     vm.copyLogToClipboard();
     expect(writeText).toHaveBeenCalledWith("some log output");
-    wrapper.destroy();
   });
 });

@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import PixelScaleBarSetting from "./PixelScaleBarSetting.vue";
 
 vi.mock("@/store/index", () => ({
@@ -11,12 +9,8 @@ vi.mock("@/store/index", () => ({
   },
 }));
 
-Vue.use(Vuetify);
-Vue.directive("description", {});
-
 function mountComponent() {
   return mount(PixelScaleBarSetting, {
-    vuetify: new Vuetify(),
   });
 }
 

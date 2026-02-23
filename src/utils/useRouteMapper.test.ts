@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { defineComponent, nextTick } from "vue";
+import { shallowMount } from "@vue/test-utils";
 
 // Mock dependencies before any imports
 vi.mock("@/utils/log", () => ({
@@ -17,18 +19,16 @@ vi.mock("@/store/properties", () => ({
   default: {},
 }));
 
+import { routeProvider, routerProvider } from "@/test/helpers";
+import { useRouteMapper } from "./useRouteMapper";
+
 describe("useRouteMapper", () => {
   let mockRouter: any;
-  let mockRoute: any;
 
   beforeEach(() => {
     vi.resetModules();
     mockRouter = {
       replace: vi.fn().mockResolvedValue(undefined),
-    };
-    mockRoute = {
-      params: {},
-      query: {},
     };
   });
 
@@ -38,17 +38,7 @@ describe("useRouteMapper", () => {
     routeParams: Record<string, string> = {},
     routeQuery: Record<string, string> = {},
   ) {
-    mockRoute.params = routeParams;
-    mockRoute.query = routeQuery;
-
-    const Vue = (await import("vue")).default;
-    const Vuetify = (await import("vuetify")).default;
-    Vue.use(Vuetify);
-
-    const { shallowMount } = await import("@vue/test-utils");
-    const { useRouteMapper } = await import("./useRouteMapper");
-
-    const TestComponent = Vue.extend({
+    const TestComponent = defineComponent({
       template: "<div />",
       setup() {
         useRouteMapper(paramsMapper, queryMapper);
@@ -56,18 +46,19 @@ describe("useRouteMapper", () => {
     });
 
     const wrapper = shallowMount(TestComponent, {
-      vuetify: new Vuetify(),
-      mocks: {
-        $router: mockRouter,
-        $route: mockRoute,
+      global: {
+        provide: {
+          ...routeProvider({ params: routeParams, query: routeQuery }),
+          ...routerProvider(mockRouter),
+        },
       },
     });
 
     // Wait for onMounted sync to complete
-    await Vue.nextTick();
-    await Vue.nextTick();
+    await nextTick();
+    await nextTick();
 
-    return { wrapper, Vue };
+    return { wrapper };
   }
 
   it("syncs URL params to store on mount", async () => {

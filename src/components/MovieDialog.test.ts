@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("./Snapshots.vue", () => ({
   MovieFormat: {
@@ -13,8 +11,6 @@ vi.mock("./Snapshots.vue", () => ({
 }));
 
 import MovieDialog from "./MovieDialog.vue";
-
-Vue.use(Vuetify);
 
 const sampleDataset = {
   id: "ds1",
@@ -39,9 +35,8 @@ function mountComponent(props = {}) {
   document.body.appendChild(app);
 
   return mount(MovieDialog, {
-    vuetify: new Vuetify(),
     attachTo: app,
-    propsData: {
+    props: {
       modelValue: false,
       currentTime: 3,
       dataset: sampleDataset,
@@ -63,13 +58,11 @@ describe("MovieDialog", () => {
   it("dialog computed get returns prop value", () => {
     const wrapper = mountComponent({ modelValue: true });
     expect((wrapper.vm as any).dialog).toBe(true);
-    wrapper.destroy();
   });
 
   it("dialog computed get returns false when value is false", () => {
     const wrapper = mountComponent({ modelValue: false });
     expect((wrapper.vm as any).dialog).toBe(false);
-    wrapper.destroy();
   });
 
   it("dialog computed set emits input", () => {
@@ -77,7 +70,6 @@ describe("MovieDialog", () => {
     (wrapper.vm as any).dialog = true;
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0][0]).toBe(true);
-    wrapper.destroy();
   });
 
   it("displayStartTime is 1-indexed (startTime + 1)", () => {
@@ -86,7 +78,6 @@ describe("MovieDialog", () => {
     expect((wrapper.vm as any).displayStartTime).toBe(1);
     (wrapper.vm as any).startTime = 5;
     expect((wrapper.vm as any).displayStartTime).toBe(6);
-    wrapper.destroy();
   });
 
   it("displayEndTime is 1-indexed (endTime + 1)", () => {
@@ -95,21 +86,18 @@ describe("MovieDialog", () => {
     expect((wrapper.vm as any).displayEndTime).toBe(1);
     (wrapper.vm as any).endTime = 9;
     expect((wrapper.vm as any).displayEndTime).toBe(10);
-    wrapper.destroy();
   });
 
   it("displayStartTime setter converts back to 0-indexed", () => {
     const wrapper = mountComponent();
     (wrapper.vm as any).displayStartTime = 3;
     expect((wrapper.vm as any).startTime).toBe(2);
-    wrapper.destroy();
   });
 
   it("displayEndTime setter converts back to 0-indexed", () => {
     const wrapper = mountComponent();
     (wrapper.vm as any).displayEndTime = 7;
     expect((wrapper.vm as any).endTime).toBe(6);
-    wrapper.destroy();
   });
 
   it("warningText returns warning when startTime > endTime", () => {
@@ -119,7 +107,6 @@ describe("MovieDialog", () => {
     expect((wrapper.vm as any).warningText).toBe(
       "Start time must be less than or equal to end time",
     );
-    wrapper.destroy();
   });
 
   it("warningText returns empty string for valid range", () => {
@@ -128,7 +115,6 @@ describe("MovieDialog", () => {
     (wrapper.vm as any).endTime = 5;
     (wrapper.vm as any).fps = 10;
     expect((wrapper.vm as any).warningText).toBe("");
-    wrapper.destroy();
   });
 
   it("warningText warns when startTime is negative", () => {
@@ -138,7 +124,6 @@ describe("MovieDialog", () => {
     expect((wrapper.vm as any).warningText).toBe(
       "Start time must be greater than or equal to 1",
     );
-    wrapper.destroy();
   });
 
   it("warningText warns when endTime exceeds maxTimePoint", () => {
@@ -148,7 +133,6 @@ describe("MovieDialog", () => {
     expect((wrapper.vm as any).warningText).toBe(
       "End time must be less than or equal to the maximum time point",
     );
-    wrapper.destroy();
   });
 
   it("warningText warns when fps is out of range", () => {
@@ -159,13 +143,11 @@ describe("MovieDialog", () => {
     expect((wrapper.vm as any).warningText).toBe(
       "Frames per second must be between 1 and 30",
     );
-    wrapper.destroy();
   });
 
   it("maxTimePoint returns max of dataset.time", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).maxTimePoint).toBe(9);
-    wrapper.destroy();
   });
 
   it("handleDownload emits download event with correct payload", () => {
@@ -193,7 +175,6 @@ describe("MovieDialog", () => {
       timeStampStep: 1,
       timeStampUnits: "hours",
     });
-    wrapper.destroy();
   });
 
   it("handleDownload closes dialog after emitting", () => {
@@ -207,7 +188,6 @@ describe("MovieDialog", () => {
 
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0][0]).toBe(false);
-    wrapper.destroy();
   });
 
   it("handleDownload does nothing when warningText is non-empty", () => {
@@ -219,7 +199,6 @@ describe("MovieDialog", () => {
     vm.handleDownload();
 
     expect(wrapper.emitted("download")).toBeFalsy();
-    wrapper.destroy();
   });
 
   it("watch on value sets startTime and endTime when opened", async () => {
@@ -230,7 +209,6 @@ describe("MovieDialog", () => {
 
     expect(vm.startTime).toBe(3);
     expect(vm.endTime).toBe(9);
-    wrapper.destroy();
   });
 
   it("watch on value does not reset when closed", async () => {
@@ -243,6 +221,5 @@ describe("MovieDialog", () => {
 
     expect(vm.startTime).toBe(1);
     expect(vm.endTime).toBe(4);
-    wrapper.destroy();
   });
 });

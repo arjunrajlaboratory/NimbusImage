@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 const mockGetDataset = vi.fn();
 const mockAddDatasetToProject = vi.fn();
@@ -36,8 +34,6 @@ vi.mock("@/components/CustomFileManager.vue", () => ({
 
 import AddDatasetToProjectDialog from "./AddDatasetToProjectDialog.vue";
 
-Vue.use(Vuetify);
-
 const sampleProject = {
   id: "proj1",
   name: "Test Project",
@@ -63,13 +59,14 @@ const sampleProject = {
 
 function mountComponent(props = {}) {
   return shallowMount(AddDatasetToProjectDialog, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       project: sampleProject,
       ...props,
     },
-    stubs: {
-      CustomFileManager: true,
+    global: {
+      stubs: {
+        CustomFileManager: true,
+      },
     },
   });
 }
@@ -87,7 +84,6 @@ describe("AddDatasetToProjectDialog", () => {
     expect(ids.has("ds-existing-1")).toBe(true);
     expect(ids.has("ds-existing-2")).toBe(true);
     expect(ids.has("ds-new")).toBe(false);
-    wrapper.destroy();
   });
 
   it("existingDatasetIds returns empty Set when no datasets", () => {
@@ -101,7 +97,6 @@ describe("AddDatasetToProjectDialog", () => {
     const wrapper = mountComponent({ project: projectWithNoDatasets });
     const vm = wrapper.vm as any;
     expect(vm.existingDatasetIds.size).toBe(0);
-    wrapper.destroy();
   });
 
   it("addDatasets calls addDatasetToProject for each selected dataset and emits added", async () => {
@@ -127,7 +122,6 @@ describe("AddDatasetToProjectDialog", () => {
     });
     expect(wrapper.emitted("added")).toBeTruthy();
     expect(wrapper.emitted("added")![0][0]).toEqual(["ds-new-1", "ds-new-2"]);
-    wrapper.destroy();
   });
 
   it("addDatasets does nothing when selectedDatasets is empty", async () => {
@@ -139,7 +133,6 @@ describe("AddDatasetToProjectDialog", () => {
 
     expect(mockAddDatasetToProject).not.toHaveBeenCalled();
     expect(wrapper.emitted("added")).toBeFalsy();
-    wrapper.destroy();
   });
 
   it("addDatasets clears selectedDatasets and warnings after success", async () => {
@@ -154,7 +147,6 @@ describe("AddDatasetToProjectDialog", () => {
 
     expect(vm.selectedDatasets).toEqual([]);
     expect(vm.warnings).toEqual([]);
-    wrapper.destroy();
   });
 
   it("addDatasets sets adding to true during execution and false after", async () => {
@@ -174,7 +166,6 @@ describe("AddDatasetToProjectDialog", () => {
     await addPromise;
 
     expect(vm.adding).toBe(false);
-    wrapper.destroy();
   });
 
   it("onSelectDataset processes selected locations", async () => {
@@ -199,7 +190,6 @@ describe("AddDatasetToProjectDialog", () => {
     expect(mockIsDatasetFolder).toHaveBeenCalledTimes(2);
     expect(mockGetDataset).toHaveBeenCalledTimes(2);
     expect(vm.selectedDatasets).toHaveLength(2);
-    wrapper.destroy();
   });
 
   it("onSelectDataset clears selection when empty locations provided", async () => {
@@ -212,7 +202,6 @@ describe("AddDatasetToProjectDialog", () => {
 
     expect(vm.selectedDatasets).toEqual([]);
     expect(vm.warnings).toEqual([]);
-    wrapper.destroy();
   });
 
   it("onSelectDataset warns about already-in-project datasets", async () => {
@@ -233,7 +222,6 @@ describe("AddDatasetToProjectDialog", () => {
     expect(vm.warnings).toContain(
       '"Existing Dataset" is already in this project',
     );
-    wrapper.destroy();
   });
 
   it("onSelectDataset warns about non-dataset selections", async () => {
@@ -248,6 +236,5 @@ describe("AddDatasetToProjectDialog", () => {
 
     expect(vm.selectedDatasets).toHaveLength(0);
     expect(vm.warnings).toContain("1 selected item(s) are not datasets");
-    wrapper.destroy();
   });
 });

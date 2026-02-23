@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -23,11 +21,8 @@ vi.mock("@/store", () => ({
 import AnnotationToggles from "./AnnotationToggles.vue";
 import store from "@/store";
 
-Vue.use(Vuetify);
-
 function mountComponent() {
   return shallowMount(AnnotationToggles, {
-    vuetify: new Vuetify(),
   });
 }
 
@@ -39,7 +34,7 @@ describe("AnnotationToggles", () => {
 
   it("annotationSelectionType setter calls store", () => {
     const wrapper = mountComponent();
-    wrapper.vm.annotationSelectionType = "TOGGLE";
+    wrapper.vm.annotationSelectionType = "TOGGLE" as any;
     expect(store.setAnnotationSelectionType).toHaveBeenCalledWith("TOGGLE");
   });
 

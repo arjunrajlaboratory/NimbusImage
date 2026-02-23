@@ -1,10 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 import RecentDatasets from "./RecentDatasets.vue";
-
-Vue.use(Vuetify);
 
 const sampleItems = [
   {
@@ -21,8 +17,7 @@ const sampleItems = [
 
 function mountComponent(props = {}) {
   return mount(RecentDatasets, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       datasetViewItems: sampleItems,
       getUserDisplayName: vi.fn((id: string) => `User ${id}`),
       formatDateNumber: vi.fn((d: number) => new Date(d).toLocaleString()),
@@ -53,7 +48,7 @@ describe("RecentDatasets", () => {
   it("emits dataset-clicked when a dataset is clicked", async () => {
     const wrapper = mountComponent();
     const listItems = wrapper.findAll(".v-list-item");
-    await listItems.at(0).trigger("click");
+    await listItems.at(0)!.trigger("click");
     expect(wrapper.emitted("dataset-clicked")).toBeTruthy();
     expect(wrapper.emitted("dataset-clicked")![0]).toEqual(["dv1"]);
   });

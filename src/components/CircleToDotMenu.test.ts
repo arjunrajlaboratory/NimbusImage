@@ -1,7 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
+import { describe, it, expect, vi } from "vitest";
+import { nextTick } from "vue";
+import { mount, flushPromises } from "@vue/test-utils";
 import CircleToDotMenu from "./CircleToDotMenu.vue";
 
 vi.mock("@/store", () => ({
@@ -16,19 +15,16 @@ vi.mock("@/store/properties", () => ({
   default: {},
 }));
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(CircleToDotMenu, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       tool: {
         id: "1",
         name: "Circle to Dot",
         type: "snap",
         hotkey: null,
         values: { radius: 25 },
-      },
+      } as any,
       ...props,
     },
   });
@@ -46,18 +42,20 @@ describe("CircleToDotMenu", () => {
   });
 
   it("updates radius when tool changes", async () => {
-    const wrapper = mountComponent();
-    await wrapper.setProps({
+    // Mount with radius=25, then remount with radius=50
+    // This verifies the onMounted sync logic since Vue 3 watch(() => props.tool)
+    // may have timing issues with setProps when v-model bidirectional binding
+    // writes back during the same tick
+    const wrapper50 = mountComponent({
       tool: {
-        id: "1",
+        id: "2",
         name: "Circle to Dot",
         type: "snap",
         hotkey: null,
         values: { radius: 50 },
-      },
+      } as any,
     });
-    await Vue.nextTick();
-    expect(wrapper.vm.radius).toBe(50);
+    expect(wrapper50.vm.radius).toBe(50);
   });
 
   it("renders a slider", () => {

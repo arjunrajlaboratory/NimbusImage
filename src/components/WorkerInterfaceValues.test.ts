@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {
@@ -16,8 +14,6 @@ vi.mock("@/store/annotation", () => ({
 }));
 
 import WorkerInterfaceValues from "./WorkerInterfaceValues.vue";
-
-Vue.use(Vuetify);
 
 const sampleInterface = {
   threshold: {
@@ -43,17 +39,18 @@ const sampleInterface = {
 
 function mountComponent(props = {}) {
   return mount(WorkerInterfaceValues, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: {},
       workerInterface: sampleInterface,
       ...props,
     },
-    stubs: {
-      "layer-select": { template: "<div></div>", props: ["modelValue"] },
-      "channel-select": { template: "<div></div>", props: ["modelValue"] },
-      "channel-checkbox-group": { template: "<div></div>", props: ["modelValue"] },
-      "tag-picker": { template: "<div></div>", props: ["modelValue"] },
+    global: {
+      stubs: {
+        "layer-select": { template: "<div></div>", props: ["modelValue"] },
+        "channel-select": { template: "<div></div>", props: ["modelValue"] },
+        "channel-checkbox-group": { template: "<div></div>", props: ["modelValue"] },
+        "tag-picker": { template: "<div></div>", props: ["modelValue"] },
+      },
     },
     directives: {
       tooltip: {},
@@ -64,7 +61,7 @@ function mountComponent(props = {}) {
 describe("WorkerInterfaceValues", () => {
   it("orderItemEntries sorts by displayOrder (explicit first, then alphabetical)", () => {
     const wrapper = mountComponent();
-    const entries = wrapper.vm.orderItemEntries;
+    const entries = (wrapper.vm as any).orderItemEntries;
     // alpha (0), threshold (1) are explicit; name (undefined) is alphabetical
     expect(entries[0][0]).toBe("alpha");
     expect(entries[1][0]).toBe("threshold");
@@ -73,7 +70,7 @@ describe("WorkerInterfaceValues", () => {
 
   it("formattedTooltip replaces newlines with <br>", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.formattedTooltip("line1\nline2")).toBe("line1<br>line2");
+    expect((wrapper.vm as any).formattedTooltip("line1\nline2")).toBe("line1<br>line2");
   });
 
   it("populateValues uses tool values when available", () => {
@@ -88,7 +85,7 @@ describe("WorkerInterfaceValues", () => {
     const wrapper = mountComponent({ tool });
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
-    const lastValues = emitted![emitted!.length - 1][0];
+    const lastValues = emitted![emitted!.length - 1][0] as any;
     expect(lastValues.threshold).toBe(75);
     expect(lastValues.alpha).toBe(0.2);
   });
@@ -97,7 +94,7 @@ describe("WorkerInterfaceValues", () => {
     const wrapper = mountComponent({ tool: null });
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
-    const lastValues = emitted![emitted!.length - 1][0];
+    const lastValues = emitted![emitted!.length - 1][0] as any;
     expect(lastValues.threshold).toBe(50); // default from interface
     expect(lastValues.name).toBe("test"); // default from interface
     expect(lastValues.alpha).toBe(0.5);
@@ -105,13 +102,13 @@ describe("WorkerInterfaceValues", () => {
 
   it("isLeft and isRight derive from tooltipPosition prop", () => {
     const wrapper = mountComponent({ tooltipPosition: "left" });
-    expect(wrapper.vm.isLeft).toBe(true);
-    expect(wrapper.vm.isRight).toBe(false);
+    expect((wrapper.vm as any).isLeft).toBe(true);
+    expect((wrapper.vm as any).isRight).toBe(false);
   });
 
   it("defaults tooltipPosition to right", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.isRight).toBe(true);
-    expect(wrapper.vm.isLeft).toBe(false);
+    expect((wrapper.vm as any).isRight).toBe(true);
+    expect((wrapper.vm as any).isLeft).toBe(false);
   });
 });

@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -9,12 +7,9 @@ vi.mock("@/store", () => ({
 
 import DisplaySlice from "./DisplaySlice.vue";
 
-Vue.use(Vuetify);
-
 function mountComponent(props = {}) {
   return mount(DisplaySlice, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       modelValue: { type: "current", value: 0 },
       maxValue: 10,
       label: "Z",
@@ -28,29 +23,29 @@ function mountComponent(props = {}) {
 describe("DisplaySlice", () => {
   it("labelHint shows no slices message when maxValue is 0", () => {
     const wrapper = mountComponent({ maxValue: 0 });
-    expect(wrapper.vm.labelHint).toBe("Z (no slices available)");
+    expect((wrapper.vm as any).labelHint).toBe("Z (no slices available)");
   });
 
   it("labelHint shows just label when maxValue > 0", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.labelHint).toBe("Z");
+    expect((wrapper.vm as any).labelHint).toBe("Z");
   });
 
   it("maxOffsetValue equals maxValue", () => {
     const wrapper = mountComponent({ maxValue: 10 });
-    expect(wrapper.vm.maxOffsetValue).toBe(10);
+    expect((wrapper.vm as any).maxOffsetValue).toBe(10);
   });
 
   it("minOffsetValue equals negative maxValue", () => {
     const wrapper = mountComponent({ maxValue: 10 });
-    expect(wrapper.vm.minOffsetValue).toBe(-10);
+    expect((wrapper.vm as any).minOffsetValue).toBe(-10);
   });
 
   it("changeSlice emits displayed value when type changes to constant", () => {
     const wrapper = mountComponent({ displayed: 7 });
-    wrapper.vm.changeSlice("constant", 0);
+    (wrapper.vm as any).changeSlice("constant", 0);
     expect(wrapper.emitted("change")).toBeTruthy();
-    const event = wrapper.emitted("change")![0][0];
+    const event = wrapper.emitted("change")![0][0] as any;
     expect(event.type).toBe("constant");
     // When type changes, constant uses this.displayed
     expect(event.value).toBe(7);
@@ -58,9 +53,9 @@ describe("DisplaySlice", () => {
 
   it("changeSlice emits 0 when type changes to offset", () => {
     const wrapper = mountComponent();
-    wrapper.vm.changeSlice("offset", "3");
+    (wrapper.vm as any).changeSlice("offset", "3");
     expect(wrapper.emitted("change")).toBeTruthy();
-    const event = wrapper.emitted("change")![0][0];
+    const event = wrapper.emitted("change")![0][0] as any;
     expect(event.type).toBe("offset");
     // When type changes, offset resets to 0
     expect(event.value).toBe(0);
@@ -73,8 +68,8 @@ describe("DisplaySlice", () => {
       offset: 1,
     });
     // Same type, inputValue = 100 - offset(1) = 99, clamped to maxValue(5)
-    wrapper.vm.changeSlice("constant", "100");
-    const event = wrapper.emitted("change")![0][0];
+    (wrapper.vm as any).changeSlice("constant", "100");
+    const event = wrapper.emitted("change")![0][0] as any;
     expect(event.value).toBeLessThanOrEqual(5);
   });
 
@@ -83,8 +78,8 @@ describe("DisplaySlice", () => {
       modelValue: { type: "offset", value: 0 },
       maxValue: 5,
     });
-    wrapper.vm.changeSlice("offset", "100");
-    const event = wrapper.emitted("change")![0][0];
+    (wrapper.vm as any).changeSlice("offset", "100");
+    const event = wrapper.emitted("change")![0][0] as any;
     expect(event.value).toBeLessThanOrEqual(5);
   });
 
@@ -92,15 +87,15 @@ describe("DisplaySlice", () => {
     const wrapper = mountComponent({
       modelValue: { type: "current", value: 0 },
     });
-    wrapper.vm.changeSlice("current", 0);
+    (wrapper.vm as any).changeSlice("current", 0);
     expect(wrapper.emitted("change")).toBeFalsy();
   });
 
   it("changeSlice emits 0 for default types", () => {
     const wrapper = mountComponent();
-    wrapper.vm.changeSlice("max-merge", 0);
+    (wrapper.vm as any).changeSlice("max-merge", 0);
     expect(wrapper.emitted("change")).toBeTruthy();
-    const event = wrapper.emitted("change")![0][0];
+    const event = wrapper.emitted("change")![0][0] as any;
     expect(event.type).toBe("max-merge");
     expect(event.value).toBe(0);
   });

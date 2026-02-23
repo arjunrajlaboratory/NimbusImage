@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-import Vue from "vue";
-import Vuetify from "vuetify";
 
 vi.mock("@/store", () => ({
   default: {},
@@ -31,8 +29,6 @@ vi.mock("@/store/properties", () => ({
 import propertyStore from "@/store/properties";
 import Property from "./Property.vue";
 
-Vue.use(Vuetify);
-
 const baseProperty = {
   id: "prop-1",
   name: "Test Property",
@@ -40,12 +36,11 @@ const baseProperty = {
   tags: [],
   shape: "point",
   workerInterface: {},
-};
+} as any;
 
 function mountComponent(props = {}) {
   return mount(Property, {
-    vuetify: new Vuetify(),
-    propsData: {
+    props: {
       property: baseProperty,
       ...props,
     },
@@ -130,7 +125,7 @@ describe("Property", () => {
     const wrapper = mountComponent({ applyToAllDatasets: true });
     wrapper.vm.compute();
     expect(wrapper.emitted("compute-property-batch")).toBeTruthy();
-    expect(wrapper.emitted("compute-property-batch")![0][0]).toBe(baseProperty);
+    expect(wrapper.emitted("compute-property-batch")![0][0]).toStrictEqual(baseProperty);
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 });
