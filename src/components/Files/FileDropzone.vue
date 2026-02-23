@@ -12,7 +12,7 @@
       class="flex-column align-center justify-center fill-height dropzone-message"
     >
       <slot name="default">
-        <v-icon size="50px"> $vuetify.icons.fileUpload </v-icon>
+        <v-icon size="50px">mdi-file-upload</v-icon>
         <div class="title mt-3">
           <template v-if="multiple">
             Drag files here or click to select them

@@ -47,7 +47,7 @@
         class="mb-2"
       >
         <template #default>
-          <v-icon size="50px">$vuetify.icons.fileUpload</v-icon>
+          <v-icon size="50px">mdi-file-upload</v-icon>
           <div class="title mt-3">Add more files to this dataset</div>
         </template>
       </file-dropzone>

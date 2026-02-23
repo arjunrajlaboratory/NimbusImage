@@ -149,20 +149,21 @@
                 </div> -->
               </v-card-text>
             </v-card>
-            <v-list lines="two">
-              <v-radio-group v-model="selectedDatasetViewId">
-                <v-list-item
-                  v-for="d in datasetViewItems"
-                  :key="d.datasetView.id"
-                  @click.stop="selectedDatasetViewId = d.datasetView.id"
-                  class="selectable-list-item"
-                >
-                  <v-radio
-                    :value="d.datasetView.id"
-                    color="primary"
-                    class="mr-2"
-                  ></v-radio>
-                  <v-list-item-title class="d-flex align-center">
+            <v-radio-group v-model="selectedDatasetViewId" hide-details>
+              <div
+                v-for="d in datasetViewItems"
+                :key="d.datasetView.id"
+                class="d-flex align-center pa-2 selectable-list-item"
+                @click="selectedDatasetViewId = d.datasetView.id"
+              >
+                <v-radio
+                  :value="d.datasetView.id"
+                  color="primary"
+                  hide-details
+                  class="flex-grow-0 mr-3"
+                />
+                <div class="flex-grow-1" style="min-width: 0">
+                  <div class="d-flex align-center text-body-1">
                     {{
                       d.configInfo
                         ? d.configInfo.name
@@ -178,44 +179,42 @@
                       "
                       :users="sharingUsers || []"
                     />
-                  </v-list-item-title>
-                  <v-list-item-subtitle>
+                  </div>
+                  <div class="text-caption text-medium-emphasis">
                     {{
                       d.configInfo
                         ? d.configInfo.description
                         : "No description"
                     }}
-                  </v-list-item-subtitle>
-                  <span @click.stop>
-                    <span class="button-bar">
-                      <girder-location-chooser
-                        @update:model-value="duplicateView(d.datasetView, $event)"
-                        title="Select a folder for duplicated configuration"
-                      >
-                        <template v-slot:activator="{ props: activatorProps }">
-                          <v-icon
-                            class="action-icon mr-2"
-                            color="primary"
-                            v-bind="activatorProps"
-                          >
-                            mdi-content-duplicate
-                          </v-icon>
-                        </template>
-                      </girder-location-chooser>
+                  </div>
+                </div>
+                <div class="d-flex align-center ml-2" @click.stop>
+                  <girder-location-chooser
+                    @update:model-value="duplicateView(d.datasetView, $event)"
+                    title="Select a folder for duplicated configuration"
+                  >
+                    <template v-slot:activator="{ props: activatorProps }">
                       <v-icon
-                        class="action-icon"
-                        color="warning"
-                        v-on:click.stop="
-                          openRemoveConfigurationDialog(d.datasetView)
-                        "
+                        class="action-icon mr-2"
+                        color="primary"
+                        v-bind="activatorProps"
                       >
-                        mdi-close
+                        mdi-content-duplicate
                       </v-icon>
-                    </span>
-                  </span>
-                </v-list-item>
-              </v-radio-group>
-            </v-list>
+                    </template>
+                  </girder-location-chooser>
+                  <v-icon
+                    class="action-icon"
+                    color="warning"
+                    @click.stop="
+                      openRemoveConfigurationDialog(d.datasetView)
+                    "
+                  >
+                    mdi-close
+                  </v-icon>
+                </div>
+              </div>
+            </v-radio-group>
             <div>
               <v-tooltip location="top" max-width="50vh">
                 <template v-slot:activator="{ props: activatorProps }">
@@ -899,9 +898,10 @@ defineExpose({
 
 .selectable-list-item {
   cursor: pointer;
+  border-radius: 4px;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: rgba(255, 255, 255, 0.05);
   }
 }
 </style>

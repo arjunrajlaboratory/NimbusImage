@@ -47,28 +47,24 @@
             {{ accessUsers.length }}
             {{ accessUsers.length === 1 ? "user" : "users" }} with access:
           </div>
-          <v-table density="compact" class="sharing-table">
-            <template #default>
-              <tbody>
-                <tr v-for="user in accessUsers" :key="user.id">
-                  <td class="text-body-2 py-1">
-                    {{ user.name || user.login }}
-                    <span
-                      v-if="user.email && user.email !== user.login"
-                      class="text-caption text-grey ml-1"
-                    >
-                      ({{ user.email }})
-                    </span>
-                  </td>
-                  <td class="text-body-2 py-1" style="width: 100px">
-                    <v-chip size="x-small" :color="accessLevelColor(user.level)" dark>
-                      {{ accessLevelLabel(user.level) }}
-                    </v-chip>
-                  </td>
-                </tr>
-              </tbody>
-            </template>
-          </v-table>
+          <div
+            v-for="user in accessUsers"
+            :key="user.id"
+            class="d-flex align-center py-1"
+          >
+            <span class="text-body-2 mr-2">
+              {{ user.name || user.login }}
+              <span
+                v-if="user.email && user.email !== user.login"
+                class="text-caption text-grey ml-1"
+              >
+                ({{ user.email }})
+              </span>
+            </span>
+            <v-chip size="x-small" :color="accessLevelColor(user.level)" dark>
+              {{ accessLevelLabel(user.level) }}
+            </v-chip>
+          </div>
         </div>
         <div v-else class="text-body-2 text-grey mt-1">
           No users have been granted access.
@@ -95,11 +91,4 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.sharing-table {
-  background: transparent !important;
-
-  td {
-    border-bottom: none !important;
-  }
-}
 </style>

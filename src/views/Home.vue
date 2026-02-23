@@ -35,11 +35,14 @@
               >
                 <v-overlay
                   :model-value="isDragging"
-                  absolute
+                  contained
                   opacity="0.8"
                   class="d-flex align-center justify-center"
+                  @dragover.prevent
+                  @drop.prevent="handleDrop"
+                  @dragleave.prevent="isDragging = false"
                 >
-                  <div class="text-h6 text-white text-center">
+                  <div class="text-h6 text-white text-center" style="pointer-events: none">
                     Drop files here to upload
                   </div>
                 </v-overlay>
@@ -1296,6 +1299,7 @@ defineExpose({
 
 .upload-card {
   cursor: pointer;
+  position: relative;
   border: 2px dashed rgba(255, 255, 255, 0.3);
 
   &.drag-active {

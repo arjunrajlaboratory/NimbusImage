@@ -356,6 +356,25 @@ Memory profiling with 26K annotations showed three data structures had unnecessa
 
 **NOT touched:** `propertyStatuses` (has direct in-place mutations like `status.running = true`).
 
+### R27. Home.vue drag-and-drop overlay fix ✅
+Vuetify 3's `v-overlay` with `absolute` still teleports to the app root. The upload card's drag overlay covered the entire viewport instead of just the card, and intercepted drop events without handling them.
+
+- [x] `src/views/Home.vue` — Changed `absolute` to `contained` on the drag overlay, added `position: relative` to `.upload-card`, added `@dragover.prevent @drop.prevent="handleDrop" @dragleave.prevent` on the overlay itself, and `pointer-events: none` on the text div
+
+### R28. Vuetify 2 icon alias `$vuetify.icons.fileUpload` → `mdi-file-upload` ✅
+- [x] `src/components/Files/FileDropzone.vue` — `$vuetify.icons.fileUpload` → `mdi-file-upload`
+- [x] `src/views/dataset/NewDataset.vue` — Same fix in the `#default` slot override
+
+### R29. DatasetInfo.vue collection list layout fix ✅
+In Vuetify 3, `v-list-item`'s internal slot layout (`#prepend`, default, `#append`) doesn't vertically align well with `v-radio` and action icons. Replaced `v-list`/`v-list-item` structure with plain flex divs inside `v-radio-group` for full control over alignment.
+
+- [x] `src/views/dataset/DatasetInfo.vue` — Replaced `v-list lines="two"` + `v-list-item` with `d-flex align-center` divs containing radio, title/subtitle, and action icons
+
+### R30. SharingStatusDisplay layout fix ✅
+Vuetify 3's `v-table` internal styles caused user name, email, and access chip to wrap across lines. Replaced with flex-based layout.
+
+- [x] `src/components/SharingStatusDisplay.vue` — Replaced `v-table` with `d-flex align-center` divs per user row
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
 
