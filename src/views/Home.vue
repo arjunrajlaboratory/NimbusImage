@@ -470,7 +470,7 @@ void RecentDatasets;
 
 // DEBUG: Catch child component errors during mount/render
 onErrorCaptured((err, instance, info) => {
-  const name = instance?.type?.__name || instance?.type?.name || 'Unknown';
+  const name = (instance as any)?.type?.__name || (instance as any)?.type?.name || 'Unknown';
   console.error(`[Home onErrorCaptured] Error in child "${name}": ${err.message}\nInfo: ${info}\nStack: ${err.stack?.split('\n').slice(0, 3).join('\n')}`);
   return true; // propagate
 });
