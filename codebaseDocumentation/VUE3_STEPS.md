@@ -330,6 +330,21 @@ Selected and unselected column filter chips were nearly indistinguishable (both 
 
 - [x] `src/components/AnnotationBrowser/AnnotationList.vue` — Selected chips use `variant="flat"` with `color="white"` (filled), unselected use `variant="outlined"` with `opacity: 0.4` (dimmed)
 
+### R25. ChatComponent — Vuex reactive proxy fixes + UI polish ✅
+The chat store (`src/store/chat.ts`) had two Vue 3 reactivity issues, and the chat UI needed updates for Vuetify 3.
+
+**Vuex/reactivity fixes:**
+- [x] `src/store/chat.ts` — Moved `IDBDatabase` out of Vuex module state into a module-level variable. Vue 3's Proxy-based reactivity wraps all Vuex state, and native browser objects like `IDBDatabase` break when proxied (their internal methods check for internal slots that don't exist on the Proxy).
+- [x] `src/store/chat.ts` — Added `JSON.parse(JSON.stringify(toRaw(message)))` before `store.add()` to strip Vue reactive proxies before IndexedDB storage (structured clone algorithm can't handle Proxies → `DataCloneError`).
+
+**UI fixes:**
+- [x] `src/components/ChatComponent.vue` — Fixed CSS class names from `.v-card__text`/`.v-card__actions` (Vuetify 2 BEM) to `:deep(.v-card-text)`/`:deep(.v-card-actions)` (Vuetify 3). Without this, the flex layout and overflow styles weren't applying, breaking scroll.
+- [x] `src/components/ChatComponent.vue` — Added `flex: 1; min-height: 0` to `.chat-messages` so it becomes a proper scroll container within the card.
+- [x] `src/components/ChatComponent.vue` — Added `:deep()` markdown styling for `v-html` content (headings, lists, code blocks, paragraphs) — `v-html` content doesn't receive scoped data attributes.
+- [x] `src/components/ChatComponent.vue` — Replaced `v-card-title` with custom flex header (Vuetify 3 `v-card-title` lost `display: flex`), putting title and buttons on one row.
+- [x] `src/components/ChatComponent.vue` — Restyled message bubbles: rounded corners with directional tails, blue-tinted user bubbles vs subtle light assistant bubbles, 8px gap between messages.
+- [x] `src/components/ChatComponent.vue` — Redesigned input area: compact outlined textarea, icon buttons for image upload and send (mdi-send), tighter layout with border-top separator.
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
 
