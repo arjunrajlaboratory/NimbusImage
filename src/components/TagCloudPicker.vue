@@ -16,16 +16,15 @@
       :model-value="tags"
       column
       multiple
-      active-class="selected-chip"
+      selected-class=""
     >
       <v-chip
         v-for="tag in displayedTags"
         :key="tag"
         :value="tag"
-        :class="{
-          'selected-chip': tags.includes(tag),
-        }"
-        variant="outlined"
+        :variant="tags.includes(tag) ? 'flat' : 'outlined'"
+        :color="tags.includes(tag) ? 'white' : undefined"
+        :style="tags.includes(tag) ? {} : { opacity: 0.4 }"
         size="x-small"
         class="d-flex align-center"
       >
@@ -213,7 +212,4 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.selected-chip {
-  border-color: #ffffff !important;
-}
 </style>

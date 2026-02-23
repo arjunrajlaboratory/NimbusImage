@@ -381,6 +381,13 @@ In Vuetify 3, `v-overlay` with `absolute` still teleports to the app root, break
 - [x] `src/views/Home.vue` — Changed `absolute` → `contained`, `color="white"` → `scrim="white"`, added `.home-root` with `position: relative; min-height: calc(100vh - 64px)`
 - [x] `src/views/dataset/Dataset.vue` — Same changes with `.dataset-root` class
 
+### R32. TagCloudPicker chip contrast ✅
+Same issue as R24 (AnnotationList): selected/unselected chips were nearly indistinguishable. Applied the same `variant="flat"`/`variant="outlined"` + `opacity: 0.4` pattern.
+
+- [x] `src/components/TagCloudPicker.vue` — Selected chips use `variant="flat"` with `color="white"`, unselected use `variant="outlined"` with `opacity: 0.4`
+
+**Note:** This selected/unselected chip styling pattern is now duplicated in `AnnotationList.vue` (R24) and `TagCloudPicker.vue` (R32). Could be factorized into a shared utility component or global CSS class (e.g., `.chip-selected` / `.chip-unselected`) to keep it consistent in one place.
+
 ### Known Runtime Issues (Not Yet Fixed)
 - [ ] **Vue Router param warnings** — BreadCrumbs passes extra params to routes (cosmetic, non-blocking)
 
