@@ -497,7 +497,7 @@ export class Annotations extends VuexModule {
     }
     this.annotations = values;
     this.annotationCentroids = markRaw({});
-    this.annotationIdToIdx = {};
+    this.annotationIdToIdx = markRaw({});
     for (let idx = 0; idx < this.annotations.length; ++idx) {
       const annotation = this.annotations[idx];
       this.annotationCentroids[annotation.id] = markRaw(

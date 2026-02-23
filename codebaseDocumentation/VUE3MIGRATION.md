@@ -972,6 +972,7 @@ The annotation store uses `markRaw()` on all large read-only data structures to 
 - **`annotation.ts:865`** — Annotations cloned for editing (`structuredClone`) are re-wrapped with `markRaw()`
 - **`annotation.ts:461/474/499`** — Each centroid entry is wrapped with `markRaw()` when added
 - **`annotation.ts:495`** — The `annotationCentroids` dict itself is marked raw on reset (`markRaw({})`) to prevent proxy traps during bulk 26K key assignments
+- **`annotation.ts:500`** — The `annotationIdToIdx` dict is marked raw on reset (`markRaw({})`) for the same reason
 - **`properties.ts:166`** — The entire `propertyValues` object is wrapped with `markRaw()` in `updatePropertyValues` (single mutation chokepoint)
 
 **NOT marked raw:** `propertyStatuses` — has direct in-place mutations (`status.running = true`) that require reactivity.
@@ -990,7 +991,7 @@ The annotation store uses `markRaw()` on all large read-only data structures to 
 | `propertyValues` (26K entries, 5 nested each) | 22.2 MB | ~0 MB | Yes |
 | `annotationCentroids` (26K entries) | 1.8 MB | ~0 MB | Yes |
 | `annotationConnections` | variable | ~0 MB | Yes |
-| `annotationIdToIdx` (26K entries) | 0.8 MB | ~0 MB (primitive values) | No |
+| `annotationIdToIdx` (26K entries) | 0.8 MB | ~0 MB | Yes (dict) |
 | Total store data | ~42 MB | ~0 MB | — |
 | Total JS heap | ~530 MB | — | — |
 

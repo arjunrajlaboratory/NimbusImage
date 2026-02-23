@@ -351,7 +351,7 @@ Memory profiling with 26K annotations showed three data structures had unnecessa
 - [x] `src/store/properties.ts` — Added `import { markRaw } from "vue"`, wrapped `this.propertyValues = markRaw(values)` in `updatePropertyValues` mutation (single chokepoint for all property value updates)
 - [x] `src/store/annotation.ts` — `addAnnotationImpl`: wrapped centroid with `markRaw()`
 - [x] `src/store/annotation.ts` — `setAnnotation`: wrapped centroid with `markRaw()`
-- [x] `src/store/annotation.ts` — `setAnnotations`: marked reset dict raw (`markRaw({})`) to prevent proxy traps on all 26K key assignments, and wrapped each centroid with `markRaw()`
+- [x] `src/store/annotation.ts` — `setAnnotations`: marked reset dicts raw (`markRaw({})`) for both `annotationCentroids` and `annotationIdToIdx` to prevent proxy traps on all 26K key assignments, and wrapped each centroid with `markRaw()`
 - [x] `src/store/AnnotationsAPI.ts` — Wrapped `toConnection` return with `markRaw()`, mirroring the existing `toAnnotation` pattern
 
 **NOT touched:** `propertyStatuses` (has direct in-place mutations like `status.running = true`).
