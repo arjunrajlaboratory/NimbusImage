@@ -7,49 +7,46 @@
     <!-- Show normal slider when not unrolled -->
     <template v-else>
       <!-- Row 1: Label and Text Input -->
-      <v-row no-gutters class="mb-1">
-        <v-col cols="2" class="text-right align-center label-column pa-0">
+      <div class="d-flex align-center mb-1">
+        <div class="label-column text-right pa-0">
           {{ label }}:
-        </v-col>
-        <v-col cols="10" class="text-left align-center value-column pa-0 pl-2">
-          <div class="d-flex align-center">
-            <v-text-field
-              :model-value="displayValue"
-              class="mt-0 pt-0 no-underline flex-grow-0"
-              hide-details
-              single-line
-              type="text"
-              density="compact"
-              @update:model-value="handleInput"
-              @blur="handleBlur"
-            />
-            <div class="step-arrows ml-1">
-              <v-btn
-                size="x-small"
-                icon
-                class="step-btn"
-                :disabled="modelValue >= max"
-                @click="increment"
-              >
-                <v-icon size="x-small">mdi-chevron-up</v-icon>
-              </v-btn>
-              <v-btn
-                size="x-small"
-                icon
-                class="step-btn"
-                :disabled="modelValue <= min"
-                @click="decrement"
-              >
-                <v-icon size="x-small">mdi-chevron-down</v-icon>
-              </v-btn>
-            </div>
-          </div>
-        </v-col>
-      </v-row>
+        </div>
+        <v-text-field
+          :model-value="displayValue"
+          class="mt-0 pt-0 no-underline flex-grow-1 ml-2"
+          hide-details
+          single-line
+          type="text"
+          density="compact"
+          @update:model-value="handleInput"
+          @blur="handleBlur"
+        />
+        <div class="step-arrows ml-1">
+          <v-btn
+            size="x-small"
+            icon
+            class="step-btn"
+            :disabled="modelValue >= max"
+            @click="increment"
+          >
+            <v-icon size="x-small">mdi-chevron-up</v-icon>
+          </v-btn>
+          <v-btn
+            size="x-small"
+            icon
+            class="step-btn"
+            :disabled="modelValue <= min"
+            @click="decrement"
+          >
+            <v-icon size="x-small">mdi-chevron-down</v-icon>
+          </v-btn>
+        </div>
+      </div>
 
       <!-- Row 2: Slider and Counter -->
-      <v-row no-gutters class="mt-0">
-        <v-col cols="6" class="slider-column pa-0 pl-2 offset-2">
+      <div class="d-flex align-center mt-0">
+        <div class="label-column flex-shrink-0"></div>
+        <div class="slider-column flex-grow-1 ml-2">
           <v-slider
             v-model="slider"
             :max="max + offset"
@@ -57,16 +54,11 @@
             :step="1"
             hide-details
           />
-        </v-col>
-        <v-col
-          cols="4"
-          class="text-right align-center counter-column pa-0 pl-2"
-        >
-          <span class="caption font-weight-light">
-            {{ `${modelValue + offset} of ${max + offset}` }}
-          </span>
-        </v-col>
-      </v-row>
+        </div>
+        <span class="caption font-weight-light counter-label ml-2">
+          {{ `${modelValue + offset} of ${max + offset}` }}
+        </span>
+      </div>
     </template>
   </div>
 </template>
@@ -78,11 +70,14 @@
 }
 
 .label-column {
-  transform: translateY(2px); /* Move the label vertically */
+  width: 3em;
+  min-width: 3em;
+  flex-shrink: 0;
 }
 
-.counter-column {
-  transform: translateY(2px); /* Align counter with other elements */
+.counter-label {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .unrolled-message {
