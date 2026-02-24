@@ -70,18 +70,26 @@
       @centerChange="setCenter"
       @cornersChange="setCorners"
     />
-    <v-alert
-      v-model="showSamToolHelpAlert"
-      class="viewer-alert"
-      type="info"
-      density="compact"
-      closable
-      transition="slide-x-transition"
-    >
-      Shift + left click to add a positive point<br />
-      Shift + right click to add a negative point<br />
-      Shift + click + drag to add box
-    </v-alert>
+    <div v-if="samToolActive" class="sam-status-area">
+      <div v-if="showSamToolHelpAlert" class="sam-help-banner">
+        <div class="sam-help-text">
+          <span><b>Shift + left click</b> positive point</span>
+          <span class="sam-help-sep">|</span>
+          <span><b>Shift + right click</b> negative point</span>
+          <span class="sam-help-sep">|</span>
+          <span><b>Shift + drag</b> box</span>
+        </div>
+        <button class="sam-help-close" @click="showSamToolHelpAlert = false">
+          &times;
+        </button>
+      </div>
+      <div v-if="samLoadingMessages.length > 0" class="sam-loading-overlay">
+        <v-progress-circular indeterminate size="18" width="2" color="white" />
+        <div class="sam-loading-messages">
+          <span v-for="(msg, i) in samLoadingMessages" :key="i">{{ msg }}</span>
+        </div>
+      </div>
+    </div>
     <div class="bottom-right-container">
       <v-btn
         v-if="submitPendingAnnotation"
@@ -309,6 +317,14 @@ const mapSynchronizationCallbacks = ref(new Map<IGeoJSMap, () => void>());
 let scaleWidget: IGeoJSScaleWidget | null = null;
 let scalePixelWidget: IGeoJSScaleWidget | null = null;
 const showSamToolHelpAlert = ref(false);
+const samToolActive = computed(
+  () => selectedToolType.value === SamAnnotationToolStateSymbol,
+);
+const samLoadingMessages = computed(() => {
+  const state = selectedTool.value?.state;
+  if (state?.type !== SamAnnotationToolStateSymbol) return [];
+  return (state as { loadingMessages: string[] }).loadingMessages ?? [];
+});
 const samMapEntry = ref<IMapEntry | null>(null);
 const mouseState = ref<IMouseState | null>(null);
 let synchronisationEnabled = true;
@@ -1279,9 +1295,6 @@ watch(
 watch(selectedToolType, () => {
   showSamToolHelpAlert.value =
     selectedToolType.value === SamAnnotationToolStateSymbol;
-  if (showSamToolHelpAlert.value) {
-    setTimeout(() => (showSamToolHelpAlert.value = false), 10000);
-  }
 });
 
 watch([readyLayersCount, readyLayersTotal], () => {
@@ -1422,6 +1435,8 @@ defineExpose({
     scalePixelWidget = v;
   },
   showSamToolHelpAlert,
+  samToolActive,
+  samLoadingMessages,
   samMapEntry,
   mouseState,
   get synchronisationEnabled() {
@@ -1480,10 +1495,64 @@ defineExpose({
   width: 200px;
   z-index: 200;
 }
-.viewer-alert {
-  width: fit-content;
+.sam-status-area {
+  position: absolute;
+  top: 4px;
+  left: 160px;
   z-index: 200;
-  margin: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+.sam-help-banner {
+  display: flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.75);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.sam-help-text {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sam-help-sep {
+  opacity: 0.35;
+  margin: 0 2px;
+}
+.sam-help-close {
+  margin-left: 10px;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.6;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: white;
+  padding: 0 2px;
+}
+.sam-help-close:hover {
+  opacity: 1;
+}
+.sam-loading-overlay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.75);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  width: fit-content;
+}
+.sam-loading-messages {
+  display: flex;
+  gap: 6px;
 }
 .bottom-right-container {
   position: absolute;

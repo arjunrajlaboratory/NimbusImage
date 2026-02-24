@@ -136,6 +136,11 @@ export interface ISamAnnotationToolState {
   type: TSamAnnotationToolStateSymbol;
   nodes: TSamNodes;
   loadingMessages: string[];
+  // Reactive mirror of nodes.input.geoJSMap.output. In Vue 3, pipeline node
+  // outputs are not reactive (markRaw'd ComputeNode instances write to raw
+  // targets, bypassing Proxy). This property is updated by an onOutputUpdate
+  // callback and can be safely read by Vue computeds.
+  mapEntry: IMapEntry | null;
   mouseState: {
     path: IGeoJSPoint2D[]; // In GCS coordinates
   };

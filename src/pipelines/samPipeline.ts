@@ -1,3 +1,4 @@
+import { markRaw, reactive } from "vue";
 import {
   ErrorToolStateSymbol,
   IErrorToolState,
@@ -20,7 +21,10 @@ import {
   TNoOutput,
   createComputeNode,
 } from "./computePipeline";
-import { createOnnxInferenceSession } from "./onnxModels";
+import {
+  createOnnxInferenceSession,
+  runOnnxSessionSerialized,
+} from "./onnxModels";
 import { InferenceSession, Tensor, TypedTensor } from "onnxruntime-web/webgpu";
 import geojs from "geojs";
 import {
@@ -225,7 +229,10 @@ async function runEncoder(
   encoderSession: InferenceSession,
   input: IProcessCanvasOutput,
 ) {
-  const encoderOutput = await encoderSession.run(input.encoderFeed);
+  const encoderOutput = await runOnnxSessionSerialized(
+    encoderSession,
+    input.encoderFeed,
+  );
   return encoderOutput as unknown as IEncoderOutput;
 }
 
@@ -330,7 +337,7 @@ async function runDecoder(
   prompt: IProcessPromptOutput,
   encoderOutput: IEncoderOutput,
 ): Promise<IDecoderOutput> {
-  const decoderOutput = await decoderSession.run({
+  const decoderOutput = await runOnnxSessionSerialized(decoderSession, {
     ...encoderOutput,
     ...prompt,
   });
@@ -607,21 +614,33 @@ export function createSamToolStateFromToolConfiguration(
   const model: TSamModel = configuration.values.model.value;
   let nodes: TSamNodes;
   try {
-    nodes = createSamPipeline(model);
+    // markRaw prevents Vue 3 from wrapping pipeline nodes in reactive Proxies.
+    // ComputeNode instances have internal callback chains and async state that
+    // break when accessed through Proxies.
+    nodes = markRaw(createSamPipeline(model));
   } catch (error) {
     return { type: ErrorToolStateSymbol, error: error as Error };
   }
 
-  const state: ISamAnnotationToolState = {
-    type: SamAnnotationToolStateSymbol,
+  // reactive() ensures that pipeline callbacks (which capture `state` in closures)
+  // mutate through Vue's Proxy, making changes visible to the UI.
+  // In Vue 2, Object.defineProperty modified objects in-place so closures over the
+  // original worked. In Vue 3, reactive() creates a Proxy wrapper — without this,
+  // mutations to loadingMessages/output/livePreview bypass reactivity entirely.
+  // Cast through unknown: reactive()'s return type is UnwrapNestedRefs<T> which
+  // deeply unwraps ref types and doesn't match ISamAnnotationToolState due to
+  // the markRaw'd nodes. At runtime the shape is correct.
+  const state = reactive({
+    type: SamAnnotationToolStateSymbol as typeof SamAnnotationToolStateSymbol,
     nodes,
-    loadingMessages: [],
+    loadingMessages: [] as string[],
+    mapEntry: null as ISamAnnotationToolState["mapEntry"],
     mouseState: {
-      path: [],
+      path: [] as IGeoJSPosition[],
     },
-    output: null,
-    livePreview: null,
-  };
+    output: null as ISamAnnotationToolState["output"],
+    livePreview: null as ISamAnnotationToolState["livePreview"],
+  }) as unknown as ISamAnnotationToolState;
 
   // Add a callback to update the loading message when computing
   // Do this only for nodes that take a long time to compute
@@ -641,7 +660,17 @@ export function createSamToolStateFromToolConfiguration(
     node.onOutputUpdate(recomputeLoadingMessage);
   });
 
-  // State is reactive
+  // Mirror geoJSMap output to the reactive state.mapEntry property.
+  // AnnotationViewer's samToolState computed needs to know which map the SAM
+  // tool is operating on. Reading from a markRaw'd pipeline node is not
+  // reactive, so we mirror it to a reactive property on the state.
+  const geoJSMapNode = nodes.input.geoJSMap;
+  geoJSMapNode.onOutputUpdate(() => {
+    const mapOutput = geoJSMapNode.output;
+    state.mapEntry =
+      !mapOutput || mapOutput === NoOutput ? null : mapOutput;
+  });
+
   // Main output is reactive
   const outputNode = state.nodes.output.mainOuput;
   outputNode.onOutputUpdate(() => {

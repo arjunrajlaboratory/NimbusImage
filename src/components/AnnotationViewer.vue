@@ -268,8 +268,10 @@ const samToolState = computed((): ISamAnnotationToolState | null => {
   if (!(state?.type === SamAnnotationToolStateSymbol)) {
     return null;
   }
-  const samMapEntry = state.nodes.input.geoJSMap.output;
-  if (samMapEntry === NoOutput || samMapEntry.map !== props.map) {
+  // Read from the reactive mapEntry property instead of the raw pipeline node
+  // output. Pipeline nodes are markRaw'd so their outputs are not reactive.
+  const samMapEntry = state.mapEntry;
+  if (!samMapEntry || samMapEntry.map !== props.map) {
     return null;
   }
   return state;

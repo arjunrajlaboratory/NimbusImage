@@ -1,22 +1,6 @@
 <template>
   <v-card>
-    <!-- Title and loading -->
-    <v-menu
-      :closeOnClick="false"
-      :closeOnContentClick="false"
-      :model-value="loadingMessages.length > 0"
-      z-index="100"
-    >
-      <template #activator="{}">
-        <v-card-title> Options </v-card-title>
-      </template>
-      <v-card class="d-flex flex-column">
-        <v-progress-circular indeterminate />
-        <div v-for="(message, i) in loadingMessages" :key="`sam-loading-${i}`">
-          {{ message }}
-        </div>
-      </v-card>
-    </v-menu>
+    <v-card-title>Options</v-card-title>
 
     <!-- Main menu -->
     <v-card-text v-if="samState && datasetId">
