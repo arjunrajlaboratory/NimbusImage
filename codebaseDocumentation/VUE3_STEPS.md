@@ -415,6 +415,26 @@ When navigating between datasets, old tiles remained visible briefly before new 
 - [x] `src/store/index.ts` — Early `sync.setDatasetLoading(true)` before async work in `setDatasetViewId`
 - [x] `src/components/ImageViewer.vue` — `datasetLoading` watcher hides tiles on `true`, draws on `false`
 
+### R35. SAM tool reactivity, session errors, and status UI redesign ✅
+Vue 3's Proxy-based reactivity broke the SAM pipeline in three ways: (1) ComputeNode instances with internal callback chains broke when wrapped in Proxies, (2) pipeline callbacks that captured the original state object bypassed the Proxy and mutations were invisible to the UI, (3) ONNX `session.run()` threw "Session already started" WebGPU errors when rapidly toggling the SAM tool because sessions were recreated on every tool activation.
+
+**Reactivity fixes:**
+- [x] `src/pipelines/samPipeline.ts` — Wrapped `createSamPipeline()` output with `markRaw()` to prevent Vue 3 from wrapping ComputeNode instances in Proxies (their internal callback chains and async state break when accessed through Proxies)
+- [x] `src/pipelines/samPipeline.ts` — Wrapped the tool state object in `reactive()` so that pipeline callbacks (which capture `state` in closures) mutate through Vue's Proxy, making `loadingMessages`/`output`/`livePreview` changes visible to the UI. In Vue 2, `Object.defineProperty` modified objects in-place so closures over the original worked; Vue 3's `reactive()` creates a Proxy wrapper.
+- [x] `src/store/model.ts` — Added `mapEntry: IMapEntry | null` to `ISamAnnotationToolState` interface as a reactive mirror of the pipeline node output
+- [x] `src/pipelines/samPipeline.ts` — Added `onOutputUpdate` callback on `geoJSMap` node to mirror its output to the reactive `state.mapEntry` property
+- [x] `src/components/AnnotationViewer.vue` — Changed `samToolState` computed to read from `state.mapEntry` (reactive) instead of `state.nodes.input.geoJSMap.output` (markRaw'd, not reactive)
+
+**ONNX session caching and serialization:**
+- [x] `src/pipelines/onnxModels.ts` — Added `sessionCache` to reuse ONNX `InferenceSession` instances across tool activations instead of recreating them (which is slow and leaked GPU resources)
+- [x] `src/pipelines/onnxModels.ts` — Added `runOnnxSessionSerialized()` using a `WeakMap`-based promise queue to serialize `session.run()` calls, preventing concurrent WebGPU runs on the same session ("Session already started" errors)
+- [x] `src/pipelines/samPipeline.ts` — Replaced direct `session.run()` calls with `runOnnxSessionSerialized()` in both `runEncoder` and `runDecoder`
+
+**UI redesign:**
+- [x] `src/components/ImageViewer.vue` — Replaced `v-alert` help popup with a compact dark banner positioned right of the minimap. Replaced sidebar loading overlay with an inline spinner + loading messages in the same area. Both render only when SAM tool is active.
+- [x] `src/components/ImageViewer.vue` — Added `samToolActive` and `samLoadingMessages` computeds to read loading state from the reactive tool state
+- [x] `src/components/SamToolMenu.vue` — Removed the `v-menu` loading overlay (loading status is now shown in the viewport)
+
 ## Batch E: Test Suite Recovery ✅
 
 Migrated all 118 test files from Vue Test Utils v1 / Vue 2 patterns to Vue Test Utils v2 / Vue 3 patterns. Eliminated ~1982 tsc errors in test files and restored the full test suite.
