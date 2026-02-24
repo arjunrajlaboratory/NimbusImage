@@ -113,13 +113,15 @@
   <!-- Tool creation dialog (outside expansion panels to avoid watcher conflicts) -->
   <v-dialog
     v-model="toolCreationDialogOpen"
-    width="60%"
+    :width="toolCreationWide ? '90%' : '80%'"
+    :max-width="toolCreationWide ? '1400px' : '1050px'"
     @update:model-value="onToolCreationDialogInput"
   >
     <tool-creation
       @done="onToolCreationDone"
       :open="toolCreationDialogOpen"
       :initial-selected-tool="selectedToolType"
+      @advanced-changed="toolCreationWide = $event"
     />
   </v-dialog>
 </template>
@@ -171,6 +173,7 @@ const isLoggedIn = computed(() => store.isLoggedIn);
 const toolCreationDialogOpen = ref(false);
 const toolTypeDialogOpen = ref(false);
 const selectedToolType = ref<any>(null);
+const toolCreationWide = ref(false);
 
 function onToolCreationDone() {
   // The child emitted "done" meaning the dialog is closing/cancelled/finished
@@ -253,6 +256,7 @@ defineExpose({
   toolCreationDialogOpen,
   toolTypeDialogOpen,
   selectedToolType,
+  toolCreationWide,
   onToolCreationDone,
   onToolCreationDialogInput,
   handleToolTypeSelected,

@@ -1,15 +1,13 @@
 <template>
-  <div>
-    <div class="pa-2">
-      {{ hotkey === null ? "No hotkey yet" : `Current hotkey: ${hotkey}` }}
-    </div>
-    <div>
-      <v-btn class="mr-2" @click="editHotkey()" :disabled="isRecordingHotkey">
-        <v-progress-circular size="20" indeterminate v-if="isRecordingHotkey" />
-        {{ isRecordingHotkey ? "Recording..." : "Record hotkey" }}
-      </v-btn>
-      <v-btn class="mr-2" @click="hotkey = null"> Clear hotkey </v-btn>
-    </div>
+  <div class="hotkey-selection">
+    <span class="hotkey-label">
+      {{ hotkey === null ? "No hotkey yet" : `Hotkey: ${hotkey}` }}
+    </span>
+    <v-btn size="small" class="mr-2" @click="editHotkey()" :disabled="isRecordingHotkey">
+      <v-progress-circular size="16" indeterminate v-if="isRecordingHotkey" class="mr-1" />
+      {{ isRecordingHotkey ? "Recording..." : "Record" }}
+    </v-btn>
+    <v-btn size="small" @click="hotkey = null"> Clear </v-btn>
   </div>
 </template>
 
@@ -44,3 +42,17 @@ function editHotkey() {
   });
 }
 </script>
+
+<style scoped>
+.hotkey-selection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hotkey-label {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+</style>

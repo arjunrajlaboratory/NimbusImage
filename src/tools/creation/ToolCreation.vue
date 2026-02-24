@@ -1,63 +1,89 @@
 <template>
   <div>
-    <v-card class="pa-1">
-      <v-card-title> Add a new tool </v-card-title>
-      <v-card-text>
-        <!-- Form elements generated from the template -->
-        <tool-configuration
-          :template="selectedTemplate"
-          :defaultValues="selectedDefaultValues"
-          v-model="toolValues"
-          ref="toolConfigurationRef"
-        />
-        <v-container v-if="selectedTemplate" class="pa-4">
-          <!-- Tool name with autofill -->
-          <v-row dense>
-            <v-col>
-              <div class="title text-white">Tool Name</div>
-            </v-col>
-          </v-row>
-          <v-row dense class="px-4">
-            <v-col>
+    <v-card class="tool-creation-card">
+      <v-card-title class="tool-creation-header">
+        Add a new tool
+        <v-btn
+          v-if="showAdvancedButton"
+          size="small"
+          variant="text"
+          :color="advancedOpen ? 'primary' : undefined"
+          @click="advancedOpen = !advancedOpen"
+        >
+          Advanced
+          <v-icon size="small" class="ml-1">
+            {{ advancedOpen ? "mdi-chevron-left" : "mdi-chevron-right" }}
+          </v-icon>
+        </v-btn>
+      </v-card-title>
+      <div class="tool-creation-body">
+        <!-- Main column: config + tool name/hotkey -->
+        <div class="tool-creation-main">
+          <div class="tool-creation-config">
+            <tool-configuration
+              :template="selectedTemplate"
+              :defaultValues="selectedDefaultValues"
+              v-model="toolValues"
+              ref="toolConfigurationRef"
+              :external-advanced="true"
+            />
+          </div>
+          <!-- Tool name and hotkey (above buttons) -->
+          <div v-if="selectedTemplate" class="tool-creation-name-section">
+            <div class="name-row">
+              <div class="name-label">Tool Name</div>
               <v-text-field
                 v-model="toolName"
-                :append-icon="userToolName ? 'mdi-refresh' : ''"
-                @click:append="userToolName = false"
+                :append-inner-icon="userToolName ? 'mdi-refresh' : undefined"
+                @click:append-inner="userToolName = false"
                 @input="userToolName = true"
+                variant="outlined"
                 density="compact"
+                hide-details
+                class="tool-name-field"
                 id="tool-name-tourstep"
               />
-            </v-col>
-          </v-row>
-          <!-- Tool hotkey -->
-          <v-row dense>
-            <v-col>
-              <div class="title text-white">Tool Hotkey</div>
-            </v-col>
-          </v-row>
-          <v-row dense class="px-4">
-            <v-col>
+            </div>
+            <div class="hotkey-row">
               <hotkey-selection v-model="hotkey" />
-            </v-col>
-          </v-row>
-        </v-container>
-      </v-card-text>
-      <v-card-actions>
-        <v-container class="button-bar ma-0 pa-0">
-          <v-spacer />
-          <v-btn class="mr-4" color="warning" @click="close">CANCEL</v-btn>
-          <v-btn
-            class="mr-4"
-            color="primary"
-            @click="createTool"
-            :disabled="!selectedTemplate"
-            id="tool-creation-add-tool-button-tourstep"
-            v-tour-trigger="`tool-creation-add-tool-button-tourtrigger`"
-          >
-            ADD TOOL TO TOOLSET
-          </v-btn>
-        </v-container>
-      </v-card-actions>
+            </div>
+          </div>
+          <v-card-actions class="tool-creation-actions">
+            <v-spacer />
+            <v-btn class="mr-4" color="warning" @click="close">CANCEL</v-btn>
+            <v-btn
+              class="mr-4"
+              color="primary"
+              @click="createTool"
+              :disabled="!selectedTemplate"
+              id="tool-creation-add-tool-button-tourstep"
+              v-tour-trigger="`tool-creation-add-tool-button-tourtrigger`"
+            >
+              ADD TOOL TO TOOLSET
+            </v-btn>
+          </v-card-actions>
+        </div>
+        <!-- Advanced panel (right column, conditional) -->
+        <div
+          v-if="advancedOpen && advancedItems.length"
+          class="tool-creation-advanced"
+        >
+          <div class="advanced-content">
+            <v-container>
+              <template v-for="(item, index) in advancedItems" :key="index">
+                <tool-configuration-item
+                  v-if="shouldShowAdvancedItem(item)"
+                  :item="item"
+                  :advanced="true"
+                  @change="onAdvancedItemChanged"
+                  v-model="configToolValues[item.id]"
+                  :ref="getAdvancedRefSetter(item.id)"
+                />
+              </template>
+            </v-container>
+          </div>
+        </div>
+      </div>
     </v-card>
   </div>
 </template>
@@ -69,6 +95,7 @@ import propertiesStore from "@/store/properties";
 import { IToolConfiguration, IToolTemplate } from "@/store/model";
 
 import ToolConfiguration from "@/tools/creation/ToolConfiguration.vue";
+import ToolConfigurationItem from "@/tools/creation/ToolConfigurationItem.vue";
 import ToolTypeSelection, {
   TReturnType as TToolTypeSelectionValue,
 } from "@/tools/creation/ToolTypeSelection.vue";
@@ -93,6 +120,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: "done"): void;
+  (e: "advanced-changed", isOpen: boolean): void;
 }>();
 
 const toolValues = ref<Record<string, any>>({ ...defaultValues });
@@ -102,6 +130,7 @@ const userToolName = ref(false);
 const toolName = ref("New Tool");
 const hotkey = ref<string | null>(null);
 const _selectedTool = ref<TToolTypeSelectionValue | null>(null);
+const advancedOpen = ref(false);
 const toolConfigurationRef = ref<InstanceType<typeof ToolConfiguration> | null>(
   null,
 );
@@ -117,6 +146,34 @@ const selectedTool = computed({
     selectedDefaultValues.value = value?.defaultValues ?? null;
   },
 });
+
+// Show the Advanced button only when a template is selected and has advanced items
+const showAdvancedButton = computed(
+  () =>
+    !!selectedTemplate.value &&
+    (toolConfigurationRef.value?.hasAdvancedItems ?? false),
+);
+
+// Access ToolConfiguration's internal state for rendering advanced items externally
+const advancedItems = computed(
+  () => toolConfigurationRef.value?.advancedInternalTemplate ?? [],
+);
+
+const configToolValues = computed(
+  () => toolConfigurationRef.value?.toolValues ?? {},
+);
+
+function shouldShowAdvancedItem(item: any): boolean {
+  return toolConfigurationRef.value?.shouldShowConfigurationItem(item) ?? true;
+}
+
+function getAdvancedRefSetter(id: string) {
+  return toolConfigurationRef.value?.getRefSetter(id) ?? (() => {});
+}
+
+function onAdvancedItemChanged() {
+  toolConfigurationRef.value?.changed();
+}
 
 function createTool() {
   if (selectedTemplate.value === null) {
@@ -196,6 +253,7 @@ function reset() {
   selectedTemplate.value = null;
   selectedDefaultValues.value = null;
   hotkey.value = null;
+  advancedOpen.value = false;
 
   if (!toolConfigurationRef.value) {
     return;
@@ -233,6 +291,11 @@ watch(
   },
 );
 
+// Emit advanced-changed when advancedOpen toggles
+watch(advancedOpen, (isOpen) => {
+  emit("advanced-changed", isOpen);
+});
+
 defineExpose({
   toolValues,
   selectedTemplate,
@@ -241,6 +304,7 @@ defineExpose({
   toolName,
   hotkey,
   selectedTool,
+  advancedOpen,
   toolConfigurationRef,
   createTool,
   updateAutoToolName,
@@ -248,3 +312,103 @@ defineExpose({
   close,
 });
 </script>
+
+<style scoped>
+.tool-creation-card {
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+
+.tool-creation-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tool-creation-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tool-creation-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.tool-creation-config {
+  flex: 1 1 auto;
+  overflow-y: scroll;
+  padding: 0 8px;
+}
+
+.tool-creation-name-section {
+  flex: 0 0 auto;
+  padding: 12px 24px;
+  border-top: 1px solid rgba(128, 128, 128, 0.15);
+}
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.name-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.tool-name-field {
+  flex: 1 1 auto;
+}
+
+.tool-name-field :deep(.v-field) {
+  font-weight: 600;
+}
+
+.hotkey-row {
+  margin-top: 4px;
+}
+
+.tool-creation-actions {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(128, 128, 128, 0.15);
+}
+
+/* Advanced panel (right column) */
+.tool-creation-advanced {
+  flex: 0 0 50%;
+  max-width: 70%;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid rgba(128, 128, 128, 0.15);
+  min-height: 0;
+}
+
+.advanced-content {
+  flex: 1 1 auto;
+  overflow-y: scroll;
+}
+
+.advanced-content :deep(.v-container) {
+  padding: 8px;
+}
+
+.advanced-content :deep(.v-card-text .v-container) {
+  padding: 2px 6px;
+}
+
+.advanced-content :deep(.v-checkbox .v-label) {
+  white-space: normal;
+  min-width: 120px;
+}
+</style>

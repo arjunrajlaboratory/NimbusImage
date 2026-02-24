@@ -28,15 +28,15 @@ describe("HotkeySelection", () => {
 
   it("displays the current hotkey when value is provided", () => {
     const wrapper = mountComponent({ modelValue: "ctrl+k" });
-    expect(wrapper.text()).toContain("Current hotkey: ctrl+k");
+    expect(wrapper.text()).toContain("Hotkey: ctrl+k");
   });
 
   it("renders Record and Clear buttons", () => {
     const wrapper = mountComponent();
     const buttons = wrapper.findAll(".v-btn");
     expect(buttons).toHaveLength(2);
-    expect(wrapper.text()).toContain("Record hotkey");
-    expect(wrapper.text()).toContain("Clear hotkey");
+    expect(wrapper.text()).toContain("Record");
+    expect(wrapper.text()).toContain("Clear");
   });
 
   it("emits input with null when Clear hotkey is clicked", async () => {

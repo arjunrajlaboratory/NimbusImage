@@ -12,8 +12,9 @@
         />
       </template>
     </v-container>
+    <!-- Inline advanced panel (default behavior) -->
     <v-expansion-panels
-      v-if="advancedInternalTemplate.length > 0 && showAdvancedPanel"
+      v-if="!externalAdvanced && advancedInternalTemplate.length > 0 && showAdvancedPanel"
       v-model="advancedPanel"
     >
       <v-expansion-panel>
@@ -45,11 +46,17 @@ import store from "@/store";
 import propertiesStore from "@/store/properties";
 import ToolConfigurationItem from "@/tools/creation/ToolConfigurationItem.vue";
 
-const props = defineProps<{
-  modelValue: Record<string, any>;
-  template: any;
-  defaultValues: any;
-}>();
+const props = withDefaults(
+  defineProps<{
+    modelValue: Record<string, any>;
+    template: any;
+    defaultValues: any;
+    externalAdvanced?: boolean;
+  }>(),
+  {
+    externalAdvanced: false,
+  },
+);
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: Record<string, any> | null): void;
@@ -101,6 +108,10 @@ const showAdvancedPanel = computed(() => {
     ? propertiesStore.showAdvancedOptionsPanel(dockerImage)
     : true;
 });
+
+const hasAdvancedItems = computed(
+  () => advancedInternalTemplate.value.length > 0 && showAdvancedPanel.value,
+);
 
 function shouldShowConfigurationItem(item: any) {
   if (item.type !== "annotation") {
@@ -258,6 +269,7 @@ defineExpose({
   advancedInternalTemplate,
   basicInternalTemplate,
   showAdvancedPanel,
+  hasAdvancedItems,
   reset,
   changed,
   setDefaultValues,
@@ -265,5 +277,7 @@ defineExpose({
   shouldShowConfigurationItem,
   initialize,
   itemRefs,
+  getRefSetter,
 });
 </script>
+
