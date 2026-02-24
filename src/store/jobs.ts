@@ -112,8 +112,10 @@ interface IJobInfo {
 
 @Module({ dynamic: true, store, name: "jobs" })
 export class Jobs extends VuexModule {
-  notificationSource: EventSource | null = null;
+  notificationSource: WebSocket | null = null;
   latestNotificationTime: number = 0;
+
+  messageStore: { [jobId: string]: IJobEventData[] } = {};
 
   private jobInfoMap: { [jobId: string]: IJobInfo } = {};
 
@@ -192,28 +194,18 @@ export class Jobs extends VuexModule {
       await this.initializeNotificationSubscription();
     }
     this.rawAddJob(job);
+    // If there are messages in the message store for this job, handle them now
+    if (job.jobId in this.messageStore) {
+      for (const jobEvent of this.messageStore[job.jobId]) {
+        await this.handleJobEventImp(jobEvent);
+      }
+      delete this.messageStore[job.jobId];
+    }
     return this.jobInfoMap[job.jobId].successPromise;
   }
 
   @Mutation
-  rawRemoveJob(jobId: string) {
-    delete this.jobInfoMap[jobId];
-  }
-
-  @Action
-  async removeJob(jobId: string) {
-    this.rawRemoveJob(jobId);
-    if (Object.keys(this.jobInfoMap).length <= 0) {
-      await this.closeNotificationSubscription();
-    }
-    // A job is done, add badge to annotation panel if it is closed
-    if (!main.isAnnotationPanelOpen) {
-      main.setAnnotationPanelBadge(true);
-    }
-  }
-
-  @Mutation
-  setNotificationSource(source: EventSource | null) {
+  setNotificationSource(source: WebSocket | null) {
     this.notificationSource = source;
   }
 
@@ -245,10 +237,24 @@ export class Jobs extends VuexModule {
     const jobEvent = data.data;
     const jobId = jobEvent._id;
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
+    // If the jobId from the message hasn't been registered, store the message to be handled later.
     if (!jobInfo) {
+      if (jobId) {
+        if (!(jobId in this.messageStore)) {
+          this.messageStore[jobId] = [];
+        }
+        this.messageStore[jobId].push(jobEvent);
+      }
       return;
     }
 
+    this.handleJobEventImp(jobEvent);
+  }
+
+  @Action
+  async handleJobEventImp(jobEvent: IJobEventData) {
+    const jobId = jobEvent._id;
+    const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
     // Append to the log if there's text
     if (jobEvent.text && typeof jobEvent.text === "string") {
       jobInfo.log = jobInfo.log + jobEvent.text;
@@ -260,6 +266,7 @@ export class Jobs extends VuexModule {
     }
     const status = jobEvent.status;
     if (
+      !status ||
       ![jobStates.cancelled, jobStates.success, jobStates.error].includes(
         status,
       )
@@ -285,8 +292,14 @@ export class Jobs extends VuexModule {
         timeout: 5, // Auto-dismiss after 5 seconds
       });
     }
-    this.removeJob(jobId);
     jobInfo.successResolve(success);
+    jobInfo.listeners = jobInfo.listeners.filter(
+      (listener) => listener.jobId !== jobId,
+    );
+    // A job is done, add badge to annotation panel if it is closed
+    if (!main.isAnnotationPanelOpen) {
+      main.setAnnotationPanelBadge(true);
+    }
   }
 
   @Action
@@ -309,8 +322,8 @@ export class Jobs extends VuexModule {
   @Action
   async initializeNotificationSubscription() {
     await this.closeNotificationSubscription();
-    const notificationSource = new EventSource(
-      `${main.girderRest.apiRoot}/notification/stream?token=${main.girderRest.token}&timeout=45`,
+    const notificationSource = new WebSocket(
+      `${import.meta.env.VITE_GIRDER_URL}/notifications/me?token=${main.girderRest.token}`,
     );
     notificationSource.onmessage = this.handleJobEvent;
     notificationSource.onerror = this.handleError;
