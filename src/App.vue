@@ -189,6 +189,7 @@
       location="right"
       :scrim="false"
       :width="480"
+      temporary
     >
       <analyze-annotations />
     </v-navigation-drawer>
@@ -198,6 +199,7 @@
       location="right"
       :scrim="false"
       :width="480"
+      temporary
     >
       <annotations-settings />
     </v-navigation-drawer>
@@ -207,6 +209,7 @@
       location="right"
       :scrim="false"
       :width="480"
+      temporary
       @transitionend="snapshotPanelFull = snapshotPanel"
     >
       <snapshots :snapshotVisible="snapshotPanel && snapshotPanelFull" />
@@ -217,6 +220,7 @@
       location="right"
       :scrim="false"
       :width="640"
+      temporary
     >
       <annotation-browser></annotation-browser>
     </v-navigation-drawer>
@@ -486,5 +490,27 @@ body > div {
   background: transparent !important;
   box-shadow: none !important;
   max-height: 100% !important;
+}
+
+/* Flat cards get a subtle line border for section discrimination */
+.v-card--variant-flat {
+  border: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+/* Improve secondary text contrast in dark mode */
+.v-theme--dark .text-grey {
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* More breathing room in list rows */
+.v-theme--dark .v-list-item {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* Better type-indicator chip legibility in dark mode */
+.v-theme--dark .type-indicator.v-chip {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.7) !important;
 }
 </style>

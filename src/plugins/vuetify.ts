@@ -3,8 +3,23 @@ import { aliases, mdi } from "vuetify/iconsets/mdi";
 import Persister from "@/store/Persister";
 
 const vuetify = createVuetify({
+  defaults: {
+    VBtn: { variant: "tonal" },
+    VCard: { variant: "flat" },
+    VAlert: { variant: "tonal" },
+    VSwitch: { color: "primary" },
+    VCheckbox: { color: "primary" },
+  },
   theme: {
     defaultTheme: Persister.get("theme", "dark") === "dark" ? "dark" : "light",
+    themes: {
+      dark: {
+        colors: {
+          surface: "#121212",
+          primary: "#26A69A",
+        },
+      },
+    },
   },
   icons: {
     defaultSet: "mdi",

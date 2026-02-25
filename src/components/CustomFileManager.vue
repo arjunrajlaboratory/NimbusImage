@@ -329,7 +329,7 @@ async function itemToChips(selectable: IGirderSelectAble) {
   const chipOption = chipOptions[type];
   const headerChip: IChipAttrs = {
     text: chipOption.text,
-    color: "grey-darken-1",
+    color: "grey",
   };
   if (props.clickableChips) {
     headerChip.to = {

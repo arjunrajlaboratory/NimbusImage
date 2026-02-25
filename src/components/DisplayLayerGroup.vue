@@ -126,7 +126,7 @@ defineExpose({ hasMultipleZ, update, startDragging, endDragging });
 
 .background {
   border-radius: 14px;
-  background-color: grey;
+  border: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 </style>
 

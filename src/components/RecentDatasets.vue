@@ -30,7 +30,7 @@
               <span
                 class="my-0 d-flex flex-column justify-center"
               >
-                <div class="text-caption text-grey text-left">
+                <div class="text-caption text-medium-emphasis text-left">
                   <div>Last accessed:</div>
                   <div style="line-height: 1.1">
                     {{ formatDateNumber(d.datasetView.lastViewed) }}

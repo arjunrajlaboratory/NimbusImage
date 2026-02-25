@@ -42,7 +42,7 @@
                         :closeOnClick="false"
                         :closeOnContentClick="false"
                         :model-value="!!selectedTool && selectedTool.id === tool.id"
-                        z-index="100"
+                        z-index="2100"
                         location="end"
                       >
                         <template #activator="{ props: menuActivatorProps }">

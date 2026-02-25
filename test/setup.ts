@@ -27,7 +27,13 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   };
 }
 
-const vuetify = createVuetify();
+const vuetify = createVuetify({
+  defaults: {
+    VBtn: { variant: "tonal" },
+    VCard: { variant: "flat" },
+    VAlert: { variant: "tonal" },
+  },
+});
 
 config.global.plugins = [vuetify];
 config.global.directives = {

@@ -14,7 +14,7 @@
       v-else-if="computedChipsIds.has(item._id)"
       size="x-small"
       class="ma-1 type-indicator"
-      color="grey-darken-1"
+      color="grey"
     >
       Loading info...
     </v-chip>
@@ -36,7 +36,7 @@
       <template v-slot:activator="{ props: activatorProps }">
         <span
           v-bind="activatorProps"
-          class="text-caption text-grey mx-2"
+          class="text-caption text-medium-emphasis mx-2"
         >
           Modified: {{ item.updated ? formatDateString(item.updated) : "Unknown" }}
         </span>

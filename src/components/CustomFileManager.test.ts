@@ -512,7 +512,7 @@ describe("CustomFileManager", () => {
       const result = await vm.itemToChips({ _id: "ds1", _modelType: "folder" });
       expect(result.chips).toHaveLength(1);
       expect(result.chips[0].text).toBe("Dataset");
-      expect(result.chips[0].color).toBe("grey-darken-1");
+      expect(result.chips[0].color).toBe("grey");
       expect(result.type).toBe("dataset");
     });
 
