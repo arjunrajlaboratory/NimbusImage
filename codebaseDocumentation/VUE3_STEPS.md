@@ -435,6 +435,16 @@ Vue 3's Proxy-based reactivity broke the SAM pipeline in three ways: (1) Compute
 - [x] `src/components/ImageViewer.vue` — Added `samToolActive` and `samLoadingMessages` computeds to read loading state from the reactive tool state
 - [x] `src/components/SamToolMenu.vue` — Removed the `v-menu` loading overlay (loading status is now shown in the viewport)
 
+### R36. AnnotationWorkerMenu positioning and UI polish ✅
+In Vuetify 3, `v-menu` requires the activator to forward both the tooltip and menu activator props via `mergeProps()`. Without this, the menu rendered at the top-left corner of the viewport instead of next to the tool item.
+
+- [x] `src/tools/toolsets/Toolset.vue` — Fixed `v-menu` activator: destructured `{ props: menuActivatorProps }` and used `mergeProps(activatorProps, menuActivatorProps)` on `tool-item`. Added `location="end"` to position menu to the right.
+- [x] `src/tools/toolsets/Toolset.vue` — Added `@close` handler on `annotation-worker-menu` to deselect tool (closes menu)
+- [x] `src/components/AnnotationWorkerMenu.vue` — Added Close button emitting `close` event
+- [x] `src/components/AnnotationWorkerMenu.vue` — Redesigned header: title left-aligned with vertical action buttons (Reset defaults, Reload interface) stacked on the right, using `x-small` buttons with tooltips
+- [x] `src/components/AnnotationWorkerMenu.vue` — Log button: removed `size="small"` from button and icon for consistent sizing
+- [x] `src/components/WorkerInterfaceValues.vue` — Widened slider text field from 60px to 90px to prevent number truncation
+
 ## Batch E: Test Suite Recovery ✅
 
 Migrated all 118 test files from Vue Test Utils v1 / Vue 2 patterns to Vue Test Utils v2 / Vue 3 patterns. Eliminated ~1982 tsc errors in test files and restored the full test suite.

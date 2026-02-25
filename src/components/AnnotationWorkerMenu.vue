@@ -1,22 +1,35 @@
 <template>
   <v-card :class="{ menu: true, loaded: !fetchingWorkerInterface }" v-if="tool">
-    <v-card-title class="subtitle-1">
-      {{ tool.name || "Worker menu" }}
-      <v-spacer />
-      <v-btn size="small" variant="text" class="mr-2" @click="resetInterfaceValues()">
-        <v-icon size="small" start>mdi-refresh</v-icon>
-        Reset
-      </v-btn>
-      <v-tooltip text="Refresh worker interface from the server">
-        <template v-slot:activator="{ props: activatorProps }">
-          <v-icon
-            v-bind="activatorProps"
-            @click="updateInterface(true)"
-          >
-            mdi-sync
-          </v-icon>
-        </template>
-      </v-tooltip>
+    <v-card-title class="subtitle-1 d-flex align-start">
+      <span class="flex-grow-1">{{ tool.name || "Worker menu" }}</span>
+      <div class="d-flex flex-column ml-2 action-buttons">
+        <v-tooltip text="Reset all values to defaults">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              size="x-small"
+              variant="text"
+              @click="resetInterfaceValues()"
+            >
+              <v-icon size="x-small" start>mdi-refresh</v-icon>
+              Reset defaults
+            </v-btn>
+          </template>
+        </v-tooltip>
+        <v-tooltip text="Refresh worker interface from the server">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              size="x-small"
+              variant="text"
+              @click="updateInterface(true)"
+            >
+              <v-icon size="x-small" start>mdi-sync</v-icon>
+              Reload interface
+            </v-btn>
+          </template>
+        </v-tooltip>
+      </div>
     </v-card-title>
     <v-card-subtitle v-if="tool.values.image.image" class="pt-0 pb-2">
       <small>Image: {{ tool.values.image.image }}</small>
@@ -66,16 +79,16 @@
         </v-row>
         <v-row>
           <v-btn @click="preview" v-if="hasPreview">Preview</v-btn>
+          <v-btn variant="text" @click="emit('close')">Close</v-btn>
           <v-spacer></v-spacer>
           <v-btn
             v-if="localJobLog"
-            size="small"
             variant="text"
             color="info"
             class="mr-2"
             @click="showLogDialog = true"
           >
-            <v-icon size="small" start>mdi-text-box-outline</v-icon>
+            <v-icon start>mdi-text-box-outline</v-icon>
             Log
           </v-btn>
           <v-btn @click="compute" v-if="!running">
@@ -218,6 +231,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "loaded"): void;
+  (e: "close"): void;
 }>();
 
 // Create a debounced version of editToolInConfiguration
@@ -668,6 +682,12 @@ defineExpose({
 }
 
 .batch-current-dataset {
+  opacity: 0.7;
+}
+
+.action-buttons {
+  flex-shrink: 0;
+  gap: 0;
   opacity: 0.7;
 }
 </style>

@@ -43,17 +43,19 @@
                         :closeOnContentClick="false"
                         :model-value="!!selectedTool && selectedTool.id === tool.id"
                         z-index="100"
+                        location="end"
                       >
-                        <template #activator="{}">
+                        <template #activator="{ props: menuActivatorProps }">
                           <tool-item
                             :tool="tool"
                             :disabled="!isLoggedIn"
-                            v-bind="activatorProps"
+                            v-bind="mergeProps(activatorProps, menuActivatorProps)"
                           />
                         </template>
                         <annotation-worker-menu
                           :tool="tool"
                           @loaded="onWorkerMenuLoaded"
+                          @close="store.setSelectedToolId(null)"
                         />
                       </v-menu>
                     </template>

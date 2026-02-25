@@ -34,7 +34,7 @@
                       :max="item.max"
                       :min="item.min"
                       :step="item.step || -1"
-                      style="width: 60px"
+                      style="width: 90px"
                       class="mt-0 pt-0"
                       :label="item.unit ? item.unit : undefined"
                     ></v-text-field>
