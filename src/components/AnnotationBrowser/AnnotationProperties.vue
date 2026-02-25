@@ -9,8 +9,7 @@
       <v-btn
         color="primary"
         dark
-        size="small"
-        density="compact"
+        size="default"
         @click.stop="showAnalyzeDialog = true"
         id="measure-objects-button-tourstep"
         v-tour-trigger="'measure-objects-button-tourtrigger'"
@@ -22,9 +21,9 @@
 
     <v-dialog
       v-model="showAnalyzeDialog"
-      min-width="900px"
-      max-width="1000px"
-      width="80%"
+      min-width="1150px"
+      max-width="1300px"
+      width="85%"
       @update:model-value="onDialogClose"
     >
       <v-card>

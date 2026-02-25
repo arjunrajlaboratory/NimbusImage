@@ -9,10 +9,10 @@
     <v-card-text>
       <v-container class="pa-2">
         <v-row align="center" class="mb-1" dense>
-          <v-col cols="3">
+          <v-col cols="4">
             <v-list-subheader dense>Measure by tag:</v-list-subheader>
           </v-col>
-          <v-col cols="6">
+          <v-col cols="5">
             <tag-picker
               v-model="filteringTags"
               dense
@@ -30,12 +30,12 @@
           </v-col>
         </v-row>
         <v-row align="center" dense>
-          <v-col cols="3">
+          <v-col cols="4">
             <v-list-subheader dense id="shape-selection-tourstep">{{
               shapeSelectionString
             }}</v-list-subheader>
           </v-col>
-          <v-col cols="9">
+          <v-col cols="8">
             <v-select
               v-model="filteringShape"
               :items="availableShapes"

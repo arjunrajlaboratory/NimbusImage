@@ -16,6 +16,7 @@ vi.mock("@/store", () => ({
     api: {
       getUserPrivateFolder: vi.fn().mockResolvedValue({ _id: "folder-1" }),
     },
+    initializeUploadWorkflow: vi.fn(),
     isAnnotationPanelOpen: false,
     annotationPanel: false,
   },
@@ -310,14 +311,8 @@ describe("App", () => {
     const vm = wrapper.vm as any;
     await vm.goToNewDataset();
     expect(store.api.getUserPrivateFolder).toHaveBeenCalled();
-    expect(mockRouter.push).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "newdataset",
-        params: expect.objectContaining({
-          initialUploadLocation: { _id: "folder-1" },
-        }),
-      }),
-    );
+    expect(store.initializeUploadWorkflow).toHaveBeenCalled();
+    expect(mockRouter.push).toHaveBeenCalledWith({ name: "newdataset" });
     expect(vm.isUploadLoading).toBe(false);
   });
 
@@ -329,14 +324,8 @@ describe("App", () => {
     const vm = wrapper.vm as any;
     await vm.goToNewDataset();
     expect(logError).toHaveBeenCalled();
-    expect(mockRouter.push).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "newdataset",
-        params: expect.objectContaining({
-          initialUploadLocation: null,
-        }),
-      }),
-    );
+    expect(store.initializeUploadWorkflow).toHaveBeenCalled();
+    expect(mockRouter.push).toHaveBeenCalledWith({ name: "newdataset" });
     expect(vm.isUploadLoading).toBe(false);
   });
 

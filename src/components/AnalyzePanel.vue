@@ -38,7 +38,7 @@ withDefaults(
 <style scoped>
 .analyze-panel {
   width: 100%;
-  max-width: 1200px; /* Ensures dialog will be wide enough */
+  max-width: 1300px; /* Ensures dialog will be wide enough */
 }
 
 .property-container {
@@ -49,11 +49,11 @@ withDefaults(
 }
 
 .property-creation {
-  flex: 0 1 500px; /* Fixed width, can shrink if needed */
+  flex: 1 1 0; /* Equal width with property list */
 }
 
 .property-list-container {
-  flex: 0 0 400px; /* Fixed width, won't grow or shrink */
+  flex: 1 1 0; /* Equal width with property creation */
   height: 600px; /* Fixed height */
   display: flex;
   flex-direction: column;

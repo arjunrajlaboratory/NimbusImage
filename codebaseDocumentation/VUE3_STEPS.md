@@ -714,6 +714,22 @@ The HelpPanel was rendered inside a narrow `v-dialog` with `width="inherit"`, sh
 - [x] `src/components/HelpPanel.vue` — Multi-column layout via CSS `column-width: 320px`, section headers in blue uppercase, group titles with subtle dividers
 - [x] `src/components/HelpPanel.vue` — Added `defineEmits<{ close: [] }>()`, click-outside-to-close on backdrop, close button (top-right)
 
+### P12. Measure Objects dialog sizing and layout polish ✅
+The "Measure objects" dialog was constrained by the parent `v-dialog` `max-width`, not the child `AnalyzePanel.vue` CSS. This is a recurring pattern: when a component's `max-width` or `width` has no effect, the constraint is almost always the parent `v-dialog` or `v-navigation-drawer` width, not the component itself.
+
+**Dialog width (AnnotationProperties.vue):**
+- [x] `src/components/AnnotationBrowser/AnnotationProperties.vue` — Increased dialog from `min-width="900px" max-width="1000px" width="80%"` to `min-width="1150px" max-width="1300px" width="85%"`
+- [x] `src/components/AnnotationBrowser/AnnotationProperties.vue` — Changed "Measure objects" button from `size="small" density="compact"` to `size="default"` for standard button height
+
+**Panel layout (AnalyzePanel.vue):**
+- [x] `src/components/AnalyzePanel.vue` — Changed both `.property-creation` and `.property-list-container` from fixed flex-basis to `flex: 1 1 0` so they split space equally
+
+**Label truncation fix (PropertyCreation.vue):**
+- [x] `src/components/AnnotationBrowser/AnnotationProperties/PropertyCreation.vue` — Widened label columns from `cols="3"` to `cols="4"` for "Measure by tag:" and "Or by shape:" rows (tag picker `cols="6"` → `cols="5"`, shape dropdown `cols="9"` → `cols="8"`)
+
+**Test fix (App.test.ts — pre-existing from P10):**
+- [x] `src/App.test.ts` — Added `initializeUploadWorkflow: vi.fn()` to store mock, updated `goToNewDataset` test assertions to match P10 changes (no route params, just `{ name: "newdataset" }`)
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 
