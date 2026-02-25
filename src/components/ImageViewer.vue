@@ -128,12 +128,13 @@
         <v-btn
           id="layer-info-tourstep"
           icon
+          size="small"
           v-bind="activatorProps"
           class="layer-info-btn"
           color="primary"
           :disabled="store.layers.length === 0"
         >
-          <v-icon size="38">mdi-palette</v-icon>
+          <v-icon size="24">mdi-palette</v-icon>
         </v-btn>
       </template>
       <layer-info-grid :layers="store.layers" />
@@ -141,6 +142,7 @@
     <v-btn
       id="lock-view-tourstep"
       icon
+      size="small"
       class="lock-view-btn"
       :color="isViewLocked ? 'error' : 'primary'"
       @click="toggleViewLock"
@@ -150,19 +152,20 @@
         description: 'Toggle pan and zoom lock (L)',
       }"
     >
-      <v-icon size="38">{{
+      <v-icon size="24">{{
         isViewLocked ? "mdi-lock" : "mdi-lock-open"
       }}</v-icon>
     </v-btn>
     <v-btn
       id="reset-rotation-tourstep"
       icon
+      size="small"
       class="reset-rotation-btn"
       color="primary"
       @click="resetRotation"
       v-if="cameraInfo.rotate !== 0"
     >
-      <v-icon size="38">mdi-rotate-left</v-icon>
+      <v-icon size="24">mdi-rotate-left</v-icon>
     </v-btn>
   </div>
 </template>
@@ -1631,13 +1634,13 @@ defineExpose({
 }
 .lock-view-btn {
   position: absolute;
-  left: 45px;
+  left: 52px;
   bottom: 10px;
   z-index: 1001;
 }
 .reset-rotation-btn {
   position: absolute;
-  left: 80px;
+  left: 94px;
   bottom: 10px;
   z-index: 1001;
 }

@@ -98,7 +98,9 @@
             <v-list>
               <!-- HUD Option -->
               <v-list-item @click="toggleHelpDialogUsingHotkey">
-                <v-icon>mdi-view-dashboard-outline</v-icon>
+                <template #prepend>
+                  <v-icon>mdi-view-dashboard-outline</v-icon>
+                </template>
                 <v-list-item-title
                   >Show heads up display (tab)</v-list-item-title
                 >
@@ -108,7 +110,9 @@
 
               <!-- Documentation Link -->
               <v-list-item href="https://docs.nimbusimage.com" target="_blank">
-                <v-icon>mdi-book-open-variant</v-icon>
+                <template #prepend>
+                  <v-icon>mdi-book-open-variant</v-icon>
+                </template>
                 <v-list-item-title>Documentation</v-list-item-title>
               </v-list-item>
 
@@ -139,9 +143,9 @@
                   :key="tourId"
                   @click="handleTourStart(tourId)"
                 >
-                  <v-icon v-if="tour.popular" color="yellow-darken-2"
-                    >mdi-star</v-icon
-                  >
+                  <template #prepend v-if="tour.popular">
+                    <v-icon color="yellow-darken-2">mdi-star</v-icon>
+                  </template>
                   <v-list-item-title>{{ tour.name }}</v-list-item-title>
                 </v-list-item>
               </template>
@@ -380,14 +384,17 @@ async function goToNewDataset() {
   } catch (error) {
     logError(error);
   } finally {
-    router.push({
-      name: "newdataset",
-      params: {
-        quickupload: false,
-        defaultFiles: [],
-        initialUploadLocation: privateFolder,
-      } as any,
+    store.initializeUploadWorkflow({
+      quickupload: false,
+      batchMode: false,
+      batchName: "",
+      fileGroups: [],
+      datasetNames: [],
+      initialUploadLocation: privateFolder,
+      initialName: "",
+      initialDescription: "",
     });
+    router.push({ name: "newdataset" });
     isUploadLoading.value = false;
   }
 }
@@ -446,6 +453,13 @@ defineExpose({
 <style lang="scss">
 body > div {
   overflow: hidden;
+}
+
+/* Vuetify 3 defaults --v-list-prepend-gap to 32px, which is too wide for
+   most lists in this app. Override globally to a tighter 8px. Individual
+   components can still override via the same CSS variable if needed. */
+.v-list {
+  --v-list-prepend-gap: 8px;
 }
 
 .v-navigation-drawer {

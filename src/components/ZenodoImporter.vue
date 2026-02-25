@@ -242,19 +242,21 @@ async function importSelectedDataset(): Promise<void> {
     currentFile.value = "Preparing upload...";
     importProgress.value = 100;
 
-    // Pass the downloaded files to NewDataset.vue using the same approach as Home.vue
-    router.push({
-      name: "newdataset",
-      params: {
-        quickupload: true,
-        defaultFiles: downloadedImageFiles,
-        initialUploadLocation: path.value,
-        initialName: selectedDataset.value.title,
-        initialDescription: stripHtml(
-          selectedDataset.value.metadata.description || "",
-        ),
-      } as any,
+    // Set upload workflow in store (same pattern as Home.vue quickUpload)
+    store.initializeUploadWorkflow({
+      quickupload: true,
+      batchMode: false,
+      batchName: "",
+      fileGroups: [downloadedImageFiles],
+      datasetNames: [],
+      initialUploadLocation: path.value,
+      initialName: selectedDataset.value.title,
+      initialDescription: stripHtml(
+        selectedDataset.value.metadata.description || "",
+      ),
     });
+
+    router.push({ name: "newdataset" });
   } catch (err) {
     error.value = "Failed to download files from Zenodo. Please try again.";
     logError("Zenodo download error", err);

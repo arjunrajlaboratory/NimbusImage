@@ -669,6 +669,37 @@ Two issues in Snapshots.vue:
 
 - [x] `src/components/Snapshots.vue` — Added `markRaw()` on `bboxLayer`, `bboxAnnotation`, and `scalebarAnnotation` when creating them, preventing Vue from Proxy-wrapping GeoJS objects
 
+### P5. ZenodoImporter Vue Router 4 param fix ✅
+Vue Router 4 only allows string params that correspond to path segments. The `newdataset` route has path `"new"` with no dynamic segments. ZenodoImporter was passing complex objects (`File[]`, booleans, `IGirderLocation`) as route params — this worked in Vue Router 3 (which held arbitrary params in memory) but Vue Router 4 silently discards them, breaking the Zenodo import → upload flow.
+
+- [x] `src/components/ZenodoImporter.vue` — Replaced `router.push({ name: "newdataset", params: { quickupload, defaultFiles, ... } })` with `store.initializeUploadWorkflow({...})` + `router.push({ name: "newdataset" })` (same pattern as `Home.vue`)
+- [x] `src/components/ZenodoImporter.test.ts` — Updated test to verify `store.initializeUploadWorkflow` is called instead of checking route params
+
+### P6. NewDataset.vue failedDataset error not clearing ✅
+When dataset creation failed due to a duplicate name, the error alert persisted even after the user edited the name field. Added a watcher on `name` to clear `failedDataset`.
+
+- [x] `src/views/dataset/NewDataset.vue` — Added `watch(name, () => { failedDataset.value = "" })`
+
+### P7. App.vue help/tour menu icon layout ✅
+In Vuetify 3, `v-icon` as a direct child of `v-list-item` renders in the default slot (stacking vertically with the title). Icons need to be in the `#prepend` slot.
+
+- [x] `src/App.vue` — Moved `v-icon` into `<template #prepend>` for HUD, Documentation, and tour star icons in the help menu
+
+### P8. Global `--v-list-prepend-gap` override ✅
+Vuetify 3 defaults `--v-list-prepend-gap` to `32px`, which is too wide for most lists in this app. Added a global CSS override.
+
+- [x] `src/App.vue` — Added `.v-list { --v-list-prepend-gap: 8px; }` in unscoped style block. Individual components (e.g., ToolItem.vue at 6px) can still override locally.
+
+### P9. ImageViewer overlay button sizing ✅
+The palette, lock, and rotate buttons in the image viewer were oversized (38px icons in default 48px buttons). Reduced to match the compact viewer aesthetic.
+
+- [x] `src/components/ImageViewer.vue` — Reduced icon size from `38` to `24`, added `size="small"` to all three `v-btn` components, increased spacing between buttons (lock at `left: 52px`, rotate at `left: 94px`)
+
+### P10. App.vue goToNewDataset Vue Router 4 param fix ✅
+Same issue as P5: `goToNewDataset()` in App.vue was passing `quickupload`, `defaultFiles`, and `initialUploadLocation` as route params to `newdataset`, which Vue Router 4 silently discards. This didn't break upload functionality (the values were all falsy/empty defaults) but generated console warnings.
+
+- [x] `src/App.vue` — Changed `router.push({ name: "newdataset", params: { quickupload: false, defaultFiles: [], initialUploadLocation: privateFolder } })` to just `router.push({ name: "newdataset" })`. The `initialUploadLocation` is already set via `store.setFolderLocation()` upstream, and `quickupload: false` / `defaultFiles: []` are the prop defaults.
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 

@@ -23,6 +23,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Build:** `pnpm build` succeeds (production build).
 - **Tests:** 118/118 test files passing, 2073/2073 tests passing, 0 failures.
 - **Circular dependencies:** All ~6 root cycles fixed (type-only imports, dependency inversion, lazy imports, constant extraction). See R38 in VUE3_STEPS.md and "Circular Dependencies" section below.
+- **Post-Phase 3 Fixes (P5–P10):** Vue Router 4 param discarding fixed in ZenodoImporter and App.vue `goToNewDataset` (complex objects passed as route params → `store.initializeUploadWorkflow` pattern). NewDataset `failedDataset` error now clears on name edit. Vuetify 3 `v-list-item` icon layout fixed in help/tour menu (`#prepend` slot). Global `--v-list-prepend-gap: 8px` override added. ImageViewer overlay buttons resized smaller with more spacing.
 
 ---
 

@@ -1145,7 +1145,11 @@ function copyLogToClipboard() {
   }
 }
 
-// --- Watcher ---
+// --- Watchers ---
+watch(name, () => {
+  failedDataset.value = "";
+});
+
 watch(configurationLogs, () => {
   if (configuring.value && configurationLogs.value) {
     const progress = parseTranscodeOutput(configurationLogs.value);

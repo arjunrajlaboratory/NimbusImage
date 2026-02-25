@@ -3,12 +3,14 @@ import { nextTick } from "vue";
 
 const {
   mockSetFolderLocation,
+  mockInitializeUploadWorkflow,
   mockStoreAnnotationFile,
   mockStoreCollectionFile,
   mockFilterImageFiles,
   mockDownloadFile,
 } = vi.hoisted(() => {
   const mockSetFolderLocation = vi.fn();
+  const mockInitializeUploadWorkflow = vi.fn();
   const mockStoreAnnotationFile = vi.fn();
   const mockStoreCollectionFile = vi.fn();
   const mockFilterImageFiles = vi.fn((files: any[]) =>
@@ -25,6 +27,7 @@ const {
   const mockDownloadFile = vi.fn().mockResolvedValue(new Blob(["test"]));
   return {
     mockSetFolderLocation,
+    mockInitializeUploadWorkflow,
     mockStoreAnnotationFile,
     mockStoreCollectionFile,
     mockFilterImageFiles,
@@ -37,6 +40,7 @@ vi.mock("@/store", () => ({
     girderRestProxy: {},
     folderLocation: { _id: "folder1", _modelType: "folder" },
     setFolderLocation: mockSetFolderLocation,
+    initializeUploadWorkflow: mockInitializeUploadWorkflow,
   },
 }));
 vi.mock("@/store/annotation", () => ({ default: {} }));
@@ -301,11 +305,14 @@ describe("ZenodoImporter", () => {
     // Should have downloaded image files (2) and non-image files (1)
     expect(mockDownloadFile).toHaveBeenCalledTimes(3);
     expect(mockStoreAnnotationFile).toHaveBeenCalledTimes(1);
-    expect(mockRouter.push).toHaveBeenCalledWith(
+    expect(mockInitializeUploadWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "newdataset",
+        quickupload: true,
+        batchMode: false,
+        initialName: sampleDataset.title,
       }),
     );
+    expect(mockRouter.push).toHaveBeenCalledWith({ name: "newdataset" });
   });
 
   it("importSelectedDataset sets error on failure", async () => {
