@@ -772,6 +772,24 @@ Replaced shade-based section discrimination with a flat, uniform dark background
 - [x] `CustomFileManager.test.ts` — chip color assertion updated from `grey-darken-1` to `grey`
 - [x] `FileItemRow.test.ts` — loading chip color assertion updated from `grey-darken-1` to `grey`
 
+### P16. AnnotationList hover-induced page jumping on property columns ✅
+When the annotation list was sorted by a computed property column (e.g., "nucleus Blob metrics / Area") in descending order, hovering over rows caused the table to scroll and jump erratically.
+
+**Root cause (three layered issues):**
+
+1. **Sort mismatch between custom sort and Vuetify's internal sort.** The `hoveredId` watcher used `getPageFromItemId()`, which computed page numbers from `dataTableItems` — a manually-sorted copy of `filteredItems`. But the `v-data-table` does its own internal sorting via the `:sort-by` prop. For property columns where some annotations have `undefined` values (e.g., "stroma" annotations have no "Area" property), the two sorts diverged: the custom sort treated `undefined` as equal to any number (JavaScript's `undefined < N` and `undefined > N` both return `false`, so the comparator returned 0), while Vuetify sorts `undefined` to the end. This caused the watcher to calculate the wrong page for annotations near page boundaries.
+
+2. **Hover from list itself triggered page changes.** The `hoveredId` watcher was designed to scroll the annotation list when an annotation is hovered in the *image viewer*. But it also fired when hovering rows in the list itself (where the annotation is already visible). When the page calculation was wrong, this caused: page jumps → row under mouse changes → new hover fires → cascading jumps.
+
+3. **Missing `@update:page` handler.** The `v-data-table` had `:page="page"` (controlled prop) but no `@update:page` handler. When users clicked pagination controls, the `page` ref stayed stale. Subsequent hover-triggered page calculations could jump back to the stale page value.
+
+**Fixes:**
+- [x] `src/components/AnnotationBrowser/AnnotationList.vue` — Added `hoverFromList` flag: set synchronously in `hover()` (called from `@mouseover`), checked in the watcher to skip page/scroll logic for list-internal hovers. External hovers (from image viewer) go through `setHoveredAnnotationId` directly, so the scroll-to-annotation behavior is preserved.
+- [x] `src/components/AnnotationBrowser/AnnotationList.vue` — Fixed `dataTableItems` sort comparator: `undefined`/`null` values now sort to end regardless of sort direction (matching Vuetify's behavior), instead of being treated as equal to all numbers.
+- [x] `src/components/AnnotationBrowser/AnnotationList.vue` — Added `@update:page="page = $event"` to keep the `page` ref in sync with user pagination clicks.
+
+**Future improvement — virtual data table:** The current `v-data-table` renders all rows on the current page into the DOM. For datasets with thousands of annotations, this can be slow. Vuetify 3 offers `v-data-table-virtual`, which virtualizes row rendering (only DOM nodes for visible rows). This would eliminate pagination entirely (infinite scroll) and improve performance for large annotation lists. The main migration work would be adapting the page-based hover-scroll logic to a scroll-offset-based approach, and ensuring the custom `v-slot:item` template works with the virtual table's recycling behavior.
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 

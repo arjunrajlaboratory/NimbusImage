@@ -25,6 +25,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Circular dependencies:** All ~6 root cycles fixed (type-only imports, dependency inversion, lazy imports, constant extraction). See R38 in VUE3_STEPS.md and "Circular Dependencies" section below.
 - **Post-Phase 3 Fixes (P5–P11):** Vue Router 4 param discarding fixed in ZenodoImporter and App.vue `goToNewDataset` (complex objects passed as route params → `store.initializeUploadWorkflow` pattern). NewDataset `failedDataset` error now clears on name edit. Vuetify 3 `v-list-item` icon layout fixed in help/tour menu (`#prepend` slot). Global `--v-list-prepend-gap: 8px` override added. ImageViewer overlay buttons resized smaller with more spacing. HelpPanel redesigned as fullscreen translucent HUD overlay with `<kbd>` key badges and multi-column layout.
 - **Dark UI flattening (P15):** Replaced shade-based section discrimination with flat background + line borders. VCard default changed from `tonal` to `flat`. Dark theme surface unified with background (#121212). Primary accent changed from default blue to teal (#26A69A) to complement coral logo. VCheckbox/VSwitch default to primary color. Secondary text contrast improved. Type indicator chip legibility improved. Navigation drawers marked temporary.
+- **AnnotationList hover fix (P16):** Fixed hover-induced page jumping when sorted by property columns. Three fixes: `hoverFromList` flag to skip page/scroll for list-internal hovers, sort comparator fix for undefined/null values, and missing `@update:page` handler. See P16 in VUE3_STEPS.md.
 
 ---
 
@@ -1070,3 +1071,25 @@ Router creation (`createRouter` + `createWebHashHistory` + routes) was moved fro
 2. **Dependency inversion** — Pass dependencies as parameters (e.g., `api` parameter on `getBandOption`) instead of importing the module that provides them
 3. **Lazy `import()`** — Replace static `import X from "./X"` with `await import("./X")` at call sites in async functions. Breaks the static cycle while preserving runtime behavior
 4. **Constant extraction** — Move shared constants (e.g., `jobStates`) to a dedicated file that both modules import from
+
+### Custom Sort vs Vuetify Internal Sort — RESOLVED (P16)
+
+**Critical gotcha:** When `v-data-table` is given `:items` and `:sort-by`, it sorts internally. If you maintain a *separate* manually-sorted copy of the same items (e.g., for computing which page an item is on), the two sorts can diverge for edge cases — especially when comparing `undefined`/`null` values.
+
+JavaScript's `<` and `>` operators return `false` for any comparison involving `undefined` (NaN semantics), so a naive comparator returns 0 (equal) for undefined vs. any number. Vuetify's internal sort places undefined values at the end. This mismatch caused AnnotationList's hover watcher to calculate wrong page numbers, triggering cascading page jumps.
+
+**Rule:** Any custom sort that mirrors a `v-data-table`'s sort must handle `null`/`undefined` explicitly — sort them to the end:
+```typescript
+if (valA == null && valB == null) return 0;
+if (valA == null) return 1;   // a goes after b (end)
+if (valB == null) return -1;  // b goes after a (end)
+```
+
+### Future: Virtual Data Table for Large Annotation Lists
+
+The current `v-data-table` in AnnotationList.vue renders all rows on the current page into the DOM and uses pagination for large datasets. Vuetify 3 offers `v-data-table-virtual`, which virtualizes row rendering (only visible rows exist in the DOM). This would:
+- Eliminate pagination in favor of infinite scroll
+- Improve performance for datasets with thousands of annotations
+- Simplify the hover-scroll logic (scroll-offset-based instead of page-based)
+
+The main migration work would be adapting the `v-slot:item` custom template for the virtual table's row recycling behavior, and replacing the page-based `getPageFromItemId` with `scrollToIndex()` or similar.

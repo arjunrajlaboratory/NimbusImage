@@ -112,6 +112,7 @@
         :items-per-page-options="[10, 50, 200]"
         :sort-by="sortBy"
         @update:items-per-page="itemsPerPage = $event"
+        @update:page="page = $event"
         @update:sort-by="sortBy = $event"
         @update:group-by="groupBy = $event"
         ref="dataTable"
@@ -441,6 +442,11 @@ const dataTableItems = computed((): IAnnotationListItem[] => {
     items.sort((a, b) => {
       const valA = getNestedValue(a, key);
       const valB = getNestedValue(b, key);
+      // Sort null/undefined to end regardless of sort direction
+      // (matches Vuetify's internal sort behavior)
+      if (valA == null && valB == null) return 0;
+      if (valA == null) return 1;
+      if (valB == null) return -1;
       if (valA < valB) return order === "asc" ? -1 : 1;
       if (valA > valB) return order === "asc" ? 1 : -1;
       return 0;
@@ -466,12 +472,23 @@ const getPageFromItemId = computed(() => {
   };
 });
 
+// Track whether hover originated from within the list itself.
+// When hovering a row in the list, the annotation is already visible —
+// no page change or scroll is needed. The page/scroll logic only matters
+// for external hovers (e.g., hovering an annotation in the image viewer).
+let hoverFromList = false;
+
 // Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
 watch([hoveredId, itemsPerPage], () => {
   if (hoveredId.value === null) {
+    hoverFromList = false;
     return;
   }
-  // Change page
+  if (hoverFromList) {
+    hoverFromList = false;
+    return;
+  }
+  // Change page (only for external hovers, e.g., from image viewer)
   page.value = getPageFromItemId.value(hoveredId.value);
   // Get the tr element from the ref map if it exists
   const annotationEl = annotationRefMap.get(hoveredId.value);
@@ -491,6 +508,7 @@ function clickedTag(tag: string) {
 
 function hover(annotationId: string | null) {
   if (annotationStore.annotations.length < 5000) {
+    hoverFromList = true;
     annotationStore.setHoveredAnnotationId(annotationId);
   }
 }
