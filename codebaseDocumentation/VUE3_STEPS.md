@@ -742,6 +742,36 @@ Vuetify 3's CSS sets `.v-dialog { width: 50% }` on the outer overlay element. Th
 - [x] `src/tools/toolsets/Toolset.vue` — Adjusted dialog widths: default 55%/800px, advanced 85%/1400px (roughly doubles when Advanced panel opens)
 - [x] `src/tools/creation/ToolCreation.vue` — Added `width: 100%` to `.tool-creation-card` so the card fills the dialog
 
+### P15. Flatten dark UI — teal accent, line-based section separation ✅
+Replaced shade-based section discrimination with a flat, uniform dark background using thin line borders. Changed the primary accent color from default Material blue (#1976D2) to teal (#26A69A) to complement the coral/salmon logo.
+
+**Theme changes (vuetify.ts):**
+- [x] VCard default variant changed from `tonal` to `flat` — removes semi-transparent colored tint from ~350+ cards
+- [x] Dark theme `surface` set to `#121212` (matches `background`) — collapses shade banding between cards/drawers and page background
+- [x] Dark theme `primary` set to `#26A69A` (Teal 400) — complements coral logo, replaces default bootstrap blue
+- [x] VCheckbox and VSwitch `color` defaulted to `primary` — standardizes active state color across toggle controls (was muted purple)
+
+**Global CSS (App.vue):**
+- [x] `.v-card--variant-flat` gets `border: thin solid rgba(var(--v-border-color), var(--v-border-opacity))` — line-based section discrimination
+- [x] `.text-grey` in dark mode lightened to `rgba(255,255,255,0.5)` — improves secondary text contrast (timestamps, metadata)
+- [x] `.v-list-item` gets 4px vertical padding — more breathing room in lists
+- [x] `.type-indicator.v-chip` in dark mode gets `rgba(255,255,255,0.12)` background — better tag legibility
+- [x] Navigation drawers marked `temporary` to prevent auto-opening on viewport resize (e.g., toggling F12 dev tools)
+- [x] Worker menu z-index raised above progress bar overlay
+
+**Component changes:**
+- [x] `DisplayLayerGroup.vue` — replaced `background-color: grey` with border
+- [x] `Home.vue` — upload card dashed border uses `!important` to override flat-card global border
+- [x] `RecentDatasets.vue` — timestamp text changed from `text-grey` to `text-medium-emphasis` for better dark mode contrast
+- [x] `FileItemRow.vue` — modified date text changed from `text-grey` to `text-medium-emphasis`; loading chip color from `grey-darken-1` to `grey`
+- [x] `CustomFileManager.vue` — type indicator chip color from `grey-darken-1` to `grey` for better legibility
+- [x] `Toolset.vue` — worker menu z-index set to 1001
+
+**Test updates:**
+- [x] `test/setup.ts` — VCard variant matched to `flat`; VCheckbox/VSwitch color defaults added
+- [x] `CustomFileManager.test.ts` — chip color assertion updated from `grey-darken-1` to `grey`
+- [x] `FileItemRow.test.ts` — loading chip color assertion updated from `grey-darken-1` to `grey`
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 
