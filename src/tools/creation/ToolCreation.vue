@@ -318,6 +318,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   max-height: 80vh;
+  width: 100%;
 }
 
 .tool-creation-header {

@@ -735,6 +735,13 @@ The dynamic `<component :is="...">` in ToolConfigurationItem.vue passed `size="s
 
 - [x] `src/tools/creation/ToolConfigurationItem.vue` — Removed `size="small"` from dynamic component (Vuetify 2 leftover); `density="compact"` is sufficient
 
+### P14. Tool creation dialog width constraint (Toolset.vue, ToolCreation.vue) ✅
+Vuetify 3's CSS sets `.v-dialog { width: 50% }` on the outer overlay element. The `width` prop on `v-dialog` only sets the inner `.v-overlay__content` width. So `width="85%"` became 85% of 50% = 42.5% of viewport, making the dialog appear cramped. Additionally, the `v-card` inside `ToolCreation.vue` had no explicit width, so it sized to content rather than filling the dialog.
+
+- [x] `src/tools/toolsets/Toolset.vue` — Added `class="tool-creation-dialog"` to the tool creation `v-dialog`, with unscoped CSS rule `.tool-creation-dialog.v-dialog { width: auto }` to override Vuetify 3's default 50% constraint
+- [x] `src/tools/toolsets/Toolset.vue` — Adjusted dialog widths: default 55%/800px, advanced 85%/1400px (roughly doubles when Advanced panel opens)
+- [x] `src/tools/creation/ToolCreation.vue` — Added `width: 100%` to `.tool-creation-card` so the card fills the dialog
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 
