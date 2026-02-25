@@ -3,7 +3,8 @@
     density="compact"
     :value="tool.id"
     :active="isToolSelected"
-    :style="{ 'max-height': '32px' }"
+    :color="isToolSelected ? 'primary' : undefined"
+    :class="['tool-item', { 'tool-item--active': isToolSelected }]"
     :id="getTourStepId(tool.name)"
     v-tour-trigger="getTourTriggerId(tool.name)"
     v-mousetrap="
@@ -24,7 +25,8 @@
     @mouseleave="isHovering = false"
   >
     <template #prepend>
-      <tool-icon :tool="tool" />
+      <span v-if="isToolSelected" class="tool-item__active-dot" />
+      <tool-icon :tool="tool" :size="18" />
     </template>
     <v-list-item-title>
       {{ tool.name }}
@@ -38,12 +40,13 @@
     </v-list-item-title>
     <template #append>
       <v-btn
+        size="x-small"
+        variant="text"
         icon
-        :max-height="32"
         @click.stop="editDialog = true"
         v-show="isHovering"
       >
-        <v-icon>mdi-pen</v-icon>
+        <v-icon size="14">mdi-pen</v-icon>
       </v-btn>
     </template>
     <v-dialog v-model="editDialog">
@@ -114,3 +117,52 @@ defineExpose({
   onJobChanged,
 });
 </script>
+
+<style scoped>
+.tool-item {
+  --v-list-prepend-gap: 6px;
+  min-height: 36px;
+  border-left: 3px solid transparent;
+  border-radius: 0 4px 4px 0;
+  margin: 1px 4px 1px 0;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.tool-item--active {
+  border-left-color: rgb(var(--v-theme-primary));
+  background-color: rgba(var(--v-theme-primary), 0.12);
+  --v-activated-opacity: 0;
+}
+
+.tool-item:hover:not(.tool-item--active) {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.tool-item :deep(.v-list-item-title) {
+  opacity: 0.7;
+  transition:
+    opacity 0.15s ease,
+    font-weight 0.15s ease;
+}
+
+.tool-item--active :deep(.v-list-item-title) {
+  opacity: 1;
+  font-weight: 500;
+}
+
+.tool-item__active-dot {
+  display: inline-block;
+  width: 6px;
+  min-width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: rgb(var(--v-theme-primary));
+}
+
+.tool-item :deep(.v-list-item__prepend) {
+  gap: 6px;
+}
+</style>

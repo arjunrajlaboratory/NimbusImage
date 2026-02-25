@@ -640,6 +640,24 @@ The breadcrumb bar showed Dataset, Owner, and Collection all inline, consuming s
 - [x] `src/layout/BreadCrumbs.vue` — Made `.breadcrumbs` a flex container; added `.info-hover-icon` and `.nav-icon` opacity transition styles
 - [x] `src/layout/BreadCrumbs.test.ts` — Updated tests: collection now in ref not items when dataset exists, owner now in `ownerDisplayName` ref, added test for configuration-only route keeping collection inline
 
+### P3. Toolset UI modernization — active tool visibility and spacing ✅
+In Vuetify 3 dark mode, the default `v-list-item` active state is nearly invisible — Vuetify's activated overlay is too subtle. Additionally, tool icons were flush against the left edge with zero padding after the Vuetify 3 migration.
+
+**Active tool indicators:**
+- 3px blue left accent bar (using `--v-theme-primary` CSS variable)
+- 6px blue dot rendered before the icon in the `#prepend` slot
+- 12% blue-tinted background with rounded right corners
+- Icon and text tinted blue via Vuetify's `color="primary"` on the list item
+- `--v-activated-opacity: 0` to suppress Vuetify 3's default overlay
+
+**Inactive tool styling:** `opacity: 0.7` on title text, subtle `rgba(255,255,255, 0.05)` hover background.
+
+**Vuetify 3 gotcha — `v-list-item__spacer`:** Vuetify 3 does NOT use `margin` on `.v-list-item__prepend` to space the prepend slot from content. Instead it inserts a `.v-list-item__spacer` element with `width: 32px` (when prepend contains a `v-icon`). The correct override is the `--v-list-prepend-gap` CSS variable on the list item, not `margin-inline-end` on the prepend container.
+
+- [x] `src/tools/ToolIcon.vue` — Added optional `size` prop (default: 20) passed to `<v-icon :size="size">`
+- [x] `src/tools/toolsets/ToolItem.vue` — Added `color="primary"`, active class binding, blue dot in `#prepend`, smaller edit button (`size="x-small" variant="text"`). New `<style scoped>` block with `.tool-item` (36px min-height, 3px transparent left border, `--v-list-prepend-gap: 6px`), `.tool-item--active`, hover, dot, and title opacity styles
+- [x] `src/tools/toolsets/Toolset.vue` — Replaced `padding: 0px` on list items with `padding: 4px 0` on container and `padding-left: 8px; padding-right: 4px` on items (fixes flush-left icon issue)
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 

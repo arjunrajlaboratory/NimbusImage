@@ -1,5 +1,5 @@
 <template>
-  <v-icon v-if="tool">{{ iconName }}</v-icon>
+  <v-icon v-if="tool" :size="size">{{ iconName }}</v-icon>
 </template>
 
 <script setup lang="ts">
@@ -24,9 +24,13 @@ const createShapeToIcon = {
 type toolType = keyof typeof toolTypeToIcon;
 type shape = keyof typeof createShapeToIcon;
 
-const props = defineProps<{
-  tool?: IToolConfiguration;
-}>();
+const props = withDefaults(
+  defineProps<{
+    tool?: IToolConfiguration;
+    size?: number | string;
+  }>(),
+  { size: 20 },
+);
 
 const iconName = computed(() => {
   if (props.tool) {

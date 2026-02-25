@@ -267,7 +267,12 @@ defineExpose({
 });
 </script>
 <style scoped>
-.tight-list .v-list-item {
-  padding: 0px;
+.tight-list {
+  padding: 4px 0;
+}
+
+.tight-list :deep(.v-list-item) {
+  padding-left: 8px;
+  padding-right: 4px;
 }
 </style>
