@@ -38,7 +38,7 @@
               </template>
             </v-select>
             <router-link :to="item.to">
-              <v-icon>mdi-information</v-icon>
+              <v-icon size="small" class="nav-icon">mdi-arrow-right-circle-outline</v-icon>
             </router-link>
             <v-btn
               v-if="item.title === 'Dataset:' && showExternalLink"
@@ -73,6 +73,41 @@
         </v-breadcrumbs-item>
       </template>
     </v-breadcrumbs>
+
+    <!-- Info popover: Owner + Collection on hover -->
+    <v-menu
+      v-if="currentDatasetId && (ownerDisplayName || collectionDisplayName)"
+      open-on-hover
+      :open-delay="200"
+      :close-delay="300"
+      location="bottom"
+    >
+      <template #activator="{ props: activatorProps }">
+        <v-icon
+          v-bind="activatorProps"
+          size="small"
+          class="info-hover-icon mx-1"
+        >
+          mdi-information-outline
+        </v-icon>
+      </template>
+      <v-card class="pa-3" max-width="300" min-width="200">
+        <div v-if="ownerDisplayName" class="mb-2">
+          <div class="text-caption text-medium-emphasis">Owner</div>
+          <div class="text-body-2">{{ ownerDisplayName }}</div>
+        </div>
+        <div v-if="collectionDisplayName">
+          <div class="text-caption text-medium-emphasis">Collection</div>
+          <router-link
+            :to="{ name: 'configuration', params: { configurationId: currentConfigurationId } }"
+            class="text-body-2 text-primary text-decoration-none"
+          >
+            {{ collectionDisplayName }}
+            <v-icon size="x-small" class="ml-1">mdi-arrow-top-right</v-icon>
+          </router-link>
+        </div>
+      </v-card>
+    </v-menu>
 
     <!-- Dialog to add a dataset to the current collection -->
     <v-dialog
@@ -125,6 +160,8 @@ const alert = ref<any>(null);
 const items = ref<IBreadCrumbItem[]>([]);
 const currentConfigurationId = ref<string | null>(null);
 const currentDatasetId = ref<string | null>(null);
+const ownerDisplayName = ref<string | null>(null);
+const collectionDisplayName = ref<string | null>(null);
 
 const previousRefreshInfo = ref<{
   datasetId: string | null;
@@ -210,32 +247,6 @@ function openAlert(alertData: IAlert) {
   alert.value.openAlert(alertData);
 }
 
-async function setItemTextWithResourceName(
-  item: { text: string },
-  id: string,
-  type: "item" | "folder" | "user" | "upenn_collection",
-) {
-  if (type === "user") {
-    try {
-      const user = await girderResources.getUser(id);
-      if (user) {
-        item.text = `${user.firstName} ${user.lastName} (${user.email})`;
-      }
-    } catch (error) {
-      // Silently handle errors (e.g., 401 when not logged in)
-    }
-  } else {
-    try {
-      const resource = await girderResources.getResource({ id, type });
-      if (resource) {
-        item.text = resource.name;
-      }
-    } catch (error) {
-      // Silently handle errors
-    }
-  }
-}
-
 async function openAddDatasetDialog(configIdPromise: Promise<string>) {
   addDatasetCollection.value = await girderResources.getConfiguration(
     await configIdPromise,
@@ -258,6 +269,8 @@ async function refreshItems(force = false) {
 
   currentConfigurationId.value = resolvedConfigurationId || null;
   currentDatasetId.value = resolvedDatasetId || null;
+  ownerDisplayName.value = null;
+  collectionDisplayName.value = null;
 
   if (
     !force &&
@@ -302,32 +315,33 @@ async function refreshItems(force = false) {
     }
   }
 
-  if (folder?.creatorId) {
-    const ownerItem: IBreadCrumbItem = {
-      title: "Owner:",
-      to: {} as RouteLocationRaw,
-      text: "Unknown owner",
-    };
-    newItems.push(ownerItem);
-  }
-
   if (resolvedConfigurationId) {
     const cached = girderResources.watchCollection(resolvedConfigurationId);
-    const configurationItem: IBreadCrumbItem = {
-      title: "Collection:",
-      to: { name: "configuration", params: configParams },
-      text: cached?.name ?? "Unknown configuration",
-    };
-    newItems.push(configurationItem);
+    if (resolvedDatasetId) {
+      // When there's a dataset, store collection name in ref for hover card
+      collectionDisplayName.value = cached?.name ?? "Unknown collection";
+    } else {
+      // Configuration-only route: keep Collection as inline breadcrumb item
+      const configurationItem: IBreadCrumbItem = {
+        title: "Collection:",
+        to: { name: "configuration", params: configParams },
+        text: cached?.name ?? "Unknown configuration",
+      };
+      newItems.push(configurationItem);
+    }
   }
 
   items.value = newItems;
 
   if (folder?.creatorId) {
-    const ownerItem = newItems.find((item) => item.title === "Owner:");
-    if (ownerItem) {
-      setItemTextWithResourceName(ownerItem, folder.creatorId, "user");
-    }
+    girderResources
+      .getUser(folder.creatorId)
+      .then((user) => {
+        if (user) {
+          ownerDisplayName.value = `${user.firstName} ${user.lastName} (${user.email})`;
+        }
+      })
+      .catch(() => {});
   }
 
   if (
@@ -425,12 +439,21 @@ watch([datasetId, configurationId], () => refreshItems());
 watch(
   configurationResource,
   (resource) => {
-    handleResourceChange(
-      resource,
-      "Collection:",
-      currentConfigurationId.value,
-      "upenn_collection",
-    );
+    if (resource == null && currentConfigurationId.value) {
+      girderResources.forceFetchResource({
+        id: currentConfigurationId.value,
+        type: "upenn_collection",
+      });
+      return;
+    }
+    if (resource?.name) {
+      collectionDisplayName.value = resource.name;
+      // Also update inline breadcrumb item if present (configuration-only route)
+      const item = items.value.find((i) => i.title === "Collection:");
+      if (item) {
+        item.text = resource.name;
+      }
+    }
   },
   { immediate: true },
 );
@@ -456,6 +479,8 @@ defineExpose({
   items,
   currentConfigurationId,
   currentDatasetId,
+  ownerDisplayName,
+  collectionDisplayName,
   addDatasetCollection,
   addDatasetFlag,
   configurationResource,
@@ -477,8 +502,27 @@ defineExpose({
 
 <style lang="scss" scoped>
 .breadcrumbs {
+  display: flex;
+  align-items: center;
   overflow: hidden;
   white-space: nowrap;
+}
+
+.info-hover-icon {
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.nav-icon {
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+  &:hover {
+    opacity: 1;
+  }
 }
 
 .breadcrumb-select {

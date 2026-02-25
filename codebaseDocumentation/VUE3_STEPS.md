@@ -629,6 +629,20 @@ Worker tools crashed with `KeyError: 'tags'` when the tool's `connectTo` configu
 
 - [x] `src/store/AnnotationsAPI.ts` — Changed `{ ...connectTo, channel }` to `{ tags: [], ...connectTo, channel }` so `tags` always defaults to `[]`
 
+### P2. Compact breadcrumbs with info hover card ✅
+The breadcrumb bar showed Dataset, Owner, and Collection all inline, consuming significant horizontal space. Condensed by hiding Owner/Collection behind a hover info card, keeping a dedicated navigation icon for the dataset info page.
+
+- [x] `src/layout/BreadCrumbs.vue` — Added `ownerDisplayName` and `collectionDisplayName` refs to hold popover data
+- [x] `src/layout/BreadCrumbs.vue` — Modified `refreshItems()` to store Owner/Collection in refs (not items array) when a dataset exists. On configuration-only routes, Collection stays inline as before.
+- [x] `src/layout/BreadCrumbs.vue` — Added `v-menu` hover card (open-on-hover) after `v-breadcrumbs` showing Owner name and Collection as a clickable `router-link`. Follows `SharingStatusIcon.vue` pattern.
+- [x] `src/layout/BreadCrumbs.vue` — Replaced `mdi-information` nav icon with `mdi-arrow-right-circle-outline` (dataset info page link). Info icon (`mdi-information-outline`) now used for the hover card.
+- [x] `src/layout/BreadCrumbs.vue` — Updated `configurationResource` watcher to update `collectionDisplayName` ref directly. Removed unused `setItemTextWithResourceName` function.
+- [x] `src/layout/BreadCrumbs.vue` — Made `.breadcrumbs` a flex container; added `.info-hover-icon` and `.nav-icon` opacity transition styles
+- [x] `src/layout/BreadCrumbs.test.ts` — Updated tests: collection now in ref not items when dataset exists, owner now in `ownerDisplayName` ref, added test for configuration-only route keeping collection inline
+
+### Known Test Failures: SAM integration tests (pre-existing)
+4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
+
 ---
 
 ## Notes

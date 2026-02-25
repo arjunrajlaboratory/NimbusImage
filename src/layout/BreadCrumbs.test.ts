@@ -275,7 +275,7 @@ describe("BreadCrumbs", () => {
 
   // --- refreshItems ---
 
-  it("refreshItems builds items array with dataset and configuration", async () => {
+  it("refreshItems builds dataset item and stores collection in ref when dataset exists", async () => {
     mockWatchFolder.mockReturnValue({ name: "My Dataset" });
     mockWatchCollection.mockReturnValue({ name: "My Collection" });
     mockGetFolder.mockResolvedValue({ name: "My Dataset", creatorId: "u1" });
@@ -288,17 +288,41 @@ describe("BreadCrumbs", () => {
     await vm.refreshItems(true);
     const itemTitles = vm.items.map((i: any) => i.title);
     expect(itemTitles).toContain("Dataset:");
-    expect(itemTitles).toContain("Collection:");
+    // Collection is now in the ref, not in items
+    expect(itemTitles).not.toContain("Collection:");
+    expect(vm.collectionDisplayName).toBe("My Collection");
   });
 
-  it("refreshItems builds owner item when folder has creatorId", async () => {
-    mockWatchFolder.mockReturnValue({ name: "My Dataset" });
-    mockGetFolder.mockResolvedValue({ name: "My Dataset", creatorId: "u1" });
-    const wrapper = mountComponent({ datasetId: "ds1" }, {}, "dataset");
+  it("refreshItems keeps collection inline when no dataset (configuration-only route)", async () => {
+    mockWatchCollection.mockReturnValue({ name: "My Collection" });
+    const wrapper = mountComponent(
+      { configurationId: "cfg1" },
+      {},
+      "configuration",
+    );
     const vm = wrapper.vm as any;
     await vm.refreshItems(true);
     const itemTitles = vm.items.map((i: any) => i.title);
-    expect(itemTitles).toContain("Owner:");
+    expect(itemTitles).toContain("Collection:");
+  });
+
+  it("refreshItems sets ownerDisplayName when folder has creatorId", async () => {
+    mockWatchFolder.mockReturnValue({ name: "My Dataset" });
+    mockGetFolder.mockResolvedValue({ name: "My Dataset", creatorId: "u1" });
+    mockGetUser.mockResolvedValue({
+      firstName: "John",
+      lastName: "Doe",
+      email: "john@example.com",
+    });
+    const wrapper = mountComponent({ datasetId: "ds1" }, {}, "dataset");
+    const vm = wrapper.vm as any;
+    await vm.refreshItems(true);
+    // Owner is no longer in items
+    const itemTitles = vm.items.map((i: any) => i.title);
+    expect(itemTitles).not.toContain("Owner:");
+    // Wait for the async getUser call
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vm.ownerDisplayName).toBe("John Doe (john@example.com)");
   });
 
   it("refreshItems deduplicates when called with same params and not forced", async () => {
