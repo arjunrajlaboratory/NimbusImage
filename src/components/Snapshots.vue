@@ -249,6 +249,8 @@
             <v-select
               v-model="format"
               :items="formatList"
+              item-title="text"
+              item-value="value"
               label="Format"
               density="compact"
               hide-details
@@ -336,6 +338,8 @@
                       <v-select
                         v-model="manualPixelSizeUnit"
                         :items="pixelSizeUnitItems"
+                        item-title="text"
+                        item-value="value"
                         label="Unit"
                         density="compact"
                         hide-details
@@ -372,6 +376,8 @@
                       <v-select
                         v-model="manualScalebarSettingsUnit"
                         :items="scalebarSettingsUnitItems"
+                        item-title="text"
+                        item-value="value"
                         label="Unit"
                         density="compact"
                         hide-details
@@ -525,7 +531,7 @@ export enum ScalebarMode {
 </script>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, markRaw } from "vue";
 import TagPicker from "@/components/TagPicker.vue";
 import MovieDialog from "@/components/MovieDialog.vue";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
@@ -1146,12 +1152,12 @@ function showSnapshot(show: boolean) {
     );
 
     if (!bboxLayer.value) {
-      bboxLayer.value = map.createLayer("annotation", {
+      bboxLayer.value = markRaw(map.createLayer("annotation", {
         autoshareRenderer: false,
         showLabels: false,
-      });
+      }));
 
-      bboxAnnotation.value = geojs.annotation.rectangleAnnotation({
+      bboxAnnotation.value = markRaw(geojs.annotation.rectangleAnnotation({
         layer: bboxLayer.value,
         corners: [
           { x: bboxLeft.value, y: bboxTop.value },
@@ -1173,9 +1179,9 @@ function showSnapshot(show: boolean) {
           strokeColor: { r: 1, g: 0, b: 0 },
           strokeWidth: 2,
         },
-      }) as IGeoJSAnnotation;
+      }) as IGeoJSAnnotation);
 
-      scalebarAnnotation.value = geojs.annotation.lineAnnotation({
+      scalebarAnnotation.value = markRaw(geojs.annotation.lineAnnotation({
         vertices: scalebarVertices(bboxRight.value, bboxBottom.value),
         layer: bboxLayer.value,
         style: {
@@ -1183,7 +1189,7 @@ function showSnapshot(show: boolean) {
           strokeWidth: 3,
           strokeOpacity: 1,
         },
-      });
+      }));
 
       bboxLayer.value.addAnnotation(bboxAnnotation.value);
       bboxLayer.value.addAnnotation(scalebarAnnotation.value);

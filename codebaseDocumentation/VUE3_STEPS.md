@@ -658,6 +658,17 @@ In Vuetify 3 dark mode, the default `v-list-item` active state is nearly invisib
 - [x] `src/tools/toolsets/ToolItem.vue` — Added `color="primary"`, active class binding, blue dot in `#prepend`, smaller edit button (`size="x-small" variant="text"`). New `<style scoped>` block with `.tool-item` (36px min-height, 3px transparent left border, `--v-list-prepend-gap: 6px`), `.tool-item--active`, hover, dot, and title opacity styles
 - [x] `src/tools/toolsets/Toolset.vue` — Replaced `padding: 0px` on list items with `padding: 4px 0` on container and `padding-left: 8px; padding-right: 4px` on items (fixes flush-left icon issue)
 
+### P4. Snapshots format dropdown [object Object] + bbox coordinate live-update ✅
+Two issues in Snapshots.vue:
+
+**Format dropdown showing [object Object]:** Three v-select components used `{ text, value }` items without `item-title="text" item-value="value"` props (same Vuetify 3 issue as R5).
+
+- [x] `src/components/Snapshots.vue` — Added `item-title="text" item-value="value"` to format dropdown, pixel size unit dropdown, and scalebar unit dropdown
+
+**Bounding box coordinates not updating when dragging:** The `boundingBoxCoordinates()` callback checks `event.annotation === bboxAnnotation.value`. In Vue 3, `ref()` wraps objects in reactive Proxies, so the GeoJS raw annotation !== Proxy(annotation), and `setBoundingBox()` was never called. Same class of issue as R26/R35.
+
+- [x] `src/components/Snapshots.vue` — Added `markRaw()` on `bboxLayer`, `bboxAnnotation`, and `scalebarAnnotation` when creating them, preventing Vue from Proxy-wrapping GeoJS objects
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 
