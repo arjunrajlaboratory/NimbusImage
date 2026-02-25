@@ -445,6 +445,40 @@ In Vuetify 3, `v-menu` requires the activator to forward both the tooltip and me
 - [x] `src/components/AnnotationWorkerMenu.vue` — Log button: removed `size="small"` from button and icon for consistent sizing
 - [x] `src/components/WorkerInterfaceValues.vue` — Widened slider text field from 60px to 90px to prevent number truncation
 
+### R37. HMR freeze fix (Vite 6 + vuex-module-decorators) ✅
+
+**Problem:** After upgrading to Vite 6, any code edit triggered a multi-minute browser freeze. The root cause was twofold:
+
+1. **Store module re-registration cascade.** `vuex-module-decorators` `@Module({ dynamic: true })` calls `store.registerModule()` at class-definition time. When Vite 6 HMR re-evaluates a store file, the decorator re-registers the module, causing "duplicate getter" warnings, state overwrites, and massive Vue reactivity cascades. Vite 6 is more aggressive than Vite 5 about invalidating transitive dependencies, so editing any file imported by a store module would cascade through all 13 store modules and then into 80+ Vue components.
+
+2. **Circular import causing full page reloads.** `App.vue → store/index.ts → (dynamic import) main.ts → App.vue` formed a cycle. Even though the store used `await import("@/main")` (dynamic), Vite's HMR graph still tracked it as a dependency, preventing HMR patches on App.vue edits.
+
+**Solution (three layers):**
+
+- **Layer 1: `import.meta.hot.accept()` on all store files.** Makes each store module self-accepting for HMR, preventing edit cascades from propagating to all importing Vue components. Applied to all 13 store files + `useRouteMapper.ts`.
+
+- **Layer 2: Idempotent `registerModule` in `src/store/root.ts`.** Patched `store.registerModule()` to detect already-registered modules, unregister them first, then re-register with `preserveState: true`. This keeps existing runtime state (loaded dataset, annotations, etc.) while picking up new/changed getters, actions, and mutations. Only active in dev (`import.meta.hot` guard).
+
+- **Layer 3: Extract `src/router.ts` to break circular import.** Moved router creation from `main.ts` to a dedicated `src/router.ts` file. Changed `store/index.ts` dynamic import from `await import("@/main")` to `await import("@/router")`, breaking the `App.vue → store → main.ts → App.vue` cycle.
+
+**Files modified:**
+- [x] `src/store/root.ts` — Patched `store.registerModule` for idempotent HMR with `preserveState: true`; added `import.meta.hot.accept()`
+- [x] `src/router.ts` — **New file.** Extracted router creation (`createRouter` + `createWebHashHistory` + routes) from `main.ts`
+- [x] `src/main.ts` — Removed inline router creation; now imports from `./router`
+- [x] `src/store/index.ts` — Changed dynamic import from `@/main` to `@/router` (line ~1308)
+- [x] `src/utils/useRouteMapper.ts` — Added `needsSync()` guard to skip redundant `syncFromRoute` calls during HMR; added null guards in params watcher; added `import.meta.hot.accept()`
+- [x] `src/store/annotation.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/chat.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/datasetMetadataImport.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/filters.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/girderResources.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/jobs.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/model.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/progress.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/projects.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/properties.ts` — Added `import.meta.hot.accept()`
+- [x] `src/store/sync.ts` — Added `import.meta.hot.accept()`
+
 ## Batch E: Test Suite Recovery ✅
 
 Migrated all 118 test files from Vue Test Utils v1 / Vue 2 patterns to Vue Test Utils v2 / Vue 3 patterns. Eliminated ~1982 tsc errors in test files and restored the full test suite.

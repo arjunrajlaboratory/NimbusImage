@@ -18,9 +18,11 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Phase 3 Batch E:** Test suite fully recovered — migrated 118 test files from Vue Test Utils v1 to v2, eliminated ~1982 tsc errors, all 2073 tests passing.
 - **Phase 3 Batch F:** Build toolchain upgraded — Vite 6.4, @vitejs/plugin-vue 6.0.4, Vitest 3.2, Sass 1.86+, vite-plugin-static-copy 3.2. Node version in `.npmrc` updated from 18.20.2 to 22.22.0. Production build now works.
 - **TypeScript:** `pnpm tsc` has 0 errors (source and test files).
-- **Dev server:** App boots successfully on Vite 6. Home page (file browser with names, chips, search; recent datasets/projects tabs), dataset viewer, toolsets, layer controls, settings, and snapshots all render correctly.
+- **HMR fix:** Vite 6 HMR freeze resolved — patched vuex-module-decorators re-registration, added `import.meta.hot.accept()` to all store files, extracted `src/router.ts` to break circular import. See R37 in VUE3_STEPS.md.
+- **Dev server:** App boots successfully on Vite 6. HMR works correctly — edits to store files and App.vue apply without freezes or full reloads.
 - **Build:** `pnpm build` succeeds (production build).
 - **Tests:** 118/118 test files passing, 2073/2073 tests passing, 0 failures.
+- **TODO:** ~6 root circular dependency cycles remain (162 total paths). See "Circular Dependencies" section below.
 
 ---
 
@@ -963,6 +965,8 @@ const dataTableInner = computed(() => {
 - ~~**GeoJS Proxy Reactivity**~~ (Resolved): Both `ImageViewer.vue` and `AnnotationViewer.vue` now have full `markRaw()` coverage on all GeoJS objects in reactive refs.
 - **AnnotationViewer.vue** (~3,310 lines): Migrated (Batch 19). Full `markRaw()` coverage. 244 tests passing.
 - **ImageViewer.vue** (~1,395 lines): Migrated (Batch 18). Full `markRaw()` coverage. 106 tests passing.
+- ~~**HMR freeze (Vite 6)**~~ (Resolved): vuex-module-decorators re-registration during HMR caused multi-minute freezes. Fixed with `import.meta.hot.accept()`, idempotent `registerModule` patch, and router extraction. See "HMR Store Re-registration" section below.
+- **Circular dependencies**: 162 circular dependency paths across ~6 root cycles. Mitigated by `accept()` calls but not yet fixed. See "Circular Dependencies" section below.
 - **Store interdependencies**: 11 Vuex modules with cross-references. Map dependencies before Pinia migration.
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
 - **Template ref typing**: Mixed Class + Composition components cause type mismatches during incremental migration.
@@ -1004,3 +1008,66 @@ The annotation store uses `markRaw()` on all large read-only data structures to 
 | Total JS heap | ~530 MB | — | — |
 
 The ~530MB heap is dominated by GeoJS tile caches (~400MB+), canvas rendering (~42MB), and Vue's dependency tracking infrastructure (~35MB est.), not by proxy overhead. The `markRaw()` strategy eliminates virtually all proxy overhead on store data.
+
+### HMR Store Re-registration (Vite 6) — RESOLVED
+
+**Problem:** After upgrading to Vite 6, any code edit during development triggered a multi-minute browser freeze. Two separate issues contributed:
+
+1. **vuex-module-decorators re-registration cascade.** The library's `@Module({ dynamic: true })` decorator calls `store.registerModule()` at class-definition time (in `registerDynamicModule()` at `vuex-module-decorators/dist/esm/index.js:150-159`). It does not check whether the module is already registered. When Vite 6 HMR re-evaluates a store file, the decorator blindly re-registers the module, causing:
+   - "duplicate getter" warnings from Vuex (getters cannot be redefined)
+   - State reset to initial values (registerModule overwrites existing state)
+   - Massive Vue reactivity cascades as every reactive subscriber re-evaluates
+
+   Vite 6 is more aggressive than Vite 5 about invalidating transitive dependencies. An edit to any file imported by a store module cascades up through all 13 store modules, then into 80+ Vue components that import those stores. Each store module re-registers during this cascade, compounding the problem.
+
+2. **Circular import preventing HMR on App.vue.** The dependency chain `App.vue → store/index.ts → (dynamic import) main.ts → App.vue` formed a cycle. Even though the store used `await import("@/main")` (a dynamic import), Vite's HMR module graph still tracked it as a dependency, causing Vite to fall back to a full page reload whenever App.vue was edited.
+
+**Solution (three complementary layers):**
+
+**Layer 1 — `import.meta.hot.accept()` on all store files.**
+Each store module (13 files) and `useRouteMapper.ts` now call `import.meta.hot.accept()` at the end of the file. This makes each module self-accepting for HMR, preventing cascades from propagating to all importing Vue components. Without this, an edit to a utility file would cascade through every store → every component, causing a full re-render of the entire app.
+
+**Layer 2 — Idempotent `registerModule` patch in `src/store/root.ts`.**
+The Vuex store's `registerModule` method is monkey-patched (only in dev, behind `import.meta.hot` guard) to:
+1. Check if the module already exists in `store.state`
+2. If it does: `unregisterModule()` first, then `registerModule()` with `preserveState: true`
+3. If it doesn't: call the original `registerModule()` normally
+
+The `preserveState: true` option is critical — it tells Vuex to keep the existing runtime state (loaded dataset, annotations, user session, etc.) while picking up new/changed getters, actions, and mutations from the re-evaluated module.
+
+**Layer 3 — Extract `src/router.ts` to break circular import.**
+Router creation (`createRouter` + `createWebHashHistory` + routes) was moved from `main.ts` to a dedicated `src/router.ts` file. The store's dynamic import was changed from `await import("@/main")` to `await import("@/router")`. This breaks the `App.vue → store → main.ts → App.vue` cycle, allowing Vite to apply HMR patches to App.vue without a full page reload.
+
+**Key insight:** Layers 1 and 2 are complementary, not redundant. Layer 2 makes re-registration safe (no state loss, no duplicate getters). Layer 1 makes it fast (prevents unnecessary cascade propagation). Without Layer 1, every edit would still trigger re-evaluation of all 13 stores and 80+ components — safe, but slow. Without Layer 2, if a store file IS re-evaluated (e.g., when edited directly), the re-registration would still cause duplicate getter warnings and state loss.
+
+### Circular Dependencies — TODO
+
+**Status: Not yet fixed. 162 circular dependency paths found (via `pnpm dlx madge --circular --extensions ts --ts-config tsconfig.json src/`), stemming from ~6 root cycles.**
+
+The `import.meta.hot.accept()` calls on store files mitigate the HMR impact, but circular dependencies remain problematic:
+- They can cause `undefined` imports at module evaluation time (temporal dead zone)
+- They make the dependency graph harder to reason about
+- They prevent tree-shaking and code splitting
+- They increase the blast radius of HMR invalidations
+
+**Root cycles (shortest paths):**
+
+| # | Cycle | Length | Severity |
+|---|-------|--------|----------|
+| 1 | `store/images.ts` ↔ `store/index.ts` | 2 | High — two largest store modules |
+| 2 | `store/model.ts` ↔ `store/GirderAPI.ts` | 2 | High — types and API client |
+| 3 | `store/jobs.ts` ↔ `store/progress.ts` | 2 | Medium — job tracking |
+| 4 | `store/properties.ts` ↔ `store/filters.ts` | 2 | Medium — property computation |
+| 5 | `store/model.ts` ↔ `pipelines/samPipeline.ts` | 2 | Medium — SAM model types |
+| 6 | `store/index.ts → router.ts → views/index.ts → ... → store` | Long | High — connects store to entire view tree |
+
+**Vue component cycles (lower priority — SFCs self-accept HMR):**
+- `components/Snapshots.vue` ↔ `components/MovieDialog.vue`
+- `components/CustomFileManager.vue` → `components/FileManagerOptions.vue` → `components/GirderLocationChooser.vue`
+- `store/annotation.ts` → `tools/creation/templates/AnnotationConfiguration.vue` → `components/TagPicker.vue`
+
+**Proposed fix strategy:**
+1. **Extract shared types to dedicated files** — Move interfaces/types that cause cycles (e.g., types shared between `model.ts` and `GirderAPI.ts`) to standalone type-only files
+2. **Use `import type` for type-only references** — TypeScript `import type` is erased at compile time and doesn't create runtime dependencies
+3. **Use dynamic imports for runtime-only references** — Where module A needs module B only at runtime (not at module evaluation time), use `await import()` to break the static cycle
+4. **Lazy-initialize cross-references** — For store modules that reference each other, defer the cross-reference to action/mutation time rather than module evaluation time

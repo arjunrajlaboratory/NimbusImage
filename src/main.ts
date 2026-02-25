@@ -6,11 +6,10 @@ import "reflect-metadata";
 import "./registerServiceWorker";
 import vuetify from "./plugins/vuetify";
 import VueAsyncComputed from "vue-async-computed";
-import { createRouter, createWebHashHistory } from "vue-router";
 
 import main, { store } from "./store";
+import router from "./router";
 
-import routes from "./views";
 import App from "./App.vue";
 
 import "./style.scss";
@@ -30,11 +29,6 @@ import { tourTriggerDirective } from "./plugins/tour-trigger.directive";
 main.initialize();
 main.setupWatchers();
 chat.initializeChatDatabase();
-
-const router = createRouter({
-  history: createWebHashHistory(),
-  routes,
-});
 
 const app = createApp(App);
 

@@ -36,7 +36,9 @@
       </v-tooltip>
       <v-divider class="ml-1" vertical />
       <template v-if="store.dataset && routeName === 'datasetview'">
-        <v-tooltip text="List of all objects in the dataset, including their properties, and various actions on them">
+        <v-tooltip
+          text="List of all objects in the dataset, including their properties, and various actions on them"
+        >
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
@@ -50,7 +52,9 @@
           </template>
         </v-tooltip>
         <v-divider class="ml-4" vertical />
-        <v-tooltip text="Snapshots for bookmarking and downloading cropped regions in your dataset">
+        <v-tooltip
+          text="Snapshots for bookmarking and downloading cropped regions in your dataset"
+        >
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
@@ -125,14 +129,19 @@
               </v-list-item>
 
               <!-- Tours List -->
-              <template v-for="(tours, category) in filteredToursByCategory" :key="category">
+              <template
+                v-for="(tours, category) in filteredToursByCategory"
+                :key="category"
+              >
                 <v-list-subheader>{{ category }}</v-list-subheader>
                 <v-list-item
                   v-for="(tour, tourId) in tours"
                   :key="tourId"
                   @click="handleTourStart(tourId)"
                 >
-                  <v-icon v-if="tour.popular" color="yellow-darken-2">mdi-star</v-icon>
+                  <v-icon v-if="tour.popular" color="yellow-darken-2"
+                    >mdi-star</v-icon
+                  >
                   <v-list-item-title>{{ tour.name }}</v-list-item-title>
                 </v-list-item>
               </template>
@@ -141,7 +150,9 @@
         </v-menu>
         <server-status />
         <user-menu />
-        <v-tooltip text="Open NimbusImage chat for help with solving your particular image analysis problems">
+        <v-tooltip
+          text="Open NimbusImage chat for help with solving your particular image analysis problems"
+        >
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"

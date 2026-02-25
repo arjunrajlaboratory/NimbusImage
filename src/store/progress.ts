@@ -462,3 +462,9 @@ class Progress extends VuexModule {
 }
 
 export default getModule(Progress);
+
+// Self-accept HMR to prevent vuex-module-decorators from re-registering
+// the dynamic module (which causes duplicate getters and state overwrites).
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}

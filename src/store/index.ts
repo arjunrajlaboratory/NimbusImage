@@ -1305,7 +1305,7 @@ export class Main extends VuexModule {
       }
 
       const newLocation = datasetView.lastLocation;
-      const { router } = await import("@/main");
+      const { default: router } = await import("@/router");
       const query = router.currentRoute.value.query;
       promises.push(
         this.setXY(query.xy == null ? newLocation.xy : Number(query.xy)),
@@ -2532,3 +2532,9 @@ export class Main extends VuexModule {
 const main = getModule(Main);
 
 export default main;
+
+// Self-accept HMR to prevent vuex-module-decorators from re-registering
+// the dynamic module (which causes duplicate getters and state overwrites).
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}
