@@ -1,5 +1,5 @@
 import { IGirderItem } from "@/girder";
-import { ITileHistogram } from "./images";
+import type { ITileHistogram } from "./images";
 import Shepherd from "shepherd.js";
 
 interface IObject<Values = any> {
@@ -1807,9 +1807,9 @@ export function getChannelColors(userColors?: { [key: string]: string }): {
 
 import { v4 as uuidv4 } from "uuid";
 import { ISetQuadStatus } from "@/utils/setFrameQuad";
-import { ITileMeta } from "./GirderAPI";
+import type { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
-import { TSamNodes } from "@/pipelines/samPipeline";
+import type { TSamNodes } from "@/pipelines/samPipeline";
 
 // TODO: It's kind of weird to have this function here.
 export function newLayer(

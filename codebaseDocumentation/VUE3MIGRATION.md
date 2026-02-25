@@ -22,7 +22,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Dev server:** App boots successfully on Vite 6. HMR works correctly — edits to store files and App.vue apply without freezes or full reloads.
 - **Build:** `pnpm build` succeeds (production build).
 - **Tests:** 118/118 test files passing, 2073/2073 tests passing, 0 failures.
-- **TODO:** ~6 root circular dependency cycles remain (162 total paths). See "Circular Dependencies" section below.
+- **Circular dependencies:** All ~6 root cycles fixed (type-only imports, dependency inversion, lazy imports, constant extraction). See R38 in VUE3_STEPS.md and "Circular Dependencies" section below.
 
 ---
 
@@ -966,7 +966,7 @@ const dataTableInner = computed(() => {
 - **AnnotationViewer.vue** (~3,310 lines): Migrated (Batch 19). Full `markRaw()` coverage. 244 tests passing.
 - **ImageViewer.vue** (~1,395 lines): Migrated (Batch 18). Full `markRaw()` coverage. 106 tests passing.
 - ~~**HMR freeze (Vite 6)**~~ (Resolved): vuex-module-decorators re-registration during HMR caused multi-minute freezes. Fixed with `import.meta.hot.accept()`, idempotent `registerModule` patch, and router extraction. See "HMR Store Re-registration" section below.
-- **Circular dependencies**: 162 circular dependency paths across ~6 root cycles. Mitigated by `accept()` calls but not yet fixed. See "Circular Dependencies" section below.
+- ~~**Circular dependencies**~~ (Resolved): All ~6 root cycles fixed via type-only imports, dependency inversion (pass API as parameter), lazy imports, and constant extraction. See R38 in VUE3_STEPS.md.
 - **Store interdependencies**: 11 Vuex modules with cross-references. Map dependencies before Pinia migration.
 - **`$vnode.data` access**: Used in ColorPickerMenu for class/style passthrough. Vue 2-only API.
 - **Template ref typing**: Mixed Class + Composition components cause type mismatches during incremental migration.
@@ -1040,34 +1040,31 @@ Router creation (`createRouter` + `createWebHashHistory` + routes) was moved fro
 
 **Key insight:** Layers 1 and 2 are complementary, not redundant. Layer 2 makes re-registration safe (no state loss, no duplicate getters). Layer 1 makes it fast (prevents unnecessary cascade propagation). Without Layer 1, every edit would still trigger re-evaluation of all 13 stores and 80+ components — safe, but slow. Without Layer 2, if a store file IS re-evaluated (e.g., when edited directly), the re-registration would still cause duplicate getter warnings and state loss.
 
-### Circular Dependencies — TODO
+### Circular Dependencies — RESOLVED
 
-**Status: Not yet fixed. 162 circular dependency paths found (via `pnpm dlx madge --circular --extensions ts --ts-config tsconfig.json src/`), stemming from ~6 root cycles.**
+**Status: All ~6 root cycles fixed.** See R38 in VUE3_STEPS.md for full details.
 
-The `import.meta.hot.accept()` calls on store files mitigate the HMR impact, but circular dependencies remain problematic:
-- They can cause `undefined` imports at module evaluation time (temporal dead zone)
-- They make the dependency graph harder to reason about
-- They prevent tree-shaking and code splitting
-- They increase the blast radius of HMR invalidations
+**Root cycles and how they were fixed:**
 
-**Root cycles (shortest paths):**
+| # | Cycle | Fix |
+|---|-------|-----|
+| 1 | `store/images.ts` ↔ `store/index.ts` | Added `api` parameter to `getBandOption()`, removed store import from images.ts |
+| 2 | `store/model.ts` ↔ `store/GirderAPI.ts` | `import type { ITileMeta }` (type-only, erased at compile time) |
+| 3 | `store/jobs.ts` ↔ `store/progress.ts` | Extracted `jobStates` to `jobConstants.ts`, lazy `import("./progress")` in jobs.ts |
+| 4 | `store/properties.ts` ↔ `store/filters.ts` | Lazy `import("./filters")` at 2 call sites in properties.ts |
+| 5 | `store/model.ts` ↔ `pipelines/samPipeline.ts` | `import type { TSamNodes }` (type-only) |
+| 6 | `store/index.ts → router.ts → views → store` | Pass `routeQuery` from UI layer into `setDatasetViewId()`, removed router import from store |
 
-| # | Cycle | Length | Severity |
-|---|-------|--------|----------|
-| 1 | `store/images.ts` ↔ `store/index.ts` | 2 | High — two largest store modules |
-| 2 | `store/model.ts` ↔ `store/GirderAPI.ts` | 2 | High — types and API client |
-| 3 | `store/jobs.ts` ↔ `store/progress.ts` | 2 | Medium — job tracking |
-| 4 | `store/properties.ts` ↔ `store/filters.ts` | 2 | Medium — property computation |
-| 5 | `store/model.ts` ↔ `pipelines/samPipeline.ts` | 2 | Medium — SAM model types |
-| 6 | `store/index.ts → router.ts → views/index.ts → ... → store` | Long | High — connects store to entire view tree |
+**Additional cleanup:**
+- `store/model.ts` → `store/images.ts`: `import type { ITileHistogram }` (type-only)
+- `components/FileManagerOptions.vue`: Deleted unused `GirderLocationChooser` import
 
-**Vue component cycles (lower priority — SFCs self-accept HMR):**
-- `components/Snapshots.vue` ↔ `components/MovieDialog.vue`
-- `components/CustomFileManager.vue` → `components/FileManagerOptions.vue` → `components/GirderLocationChooser.vue`
-- `store/annotation.ts` → `tools/creation/templates/AnnotationConfiguration.vue` → `components/TagPicker.vue`
+**Remaining Vue component cycles (low priority — SFCs self-accept HMR):**
+- `components/Snapshots.vue` ↔ `components/MovieDialog.vue` — investigated, found to be one-way only (not actually circular)
+- `components/CustomFileManager.vue` → `components/FileManagerOptions.vue` → `components/GirderLocationChooser.vue` — partially resolved by removing unused GirderLocationChooser import
 
-**Proposed fix strategy:**
-1. **Extract shared types to dedicated files** — Move interfaces/types that cause cycles (e.g., types shared between `model.ts` and `GirderAPI.ts`) to standalone type-only files
-2. **Use `import type` for type-only references** — TypeScript `import type` is erased at compile time and doesn't create runtime dependencies
-3. **Use dynamic imports for runtime-only references** — Where module A needs module B only at runtime (not at module evaluation time), use `await import()` to break the static cycle
-4. **Lazy-initialize cross-references** — For store modules that reference each other, defer the cross-reference to action/mutation time rather than module evaluation time
+**Techniques used (for future reference):**
+1. **`import type`** — TypeScript erases these at compile time, breaking runtime cycles for type-only references
+2. **Dependency inversion** — Pass dependencies as parameters (e.g., `api` parameter on `getBandOption`) instead of importing the module that provides them
+3. **Lazy `import()`** — Replace static `import X from "./X"` with `await import("./X")` at call sites in async functions. Breaks the static cycle while preserving runtime behavior
+4. **Constant extraction** — Move shared constants (e.g., `jobStates`) to a dedicated file that both modules import from

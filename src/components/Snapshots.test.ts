@@ -1044,7 +1044,7 @@ describe("Snapshots.vue", () => {
     it("loadSnapshot calls setDatasetViewId when different view", async () => {
       const snapshot = makeSnapshot({ datasetViewId: "differentView" });
       await (wrapper.vm as any).loadSnapshot(new Event("click"), { item: { record: snapshot, name: snapshot.name, datasetName: "", key: "", modified: "" } });
-      expect(store.setDatasetViewId).toHaveBeenCalledWith("differentView");
+      expect(store.setDatasetViewId).toHaveBeenCalledWith({ id: "differentView" });
     });
 
     it("loadSnapshot does not call setDatasetViewId when same view", async () => {

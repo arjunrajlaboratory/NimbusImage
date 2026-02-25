@@ -164,6 +164,7 @@ const urlPromise = computed(() => {
     layers,
     dataset.value,
     store.currentLocation,
+    store.api,
   ).then((urls) => urls[0].url);
 });
 /* eslint-enable vue/no-async-in-computed-properties */

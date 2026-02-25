@@ -29,7 +29,6 @@ import {
 import main from "./index";
 
 import { canComputeAnnotationProperty } from "@/utils/annotation";
-import filters from "./filters";
 import annotations from "./annotation";
 import jobs, {
   createProgressEventCallback,
@@ -396,7 +395,7 @@ export class Properties extends VuexModule {
 
     jobs.addJob(computeJob).then(async (success: boolean) => {
       await this.fetchPropertyValues();
-      await filters.updateHistograms();
+      await (await import("./filters")).default.updateHistograms();
       // Update both progress systems
       progress.complete(progressId);
       status.running = false;
@@ -591,7 +590,7 @@ export class Properties extends VuexModule {
 
     // Refresh property values for the current dataset
     await this.fetchPropertyValues();
-    await filters.updateHistograms();
+    await (await import("./filters")).default.updateHistograms();
 
     // Update property status
     status.running = false;

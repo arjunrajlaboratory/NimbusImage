@@ -8,7 +8,6 @@ import {
   IImage,
   IDatasetLocation,
 } from "./model";
-import main from "./index";
 
 const resolveSlice = (slice: IDisplaySlice, value: number) => {
   switch (slice.type) {
@@ -149,6 +148,7 @@ export async function getBandOption(
   dataset: IDataset,
   layer: IDisplayLayer,
   location: IDatasetLocation,
+  api: { getLayerHistogram(images: IImage[]): Promise<ITileHistogram | null> },
 ) {
   // Get the images at the location
   const { xy, z, time } = location;
@@ -160,7 +160,7 @@ export async function getBandOption(
   }
 
   // Fetch the histogram
-  const histogram = await main.api.getLayerHistogram(images);
+  const histogram = await api.getLayerHistogram(images);
 
   const style = toStyle(
     layer.color,

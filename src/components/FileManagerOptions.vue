@@ -149,7 +149,6 @@ import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IGirderFolder, IGirderSelectAble } from "@/girder";
 import { downloadToClient } from "@/utils/download";
-import GirderLocationChooser from "@/components/GirderLocationChooser.vue"; // eslint-disable-line @typescript-eslint/no-unused-vars
 import AddToProjectDialog from "@/components/AddToProjectDialog.vue"; // eslint-disable-line @typescript-eslint/no-unused-vars
 
 const props = defineProps<{

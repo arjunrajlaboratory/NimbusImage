@@ -1274,7 +1274,13 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async setDatasetViewId(id: string | null) {
+  async setDatasetViewId({
+    id,
+    routeQuery,
+  }: {
+    id: string | null;
+    routeQuery?: Record<string, string | null | (string | null)[]>;
+  }) {
     if (!id) {
       this.setDatasetViewImpl(null);
     } else {
@@ -1305,13 +1311,17 @@ export class Main extends VuexModule {
       }
 
       const newLocation = datasetView.lastLocation;
-      const { default: router } = await import("@/router");
-      const query = router.currentRoute.value.query;
       promises.push(
-        this.setXY(query.xy == null ? newLocation.xy : Number(query.xy)),
-        this.setZ(query.z == null ? newLocation.z : Number(query.z)),
+        this.setXY(
+          routeQuery?.xy == null ? newLocation.xy : Number(routeQuery.xy),
+        ),
+        this.setZ(
+          routeQuery?.z == null ? newLocation.z : Number(routeQuery.z),
+        ),
         this.setTime(
-          query.time == null ? newLocation.time : Number(query.time),
+          routeQuery?.time == null
+            ? newLocation.time
+            : Number(routeQuery.time),
         ),
       );
 

@@ -1366,7 +1366,7 @@ async function loadSnapshot(_event: Event, { item }: { item: ISnapshotItem }) {
     snapshot.datasetViewId &&
     snapshot.datasetViewId !== store.datasetView?.id
   ) {
-    await store.setDatasetViewId(snapshot.datasetViewId);
+    await store.setDatasetViewId({ id: snapshot.datasetViewId });
   }
   if (areCurrentLayersCompatible(snapshot)) {
     await store.loadSnapshotLayers(snapshot);
@@ -1754,6 +1754,7 @@ async function getUrlsForSnapshot(
       layers,
       dataset,
       location,
+      store.api,
     );
     for (const { url, layerIds } of layerUrls) {
       const layerNames = layerIds.map(
@@ -1927,6 +1928,7 @@ async function getUrlsForMovie(
       layers,
       dataset,
       currentLocation,
+      store.api,
     );
 
     if (layerUrls.length === 0) {

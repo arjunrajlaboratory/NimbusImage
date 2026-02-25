@@ -5,13 +5,17 @@
 import store from "@/store";
 import { TLayerMode } from "@/store/model";
 import { useRouteMapper } from "@/utils/useRouteMapper";
+import { useRoute } from "vue-router";
+
+const route = useRoute();
 
 useRouteMapper(
   {
     datasetViewId: {
       parse: String,
       get: () => store.datasetView?.id || null,
-      set: (value: string) => store.setDatasetViewId(value),
+      set: (value: string) =>
+        store.setDatasetViewId({ id: value, routeQuery: route.query }),
     },
   },
   {

@@ -19,17 +19,9 @@ import {
 import main from "./index";
 
 import { logError } from "@/utils/log";
-import progress from "./progress";
+import { jobStates } from "./jobConstants";
 
-export const jobStates = {
-  inactive: 0,
-  queued: 1,
-  running: 2,
-  success: 3,
-  error: 4,
-  cancelled: 5,
-  cancelling: 824,
-};
+export { jobStates };
 
 // Create a function that can be used as eventCallback of a job
 // It will parse the events and update the progress object
@@ -88,21 +80,23 @@ export function createErrorEventCallback(errorObject: IErrorInfoList) {
               (error.error ? MessageType.ERROR : MessageType.WARNING),
           };
           errorObject.errors.push(newError);
-          progress.createNotification({
-            type:
-              newError.type === MessageType.ERROR
-                ? NotificationType.ERROR
-                : NotificationType.WARNING,
-            title:
-              newError.title ||
-              (newError.type === MessageType.ERROR ? "Error" : "Warning"),
-            message:
-              newError.error ||
-              newError.warning ||
-              "An issue occurred during job execution",
-            info: newError.info,
-            timeout: 0, // Requires manual dismissal for errors/warnings
-          });
+          import("./progress").then(({ default: progress }) =>
+            progress.createNotification({
+              type:
+                newError.type === MessageType.ERROR
+                  ? NotificationType.ERROR
+                  : NotificationType.WARNING,
+              title:
+                newError.title ||
+                (newError.type === MessageType.ERROR ? "Error" : "Warning"),
+              message:
+                newError.error ||
+                newError.warning ||
+                "An issue occurred during job execution",
+              info: newError.info,
+              timeout: 0, // Requires manual dismissal for errors/warnings
+            }),
+          );
         }
       } catch {}
     }
@@ -283,6 +277,7 @@ export class Jobs extends VuexModule {
     } else {
       // Create success notification
       const jobTitle = jobEvent.title || "Job";
+      const { default: progress } = await import("./progress");
       progress.createNotification({
         type: NotificationType.INFO,
         title: "Job Completed Successfully",

@@ -1131,7 +1131,7 @@ async function createView(jsonId: string | null) {
     pipelineError.value = true;
     return;
   }
-  store.setDatasetViewId(defaultView.id);
+  store.setDatasetViewId({ id: defaultView.id });
   const route = vc.toRoute(defaultView);
   creatingView.value = false;
 

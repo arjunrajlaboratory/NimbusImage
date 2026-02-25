@@ -479,6 +479,46 @@ In Vuetify 3, `v-menu` requires the activator to forward both the tooltip and me
 - [x] `src/store/properties.ts` — Added `import.meta.hot.accept()`
 - [x] `src/store/sync.ts` — Added `import.meta.hot.accept()`
 
+### R38. Fix all circular dependencies ✅
+Resolved ~6 root circular dependency cycles (162 total paths found by madge) using type-only imports, dependency inversion, lazy imports, and constant extraction.
+
+**Fix 1 — Type-only imports (`src/store/model.ts`):**
+- [x] `import { ITileHistogram }` → `import type { ITileHistogram }` from `./images`
+- [x] `import { ITileMeta }` → `import type { ITileMeta }` from `./GirderAPI`
+- [x] `import { TSamNodes }` → `import type { TSamNodes }` from `@/pipelines/samPipeline`
+
+**Fix 2 — Remove router import from store (`store/index.ts` → `router.ts` cycle):**
+The store dynamically imported the router to read URL query params (`?xy=X&z=Z&time=T`) during `setDatasetViewId`. This created a cycle: `store/index.ts → router.ts → views → store`. Fixed by passing route query from the UI layer.
+- [x] `src/store/index.ts` — Changed `setDatasetViewId(id)` to `setDatasetViewId({ id, routeQuery? })`. Removed `await import("@/router")`.
+- [x] `src/views/datasetView/DatasetView.vue` — Pass `route.query` via `useRoute()` to `setDatasetViewId`
+- [x] `src/views/dataset/NewDataset.vue` — Updated call to `{ id: defaultView.id }`
+- [x] `src/components/Snapshots.vue` — Updated call to `{ id: snapshot.datasetViewId }`
+- [x] `src/components/Snapshots.test.ts` — Updated assertion to match new object parameter
+
+**Fix 3 — Break `images.ts` ↔ `index.ts` cycle:**
+`images.ts` imported `main` from `index.ts` solely for `main.api.getLayerHistogram()`. Fixed by adding an `api` parameter to `getBandOption()` (and `getLayersDownloadUrls()`), removing the store import.
+- [x] `src/store/images.ts` — Added `api` parameter to `getBandOption()`, removed `import main from "./index"`
+- [x] `src/utils/screenshot.ts` — Threaded `api` parameter through `getLayersDownloadUrls()`
+- [x] `src/components/ImageOverview.vue` — Pass `store.api` to `getLayersDownloadUrls()`
+- [x] `src/components/Snapshots.vue` — Pass `store.api` to `getLayersDownloadUrls()` (2 call sites)
+
+**Fix 4 — Break `jobs.ts` ↔ `progress.ts` cycle:**
+Both modules imported each other at module evaluation time. Fixed by extracting the shared `jobStates` constant and using lazy imports for `progress` in `jobs.ts`.
+- [x] `src/store/jobConstants.ts` — **New file.** Extracted `jobStates` constant
+- [x] `src/store/jobs.ts` — Import `jobStates` from `./jobConstants`, re-export for consumers. Replaced static `import progress` with lazy `import("./progress")` at 2 call sites
+- [x] `src/store/progress.ts` — Import `jobStates` from `./jobConstants` instead of `./jobs`
+
+**Fix 5 — Break `properties.ts` ↔ `filters.ts` cycle:**
+`properties.ts` imported `filters` statically but only used it at runtime in 2 action call sites.
+- [x] `src/store/properties.ts` — Removed `import filters from "./filters"`, replaced with lazy `await (await import("./filters")).default.updateHistograms()` at 2 call sites
+
+**Fix 6 — Remove unused component import:**
+- [x] `src/components/FileManagerOptions.vue` — Deleted unused `import GirderLocationChooser`
+
+**Verification:**
+- [x] `pnpm tsc` — 0 errors
+- [x] `pnpm test` — 117/118 files pass, 2069/2073 tests pass (4 SAM integration test failures are pre-existing)
+
 ## Batch E: Test Suite Recovery ✅
 
 Migrated all 118 test files from Vue Test Utils v1 / Vue 2 patterns to Vue Test Utils v2 / Vue 3 patterns. Eliminated ~1982 tsc errors in test files and restored the full test suite.
