@@ -730,6 +730,11 @@ The "Measure objects" dialog was constrained by the parent `v-dialog` `max-width
 **Test fix (App.test.ts — pre-existing from P10):**
 - [x] `src/App.test.ts` — Added `initializeUploadWorkflow: vi.fn()` to store mock, updated `goToNewDataset` test assertions to match P10 changes (no route params, just `{ name: "newdataset" }`)
 
+### P13. ToolConfigurationItem `size="small"` fallthrough on VCheckbox ✅
+The dynamic `<component :is="...">` in ToolConfigurationItem.vue passed `size="small"` to all component types. In Vuetify 3, `v-checkbox` doesn't consume `size` — it falls through to the native `<input>` element where `size` must be a number (character width), causing `Failed setting prop "size" on <input>: value small is invalid`. The `density="compact"` prop already handles compact sizing for all form input components (`v-select`, `v-checkbox`, `v-text-field`, `v-radio-group`). The `size` prop is only for `v-btn`/`v-icon`/`v-chip`/`v-avatar`.
+
+- [x] `src/tools/creation/ToolConfigurationItem.vue` — Removed `size="small"` from dynamic component (Vuetify 2 leftover); `density="compact"` is sufficient
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 

@@ -17,7 +17,6 @@
               return-object
               @change="changed"
               density="compact"
-              size="small"
             >
               <v-radio
                 v-for="(value, index) in item.values"
