@@ -622,6 +622,15 @@ Upgraded the build toolchain to Vite 6 + Vitest 3 + Sass 1.86+. This was the fin
 - [x] `pnpm build` — production build succeeds (was previously blocked by `crypto.hash` issue)
 - [x] `pnpm test` — 118/118 test files, 2073/2073 tests passing, exit code 0
 
+## Post-Phase 3 Fixes
+
+### P1. Worker `connectTo.tags` KeyError fix ✅
+Worker tools crashed with `KeyError: 'tags'` when the tool's `connectTo` configuration was unset (advanced panel never opened, or legacy tool). The destructuring `const { connectTo = {} } = values` produced an empty object, and `{ ...connectTo, channel }` yielded `{ channel: null }` — no `tags` key. The Python worker_client then failed on `self.connectTo['tags']`.
+
+- [x] `src/store/AnnotationsAPI.ts` — Changed `{ ...connectTo, channel }` to `{ tags: [], ...connectTo, channel }` so `tags` always defaults to `[]`
+
+---
+
 ## Notes
 - **`vue-tsc`:** Installed as `vue-tsc@2.2.12` in Batch A. This is the Vue-aware TypeScript checker that understands `.vue` template types (powered by Volar). During iterative work we use `pnpm tsc` (faster, checks `.ts` files only). `vue-tsc --noEmit` should be run as a final gate once Batch D is complete — it will catch template-level type errors (e.g., wrong prop types passed in `<template>`) that plain `tsc` misses. It's also what `vite build` uses internally for type-checked builds.
 - `vue-tooltip-directive` removed; will replace with Vuetify 3 `<v-tooltip>` in Batch D
