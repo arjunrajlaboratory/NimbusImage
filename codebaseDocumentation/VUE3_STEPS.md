@@ -700,6 +700,20 @@ Same issue as P5: `goToNewDataset()` in App.vue was passing `quickupload`, `defa
 
 - [x] `src/App.vue` — Changed `router.push({ name: "newdataset", params: { quickupload: false, defaultFiles: [], initialUploadLocation: privateFolder } })` to just `router.push({ name: "newdataset" })`. The `initialUploadLocation` is already set via `store.setFolderLocation()` upstream, and `quickupload: false` / `defaultFiles: []` are the prop defaults.
 
+### P11. HelpPanel HUD overlay redesign ✅
+The HelpPanel was rendered inside a narrow `v-dialog` with `width="inherit"`, showing a cramped `v-card` in the center of the screen. Redesigned as a fullscreen translucent HUD overlay.
+
+**App.vue dialog changes:**
+- [x] `src/App.vue` — Changed `v-dialog` from `width="inherit"` to `fullscreen` with `scrim="transparent"`, `fade-transition`, and `content-class="help-dialog-overlay"`
+- [x] `src/App.vue` — Added `@close` handler on `<help-panel>` to close dialog
+- [x] `src/App.vue` — Added `.help-dialog-overlay` global CSS (transparent background, no shadow)
+
+**HelpPanel.vue full rewrite:**
+- [x] `src/components/HelpPanel.vue` — Replaced `v-card` structure with custom `.hud-overlay` (fullscreen, `rgba(0,0,0,0.5)` + `backdrop-filter: blur(8px)`) and `.hud-content` (`rgba(20,20,20,0.7)`, edge-to-edge)
+- [x] `src/components/HelpPanel.vue` — Keys now use `<kbd>` elements with monospace font stack (SF Mono, Fira Code, Consolas), bordered pill style with `rgba(255,255,255,0.1)` background
+- [x] `src/components/HelpPanel.vue` — Multi-column layout via CSS `column-width: 320px`, section headers in blue uppercase, group titles with subtle dividers
+- [x] `src/components/HelpPanel.vue` — Added `defineEmits<{ close: [] }>()`, click-outside-to-close on backdrop, close button (top-right)
+
 ### Known Test Failures: SAM integration tests (pre-existing)
 4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
 

@@ -1,7 +1,13 @@
 <template>
   <v-app id="inspire" v-mousetrap="appHotkeys">
-    <v-dialog v-model="helpPanelIsOpen" width="inherit">
-      <help-panel />
+    <v-dialog
+      v-model="helpPanelIsOpen"
+      fullscreen
+      scrim="transparent"
+      transition="fade-transition"
+      content-class="help-dialog-overlay"
+    >
+      <help-panel @close="helpPanelIsOpen = false" />
     </v-dialog>
     <v-app-bar class="elevation-1">
       <v-tooltip text="NimbusImage home" :open-delay="500">
@@ -474,5 +480,11 @@ body > div {
 
 .v-menu__content {
   z-index: 10000 !important;
+}
+
+.help-dialog-overlay {
+  background: transparent !important;
+  box-shadow: none !important;
+  max-height: 100% !important;
 }
 </style>
