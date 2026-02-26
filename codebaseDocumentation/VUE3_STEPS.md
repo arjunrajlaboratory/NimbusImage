@@ -838,8 +838,20 @@ Manual walkthrough of all major views and interactions on the running app (local
 
 **Network requests:** Zero failed HTTP requests. All tile and API calls returned 200.
 
-**One minor issue found:**
-- "Preparing layers (0/2)" progress bar persists after switching from Multiple → Single → Multiple layer mode. The bar stayed visible for 10+ seconds even though the image had already updated with the correct layers. Cleared after navigating away (home) and returning to the dataset. Likely a race condition in the histogram/layer preparation progress counter — the counter may not be incrementing properly when layers are toggled off/on during mode switching. Not a blocking issue.
+**One minor issue found (fixed in P21):**
+- "Preparing layers (0/2)" progress bar persists after switching from Multiple → Single → Multiple layer mode. The bar stayed visible for 10+ seconds even though the image had already updated with the correct layers. Cleared after navigating away (home) and returning to the dataset. Root cause: race condition in `draw()` — see P21.
+
+### P21. "Preparing layers" progress bar race condition fix ✅
+
+The "Preparing layers (0/2)" progress bar could get stuck permanently when switching layer modes (e.g., Multiple → Single → Multiple) if tiles were already cached.
+
+**Root cause:** In `ImageViewer.vue` `draw()`, the layer-readiness tracking loop (1) built a `localReadyLayers` array of `false` entries, (2) registered GeoJS `onIdle` callbacks that splice `readyLayers.value`, and (3) assigned `readyLayers.value = localReadyLayers` **after** the loop. When tiles were already cached, `onIdle` fired **synchronously** during step 2, splicing the **old** `readyLayers.value` array. Step 3 then replaced the ref with the all-false array, discarding the ready state. Since the callbacks already fired and won't fire again, the progress bar was stuck at 0/N forever.
+
+**Fix:** Split the loop into two passes:
+1. **Pass 1:** Build `localReadyLayers` and collect layer pairs, then assign `readyLayers.value = localReadyLayers`
+2. **Pass 2:** Register `onIdle` callbacks — now synchronous callbacks splice the correct (current) array
+
+- [x] Refactored `draw()` layer tracking in `ImageViewer.vue` into two-pass approach
 
 ### SAM integration test failures — FIXED (Phase 4)
 4 tests in `src/components/AnnotationViewer.test.ts` were failing (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). Root cause: R35 changed the runtime code to read `state.mapEntry` (a reactive mirror) instead of `state.nodes.input.geoJSMap.output` (markRaw'd, not reactive). The test mocks didn't include the `mapEntry` field.

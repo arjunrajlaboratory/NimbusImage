@@ -1228,8 +1228,19 @@ function draw() {
     map.draw();
   });
 
-  // Track progress of layers
+  // Track progress of layers.
+  // Two-pass approach: first build the array and assign the ref, THEN register
+  // onIdle callbacks. GeoJS fires onIdle synchronously when a layer is already
+  // idle (e.g. tiles cached from a previous mode). If we register callbacks
+  // before assigning readyLayers.value, the callbacks splice the old array and
+  // the subsequent assignment overwrites the ref with all-false entries,
+  // leaving the progress bar stuck.
   const localReadyLayers: boolean[] = [];
+  const layerPairs: {
+    fullLayer: any;
+    adjLayer: any;
+    capturedIdx: number;
+  }[] = [];
   let readyLayersIdx = 0;
   for (let mllidx = 0; mllidx < currentMapLayerList.length; ++mllidx) {
     const mapentry = maps.value[mllidx];
@@ -1242,20 +1253,24 @@ function draw() {
       ++layerIdx
     ) {
       const capturedIdx = readyLayersIdx++;
-
       const fullLayer = mapentry.imageLayers[2 * layerIdx];
       const adjLayer = mapentry.imageLayers[2 * layerIdx + 1];
       localReadyLayers[capturedIdx] = false;
-      const setReady = () => {
-        if (fullLayer.idle && adjLayer.idle) {
-          readyLayers.value.splice(capturedIdx, 1, true);
-        }
-      };
-      fullLayer.onIdle(setReady);
-      adjLayer.onIdle(setReady);
+      layerPairs.push({ fullLayer, adjLayer, capturedIdx });
     }
   }
+  // Assign BEFORE registering callbacks so synchronous onIdle splices the
+  // correct array.
   readyLayers.value = localReadyLayers;
+  for (const { fullLayer, adjLayer, capturedIdx } of layerPairs) {
+    const setReady = () => {
+      if (fullLayer.idle && adjLayer.idle) {
+        readyLayers.value.splice(capturedIdx, 1, true);
+      }
+    };
+    fullLayer.onIdle(setReady);
+    adjLayer.onIdle(setReady);
+  }
 }
 
 function toggleViewLock() {
