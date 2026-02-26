@@ -194,7 +194,6 @@ vi.mock("@/utils/log", () => ({
 import store from "@/store";
 import {
   getDownloadParameters,
-  getBaseURLFromDownloadParameters,
   getChannelsDownloadUrls,
   getLayersDownloadUrls,
 } from "@/utils/screenshot";
@@ -464,8 +463,12 @@ describe("Snapshots.vue", () => {
 
     it("setBoundingBox ensures right > left and bottom > top", () => {
       (wrapper.vm as any).setBoundingBox(500, 400, 500, 400);
-      expect((wrapper.vm as any).bboxRight).toBeGreaterThan((wrapper.vm as any).bboxLeft);
-      expect((wrapper.vm as any).bboxBottom).toBeGreaterThan((wrapper.vm as any).bboxTop);
+      expect((wrapper.vm as any).bboxRight).toBeGreaterThan(
+        (wrapper.vm as any).bboxLeft,
+      );
+      expect((wrapper.vm as any).bboxBottom).toBeGreaterThan(
+        (wrapper.vm as any).bboxTop,
+      );
     });
 
     it("computes layerItems with composite, all, and visible layers", () => {
@@ -540,22 +543,31 @@ describe("Snapshots.vue", () => {
 
     it("computes pixelSize from manual settings when mode is manual", () => {
       (wrapper.vm as any).pixelSizeMode = "manual";
-      (wrapper.vm as any).manualPixelSize = { length: 2.0, unit: TScalebarUnit.NM };
+      (wrapper.vm as any).manualPixelSize = {
+        length: 2.0,
+        unit: TScalebarUnit.NM,
+      };
       const ps = (wrapper.vm as any).pixelSize;
       expect(ps.length).toBe(2.0);
       expect(ps.unit).toBe(TScalebarUnit.NM);
     });
 
     it("convertLengthToMeters converts nm correctly", () => {
-      expect((wrapper.vm as any).convertLengthToMeters(100, "nm")).toBeCloseTo(1e-7);
+      expect((wrapper.vm as any).convertLengthToMeters(100, "nm")).toBeCloseTo(
+        1e-7,
+      );
     });
 
     it("convertLengthToMeters converts µm correctly", () => {
-      expect((wrapper.vm as any).convertLengthToMeters(1, "µm")).toBeCloseTo(1e-6);
+      expect((wrapper.vm as any).convertLengthToMeters(1, "µm")).toBeCloseTo(
+        1e-6,
+      );
     });
 
     it("convertLengthToMeters converts mm correctly", () => {
-      expect((wrapper.vm as any).convertLengthToMeters(1, "mm")).toBeCloseTo(1e-3);
+      expect((wrapper.vm as any).convertLengthToMeters(1, "mm")).toBeCloseTo(
+        1e-3,
+      );
     });
 
     it("convertLengthToMeters converts m correctly", () => {
@@ -653,7 +665,10 @@ describe("Snapshots.vue", () => {
 
     it("scalebarSettingsUnitItems returns only px when pixelSize is px", () => {
       (wrapper.vm as any).pixelSizeMode = "manual";
-      (wrapper.vm as any).manualPixelSize = { length: 1, unit: TScalebarUnit.PX };
+      (wrapper.vm as any).manualPixelSize = {
+        length: 1,
+        unit: TScalebarUnit.PX,
+      };
       const items = (wrapper.vm as any).scalebarSettingsUnitItems;
       expect(items).toHaveLength(1);
       expect(items[0].value).toBe(TScalebarUnit.PX);
@@ -677,7 +692,9 @@ describe("Snapshots.vue", () => {
       (wrapper.vm as any).scalebarMode = "manual";
       (wrapper.vm as any).handleScalebarModeChange();
       expect((wrapper.vm as any).manualScalebarSettings).toBeDefined();
-      expect(typeof (wrapper.vm as any).manualScalebarSettings.length).toBe("number");
+      expect(typeof (wrapper.vm as any).manualScalebarSettings.length).toBe(
+        "number",
+      );
     });
 
     it("manualScalebarSettingsLength get returns 1.0 when null", () => {
@@ -696,7 +713,9 @@ describe("Snapshots.vue", () => {
 
     it("manualScalebarSettingsUnit get returns PX when null", () => {
       (wrapper.vm as any).manualScalebarSettings = null;
-      expect((wrapper.vm as any).manualScalebarSettingsUnit).toBe(TScalebarUnit.PX);
+      expect((wrapper.vm as any).manualScalebarSettingsUnit).toBe(
+        TScalebarUnit.PX,
+      );
     });
 
     it("manualScalebarSettingsUnit set updates the settings", () => {
@@ -705,7 +724,9 @@ describe("Snapshots.vue", () => {
         unit: TScalebarUnit.UM,
       };
       (wrapper.vm as any).manualScalebarSettingsUnit = TScalebarUnit.MM;
-      expect((wrapper.vm as any).manualScalebarSettings.unit).toBe(TScalebarUnit.MM);
+      expect((wrapper.vm as any).manualScalebarSettings.unit).toBe(
+        TScalebarUnit.MM,
+      );
     });
 
     it("manualPixelSizeLength get returns 1.0 when null", () => {
@@ -714,7 +735,10 @@ describe("Snapshots.vue", () => {
     });
 
     it("manualPixelSizeLength set updates the settings", () => {
-      (wrapper.vm as any).manualPixelSize = { length: 1, unit: TScalebarUnit.NM };
+      (wrapper.vm as any).manualPixelSize = {
+        length: 1,
+        unit: TScalebarUnit.NM,
+      };
       (wrapper.vm as any).manualPixelSizeLength = 5;
       expect((wrapper.vm as any).manualPixelSize.length).toBe(5);
     });
@@ -725,7 +749,10 @@ describe("Snapshots.vue", () => {
     });
 
     it("manualPixelSizeUnit set updates the settings", () => {
-      (wrapper.vm as any).manualPixelSize = { length: 1, unit: TScalebarUnit.NM };
+      (wrapper.vm as any).manualPixelSize = {
+        length: 1,
+        unit: TScalebarUnit.NM,
+      };
       (wrapper.vm as any).manualPixelSizeUnit = TScalebarUnit.M;
       expect((wrapper.vm as any).manualPixelSize.unit).toBe(TScalebarUnit.M);
     });
@@ -802,7 +829,6 @@ describe("Snapshots.vue", () => {
       expect(list[0].name).toBeDefined();
       expect(list[0].record).toBeDefined();
       expect(list[0].modified).toBeDefined();
-
     });
 
     it("snapshotList sorts by modified date descending", () => {
@@ -814,7 +840,6 @@ describe("Snapshots.vue", () => {
       const list = (w.vm as any).snapshotList;
       expect(list[0].name).toBe("New");
       expect(list[1].name).toBe("Old");
-
     });
 
     it("snapshotList filters by name search", () => {
@@ -856,7 +881,6 @@ describe("Snapshots.vue", () => {
       const w = mountComponent();
       const list = (w.vm as any).snapshotList;
       expect(list).toHaveLength(1);
-
     });
 
     it("currentSnapshot returns matching snapshot by name", () => {
@@ -877,7 +901,6 @@ describe("Snapshots.vue", () => {
       (store as any).configuration = null;
       const w = mountComponent();
       expect((w.vm as any).currentSnapshot).toBeUndefined();
-
     });
 
     it("saveSnapshot calls store.addSnapshot with correct data", () => {
@@ -919,7 +942,6 @@ describe("Snapshots.vue", () => {
       };
       (w.vm as any).saveSnapshot();
       expect(store.addSnapshot).not.toHaveBeenCalled();
-
     });
 
     it("saveSnapshot does not call addSnapshot when no map", () => {
@@ -930,7 +952,6 @@ describe("Snapshots.vue", () => {
       (w.vm as any).isSaveSnapshotValid = true;
       (w.vm as any).saveSnapshot();
       expect(store.addSnapshot).not.toHaveBeenCalled();
-
     });
 
     it("removeSnapshot calls store.removeSnapshot", () => {
@@ -952,21 +973,27 @@ describe("Snapshots.vue", () => {
 
     it("areCurrentLayersCompatible returns true when layers match", () => {
       const snapshot = makeSnapshot("Test");
-      expect((wrapper.vm as any).areCurrentLayersCompatible(snapshot)).toBe(true);
+      expect((wrapper.vm as any).areCurrentLayersCompatible(snapshot)).toBe(
+        true,
+      );
     });
 
     it("areCurrentLayersCompatible returns false when layer missing", () => {
       const snapshot = makeSnapshot("Test", {
         layers: [{ id: "nonexistent", channel: 0 }],
       });
-      expect((wrapper.vm as any).areCurrentLayersCompatible(snapshot)).toBe(false);
+      expect((wrapper.vm as any).areCurrentLayersCompatible(snapshot)).toBe(
+        false,
+      );
     });
 
     it("areCurrentLayersCompatible returns false when channel differs", () => {
       const snapshot = makeSnapshot("Test", {
         layers: [{ id: "layer1", channel: 5 }],
       });
-      expect((wrapper.vm as any).areCurrentLayersCompatible(snapshot)).toBe(false);
+      expect((wrapper.vm as any).areCurrentLayersCompatible(snapshot)).toBe(
+        false,
+      );
     });
   });
 
@@ -1014,7 +1041,15 @@ describe("Snapshots.vue", () => {
 
     it("loadSnapshot sets bbox from snapshot", async () => {
       const snapshot = makeSnapshot();
-      await (wrapper.vm as any).loadSnapshot(new Event("click"), { item: { record: snapshot, name: snapshot.name, datasetName: "", key: "", modified: "" } });
+      await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+        item: {
+          record: snapshot,
+          name: snapshot.name,
+          datasetName: "",
+          key: "",
+          modified: "",
+        },
+      });
       expect((wrapper.vm as any).bboxLeft).toBe(10);
       expect((wrapper.vm as any).bboxTop).toBe(20);
       expect((wrapper.vm as any).bboxRight).toBe(300);
@@ -1023,7 +1058,15 @@ describe("Snapshots.vue", () => {
 
     it("loadSnapshot sets form fields from snapshot", async () => {
       const snapshot = makeSnapshot();
-      await (wrapper.vm as any).loadSnapshot(new Event("click"), { item: { record: snapshot, name: snapshot.name, datasetName: "", key: "", modified: "" } });
+      await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+        item: {
+          record: snapshot,
+          name: snapshot.name,
+          datasetName: "",
+          key: "",
+          modified: "",
+        },
+      });
       expect((wrapper.vm as any).newName).toBe("Test Snapshot");
       expect((wrapper.vm as any).newDescription).toBe("Test description");
       expect((wrapper.vm as any).newTags).toEqual(["tag1"]);
@@ -1031,7 +1074,15 @@ describe("Snapshots.vue", () => {
 
     it("loadSnapshot calls store navigation methods", async () => {
       const snapshot = makeSnapshot();
-      await (wrapper.vm as any).loadSnapshot(new Event("click"), { item: { record: snapshot, name: snapshot.name, datasetName: "", key: "", modified: "" } });
+      await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+        item: {
+          record: snapshot,
+          name: snapshot.name,
+          datasetName: "",
+          key: "",
+          modified: "",
+        },
+      });
       expect(store.setXY).toHaveBeenCalledWith(2);
       expect(store.setZ).toHaveBeenCalledWith(3);
       expect(store.setTime).toHaveBeenCalledWith(5);
@@ -1043,13 +1094,31 @@ describe("Snapshots.vue", () => {
 
     it("loadSnapshot calls setDatasetViewId when different view", async () => {
       const snapshot = makeSnapshot({ datasetViewId: "differentView" });
-      await (wrapper.vm as any).loadSnapshot(new Event("click"), { item: { record: snapshot, name: snapshot.name, datasetName: "", key: "", modified: "" } });
-      expect(store.setDatasetViewId).toHaveBeenCalledWith({ id: "differentView" });
+      await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+        item: {
+          record: snapshot,
+          name: snapshot.name,
+          datasetName: "",
+          key: "",
+          modified: "",
+        },
+      });
+      expect(store.setDatasetViewId).toHaveBeenCalledWith({
+        id: "differentView",
+      });
     });
 
     it("loadSnapshot does not call setDatasetViewId when same view", async () => {
       const snapshot = makeSnapshot({ datasetViewId: "view1" });
-      await (wrapper.vm as any).loadSnapshot(new Event("click"), { item: { record: snapshot, name: snapshot.name, datasetName: "", key: "", modified: "" } });
+      await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+        item: {
+          record: snapshot,
+          name: snapshot.name,
+          datasetName: "",
+          key: "",
+          modified: "",
+        },
+      });
       expect(store.setDatasetViewId).not.toHaveBeenCalled();
     });
 
@@ -1057,13 +1126,29 @@ describe("Snapshots.vue", () => {
       const snapshot = makeSnapshot({
         layers: [{ id: "nonexistent", channel: 99 }],
       });
-      await (wrapper.vm as any).loadSnapshot(new Event("click"), { item: { record: snapshot, name: snapshot.name, datasetName: "", key: "", modified: "" } });
+      await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+        item: {
+          record: snapshot,
+          name: snapshot.name,
+          datasetName: "",
+          key: "",
+          modified: "",
+        },
+      });
       expect((wrapper.vm as any).layersOverwritePanel).toBe(true);
     });
 
     it("loadSnapshot loads layers when compatible", async () => {
       const snapshot = makeSnapshot();
-      await (wrapper.vm as any).loadSnapshot(new Event("click"), { item: { record: snapshot, name: snapshot.name, datasetName: "", key: "", modified: "" } });
+      await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+        item: {
+          record: snapshot,
+          name: snapshot.name,
+          datasetName: "",
+          key: "",
+          modified: "",
+        },
+      });
       expect(store.loadSnapshotLayers).toHaveBeenCalledWith(snapshot);
     });
 
@@ -1183,7 +1268,6 @@ describe("Snapshots.vue", () => {
       const w = mountComponent();
       (w.vm as any).showSnapshot(true);
       expect((w.vm as any).bboxLayer).toBeNull();
-
     });
 
     it("markCurrentArea updates bbox annotation options", () => {
@@ -1431,7 +1515,6 @@ describe("Snapshots.vue", () => {
       const w = mountComponent();
       await (w.vm as any).screenshotViewport();
       expect(mockedDownloadToClient).not.toHaveBeenCalled();
-
     });
 
     it("screenshotViewport downloads screenshot when map available", async () => {
@@ -1561,7 +1644,9 @@ describe("Snapshots.vue", () => {
     });
 
     it("handleMovieDownload logs error on unknown format", async () => {
-      const spy = vi.spyOn(wrapper.vm as any, "getUrlsForMovie").mockResolvedValue([]);
+      const spy = vi
+        .spyOn(wrapper.vm as any, "getUrlsForMovie")
+        .mockResolvedValue([]);
 
       await (wrapper.vm as any).handleMovieDownload({
         startTime: 0,

@@ -782,7 +782,7 @@ describe("Home", () => {
 
       // mounted() calls initializeWelcomeTour, so we need to verify
       // that $startTour was NOT called even after mount
-      const wrapper = mountComponent();
+      mountComponent();
       await nextTick();
 
       expect(mockStartTour).not.toHaveBeenCalled();

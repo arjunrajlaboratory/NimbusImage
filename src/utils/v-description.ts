@@ -37,10 +37,7 @@ function unbind(el: any) {
   flush();
 }
 
-function shallowEqual(
-  a: IFeatureDescription,
-  b: IFeatureDescription,
-): boolean {
+function shallowEqual(a: IFeatureDescription, b: IFeatureDescription): boolean {
   return (
     a === b ||
     (a.section === b.section &&

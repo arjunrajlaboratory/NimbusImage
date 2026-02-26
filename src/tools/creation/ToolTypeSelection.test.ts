@@ -72,8 +72,7 @@ const mockFetch = vi.fn().mockResolvedValue({ ok: false });
 vi.stubGlobal("fetch", mockFetch);
 
 function mountComponent() {
-  return mount(ToolTypeSelection, {
-  });
+  return mount(ToolTypeSelection, {});
 }
 
 describe("ToolTypeSelection", () => {

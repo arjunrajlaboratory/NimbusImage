@@ -129,13 +129,7 @@ export interface IAnnotationSetup {
 </script>
 
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  watch,
-  onMounted,
-  nextTick,
-} from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import store from "@/store";
 import LayerSelect from "@/components/LayerSelect.vue";
@@ -346,9 +340,7 @@ onMounted(() => {
         WelcomeTourTypes.WORKING_WITH_TAGS,
         WelcomeTourStatus.ALREADY_RUN,
       );
-      startTour(
-        WelcomeTourNames[WelcomeTourTypes.WORKING_WITH_TAGS],
-      );
+      startTour(WelcomeTourNames[WelcomeTourTypes.WORKING_WITH_TAGS]);
     }
   }
 });

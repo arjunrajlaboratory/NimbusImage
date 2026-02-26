@@ -71,7 +71,9 @@
           permissions to match the project's access settings.
         </v-card-text>
         <v-card-actions class="justify-end" style="gap: 8px">
-          <v-btn variant="text" @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showPermissionConfirm = false"
+            >Cancel</v-btn
+          >
           <v-btn color="primary" @click="addDatasets">Continue</v-btn>
         </v-card-actions>
       </v-card>

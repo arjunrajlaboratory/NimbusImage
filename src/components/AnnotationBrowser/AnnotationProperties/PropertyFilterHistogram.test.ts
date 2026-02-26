@@ -21,7 +21,7 @@ const { d3Chain } = vi.hoisted(() => {
     "text",
   ];
   for (const method of methods) {
-    d3Chain[method] = (..._args: any[]) => d3Chain;
+    d3Chain[method] = () => d3Chain;
   }
   return { d3Chain };
 });
@@ -34,7 +34,7 @@ vi.mock("d3-selection", () => ({
 
 vi.mock("d3-drag", () => {
   const dragBehavior: any = {};
-  dragBehavior.on = (..._args: any[]) => dragBehavior;
+  dragBehavior.on = () => dragBehavior;
   return {
     drag: () => dragBehavior,
   };
@@ -225,8 +225,6 @@ describe("PropertyFilterHistogram", () => {
     const vm = wrapper.vm as any;
     vm.maxValue = -999;
     // Only the onMounted call should have happened, not one for this setter
-    const callsFromOnMounted = (filterStore.updatePropertyFilter as any).mock
-      .calls.length;
     // Re-attempt with invalid
     (filterStore.updatePropertyFilter as any).mockClear();
     vm.maxValue = -999;
@@ -423,7 +421,7 @@ describe("PropertyFilterHistogram", () => {
   });
 
   it("onMounted calls filterStore.updateHistograms", () => {
-    const wrapper = mountComponent();
+    mountComponent();
     expect(filterStore.updateHistograms).toHaveBeenCalled();
   });
 

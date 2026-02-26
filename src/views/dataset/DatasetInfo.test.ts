@@ -189,7 +189,7 @@ describe("DatasetInfo", () => {
   });
 
   it("fetchCounts calls 4 APIs in parallel", async () => {
-    const wrapper = mountComponent();
+    mountComponent();
     await flushPromises();
     expect(mockGetAnnotationCount).toHaveBeenCalledWith("ds-1");
     expect(mockGetConnectionCount).toHaveBeenCalledWith("ds-1");

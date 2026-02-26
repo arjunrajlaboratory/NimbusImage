@@ -328,7 +328,6 @@ describe("AnnotationCSVDialog", () => {
     await nextTick();
     await nextTick();
     await nextTick();
-    const textAfterAll = vm.text;
     // Change mode to listed (which filters fewer properties)
     vm.propertyExportMode = "listed";
     await nextTick();

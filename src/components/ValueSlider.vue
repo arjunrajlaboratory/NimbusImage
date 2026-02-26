@@ -8,9 +8,7 @@
     <template v-else>
       <!-- Row 1: Label and Text Input -->
       <div class="d-flex align-center mb-1">
-        <div class="label-column text-right pa-0">
-          {{ label }}:
-        </div>
+        <div class="label-column text-right pa-0">{{ label }}:</div>
         <v-text-field
           :model-value="displayValue"
           class="mt-0 pt-0 no-underline flex-grow-1 ml-2"

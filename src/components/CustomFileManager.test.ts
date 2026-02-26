@@ -148,7 +148,7 @@ describe("CustomFileManager", () => {
 
       // Access currentLocation to trigger getter side-effect
       const vm = wrapper.vm as any;
-      const _loc = vm.currentLocation;
+      vm.currentLocation;
 
       expect(wrapper.emitted("update:location")).toBeTruthy();
     });

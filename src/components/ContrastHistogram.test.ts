@@ -22,16 +22,16 @@ const { d3Chain, d3DragChain, d3ZoomChain } = vi.hoisted(() => {
     "text",
   ];
   for (const method of methods) {
-    d3Chain[method] = (..._args: any[]) => d3Chain;
+    d3Chain[method] = () => d3Chain;
   }
 
   const d3DragChain: any = {};
-  d3DragChain.on = (..._args: any[]) => d3DragChain;
+  d3DragChain.on = () => d3DragChain;
 
   const d3ZoomChain: any = {};
-  d3ZoomChain.scaleExtent = (..._args: any[]) => d3ZoomChain;
-  d3ZoomChain.on = (..._args: any[]) => d3ZoomChain;
-  d3ZoomChain.translateExtent = (..._args: any[]) => d3ZoomChain;
+  d3ZoomChain.scaleExtent = () => d3ZoomChain;
+  d3ZoomChain.on = () => d3ZoomChain;
+  d3ZoomChain.translateExtent = () => d3ZoomChain;
 
   return { d3Chain, d3DragChain, d3ZoomChain };
 });
@@ -72,12 +72,6 @@ const defaultContrast = {
   mode: "percentile" as const,
   blackPoint: 10,
   whitePoint: 90,
-};
-
-const absoluteContrast = {
-  mode: "absolute" as const,
-  blackPoint: 50,
-  whitePoint: 200,
 };
 
 const sampleHistData = {
@@ -372,7 +366,6 @@ describe("ContrastHistogram", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     // Mock the rootEl's getBoundingClientRect
-    const mockEl = { getBoundingClientRect: () => ({ width: 500 }) };
     // Access the internal rootEl ref through the exposed interface indirectly
     // Since rootEl isn't exposed, we test handleResize doesn't throw
     vm.handleResize();

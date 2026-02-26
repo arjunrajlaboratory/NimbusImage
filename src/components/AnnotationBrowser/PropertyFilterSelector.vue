@@ -20,15 +20,15 @@
             v-for="propertyPath in filteredPropertyPaths"
             :key="propertyPath.join('.')"
           >
-              <v-checkbox
-                :model-value="isPropertyPathFiltered(propertyPath)"
-                @change="togglePropertyPathFiltering(propertyPath)"
-                density="compact"
-                hide-details
-              />
-              <v-list-item-title>
-                {{ getPropertyFullName(propertyPath) }}
-              </v-list-item-title>
+            <v-checkbox
+              :model-value="isPropertyPathFiltered(propertyPath)"
+              @change="togglePropertyPathFiltering(propertyPath)"
+              density="compact"
+              hide-details
+            />
+            <v-list-item-title>
+              {{ getPropertyFullName(propertyPath) }}
+            </v-list-item-title>
           </v-list-item>
         </v-list>
       </v-card-text>

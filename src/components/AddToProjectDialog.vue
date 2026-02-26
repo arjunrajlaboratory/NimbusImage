@@ -34,32 +34,30 @@
               </div>
 
               <v-list v-else density="compact" class="project-select-list">
-                  <v-list-item
-                    v-for="project in availableProjects"
-                    :key="project.id"
-                    :disabled="isDatasetInProject(project)"
+                <v-list-item
+                  v-for="project in availableProjects"
+                  :key="project.id"
+                  :disabled="isDatasetInProject(project)"
+                >
+                  <v-icon
+                    :color="isDatasetInProject(project) ? 'grey' : '#8e24aa'"
                   >
-                    <v-icon
-                      :color="
-                        isDatasetInProject(project) ? 'grey' : '#8e24aa'
-                      "
-                    >
-                      {{
-                        isDatasetInProject(project)
-                          ? "mdi-check-circle"
-                          : "mdi-folder-star"
-                      }}
-                    </v-icon>
-                    <v-list-item-title>{{ project.name }}</v-list-item-title>
-                    <v-list-item-subtitle>
-                      {{ project.meta.datasets.length }} dataset{{
-                        project.meta.datasets.length !== 1 ? "s" : ""
-                      }}
-                      <span v-if="isDatasetInProject(project)" class="ml-1">
-                        (already added)
-                      </span>
-                    </v-list-item-subtitle>
-                  </v-list-item>
+                    {{
+                      isDatasetInProject(project)
+                        ? "mdi-check-circle"
+                        : "mdi-folder-star"
+                    }}
+                  </v-icon>
+                  <v-list-item-title>{{ project.name }}</v-list-item-title>
+                  <v-list-item-subtitle>
+                    {{ project.meta.datasets.length }} dataset{{
+                      project.meta.datasets.length !== 1 ? "s" : ""
+                    }}
+                    <span v-if="isDatasetInProject(project)" class="ml-1">
+                      (already added)
+                    </span>
+                  </v-list-item-subtitle>
+                </v-list-item>
               </v-list>
             </div>
           </v-window-item>
@@ -104,7 +102,6 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
-import store from "@/store";
 import projects from "@/store/projects";
 import { IProject } from "@/store/model";
 

@@ -72,7 +72,12 @@
                   {{ getDuration(item) }}
                 </template>
                 <template #[`item.actions`]="{ item }">
-                  <v-btn size="small" variant="text" color="info" @click="viewJobLog(item)">
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    color="info"
+                    @click="viewJobLog(item)"
+                  >
                     <v-icon size="small" start>mdi-text-box-outline</v-icon>
                     Log
                   </v-btn>
@@ -122,7 +127,10 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn color="primary" variant="text" @click="showLogDialog = false"
+              <v-btn
+                color="primary"
+                variant="text"
+                @click="showLogDialog = false"
                 >Close</v-btn
               >
             </v-card-actions>

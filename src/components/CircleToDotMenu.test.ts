@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { nextTick } from "vue";
-import { mount, flushPromises } from "@vue/test-utils";
+import { mount } from "@vue/test-utils";
 import CircleToDotMenu from "./CircleToDotMenu.vue";
 
 vi.mock("@/store", () => ({

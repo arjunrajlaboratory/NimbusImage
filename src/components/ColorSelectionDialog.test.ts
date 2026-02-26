@@ -24,12 +24,12 @@ function mountComponent(props = {}) {
 
 describe("ColorSelectionDialog", () => {
   it("renders dialog title", () => {
-    const wrapper = mountComponent();
+    mountComponent();
     expect(document.body.textContent).toContain("Color selected annotations");
   });
 
   it("renders radio options", () => {
-    const wrapper = mountComponent();
+    mountComponent();
     expect(document.body.textContent).toContain("Use color from layer");
     expect(document.body.textContent).toContain("Defined color");
     expect(document.body.textContent).toContain("Random color");

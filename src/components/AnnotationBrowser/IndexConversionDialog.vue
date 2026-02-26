@@ -88,7 +88,10 @@
               <div class="d-flex align-center">
                 <div class="flex-grow-1">
                   <div>{{ timeCount }} time points</div>
-                  <div v-if="!hasTimeLabels" class="text-medium-emphasis caption">
+                  <div
+                    v-if="!hasTimeLabels"
+                    class="text-medium-emphasis caption"
+                  >
                     No labels detected; index only
                   </div>
                 </div>

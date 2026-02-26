@@ -10,7 +10,12 @@
         {{ project.meta.status }}
       </v-chip>
       -->
-      <v-chip v-if="totalProjectSize > 0" variant="outlined" size="small" class="mr-2">
+      <v-chip
+        v-if="totalProjectSize > 0"
+        variant="outlined"
+        size="small"
+        class="mr-2"
+      >
         <v-icon start size="small">mdi-database</v-icon>
         {{ formatSize(totalProjectSize) }} total
       </v-chip>
@@ -117,54 +122,54 @@
           </div>
         </div>
         <v-list v-else class="pa-0">
-          <template v-for="(item, index) in filteredDatasetItems" :key="item.datasetId">
+          <template
+            v-for="(item, index) in filteredDatasetItems"
+            :key="item.datasetId"
+          >
             <v-list-item class="px-4">
-                <v-list-item-title
-                  class="font-weight-medium d-flex align-center flex-wrap"
-                >
-                  <span>{{ item.info?.name || "Loading..." }}</span>
-                  <span
-                    v-if="item.info?.size"
-                    class="ml-2 text-grey text-body-2"
-                  >
-                    ({{ formatSize(item.info.size) }})
-                  </span>
-                  <v-chip
-                    v-for="collId in item.collectionIds"
-                    :key="collId"
-                    size="x-small"
-                    class="ml-2"
-                    color="#4baeff"
-                    text-color="white"
-                    :to="{
-                      name: 'configuration',
-                      params: { configurationId: collId },
-                    }"
-                  >
-                    {{ collectionInfoCache[collId]?.name || "Collection" }}
-                  </v-chip>
-                </v-list-item-title>
-                <v-list-item-subtitle v-if="item.info?.description">
-                  {{ item.info.description }}
-                </v-list-item-subtitle>
-              <span class="button-bar">
-                  <v-btn
-                    v-if="item.source === 'direct'"
-                    color="warning"
-                    @click="confirmRemoveDataset(item.datasetId)"
-                  >
-                    <v-icon start>mdi-close</v-icon>remove
-                  </v-btn>
-                  <v-btn
-                    color="primary"
-                    :to="{
-                      name: 'dataset',
-                      params: { datasetId: item.datasetId },
-                    }"
-                  >
-                    <v-icon start>mdi-eye</v-icon>view
-                  </v-btn>
+              <v-list-item-title
+                class="font-weight-medium d-flex align-center flex-wrap"
+              >
+                <span>{{ item.info?.name || "Loading..." }}</span>
+                <span v-if="item.info?.size" class="ml-2 text-grey text-body-2">
+                  ({{ formatSize(item.info.size) }})
                 </span>
+                <v-chip
+                  v-for="collId in item.collectionIds"
+                  :key="collId"
+                  size="x-small"
+                  class="ml-2"
+                  color="#4baeff"
+                  text-color="white"
+                  :to="{
+                    name: 'configuration',
+                    params: { configurationId: collId },
+                  }"
+                >
+                  {{ collectionInfoCache[collId]?.name || "Collection" }}
+                </v-chip>
+              </v-list-item-title>
+              <v-list-item-subtitle v-if="item.info?.description">
+                {{ item.info.description }}
+              </v-list-item-subtitle>
+              <span class="button-bar">
+                <v-btn
+                  v-if="item.source === 'direct'"
+                  color="warning"
+                  @click="confirmRemoveDataset(item.datasetId)"
+                >
+                  <v-icon start>mdi-close</v-icon>remove
+                </v-btn>
+                <v-btn
+                  color="primary"
+                  :to="{
+                    name: 'dataset',
+                    params: { datasetId: item.datasetId },
+                  }"
+                >
+                  <v-icon start>mdi-eye</v-icon>view
+                </v-btn>
+              </span>
             </v-list-item>
             <v-divider
               v-if="index < filteredDatasetItems.length - 1"
@@ -217,32 +222,35 @@
           </div>
         </div>
         <v-list v-else class="pa-0">
-          <template v-for="(item, index) in filteredCollectionItems" :key="item.collectionId">
+          <template
+            v-for="(item, index) in filteredCollectionItems"
+            :key="item.collectionId"
+          >
             <v-list-group no-action>
               <template #activator>
-                  <v-list-item-title class="font-weight-medium">
-                    {{ item.info?.name || "Loading..." }}
-                  </v-list-item-title>
-                  <v-list-item-subtitle>
-                    {{ item.datasetViews.length }} dataset(s)
-                    <span v-if="collectionSizes[item.collectionId]">
-                      · {{ formatSize(collectionSizes[item.collectionId]) }}
-                    </span>
-                  </v-list-item-subtitle>
-                  <span class="button-bar">
-                    <v-btn
-                      color="warning"
-                      @click.stop="confirmRemoveCollection(item.collectionId)"
-                    >
-                      <v-icon start>mdi-close</v-icon>remove
-                    </v-btn>
-                    <v-btn
-                      color="primary"
-                      @click.stop="navigateToCollection(item.collectionId)"
-                    >
-                      <v-icon start>mdi-eye</v-icon>view
-                    </v-btn>
+                <v-list-item-title class="font-weight-medium">
+                  {{ item.info?.name || "Loading..." }}
+                </v-list-item-title>
+                <v-list-item-subtitle>
+                  {{ item.datasetViews.length }} dataset(s)
+                  <span v-if="collectionSizes[item.collectionId]">
+                    · {{ formatSize(collectionSizes[item.collectionId]) }}
                   </span>
+                </v-list-item-subtitle>
+                <span class="button-bar">
+                  <v-btn
+                    color="warning"
+                    @click.stop="confirmRemoveCollection(item.collectionId)"
+                  >
+                    <v-icon start>mdi-close</v-icon>remove
+                  </v-btn>
+                  <v-btn
+                    color="primary"
+                    @click.stop="navigateToCollection(item.collectionId)"
+                  >
+                    <v-icon start>mdi-eye</v-icon>view
+                  </v-btn>
+                </span>
               </template>
               <!-- Expanded: datasets in this collection -->
               <v-list-item
@@ -250,26 +258,26 @@
                 :key="dv.id"
                 class="pl-8"
               >
-                  <v-list-item-title class="text-body-2">
-                    {{ datasetInfoCache[dv.datasetId]?.name || "Loading..." }}
-                    <span
-                      v-if="datasetInfoCache[dv.datasetId]?.size"
-                      class="ml-2 text-grey"
-                    >
-                      ({{
-                        formatSize(datasetInfoCache[dv.datasetId]?.size || 0)
-                      }})
-                    </span>
-                  </v-list-item-title>
-                  <v-btn
-                    color="primary"
-                    :to="{
-                      name: 'dataset',
-                      params: { datasetId: dv.datasetId },
-                    }"
+                <v-list-item-title class="text-body-2">
+                  {{ datasetInfoCache[dv.datasetId]?.name || "Loading..." }}
+                  <span
+                    v-if="datasetInfoCache[dv.datasetId]?.size"
+                    class="ml-2 text-grey"
                   >
-                    <v-icon start>mdi-eye</v-icon>view
-                  </v-btn>
+                    ({{
+                      formatSize(datasetInfoCache[dv.datasetId]?.size || 0)
+                    }})
+                  </span>
+                </v-list-item-title>
+                <v-btn
+                  color="primary"
+                  :to="{
+                    name: 'dataset',
+                    params: { datasetId: dv.datasetId },
+                  }"
+                >
+                  <v-icon start>mdi-eye</v-icon>view
+                </v-btn>
               </v-list-item>
             </v-list-group>
             <v-divider
@@ -295,7 +303,12 @@
     <v-card class="mb-4">
       <v-card-title>Publication Metadata</v-card-title>
       <v-card-text>
-        <v-text-field v-model="metadata.title" label="Title" variant="outlined" density="compact" />
+        <v-text-field
+          v-model="metadata.title"
+          label="Title"
+          variant="outlined"
+          density="compact"
+        />
         <v-textarea
           v-model="metadata.description"
           label="Description"

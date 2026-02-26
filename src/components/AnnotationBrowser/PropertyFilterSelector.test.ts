@@ -24,8 +24,7 @@ import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 
 function mountComponent() {
-  return mount(PropertyFilterSelector, {
-  });
+  return mount(PropertyFilterSelector, {});
 }
 
 describe("PropertyFilterSelector", () => {

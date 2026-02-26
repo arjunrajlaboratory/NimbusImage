@@ -91,7 +91,9 @@
                           hide-details
                           :loading="userLoading === user.id"
                           :disabled="userLoading === user.id"
-                          @update:model-value="confirmUpdateUserAccess(user, $event)"
+                          @update:model-value="
+                            confirmUpdateUserAccess(user, $event)
+                          "
                         />
                       </td>
                       <td class="text-center">
@@ -197,7 +199,11 @@
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="confirmDialog = false">Cancel</v-btn>
-          <v-btn :color="confirmColor" variant="text" @click="executeConfirmedAction">
+          <v-btn
+            :color="confirmColor"
+            variant="text"
+            @click="executeConfirmedAction"
+          >
             {{ confirmActionLabel }}
           </v-btn>
         </v-card-actions>

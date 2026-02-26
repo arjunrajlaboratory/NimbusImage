@@ -102,7 +102,6 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
-import store from "@/store";
 import projects from "@/store/projects";
 import { IProject } from "@/store/model";
 

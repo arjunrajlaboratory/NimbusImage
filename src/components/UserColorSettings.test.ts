@@ -46,7 +46,6 @@ vi.mock("@/utils/log", () => ({
 
 import UserColorSettings from "./UserColorSettings.vue";
 import store from "@/store";
-import { getChannelColors, COLOR } from "@/store/model";
 
 function mountComponent(props = {}) {
   return shallowMount(UserColorSettings, {

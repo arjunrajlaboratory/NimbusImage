@@ -19,7 +19,11 @@
       />
       <div class="d-flex flex-column">
         <v-btn type="submit" color="primary">Login</v-btn>
-        <v-btn variant="text" class="align-self-end my-2" @click="switchToSignUp">
+        <v-btn
+          variant="text"
+          class="align-self-end my-2"
+          @click="switchToSignUp"
+        >
           Sign up
         </v-btn>
       </div>
@@ -88,7 +92,11 @@
           >
             Sign up
           </v-btn>
-          <v-btn variant="text" class="align-self-end my-2" @click="switchToLogin">
+          <v-btn
+            variant="text"
+            class="align-self-end my-2"
+            @click="switchToLogin"
+          >
             Back to login
           </v-btn>
         </div>
@@ -112,7 +120,7 @@ const props = defineProps<{
   modelValue: boolean;
 }>();
 
-const emit = defineEmits<{
+defineEmits<{
   (e: "update:modelValue", value: boolean): void;
 }>();
 

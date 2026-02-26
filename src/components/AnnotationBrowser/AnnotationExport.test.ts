@@ -23,8 +23,7 @@ import AnnotationExport from "./AnnotationExport.vue";
 import store from "@/store";
 
 function mountComponent() {
-  return shallowMount(AnnotationExport, {
-  });
+  return shallowMount(AnnotationExport, {});
 }
 
 describe("AnnotationExport", () => {

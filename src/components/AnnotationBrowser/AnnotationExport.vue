@@ -54,7 +54,13 @@
           >
             No datasets found in this collection.
           </v-alert>
-          <v-alert v-else type="success" variant="tonal" density="compact" class="my-4">
+          <v-alert
+            v-else
+            type="success"
+            variant="tonal"
+            density="compact"
+            class="my-4"
+          >
             Found {{ collectionDatasets.length }} dataset{{
               collectionDatasets.length === 1 ? "" : "s"
             }}

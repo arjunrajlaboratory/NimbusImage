@@ -258,7 +258,9 @@
                   ({{ getAssignmentSize(dimension) }})
                 </span>
                 <template v-if="shouldDoCompositing && dimension === 'XY'">
-                  <v-chip size="x-small" variant="outlined" class="ml-2">composited</v-chip>
+                  <v-chip size="x-small" variant="outlined" class="ml-2"
+                    >composited</v-chip
+                  >
                 </template>
                 <!-- Lock icon for immutable -->
                 <v-tooltip
@@ -342,7 +344,13 @@
     </v-card>
     <v-row>
       <v-col class="d-flex">
-        <v-alert v-if="submitError" type="error" variant="tonal" density="compact" class="mr-4">
+        <v-alert
+          v-if="submitError"
+          type="error"
+          variant="tonal"
+          density="compact"
+          class="mr-4"
+        >
           {{ submitError }}
         </v-alert>
         <v-spacer />
@@ -621,7 +629,6 @@ const assignments = reactive<{ [dimension in TUpDim]: IAssignment | null }>({
   C: null,
 });
 
-const searchInput = ref("");
 let filenameVariableCount = 0;
 let fileVariableCount = 0;
 let imageVariableCount = 0;

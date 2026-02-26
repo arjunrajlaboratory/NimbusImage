@@ -35,8 +35,7 @@ vi.mock("@/utils/v-description", () => ({
 import HelpPanel from "./HelpPanel.vue";
 
 function mountComponent() {
-  return mount(HelpPanel, {
-  });
+  return mount(HelpPanel, {});
 }
 
 describe("HelpPanel", () => {

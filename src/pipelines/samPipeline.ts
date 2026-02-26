@@ -667,8 +667,7 @@ export function createSamToolStateFromToolConfiguration(
   const geoJSMapNode = nodes.input.geoJSMap;
   geoJSMapNode.onOutputUpdate(() => {
     const mapOutput = geoJSMapNode.output;
-    state.mapEntry =
-      !mapOutput || mapOutput === NoOutput ? null : mapOutput;
+    state.mapEntry = !mapOutput || mapOutput === NoOutput ? null : mapOutput;
   });
 
   // Main output is reactive

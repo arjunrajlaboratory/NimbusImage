@@ -248,7 +248,11 @@ export default class AnnotationsAPI {
       ? layers.find((layer) => layer.id === connectToLayerId)
       : null;
     const connectToChannel = connectToLayer ? connectToLayer.channel : null;
-    const augmentedConnectTo = { tags: [], ...connectTo, channel: connectToChannel };
+    const augmentedConnectTo = {
+      tags: [],
+      ...connectTo,
+      channel: connectToChannel,
+    };
     const params = {
       datasetId,
       type,

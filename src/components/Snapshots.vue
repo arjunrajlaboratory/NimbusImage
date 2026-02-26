@@ -400,7 +400,9 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn variant="text" @click="scalebarSettingsDialog = false">Close</v-btn>
+              <v-btn variant="text" @click="scalebarSettingsDialog = false"
+                >Close</v-btn
+              >
             </v-card-actions>
           </v-card>
         </v-dialog>
@@ -533,6 +535,7 @@ export enum ScalebarMode {
 <script setup lang="ts">
 import { ref, computed, watch, markRaw } from "vue";
 import TagPicker from "@/components/TagPicker.vue";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import MovieDialog from "@/components/MovieDialog.vue";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import store from "@/store";
@@ -931,7 +934,7 @@ const currentSnapshot = computed((): { [key: string]: any } | undefined => {
       .slice()
       .filter((s: ISnapshot) => s.name === newName.value)[0];
   }
-  return;
+  return undefined;
 });
 
 const pixelSizeUnitItems = computed(() => {
@@ -1152,44 +1155,50 @@ function showSnapshot(show: boolean) {
     );
 
     if (!bboxLayer.value) {
-      bboxLayer.value = markRaw(map.createLayer("annotation", {
-        autoshareRenderer: false,
-        showLabels: false,
-      }));
+      bboxLayer.value = markRaw(
+        map.createLayer("annotation", {
+          autoshareRenderer: false,
+          showLabels: false,
+        }),
+      );
 
-      bboxAnnotation.value = markRaw(geojs.annotation.rectangleAnnotation({
-        layer: bboxLayer.value,
-        corners: [
-          { x: bboxLeft.value, y: bboxTop.value },
-          { x: bboxRight.value, y: bboxTop.value },
-          { x: bboxRight.value, y: bboxBottom.value },
-          { x: bboxLeft.value, y: bboxBottom.value },
-        ],
-        editHandleStyle: {
-          strokeColor: { r: 1, g: 0, b: 0 },
-          handles: { rotate: false },
-        },
-        editStyle: {
-          fillOpacity: 0,
-          strokeColor: { r: 1, g: 0, b: 0 },
-          strokeWidth: 2,
-        },
-        style: {
-          fillOpacity: 0,
-          strokeColor: { r: 1, g: 0, b: 0 },
-          strokeWidth: 2,
-        },
-      }) as IGeoJSAnnotation);
+      bboxAnnotation.value = markRaw(
+        geojs.annotation.rectangleAnnotation({
+          layer: bboxLayer.value,
+          corners: [
+            { x: bboxLeft.value, y: bboxTop.value },
+            { x: bboxRight.value, y: bboxTop.value },
+            { x: bboxRight.value, y: bboxBottom.value },
+            { x: bboxLeft.value, y: bboxBottom.value },
+          ],
+          editHandleStyle: {
+            strokeColor: { r: 1, g: 0, b: 0 },
+            handles: { rotate: false },
+          },
+          editStyle: {
+            fillOpacity: 0,
+            strokeColor: { r: 1, g: 0, b: 0 },
+            strokeWidth: 2,
+          },
+          style: {
+            fillOpacity: 0,
+            strokeColor: { r: 1, g: 0, b: 0 },
+            strokeWidth: 2,
+          },
+        }) as IGeoJSAnnotation,
+      );
 
-      scalebarAnnotation.value = markRaw(geojs.annotation.lineAnnotation({
-        vertices: scalebarVertices(bboxRight.value, bboxBottom.value),
-        layer: bboxLayer.value,
-        style: {
-          strokeColor: snapshotScalebarColor.value,
-          strokeWidth: 3,
-          strokeOpacity: 1,
-        },
-      }));
+      scalebarAnnotation.value = markRaw(
+        geojs.annotation.lineAnnotation({
+          vertices: scalebarVertices(bboxRight.value, bboxBottom.value),
+          layer: bboxLayer.value,
+          style: {
+            strokeColor: snapshotScalebarColor.value,
+            strokeWidth: 3,
+            strokeOpacity: 1,
+          },
+        }),
+      );
 
       bboxLayer.value.addAnnotation(bboxAnnotation.value);
       bboxLayer.value.addAnnotation(scalebarAnnotation.value);

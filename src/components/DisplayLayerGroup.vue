@@ -43,10 +43,11 @@
       :item-key="(el: any) => el.layer.id"
     >
       <template #item="{ element: combinedLayer }">
-        <v-card
-          class="mb-1 mx-1"
-        >
-          <display-layer ref="displayLayerRefs" :model-value="combinedLayer.layer" />
+        <v-card class="mb-1 mx-1">
+          <display-layer
+            ref="displayLayerRefs"
+            :model-value="combinedLayer.layer"
+          />
         </v-card>
       </template>
     </draggable>

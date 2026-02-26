@@ -32,13 +32,17 @@
         </v-btn>
       </template>
     </v-tooltip>
-    <v-tooltip :text="`Created: ${item.created ? formatDateString(item.created) : 'Unknown'}`" location="end">
+    <v-tooltip
+      :text="`Created: ${item.created ? formatDateString(item.created) : 'Unknown'}`"
+      location="end"
+    >
       <template v-slot:activator="{ props: activatorProps }">
         <span
           v-bind="activatorProps"
           class="text-caption text-medium-emphasis mx-2"
         >
-          Modified: {{ item.updated ? formatDateString(item.updated) : "Unknown" }}
+          Modified:
+          {{ item.updated ? formatDateString(item.updated) : "Unknown" }}
         </span>
       </template>
     </v-tooltip>

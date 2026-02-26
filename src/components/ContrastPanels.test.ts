@@ -21,8 +21,7 @@ vi.mock("@/store/properties", () => ({
 import ContrastPanels from "./ContrastPanels.vue";
 
 function mountComponent() {
-  return shallowMount(ContrastPanels, {
-  });
+  return shallowMount(ContrastPanels, {});
 }
 
 describe("ContrastPanels", () => {

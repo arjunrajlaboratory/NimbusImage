@@ -23,8 +23,7 @@ import AnnotationBrowser from "./AnnotationBrowser.vue";
 import filterStore from "@/store/filters";
 
 function mountComponent() {
-  return shallowMount(AnnotationBrowser, {
-  });
+  return shallowMount(AnnotationBrowser, {});
 }
 
 describe("AnnotationBrowser", () => {

@@ -2,119 +2,121 @@
   <v-expansion-panels>
     <v-expansion-panel>
       <v-expansion-panel-title class="displayLayerHeader">
-      <v-row dense class="align-center">
-        <v-col cols="7" class="d-flex align-center">
-          <v-icon :color="modelValue.color" start>mdi-circle</v-icon>
-          <div class="header pa-1 text-truncate">{{ modelValue.name }}</div>
-          <span v-if="hoverValue !== null" class="ml-auto text-no-wrap">{{ hoverValue }}</span>
-        </v-col>
-        <v-col class="d-flex justify-center">
-          <v-switch
-            @click.stop
-            @mousedown.stop
-            @mouseup.stop
-            v-mousetrap="zMaxMergeHotkey"
-            class="toggleButton"
-            v-model="isZMaxMerge"
-            v-show="hasMultipleZ"
-            :title="`Toggle Z Max Merge (hotkey ${zMaxMergeBinding})`"
-            density="compact"
-            hide-details
-          />
-        </v-col>
-        <v-col class="d-flex justify-center">
-          <v-switch
-            @click.stop
-            @mousedown.stop
-            @mouseup.stop
-            v-mousetrap="visibilityHotkey"
-            class="toggleButton"
-            v-model="visible"
-            :title="`Toggle Visibility (hotkey ${index + 1})`"
-            density="compact"
-            hide-details
-          />
-        </v-col>
-      </v-row>
-    </v-expansion-panel-title>
-    <v-expansion-panel-text :class="{ notVisible: !modelValue.visible }">
-      <v-text-field
-        :model-value="modelValue.name"
-        @change="changeProp('name', $event)"
-        label="Name"
-        density="compact"
-        hide-details
-      />
-      <contrast-histogram
-        :configurationContrast="configurationContrast"
-        :viewContrast="currentContrast"
-        @change="changeContrast($event, false)"
-        @commit="changeContrast($event, true)"
-        @revert="resetContrastInView()"
-        :histogram="histogram"
-      />
-      <color-picker-menu
-        :model-value="modelValue.color"
-        @update:model-value="changeProp('color', $event)"
-        class="mb-4"
-      />
-      <v-radio-group
-        inline
-        v-model="channel"
-        label="Channel"
-        density="compact"
-        hide-details
-        class="channel"
-      >
-        <v-radio
-          v-for="(channel, index) in channels"
-          :key="index"
-          :value="index"
-          :label="channelName(channel)"
+        <v-row dense class="align-center">
+          <v-col cols="7" class="d-flex align-center">
+            <v-icon :color="modelValue.color" start>mdi-circle</v-icon>
+            <div class="header pa-1 text-truncate">{{ modelValue.name }}</div>
+            <span v-if="hoverValue !== null" class="ml-auto text-no-wrap">{{
+              hoverValue
+            }}</span>
+          </v-col>
+          <v-col class="d-flex justify-center">
+            <v-switch
+              @click.stop
+              @mousedown.stop
+              @mouseup.stop
+              v-mousetrap="zMaxMergeHotkey"
+              class="toggleButton"
+              v-model="isZMaxMerge"
+              v-show="hasMultipleZ"
+              :title="`Toggle Z Max Merge (hotkey ${zMaxMergeBinding})`"
+              density="compact"
+              hide-details
+            />
+          </v-col>
+          <v-col class="d-flex justify-center">
+            <v-switch
+              @click.stop
+              @mousedown.stop
+              @mouseup.stop
+              v-mousetrap="visibilityHotkey"
+              class="toggleButton"
+              v-model="visible"
+              :title="`Toggle Visibility (hotkey ${index + 1})`"
+              density="compact"
+              hide-details
+            />
+          </v-col>
+        </v-row>
+      </v-expansion-panel-title>
+      <v-expansion-panel-text :class="{ notVisible: !modelValue.visible }">
+        <v-text-field
+          :model-value="modelValue.name"
+          @change="changeProp('name', $event)"
+          label="Name"
+          density="compact"
+          hide-details
         />
-      </v-radio-group>
-      <v-expansion-panels>
-        <v-expansion-panel>
-          <v-expansion-panel-title
-            >Advanced layer options</v-expansion-panel-title
-          >
-          <v-expansion-panel-text>
-          <display-slice
-            :model-value="modelValue.xy"
-            @change="changeProp('xy', $event)"
-            label="XY-Slice"
-            :max-value="maxXY"
-            v-if="maxXY > 0"
-            :displayed="displayXY"
-            :offset="1"
+        <contrast-histogram
+          :configurationContrast="configurationContrast"
+          :viewContrast="currentContrast"
+          @change="changeContrast($event, false)"
+          @commit="changeContrast($event, true)"
+          @revert="resetContrastInView()"
+          :histogram="histogram"
+        />
+        <color-picker-menu
+          :model-value="modelValue.color"
+          @update:model-value="changeProp('color', $event)"
+          class="mb-4"
+        />
+        <v-radio-group
+          inline
+          v-model="channel"
+          label="Channel"
+          density="compact"
+          hide-details
+          class="channel"
+        >
+          <v-radio
+            v-for="(channel, index) in channels"
+            :key="index"
+            :value="index"
+            :label="channelName(channel)"
           />
-          <display-slice
-            :model-value="modelValue.z"
-            @change="changeProp('z', $event)"
-            label="Z-Slice"
-            :max-value="maxZ"
-            v-if="maxZ > 0"
-            :displayed="displayZ"
-            :offset="1"
-          />
-          <display-slice
-            :model-value="modelValue.time"
-            @change="changeProp('time', $event)"
-            label="Time-Slice"
-            :max-value="maxTime"
-            v-if="maxTime > 0"
-            :displayed="displayTime"
-            :offset="1"
-          />
-          <div class="buttons">
-            <v-btn color="warning" size="small" @click="removeLayer"
-              >Delete layer</v-btn
+        </v-radio-group>
+        <v-expansion-panels>
+          <v-expansion-panel>
+            <v-expansion-panel-title
+              >Advanced layer options</v-expansion-panel-title
             >
-          </div>
-          </v-expansion-panel-text>
-        </v-expansion-panel>
-      </v-expansion-panels>
-    </v-expansion-panel-text>
+            <v-expansion-panel-text>
+              <display-slice
+                :model-value="modelValue.xy"
+                @change="changeProp('xy', $event)"
+                label="XY-Slice"
+                :max-value="maxXY"
+                v-if="maxXY > 0"
+                :displayed="displayXY"
+                :offset="1"
+              />
+              <display-slice
+                :model-value="modelValue.z"
+                @change="changeProp('z', $event)"
+                label="Z-Slice"
+                :max-value="maxZ"
+                v-if="maxZ > 0"
+                :displayed="displayZ"
+                :offset="1"
+              />
+              <display-slice
+                :model-value="modelValue.time"
+                @change="changeProp('time', $event)"
+                label="Time-Slice"
+                :max-value="maxTime"
+                v-if="maxTime > 0"
+                :displayed="displayTime"
+                :offset="1"
+              />
+              <div class="buttons">
+                <v-btn color="warning" size="small" @click="removeLayer"
+                  >Delete layer</v-btn
+                >
+              </div>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
+      </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
 </template>
@@ -246,7 +248,9 @@ const maxZ = computed(() =>
 );
 
 const maxTime = computed(() =>
-  store.dataset ? store.dataset.time.length - 1 : props.modelValue.time.value || 0,
+  store.dataset
+    ? store.dataset.time.length - 1
+    : props.modelValue.time.value || 0,
 );
 
 const displayXY = computed(() => store.xy);

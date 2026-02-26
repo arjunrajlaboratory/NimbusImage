@@ -101,7 +101,6 @@ import {
 } from "@/pipelines/samPipeline";
 import { NoOutput } from "@/pipelines/computePipeline";
 
-import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import AnnotationContextMenu from "@/components/AnnotationContextMenu.vue";
 import AnnotationActionPanel from "@/components/AnnotationActionPanel.vue";
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
@@ -2355,7 +2354,9 @@ function onSamPromptsChanged(prompts: TSamPrompt[]) {
   };
   const newAnnotations = [];
   for (const prompt of prompts) {
-    const newAnnotation = markRaw(samPromptToAnnotation(prompt, promptBaseStyle));
+    const newAnnotation = markRaw(
+      samPromptToAnnotation(prompt, promptBaseStyle),
+    );
     newAnnotation.options("specialAnnotation", true);
     props.annotationLayer.addAnnotation(newAnnotation);
     newAnnotations.push(newAnnotation);

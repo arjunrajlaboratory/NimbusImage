@@ -89,7 +89,9 @@
             Save Preferences
           </v-btn>
           <v-btn class="ml-2" @click="resetAllColors"> Reset All </v-btn>
-          <v-btn class="ml-2" variant="text" @click="cancelChanges"> Cancel </v-btn>
+          <v-btn class="ml-2" variant="text" @click="cancelChanges">
+            Cancel
+          </v-btn>
         </v-col>
       </v-row>
 
@@ -107,7 +109,9 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="colorPickerDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="colorPickerDialog = false"
+            >Cancel</v-btn
+          >
           <v-btn color="primary" @click="applyPickerColor">Apply</v-btn>
         </v-card-actions>
       </v-card>
@@ -298,8 +302,9 @@ async function saveColors() {
 function resetColor(channel: string) {
   // Remove the override, falling back to default
   if (channel in localOverrides.value) {
-    const { [channel]: _, ...rest } = localOverrides.value;
-    localOverrides.value = rest;
+    const copy = { ...localOverrides.value };
+    delete copy[channel];
+    localOverrides.value = copy;
   }
 }
 

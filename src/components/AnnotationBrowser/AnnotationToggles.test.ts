@@ -22,8 +22,7 @@ import AnnotationToggles from "./AnnotationToggles.vue";
 import store from "@/store";
 
 function mountComponent() {
-  return shallowMount(AnnotationToggles, {
-  });
+  return shallowMount(AnnotationToggles, {});
 }
 
 describe("AnnotationToggles", () => {

@@ -3,8 +3,7 @@ import { mount } from "@vue/test-utils";
 import SelectAllNoneChips from "./SelectAllNoneChips.vue";
 
 function mountComponent() {
-  return mount(SelectAllNoneChips, {
-  });
+  return mount(SelectAllNoneChips, {});
 }
 
 describe("SelectAllNoneChips", () => {

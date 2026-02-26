@@ -84,9 +84,15 @@
               v-for="option in columnOptions"
               :key="option.key"
               :value="option.key"
-              :variant="selectedColumns.includes(option.key) ? 'flat' : 'outlined'"
-              :color="selectedColumns.includes(option.key) ? 'white' : undefined"
-              :style="selectedColumns.includes(option.key) ? {} : { opacity: 0.4 }"
+              :variant="
+                selectedColumns.includes(option.key) ? 'flat' : 'outlined'
+              "
+              :color="
+                selectedColumns.includes(option.key) ? 'white' : undefined
+              "
+              :style="
+                selectedColumns.includes(option.key) ? {} : { opacity: 0.4 }
+              "
               size="x-small"
             >
               {{ option.title }}

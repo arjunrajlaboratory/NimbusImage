@@ -16,8 +16,7 @@ import ROIFilters from "./ROIFilters.vue";
 import filterStore from "@/store/filters";
 
 function mountComponent() {
-  return mount(ROIFilters, {
-  });
+  return mount(ROIFilters, {});
 }
 
 describe("ROIFilters", () => {

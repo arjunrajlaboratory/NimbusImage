@@ -45,7 +45,11 @@ describe("ValueSlider", () => {
   });
 
   it("displayValue uses valueLabel when provided", () => {
-    const wrapper = mountComponent({ modelValue: 5, offset: 1, valueLabel: "H10" });
+    const wrapper = mountComponent({
+      modelValue: 5,
+      offset: 1,
+      valueLabel: "H10",
+    });
     expect(wrapper.vm.displayValue).toBe("H10");
   });
 

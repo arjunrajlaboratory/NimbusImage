@@ -33,8 +33,7 @@ import JobsLogs from "./JobsLogs.vue";
 import store from "@/store/index";
 
 function mountComponent() {
-  return shallowMount(JobsLogs, {
-  });
+  return shallowMount(JobsLogs, {});
 }
 
 describe("JobsLogs", () => {
@@ -71,7 +70,9 @@ describe("JobsLogs", () => {
 
   it("getFirstArg returns first arg", () => {
     const wrapper = mountComponent();
-    expect((wrapper.vm as any).getFirstArg({ args: ["image1", "arg2"] })).toBe("image1");
+    expect((wrapper.vm as any).getFirstArg({ args: ["image1", "arg2"] })).toBe(
+      "image1",
+    );
   });
 
   it("getFirstArg returns empty for no args", () => {

@@ -10,8 +10,7 @@ vi.mock("@/store/index", () => ({
 }));
 
 function mountComponent() {
-  return mount(PixelScaleBarSetting, {
-  });
+  return mount(PixelScaleBarSetting, {});
 }
 
 describe("PixelScaleBarSetting", () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import { markRaw , nextTick } from "vue";
+import { markRaw, nextTick } from "vue";
 
 // ---- Hoisted mocks ----
 
@@ -610,7 +610,9 @@ describe("ImageViewer", () => {
       Object.defineProperty(evt, "target", { value: target });
       (wrapper.vm as any).mouseDown(evt, 0);
       expect((wrapper.vm as any).mouseState).not.toBeNull();
-      expect((wrapper.vm as any).mouseState.mapEntry).toStrictEqual(mockedStore.maps[0]);
+      expect((wrapper.vm as any).mouseState.mapEntry).toStrictEqual(
+        mockedStore.maps[0],
+      );
     });
 
     it("mouseDown without shift does not set mouseState (active)", () => {
@@ -994,7 +996,11 @@ describe("ImageViewer", () => {
     it("returns early when map element not found", () => {
       wrapper = mountComponent();
       // No ref for map-0 exists, so should return without error
-      (wrapper.vm as any)._setupMap(0, createLayerStackImage().images[0], false);
+      (wrapper.vm as any)._setupMap(
+        0,
+        createLayerStackImage().images[0],
+        false,
+      );
       // Should not throw
     });
   });
@@ -1298,7 +1304,9 @@ describe("ImageViewer", () => {
   describe("mapSynchronizationCallbacks", () => {
     it("starts as empty Map", () => {
       wrapper = mountComponent();
-      expect((wrapper.vm as any).mapSynchronizationCallbacks).toBeInstanceOf(Map);
+      expect((wrapper.vm as any).mapSynchronizationCallbacks).toBeInstanceOf(
+        Map,
+      );
       expect((wrapper.vm as any).mapSynchronizationCallbacks.size).toBe(0);
     });
   });

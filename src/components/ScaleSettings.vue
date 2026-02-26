@@ -1,57 +1,57 @@
 <template>
   <v-list lines="two">
     <v-list-item v-for="(item, i) in scaleItems" :key="`item-${i}`">
-        <span class="d-flex align-center">
-          <div style="min-width: 10em">
-            {{ item.text }}
+      <span class="d-flex align-center">
+        <div style="min-width: 10em">
+          {{ item.text }}
+        </div>
+        <v-text-field
+          :model-value="scales[item.key].value"
+          @update:model-value="setScaleValueForItem(item, $event)"
+          class="mx-2"
+          hide-details
+          density="compact"
+          type="number"
+        />
+        <v-select
+          :model-value="scales[item.key].unit"
+          @update:model-value="setUnitValueForItem(item, $event)"
+          class="mx-2 small-input"
+          hide-details
+          density="compact"
+          :items="getUnitValues(item.unit)"
+        />
+        <template v-if="!configurationOnly">
+          <div>
+            <v-btn
+              class="ma-1 d-flex"
+              size="small"
+              @click="resetFromDataset(item.key)"
+            >
+              Reset from dataset
+            </v-btn>
+            <v-btn
+              class="ma-1 d-flex"
+              size="small"
+              :disabled="!viewScales[item.key]"
+              @click="revertToCollection(item.key)"
+            >
+              Reset from collection
+            </v-btn>
+            <v-btn
+              class="ma-1 d-flex"
+              size="small"
+              :disabled="!viewScales[item.key]"
+              @click="saveInCollection(item.key)"
+            >
+              Save in collection
+            </v-btn>
           </div>
-          <v-text-field
-            :model-value="scales[item.key].value"
-            @update:model-value="setScaleValueForItem(item, $event)"
-            class="mx-2"
-            hide-details
-            density="compact"
-            type="number"
-          />
-          <v-select
-            :model-value="scales[item.key].unit"
-            @update:model-value="setUnitValueForItem(item, $event)"
-            class="mx-2 small-input"
-            hide-details
-            density="compact"
-            :items="getUnitValues(item.unit)"
-          />
-          <template v-if="!configurationOnly">
-            <div>
-              <v-btn
-                class="ma-1 d-flex"
-                size="small"
-                @click="resetFromDataset(item.key)"
-              >
-                Reset from dataset
-              </v-btn>
-              <v-btn
-                class="ma-1 d-flex"
-                size="small"
-                :disabled="!viewScales[item.key]"
-                @click="revertToCollection(item.key)"
-              >
-                Reset from collection
-              </v-btn>
-              <v-btn
-                class="ma-1 d-flex"
-                size="small"
-                :disabled="!viewScales[item.key]"
-                @click="saveInCollection(item.key)"
-              >
-                Save in collection
-              </v-btn>
-            </div>
-          </template>
-        </span>
+        </template>
+      </span>
     </v-list-item>
     <v-list-item>
-        <pixel-scale-bar-setting class="mx-2" />
+      <pixel-scale-bar-setting class="mx-2" />
     </v-list-item>
     <span class="d-flex align-center">
       <color-picker-menu
@@ -93,8 +93,6 @@ const props = withDefaults(
   }>(),
   { configurationOnly: false },
 );
-
-const configuration = computed(() => store.configuration);
 
 const viewScales = computed(() => store.viewScales);
 

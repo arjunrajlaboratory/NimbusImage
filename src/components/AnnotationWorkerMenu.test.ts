@@ -474,7 +474,6 @@ describe("AnnotationWorkerMenu", () => {
   // -- Watcher: tool prop triggers updateInterface --
   it("watcher on tool calls updateInterface", async () => {
     const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
     (propertiesStore.fetchWorkerImageList as any).mockClear();
     const newTool = makeTool({ image: { image: "new-image:latest" } });
     await wrapper.setProps({ tool: newTool });

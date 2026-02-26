@@ -1,7 +1,9 @@
 <template>
   <v-radio-group
     :model-value="modelValue.type"
-    @update:model-value="$event != null && changeSlice($event, modelValue.value)"
+    @update:model-value="
+      $event != null && changeSlice($event, modelValue.value)
+    "
     :label="labelHint"
     hide-details
     density="compact"

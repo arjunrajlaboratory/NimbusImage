@@ -27,76 +27,76 @@
       <v-expansion-panel-text>
         <!-- List toolset tools -->
         <v-list v-if="toolsetTools.length" density="compact" class="tight-list">
-              <template v-for="(tool, index) in toolsetTools" :key="index">
-                <v-tooltip
-                  location="end"
-                  transition="none"
-                  z-index="100"
-                  v-if="tool"
-                >
-                  <template v-slot:activator="{ props: activatorProps }">
-                    <!-- If type === segmentation, add an annotation worker menu -->
-                    <template v-if="tool.type === 'segmentation'">
-                      <v-menu
-                        :ref="setAnnotationMenuRef"
-                        :closeOnClick="false"
-                        :closeOnContentClick="false"
-                        :model-value="!!selectedTool && selectedTool.id === tool.id"
-                        z-index="2100"
-                        location="end"
-                      >
-                        <template #activator="{ props: menuActivatorProps }">
-                          <tool-item
-                            :tool="tool"
-                            :disabled="!isLoggedIn"
-                            v-bind="mergeProps(activatorProps, menuActivatorProps)"
-                          />
-                        </template>
-                        <annotation-worker-menu
-                          :tool="tool"
-                          @loaded="onWorkerMenuLoaded"
-                          @close="store.setSelectedToolId(null)"
-                        />
-                      </v-menu>
-                    </template>
-                    <!-- When the tool is a SAM tool, show options in an expansion panel -->
-                    <template v-else-if="tool.type === 'samAnnotation'">
-                      <div>
-                        <tool-item
-                          :tool="tool"
-                          :disabled="!isLoggedIn"
-                          v-bind="activatorProps"
-                        />
-                        <template
-                          v-if="selectedTool && selectedTool.id === tool.id"
-                        >
-                          <sam-tool-menu :toolConfiguration="tool" />
-                        </template>
-                      </div>
-                    </template>
-                    <!-- Otherwiser, only tool item -->
-                    <template v-else>
+          <template v-for="(tool, index) in toolsetTools" :key="index">
+            <v-tooltip
+              location="end"
+              transition="none"
+              z-index="100"
+              v-if="tool"
+            >
+              <template v-slot:activator="{ props: activatorProps }">
+                <!-- If type === segmentation, add an annotation worker menu -->
+                <template v-if="tool.type === 'segmentation'">
+                  <v-menu
+                    :ref="setAnnotationMenuRef"
+                    :closeOnClick="false"
+                    :closeOnContentClick="false"
+                    :model-value="!!selectedTool && selectedTool.id === tool.id"
+                    z-index="2100"
+                    location="end"
+                  >
+                    <template #activator="{ props: menuActivatorProps }">
                       <tool-item
                         :tool="tool"
                         :disabled="!isLoggedIn"
-                        v-bind="activatorProps"
+                        v-bind="mergeProps(activatorProps, menuActivatorProps)"
                       />
                     </template>
-                  </template>
-                  <div class="d-flex flex-column">
-                    <div style="margin: 5px">
-                      <div
-                        v-for="(
-                          propEntry, forKey
-                        ) in getToolPropertiesDescription(tool)"
-                        :key="forKey"
-                      >
-                        {{ propEntry[0] }}: {{ propEntry[1] }}
-                      </div>
-                    </div>
+                    <annotation-worker-menu
+                      :tool="tool"
+                      @loaded="onWorkerMenuLoaded"
+                      @close="store.setSelectedToolId(null)"
+                    />
+                  </v-menu>
+                </template>
+                <!-- When the tool is a SAM tool, show options in an expansion panel -->
+                <template v-else-if="tool.type === 'samAnnotation'">
+                  <div>
+                    <tool-item
+                      :tool="tool"
+                      :disabled="!isLoggedIn"
+                      v-bind="activatorProps"
+                    />
+                    <template
+                      v-if="selectedTool && selectedTool.id === tool.id"
+                    >
+                      <sam-tool-menu :toolConfiguration="tool" />
+                    </template>
                   </div>
-                </v-tooltip>
+                </template>
+                <!-- Otherwiser, only tool item -->
+                <template v-else>
+                  <tool-item
+                    :tool="tool"
+                    :disabled="!isLoggedIn"
+                    v-bind="activatorProps"
+                  />
+                </template>
               </template>
+              <div class="d-flex flex-column">
+                <div style="margin: 5px">
+                  <div
+                    v-for="(propEntry, forKey) in getToolPropertiesDescription(
+                      tool,
+                    )"
+                    :key="forKey"
+                  >
+                    {{ propEntry[0] }}: {{ propEntry[1] }}
+                  </div>
+                </div>
+              </div>
+            </v-tooltip>
+          </template>
           <circle-to-dot-menu
             :tool="selectedTool"
             v-if="

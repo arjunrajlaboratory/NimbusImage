@@ -48,7 +48,10 @@ function mountComponent(props = {}) {
       stubs: {
         "layer-select": { template: "<div></div>", props: ["modelValue"] },
         "channel-select": { template: "<div></div>", props: ["modelValue"] },
-        "channel-checkbox-group": { template: "<div></div>", props: ["modelValue"] },
+        "channel-checkbox-group": {
+          template: "<div></div>",
+          props: ["modelValue"],
+        },
         "tag-picker": { template: "<div></div>", props: ["modelValue"] },
       },
     },
@@ -70,7 +73,9 @@ describe("WorkerInterfaceValues", () => {
 
   it("formattedTooltip replaces newlines with <br>", () => {
     const wrapper = mountComponent();
-    expect((wrapper.vm as any).formattedTooltip("line1\nline2")).toBe("line1<br>line2");
+    expect((wrapper.vm as any).formattedTooltip("line1\nline2")).toBe(
+      "line1<br>line2",
+    );
   });
 
   it("populateValues uses tool values when available", () => {

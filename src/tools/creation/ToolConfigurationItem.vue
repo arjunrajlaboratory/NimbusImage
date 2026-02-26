@@ -35,7 +35,12 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 // Manually import those vuetify components that might be used procedurally
-import { VSelect, VCheckbox, VTextField, VRadioGroup } from "vuetify/components";
+import {
+  VSelect,
+  VCheckbox,
+  VTextField,
+  VRadioGroup,
+} from "vuetify/components";
 import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
 import TagAndLayerRestriction from "@/tools/creation/templates/TagAndLayerRestriction.vue";
 import DockerImage from "@/tools/creation/templates/DockerImage.vue";

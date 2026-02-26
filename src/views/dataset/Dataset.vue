@@ -61,13 +61,10 @@ async function loadDataset() {
   }
 }
 
-watch(
-  route,
-  () => {
-    isReady.value = false;
-    loadDataset();
-  },
-);
+watch(route, () => {
+  isReady.value = false;
+  loadDataset();
+});
 
 onMounted(() => {
   loadDataset();

@@ -14,7 +14,11 @@
     </v-container>
     <!-- Inline advanced panel (default behavior) -->
     <v-expansion-panels
-      v-if="!externalAdvanced && advancedInternalTemplate.length > 0 && showAdvancedPanel"
+      v-if="
+        !externalAdvanced &&
+        advancedInternalTemplate.length > 0 &&
+        showAdvancedPanel
+      "
       v-model="advancedPanel"
     >
       <v-expansion-panel>
@@ -23,7 +27,10 @@
         </v-expansion-panel-title>
         <v-expansion-panel-text eager>
           <v-container>
-            <template v-for="(item, index) in advancedInternalTemplate" :key="index">
+            <template
+              v-for="(item, index) in advancedInternalTemplate"
+              :key="index"
+            >
               <tool-configuration-item
                 v-if="shouldShowConfigurationItem(item)"
                 :item="item"
@@ -42,7 +49,6 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
-import store from "@/store";
 import propertiesStore from "@/store/properties";
 import ToolConfigurationItem from "@/tools/creation/ToolConfigurationItem.vue";
 
@@ -159,8 +165,7 @@ function setDefaultValues() {
       return;
     }
     const capturedToolValues = toolValues.value;
-    const setItemValue = (value: any) =>
-      capturedToolValues[item.id] = value;
+    const setItemValue = (value: any) => (capturedToolValues[item.id] = value);
     switch (item.type) {
       case "select":
         if (item?.meta?.items.length) {
@@ -280,4 +285,3 @@ defineExpose({
   getRefSetter,
 });
 </script>
-

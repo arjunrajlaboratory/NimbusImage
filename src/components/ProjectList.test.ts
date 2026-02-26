@@ -77,7 +77,7 @@ describe("ProjectList", () => {
   });
 
   it("fetchProjects is called on mount", async () => {
-    const wrapper = mountComponent();
+    mountComponent();
     await nextTick();
     expect(mockFetchProjects).toHaveBeenCalled();
   });

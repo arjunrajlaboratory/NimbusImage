@@ -1,6 +1,4 @@
-export {
-  RestClient,
-} from "@girder/components";
+export { RestClient } from "@girder/components";
 import type { RestClient as RCType } from "@girder/components";
 export type RestClientInstance = InstanceType<typeof RCType>;
 

@@ -117,7 +117,12 @@
 
           <v-row v-if="warningText" class="mt-4">
             <v-col cols="12">
-              <v-alert type="warning" density="compact" variant="tonal" class="mb-0">
+              <v-alert
+                type="warning"
+                density="compact"
+                variant="tonal"
+                class="mb-0"
+              >
                 {{ warningText }}
               </v-alert>
             </v-col>

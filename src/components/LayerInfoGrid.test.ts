@@ -82,7 +82,9 @@ describe("LayerInfoGrid", () => {
     const contrast = { mode: "percentile", blackPoint: 0, whitePoint: 100 };
     (store.getConfigurationLayerFromId as any).mockReturnValue({ contrast });
     const wrapper = mountComponent();
-    expect((wrapper.vm as any).getConfigurationContrast("l1")).toEqual(contrast);
+    expect((wrapper.vm as any).getConfigurationContrast("l1")).toEqual(
+      contrast,
+    );
   });
 
   it("changeContrast calls saveContrastInConfiguration when syncConfiguration is true", () => {

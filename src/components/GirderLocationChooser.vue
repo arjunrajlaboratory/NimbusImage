@@ -1,9 +1,14 @@
 <template>
   <v-dialog v-model="dialogInternal" scrollable width="auto">
-    <template #activator="{ props: activatorProps }" v-if="activatorDisabled === false">
+    <template
+      #activator="{ props: activatorProps }"
+      v-if="activatorDisabled === false"
+    >
       <div class="d-flex">
         <slot name="activator" v-bind="{ props: activatorProps }">
-          <v-btn v-bind="activatorProps" :disabled="disabled"> Choose... </v-btn>
+          <v-btn v-bind="activatorProps" :disabled="disabled">
+            Choose...
+          </v-btn>
         </slot>
         <girder-breadcrumb
           v-if="breadcrumb && selected"

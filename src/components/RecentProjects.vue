@@ -13,35 +13,36 @@
       <div v-for="project in projects" :key="project.id">
         <v-tooltip location="top" :disabled="!project.description">
           <template v-slot:activator="{ props: activatorProps }">
-            <v-list-item @click="handleProjectClick(project)" v-bind="activatorProps">
-                <v-icon color="#8e24aa">mdi-folder-star</v-icon>
-                <v-list-item-title>
-                  {{ project.name }}
-                </v-list-item-title>
-                <v-list-item-subtitle>
-                  <v-chip
-                    size="x-small"
-                    variant="outlined"
-                    class="mr-1"
-                    :color="getStatusColor(project.meta.status)"
-                  >
-                    {{ project.meta.status }}
-                  </v-chip>
+            <v-list-item
+              @click="handleProjectClick(project)"
+              v-bind="activatorProps"
+            >
+              <v-icon color="#8e24aa">mdi-folder-star</v-icon>
+              <v-list-item-title>
+                {{ project.name }}
+              </v-list-item-title>
+              <v-list-item-subtitle>
+                <v-chip
+                  size="x-small"
+                  variant="outlined"
+                  class="mr-1"
+                  :color="getStatusColor(project.meta.status)"
+                >
+                  {{ project.meta.status }}
+                </v-chip>
+                <span class="text-caption">
+                  {{ project.meta.datasets.length }} dataset{{
+                    project.meta.datasets.length !== 1 ? "s" : ""
+                  }}
+                </span>
+                <template v-if="project.creatorId">
+                  <span class="mx-1">·</span>
                   <span class="text-caption">
-                    {{ project.meta.datasets.length }} dataset{{
-                      project.meta.datasets.length !== 1 ? "s" : ""
-                    }}
+                    Owner: {{ getUserDisplayName(project.creatorId) }}
                   </span>
-                  <template v-if="project.creatorId">
-                    <span class="mx-1">·</span>
-                    <span class="text-caption">
-                      Owner: {{ getUserDisplayName(project.creatorId) }}
-                    </span>
-                  </template>
-                </v-list-item-subtitle>
-              <span
-                class="my-0 d-flex flex-column justify-center"
-              >
+                </template>
+              </v-list-item-subtitle>
+              <span class="my-0 d-flex flex-column justify-center">
                 <div class="text-caption text-grey text-left">
                   <div>Updated:</div>
                   <div style="line-height: 1.1">

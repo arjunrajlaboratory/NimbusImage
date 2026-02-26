@@ -37,7 +37,7 @@ function mountComponent(props = {}) {
 
 describe("TagSelectionDialog", () => {
   it("renders dialog title", () => {
-    const wrapper = mountComponent();
+    mountComponent();
     expect(document.body.textContent).toContain(
       "Add tags to or remove tags from selected objects",
     );
@@ -85,7 +85,7 @@ describe("TagSelectionDialog", () => {
   });
 
   it("renders radio options for add/remove", () => {
-    const wrapper = mountComponent();
+    mountComponent();
     expect(document.body.textContent).toContain("Add tags to selected objects");
     expect(document.body.textContent).toContain(
       "Remove tags from selected objects",

@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { nextTick } from "vue";
 import { shallowMount, flushPromises } from "@vue/test-utils";
 
 const mockGetCollectionDatasetCount = vi.fn();

@@ -3,8 +3,18 @@
     <span class="hotkey-label">
       {{ hotkey === null ? "No hotkey yet" : `Hotkey: ${hotkey}` }}
     </span>
-    <v-btn size="small" class="mr-2" @click="editHotkey()" :disabled="isRecordingHotkey">
-      <v-progress-circular size="16" indeterminate v-if="isRecordingHotkey" class="mr-1" />
+    <v-btn
+      size="small"
+      class="mr-2"
+      @click="editHotkey()"
+      :disabled="isRecordingHotkey"
+    >
+      <v-progress-circular
+        size="16"
+        indeterminate
+        v-if="isRecordingHotkey"
+        class="mr-1"
+      />
       {{ isRecordingHotkey ? "Recording..." : "Record" }}
     </v-btn>
     <v-btn size="small" @click="hotkey = null"> Clear </v-btn>

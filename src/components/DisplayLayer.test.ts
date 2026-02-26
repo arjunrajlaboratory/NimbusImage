@@ -98,7 +98,6 @@ describe("DisplayLayer", () => {
   });
 
   it("changeProp calls store.changeLayer", async () => {
-
     const wrapper = mountComponent();
     (wrapper.vm as any).changeProp("name", "NewName");
     expect(store.changeLayer).toHaveBeenCalledWith({
@@ -108,7 +107,6 @@ describe("DisplayLayer", () => {
   });
 
   it("changeProp does not call store when value is the same", async () => {
-
     (store.changeLayer as any).mockClear();
     const wrapper = mountComponent();
     (wrapper.vm as any).changeProp("name", "DAPI");
@@ -116,7 +114,6 @@ describe("DisplayLayer", () => {
   });
 
   it("removeLayer calls store.removeLayer", async () => {
-
     const wrapper = mountComponent();
     (wrapper.vm as any).removeLayer();
     expect(store.removeLayer).toHaveBeenCalledWith("l1");
@@ -170,7 +167,6 @@ describe("DisplayLayer", () => {
   });
 
   it("changeContrast with syncConfiguration calls saveContrastInConfiguration", async () => {
-
     const wrapper = mountComponent();
     const contrast = { mode: "absolute", blackPoint: 10, whitePoint: 200 };
     (wrapper.vm as any).changeContrast(contrast, true);
@@ -181,7 +177,6 @@ describe("DisplayLayer", () => {
   });
 
   it("changeContrast without syncConfiguration calls saveContrastInView", async () => {
-
     const wrapper = mountComponent();
     const contrast = { mode: "absolute", blackPoint: 10, whitePoint: 200 };
     (wrapper.vm as any).changeContrast(contrast, false);
@@ -192,7 +187,6 @@ describe("DisplayLayer", () => {
   });
 
   it("resetContrastInView calls store.resetContrastInView", async () => {
-
     const wrapper = mountComponent();
     (wrapper.vm as any).resetContrastInView();
     expect(store.resetContrastInView).toHaveBeenCalledWith("l1");

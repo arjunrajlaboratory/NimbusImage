@@ -35,8 +35,7 @@ import store from "@/store";
 import { downloadToClient } from "@/utils/download";
 
 function mountComponent() {
-  return shallowMount(IndexConversionDialog, {
-  });
+  return shallowMount(IndexConversionDialog, {});
 }
 
 describe("IndexConversionDialog", () => {

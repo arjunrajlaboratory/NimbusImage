@@ -2,7 +2,9 @@
   <div>
     <v-dialog v-model="userMenu" v-if="!store.isLoggedIn" max-width="400px">
       <template #activator="{ props: activatorProps }">
-        <v-btn v-if="!store.isLoggedIn" v-bind="activatorProps" color="primary">Login</v-btn>
+        <v-btn v-if="!store.isLoggedIn" v-bind="activatorProps" color="primary"
+          >Login</v-btn
+        >
       </template>
       <v-container class="pa-0">
         <v-card class="pa-6">

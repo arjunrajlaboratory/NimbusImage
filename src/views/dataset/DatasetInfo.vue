@@ -46,7 +46,12 @@
               </v-btn>
               <v-dialog v-model="removeDatasetConfirm" max-width="33vw">
                 <template #activator="{ props: activatorProps }">
-                  <v-btn color="error" size="small" variant="outlined" v-bind="activatorProps">
+                  <v-btn
+                    color="error"
+                    size="small"
+                    variant="outlined"
+                    v-bind="activatorProps"
+                  >
                     <v-icon start>mdi-close</v-icon>
                     Remove Dataset
                   </v-btn>
@@ -165,14 +170,10 @@
                 <div class="flex-grow-1" style="min-width: 0">
                   <div class="d-flex align-center text-body-1">
                     {{
-                      d.configInfo
-                        ? d.configInfo.name
-                        : "Unnamed configuration"
+                      d.configInfo ? d.configInfo.name : "Unnamed configuration"
                     }}
                     <sharing-status-icon
-                      v-if="
-                        getConfigSharingInfo(d.datasetView.configurationId)
-                      "
+                      v-if="getConfigSharingInfo(d.datasetView.configurationId)"
                       :is-public="
                         getConfigSharingInfo(d.datasetView.configurationId)
                           ?.public ?? false
@@ -182,9 +183,7 @@
                   </div>
                   <div class="text-caption text-medium-emphasis">
                     {{
-                      d.configInfo
-                        ? d.configInfo.description
-                        : "No description"
+                      d.configInfo ? d.configInfo.description : "No description"
                     }}
                   </div>
                 </div>
@@ -206,9 +205,7 @@
                   <v-icon
                     class="action-icon"
                     color="warning"
-                    @click.stop="
-                      openRemoveConfigurationDialog(d.datasetView)
-                    "
+                    @click.stop="openRemoveConfigurationDialog(d.datasetView)"
                   >
                     mdi-close
                   </v-icon>
@@ -308,7 +305,9 @@
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer></v-spacer>
-                  <v-btn variant="text" @click="showNewCollectionNameDialog = false"
+                  <v-btn
+                    variant="text"
+                    @click="showNewCollectionNameDialog = false"
                     >Cancel</v-btn
                   >
                   <v-btn color="success" @click="createNewCollection"

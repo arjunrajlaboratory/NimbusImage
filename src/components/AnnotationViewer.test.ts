@@ -342,10 +342,7 @@ import {
   CombineToolStateSymbol,
   SamAnnotationToolStateSymbol,
 } from "@/store/model";
-import {
-  mouseStateToSamPrompt,
-  samPromptToAnnotation,
-} from "@/pipelines/samPipeline";
+import { samPromptToAnnotation } from "@/pipelines/samPipeline";
 import { NoOutput } from "@/pipelines/computePipeline";
 import AnnotationViewer from "./AnnotationViewer.vue";
 
@@ -700,7 +697,9 @@ describe("AnnotationViewer", () => {
         configuration: toolConfig,
         state: { type: Symbol("test") },
       } as any;
-      expect((wrapper.vm as any).selectedToolConfiguration).toStrictEqual(toolConfig);
+      expect((wrapper.vm as any).selectedToolConfiguration).toStrictEqual(
+        toolConfig,
+      );
     });
 
     it("selectedToolState returns tool state or null", () => {
@@ -745,7 +744,9 @@ describe("AnnotationViewer", () => {
         mockedFilterStore.filteredAnnotations = filtered;
         mockedStore.filteredDraw = true;
         wrapper = mountComponent();
-        expect((wrapper.vm as any).displayableAnnotations).toStrictEqual(filtered);
+        expect((wrapper.vm as any).displayableAnnotations).toStrictEqual(
+          filtered,
+        );
       });
 
       it("returns all annotations when filteredDraw is false", () => {
@@ -1363,8 +1364,9 @@ describe("AnnotationViewer", () => {
         selectAnn.type = vi.fn().mockReturnValue("point");
         selectAnn.coordinates = vi.fn().mockReturnValue([{ x: 10, y: 20 }]);
 
-        const result =
-          (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(selectAnn);
+        const result = (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(
+          selectAnn,
+        );
         expect(result).toHaveLength(1);
         expect(result[0].id).toBe("a1");
       });
@@ -1378,8 +1380,9 @@ describe("AnnotationViewer", () => {
         (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
 
         const selectAnn = mockGeoJSAnnotation("point");
-        const result =
-          (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(selectAnn);
+        const result = (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(
+          selectAnn,
+        );
         expect(result).toHaveLength(0);
       });
 
@@ -1407,8 +1410,9 @@ describe("AnnotationViewer", () => {
         selectAnn.type = vi.fn().mockReturnValue("point");
         selectAnn.coordinates = vi.fn().mockReturnValue([{ x: 10, y: 20 }]);
 
-        const result =
-          (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(selectAnn);
+        const result = (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(
+          selectAnn,
+        );
         expect(result).toHaveLength(1);
       });
     });
@@ -1490,7 +1494,9 @@ describe("AnnotationViewer", () => {
         mockedStore.unroll = true;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(null);
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          null,
+        );
       });
 
       it("sets polygon mode when roiFilter is active and deselects tool", () => {
@@ -1518,7 +1524,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith("point");
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          "point",
+        );
       });
 
       it("sets polygon mode for create tool with polygon shape", () => {
@@ -1580,7 +1588,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith("point");
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          "point",
+        );
       });
 
       it("sets polygon mode for tagging tool with tag_lasso action", () => {
@@ -1610,7 +1620,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith("point");
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          "point",
+        );
       });
 
       it("sets polygon mode for connection tool with lasso action", () => {
@@ -1640,7 +1652,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith("point");
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          "point",
+        );
       });
 
       it("sets polygon mode for select tool with lasso type", () => {
@@ -1670,7 +1684,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith("point");
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          "point",
+        );
       });
 
       it("sets line mode for edit tool with blob_edit action", () => {
@@ -1684,7 +1700,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith("line");
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          "line",
+        );
       });
 
       it("sets null mode for samAnnotation tool", () => {
@@ -1694,7 +1712,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(null);
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          null,
+        );
       });
 
       it("sets null mode for segmentation tool", () => {
@@ -1704,7 +1724,9 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).setNewAnnotationMode();
-        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(null);
+        expect((wrapper.vm as any).interactionLayer.mode).toHaveBeenCalledWith(
+          null,
+        );
       });
     });
 
@@ -1712,7 +1734,10 @@ describe("AnnotationViewer", () => {
     describe("handleInteractionAnnotationChange", () => {
       it("returns early when no tool and no roiFilter", () => {
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm as any, "addAnnotationFromGeoJsAnnotation");
+        const spy = vi.spyOn(
+          wrapper.vm as any,
+          "addAnnotationFromGeoJsAnnotation",
+        );
         (wrapper.vm as any).handleInteractionAnnotationChange({
           event: "geo_annotation_state",
           annotation: { layer: () => (wrapper.vm as any).interactionLayer },
@@ -1732,7 +1757,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
 
         const ann = mockGeoJSAnnotation("point");
-        ann.layer = vi.fn().mockReturnValue((wrapper.vm as any).interactionLayer);
+        ann.layer = vi
+          .fn()
+          .mockReturnValue((wrapper.vm as any).interactionLayer);
         // In Vue 3 <script setup>, internal functions are closures and can't be
         // spied on via wrapper.vm. Verify the route was taken by checking that
         // addAnnotationFromGeoJsAnnotation's first action (removeAnnotation) was called.
@@ -1750,14 +1777,20 @@ describe("AnnotationViewer", () => {
           configuration: {
             id: "t1",
             type: "tagging",
-            values: { action: { value: "tag_click" }, tags: [], removeExisting: false },
+            values: {
+              action: { value: "tag_click" },
+              tags: [],
+              removeExisting: false,
+            },
           },
           state: {},
         } as any;
         wrapper = mountComponent();
 
         const ann = mockGeoJSAnnotation("point");
-        ann.layer = vi.fn().mockReturnValue((wrapper.vm as any).interactionLayer);
+        ann.layer = vi
+          .fn()
+          .mockReturnValue((wrapper.vm as any).interactionLayer);
         // In Vue 3 <script setup>, verify route was taken without throwing.
         // handleAnnotationTagging calls getSelectedAnnotationsFromAnnotation
         // which returns [] with no matching annotations, so no further calls happen.
@@ -1781,7 +1814,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
 
         const ann = mockGeoJSAnnotation("point");
-        ann.layer = vi.fn().mockReturnValue((wrapper.vm as any).interactionLayer);
+        ann.layer = vi
+          .fn()
+          .mockReturnValue((wrapper.vm as any).interactionLayer);
         // In Vue 3 <script setup>, verify route was taken without throwing.
         expect(() => {
           (wrapper.vm as any).handleInteractionAnnotationChange({
@@ -1803,7 +1838,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
 
         const ann = mockGeoJSAnnotation("point");
-        ann.layer = vi.fn().mockReturnValue((wrapper.vm as any).interactionLayer);
+        ann.layer = vi
+          .fn()
+          .mockReturnValue((wrapper.vm as any).interactionLayer);
         // In Vue 3 <script setup>, verify route was taken without throwing.
         expect(() => {
           (wrapper.vm as any).handleInteractionAnnotationChange({
@@ -1825,7 +1862,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
 
         const ann = mockGeoJSAnnotation("point");
-        ann.layer = vi.fn().mockReturnValue((wrapper.vm as any).interactionLayer);
+        ann.layer = vi
+          .fn()
+          .mockReturnValue((wrapper.vm as any).interactionLayer);
         // In Vue 3 <script setup>, verify route was taken without throwing.
         expect(() => {
           (wrapper.vm as any).handleInteractionAnnotationChange({
@@ -1847,7 +1886,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
 
         const ann = mockGeoJSAnnotation("point");
-        ann.layer = vi.fn().mockReturnValue((wrapper.vm as any).interactionLayer);
+        ann.layer = vi
+          .fn()
+          .mockReturnValue((wrapper.vm as any).interactionLayer);
         // In Vue 3 <script setup>, verify route was taken.
         // handleAnnotationEdits calls getSelectedAnnotationsFromAnnotation, which
         // returns [] since no annotations match. Then it calls
@@ -1866,7 +1907,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
 
         const ann = mockGeoJSAnnotation("polygon");
-        ann.layer = vi.fn().mockReturnValue((wrapper.vm as any).interactionLayer);
+        ann.layer = vi
+          .fn()
+          .mockReturnValue((wrapper.vm as any).interactionLayer);
         // In Vue 3 <script setup>, verify route was taken by checking that
         // handleNewROIFilter's downstream call (validateNewROIFilter) was invoked.
         mockedFilterStore.validateNewROIFilter.mockClear();
@@ -1999,8 +2042,6 @@ describe("AnnotationViewer", () => {
 
     // --- handleAnnotationConnections ---
     describe("handleAnnotationConnections", () => {
-      const connectionToolState = Symbol("ConnectionToolState");
-
       function setupConnectionTool(action: string) {
         // Get the actual symbol from model
 
@@ -2168,7 +2209,9 @@ describe("AnnotationViewer", () => {
         selectAnn.coordinates = vi.fn().mockReturnValue([{ x: 5, y: 5 }]);
 
         await (wrapper.vm as any).handleAnnotationCombine(selectAnn);
-        expect((wrapper.vm as any).selectedToolState.selectedAnnotationId).toBe("a1");
+        expect((wrapper.vm as any).selectedToolState.selectedAnnotationId).toBe(
+          "a1",
+        );
       });
 
       it("combines annotations on second click", async () => {
@@ -2267,7 +2310,9 @@ describe("AnnotationViewer", () => {
 
         await (wrapper.vm as any).handleAnnotationCombine(selectAnn);
         // Should not set selectedAnnotationId since no polygon found
-        expect((wrapper.vm as any).selectedToolState.selectedAnnotationId).toBeNull();
+        expect(
+          (wrapper.vm as any).selectedToolState.selectedAnnotationId,
+        ).toBeNull();
       });
 
       it("returns early when selectAnnotation is null", async () => {
@@ -2527,14 +2572,28 @@ describe("AnnotationViewer", () => {
           images: () => null,
         } as any;
         wrapper = mountComponent();
-        const result = (wrapper.vm as any).unrollIndex(0, 0, 0, false, false, false);
+        const result = (wrapper.vm as any).unrollIndex(
+          0,
+          0,
+          0,
+          false,
+          false,
+          false,
+        );
         expect(result).toBe(0);
       });
 
       it("calls unrollIndexFromImages", () => {
         (unrollIndexFromImages as any).mockReturnValue(3);
         wrapper = mountComponent();
-        const result = (wrapper.vm as any).unrollIndex(1, 2, 3, false, false, false);
+        const result = (wrapper.vm as any).unrollIndex(
+          1,
+          2,
+          3,
+          false,
+          false,
+          false,
+        );
         expect(unrollIndexFromImages).toHaveBeenCalled();
         expect(result).toBe(3);
       });
@@ -2709,7 +2768,9 @@ describe("AnnotationViewer", () => {
         mockedAnnotationStore.annotations = [ann1, ann2];
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
-        const result = (wrapper.vm as any).getDisplayedAnnotationIdsAcrossTime();
+        const result = (
+          wrapper.vm as any
+        ).getDisplayedAnnotationIdsAcrossTime();
         // Both should be included since we're collecting across time
         expect(result.has("a1")).toBe(true);
         expect(result.has("a2")).toBe(true);
@@ -2736,7 +2797,9 @@ describe("AnnotationViewer", () => {
         mockedAnnotationStore.annotations = [ann1, ann2];
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
-        const result = (wrapper.vm as any).getDisplayedAnnotationIdsAcrossTime();
+        const result = (
+          wrapper.vm as any
+        ).getDisplayedAnnotationIdsAcrossTime();
         expect(result.has("a1")).toBe(true);
         expect(result.has("a2")).toBe(false); // Different XY
       });
@@ -2749,7 +2812,9 @@ describe("AnnotationViewer", () => {
         mockedAnnotationStore.annotations = [ann];
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
-        const result = (wrapper.vm as any).getDisplayedAnnotationIdsAcrossTime();
+        const result = (
+          wrapper.vm as any
+        ).getDisplayedAnnotationIdsAcrossTime();
         expect(result.size).toBe(0);
       });
     });
@@ -2963,9 +3028,9 @@ describe("AnnotationViewer", () => {
           modifiers: { alt: true },
         });
 
-        expect((wrapper.vm as any).interactionLayer.addAnnotation).toHaveBeenCalledWith(
-          ghost,
-        );
+        expect(
+          (wrapper.vm as any).interactionLayer.addAnnotation,
+        ).toHaveBeenCalledWith(ghost);
       });
 
       it("does nothing when no annotation found under click", () => {
@@ -3169,9 +3234,9 @@ describe("AnnotationViewer", () => {
             { x: 10, y: 10 },
           ],
         });
-        expect((wrapper.vm as any).interactionLayer.addAnnotation).toHaveBeenCalledWith(
-          lineAnn,
-        );
+        expect(
+          (wrapper.vm as any).interactionLayer.addAnnotation,
+        ).toHaveBeenCalledWith(lineAnn);
       });
     });
 
@@ -3180,9 +3245,9 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
         const prev = mockGeoJSAnnotation("line");
         (wrapper.vm as any).selectionAnnotation = prev;
-        const spy = vi
-          .spyOn(wrapper.vm as any, "selectAnnotations")
-          .mockImplementation(() => {});
+        vi.spyOn(wrapper.vm as any, "selectAnnotations").mockImplementation(
+          () => {},
+        );
 
         (wrapper.vm as any).consumeMouseState({
           path: [{ x: 10, y: 20 }],
@@ -3287,7 +3352,9 @@ describe("AnnotationViewer", () => {
       it("hides context menu", () => {
         wrapper = mountComponent();
         (wrapper.vm as any).showContextMenu = true;
-        (wrapper.vm as any).rightClickedAnnotation = makeAnnotation({ id: "a1" });
+        (wrapper.vm as any).rightClickedAnnotation = makeAnnotation({
+          id: "a1",
+        });
 
         (wrapper.vm as any).handleContextMenuCancel();
         expect((wrapper.vm as any).showContextMenu).toBe(false);
@@ -3421,7 +3488,8 @@ describe("AnnotationViewer", () => {
       it("calls addHoverCallback on mount", () => {
         wrapper = mountComponent();
         // addHoverCallback registers a mouseclick handler on annotationLayer
-        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any).mock.calls;
+        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any)
+          .mock.calls;
         const mouseclickCalls = geoOnCalls.filter(
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
@@ -3447,7 +3515,8 @@ describe("AnnotationViewer", () => {
     describe("bindAnnotationEvents", () => {
       it("registers mouseclick handler on annotationLayer", () => {
         wrapper = mountComponent();
-        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any).mock.calls;
+        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any)
+          .mock.calls;
         const mouseclickCalls = geoOnCalls.filter(
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
@@ -3456,7 +3525,8 @@ describe("AnnotationViewer", () => {
 
       it("registers drag handlers on annotationLayer", () => {
         wrapper = mountComponent();
-        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any).mock.calls;
+        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any)
+          .mock.calls;
         const eventTypes = geoOnCalls.map((call: any[]) => call[0]);
         expect(eventTypes).toContain("geojs.mousedown");
         expect(eventTypes).toContain("geojs.mousemove");
@@ -3481,8 +3551,8 @@ describe("AnnotationViewer", () => {
 
       it("registers annotation mode/add/update/state handlers", () => {
         wrapper = mountComponent();
-        const geoOnCalls = ((wrapper.vm as any).interactionLayer.geoOn as any).mock
-          .calls;
+        const geoOnCalls = ((wrapper.vm as any).interactionLayer.geoOn as any)
+          .mock.calls;
         const eventTypes = geoOnCalls.map((call: any[]) => call[0]);
         expect(eventTypes).toContain("geojs.annotation.mode");
         expect(eventTypes).toContain("geojs.annotation.add");
@@ -3502,8 +3572,8 @@ describe("AnnotationViewer", () => {
           state: null,
         } as any;
         wrapper = mountComponent();
-        const geoOnCalls = ((wrapper.vm as any).interactionLayer.geoOn as any).mock
-          .calls;
+        const geoOnCalls = ((wrapper.vm as any).interactionLayer.geoOn as any)
+          .mock.calls;
         const mouseclickCalls = geoOnCalls.filter(
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
@@ -3514,7 +3584,8 @@ describe("AnnotationViewer", () => {
     describe("bindTimelapseEvents", () => {
       it("registers mouseclick handler on timelapseLayer", () => {
         wrapper = mountComponent();
-        const geoOnCalls = ((wrapper.vm as any).timelapseLayer.geoOn as any).mock.calls;
+        const geoOnCalls = ((wrapper.vm as any).timelapseLayer.geoOn as any)
+          .mock.calls;
         const mouseclickCalls = geoOnCalls.filter(
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
@@ -3543,6 +3614,7 @@ describe("AnnotationViewer", () => {
           configuration: { type: "samAnnotation", values: {} },
           state: {
             type: SamAnnotationToolStateSymbol,
+            mapEntry: wrongMap,
             nodes: {
               input: {
                 geoJSMap: { output: wrongMap },
@@ -3565,6 +3637,7 @@ describe("AnnotationViewer", () => {
           configuration: { type: "samAnnotation", values: {} },
           state: {
             type: SamAnnotationToolStateSymbol,
+            mapEntry: { map: mapObj },
             nodes: {
               input: {
                 geoJSMap: { output: { map: mapObj } },
@@ -3578,7 +3651,9 @@ describe("AnnotationViewer", () => {
         } as any;
         await wrapper.vm.$nextTick();
         expect((wrapper.vm as any).samToolState).not.toBeNull();
-        expect((wrapper.vm as any).samToolState.type).toBe(SamAnnotationToolStateSymbol);
+        expect((wrapper.vm as any).samToolState.type).toBe(
+          SamAnnotationToolStateSymbol,
+        );
       });
     });
 
@@ -3596,6 +3671,7 @@ describe("AnnotationViewer", () => {
           configuration: { type: "samAnnotation", values: {} },
           state: {
             type: SamAnnotationToolStateSymbol,
+            mapEntry: { map: mapObj },
             nodes: {
               input: {
                 geoJSMap: { output: { map: mapObj } },
@@ -3624,6 +3700,7 @@ describe("AnnotationViewer", () => {
           configuration: { type: "samAnnotation", values: {} },
           state: {
             type: SamAnnotationToolStateSymbol,
+            mapEntry: { map: mapObj },
             nodes: {
               input: {
                 geoJSMap: { output: { map: mapObj } },
@@ -3667,6 +3744,7 @@ describe("AnnotationViewer", () => {
           configuration: { type: "samAnnotation", values: {} },
           state: {
             type: SamAnnotationToolStateSymbol,
+            mapEntry: { map: mapObj },
             nodes: {
               input: {
                 geoJSMap: { output: { map: mapObj } },
@@ -3684,7 +3762,9 @@ describe("AnnotationViewer", () => {
 
         expect(geojs.annotation.polygonAnnotation).toHaveBeenCalled();
         expect((wrapper.vm as any).samUnsubmittedAnnotation).not.toBeNull();
-        expect((wrapper.vm as any).annotationLayer.addAnnotation).toHaveBeenCalled();
+        expect(
+          (wrapper.vm as any).annotationLayer.addAnnotation,
+        ).toHaveBeenCalled();
       });
 
       it("returns early when output is null", () => {
@@ -3727,6 +3807,7 @@ describe("AnnotationViewer", () => {
           configuration: { type: "samAnnotation", values: {} },
           state: {
             type: SamAnnotationToolStateSymbol,
+            mapEntry: { map: mapObj },
             nodes: {
               input: {
                 geoJSMap: { output: { map: mapObj } },
@@ -3759,6 +3840,7 @@ describe("AnnotationViewer", () => {
           configuration: { type: "samAnnotation", values: {} },
           state: {
             type: SamAnnotationToolStateSymbol,
+            mapEntry: { map: mapObj },
             nodes: {
               input: {
                 geoJSMap: { output: { map: mapObj } },
@@ -3935,7 +4017,8 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent();
         // In Vue 3 <script setup>, can't spy on closure functions.
         // Verify clearOldAnnotations was called by checking annotationLayer.removeAllAnnotations.
-        const removeAllSpy = (wrapper.vm as any).annotationLayer.removeAllAnnotations;
+        const removeAllSpy = (wrapper.vm as any).annotationLayer
+          .removeAllAnnotations;
         removeAllSpy.mockClear();
         (wrapper.vm as any).onUnrollChanged();
         expect(removeAllSpy).toHaveBeenCalled();
@@ -4040,7 +4123,9 @@ describe("AnnotationViewer", () => {
           },
         } as any;
         wrapper = mountComponent();
-        expect((wrapper.vm as any).toolHighlightedAnnotationIds.has("ann1")).toBe(true);
+        expect(
+          (wrapper.vm as any).toolHighlightedAnnotationIds.has("ann1"),
+        ).toBe(true);
       });
 
       it("returns annotation id for combine tool", () => {
@@ -4052,7 +4137,9 @@ describe("AnnotationViewer", () => {
           },
         } as any;
         wrapper = mountComponent();
-        expect((wrapper.vm as any).toolHighlightedAnnotationIds.has("ann2")).toBe(true);
+        expect(
+          (wrapper.vm as any).toolHighlightedAnnotationIds.has("ann2"),
+        ).toBe(true);
       });
     });
 
@@ -4099,7 +4186,9 @@ describe("AnnotationViewer", () => {
         mockedStore.drawAnnotations = true;
         mockedStore.filteredDraw = false;
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 10 });
-        expect((wrapper.vm as any).layerDisplaysAnnotation("l1", "a1")).toBe(true);
+        expect((wrapper.vm as any).layerDisplaysAnnotation("l1", "a1")).toBe(
+          true,
+        );
       });
 
       it("returns false when annotation does not belong to layer", () => {
@@ -4107,9 +4196,9 @@ describe("AnnotationViewer", () => {
         mockedStore.layers = [layer1];
         mockedAnnotationStore.annotations = [];
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 10 });
-        expect((wrapper.vm as any).layerDisplaysAnnotation("l1", "nonexistent")).toBe(
-          false,
-        );
+        expect(
+          (wrapper.vm as any).layerDisplaysAnnotation("l1", "nonexistent"),
+        ).toBe(false);
       });
     });
 
@@ -4148,16 +4237,24 @@ describe("AnnotationViewer", () => {
         } as any;
         wrapper = mountComponent();
         (wrapper.vm as any).renderWorkerPreview();
-        expect((wrapper.vm as any).workerPreviewFeature.data).toHaveBeenCalled();
-        expect((wrapper.vm as any).workerPreviewFeature.draw).toHaveBeenCalled();
+        expect(
+          (wrapper.vm as any).workerPreviewFeature.data,
+        ).toHaveBeenCalled();
+        expect(
+          (wrapper.vm as any).workerPreviewFeature.draw,
+        ).toHaveBeenCalled();
       });
 
       it("clears preview data when not displayed", () => {
         mockedPropertiesStore.displayWorkerPreview = false;
         wrapper = mountComponent();
         (wrapper.vm as any).renderWorkerPreview();
-        expect((wrapper.vm as any).workerPreviewFeature.data).toHaveBeenCalledWith([]);
-        expect((wrapper.vm as any).workerPreviewFeature.draw).toHaveBeenCalled();
+        expect(
+          (wrapper.vm as any).workerPreviewFeature.data,
+        ).toHaveBeenCalledWith([]);
+        expect(
+          (wrapper.vm as any).workerPreviewFeature.draw,
+        ).toHaveBeenCalled();
       });
     });
 
@@ -4189,7 +4286,9 @@ describe("AnnotationViewer", () => {
         (wrapper.vm as any).pendingAnnotationChanged();
 
         expect(geoAnn.options).toHaveBeenCalledWith("specialAnnotation", true);
-        expect((wrapper.vm as any).interactionLayer.addAnnotation).toHaveBeenCalled();
+        expect(
+          (wrapper.vm as any).interactionLayer.addAnnotation,
+        ).toHaveBeenCalled();
       });
     });
   });

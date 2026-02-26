@@ -43,7 +43,10 @@
                   @drop.prevent="handleDrop"
                   @dragleave.prevent="isDragging = false"
                 >
-                  <div class="text-h6 text-white text-center" style="pointer-events: none">
+                  <div
+                    class="text-h6 text-white text-center"
+                    style="pointer-events: none"
+                  >
                     Drop files here to upload
                   </div>
                 </v-overlay>
@@ -122,7 +125,8 @@
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <div class="d-flex align-center mb-4">
-                <v-list-subheader class="headline section-title text-h5 pa-0 mr-4"
+                <v-list-subheader
+                  class="headline section-title text-h5 pa-0 mr-4"
                   >Browse</v-list-subheader
                 >
                 <v-btn-toggle
@@ -193,166 +197,171 @@
 
       <!-- Upload Choice Dialog -->
       <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
-      <v-card>
-        <v-card-title class="headline d-flex align-center">
-          Create dataset
-          <v-btn
-            icon
-            size="small"
-            class="ml-2"
-            @click="showUploadInfo = !showUploadInfo"
-          >
-            <v-icon size="small">mdi-information-outline</v-icon>
-          </v-btn>
-        </v-card-title>
+        <v-card>
+          <v-card-title class="headline d-flex align-center">
+            Create dataset
+            <v-btn
+              icon
+              size="small"
+              class="ml-2"
+              @click="showUploadInfo = !showUploadInfo"
+            >
+              <v-icon size="small">mdi-information-outline</v-icon>
+            </v-btn>
+          </v-card-title>
 
-        <!-- Info Panel -->
-        <v-expand-transition>
-          <v-alert
-            v-if="showUploadInfo"
-            type="info"
-            variant="tonal"
-            class="mx-4 mb-4 text-body-2"
-          >
-            <div class="font-weight-bold mb-2">
-              Understanding Datasets and Collections
-            </div>
-            <p>
-              A <strong>dataset</strong> is a set of images you want to
-              visualize and analyze together. It can come from a single file
-              (like a multi-dimensional .nd2 file) or multiple files that belong
-              together.
-            </p>
-            <p>
-              By default, when you upload multiple files, they all become part
-              of <strong>one dataset</strong>. NimbusImage will automatically
-              parse dimensions like channels, Z-stacks, and timepoints from file
-              metadata or filenames.
-            </p>
-            <p>
-              If you want each file to be its own separate dataset, check the
-              "<strong
-                >Upload each file as a separate dataset in a collection</strong
-              >" option. This creates a <strong>collection</strong> — a group of
-              datasets that share the same visualization settings and tools.
-            </p>
-            <p class="mb-0">
-              Collections are useful when you have similar data from different
-              conditions or timepoints that you want to analyze with consistent
-              settings.
-            </p>
-          </v-alert>
-        </v-expand-transition>
+          <!-- Info Panel -->
+          <v-expand-transition>
+            <v-alert
+              v-if="showUploadInfo"
+              type="info"
+              variant="tonal"
+              class="mx-4 mb-4 text-body-2"
+            >
+              <div class="font-weight-bold mb-2">
+                Understanding Datasets and Collections
+              </div>
+              <p>
+                A <strong>dataset</strong> is a set of images you want to
+                visualize and analyze together. It can come from a single file
+                (like a multi-dimensional .nd2 file) or multiple files that
+                belong together.
+              </p>
+              <p>
+                By default, when you upload multiple files, they all become part
+                of <strong>one dataset</strong>. NimbusImage will automatically
+                parse dimensions like channels, Z-stacks, and timepoints from
+                file metadata or filenames.
+              </p>
+              <p>
+                If you want each file to be its own separate dataset, check the
+                "<strong
+                  >Upload each file as a separate dataset in a
+                  collection</strong
+                >" option. This creates a <strong>collection</strong> — a group
+                of datasets that share the same visualization settings and
+                tools.
+              </p>
+              <p class="mb-0">
+                Collections are useful when you have similar data from different
+                conditions or timepoints that you want to analyze with
+                consistent settings.
+              </p>
+            </v-alert>
+          </v-expand-transition>
 
-        <v-card-text>
-          <v-text-field
-            v-model="datasetName"
-            :label="batchMode ? 'Collection Name' : 'Dataset Name'"
-            required
-            :rules="nameRules"
-            :error-messages="nameError"
-            class="mb-2"
-          />
+          <v-card-text>
+            <v-text-field
+              v-model="datasetName"
+              :label="batchMode ? 'Collection Name' : 'Dataset Name'"
+              required
+              :rules="nameRules"
+              :error-messages="nameError"
+              class="mb-2"
+            />
 
-          <!-- Collection mode toggle -->
-          <v-checkbox
-            v-model="batchMode"
-            label="Upload each file as a separate dataset in a collection"
-            :disabled="pendingFiles.length < 2"
-            hide-details
-            class="mb-4"
-          />
+            <!-- Collection mode toggle -->
+            <v-checkbox
+              v-model="batchMode"
+              label="Upload each file as a separate dataset in a collection"
+              :disabled="pendingFiles.length < 2"
+              hide-details
+              class="mb-4"
+            />
 
-          <!-- Show file-to-dataset mapping when in batch mode -->
-          <v-card v-if="batchMode" variant="outlined" class="mb-4">
-            <v-card-subtitle>
-              Each file will become a separate dataset:
-              <v-progress-circular
-                v-if="validatingNames"
-                indeterminate
-                size="16"
-                width="2"
-                class="ml-2"
-              />
-            </v-card-subtitle>
-            <v-list density="compact">
-              <v-list-item v-for="(file, idx) in pendingFiles" :key="idx">
-                <v-icon
-                  size="small"
-                  :color="nameConflicts.includes(idx) ? 'error' : ''"
-                >
-                  {{
-                    nameConflicts.includes(idx)
-                      ? "mdi-alert-circle"
-                      : "mdi-file"
-                  }}
-                </v-icon>
-                <v-text-field
-                  v-model="datasetNames[idx]"
-                  :error="nameConflicts.includes(idx)"
-                  :error-messages="getNameError(idx)"
-                  density="compact"
-                  hide-details="auto"
-                  @input="validateDatasetNamesDebounced"
+            <!-- Show file-to-dataset mapping when in batch mode -->
+            <v-card v-if="batchMode" variant="outlined" class="mb-4">
+              <v-card-subtitle>
+                Each file will become a separate dataset:
+                <v-progress-circular
+                  v-if="validatingNames"
+                  indeterminate
+                  size="16"
+                  width="2"
+                  class="ml-2"
                 />
-                <v-list-item-subtitle class="text-medium-emphasis mt-1">
-                  {{ file.name }}
-                </v-list-item-subtitle>
-              </v-list-item>
-            </v-list>
-          </v-card>
+              </v-card-subtitle>
+              <v-list density="compact">
+                <v-list-item v-for="(file, idx) in pendingFiles" :key="idx">
+                  <v-icon
+                    size="small"
+                    :color="nameConflicts.includes(idx) ? 'error' : ''"
+                  >
+                    {{
+                      nameConflicts.includes(idx)
+                        ? "mdi-alert-circle"
+                        : "mdi-file"
+                    }}
+                  </v-icon>
+                  <v-text-field
+                    v-model="datasetNames[idx]"
+                    :error="nameConflicts.includes(idx)"
+                    :error-messages="getNameError(idx)"
+                    density="compact"
+                    hide-details="auto"
+                    @input="validateDatasetNamesDebounced"
+                  />
+                  <v-list-item-subtitle class="text-medium-emphasis mt-1">
+                    {{ file.name }}
+                  </v-list-item-subtitle>
+                </v-list-item>
+              </v-list>
+            </v-card>
 
-          <div class="mb-4 text-body-2 text-medium-emphasis">
-            {{ pendingFiles.length }}
-            {{ pendingFiles.length === 1 ? "file" : "files" }} selected
-            <template v-if="batchMode">
-              → {{ pendingFiles.length }} datasets
-            </template>
-          </div>
+            <div class="mb-4 text-body-2 text-medium-emphasis">
+              {{ pendingFiles.length }}
+              {{ pendingFiles.length === 1 ? "file" : "files" }} selected
+              <template v-if="batchMode">
+                → {{ pendingFiles.length }} datasets
+              </template>
+            </div>
 
-          <v-alert v-if="nameTaken" variant="tonal" type="error" class="mb-4">
-            Could not create dataset <strong>{{ datasetName }}</strong
-            >. This might happen, for instance, if a dataset by that name
-            already exists. Please update the dataset name field and try again.
-          </v-alert>
+            <v-alert v-if="nameTaken" variant="tonal" type="error" class="mb-4">
+              Could not create dataset <strong>{{ datasetName }}</strong
+              >. This might happen, for instance, if a dataset by that name
+              already exists. Please update the dataset name field and try
+              again.
+            </v-alert>
 
-          <v-card class="mb-4">
-            <v-card-title class="text-subtitle-1 pa-3">Location:</v-card-title>
-            <v-card-text class="pt-0">
-              <girder-location-chooser
-                v-model="selectedLocation"
-                :breadcrumb="true"
-                title="Select a Folder to Import the New Dataset"
-              />
-            </v-card-text>
-          </v-card>
-        </v-card-text>
-        <v-card-actions>
-          <v-btn variant="text" @click="closeUploadDialog">Cancel</v-btn>
-          <v-spacer></v-spacer>
-          <v-btn
-            id="configure-dataset-button-tourstep"
-            variant="outlined"
-            color="primary"
-            v-tour-trigger="'configure-dataset-tourtrigger'"
-            :disabled="!isFormValid"
-            @click="handleConfigureDataset"
-            class="mr-2"
-          >
-            Advanced Import
-          </v-btn>
-          <v-btn
-            id="accept-defaults-button-tourstep"
-            color="primary"
-            v-tour-trigger="'accept-defaults-tourtrigger'"
-            :disabled="!isFormValid"
-            @click="handleAcceptDefaults"
-          >
-            Quick Import
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+            <v-card class="mb-4">
+              <v-card-title class="text-subtitle-1 pa-3"
+                >Location:</v-card-title
+              >
+              <v-card-text class="pt-0">
+                <girder-location-chooser
+                  v-model="selectedLocation"
+                  :breadcrumb="true"
+                  title="Select a Folder to Import the New Dataset"
+                />
+              </v-card-text>
+            </v-card>
+          </v-card-text>
+          <v-card-actions>
+            <v-btn variant="text" @click="closeUploadDialog">Cancel</v-btn>
+            <v-spacer></v-spacer>
+            <v-btn
+              id="configure-dataset-button-tourstep"
+              variant="outlined"
+              color="primary"
+              v-tour-trigger="'configure-dataset-tourtrigger'"
+              :disabled="!isFormValid"
+              @click="handleConfigureDataset"
+              class="mr-2"
+            >
+              Advanced Import
+            </v-btn>
+            <v-btn
+              id="accept-defaults-button-tourstep"
+              color="primary"
+              v-tour-trigger="'accept-defaults-tourtrigger'"
+              :disabled="!isFormValid"
+              @click="handleAcceptDefaults"
+            >
+              Quick Import
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
     </template>
   </div>
 </template>
@@ -470,8 +479,13 @@ void RecentDatasets;
 
 // DEBUG: Catch child component errors during mount/render
 onErrorCaptured((err, instance, info) => {
-  const name = (instance as any)?.type?.__name || (instance as any)?.type?.name || 'Unknown';
-  console.error(`[Home onErrorCaptured] Error in child "${name}": ${err.message}\nInfo: ${info}\nStack: ${err.stack?.split('\n').slice(0, 3).join('\n')}`);
+  const name =
+    (instance as any)?.type?.__name ||
+    (instance as any)?.type?.name ||
+    "Unknown";
+  console.error(
+    `[Home onErrorCaptured] Error in child "${name}": ${err.message}\nInfo: ${info}\nStack: ${err.stack?.split("\n").slice(0, 3).join("\n")}`,
+  );
   return true; // propagate
 });
 

@@ -39,6 +39,9 @@ export async function runOnnxSessionSerialized(
     () => session.run(feeds),
     () => session.run(feeds),
   );
-  sessionRunQueues.set(session, run.catch(() => {}));
+  sessionRunQueues.set(
+    session,
+    run.catch(() => {}),
+  );
   return run;
 }

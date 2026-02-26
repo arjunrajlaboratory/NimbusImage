@@ -73,25 +73,28 @@
             :debouncedChipsPerItemId="debouncedChipsPerItemId"
             :computedChipsIds="computedChipsIds"
           >
-          <template #actions>
-            <v-menu v-model="rowOptionsMenu[props.item._id]" v-if="menuEnabled">
-              <template v-slot:activator="{ props: activatorProps }">
-                <v-btn icon v-bind="activatorProps">
-                  <v-icon>mdi-dots-vertical</v-icon>
-                </v-btn>
-              </template>
-              <file-manager-options
-                @itemsChanged="reloadItems"
-                :items="[props.item]"
-                @closeMenu="rowOptionsMenu[props.item._id] = false"
+            <template #actions>
+              <v-menu
+                v-model="rowOptionsMenu[props.item._id]"
+                v-if="menuEnabled"
               >
-                <template #default="optionsSlotAttributes">
-                  <slot name="options" v-bind="optionsSlotAttributes"></slot>
+                <template v-slot:activator="{ props: activatorProps }">
+                  <v-btn icon v-bind="activatorProps">
+                    <v-icon>mdi-dots-vertical</v-icon>
+                  </v-btn>
                 </template>
-              </file-manager-options>
-            </v-menu>
-          </template>
-        </file-item-row>
+                <file-manager-options
+                  @itemsChanged="reloadItems"
+                  :items="[props.item]"
+                  @closeMenu="rowOptionsMenu[props.item._id] = false"
+                >
+                  <template #default="optionsSlotAttributes">
+                    <slot name="options" v-bind="optionsSlotAttributes"></slot>
+                  </template>
+                </file-manager-options>
+              </v-menu>
+            </template>
+          </file-item-row>
         </div>
       </template>
     </girder-file-manager>

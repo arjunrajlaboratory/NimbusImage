@@ -96,9 +96,7 @@ import { IToolConfiguration, IToolTemplate } from "@/store/model";
 
 import ToolConfiguration from "@/tools/creation/ToolConfiguration.vue";
 import ToolConfigurationItem from "@/tools/creation/ToolConfigurationItem.vue";
-import ToolTypeSelection, {
-  TReturnType as TToolTypeSelectionValue,
-} from "@/tools/creation/ToolTypeSelection.vue";
+import { type TReturnType as TToolTypeSelectionValue } from "@/tools/creation/ToolTypeSelection.vue";
 import HotkeySelection from "@/components/HotkeySelection.vue";
 import { v4 as uuidv4 } from "uuid";
 

@@ -5,7 +5,10 @@
         <span class="hud-title">HUD</span>
         <span class="hud-subtitle">
           Read
-          <a href="https://arjun-raj-lab.gitbook.io/nimbusimage" target="_blank">
+          <a
+            href="https://arjun-raj-lab.gitbook.io/nimbusimage"
+            target="_blank"
+          >
             the documentation
           </a>
           for more info

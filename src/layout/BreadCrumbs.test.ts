@@ -83,7 +83,11 @@ function mountComponent(
         AddDatasetToCollection: true,
       },
       provide: {
-        ...routeProvider({ params: routeParams, query: routeQuery, name: routeName }),
+        ...routeProvider({
+          params: routeParams,
+          query: routeQuery,
+          name: routeName,
+        }),
         ...routerProvider(mockRouter),
       },
     },

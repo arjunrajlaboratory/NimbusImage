@@ -5,15 +5,17 @@
       Collection
     </v-chip>
 
-    <v-tooltip :text="`Created: ${collection.created ? formatDateString(collection.created) : 'Unknown'}`" location="end">
+    <v-tooltip
+      :text="`Created: ${collection.created ? formatDateString(collection.created) : 'Unknown'}`"
+      location="end"
+    >
       <template v-slot:activator="{ props: activatorProps }">
-        <span
-          v-bind="activatorProps"
-          class="text-caption text-grey mx-2"
-        >
+        <span v-bind="activatorProps" class="text-caption text-grey mx-2">
           Modified:
           {{
-            collection.updated ? formatDateString(collection.updated) : "Unknown"
+            collection.updated
+              ? formatDateString(collection.updated)
+              : "Unknown"
           }}
         </span>
       </template>

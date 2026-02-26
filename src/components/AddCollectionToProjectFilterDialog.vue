@@ -32,31 +32,31 @@
       </div>
 
       <v-list v-else density="compact" class="collection-list">
-          <v-list-item
-            v-for="(collection, index) in filteredCollections"
-            :key="collection.id"
+        <v-list-item
+          v-for="(collection, index) in filteredCollections"
+          :key="collection.id"
+          :disabled="isInProject(collection.id)"
+        >
+          <v-checkbox
+            :model-value="selectedIndices.includes(index)"
             :disabled="isInProject(collection.id)"
-          >
-              <v-checkbox
-                :model-value="selectedIndices.includes(index)"
-                :disabled="isInProject(collection.id)"
-                color="primary"
-              />
-              <v-list-item-title>
-                {{ collection.name }}
-                <v-chip
-                  v-if="isInProject(collection.id)"
-                  size="x-small"
-                  class="ml-2"
-                  color="grey"
-                >
-                  Already in project
-                </v-chip>
-              </v-list-item-title>
-              <v-list-item-subtitle v-if="collection.description">
-                {{ collection.description }}
-              </v-list-item-subtitle>
-          </v-list-item>
+            color="primary"
+          />
+          <v-list-item-title>
+            {{ collection.name }}
+            <v-chip
+              v-if="isInProject(collection.id)"
+              size="x-small"
+              class="ml-2"
+              color="grey"
+            >
+              Already in project
+            </v-chip>
+          </v-list-item-title>
+          <v-list-item-subtitle v-if="collection.description">
+            {{ collection.description }}
+          </v-list-item-subtitle>
+        </v-list-item>
       </v-list>
     </v-card-text>
     <v-card-actions>
@@ -86,7 +86,9 @@
           their permissions to match the project's access settings.
         </v-card-text>
         <v-card-actions class="justify-end" style="gap: 8px">
-          <v-btn variant="text" @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showPermissionConfirm = false"
+            >Cancel</v-btn
+          >
           <v-btn color="primary" @click="addCollections">Continue</v-btn>
         </v-card-actions>
       </v-card>

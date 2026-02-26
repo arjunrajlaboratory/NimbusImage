@@ -4,92 +4,95 @@
       Dummy item group to prevent "change" events to be registered by a parent item group
       See: https://github.com/Kitware/UPennContrast/pull/391#issuecomment-1557606390
     -->
-      <template v-for="[id, item] in orderItemEntries" :key="id">
-        <v-tooltip
-          :text="item.tooltip ? formattedTooltip(item.tooltip) : undefined"
-          :disabled="!item.tooltip"
-          :location="tooltipPosition === 'left' ? 'start' : 'end'"
-        >
-          <template v-slot:activator="{ props: activatorProps }">
-            <v-row v-bind="activatorProps" class="pa-0 ma-0">
-              <v-col class="pa-0 ma-0" cols="4">
-                <v-list-subheader class="font-weight-bold" :id="getTourStepId(id)">
-                  {{ id }}
-                </v-list-subheader>
-              </v-col>
-              <v-col class="pa-0 ma-0">
-                <v-slider
-                  v-if="item.type === 'number'"
-                  v-bind="item.vueAttrs"
-                  v-model="interfaceValues[id]"
-                  :max="item.max"
-                  :min="item.min"
-                  :step="item.step || -1"
-                  class="align-center"
-                >
-                  <template v-slot:append>
-                    <v-text-field
-                      v-model="interfaceValues[id]"
-                      type="number"
-                      :max="item.max"
-                      :min="item.min"
-                      :step="item.step || -1"
-                      style="width: 90px"
-                      class="mt-0 pt-0"
-                      :label="item.unit ? item.unit : undefined"
-                    ></v-text-field>
-                  </template>
-                </v-slider>
-                <div
-                  v-if="item.type === 'notes'"
-                  class="py-2 notes-container"
-                  v-html="item.value"
-                ></div>
-                <v-text-field
-                  v-if="item.type === 'text'"
-                  v-bind="item.vueAttrs"
-                  v-model="interfaceValues[id]"
-                  density="compact"
-                ></v-text-field>
-                <tag-picker
-                  v-if="item.type === 'tags'"
-                  v-bind="item.vueAttrs"
-                  v-model="interfaceValues[id]"
-                ></tag-picker>
-                <layer-select
-                  :clearable="!item.required"
-                  v-if="item.type === 'layer'"
-                  v-bind="item.vueAttrs"
-                  v-model="interfaceValues[id]"
-                ></layer-select>
-                <v-select
-                  :clearable="!item.required"
-                  v-if="item.type === 'select'"
-                  v-bind="item.vueAttrs"
-                  v-model="interfaceValues[id]"
-                  :items="item.items"
-                ></v-select>
-                <channel-select
-                  :clearable="!item.required"
-                  v-if="item.type === 'channel'"
-                  v-bind="item.vueAttrs"
-                  v-model="interfaceValues[id]"
-                ></channel-select>
-                <channel-checkbox-group
-                  v-if="item.type === 'channelCheckboxes'"
-                  v-bind="item.vueAttrs"
-                  v-model="interfaceValues[id]"
-                ></channel-checkbox-group>
-                <v-checkbox
-                  v-if="item.type === 'checkbox'"
-                  v-bind="item.vueAttrs"
-                  v-model="interfaceValues[id]"
-                ></v-checkbox>
-              </v-col>
-            </v-row>
-          </template>
-        </v-tooltip>
-      </template>
+    <template v-for="[id, item] in orderItemEntries" :key="id">
+      <v-tooltip
+        :text="item.tooltip ? formattedTooltip(item.tooltip) : undefined"
+        :disabled="!item.tooltip"
+        :location="tooltipPosition === 'left' ? 'start' : 'end'"
+      >
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-row v-bind="activatorProps" class="pa-0 ma-0">
+            <v-col class="pa-0 ma-0" cols="4">
+              <v-list-subheader
+                class="font-weight-bold"
+                :id="getTourStepId(id)"
+              >
+                {{ id }}
+              </v-list-subheader>
+            </v-col>
+            <v-col class="pa-0 ma-0">
+              <v-slider
+                v-if="item.type === 'number'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+                :max="item.max"
+                :min="item.min"
+                :step="item.step || -1"
+                class="align-center"
+              >
+                <template v-slot:append>
+                  <v-text-field
+                    v-model="interfaceValues[id]"
+                    type="number"
+                    :max="item.max"
+                    :min="item.min"
+                    :step="item.step || -1"
+                    style="width: 90px"
+                    class="mt-0 pt-0"
+                    :label="item.unit ? item.unit : undefined"
+                  ></v-text-field>
+                </template>
+              </v-slider>
+              <div
+                v-if="item.type === 'notes'"
+                class="py-2 notes-container"
+                v-html="item.value"
+              ></div>
+              <v-text-field
+                v-if="item.type === 'text'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+                density="compact"
+              ></v-text-field>
+              <tag-picker
+                v-if="item.type === 'tags'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+              ></tag-picker>
+              <layer-select
+                :clearable="!item.required"
+                v-if="item.type === 'layer'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+              ></layer-select>
+              <v-select
+                :clearable="!item.required"
+                v-if="item.type === 'select'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+                :items="item.items"
+              ></v-select>
+              <channel-select
+                :clearable="!item.required"
+                v-if="item.type === 'channel'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+              ></channel-select>
+              <channel-checkbox-group
+                v-if="item.type === 'channelCheckboxes'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+              ></channel-checkbox-group>
+              <v-checkbox
+                v-if="item.type === 'checkbox'"
+                v-bind="item.vueAttrs"
+                v-model="interfaceValues[id]"
+              ></v-checkbox>
+            </v-col>
+          </v-row>
+        </template>
+      </v-tooltip>
+    </template>
   </v-container>
 </template>
 

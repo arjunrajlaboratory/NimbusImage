@@ -21,8 +21,7 @@ import LargeImageDropdown from "./LargeImageDropdown.vue";
 import store from "@/store";
 
 function mountComponent() {
-  return shallowMount(LargeImageDropdown, {
-  });
+  return shallowMount(LargeImageDropdown, {});
 }
 
 describe("LargeImageDropdown", () => {

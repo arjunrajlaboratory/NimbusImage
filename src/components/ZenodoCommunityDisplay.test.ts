@@ -106,7 +106,7 @@ describe("ZenodoCommunityDisplay", () => {
   });
 
   it("mounted fetches community and records", async () => {
-    const wrapper = mountComponent();
+    mountComponent();
     // Wait for the async mounted() to complete
     await nextTick();
     await nextTick();

@@ -32,8 +32,7 @@ import propertiesStore from "@/store/properties";
 import Viewer from "./Viewer.vue";
 
 function mountComponent() {
-  return shallowMount(Viewer, {
-  });
+  return shallowMount(Viewer, {});
 }
 
 describe("Viewer", () => {

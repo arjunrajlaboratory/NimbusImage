@@ -107,7 +107,9 @@
         >
           Create Property
         </v-btn>
-        <v-btn class="mr-2" color="warning" size="small" @click="reset">Reset</v-btn>
+        <v-btn class="mr-2" color="warning" size="small" @click="reset"
+          >Reset</v-btn
+        >
       </div>
     </v-card-text>
   </v-card>

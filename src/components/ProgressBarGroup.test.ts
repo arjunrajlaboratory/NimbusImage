@@ -14,8 +14,7 @@ import ProgressBarGroup from "./ProgressBarGroup.vue";
 import progressStore from "@/store/progress";
 
 function mountComponent() {
-  return shallowMount(ProgressBarGroup, {
-  });
+  return shallowMount(ProgressBarGroup, {});
 }
 
 describe("ProgressBarGroup", () => {

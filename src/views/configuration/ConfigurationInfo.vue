@@ -81,15 +81,12 @@
               />
             </v-list-item-title>
             <v-list-item-subtitle>
-              {{
-                d.datasetInfo ? d.datasetInfo.description : "No description"
-              }}
+              {{ d.datasetInfo ? d.datasetInfo.description : "No description" }}
             </v-list-item-subtitle>
             <div
               v-if="
                 datasetCompatibilityWarnings[d.datasetView.datasetId] &&
-                datasetCompatibilityWarnings[d.datasetView.datasetId].length >
-                  0
+                datasetCompatibilityWarnings[d.datasetView.datasetId].length > 0
               "
               class="compatibility-warnings mt-1"
             >

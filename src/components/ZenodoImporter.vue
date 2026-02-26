@@ -95,7 +95,7 @@ import { useRouter } from "vue-router";
 import store from "@/store";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
-import { IGirderLocation, IGirderSelectAble } from "@/girder";
+import { IGirderLocation } from "@/girder";
 import { logError } from "@/utils/log";
 import ZenodoAPI, { IZenodoRecord, IZenodoFile } from "@/store/ZenodoAPI";
 import { stripHtml } from "@/utils/strings";

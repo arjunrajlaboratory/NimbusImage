@@ -125,7 +125,9 @@ describe("Property", () => {
     const wrapper = mountComponent({ applyToAllDatasets: true });
     wrapper.vm.compute();
     expect(wrapper.emitted("compute-property-batch")).toBeTruthy();
-    expect(wrapper.emitted("compute-property-batch")![0][0]).toStrictEqual(baseProperty);
+    expect(wrapper.emitted("compute-property-batch")![0][0]).toStrictEqual(
+      baseProperty,
+    );
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 });

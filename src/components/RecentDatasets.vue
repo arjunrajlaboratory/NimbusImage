@@ -7,29 +7,30 @@
           :disabled="!d.datasetInfo.description && !d.configInfo.description"
         >
           <template v-slot:activator="{ props: activatorProps }">
-            <v-list-item @click="handleDatasetClick(d.datasetView.id)" v-bind="activatorProps">
-                <v-list-item-title>
-                  {{
-                    d.datasetInfo.name ? d.datasetInfo.name : "Unnamed dataset"
-                  }}
-                </v-list-item-title>
-                <v-list-item-subtitle>
-                  {{
-                    d.configInfo.name
-                      ? d.configInfo.name
-                      : "Unnamed configuration"
-                  }}
-                  <template v-if="d.datasetInfo.creatorId">
-                    <br />
-                    <span class="text-caption">
-                      Owner:
-                      {{ getUserDisplayName(d.datasetInfo.creatorId) }}
-                    </span>
-                  </template>
-                </v-list-item-subtitle>
-              <span
-                class="my-0 d-flex flex-column justify-center"
-              >
+            <v-list-item
+              @click="handleDatasetClick(d.datasetView.id)"
+              v-bind="activatorProps"
+            >
+              <v-list-item-title>
+                {{
+                  d.datasetInfo.name ? d.datasetInfo.name : "Unnamed dataset"
+                }}
+              </v-list-item-title>
+              <v-list-item-subtitle>
+                {{
+                  d.configInfo.name
+                    ? d.configInfo.name
+                    : "Unnamed configuration"
+                }}
+                <template v-if="d.datasetInfo.creatorId">
+                  <br />
+                  <span class="text-caption">
+                    Owner:
+                    {{ getUserDisplayName(d.datasetInfo.creatorId) }}
+                  </span>
+                </template>
+              </v-list-item-subtitle>
+              <span class="my-0 d-flex flex-column justify-center">
                 <div class="text-caption text-medium-emphasis text-left">
                   <div>Last accessed:</div>
                   <div style="line-height: 1.1">

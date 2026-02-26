@@ -30,8 +30,7 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 
 function mountComponent() {
-  return shallowMount(DeleteConnections, {
-  });
+  return shallowMount(DeleteConnections, {});
 }
 
 describe("DeleteConnections", () => {

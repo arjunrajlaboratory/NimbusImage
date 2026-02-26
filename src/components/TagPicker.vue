@@ -15,13 +15,7 @@
     ref="combobox"
   >
     <template v-slot:chip="{ item, props: chipProps }">
-      <v-chip
-        v-bind="chipProps"
-        class="pa-2"
-        closable
-        pill
-        size="x-small"
-      >
+      <v-chip v-bind="chipProps" class="pa-2" closable pill size="x-small">
         {{ item.raw }}
       </v-chip>
     </template>

@@ -259,12 +259,10 @@ function makeBasicTileMeta(overrides: any = {}) {
 
 function makeND2TileMeta(nC: number = 3, nZ: number = 5, nT: number = 4): any {
   const frames = [];
-  let idx = 0;
   for (let t = 0; t < nT; t++) {
     for (let z = 0; z < nZ; z++) {
       for (let c = 0; c < nC; c++) {
         frames.push({ IndexT: t, IndexZ: z, IndexC: c, IndexXY: 0 });
-        idx++;
       }
     }
   }

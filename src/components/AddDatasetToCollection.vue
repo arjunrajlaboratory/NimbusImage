@@ -277,6 +277,8 @@ const canAddDatasetToCollection = computed<boolean>(() => {
       return option.value.datasets.length > 0;
     case "upload":
       return false;
+    default:
+      return false;
   }
 });
 

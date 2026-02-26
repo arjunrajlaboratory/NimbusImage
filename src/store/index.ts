@@ -1315,13 +1315,9 @@ export class Main extends VuexModule {
         this.setXY(
           routeQuery?.xy == null ? newLocation.xy : Number(routeQuery.xy),
         ),
-        this.setZ(
-          routeQuery?.z == null ? newLocation.z : Number(routeQuery.z),
-        ),
+        this.setZ(routeQuery?.z == null ? newLocation.z : Number(routeQuery.z)),
         this.setTime(
-          routeQuery?.time == null
-            ? newLocation.time
-            : Number(routeQuery.time),
+          routeQuery?.time == null ? newLocation.time : Number(routeQuery.time),
         ),
       );
 

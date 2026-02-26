@@ -22,8 +22,7 @@ import AnnotationIdFilters from "./AnnotationIdFilters.vue";
 import filterStore from "@/store/filters";
 
 function mountComponent() {
-  return mount(AnnotationIdFilters, {
-  });
+  return mount(AnnotationIdFilters, {});
 }
 
 describe("AnnotationIdFilters", () => {

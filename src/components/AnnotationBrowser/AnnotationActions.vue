@@ -28,11 +28,7 @@
         </v-row>
         <v-row>
           <v-col class="pa-1">
-            <v-btn
-              v-if="selectionFilterEnabled"
-              @click="clearSelection"
-              block
-            >
+            <v-btn v-if="selectionFilterEnabled" @click="clearSelection" block>
               Clear selection filter
             </v-btn>
             <v-btn v-else @click="filterBySelection" block>

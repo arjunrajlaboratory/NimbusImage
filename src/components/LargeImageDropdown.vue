@@ -34,9 +34,7 @@
         </v-btn>
       </template>
       <template v-slot:selection="{ item: listItem }">
-        <div
-          style="flex: 1 1 auto; min-width: 0; white-space: normal"
-        >
+        <div style="flex: 1 1 auto; min-width: 0; white-space: normal">
           <v-list-item-title>{{ listItem.raw.displayName }}</v-list-item-title>
           <v-list-item-subtitle
             v-if="listItem.raw.meta"

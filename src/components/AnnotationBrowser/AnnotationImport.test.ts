@@ -30,8 +30,7 @@ import store from "@/store";
 import { importAnnotationsFromData } from "@/utils/annotationImport";
 
 function mountComponent() {
-  return shallowMount(AnnotationImport, {
-  });
+  return shallowMount(AnnotationImport, {});
 }
 
 describe("AnnotationImport", () => {

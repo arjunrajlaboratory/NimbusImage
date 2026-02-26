@@ -198,7 +198,11 @@ function mountComponent(props: Record<string, any> = {}, options: any = {}) {
         VCardText: { template: "<div><slot /></div>" },
         VCardSubtitle: { template: "<div><slot /></div>" },
         VAlert: { template: "<div><slot /></div>", props: ["type", "variant"] },
-        VForm: { template: "<form><slot /></form>", props: ["modelValue", "disabled"], emits: ["submit"] },
+        VForm: {
+          template: "<form><slot /></form>",
+          props: ["modelValue", "disabled"],
+          emits: ["submit"],
+        },
       },
       provide: {
         ...routerProvider(mockRouter),
@@ -755,7 +759,7 @@ describe("NewDataset", () => {
 
     it("calls getMaxUploadSize on mount", async () => {
       mockGetUserApiKeys.mockResolvedValue([]);
-      const wrapper = mountComponent();
+      mountComponent();
       await nextTick();
       await nextTick();
       expect(mockGetUserApiKeys).toHaveBeenCalled();

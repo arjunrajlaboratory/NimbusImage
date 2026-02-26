@@ -51,7 +51,13 @@ vi.mock("vuedraggable", () => ({
   default: {
     name: "draggable",
     template: "<div><slot /></div>",
-    props: ["modelValue", "animation", "fallbackOnBody", "swapThreshold", "group"],
+    props: [
+      "modelValue",
+      "animation",
+      "fallbackOnBody",
+      "swapThreshold",
+      "group",
+    ],
   },
 }));
 
@@ -185,7 +191,10 @@ describe("DisplayLayers", () => {
       layer: { id: "l1", name: "DAPI", layerGroup: null },
       configurationLayer: { id: "l1", name: "DAPI", layerGroup: null },
     };
-    (wrapper.vm as any).spacerUpdate([combinedLayer], "spacer_single-layer-group_l2");
+    (wrapper.vm as any).spacerUpdate(
+      [combinedLayer],
+      "spacer_single-layer-group_l2",
+    );
     expect(mockStore.setConfigurationLayers).not.toHaveBeenCalled();
     mockStore.configuration = originalConfig;
   });

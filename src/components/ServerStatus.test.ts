@@ -13,8 +13,7 @@ import ServerStatus from "./ServerStatus.vue";
 import sync from "@/store/sync";
 
 function mountComponent() {
-  return mount(ServerStatus, {
-  });
+  return mount(ServerStatus, {});
 }
 
 describe("ServerStatus", () => {

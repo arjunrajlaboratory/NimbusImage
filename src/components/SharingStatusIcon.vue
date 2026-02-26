@@ -26,7 +26,11 @@
       <div v-else>
         <!-- Public/Private Badge -->
         <div class="d-flex align-center mb-1">
-          <v-icon size="x-small" class="mr-1" :color="isPublic ? 'green' : 'grey'">
+          <v-icon
+            size="x-small"
+            class="mr-1"
+            :color="isPublic ? 'green' : 'grey'"
+          >
             {{ isPublic ? "mdi-earth" : "mdi-lock" }}
           </v-icon>
           <span class="text-caption font-weight-medium">

@@ -1,6 +1,11 @@
 <template>
   <div class="d-flex flex-column">
-    <v-chip class="mb-2" variant="outlined" size="small" @click="emit('selectAll')">
+    <v-chip
+      class="mb-2"
+      variant="outlined"
+      size="small"
+      @click="emit('selectAll')"
+    >
       <v-icon start size="small">mdi-check-all</v-icon>
       Select All
     </v-chip>

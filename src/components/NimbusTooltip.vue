@@ -1,8 +1,8 @@
 <template>
   <v-tooltip
     v-if="enabled"
-    :location="(position as any)"
-    :activator="(activator as any)"
+    :location="position as any"
+    :activator="activator as any"
     :open-delay="openDelay"
     content-class="nimbus-tooltip-overlay"
   >

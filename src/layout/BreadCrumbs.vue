@@ -38,7 +38,9 @@
               </template>
             </v-select>
             <router-link :to="item.to">
-              <v-icon size="small" class="nav-icon">mdi-arrow-right-circle-outline</v-icon>
+              <v-icon size="small" class="nav-icon"
+                >mdi-arrow-right-circle-outline</v-icon
+              >
             </router-link>
             <v-btn
               v-if="item.title === 'Dataset:' && showExternalLink"
@@ -99,7 +101,10 @@
         <div v-if="collectionDisplayName">
           <div class="text-caption text-medium-emphasis">Collection</div>
           <router-link
-            :to="{ name: 'configuration', params: { configurationId: currentConfigurationId } }"
+            :to="{
+              name: 'configuration',
+              params: { configurationId: currentConfigurationId },
+            }"
             class="text-body-2 text-primary text-decoration-none"
           >
             {{ collectionDisplayName }}
@@ -204,7 +209,7 @@ const datasetView = computed(() => {
   return null;
 });
 
-// eslint-disable-next-line vue/no-async-in-computed-properties
+/* eslint-disable vue/no-async-in-computed-properties */
 const datasetId = computed((): Promise<string> | null => {
   const paramsId = route.params.datasetId;
   const queryId = route.query.datasetId;
@@ -217,7 +222,6 @@ const datasetId = computed((): Promise<string> | null => {
   return null;
 });
 
-// eslint-disable-next-line vue/no-async-in-computed-properties
 const configurationId = computed((): Promise<string> | null => {
   const paramsId = route.params.configurationId;
   const queryId = route.query.configurationId;
@@ -229,6 +233,7 @@ const configurationId = computed((): Promise<string> | null => {
   if (queryId && typeof queryId === "string") return Promise.resolve(queryId);
   return null;
 });
+/* eslint-enable vue/no-async-in-computed-properties */
 
 const showExternalLink = computed(
   () => store.isAdmin && currentDatasetId.value !== null,
@@ -344,11 +349,7 @@ async function refreshItems(force = false) {
       .catch(() => {});
   }
 
-  if (
-    datasetItem &&
-    resolvedConfigurationId &&
-    route.name === "datasetview"
-  ) {
+  if (datasetItem && resolvedConfigurationId && route.name === "datasetview") {
     const views = await store.api.findDatasetViews({
       configurationId: resolvedConfigurationId,
     });
