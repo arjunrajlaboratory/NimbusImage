@@ -1,6 +1,6 @@
 # Vue 3 Migration - Phase 3 & 4 Progress Tracker
 
-## Status: Phase 4 — Final Verification & CI (In Progress)
+## Status: Phase 4 — Final Verification & CI (CI Passing)
 
 ## Batch A: Package Swap + Bundler/Entry Points ✅
 
@@ -800,39 +800,86 @@ The `pnpm-lock.yaml` was out of sync with `package.json` (lockfile had `sass: "~
 
 See `codebaseDocumentation/PACKAGE_UPDATES.md` for the full inventory of outdated packages, including which are safe to update now and which require dedicated migration effort (major version bumps).
 
-### Known Test Failures: SAM integration tests (pre-existing)
-4 tests in `src/components/AnnotationViewer.test.ts` fail (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). These failures pre-date all Post-Phase 3 changes — they fail on the clean branch at commit `6dd6548a` as well. Root cause is likely the `markRaw()` changes in R35 interacting with the test mocks for SAM pipeline nodes; the tests access `state.nodes.input.geoJSMap.output` which is now markRaw'd and not reactive, but the runtime code was updated to use `state.mapEntry` instead. The test mocks need to be updated to match.
+### SAM integration test failures — FIXED (Phase 4)
+4 tests in `src/components/AnnotationViewer.test.ts` were failing (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). Root cause: R35 changed the runtime code to read `state.mapEntry` (a reactive mirror) instead of `state.nodes.input.geoJSMap.output` (markRaw'd, not reactive). The test mocks didn't include the `mapEntry` field.
+
+- [x] Added `mapEntry: { map: mapObj }` to all SAM mock state objects in test file (8 mock state blocks updated)
 
 ---
 
-## Phase 4: Final Verification & CI
+## Phase 4: Final Verification & CI ✅
 
 This is the wrap-up phase: ensuring the migration branch is CI-ready, all checks pass, and no regressions remain before merging to master.
 
 ### Checklist
 
-- [ ] `pnpm install` succeeds (lockfile in sync with package.json)
-- [ ] `pnpm tsc` — 0 errors
-- [ ] `pnpm lint:ci` — 0 warnings, 0 errors
-- [ ] `pnpm test` — all tests pass (currently 118/118 files, 2073/2073 tests)
-- [ ] `pnpm build` — production build succeeds
-- [ ] Fix 4 pre-existing SAM integration test failures (AnnotationViewer.test.ts)
-- [ ] `vue-tsc --noEmit` — run as final type-check gate (catches template-level type errors that `pnpm tsc` misses)
-- [ ] CI pipeline passes with `--frozen-lockfile` (lockfile fix in P17)
+- [x] `pnpm install` succeeds (lockfile in sync with package.json)
+- [x] `pnpm tsc` — 0 errors (vue-tsc 3.2.5, upgraded from 2.2.12)
+- [x] `pnpm lint:ci` — 0 warnings, 0 errors
+- [x] `pnpm test` — all tests pass (118/118 files, 2074/2074 tests)
+- [x] `pnpm build` — production build succeeds
+- [x] Fix 4 pre-existing SAM integration test failures (AnnotationViewer.test.ts) — added `mapEntry` to mock state
+- [x] `vue-tsc --noEmit` — 0 errors (`pnpm tsc` now runs vue-tsc 3.2.5 which covers templates)
+- [x] CI pipeline passes with `--frozen-lockfile`
+- [x] ESLint config updated for Vue 3 (`plugin:vue/vue3-essential`, disabled `vue/multi-word-component-names`)
+- [x] Prettier formatting clean across all files (975 auto-fixed)
+- [x] Unused variables removed (44 across 29 files)
+- [x] `vite-plugin-static-copy` v3.2.0 `silent: true` for CI builds without emscripten
+- [x] Package updates: safe dependencies updated (see `codebaseDocumentation/PACKAGE_UPDATES.md`)
 - [ ] Visual smoke test: home page, dataset view (image, layers, tools, settings, snapshots, object browser), annotation creation/editing, worker tools
-- [ ] Package updates: safe dependencies updated (see `codebaseDocumentation/PACKAGE_UPDATES.md`)
 - [ ] Review and clean up any remaining TODO/FIXME comments introduced during migration
 - [ ] Merge to master
+
+### Phase 4 Changes
+
+**P18. vue-tsc upgrade + ESLint Vue 3 rules + lint cleanup ✅**
+
+Upgraded vue-tsc and cleaned up all lint/prettier/unused-var issues to reach 0 errors, 0 warnings across all checks.
+
+**vue-tsc upgrade:**
+- [x] `vue-tsc` upgraded from 2.2.12 → 3.2.5 (0 errors)
+- [x] `pnpm tsc` now runs vue-tsc 3 under the hood, catching template-level type errors
+
+**ESLint config (`.eslintrc.cjs`):**
+- [x] `plugin:vue/essential` → `plugin:vue/vue3-essential` — removes Vue 2-only rules (`vue/no-v-model-argument`, `vue/no-v-for-template-key`, `vue/no-multiple-template-root`)
+- [x] Disabled `vue/multi-word-component-names` — view components like Home, Configuration, Project, Toolset, Snapshots use single-word names intentionally
+
+**Code fixes (2 files):**
+- [x] `src/components/AddDatasetToCollection.vue` — Added `default: return false` to switch in computed (missing return path)
+- [x] `src/components/Snapshots.vue` — Changed `return;` to `return undefined;` in computed (explicit return value)
+- [x] `src/layout/BreadCrumbs.vue` — Changed `eslint-disable-next-line` to block-level `eslint-disable`/`eslint-enable` for `vue/no-async-in-computed-properties` (next-line didn't suppress errors on individual `.then()` calls within the computed)
+
+**Prettier auto-fix:** 975 formatting warnings fixed via `pnpm lint:fix`.
+
+**Unused variables removed (44 across 29 files):**
+
+| Category | Files | Fix |
+|----------|-------|-----|
+| Unused store imports | AddCollectionToProjectDialog, AddToProjectDialog, ToolConfiguration | Removed `import store` |
+| Unused component imports | AnnotationViewer (`ColorPickerMenu`), ToolCreation (`ToolTypeSelection`) | Removed or converted to type-only import |
+| Unused computed | ScaleSettings (`configuration`) | Removed |
+| Unused ref | MultiSourceConfiguration (`searchInput`) | Removed |
+| Unused type import | ZenodoImporter (`IGirderSelectAble`) | Removed from import |
+| Unused emit variable | UserMenuLoginForm | Changed `const emit = defineEmits()` to `defineEmits()` |
+| Unused test imports | nextTick, flushPromises, getChannelColors, COLOR, etc. (6 files) | Removed |
+| Unused test variables | wrapper, vm, spy, textAfterAll, callsFromOnMounted, etc. (18 files) | Removed assignment or changed to bare call |
+| Unused mock params | `_args` in d3 mock chains (2 files, 7 instances) | Changed to `()` |
+| Destructuring discard | UserColorSettings (`_`) | Replaced with copy-and-delete pattern |
+
+**SAM test fixes (AnnotationViewer.test.ts):**
+- [x] Added `mapEntry: { map: mapObj }` (or `mapEntry: wrongMap`) to all 8 SAM mock state objects to match R35's reactive mirror pattern
+
+**CI build fix (`vite.config.js`):**
+- [x] Added `silent: true` to `viteStaticCopy()` — v3.2.0 throws when glob patterns match no files (v1.0.1 silently skipped). CI doesn't run `pnpm emscripten-build`, so `itk/emscripten-build/` files don't exist.
 
 ### Notes
 
 - Major version package upgrades (Vuetify 4, Vue Router 5, ESLint 9+, d3 7, etc.) are intentionally deferred. See `codebaseDocumentation/PACKAGE_UPDATES.md` for the full breakdown.
-- The ESLint config (`.eslintrc`) may need updates for Vue 3 rules (e.g., enabling `vue/no-v-model-argument` is no longer needed). Review during lint pass.
 
 ---
 
 ## Notes
-- **`vue-tsc`:** Installed as `vue-tsc@2.2.12` in Batch A. This is the Vue-aware TypeScript checker that understands `.vue` template types (powered by Volar). During iterative work we use `pnpm tsc` (faster, checks `.ts` files only). `vue-tsc --noEmit` should be run as a final gate once Batch D is complete — it will catch template-level type errors (e.g., wrong prop types passed in `<template>`) that plain `tsc` misses. It's also what `vite build` uses internally for type-checked builds.
+- **`vue-tsc`:** Upgraded to `vue-tsc@3.2.5` in Phase 4 (was 2.2.12 from Batch A). This is the Vue-aware TypeScript checker that understands `.vue` template types (powered by Volar). `pnpm tsc` runs `vue-tsc --noEmit` and catches both `.ts` file errors and template-level type errors.
 - `vue-tooltip-directive` removed; will replace with Vuetify 3 `<v-tooltip>` in Batch D
 - **`@girder/components@4.0.0` export name changes:** v4 renamed all component exports with a `Girder` prefix. The old names no longer exist:
   - `Upload` → `GirderUpload`
