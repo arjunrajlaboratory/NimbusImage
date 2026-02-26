@@ -56,7 +56,11 @@ const allSelected = computed({
   },
   set(val: boolean) {
     const exclusive = val ? false : props.modelValue.exclusive;
-    emit("update:modelValue", { ...props.modelValue, enabled: !val, exclusive });
+    emit("update:modelValue", {
+      ...props.modelValue,
+      enabled: !val,
+      exclusive,
+    });
   },
 });
 
@@ -65,7 +69,11 @@ const exclusive = computed({
     return props.modelValue.exclusive;
   },
   set(val: boolean) {
-    emit("update:modelValue", { ...props.modelValue, enabled: true, exclusive: val });
+    emit("update:modelValue", {
+      ...props.modelValue,
+      enabled: true,
+      exclusive: val,
+    });
   },
 });
 

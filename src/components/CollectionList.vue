@@ -62,18 +62,18 @@
         >
           <v-icon color="#4baeff" size="24">mdi-file-tree</v-icon>
 
-            <v-list-item-title class="collection-title">
-              {{ collection.name }}
-            </v-list-item-title>
-            <v-list-item-subtitle v-if="collection.description">
-              {{ collection.description }}
-            </v-list-item-subtitle>
+          <v-list-item-title class="collection-title">
+            {{ collection.name }}
+          </v-list-item-title>
+          <v-list-item-subtitle v-if="collection.description">
+            {{ collection.description }}
+          </v-list-item-subtitle>
 
-            <collection-item-row
-              :collection="collection"
-              :debouncedChipsPerItemId="debouncedChipsPerItemId"
-              :computedChipsIds="computedChipsIds"
-            />
+          <collection-item-row
+            :collection="collection"
+            :debouncedChipsPerItemId="debouncedChipsPerItemId"
+            :computedChipsIds="computedChipsIds"
+          />
         </v-list-item>
       </v-list>
     </div>

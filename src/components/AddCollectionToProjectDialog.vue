@@ -34,35 +34,30 @@
               </div>
 
               <v-list v-else density="compact" class="project-select-list">
-                  <v-list-item
-                    v-for="project in availableProjects"
-                    :key="project.id"
-                    :disabled="isCollectionInProject(project)"
+                <v-list-item
+                  v-for="project in availableProjects"
+                  :key="project.id"
+                  :disabled="isCollectionInProject(project)"
+                >
+                  <v-icon
+                    :color="isCollectionInProject(project) ? 'grey' : '#8e24aa'"
                   >
-                    <v-icon
-                      :color="
-                        isCollectionInProject(project) ? 'grey' : '#8e24aa'
-                      "
-                    >
-                      {{
-                        isCollectionInProject(project)
-                          ? "mdi-check-circle"
-                          : "mdi-folder-star"
-                      }}
-                    </v-icon>
-                    <v-list-item-title>{{ project.name }}</v-list-item-title>
-                    <v-list-item-subtitle>
-                      {{ project.meta.collections.length }} collection{{
-                        project.meta.collections.length !== 1 ? "s" : ""
-                      }}
-                      <span
-                        v-if="isCollectionInProject(project)"
-                        class="ml-1"
-                      >
-                        (already added)
-                      </span>
-                    </v-list-item-subtitle>
-                  </v-list-item>
+                    {{
+                      isCollectionInProject(project)
+                        ? "mdi-check-circle"
+                        : "mdi-folder-star"
+                    }}
+                  </v-icon>
+                  <v-list-item-title>{{ project.name }}</v-list-item-title>
+                  <v-list-item-subtitle>
+                    {{ project.meta.collections.length }} collection{{
+                      project.meta.collections.length !== 1 ? "s" : ""
+                    }}
+                    <span v-if="isCollectionInProject(project)" class="ml-1">
+                      (already added)
+                    </span>
+                  </v-list-item-subtitle>
+                </v-list-item>
               </v-list>
             </div>
           </v-window-item>

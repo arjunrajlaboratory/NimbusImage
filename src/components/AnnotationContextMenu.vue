@@ -30,7 +30,12 @@
           />
         </div>
         <div class="d-flex align-center position-relative">
-          <v-btn variant="text" size="small" class="px-0" @click="copyAnnotationId">
+          <v-btn
+            variant="text"
+            size="small"
+            class="px-0"
+            @click="copyAnnotationId"
+          >
             <v-icon
               size="small"
               class="mr-1"

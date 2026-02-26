@@ -1,8 +1,5 @@
 <template>
-  <v-menu
-    :close-on-content-click="false"
-    transition="scale-transition"
-  >
+  <v-menu :close-on-content-click="false" transition="scale-transition">
     <template #activator="{ props: activatorProps }">
       <div
         v-bind="activatorProps"
@@ -14,7 +11,10 @@
         <span :style="{ backgroundColor: color }" class="color-bar"></span>
       </div>
     </template>
-    <v-color-picker :model-value="color" @update:model-value="emit('update:modelValue', $event)" />
+    <v-color-picker
+      :model-value="color"
+      @update:model-value="emit('update:modelValue', $event)"
+    />
   </v-menu>
 </template>
 

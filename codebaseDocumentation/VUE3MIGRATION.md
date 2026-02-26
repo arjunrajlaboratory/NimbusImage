@@ -6,7 +6,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status
 
-**Phase 3 complete (Batches A–F). App fully running on Vue 3 + Vuetify 3 + Vite 6. Production build works. Full test suite passing.**
+**Phase 3 complete (Batches A–F). Phase 4 (Final Verification & CI) in progress. App fully running on Vue 3 + Vuetify 3 + Vite 6. Production build works. Full test suite passing.**
 
 - **Phase 1:** 124/124 components migrated to `<script setup>` (Batches 1–19 + master merge)
 - **Phase 2:** `$refs` converted, directive state migrated, `markRaw()` applied to all GeoJS objects
@@ -26,6 +26,8 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Post-Phase 3 Fixes (P5–P11):** Vue Router 4 param discarding fixed in ZenodoImporter and App.vue `goToNewDataset` (complex objects passed as route params → `store.initializeUploadWorkflow` pattern). NewDataset `failedDataset` error now clears on name edit. Vuetify 3 `v-list-item` icon layout fixed in help/tour menu (`#prepend` slot). Global `--v-list-prepend-gap: 8px` override added. ImageViewer overlay buttons resized smaller with more spacing. HelpPanel redesigned as fullscreen translucent HUD overlay with `<kbd>` key badges and multi-column layout.
 - **Dark UI flattening (P15):** Replaced shade-based section discrimination with flat background + line borders. VCard default changed from `tonal` to `flat`. Dark theme surface unified with background (#121212). Primary accent changed from default blue to teal (#26A69A) to complement coral logo. VCheckbox/VSwitch default to primary color. Secondary text contrast improved. Type indicator chip legibility improved. Navigation drawers marked temporary.
 - **AnnotationList hover fix (P16):** Fixed hover-induced page jumping when sorted by property columns. Three fixes: `hoverFromList` flag to skip page/scroll for list-internal hovers, sort comparator fix for undefined/null values, and missing `@update:page` handler. See P16 in VUE3_STEPS.md.
+- **Package updates (P17):** Fixed `pnpm-lock.yaml` / `package.json` specifier mismatch (sass) that broke CI `--frozen-lockfile`. Updated geojs (1.15.4 → latest minor) and other safe minor/patch dependencies. See `codebaseDocumentation/PACKAGE_UPDATES.md` for full inventory.
+- **Phase 4 (Final Verification & CI):** In progress. See below.
 
 ---
 
@@ -255,7 +257,29 @@ newAnnotations.push(markRaw(newAnnotation));
 const localAnnotation = geojs.annotation.pointAnnotation(opts); // fine as-is
 ```
 
-### Phase 4: Store Migration (Future)
+### Phase 4: Final Verification & CI — IN PROGRESS
+
+The wrap-up phase before merging to master. All functional migration work is complete; this phase ensures everything is clean, CI-ready, and regression-free.
+
+**Checklist:**
+- [ ] `pnpm install` succeeds (lockfile fix in P17)
+- [ ] `pnpm tsc` — 0 errors
+- [ ] `pnpm lint:ci` — 0 warnings, 0 errors
+- [ ] `pnpm test` — all tests pass
+- [ ] `pnpm build` — production build succeeds
+- [ ] Fix 4 pre-existing SAM integration test failures (AnnotationViewer.test.ts)
+- [ ] `vue-tsc --noEmit` — final type-check gate (catches template-level type errors)
+- [ ] CI pipeline passes with `--frozen-lockfile`
+- [ ] Visual smoke test across all major views
+- [ ] Review ESLint config for Vue 3 rule updates
+- [ ] Clean up any remaining migration TODOs/FIXMEs
+- [ ] Merge to master
+
+**Package updates:** Safe minor/patch dependencies updated (geojs, axios, lodash, etc.). Major version upgrades (Vuetify 4, Vue Router 5, ESLint 9+, d3 7, etc.) are intentionally deferred. See `codebaseDocumentation/PACKAGE_UPDATES.md` for the full breakdown of what to update now vs. later.
+
+See VUE3_STEPS.md "Phase 4" section for details.
+
+### Phase 5: Store Migration (Future)
 
 Post-stabilization. Once the app is running on Vue 3 + Vuetify 3:
 
@@ -563,7 +587,7 @@ Historical record of each migration batch. Key patterns discovered in each batch
 
 **After this batch:** 116 of 121 components migrated to `<script setup>` (~96%).
 
-**Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 4).
+**Note:** `src/store/index.ts` (~2,477 lines) is not a Vue component but should be considered for splitting before the Pinia migration (Phase 5).
 
 ### Master Merge — Project Sharing Feature (3 new components + 6 conflict resolutions)
 

@@ -1,106 +1,116 @@
 <template>
   <div ref="rootEl">
-  <v-card class="chat-component">
-    <div class="chat-header">
-      <span class="chat-title">Nimbus chat</span>
-      <div class="chat-header-actions">
-        <v-btn icon variant="text" size="small" @click="refreshChat" :loading="isRefreshing">
-          <v-icon size="small">mdi-refresh</v-icon>
-        </v-btn>
-        <v-btn icon variant="text" size="small" @click="emit('close')">
-          <v-icon size="small">mdi-close</v-icon>
-        </v-btn>
-      </div>
-    </div>
-    <v-card-text>
-      <div ref="chatMessages" class="chat-messages">
-        <div
-          v-for="(message, index) in filterVisibleMessages(messages)"
-          :key="index"
-          :class="message.type"
-        >
-          <div
-            v-if="message.images && message.images.length > 0"
-            class="image-grid"
-          >
-            <img
-              v-for="(image, imgIndex) in filterVisibleImages(message.images)"
-              :key="imgIndex"
-              :src="image.data"
-              alt="User uploaded image"
-              class="message-image"
-            />
-          </div>
-          <div
-            v-if="message.type === 'assistant'"
-            v-html="marked(message.content)"
-          ></div>
-          <div v-else>{{ message.content }}</div>
-        </div>
-      </div>
-    </v-card-text>
-    <v-card-actions>
-      <template v-if="isWaiting">
-        <v-progress-circular
-          indeterminate
-          color="primary"
-        ></v-progress-circular>
-      </template>
-      <template v-else>
-        <div v-if="visibleImagesInput.length > 0" class="current-images">
-          <div
-            v-for="(image, index) in visibleImagesInput"
-            :key="index"
-            class="current-image-container"
-          >
-            <img :src="image.data" alt="Current image" class="current-image" />
-            <v-btn icon size="small" class="remove-image" @click="removeImage(index)">
-              <v-icon>mdi-close</v-icon>
-            </v-btn>
-          </div>
-        </div>
-        <div class="bottom-inputs">
-          <v-textarea
-            v-model="textInput"
-            class="chat-input"
-            placeholder="Type a message..."
-            rows="2"
-            no-resize
-            density="compact"
-            variant="outlined"
-            hide-details
-            @keyup.enter="!$event.shiftKey ? sendMessage() : undefined"
-            @paste="handlePaste"
-          />
+    <v-card class="chat-component">
+      <div class="chat-header">
+        <span class="chat-title">Nimbus chat</span>
+        <div class="chat-header-actions">
           <v-btn
             icon
             variant="text"
             size="small"
-            @click="fileInput?.click()"
+            @click="refreshChat"
+            :loading="isRefreshing"
           >
-            <v-icon size="small">mdi-image</v-icon>
+            <v-icon size="small">mdi-refresh</v-icon>
           </v-btn>
-          <v-btn
-            icon
-            variant="flat"
-            size="small"
-            color="primary"
-            @click="sendMessage"
-          >
-            <v-icon size="small">mdi-send</v-icon>
+          <v-btn icon variant="text" size="small" @click="emit('close')">
+            <v-icon size="small">mdi-close</v-icon>
           </v-btn>
-          <input
-            ref="fileInput"
-            type="file"
-            @change="handleFileUpload"
-            accept="image/*"
-            multiple
-            style="display: none"
-          />
         </div>
-      </template>
-    </v-card-actions>
-  </v-card>
+      </div>
+      <v-card-text>
+        <div ref="chatMessages" class="chat-messages">
+          <div
+            v-for="(message, index) in filterVisibleMessages(messages)"
+            :key="index"
+            :class="message.type"
+          >
+            <div
+              v-if="message.images && message.images.length > 0"
+              class="image-grid"
+            >
+              <img
+                v-for="(image, imgIndex) in filterVisibleImages(message.images)"
+                :key="imgIndex"
+                :src="image.data"
+                alt="User uploaded image"
+                class="message-image"
+              />
+            </div>
+            <div
+              v-if="message.type === 'assistant'"
+              v-html="marked(message.content)"
+            ></div>
+            <div v-else>{{ message.content }}</div>
+          </div>
+        </div>
+      </v-card-text>
+      <v-card-actions>
+        <template v-if="isWaiting">
+          <v-progress-circular
+            indeterminate
+            color="primary"
+          ></v-progress-circular>
+        </template>
+        <template v-else>
+          <div v-if="visibleImagesInput.length > 0" class="current-images">
+            <div
+              v-for="(image, index) in visibleImagesInput"
+              :key="index"
+              class="current-image-container"
+            >
+              <img
+                :src="image.data"
+                alt="Current image"
+                class="current-image"
+              />
+              <v-btn
+                icon
+                size="small"
+                class="remove-image"
+                @click="removeImage(index)"
+              >
+                <v-icon>mdi-close</v-icon>
+              </v-btn>
+            </div>
+          </div>
+          <div class="bottom-inputs">
+            <v-textarea
+              v-model="textInput"
+              class="chat-input"
+              placeholder="Type a message..."
+              rows="2"
+              no-resize
+              density="compact"
+              variant="outlined"
+              hide-details
+              @keyup.enter="!$event.shiftKey ? sendMessage() : undefined"
+              @paste="handlePaste"
+            />
+            <v-btn icon variant="text" size="small" @click="fileInput?.click()">
+              <v-icon size="small">mdi-image</v-icon>
+            </v-btn>
+            <v-btn
+              icon
+              variant="flat"
+              size="small"
+              color="primary"
+              @click="sendMessage"
+            >
+              <v-icon size="small">mdi-send</v-icon>
+            </v-btn>
+            <input
+              ref="fileInput"
+              type="file"
+              @change="handleFileUpload"
+              accept="image/*"
+              multiple
+              style="display: none"
+            />
+          </div>
+        </template>
+      </v-card-actions>
+    </v-card>
   </div>
 </template>
 
