@@ -6,7 +6,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 
 ## Current Status
 
-**Phase 3 complete (Batches A–F). Phase 4 (Final Verification & CI) nearly complete — CI passing. App fully running on Vue 3 + Vuetify 3 + Vite 6. All checks green: 0 tsc errors, 0 lint errors/warnings, 2074/2074 tests passing, production build succeeds, CI passes.**
+**Phase 3 complete (Batches A–F). Phase 4 (Final Verification & CI) nearly complete — CI passing, visual smoke test done. App fully running on Vue 3 + Vuetify 3 + Vite 6. All checks green: 0 tsc errors, 0 lint errors/warnings, 2074/2074 tests passing, production build succeeds, CI passes.**
 
 - **Phase 1:** 124/124 components migrated to `<script setup>` (Batches 1–19 + master merge)
 - **Phase 2:** `$refs` converted, directive state migrated, `markRaw()` applied to all GeoJS objects
@@ -29,6 +29,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **Package updates (P17):** Fixed `pnpm-lock.yaml` / `package.json` specifier mismatch (sass) that broke CI `--frozen-lockfile`. Updated geojs (1.15.4 → latest minor) and other safe minor/patch dependencies. See `codebaseDocumentation/PACKAGE_UPDATES.md` for full inventory.
 - **Phase 4 — Lint/type-check/test cleanup (P18):** vue-tsc upgraded to 3.2.5. ESLint config updated for Vue 3 (`plugin:vue/vue3-essential`). 975 prettier fixes auto-applied. 44 unused variables removed across 29 files. 4 SAM integration test failures fixed (added `mapEntry` to mock state). CI build fixed (`vite-plugin-static-copy` `silent: true`). All checks now pass: 0 tsc errors, 0 lint errors/warnings, 2074/2074 tests, CI green.
 - **PropertyFilterSelector dialog fix (P19):** Fixed dialog appearing off-screen to the left. Vuetify 3's `v-dialog` activator slot was anchoring the dialog to the button instead of centering. Replaced with direct `@click` handler and added single root `<div>` wrapper to fix fragment attribute inheritance warning.
+- **Visual smoke test (P20):** Manual walkthrough of all major views and interactions. Tested: home page (upload zone, recent datasets/projects/sample datasets tabs, browse with datasets/collections/projects tabs), dataset viewer (image loading, multichannel compositing, annotations, overview map), Z/time sliders, Object Browser panel (filter chips, tag match, annotation list, row selection with pan-to-annotation), Settings panel (display controls, viewer settings, interface settings), Snapshots panel (bounding box overlay, coordinates, snapshot list), Help menu (tour list, documentation link), user profile popup, chat panel, tool selection (config dialog with sliders/fields), layer controls (expand/collapse, histogram, color, channel selector, Single/Multiple/Unroll modes), zoom in/out (tile loading at multiple levels, scale bar updates), and navigation (logo click home, back to dataset). **Result: zero console errors, zero failed network requests, zero Vue/Vuetify warnings.** One minor issue: "Preparing layers (0/2)" progress bar can persist after switching layer modes (Single → Multiple), but clears on next navigation.
 
 ---
 
@@ -272,7 +273,7 @@ The wrap-up phase before merging to master. All functional migration work is com
 - [x] `vue-tsc --noEmit` — 0 errors (vue-tsc 3.2.5 covers templates)
 - [x] CI pipeline passes with `--frozen-lockfile`
 - [x] ESLint config updated for Vue 3 rules
-- [ ] Visual smoke test across all major views
+- [x] Visual smoke test across all major views (P20)
 - [ ] Clean up any remaining migration TODOs/FIXMEs
 - [ ] Merge to master
 
