@@ -28,6 +28,7 @@ This document tracks the incremental migration of NimbusImage from Vue 2 (Class 
 - **AnnotationList hover fix (P16):** Fixed hover-induced page jumping when sorted by property columns. Three fixes: `hoverFromList` flag to skip page/scroll for list-internal hovers, sort comparator fix for undefined/null values, and missing `@update:page` handler. See P16 in VUE3_STEPS.md.
 - **Package updates (P17):** Fixed `pnpm-lock.yaml` / `package.json` specifier mismatch (sass) that broke CI `--frozen-lockfile`. Updated geojs (1.15.4 → latest minor) and other safe minor/patch dependencies. See `codebaseDocumentation/PACKAGE_UPDATES.md` for full inventory.
 - **Phase 4 — Lint/type-check/test cleanup (P18):** vue-tsc upgraded to 3.2.5. ESLint config updated for Vue 3 (`plugin:vue/vue3-essential`). 975 prettier fixes auto-applied. 44 unused variables removed across 29 files. 4 SAM integration test failures fixed (added `mapEntry` to mock state). CI build fixed (`vite-plugin-static-copy` `silent: true`). All checks now pass: 0 tsc errors, 0 lint errors/warnings, 2074/2074 tests, CI green.
+- **PropertyFilterSelector dialog fix (P19):** Fixed dialog appearing off-screen to the left. Vuetify 3's `v-dialog` activator slot was anchoring the dialog to the button instead of centering. Replaced with direct `@click` handler and added single root `<div>` wrapper to fix fragment attribute inheritance warning.
 
 ---
 

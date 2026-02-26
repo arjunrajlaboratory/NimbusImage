@@ -800,6 +800,13 @@ The `pnpm-lock.yaml` was out of sync with `package.json` (lockfile had `sass: "~
 
 See `codebaseDocumentation/PACKAGE_UPDATES.md` for the full inventory of outdated packages, including which are safe to update now and which require dedicated migration effort (major version bumps).
 
+### P19. PropertyFilterSelector dialog positioning fix ✅
+
+Vuetify 3's `v-dialog` activator slot was anchoring the dialog to the activator button position instead of centering on screen, causing the "Add property value filter" dialog to appear off-screen to the left.
+
+- [x] Removed activator slot pattern from `PropertyFilterSelector.vue` — button now uses `@click="dialog = true"` directly
+- [x] Wrapped template in single root `<div>` to fix Vue 3 fragment attribute inheritance warning (parent passes `class="filter-element"`)
+
 ### SAM integration test failures — FIXED (Phase 4)
 4 tests in `src/components/AnnotationViewer.test.ts` were failing (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). Root cause: R35 changed the runtime code to read `state.mapEntry` (a reactive mirror) instead of `state.nodes.input.geoJSMap.output` (markRaw'd, not reactive). The test mocks didn't include the `mapEntry` field.
 

@@ -1,43 +1,43 @@
 <template>
-  <v-dialog v-model="dialog" max-width="500px">
-    <template v-slot:activator="{ props: activatorProps }">
-      <v-btn v-bind="activatorProps" class="filter-element" size="small">
-        Add property value filter
-      </v-btn>
-    </template>
-    <v-card>
-      <v-card-title>Filter by properties</v-card-title>
-      <v-card-text>
-        <v-text-field
-          v-model="searchQuery"
-          label="Search properties"
-          clearable
-          density="compact"
-          single-line
-        />
-        <v-list density="compact">
-          <v-list-item
-            v-for="propertyPath in filteredPropertyPaths"
-            :key="propertyPath.join('.')"
-          >
-            <v-checkbox
-              :model-value="isPropertyPathFiltered(propertyPath)"
-              @change="togglePropertyPathFiltering(propertyPath)"
-              density="compact"
-              hide-details
-            />
-            <v-list-item-title>
-              {{ getPropertyFullName(propertyPath) }}
-            </v-list-item-title>
-          </v-list-item>
-        </v-list>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer></v-spacer>
-        <v-btn variant="text" @click="dialog = false">Close</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <div>
+    <v-btn class="filter-element" size="small" @click="dialog = true">
+      Add property value filter
+    </v-btn>
+    <v-dialog v-model="dialog" max-width="500px">
+      <v-card>
+        <v-card-title>Filter by properties</v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="searchQuery"
+            label="Search properties"
+            clearable
+            density="compact"
+            single-line
+          />
+          <v-list density="compact">
+            <v-list-item
+              v-for="propertyPath in filteredPropertyPaths"
+              :key="propertyPath.join('.')"
+            >
+              <v-checkbox
+                :model-value="isPropertyPathFiltered(propertyPath)"
+                @change="togglePropertyPathFiltering(propertyPath)"
+                density="compact"
+                hide-details
+              />
+              <v-list-item-title>
+                {{ getPropertyFullName(propertyPath) }}
+              </v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn variant="text" @click="dialog = false">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </div>
 </template>
 
 <script setup lang="ts">
