@@ -42,6 +42,7 @@ export default defineConfig({
     yaml(),
     visualizer(),
     viteStaticCopy({
+      silent: true,
       targets: [
         {
           src: joinAndNormalizePath(
