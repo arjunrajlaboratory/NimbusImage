@@ -1395,7 +1395,7 @@ onMounted(() => {
 
   // Watch for container resizes (e.g. navigation drawer open/close)
   // and update GeoJS map sizes accordingly
-  if (mapLayout.value) {
+  if (mapLayout.value && typeof ResizeObserver !== "undefined") {
     resizeObserver = new ResizeObserver(() => {
       for (const mapentry of maps.value) {
         const map = mapentry.map;
