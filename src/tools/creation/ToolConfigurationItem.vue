@@ -1,5 +1,5 @@
 <template>
-  <v-card flat class="pa-0 ma-0">
+  <v-card variant="flat" class="pa-0 ma-0">
     <v-card-title v-if="item.name && item.name.length" class="px-4 py-2 ma-0">
       {{ item.name }}
     </v-card-title>
@@ -16,8 +16,7 @@
               ref="innerComponent"
               return-object
               @change="changed"
-              dense
-              small
+              density="compact"
             >
               <v-radio
                 v-for="(value, index) in item.values"
@@ -33,26 +32,30 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
-import store from "@/store";
+<script setup lang="ts">
+import { computed, ref } from "vue";
 // Manually import those vuetify components that might be used procedurally
-import { VSelect, VCheckbox, VTextField, VRadioGroup } from "vuetify/lib";
+import {
+  VSelect,
+  VCheckbox,
+  VTextField,
+  VRadioGroup,
+} from "vuetify/components";
 import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
 import TagAndLayerRestriction from "@/tools/creation/templates/TagAndLayerRestriction.vue";
 import DockerImage from "@/tools/creation/templates/DockerImage.vue";
 import TagPicker from "@/components/TagPicker.vue";
 
 // Used to determine :is="" value from template interface type
-const typeToComponentName = {
-  select: "v-select",
-  annotation: "annotation-configuration",
-  restrictTagsAndLayer: "tag-and-layer-restriction",
-  checkbox: "v-checkbox",
-  radio: "v-radio-group",
-  text: "v-text-field",
-  dockerImage: "docker-image",
-  tags: "tag-picker",
+const typeToComponentName: Record<string, any> = {
+  select: VSelect,
+  annotation: AnnotationConfiguration,
+  restrictTagsAndLayer: TagAndLayerRestriction,
+  checkbox: VCheckbox,
+  radio: VRadioGroup,
+  text: VTextField,
+  dockerImage: DockerImage,
+  tags: TagPicker,
 };
 
 type TComponentType = keyof typeof typeToComponentName;
@@ -64,43 +67,31 @@ interface IItem {
   values?: any;
 }
 
-@Component({
-  components: {
-    AnnotationConfiguration,
-    TagAndLayerRestriction,
-    VSelect,
-    VCheckbox,
-    VTextField,
-    VRadioGroup,
-    DockerImage,
-    TagPicker,
+const props = defineProps<{
+  item: IItem;
+  modelValue: any;
+  advanced?: boolean;
+}>();
+
+const emit = defineEmits<{
+  (e: "update:modelValue", value: any): void;
+  (e: "change"): void;
+}>();
+
+const componentValue = computed({
+  get() {
+    return props.modelValue;
   },
-})
-// Creates a tool configuration interface based on the current selected template.
-export default class ToolConfigurationItem extends Vue {
-  readonly store = store;
-  readonly typeToComponentName = typeToComponentName;
+  set(newValue: any) {
+    emit("update:modelValue", newValue);
+  },
+});
 
-  @Prop()
-  readonly item!: IItem;
+const innerComponent = ref<any>(null);
 
-  // Pass from custom component to ToolConfiguration
-  @Prop()
-  readonly value!: any;
-
-  @Prop()
-  readonly advanced!: boolean;
-
-  get componentValue() {
-    return this.value;
-  }
-
-  set componentValue(newValue) {
-    this.$emit("input", newValue);
-  }
-
-  changed() {
-    this.$emit("change");
-  }
+function changed() {
+  emit("change");
 }
+
+defineExpose({ componentValue, typeToComponentName, changed, innerComponent });
 </script>

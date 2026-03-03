@@ -1,24 +1,24 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header>
+    <v-expansion-panel-title>
       Object display and selection controls
-    </v-expansion-panel-header>
-    <v-expansion-panel-content>
-      <v-list dense class="py-0">
+    </v-expansion-panel-title>
+    <v-expansion-panel-text>
+      <v-list density="compact" class="py-0">
         <v-list-item>
           <v-checkbox
             hide-details
             v-model="drawAnnotations"
-            dense
+            density="compact"
             label="Show objects (hotkey A)"
           ></v-checkbox>
         </v-list-item>
         <v-list-item>
-          <v-list dense class="py-0">
+          <v-list density="compact" class="py-0">
             <v-list-item>
               <v-checkbox
                 hide-details
-                dense
+                density="compact"
                 :disabled="!drawAnnotations"
                 v-model="drawConnections"
                 label="Show connections between objects"
@@ -27,7 +27,7 @@
             <v-list-item>
               <v-switch
                 hide-details
-                dense
+                density="compact"
                 :disabled="!drawAnnotations"
                 v-model="filteredDraw"
                 label="Only show objects passing filters"
@@ -36,18 +36,18 @@
             <v-list-item>
               <v-checkbox
                 hide-details
-                dense
+                density="compact"
                 :disabled="!drawAnnotations"
                 v-model="showTooltips"
                 label="Show object tooltips (hotkey T)"
               ></v-checkbox>
             </v-list-item>
             <v-list-item>
-              <v-list dense class="py-0">
+              <v-list density="compact" class="py-0">
                 <v-list-item>
                   <v-switch
                     hide-details
-                    dense
+                    density="compact"
                     :disabled="!showTooltips || !drawAnnotations"
                     v-model="filteredAnnotationTooltips"
                     label="Show tooltips only for objects passing filters"
@@ -61,96 +61,77 @@
           <v-select
             v-model="annotationSelectionType"
             :items="annotationsSelectionTypeItems"
-            item-text="text"
+            item-title="text"
             item-value="value"
             label="Object selection mode"
             title="When adding to a selection, you can add, remove, or toggle the selection of objects"
           ></v-select>
         </v-list-item>
       </v-list>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import store from "@/store";
-
 import {
   AnnotationSelectionTypes,
   AnnotationSelectionTypesNames,
 } from "../../store/model";
 
-@Component({
-  components: {},
-})
-export default class AnnotationToggles extends Vue {
-  readonly store = store;
+const annotationsSelectionTypeItems = [
+  {
+    text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.ADD],
+    value: AnnotationSelectionTypes.ADD,
+  },
+  {
+    text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.TOGGLE],
+    value: AnnotationSelectionTypes.TOGGLE,
+  },
+  {
+    text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.REMOVE],
+    value: AnnotationSelectionTypes.REMOVE,
+  },
+];
 
-  annotationsSelectionTypeItems: {
-    value: string;
-    text: string;
-  }[] = [
-    {
-      text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.ADD],
-      value: AnnotationSelectionTypes.ADD,
-    },
-    {
-      text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.TOGGLE],
-      value: AnnotationSelectionTypes.TOGGLE,
-    },
-    {
-      text: AnnotationSelectionTypesNames[AnnotationSelectionTypes.REMOVE],
-      value: AnnotationSelectionTypes.REMOVE,
-    },
-  ];
+const annotationSelectionType = computed({
+  get: () => store.annotationSelectionType,
+  set: (value) => store.setAnnotationSelectionType(value),
+});
 
-  get annotationSelectionType() {
-    return this.store.annotationSelectionType;
-  }
+const drawAnnotations = computed({
+  get: () => store.drawAnnotations,
+  set: (value: boolean) => store.setDrawAnnotations(value),
+});
 
-  set annotationSelectionType(value) {
-    this.store.setAnnotationSelectionType(value);
-  }
+const showTooltips = computed({
+  get: () => store.showTooltips,
+  set: (value: boolean) => store.setShowTooltips(value),
+});
 
-  get drawAnnotations() {
-    return this.store.drawAnnotations;
-  }
+const filteredAnnotationTooltips = computed({
+  get: () => store.filteredAnnotationTooltips,
+  set: (value: boolean) => store.setFilteredAnnotationTooltips(value),
+});
 
-  set drawAnnotations(value: boolean) {
-    this.store.setDrawAnnotations(value);
-  }
+const filteredDraw = computed({
+  get: () => store.filteredDraw,
+  set: (value: boolean) => store.setFilteredDraw(value),
+});
 
-  get showTooltips() {
-    return this.store.showTooltips;
-  }
+const drawConnections = computed({
+  get: () => store.drawAnnotationConnections,
+  set: (value: boolean) => store.setDrawAnnotationConnections(value),
+});
 
-  set showTooltips(value: boolean) {
-    this.store.setShowTooltips(value);
-  }
-
-  get filteredAnnotationTooltips() {
-    return this.store.filteredAnnotationTooltips;
-  }
-
-  set filteredAnnotationTooltips(value: boolean) {
-    this.store.setFilteredAnnotationTooltips(value);
-  }
-
-  get filteredDraw() {
-    return this.store.filteredDraw;
-  }
-
-  set filteredDraw(value: boolean) {
-    this.store.setFilteredDraw(value);
-  }
-
-  get drawConnections() {
-    return this.store.drawAnnotationConnections;
-  }
-
-  set drawConnections(value: boolean) {
-    this.store.setDrawAnnotationConnections(value);
-  }
-}
+defineExpose({
+  annotationSelectionType,
+  drawAnnotations,
+  showTooltips,
+  filteredAnnotationTooltips,
+  filteredDraw,
+  drawConnections,
+  annotationsSelectionTypeItems,
+});
 </script>

@@ -248,7 +248,11 @@ export default class AnnotationsAPI {
       ? layers.find((layer) => layer.id === connectToLayerId)
       : null;
     const connectToChannel = connectToLayer ? connectToLayer.channel : null;
-    const augmentedConnectTo = { ...connectTo, channel: connectToChannel };
+    const augmentedConnectTo = {
+      tags: [],
+      ...connectTo,
+      channel: connectToChannel,
+    };
     const params = {
       datasetId,
       type,
@@ -271,14 +275,14 @@ export default class AnnotationsAPI {
 
   toConnection = (item: any): IAnnotationConnection => {
     const { label, tags, _id, parentId, childId, datasetId } = item;
-    return {
+    return markRaw({
       label,
       tags,
       id: _id,
       parentId,
       childId,
       datasetId,
-    };
+    });
   };
 
   // Count endpoints

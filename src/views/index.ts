@@ -7,9 +7,9 @@ import configurationRoutes from "./configuration";
 import datasetViewRoutes from "./datasetView";
 import projectRoutes from "./project";
 
-import { RouteConfig } from "vue-router";
+import type { RouteRecordRaw } from "vue-router";
 
-const routes: RouteConfig[] = [
+const routes: RouteRecordRaw[] = [
   {
     path: "/",
     name: "root",
@@ -39,7 +39,7 @@ const routes: RouteConfig[] = [
     component: ProjectRouter,
   },
   {
-    path: "*",
+    path: "/:pathMatch(.*)*",
     redirect: {
       name: "root",
     },

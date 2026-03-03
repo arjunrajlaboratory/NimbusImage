@@ -1,83 +1,98 @@
 <template>
   <v-app id="inspire" v-mousetrap="appHotkeys">
-    <v-dialog v-model="helpPanelIsOpen" width="inherit">
-      <help-panel />
+    <v-dialog
+      v-model="helpPanelIsOpen"
+      fullscreen
+      scrim="transparent"
+      transition="fade-transition"
+      content-class="help-dialog-overlay"
+    >
+      <help-panel @close="helpPanelIsOpen = false" />
     </v-dialog>
-    <v-app-bar class="elevation-1" app clipped-right>
-      <span v-tooltip="{ content: 'NimbusImage home', open_delay: 500 }">
-        <v-toolbar-title @click="goHome" class="logo">
-          <img
-            src="/img/icons/NimbusImageIcon.png"
-            alt="Icon"
-            class="logo-icon"
-          />
-        </v-toolbar-title>
-      </span>
+    <v-app-bar class="elevation-1">
+      <v-tooltip text="NimbusImage home" :open-delay="500">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-toolbar-title v-bind="activatorProps" @click="goHome" class="logo">
+            <img
+              src="/img/icons/NimbusImageIcon.png"
+              alt="Icon"
+              class="logo-icon"
+            />
+          </v-toolbar-title>
+        </template>
+      </v-tooltip>
       <h1 v-if="routeName === 'root'" class="text-h4 font-weight-bold ml-4">
         NimbusImage
       </h1>
       <bread-crumbs />
       <v-spacer />
-      <span v-tooltip="'Upload a new dataset'">
-        <v-btn
-          color="primary"
-          class="ml-4"
-          @click="goToNewDataset"
-          :disabled="!store.isLoggedIn || !store.girderUser"
-          :loading="isUploadLoading"
-        >
-          Upload Data
-        </v-btn>
-      </span>
+      <v-tooltip text="Upload a new dataset">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            color="primary"
+            class="ml-4"
+            @click="goToNewDataset"
+            :disabled="!store.isLoggedIn || !store.girderUser"
+            :loading="isUploadLoading"
+          >
+            Upload Data
+          </v-btn>
+        </template>
+      </v-tooltip>
       <v-divider class="ml-1" vertical />
       <template v-if="store.dataset && routeName === 'datasetview'">
-        <span
-          v-tooltip="
-            'List of all objects in the dataset, including their properties, and various actions on them'
-          "
+        <v-tooltip
+          text="List of all objects in the dataset, including their properties, and various actions on them"
         >
-          <v-btn
-            class="ml-4"
-            @click.stop="toggleRightPanel('annotationPanel')"
-            id="object-list-button-tourstep"
-            v-tour-trigger="'object-list-button-tourtrigger'"
-          >
-            Object list
-          </v-btn>
-        </span>
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="ml-4"
+              @click.stop="toggleRightPanel('annotationPanel')"
+              id="object-list-button-tourstep"
+              v-tour-trigger="'object-list-button-tourtrigger'"
+            >
+              Object list
+            </v-btn>
+          </template>
+        </v-tooltip>
         <v-divider class="ml-4" vertical />
-        <span
-          v-tooltip="
-            'Snapshots for bookmarking and downloading cropped regions in your dataset'
-          "
+        <v-tooltip
+          text="Snapshots for bookmarking and downloading cropped regions in your dataset"
         >
-          <v-btn
-            class="ml-4"
-            @click.stop="toggleRightPanel('snapshotPanel')"
-            id="snapshots-button-tourstep"
-            v-tour-trigger="'snapshots-button-tourtrigger'"
-          >
-            Snapshots
-          </v-btn>
-        </span>
-        <span v-tooltip="'Image and object display settings'">
-          <v-btn
-            class="ml-4"
-            @click.stop="toggleRightPanel('settingsPanel')"
-            id="settings-button-tourstep"
-            v-tour-trigger="'settings-button-tourtrigger'"
-          >
-            Settings
-          </v-btn>
-        </span>
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="ml-4"
+              @click.stop="toggleRightPanel('snapshotPanel')"
+              id="snapshots-button-tourstep"
+              v-tour-trigger="'snapshots-button-tourtrigger'"
+            >
+              Snapshots
+            </v-btn>
+          </template>
+        </v-tooltip>
+        <v-tooltip text="Image and object display settings">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="ml-4"
+              @click.stop="toggleRightPanel('settingsPanel')"
+              id="settings-button-tourstep"
+              v-tour-trigger="'settings-button-tourtrigger'"
+            >
+              Settings
+            </v-btn>
+          </template>
+        </v-tooltip>
       </template>
       <div class="mx-4 d-flex align-center">
-        <v-menu offset-y>
-          <template v-slot:activator="{ on, attrs }">
+        <v-menu>
+          <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               icon
-              v-bind="attrs"
-              v-on="on"
+              v-bind="activatorProps"
               id="help-button-tourstep"
               v-tour-trigger="'help-button-tourtrigger'"
             >
@@ -89,26 +104,22 @@
             <v-list>
               <!-- HUD Option -->
               <v-list-item @click="toggleHelpDialogUsingHotkey">
-                <v-list-item-icon>
+                <template #prepend>
                   <v-icon>mdi-view-dashboard-outline</v-icon>
-                </v-list-item-icon>
-                <v-list-item-content>
-                  <v-list-item-title
-                    >Show heads up display (tab)</v-list-item-title
-                  >
-                </v-list-item-content>
+                </template>
+                <v-list-item-title
+                  >Show heads up display (tab)</v-list-item-title
+                >
               </v-list-item>
 
               <v-divider></v-divider>
 
               <!-- Documentation Link -->
               <v-list-item href="https://docs.nimbusimage.com" target="_blank">
-                <v-list-item-icon>
+                <template #prepend>
                   <v-icon>mdi-book-open-variant</v-icon>
-                </v-list-item-icon>
-                <v-list-item-content>
-                  <v-list-item-title>Documentation</v-list-item-title>
-                </v-list-item-content>
+                </template>
+                <v-list-item-title>Documentation</v-list-item-title>
               </v-list-item>
 
               <v-divider></v-divider>
@@ -118,7 +129,7 @@
                 <v-text-field
                   v-model="tourSearch"
                   label="Search tours"
-                  dense
+                  density="compact"
                   hide-details
                   prepend-inner-icon="mdi-magnify"
                   clearable
@@ -128,19 +139,20 @@
               </v-list-item>
 
               <!-- Tours List -->
-              <template v-for="(tours, category) in filteredToursByCategory">
-                <v-subheader :key="category">{{ category }}</v-subheader>
+              <template
+                v-for="(tours, category) in filteredToursByCategory"
+                :key="category"
+              >
+                <v-list-subheader>{{ category }}</v-list-subheader>
                 <v-list-item
                   v-for="(tour, tourId) in tours"
                   :key="tourId"
                   @click="handleTourStart(tourId)"
                 >
-                  <v-list-item-icon v-if="tour.popular">
-                    <v-icon color="yellow darken-2">mdi-star</v-icon>
-                  </v-list-item-icon>
-                  <v-list-item-content>
-                    <v-list-item-title>{{ tour.name }}</v-list-item-title>
-                  </v-list-item-content>
+                  <template #prepend v-if="tour.popular">
+                    <v-icon color="yellow-darken-2">mdi-star</v-icon>
+                  </template>
+                  <v-list-item-title>{{ tour.name }}</v-list-item-title>
                 </v-list-item>
               </template>
             </v-list>
@@ -148,20 +160,21 @@
         </v-menu>
         <server-status />
         <user-menu />
-        <span
-          v-tooltip="
-            'Open NimbusImage chat for help with solving your particular image analysis problems'
-          "
+        <v-tooltip
+          text="Open NimbusImage chat for help with solving your particular image analysis problems"
         >
-          <v-btn
-            icon
-            @click="chatbotOpen = !chatbotOpen"
-            id="chat-button-tourstep"
-            v-tour-trigger="'chat-button-tourtrigger'"
-          >
-            <v-icon>mdi-chat</v-icon>
-          </v-btn>
-        </span>
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              icon
+              @click="chatbotOpen = !chatbotOpen"
+              id="chat-button-tourstep"
+              v-tour-trigger="'chat-button-tourtrigger'"
+            >
+              <v-icon>mdi-chat</v-icon>
+            </v-btn>
+          </template>
+        </v-tooltip>
       </div>
     </v-app-bar>
 
@@ -173,36 +186,30 @@
 
     <v-navigation-drawer
       v-model="analyzePanel"
-      app
-      right
-      disable-resize-watcher
-      clipped
-      hide-overlay
+      location="right"
+      :scrim="false"
       :width="480"
+      temporary
     >
       <analyze-annotations />
     </v-navigation-drawer>
 
     <v-navigation-drawer
       v-model="settingsPanel"
-      app
-      right
-      disable-resize-watcher
-      clipped
-      hide-overlay
+      location="right"
+      :scrim="false"
       :width="480"
+      temporary
     >
       <annotations-settings />
     </v-navigation-drawer>
 
     <v-navigation-drawer
       v-model="snapshotPanel"
-      app
-      right
-      disable-resize-watcher
-      clipped
-      hide-overlay
+      location="right"
+      :scrim="false"
       :width="480"
+      temporary
       @transitionend="snapshotPanelFull = snapshotPanel"
     >
       <snapshots :snapshotVisible="snapshotPanel && snapshotPanelFull" />
@@ -210,19 +217,19 @@
 
     <v-navigation-drawer
       v-model="annotationPanel"
-      app
-      right
-      disable-resize-watcher
-      clipped
-      hide-overlay
+      location="right"
+      :scrim="false"
       :width="640"
+      temporary
     >
       <annotation-browser></annotation-browser>
     </v-navigation-drawer>
   </v-app>
 </template>
 
-<script lang="ts">
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, Ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import axios from "axios";
 import UserMenu from "./layout/UserMenu.vue";
 import ServerStatus from "./components/ServerStatus.vue";
@@ -232,7 +239,6 @@ import Snapshots from "./components/Snapshots.vue";
 import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.vue";
 import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
-import { Vue, Component, Watch } from "vue-property-decorator";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import { logError } from "@/utils/log";
@@ -240,175 +246,119 @@ import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
+import { useTour } from "@/utils/useTour";
 
-@Component({
-  components: {
-    HelpPanel,
-    AnnotationBrowser,
-    UserMenu,
-    BreadCrumbs,
-    ServerStatus,
-    AnalyzeAnnotations,
-    AnnotationsSettings,
-    Snapshots,
-    ChatComponent,
+// Suppress unused import warnings for template-only components
+void UserMenu;
+void ServerStatus;
+void AnalyzeAnnotations;
+void AnnotationsSettings;
+void Snapshots;
+void AnnotationBrowser;
+void HelpPanel;
+void BreadCrumbs;
+void ChatComponent;
+
+const route = useRoute();
+const router = useRouter();
+const { startTour, loadAllTours: loadAllToursFromManager } = useTour();
+
+const tourSearch = ref("");
+const availableTours = ref<Record<string, ITourMetadata>>({});
+
+const snapshotPanel = ref(false);
+const snapshotPanelFull = ref(false);
+const annotationPanel = ref(false);
+const settingsPanel = ref(false);
+const analyzePanel = ref(false);
+const chatbotOpen = ref(false);
+
+const lastModifiedRightPanel = ref<string | null>(null);
+const isUploadLoading = ref(false);
+const helpPanelIsOpen = ref(false);
+
+const panelRefs: Record<string, Ref<boolean>> = {
+  snapshotPanel,
+  annotationPanel,
+  settingsPanel,
+  analyzePanel,
+  chatbotOpen,
+};
+
+function toggleHelpDialogUsingHotkey() {
+  helpPanelIsOpen.value = !helpPanelIsOpen.value;
+}
+
+const appHotkeys: IHotkey = {
+  bind: "tab",
+  handler: toggleHelpDialogUsingHotkey,
+  data: {
+    section: "Global",
+    description: "Toggle help dialog",
   },
-})
-export default class App extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertyStore;
+};
 
-  readonly appHotkeys: IHotkey = {
-    bind: "tab",
-    handler: this.toggleHelpDialogUsingHotkey,
-    data: {
-      section: "Global",
-      description: "Toggle help dialog",
-    },
-  };
+function fetchConfig() {
+  axios
+    .get("config/templates.json")
+    .then((resp) => {
+      store.setToolTemplateList(resp.data);
+    })
+    .catch((err) => {
+      logError(err);
+      throw err;
+    });
+}
 
-  tourSearch = "";
-  availableTours: Record<string, ITourMetadata> = {};
+async function loadAllTours() {
+  availableTours.value = await loadAllToursFromManager();
+}
 
-  snapshotPanel = false;
-  snapshotPanelFull = false;
+function goHome() {
+  router.push({ name: "root" });
+}
 
-  annotationPanel = false;
-
-  settingsPanel = false;
-
-  analyzePanel = false;
-
-  chatbotOpen = false;
-
-  lastModifiedRightPanel: string | null = null;
-
-  isUploadLoading = false;
-
-  helpPanelIsOpen = false;
-
-  fetchConfig() {
-    // Fetch the list of available tool templates
-    // It consists of a json file containing a list of items, each item describing
-    // the interface elements for a different tool type:
-    // * name: Name of the tool type
-    // * type: Type of tool to be added
-    // * interface: List of various form components necessary to configure the tool
-    // Interface elements have a name, an id, a type (see ToolConfiguration) and a type-dependent meta field
-    axios
-      .get("config/templates.json")
-      .then((resp) => {
-        this.store.setToolTemplateList(resp.data);
-      })
-      .catch((err) => {
-        logError(err);
-        throw err;
-      });
+function toggleRightPanel(panel: string | null) {
+  if (panel !== null) {
+    panelRefs[panel].value = !panelRefs[panel].value;
   }
-
-  mounted() {
-    this.fetchConfig();
-    // Load available tours
-    // TODO: Move to another async function to avoid async call in mounted
-    this.loadAllTours();
+  if (
+    lastModifiedRightPanel.value !== null &&
+    lastModifiedRightPanel.value !== panel
+  ) {
+    panelRefs[lastModifiedRightPanel.value].value = false;
   }
+  lastModifiedRightPanel.value = panel;
+}
 
-  async loadAllTours() {
-    this.availableTours = await this.$loadAllTours();
-  }
+const routeName = computed(() => route.name);
 
-  goHome() {
-    this.$router.push({ name: "root" });
-  }
-
-  toggleRightPanel(panel: string | null) {
-    if (panel !== null) {
-      this.$data[panel] = !this.$data[panel];
-    }
-    // The last panel updated has to be closed if it is not the currently updated panel
-    if (
-      this.lastModifiedRightPanel !== null &&
-      this.lastModifiedRightPanel !== panel
-    ) {
-      this.$data[this.lastModifiedRightPanel] = false;
-    }
-    this.lastModifiedRightPanel = panel;
-  }
-
-  @Watch("annotationPanel")
-  annotationPanelChanged() {
-    this.store.setIsAnnotationPanelOpen(this.annotationPanel);
-  }
-
-  get routeName() {
-    return this.$route.name;
-  }
-
-  get hasUncomputedProperties() {
-    const uncomputed = this.propertyStore.uncomputedAnnotationsPerProperty;
-    for (const id in uncomputed) {
-      if (uncomputed[id].length > 0) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  @Watch("routeName")
-  datasetChanged() {
-    if (this.routeName !== "datasetview") {
-      this.toggleRightPanel(null);
+const hasUncomputedProperties = computed(() => {
+  const uncomputed = propertyStore.uncomputedAnnotationsPerProperty;
+  for (const id in uncomputed) {
+    if (uncomputed[id].length > 0) {
+      return true;
     }
   }
+  return false;
+});
 
-  async goToNewDataset() {
-    if (this.isUploadLoading) return;
-
-    this.isUploadLoading = true;
-
-    let privateFolder: IGirderFolder | null = null;
-    try {
-      // Get the user's private folder
-      privateFolder = await this.store.api.getUserPrivateFolder();
-      if (!privateFolder) {
-        throw new Error("Could not access private folder");
-      }
-    } catch (error) {
-      logError(error);
-    } finally {
-      this.$router.push({
-        name: "newdataset",
-        params: {
-          quickupload: false,
-          defaultFiles: [],
-          initialUploadLocation: privateFolder,
-        } as any,
-      });
-      this.isUploadLoading = false;
-    }
-  }
-
-  get filteredToursByCategory(): Record<string, Record<string, ITourMetadata>> {
-    const tours = this.availableTours;
+const filteredToursByCategory = computed(
+  (): Record<string, Record<string, ITourMetadata>> => {
+    const tours = availableTours.value;
     const filtered = Object.entries(tours).filter(([, tour]) => {
-      // First filter by search term
       const matchesSearch = tour.name
         .toLowerCase()
-        .includes(this.tourSearch.toLowerCase());
+        .includes(tourSearch.value.toLowerCase());
 
-      // Then filter by route constraints
       const isDatasetTour = tour.entryPoint === "datasetview";
-      const isDatasetView = this.routeName === "datasetview";
-
-      // Show all tours if we're in dataset view
-      // Otherwise, hide datasetview-specific tours (because you need to select a dataset first)
+      const isDatasetView = routeName.value === "datasetview";
       const isAllowedOnCurrentRoute = isDatasetView || !isDatasetTour;
 
       return matchesSearch && isAllowedOnCurrentRoute;
     });
 
-    // Group by category
-    const grouped = filtered.reduce(
+    return filtered.reduce(
       (acc: Record<string, Record<string, ITourMetadata>>, [id, tour]) => {
         const category = tour.category || "General";
         if (!acc[category]) {
@@ -419,34 +369,107 @@ export default class App extends Vue {
       },
       {},
     );
+  },
+);
 
-    return grouped;
+function handleTourStart(tourId: string) {
+  const tour = availableTours.value[tourId];
+  if (tour && tour.entryPoint !== routeName.value) {
+    router.push({ name: tour.entryPoint });
   }
+  startTour(tourId);
+}
 
-  toggleHelpDialogUsingHotkey() {
-    this.helpPanelIsOpen = !this.helpPanelIsOpen;
-  }
+async function goToNewDataset() {
+  if (isUploadLoading.value) return;
 
-  handleTourStart(tourId: string) {
-    const tour = this.availableTours[tourId];
-    if (tour && tour.entryPoint !== this.routeName) {
-      // If we're not on the correct route, navigate there first
-      this.$router.push({ name: tour.entryPoint });
+  isUploadLoading.value = true;
+
+  let privateFolder: IGirderFolder | null = null;
+  try {
+    privateFolder = await store.api.getUserPrivateFolder();
+    if (!privateFolder) {
+      throw new Error("Could not access private folder");
     }
-    this.$startTour(tourId);
+  } catch (error) {
+    logError(error);
+  } finally {
+    store.initializeUploadWorkflow({
+      quickupload: false,
+      batchMode: false,
+      batchName: "",
+      fileGroups: [],
+      datasetNames: [],
+      initialUploadLocation: privateFolder,
+      initialName: "",
+      initialDescription: "",
+    });
+    router.push({ name: "newdataset" });
+    isUploadLoading.value = false;
   }
 }
+
+function annotationPanelChanged() {
+  store.setIsAnnotationPanelOpen(annotationPanel.value);
+}
+
+function datasetChanged() {
+  if (routeName.value !== "datasetview") {
+    toggleRightPanel(null);
+  }
+}
+
+watch(annotationPanel, () => annotationPanelChanged());
+watch(routeName, () => datasetChanged());
+
+onMounted(() => {
+  fetchConfig();
+  loadAllTours();
+});
+
+defineExpose({
+  tourSearch,
+  availableTours,
+  snapshotPanel,
+  snapshotPanelFull,
+  annotationPanel,
+  settingsPanel,
+  analyzePanel,
+  chatbotOpen,
+  lastModifiedRightPanel,
+  isUploadLoading,
+  helpPanelIsOpen,
+  appHotkeys,
+  routeName,
+  hasUncomputedProperties,
+  filteredToursByCategory,
+  fetchConfig,
+  loadAllTours,
+  goHome,
+  toggleRightPanel,
+  toggleHelpDialogUsingHotkey,
+  handleTourStart,
+  goToNewDataset,
+});
 </script>
 <style lang="scss" scoped>
 .logo {
   cursor: pointer;
   text-overflow: unset;
   overflow: unset;
+  flex: 0 0 auto !important;
 }
 </style>
 <style lang="scss">
 body > div {
   overflow: hidden;
+}
+
+/* Vuetify 3 defaults --v-list-prepend-gap to 32px, which is too wide for
+   most lists in this app. Override globally to a tighter 8px. Individual
+   components can still override via the same CSS variable if needed. */
+.v-list {
+  --v-list-prepend-gap: 8px;
 }
 
 .v-navigation-drawer {
@@ -461,5 +484,33 @@ body > div {
 
 .v-menu__content {
   z-index: 10000 !important;
+}
+
+.help-dialog-overlay {
+  background: transparent !important;
+  box-shadow: none !important;
+  max-height: 100% !important;
+}
+
+/* Flat cards get a subtle line border for section discrimination */
+.v-card--variant-flat {
+  border: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+/* Improve secondary text contrast in dark mode */
+.v-theme--dark .text-grey {
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* More breathing room in list rows */
+.v-theme--dark .v-list-item {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* Better type-indicator chip legibility in dark mode */
+.v-theme--dark .type-indicator.v-chip {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.7) !important;
 }
 </style>

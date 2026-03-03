@@ -1,11 +1,11 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header> Interface settings </v-expansion-panel-header>
-    <v-expansion-panel-content>
+    <v-expansion-panel-title> Interface settings </v-expansion-panel-title>
+    <v-expansion-panel-text>
       <v-container>
         <v-switch
           hide-details
-          dense
+          density="compact"
           v-model="darkMode"
           label="Dark mode"
           v-description="{
@@ -15,24 +15,22 @@
           }"
         />
       </v-container>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
-import store from "@/store/index";
+<script setup lang="ts">
+import { computed } from "vue";
+import { useTheme } from "vuetify";
 
-@Component
-export default class UISettings extends Vue {
-  readonly store = store;
+const theme = useTheme();
 
-  get darkMode() {
-    return this.$vuetify.theme.dark;
-  }
+const darkMode = computed({
+  get: () => theme.global.name.value === "dark",
+  set: (value: boolean) => {
+    theme.global.name.value = value ? "dark" : "light";
+  },
+});
 
-  set darkMode(value) {
-    this.$vuetify.theme.dark = value;
-  }
-}
+defineExpose({ darkMode });
 </script>

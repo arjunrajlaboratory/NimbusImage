@@ -1,10 +1,12 @@
 <template>
   <v-radio-group
-    :value="value.type"
-    @change="changeSlice($event, value.value)"
+    :model-value="modelValue.type"
+    @update:model-value="
+      $event != null && changeSlice($event, modelValue.value)
+    "
     :label="labelHint"
     hide-details
-    dense
+    density="compact"
   >
     <template v-if="maxValue > 0">
       <v-radio value="current" label="Current" class="smaller" />
@@ -13,14 +15,14 @@
         <template #label>
           <span>Constant</span>
           <v-text-field
-            v-show="value.type === 'constant'"
-            :value="(value.value || 0) + offset"
+            v-show="modelValue.type === 'constant'"
+            :model-value="(modelValue.value || 0) + offset"
             :min="offset"
             :max="maxValue + offset"
             type="number"
-            dense
+            density="compact"
             hide-details
-            @input="changeSlice('constant', $event)"
+            @update:model-value="changeSlice('constant', $event)"
           />
         </template>
       </v-radio>
@@ -32,14 +34,14 @@
         <template #label>
           <span>Offset</span>
           <v-text-field
-            v-show="value.type === 'offset'"
-            :value="value.value || 0"
+            v-show="modelValue.type === 'offset'"
+            :model-value="modelValue.value || 0"
             type="number"
-            dense
+            density="compact"
             :min="minOffsetValue"
             :max="maxOffsetValue"
             hide-details
-            @input="changeSlice('offset', $event)"
+            @update:model-value="changeSlice('offset', $event)"
           />
         </template>
       </v-radio>
@@ -53,89 +55,82 @@
 }
 </style>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
-import { IDisplaySlice, TDisplaySliceType } from "../store/model";
-import store from "@/store";
+<script setup lang="ts">
+import { computed } from "vue";
+import { IDisplaySlice, TDisplaySliceType } from "@/store/model";
 
-@Component
-export default class DisplaySlice extends Vue {
-  readonly store = store;
-  @Prop()
-  readonly value!: IDisplaySlice;
-  @Prop()
-  readonly maxValue!: number;
-  @Prop()
-  readonly label!: string;
-  @Prop()
-  readonly displayed!: number;
-  @Prop()
-  readonly offset!: number;
+const props = defineProps<{
+  modelValue: IDisplaySlice;
+  maxValue: number;
+  label: string;
+  displayed: number;
+  offset: number;
+}>();
 
-  get maxOffsetValue() {
-    return this.maxValue;
+const emit = defineEmits<{
+  (e: "change", payload: { type: TDisplaySliceType; value: number }): void;
+}>();
+
+const maxOffsetValue = computed(() => props.maxValue);
+const minOffsetValue = computed(() => -props.maxValue);
+
+const labelHint = computed(() => {
+  if (props.maxValue === 0) {
+    return `${props.label} (no slices available)`;
+  }
+  return props.label;
+});
+
+function changeSlice(type: TDisplaySliceType, value: string | number | null) {
+  const inputValue =
+    typeof value === "string" ? parseInt(value, 10) : value || 0;
+
+  const typeHasChanged = props.modelValue.type !== type;
+  if (
+    (!typeHasChanged && props.modelValue.value === value) ||
+    (!inputValue && inputValue !== 0)
+  ) {
+    return;
   }
 
-  get minOffsetValue() {
-    return -this.maxValue;
+  let validated = inputValue;
+  switch (type) {
+    case "constant":
+      const constantValue =
+        inputValue !== null ? inputValue - props.offset : null;
+
+      validated =
+        constantValue == null || typeHasChanged
+          ? props.displayed
+          : Math.max(Math.min(constantValue, props.maxValue), 0);
+      break;
+    case "offset":
+      validated =
+        inputValue == null || typeHasChanged
+          ? 0
+          : Math.max(
+              Math.min(inputValue, maxOffsetValue.value),
+              minOffsetValue.value,
+            );
+      break;
+    default:
+      validated = 0;
+      break;
   }
-
-  get labelHint() {
-    if (this.maxValue === 0) {
-      return `${this.label} (no slices available)`;
-    }
-    return this.label;
-  }
-
-  changeSlice(type: TDisplaySliceType, value: string | number | null) {
-    const inputValue =
-      typeof value === "string" ? parseInt(value, 10) : value || 0;
-
-    const typeHasChanged = this.value.type !== type;
-    if (
-      (!typeHasChanged && this.value.value === value) ||
-      (!inputValue && inputValue !== 0)
-    ) {
-      return;
-    }
-
-    let validated = inputValue;
-    switch (type) {
-      case "constant":
-        const constantValue =
-          inputValue !== null ? inputValue - this.offset : null;
-
-        validated =
-          constantValue == null || typeHasChanged
-            ? this.displayed
-            : Math.max(Math.min(constantValue, this.maxValue), 0);
-        break;
-      case "offset":
-        validated =
-          inputValue == null || typeHasChanged
-            ? 0
-            : Math.max(
-                Math.min(inputValue, this.maxOffsetValue),
-                this.minOffsetValue,
-              );
-        break;
-      default:
-        validated = 0;
-        break;
-    }
-    this.$emit("change", {
-      type,
-      value: validated,
-    });
-  }
+  emit("change", {
+    type,
+    value: validated,
+  });
 }
+
+defineExpose({ maxOffsetValue, minOffsetValue, labelHint, changeSlice });
 </script>
 
 <style lang="scss" scoped>
 .smaller {
   margin-bottom: 0 !important;
 
-  ::v-deep .v-label {
+  :deep(.v-label) {
     font-size: 14px;
     height: auto;
   }
@@ -150,7 +145,7 @@ export default class DisplaySlice extends Vue {
     font-size: 12px;
     margin: 0;
 
-    ::v-deep input {
+    :deep(input) {
       padding: 0 !important;
     }
   }

@@ -1,11 +1,13 @@
+<!-- eslint-disable vue/multi-word-component-names -->
 <template>
-  <div>
+  <div class="dataset-root">
     <v-overlay
-      :value="isLoading"
-      absolute
-      color="white"
-      opacity="0.8"
+      :model-value="isLoading"
+      contained
+      scrim="white"
+      :opacity="0.8"
       z-index="9999"
+      class="d-flex align-center justify-center"
     >
       <div class="loading-container">
         <v-progress-circular
@@ -27,50 +29,56 @@
   </div>
 </template>
 
-<script lang="ts">
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
+import { useRoute } from "vue-router";
 import store from "@/store";
 import sync from "@/store/sync";
 import { logError } from "@/utils/log";
-import { Component, Vue, Watch } from "vue-property-decorator";
 
-@Component
-export default class Dataset extends Vue {
-  isReady = false;
+const route = useRoute();
 
-  get isLoading() {
-    return sync.datasetLoading || !this.isReady;
-  }
+const isReady = ref(false);
 
-  get datasetReady() {
-    return store.dataset && this.isReady;
-  }
+const isLoading = computed(() => {
+  return sync.datasetLoading || !isReady.value;
+});
 
-  mounted() {
-    this.loadDataset();
-  }
+const datasetReady = computed(() => {
+  return store.dataset && isReady.value;
+});
 
-  @Watch("$route")
-  onRouteChange() {
-    this.isReady = false;
-    this.loadDataset();
-  }
-
-  async loadDataset() {
-    const datasetId = this.$route.params.datasetId;
-    if (datasetId) {
-      try {
-        await store.setSelectedDataset(datasetId);
-        this.isReady = true;
-      } catch (error) {
-        logError("Failed to load dataset:", error);
-        this.isReady = false;
-      }
+async function loadDataset() {
+  const datasetId = route.params.datasetId as string;
+  if (datasetId) {
+    try {
+      await store.setSelectedDataset(datasetId);
+      isReady.value = true;
+    } catch (error) {
+      logError("Failed to load dataset:", error);
+      isReady.value = false;
     }
   }
 }
+
+watch(route, () => {
+  isReady.value = false;
+  loadDataset();
+});
+
+onMounted(() => {
+  loadDataset();
+});
+
+defineExpose({ isReady, isLoading, datasetReady, loadDataset });
 </script>
 
 <style scoped>
+.dataset-root {
+  position: relative;
+  min-height: calc(100vh - 64px);
+}
+
 .loading-container {
   display: flex;
   flex-direction: column;

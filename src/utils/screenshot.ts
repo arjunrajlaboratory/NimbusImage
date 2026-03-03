@@ -1,10 +1,16 @@
-import { ITileOptions, ITileOptionsBands, getBandOption } from "@/store/images";
+import {
+  ITileOptions,
+  ITileOptionsBands,
+  getBandOption,
+  type ITileHistogram,
+} from "@/store/images";
 import {
   IDataset,
   IDatasetLocation,
   IDisplayLayer,
   IDownloadParameters,
   IGeoJSBounds,
+  type IImage,
 } from "@/store/model";
 
 export function getDownloadParameters(
@@ -63,6 +69,7 @@ export async function getLayersDownloadUrls(
   configurationLayers: IDisplayLayer[],
   dataset: IDataset,
   location: IDatasetLocation,
+  api: { getLayerHistogram(images: IImage[]): Promise<ITileHistogram | null> },
 ) {
   // Get layer bands: style and frame idx
   const styles: { style: ITileOptions; layerId: string }[] = [];
@@ -71,7 +78,7 @@ export async function getLayersDownloadUrls(
     configurationLayers.forEach((layer) => {
       if (layer.visible || exportLayer === "all") {
         promises.push(
-          getBandOption(dataset, layer, location).then((style) =>
+          getBandOption(dataset, layer, location, api).then((style) =>
             styles.push({ layerId: layer.id, style }),
           ),
         );
@@ -84,7 +91,7 @@ export async function getLayersDownloadUrls(
       return [];
     }
     promises.push(
-      getBandOption(dataset, layer, location).then((style) =>
+      getBandOption(dataset, layer, location, api).then((style) =>
         styles.push({ layerId: layer.id, style }),
       ),
     );

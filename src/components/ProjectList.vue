@@ -8,18 +8,18 @@
           placeholder="Search projects..."
           hide-details
           single-line
-          dense
+          density="compact"
           clearable
         />
       </div>
       <v-btn
         v-if="store.isLoggedIn"
         color="primary"
-        small
+        size="small"
         class="ml-2"
         @click="showCreateDialog = true"
       >
-        <v-icon left small>mdi-plus</v-icon>
+        <v-icon start size="small">mdi-plus</v-icon>
         New Project
       </v-btn>
     </div>
@@ -32,8 +32,8 @@
         class="text-center pa-4"
       >
         <v-icon size="64" color="grey">mdi-folder-star</v-icon>
-        <div class="text-h6 grey--text mt-2">No projects found</div>
-        <div class="text-body-2 grey--text">
+        <div class="text-h6 text-grey mt-2">No projects found</div>
+        <div class="text-body-2 text-grey">
           {{
             searchQuery
               ? "Try adjusting your search terms"
@@ -50,69 +50,57 @@
           :class="{ 'project-item-hover': !loading }"
           @click="navigateToProject(project)"
         >
-          <v-list-item-avatar>
-            <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
-          </v-list-item-avatar>
+          <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
 
-          <v-list-item-content>
-            <v-list-item-title class="project-title">
-              {{ project.name }}
-            </v-list-item-title>
-            <v-list-item-subtitle v-if="project.description">
-              {{ project.description }}
-            </v-list-item-subtitle>
+          <v-list-item-title class="project-title">
+            {{ project.name }}
+          </v-list-item-title>
+          <v-list-item-subtitle v-if="project.description">
+            {{ project.description }}
+          </v-list-item-subtitle>
 
-            <div class="d-flex align-center mt-1">
-              <v-chip
-                x-small
-                outlined
-                class="mr-1"
-                :color="getProjectStatusColor(project.meta.status)"
-              >
-                {{ project.meta.status }}
-              </v-chip>
-              <v-chip x-small outlined color="grey" class="mr-1">
-                {{ project.meta.datasets.length }} dataset{{
-                  project.meta.datasets.length !== 1 ? "s" : ""
-                }}
-              </v-chip>
-              <v-chip x-small outlined color="grey">
-                {{ project.meta.collections.length }} collection{{
-                  project.meta.collections.length !== 1 ? "s" : ""
-                }}
-              </v-chip>
-              <v-spacer />
-              <span class="text-caption grey--text">
-                Updated {{ formatDateString(project.updated) }}
-              </span>
-            </div>
-          </v-list-item-content>
+          <div class="d-flex align-center mt-1">
+            <v-chip
+              size="x-small"
+              variant="outlined"
+              class="mr-1"
+              :color="getProjectStatusColor(project.meta.status)"
+            >
+              {{ project.meta.status }}
+            </v-chip>
+            <v-chip size="x-small" variant="outlined" color="grey" class="mr-1">
+              {{ project.meta.datasets.length }} dataset{{
+                project.meta.datasets.length !== 1 ? "s" : ""
+              }}
+            </v-chip>
+            <v-chip size="x-small" variant="outlined" color="grey">
+              {{ project.meta.collections.length }} collection{{
+                project.meta.collections.length !== 1 ? "s" : ""
+              }}
+            </v-chip>
+            <v-spacer />
+            <span class="text-caption text-grey">
+              Updated {{ formatDateString(project.updated) }}
+            </span>
+          </div>
 
-          <v-list-item-action>
-            <v-menu offset-y>
-              <template #activator="{ on, attrs }">
-                <v-btn icon small v-bind="attrs" v-on="on">
-                  <v-icon small>mdi-dots-vertical</v-icon>
-                </v-btn>
-              </template>
-              <v-list dense>
-                <v-list-item @click="editProject(project)">
-                  <v-list-item-icon>
-                    <v-icon small>mdi-pencil</v-icon>
-                  </v-list-item-icon>
-                  <v-list-item-title>Edit</v-list-item-title>
-                </v-list-item>
-                <v-list-item @click="confirmDeleteProject(project)">
-                  <v-list-item-icon>
-                    <v-icon small color="error">mdi-delete</v-icon>
-                  </v-list-item-icon>
-                  <v-list-item-title class="error--text"
-                    >Delete</v-list-item-title
-                  >
-                </v-list-item>
-              </v-list>
-            </v-menu>
-          </v-list-item-action>
+          <v-menu>
+            <template #activator="{ props: activatorProps }">
+              <v-btn icon size="small" v-bind="activatorProps">
+                <v-icon size="small">mdi-dots-vertical</v-icon>
+              </v-btn>
+            </template>
+            <v-list density="compact">
+              <v-list-item @click="editProject(project)">
+                <v-icon size="small">mdi-pencil</v-icon>
+                <v-list-item-title>Edit</v-list-item-title>
+              </v-list-item>
+              <v-list-item @click="confirmDeleteProject(project)">
+                <v-icon size="small" color="error">mdi-delete</v-icon>
+                <v-list-item-title class="text-error">Delete</v-list-item-title>
+              </v-list-item>
+            </v-list>
+          </v-menu>
         </v-list-item>
       </v-list>
     </div>
@@ -125,21 +113,21 @@
           <v-text-field
             v-model="newProjectName"
             label="Project Name"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             autofocus
           />
           <v-textarea
             v-model="newProjectDescription"
             label="Description (optional)"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             rows="3"
           />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="showCreateDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showCreateDialog = false">Cancel</v-btn>
           <v-btn
             color="primary"
             :disabled="!newProjectName.trim()"
@@ -160,20 +148,20 @@
           <v-text-field
             v-model="editProjectName"
             label="Project Name"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
           />
           <v-textarea
             v-model="editProjectDescription"
             label="Description"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             rows="3"
           />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="showEditDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showEditDialog = false">Cancel</v-btn>
           <v-btn
             color="primary"
             :disabled="!editProjectName.trim()"
@@ -196,7 +184,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="showDeleteDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showDeleteDialog = false">Cancel</v-btn>
           <v-btn color="error" :loading="deleting" @click="deleteProject">
             Delete
           </v-btn>
@@ -206,133 +194,152 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import store from "@/store";
 import projects from "@/store/projects";
 import { IProject, getProjectStatusColor } from "@/store/model";
 import { formatDateString } from "@/utils/date";
 
-@Component
-export default class ProjectList extends Vue {
-  readonly store = store;
-  readonly projects = projects;
+const loading = ref(true);
+const searchQuery = ref("");
 
-  loading = true;
-  searchQuery = "";
+const showCreateDialog = ref(false);
+const newProjectName = ref("");
+const newProjectDescription = ref("");
+const creating = ref(false);
 
-  showCreateDialog = false;
-  newProjectName = "";
-  newProjectDescription = "";
-  creating = false;
+const showEditDialog = ref(false);
+const editingProject = ref<IProject | null>(null);
+const editProjectName = ref("");
+const editProjectDescription = ref("");
+const saving = ref(false);
 
-  showEditDialog = false;
-  editingProject: IProject | null = null;
-  editProjectName = "";
-  editProjectDescription = "";
-  saving = false;
+const showDeleteDialog = ref(false);
+const projectToDelete = ref<IProject | null>(null);
+const deleting = ref(false);
 
-  showDeleteDialog = false;
-  projectToDelete: IProject | null = null;
-  deleting = false;
+const router = useRouter();
 
-  formatDateString = formatDateString;
-  getProjectStatusColor = getProjectStatusColor;
-
-  async mounted() {
-    await this.fetchProjects();
+const filteredProjects = computed<IProject[]>(() => {
+  const allProjects = projects.projects;
+  if (!searchQuery.value) {
+    return allProjects;
   }
 
-  get filteredProjects(): IProject[] {
-    const allProjects = this.projects.projects;
-    if (!this.searchQuery) {
-      return allProjects;
-    }
+  const query = searchQuery.value.toLowerCase();
+  return allProjects.filter(
+    (project) =>
+      project.name.toLowerCase().includes(query) ||
+      (project.description &&
+        project.description.toLowerCase().includes(query)),
+  );
+});
 
-    const query = this.searchQuery.toLowerCase();
-    return allProjects.filter(
-      (project) =>
-        project.name.toLowerCase().includes(query) ||
-        (project.description &&
-          project.description.toLowerCase().includes(query)),
-    );
-  }
-
-  async fetchProjects() {
-    this.loading = true;
-    try {
-      await this.projects.fetchProjects();
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  async createProject() {
-    if (!this.newProjectName.trim()) return;
-
-    this.creating = true;
-    try {
-      await this.projects.createProject({
-        name: this.newProjectName.trim(),
-        description: this.newProjectDescription.trim(),
-      });
-      this.showCreateDialog = false;
-      this.newProjectName = "";
-      this.newProjectDescription = "";
-    } finally {
-      this.creating = false;
-    }
-  }
-
-  editProject(project: IProject) {
-    this.editingProject = project;
-    this.editProjectName = project.name;
-    this.editProjectDescription = project.description;
-    this.showEditDialog = true;
-  }
-
-  async saveProject() {
-    if (!this.editingProject || !this.editProjectName.trim()) return;
-
-    this.saving = true;
-    try {
-      await this.projects.updateProject({
-        projectId: this.editingProject.id,
-        name: this.editProjectName.trim(),
-        description: this.editProjectDescription.trim(),
-      });
-      this.showEditDialog = false;
-      this.editingProject = null;
-    } finally {
-      this.saving = false;
-    }
-  }
-
-  confirmDeleteProject(project: IProject) {
-    this.projectToDelete = project;
-    this.showDeleteDialog = true;
-  }
-
-  async deleteProject() {
-    if (!this.projectToDelete) return;
-
-    this.deleting = true;
-    try {
-      await this.projects.deleteProject(this.projectToDelete.id);
-      this.showDeleteDialog = false;
-      this.projectToDelete = null;
-    } finally {
-      this.deleting = false;
-    }
-  }
-
-  navigateToProject(project: IProject) {
-    this.$router.push({
-      name: "project",
-      params: { projectId: project.id },
-    });
+async function fetchProjects() {
+  loading.value = true;
+  try {
+    await projects.fetchProjects();
+  } finally {
+    loading.value = false;
   }
 }
+
+async function createProject() {
+  if (!newProjectName.value.trim()) return;
+
+  creating.value = true;
+  try {
+    await projects.createProject({
+      name: newProjectName.value.trim(),
+      description: newProjectDescription.value.trim(),
+    });
+    showCreateDialog.value = false;
+    newProjectName.value = "";
+    newProjectDescription.value = "";
+  } finally {
+    creating.value = false;
+  }
+}
+
+function editProject(project: IProject) {
+  editingProject.value = project;
+  editProjectName.value = project.name;
+  editProjectDescription.value = project.description;
+  showEditDialog.value = true;
+}
+
+async function saveProject() {
+  if (!editingProject.value || !editProjectName.value.trim()) return;
+
+  saving.value = true;
+  try {
+    await projects.updateProject({
+      projectId: editingProject.value.id,
+      name: editProjectName.value.trim(),
+      description: editProjectDescription.value.trim(),
+    });
+    showEditDialog.value = false;
+    editingProject.value = null;
+  } finally {
+    saving.value = false;
+  }
+}
+
+function confirmDeleteProject(project: IProject) {
+  projectToDelete.value = project;
+  showDeleteDialog.value = true;
+}
+
+async function deleteProject() {
+  if (!projectToDelete.value) return;
+
+  deleting.value = true;
+  try {
+    await projects.deleteProject(projectToDelete.value.id);
+    showDeleteDialog.value = false;
+    projectToDelete.value = null;
+  } finally {
+    deleting.value = false;
+  }
+}
+
+function navigateToProject(project: IProject) {
+  router.push({
+    name: "project",
+    params: { projectId: project.id },
+  });
+}
+
+onMounted(async () => {
+  await fetchProjects();
+});
+
+defineExpose({
+  loading,
+  searchQuery,
+  showCreateDialog,
+  newProjectName,
+  newProjectDescription,
+  creating,
+  showEditDialog,
+  editingProject,
+  editProjectName,
+  editProjectDescription,
+  saving,
+  showDeleteDialog,
+  projectToDelete,
+  deleting,
+  filteredProjects,
+  fetchProjects,
+  createProject,
+  editProject,
+  saveProject,
+  confirmDeleteProject,
+  deleteProject,
+  navigateToProject,
+});
 </script>
 
 <style lang="scss" scoped>

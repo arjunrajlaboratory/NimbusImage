@@ -2,82 +2,87 @@
   <!-- image -->
   <v-select
     :items="items"
-    dense
+    density="compact"
     v-model="image"
     label="Algorithm"
     :menu-props="{ maxHeight: 500 }"
   >
-    <template v-slot:item="item">
-      <div>
-        <div>{{ item.item.text }}</div>
-        <div v-if="item.item.description" :style="{ color: 'grey' }">
-          {{ item.item.description }}
-        </div>
-      </div>
+    <template v-slot:item="{ item, props: itemProps }">
+      <v-list-item v-bind="itemProps">
+        <v-list-item-subtitle
+          v-if="'description' in item.raw && item.raw.description"
+        >
+          {{ item.raw.description }}
+        </v-list-item-subtitle>
+      </v-list-item>
     </template>
   </v-select>
 </template>
 
-<script lang="ts">
-import { Vue, Component, VModel, Prop } from "vue-property-decorator";
-import store from "@/store";
+<script setup lang="ts">
+import { computed, onMounted } from "vue";
+import type { PropType } from "vue";
 import propertiesStore from "@/store/properties";
 import { IWorkerLabels } from "@/store/model";
 
 interface IDockerImageSelectEntry {
-  text: string;
+  title: string;
   value: string;
   description: string | undefined;
 }
 
-// Interface element selecting an image
-@Component({
-  components: {},
-})
-export default class DockerImageSelect extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertiesStore;
+const props = defineProps({
+  modelValue: { type: String as PropType<string | null>, default: null },
+  imageFilter: {
+    type: Function as PropType<(labels: IWorkerLabels) => boolean>,
+    required: true as const,
+  },
+});
 
-  @VModel({ type: String }) image!: String;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: string | null): void;
+}>();
 
-  @Prop()
-  readonly imageFilter!: { (labels: IWorkerLabels): boolean };
+const image = computed({
+  get: () => props.modelValue,
+  set: (val: string | null) => emit("update:modelValue", val),
+});
 
-  get images() {
-    return this.propertyStore.workerImageList;
-  }
+const images = computed(() => propertiesStore.workerImageList);
 
-  get items() {
-    const imagesPerCategory: {
-      [category: string]: IDockerImageSelectEntry[];
-    } = {};
-    for (const image in this.images) {
-      const labels = this.images[image];
-      if (this.imageFilter(labels)) {
-        const category = labels.interfaceCategory || "No category";
-        if (!imagesPerCategory[category]) {
-          imagesPerCategory[category] = [];
-        }
-        imagesPerCategory[category].push({
-          text: labels.interfaceName || image,
-          value: image,
-          description: labels.description,
-        });
+const items = computed(() => {
+  const imagesPerCategory: {
+    [category: string]: IDockerImageSelectEntry[];
+  } = {};
+  for (const img in images.value) {
+    const labels = images.value[img];
+    if (props.imageFilter(labels)) {
+      const category = labels.interfaceCategory || "No category";
+      if (!imagesPerCategory[category]) {
+        imagesPerCategory[category] = [];
       }
+      imagesPerCategory[category].push({
+        title: labels.interfaceName || img,
+        value: img,
+        description: labels.description,
+      });
     }
-    const items = [];
-    for (const category in imagesPerCategory) {
-      items.push(
-        { divider: true },
-        { header: category },
-        ...imagesPerCategory[category],
-      );
-    }
-    return items;
   }
+  const result: (IDockerImageSelectEntry | { type: string; title: string })[] =
+    [];
+  for (const category in imagesPerCategory) {
+    result.push(
+      { type: "divider", title: "" },
+      { type: "subheader", title: category },
+      ...imagesPerCategory[category],
+    );
+  }
+  return result;
+});
 
-  mounted() {
-    this.propertyStore.fetchWorkerImageList();
-  }
-}
+onMounted(() => {
+  propertiesStore.fetchWorkerImageList();
+});
+
+defineExpose({ images, items });
 </script>

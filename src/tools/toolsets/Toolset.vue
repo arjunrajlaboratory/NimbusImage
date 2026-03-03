@@ -1,17 +1,17 @@
 <template>
   <v-expansion-panels v-model="panels">
     <v-expansion-panel expand v-model="panels">
-      <v-expansion-panel-header class="pa-2">
+      <v-expansion-panel-title class="pa-2">
         <v-toolbar-title> Toolset </v-toolbar-title>
         <!-- Tool Type Selection -->
         <v-dialog v-model="toolTypeDialogOpen" max-width="1000px">
-          <template v-slot:activator="{ on: dialog }">
-            <v-tooltip top>
-              <template v-slot:activator="{ on: tooltip }">
+          <template v-slot:activator="{ props: dialogProps }">
+            <v-tooltip text="Browse tool types">
+              <template v-slot:activator="{ props: tooltipProps }">
                 <v-btn
                   class="ml-2"
                   color="primary"
-                  v-on="{ ...dialog, ...tooltip }"
+                  v-bind="mergeProps(dialogProps, tooltipProps)"
                   id="add-tool-tourstep"
                   v-tour-trigger="'add-tool-tourtrigger'"
                   :disabled="!isLoggedIn"
@@ -19,104 +19,84 @@
                   Add new tool
                 </v-btn>
               </template>
-              <span>Browse tool types</span>
             </v-tooltip>
           </template>
           <tool-type-selection @selected="handleToolTypeSelected" />
         </v-dialog>
-        <!-- Tool creation -->
-        <v-dialog
-          v-model="toolCreationDialogOpen"
-          width="60%"
-          @input="onToolCreationDialogInput"
-        >
-          <tool-creation
-            @done="onToolCreationDone"
-            :open="toolCreationDialogOpen"
-            :initial-selected-tool="selectedToolType"
-          />
-        </v-dialog>
-      </v-expansion-panel-header>
-      <v-expansion-panel-content>
+      </v-expansion-panel-title>
+      <v-expansion-panel-text>
         <!-- List toolset tools -->
-        <v-list v-if="toolsetTools.length" dense class="tight-list">
-          <v-list-item-group v-model="selectedToolId">
-            <draggable>
-              <template v-for="(tool, index) in toolsetTools">
-                <v-tooltip
-                  right
-                  transition="none"
-                  z-index="100"
-                  :key="index"
-                  v-if="tool"
-                >
-                  <template v-slot:activator="{ on, attrs }">
-                    <!-- If type === segmentation, add an annotation worker menu -->
-                    <template v-if="tool.type === 'segmentation'">
-                      <v-menu
-                        ref="annotationMenu"
-                        offset-x
-                        :closeOnClick="false"
-                        :closeOnContentClick="false"
-                        :value="selectedTool && selectedTool.id === tool.id"
-                        z-index="100"
-                      >
-                        <template #activator="{}">
-                          <tool-item
-                            :tool="tool"
-                            :disabled="!isLoggedIn"
-                            v-bind="attrs"
-                            v-on="on"
-                          />
-                        </template>
-                        <annotation-worker-menu
-                          :tool="tool"
-                          @loaded="onWorkerMenuLoaded"
-                        />
-                      </v-menu>
-                    </template>
-                    <!-- When the tool is a SAM tool, show options in an expansion panel -->
-                    <template v-else-if="tool.type === 'samAnnotation'">
-                      <div>
-                        <tool-item
-                          :tool="tool"
-                          :disabled="!isLoggedIn"
-                          v-bind="attrs"
-                          v-on="on"
-                        />
-                        <template
-                          v-if="selectedTool && selectedTool.id === tool.id"
-                        >
-                          <sam-tool-menu :toolConfiguration="tool" />
-                        </template>
-                      </div>
-                    </template>
-                    <!-- Otherwiser, only tool item -->
-                    <template v-else>
+        <v-list v-if="toolsetTools.length" density="compact" class="tight-list">
+          <template v-for="(tool, index) in toolsetTools" :key="index">
+            <v-tooltip
+              location="end"
+              transition="none"
+              z-index="100"
+              v-if="tool"
+            >
+              <template v-slot:activator="{ props: activatorProps }">
+                <!-- If type === segmentation, add an annotation worker menu -->
+                <template v-if="tool.type === 'segmentation'">
+                  <v-menu
+                    :ref="setAnnotationMenuRef"
+                    :closeOnClick="false"
+                    :closeOnContentClick="false"
+                    :model-value="!!selectedTool && selectedTool.id === tool.id"
+                    z-index="2100"
+                    location="end"
+                  >
+                    <template #activator="{ props: menuActivatorProps }">
                       <tool-item
                         :tool="tool"
                         :disabled="!isLoggedIn"
-                        v-bind="attrs"
-                        v-on="on"
+                        v-bind="mergeProps(activatorProps, menuActivatorProps)"
                       />
                     </template>
-                  </template>
-                  <div class="d-flex flex-column">
-                    <div style="margin: 5px">
-                      <div
-                        v-for="(
-                          propEntry, forKey
-                        ) in getToolPropertiesDescription(tool)"
-                        :key="forKey"
-                      >
-                        {{ propEntry[0] }}: {{ propEntry[1] }}
-                      </div>
-                    </div>
+                    <annotation-worker-menu
+                      :tool="tool"
+                      @loaded="onWorkerMenuLoaded"
+                      @close="store.setSelectedToolId(null)"
+                    />
+                  </v-menu>
+                </template>
+                <!-- When the tool is a SAM tool, show options in an expansion panel -->
+                <template v-else-if="tool.type === 'samAnnotation'">
+                  <div>
+                    <tool-item
+                      :tool="tool"
+                      :disabled="!isLoggedIn"
+                      v-bind="activatorProps"
+                    />
+                    <template
+                      v-if="selectedTool && selectedTool.id === tool.id"
+                    >
+                      <sam-tool-menu :toolConfiguration="tool" />
+                    </template>
                   </div>
-                </v-tooltip>
+                </template>
+                <!-- Otherwiser, only tool item -->
+                <template v-else>
+                  <tool-item
+                    :tool="tool"
+                    :disabled="!isLoggedIn"
+                    v-bind="activatorProps"
+                  />
+                </template>
               </template>
-            </draggable>
-          </v-list-item-group>
+              <div class="d-flex flex-column">
+                <div style="margin: 5px">
+                  <div
+                    v-for="(propEntry, forKey) in getToolPropertiesDescription(
+                      tool,
+                    )"
+                    :key="forKey"
+                  >
+                    {{ propEntry[0] }}: {{ propEntry[1] }}
+                  </div>
+                </div>
+              </div>
+            </v-tooltip>
+          </template>
           <circle-to-dot-menu
             :tool="selectedTool"
             v-if="
@@ -126,17 +106,31 @@
             "
           />
         </v-list>
-        <v-subheader v-if="!toolsetTools.length">
+        <v-list-subheader v-if="!toolsetTools.length">
           No tools in the current toolset.
-        </v-subheader>
-      </v-expansion-panel-content>
+        </v-list-subheader>
+      </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
+  <!-- Tool creation dialog (outside expansion panels to avoid watcher conflicts) -->
+  <v-dialog
+    v-model="toolCreationDialogOpen"
+    :width="toolCreationWide ? '85%' : '55%'"
+    :max-width="toolCreationWide ? '1400px' : '800px'"
+    class="tool-creation-dialog"
+    @update:model-value="onToolCreationDialogInput"
+  >
+    <tool-creation
+      @done="onToolCreationDone"
+      :open="toolCreationDialogOpen"
+      :initial-selected-tool="selectedToolType"
+      @advanced-changed="toolCreationWide = $event"
+    />
+  </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
-import draggable from "vuedraggable";
+<script setup lang="ts">
+import { ref, computed, nextTick, mergeProps } from "vue";
 import store from "@/store";
 import {
   AnnotationNames,
@@ -152,144 +146,142 @@ import ToolTypeSelection from "@/tools/creation/ToolTypeSelection.vue";
 import ToolItem from "./ToolItem.vue";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
-@Component({
-  components: {
-    ToolCreation,
-    ToolTypeSelection,
-    ToolItem,
-    AnnotationWorkerMenu,
-    SamToolMenu,
-    CircleToDotMenu,
-    draggable,
-  },
-})
-export default class Toolset extends Vue {
-  readonly store = store;
 
-  panels: number = 0;
-
-  get selectedToolId() {
-    return this.store.selectedTool?.configuration.id || null;
-  }
-
-  set selectedToolId(id: string | null) {
-    this.store.setSelectedToolId(id || null);
-  }
-
-  get tools() {
-    return this.store.tools;
-  }
-
-  get toolsetTools() {
-    return this.configuration?.tools || [];
-  }
-
-  get configuration() {
-    return this.store.configuration;
-  }
-
-  get selectedTool(): IToolConfiguration | null {
-    return this.store.selectedTool?.configuration ?? null;
-  }
-
-  get isLoggedIn() {
-    return this.store.isLoggedIn;
-  }
-
-  toolCreationDialogOpen: boolean = false;
-  toolTypeDialogOpen: boolean = false;
-  selectedToolType: any = null;
-
-  onToolCreationDone() {
-    // The child emitted "done" meaning the dialog is closing/cancelled/finished
-    this.toolCreationDialogOpen = false;
-    this.selectedToolType = null; // Now is the right time to clear it
-  }
-
-  onToolCreationDialogInput(newVal: boolean) {
-    this.toolCreationDialogOpen = newVal;
-    if (!newVal) {
-      // The dialog was just closed by clicking outside or ESC
-      this.selectedToolType = null;
-    }
-  }
-
-  handleToolTypeSelected(toolType: any) {
-    this.selectedToolType = toolType;
-    this.toolTypeDialogOpen = false;
-    this.toolCreationDialogOpen = true;
-  }
-
-  getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
-    const propDesc: string[][] = [["Name", tool.name]];
-
-    if (tool.values) {
-      const { values } = tool;
-
-      if (values.selectionType && values.selectionType.text) {
-        propDesc.push(["Selection type", values.selectionType.text]);
-      }
-
-      if (values.annotation) {
-        propDesc.push([
-          "Shape",
-          AnnotationNames[values.annotation.shape as AnnotationShape],
-        ]);
-        if (values.annotation.tags && values.annotation.tags.length) {
-          propDesc.push(["Tag(s)", values.annotation.tags.join(", ")]);
-        }
-      }
-      if (
-        values.connectTo &&
-        values.connectTo.tags &&
-        values.connectTo.tags.length
-      ) {
-        propDesc.push(["Connect to tags", values.connectTo.tags.join(", ")]);
-        const layerId = values.connectTo.layer;
-        const layer = this.store.getLayerFromId(layerId);
-        if (layer) {
-          propDesc.push(["Connect only on layer", layer.name]);
-        }
-      }
-    }
-
-    if (tool.hotkey !== null) {
-      propDesc.push(["Hotkey", tool.hotkey]);
-    }
-
-    return propDesc;
-  }
-
-  onWorkerMenuLoaded() {
-    this.$nextTick(() => {
-      // Access the menu component with the ref and cast it to any
-      const menuRef = this.$refs.annotationMenu as any;
-
-      // Handle case where ref is an array (multiple components with same ref)
-      // Note: in my own testing, I found that there were two components, and
-      // the first one was the one that needed to be updated.
-      if (Array.isArray(menuRef)) {
-        menuRef.forEach((menuItem) => {
-          if (menuItem) {
-            if (typeof menuItem.updateDimensions === "function") {
-              menuItem.updateDimensions();
-            }
-          }
-        });
-      }
-      // Handle case where ref is a single component
-      else if (menuRef) {
-        // Try updateDimensions first
-        if (typeof menuRef.updateDimensions === "function") {
-          menuRef.updateDimensions();
-        }
-      }
-    });
+const annotationMenuRefs = ref<any[]>([]);
+function setAnnotationMenuRef(el: any) {
+  if (el && !annotationMenuRefs.value.includes(el)) {
+    annotationMenuRefs.value.push(el);
   }
 }
+
+const panels = ref<number>(0);
+
+const selectedToolId = computed({
+  get: () => store.selectedTool?.configuration.id || null,
+  set: (id: string | null) => store.setSelectedToolId(id || null),
+});
+
+const tools = computed(() => store.tools);
+
+const configuration = computed(() => store.configuration);
+
+const toolsetTools = computed(() => configuration.value?.tools || []);
+
+const selectedTool = computed<IToolConfiguration | null>(
+  () => store.selectedTool?.configuration ?? null,
+);
+
+const isLoggedIn = computed(() => store.isLoggedIn);
+
+const toolCreationDialogOpen = ref(false);
+const toolTypeDialogOpen = ref(false);
+const selectedToolType = ref<any>(null);
+const toolCreationWide = ref(false);
+
+function onToolCreationDone() {
+  // The child emitted "done" meaning the dialog is closing/cancelled/finished
+  toolCreationDialogOpen.value = false;
+  selectedToolType.value = null; // Now is the right time to clear it
+}
+
+function onToolCreationDialogInput(newVal: boolean) {
+  toolCreationDialogOpen.value = newVal;
+  if (!newVal) {
+    // The dialog was just closed by clicking outside or ESC
+    selectedToolType.value = null;
+  }
+}
+
+function handleToolTypeSelected(toolType: any) {
+  selectedToolType.value = toolType;
+  toolTypeDialogOpen.value = false;
+  toolCreationDialogOpen.value = true;
+}
+
+function getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
+  const propDesc: string[][] = [["Name", tool.name]];
+
+  if (tool.values) {
+    const { values } = tool;
+
+    if (values.selectionType && values.selectionType.text) {
+      propDesc.push(["Selection type", values.selectionType.text]);
+    }
+
+    if (values.annotation) {
+      propDesc.push([
+        "Shape",
+        AnnotationNames[values.annotation.shape as AnnotationShape],
+      ]);
+      if (values.annotation.tags && values.annotation.tags.length) {
+        propDesc.push(["Tag(s)", values.annotation.tags.join(", ")]);
+      }
+    }
+    if (
+      values.connectTo &&
+      values.connectTo.tags &&
+      values.connectTo.tags.length
+    ) {
+      propDesc.push(["Connect to tags", values.connectTo.tags.join(", ")]);
+      const layerId = values.connectTo.layer;
+      const layer = store.getLayerFromId(layerId);
+      if (layer) {
+        propDesc.push(["Connect only on layer", layer.name]);
+      }
+    }
+  }
+
+  if (tool.hotkey !== null) {
+    propDesc.push(["Hotkey", tool.hotkey]);
+  }
+
+  return propDesc;
+}
+
+function onWorkerMenuLoaded() {
+  nextTick(() => {
+    for (const menuItem of annotationMenuRefs.value) {
+      if (menuItem && typeof menuItem.updateDimensions === "function") {
+        menuItem.updateDimensions();
+      }
+    }
+  });
+}
+
+defineExpose({
+  panels,
+  selectedToolId,
+  tools,
+  toolsetTools,
+  configuration,
+  selectedTool,
+  isLoggedIn,
+  toolCreationDialogOpen,
+  toolTypeDialogOpen,
+  selectedToolType,
+  toolCreationWide,
+  onToolCreationDone,
+  onToolCreationDialogInput,
+  handleToolTypeSelected,
+  getToolPropertiesDescription,
+  onWorkerMenuLoaded,
+});
 </script>
 <style scoped>
-.tight-list .v-list-item {
-  padding: 0px;
+.tight-list {
+  padding: 4px 0;
+}
+
+.tight-list :deep(.v-list-item) {
+  padding-left: 8px;
+  padding-right: 4px;
+}
+</style>
+<style>
+/* Unscoped: v-dialog teleports to body-level overlay container.
+   Vuetify 3 defaults .v-dialog { width: 50% } on the outer overlay,
+   making percentage-based content widths relative to half the viewport. */
+.tool-creation-dialog.v-dialog {
+  width: auto;
 }
 </style>

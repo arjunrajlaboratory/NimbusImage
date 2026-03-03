@@ -1,37 +1,27 @@
 <template>
   <v-tooltip
     v-if="enabled"
-    :top="position === 'top'"
-    :right="position === 'right'"
-    :bottom="position === 'bottom'"
-    :left="position === 'left'"
-    :activator="activator"
-    :open-delay="open_delay"
+    :location="position as any"
+    :activator="activator as any"
+    :open-delay="openDelay"
     content-class="nimbus-tooltip-overlay"
   >
     <span v-html="formattedTooltip(content)"></span>
   </v-tooltip>
 </template>
 
-<script lang="ts">
-import Vue from "vue";
+<script setup lang="ts">
+defineProps<{
+  activator: Element | string;
+  content: string;
+  position?: string;
+  openDelay?: number;
+  enabled?: boolean;
+}>();
 
-export default Vue.extend({
-  name: "NimbusTooltip",
-  props: {
-    activator: { required: true },
-    content: { type: String, required: true },
-    position: { type: String, required: false, default: "bottom" },
-    open_delay: { type: Number, default: 0 },
-    enabled: { type: Boolean, default: true },
-  },
-
-  methods: {
-    formattedTooltip(text: string): string {
-      return text.replace(/\n/g, "<br>");
-    },
-  },
-});
+function formattedTooltip(text: string): string {
+  return text.replace(/\n/g, "<br>");
+}
 </script>
 
 <style>

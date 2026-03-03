@@ -1,7 +1,7 @@
 <template>
-  <v-card class="mb-4" outlined>
+  <v-card class="mb-4" variant="outlined">
     <v-card-title class="subtitle-1 py-2">
-      <v-icon left small>mdi-share-variant</v-icon>
+      <v-icon start size="small">mdi-share-variant</v-icon>
       Sharing
     </v-card-title>
     <v-card-text>
@@ -13,11 +13,11 @@
           width="2"
           color="primary"
         />
-        <span class="ml-2 text-body-2 grey--text">Loading sharing info...</span>
+        <span class="ml-2 text-body-2 text-grey">Loading sharing info...</span>
       </div>
 
       <!-- Error / Unavailable State -->
-      <div v-else-if="!accessUsers" class="text-body-2 grey--text">
+      <div v-else-if="!accessUsers" class="text-body-2 text-grey">
         Sharing info unavailable.
       </div>
 
@@ -26,51 +26,47 @@
         <!-- Public Status -->
         <div class="d-flex align-center mb-2">
           <v-chip
-            small
+            size="small"
             :color="isPublic ? 'green' : 'grey'"
             :text-color="isPublic ? 'white' : 'white'"
             class="mr-2"
           >
-            <v-icon left small>
+            <v-icon start size="small">
               {{ isPublic ? "mdi-earth" : "mdi-lock" }}
             </v-icon>
             {{ isPublic ? "Public" : "Private" }}
           </v-chip>
-          <span v-if="isPublic" class="text-caption grey--text">
+          <span v-if="isPublic" class="text-caption text-grey">
             Read-only access for everyone
           </span>
         </div>
 
         <!-- User Access List -->
         <div v-if="accessUsers.length > 0" class="mt-2">
-          <div class="text-caption grey--text mb-1">
+          <div class="text-caption text-grey mb-1">
             {{ accessUsers.length }}
             {{ accessUsers.length === 1 ? "user" : "users" }} with access:
           </div>
-          <v-simple-table dense class="sharing-table">
-            <template #default>
-              <tbody>
-                <tr v-for="user in accessUsers" :key="user.id">
-                  <td class="text-body-2 py-1">
-                    {{ user.name || user.login }}
-                    <span
-                      v-if="user.email && user.email !== user.login"
-                      class="text-caption grey--text ml-1"
-                    >
-                      ({{ user.email }})
-                    </span>
-                  </td>
-                  <td class="text-body-2 py-1" style="width: 100px">
-                    <v-chip x-small :color="accessLevelColor(user.level)" dark>
-                      {{ accessLevelLabel(user.level) }}
-                    </v-chip>
-                  </td>
-                </tr>
-              </tbody>
-            </template>
-          </v-simple-table>
+          <div
+            v-for="user in accessUsers"
+            :key="user.id"
+            class="d-flex align-center py-1"
+          >
+            <span class="text-body-2 mr-2">
+              {{ user.name || user.login }}
+              <span
+                v-if="user.email && user.email !== user.login"
+                class="text-caption text-grey ml-1"
+              >
+                ({{ user.email }})
+              </span>
+            </span>
+            <v-chip size="x-small" :color="accessLevelColor(user.level)" dark>
+              {{ accessLevelLabel(user.level) }}
+            </v-chip>
+          </div>
         </div>
-        <div v-else class="text-body-2 grey--text mt-1">
+        <div v-else class="text-body-2 text-grey mt-1">
           No users have been granted access.
         </div>
       </div>
@@ -78,28 +74,20 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
 import { IDatasetAccessUser } from "@/store/model";
 import { accessLevelLabel, accessLevelColor } from "@/utils/accessLevel";
 
-@Component
-export default class SharingStatusDisplay extends Vue {
-  @Prop({ default: false }) readonly loading!: boolean;
-  @Prop({ default: false }) readonly isPublic!: boolean;
-  @Prop({ default: null }) readonly accessUsers!: IDatasetAccessUser[] | null;
+defineProps<{
+  loading?: boolean;
+  isPublic?: boolean;
+  accessUsers?: IDatasetAccessUser[] | null;
+}>();
 
-  accessLevelLabel = accessLevelLabel;
-  accessLevelColor = accessLevelColor;
-}
+defineExpose({
+  accessLevelLabel,
+  accessLevelColor,
+});
 </script>
 
-<style lang="scss" scoped>
-.sharing-table {
-  background: transparent !important;
-
-  td {
-    border-bottom: none !important;
-  }
-}
-</style>
+<style lang="scss" scoped></style>

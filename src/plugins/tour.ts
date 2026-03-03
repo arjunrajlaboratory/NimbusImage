@@ -1,6 +1,6 @@
-import Vue from "vue";
+import type { App } from "vue";
+import type { Router } from "vue-router";
 import Shepherd from "shepherd.js";
-import Router from "vue-router";
 import "shepherd.js/dist/css/shepherd.css";
 import "./tour.scss";
 import { tourBus } from "./tourBus";
@@ -21,11 +21,14 @@ export class TourManager {
   private isActive = false;
   private tours: Record<string, ITourMetadata> = {};
 
-  constructor(private router: Router) {
-    Vue.prototype.$startTour = this.startTour.bind(this);
-    Vue.prototype.$nextStep = this.nextStep.bind(this);
-    Vue.prototype.$loadAllTours = this.loadAllTours.bind(this);
-    Vue.prototype.$isTourActive = this.isTourActive.bind(this);
+  constructor(
+    private router: Router,
+    app: App,
+  ) {
+    app.config.globalProperties.$startTour = this.startTour.bind(this);
+    app.config.globalProperties.$nextStep = this.nextStep.bind(this);
+    app.config.globalProperties.$loadAllTours = this.loadAllTours.bind(this);
+    app.config.globalProperties.$isTourActive = this.isTourActive.bind(this);
 
     // Watch for route changes
     this.router.afterEach(() => {
@@ -61,7 +64,7 @@ export class TourManager {
     const currentStep = this.shepherd.steps[
       this.currentStepIndex
     ] as IExtendedShepherdStep;
-    const currentRoute = this.router.currentRoute.name;
+    const currentRoute = this.router.currentRoute.value.name;
     const expectedRoute = currentStep.options.route;
 
     if (currentRoute === expectedRoute) {
@@ -247,10 +250,6 @@ export class TourManager {
               }
             : undefined,
           popperOptions: {
-            // NOTE: LLMs often suggest that I use "fixed" strategy, but it
-            // has not seemed to solve any problems. Still, leaving here in case
-            // anyone wants to try it in the future.
-            // strategy: "fixed",
             modifiers: [
               {
                 name: "offset",
@@ -265,11 +264,6 @@ export class TourManager {
                   padding: 10,
                 },
               },
-              // NOTE: Although not needed now, this option was helpful when
-              // a tour step was clipped by some other element, thus hiding it.
-              // May be useful for future debugging purposes in case some tour
-              // step is hidden unexpectedly.
-              // { name: "hide", enabled: false },
             ],
           },
           title: step.title,
@@ -391,13 +385,13 @@ export class TourManager {
 
   private setupStepListeners = (step: any) => {
     if (step.onTriggerEvent) {
-      tourBus.$on(step.onTriggerEvent, this.handleNextStep);
+      tourBus.on(step.onTriggerEvent, this.handleNextStep);
     }
   };
 
   private removeStepListeners = (step: any) => {
     if (step.onTriggerEvent) {
-      tourBus.$off(step.onTriggerEvent, this.handleNextStep);
+      tourBus.off(step.onTriggerEvent, this.handleNextStep);
     }
   };
 
@@ -408,8 +402,9 @@ export class TourManager {
   };
 }
 
-declare module "vue/types/vue" {
-  interface Vue {
+// Vue 3: declare global properties for TypeScript
+declare module "vue" {
+  interface ComponentCustomProperties {
     $startTour: (tourName: string) => Promise<void>;
     $nextStep: (targetElementId?: string) => Promise<void>;
     $loadAllTours: () => Promise<Record<string, ITourMetadata>>;
@@ -417,6 +412,6 @@ declare module "vue/types/vue" {
   }
 }
 
-export function installTour(router: Router) {
-  return new TourManager(router);
+export function installTour(app: App, router: Router) {
+  return new TourManager(router, app);
 }

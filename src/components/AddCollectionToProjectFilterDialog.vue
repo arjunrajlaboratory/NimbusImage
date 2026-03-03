@@ -1,8 +1,8 @@
 <template>
   <v-card>
     <v-card-title>
-      <span class="text--secondary">Adding collection to project:</span>
-      <span class="text--primary ml-1">{{ project.name }}</span>
+      <span class="text-medium-emphasis">Adding collection to project:</span>
+      <span class="text-high-emphasis ml-1">{{ project.name }}</span>
     </v-card-title>
     <v-card-text>
       <v-text-field
@@ -10,8 +10,8 @@
         label="Search collections..."
         prepend-icon="mdi-magnify"
         clearable
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         class="mb-2"
       />
 
@@ -22,7 +22,7 @@
         class="text-center pa-4"
       >
         <v-icon size="48" color="grey">mdi-folder-multiple-outline</v-icon>
-        <div class="text-body-2 grey--text mt-2">
+        <div class="text-body-2 text-grey mt-2">
           {{
             searchQuery
               ? "No collections match your search"
@@ -31,42 +31,36 @@
         </div>
       </div>
 
-      <v-list v-else dense class="collection-list">
-        <v-list-item-group v-model="selectedIndices" multiple>
-          <v-list-item
-            v-for="(collection, index) in filteredCollections"
-            :key="collection.id"
+      <v-list v-else density="compact" class="collection-list">
+        <v-list-item
+          v-for="(collection, index) in filteredCollections"
+          :key="collection.id"
+          :disabled="isInProject(collection.id)"
+        >
+          <v-checkbox
+            :model-value="selectedIndices.includes(index)"
             :disabled="isInProject(collection.id)"
-          >
-            <v-list-item-action>
-              <v-checkbox
-                :input-value="selectedIndices.includes(index)"
-                :disabled="isInProject(collection.id)"
-                color="primary"
-              />
-            </v-list-item-action>
-            <v-list-item-content>
-              <v-list-item-title>
-                {{ collection.name }}
-                <v-chip
-                  v-if="isInProject(collection.id)"
-                  x-small
-                  class="ml-2"
-                  color="grey"
-                >
-                  Already in project
-                </v-chip>
-              </v-list-item-title>
-              <v-list-item-subtitle v-if="collection.description">
-                {{ collection.description }}
-              </v-list-item-subtitle>
-            </v-list-item-content>
-          </v-list-item>
-        </v-list-item-group>
+            color="primary"
+          />
+          <v-list-item-title>
+            {{ collection.name }}
+            <v-chip
+              v-if="isInProject(collection.id)"
+              size="x-small"
+              class="ml-2"
+              color="grey"
+            >
+              Already in project
+            </v-chip>
+          </v-list-item-title>
+          <v-list-item-subtitle v-if="collection.description">
+            {{ collection.description }}
+          </v-list-item-subtitle>
+        </v-list-item>
       </v-list>
     </v-card-text>
     <v-card-actions>
-      <v-btn text @click="$emit('done')">Cancel</v-btn>
+      <v-btn variant="text" @click="$emit('done')">Cancel</v-btn>
       <v-spacer />
       <v-btn
         color="primary"
@@ -92,7 +86,9 @@
           their permissions to match the project's access settings.
         </v-card-text>
         <v-card-actions class="justify-end" style="gap: 8px">
-          <v-btn text @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showPermissionConfirm = false"
+            >Cancel</v-btn
+          >
           <v-btn color="primary" @click="addCollections">Continue</v-btn>
         </v-card-actions>
       </v-card>
@@ -100,108 +96,122 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import { IProject, IDatasetConfiguration } from "@/store/model";
 import store from "@/store";
 import projects from "@/store/projects";
 
-@Component
-export default class AddCollectionToProjectFilterDialog extends Vue {
-  readonly store = store;
-  readonly projects = projects;
+const props = defineProps<{
+  project: IProject;
+  isShared?: boolean;
+  isPublic?: boolean;
+}>();
 
-  @Prop({ required: true })
-  project!: IProject;
+const emit = defineEmits<{
+  (e: "done"): void;
+  (e: "added", collectionIds: string[]): void;
+}>();
 
-  @Prop({ default: false })
-  isShared!: boolean;
+const searchQuery = ref("");
+const loading = ref(false);
+const adding = ref(false);
+const allCollections = ref<IDatasetConfiguration[]>([]);
+const selectedIndices = ref<number[]>([]);
+const showPermissionConfirm = ref(false);
 
-  @Prop({ default: false })
-  isPublic!: boolean;
+const existingCollectionIds = computed<Set<string>>(() => {
+  return new Set(props.project.meta.collections.map((c) => c.collectionId));
+});
 
-  searchQuery = "";
-  loading = false;
-  adding = false;
-  showPermissionConfirm = false;
-  allCollections: IDatasetConfiguration[] = [];
-  selectedIndices: number[] = [];
-
-  get existingCollectionIds(): Set<string> {
-    return new Set(this.project.meta.collections.map((c) => c.collectionId));
+const filteredCollections = computed<IDatasetConfiguration[]>(() => {
+  if (!searchQuery.value) {
+    return allCollections.value;
   }
+  const query = searchQuery.value.toLowerCase();
+  return allCollections.value.filter(
+    (c) =>
+      c.name.toLowerCase().includes(query) ||
+      (c.description && c.description.toLowerCase().includes(query)),
+  );
+});
 
-  get filteredCollections(): IDatasetConfiguration[] {
-    if (!this.searchQuery) {
-      return this.allCollections;
-    }
-    const query = this.searchQuery.toLowerCase();
-    return this.allCollections.filter(
-      (c) =>
-        c.name.toLowerCase().includes(query) ||
-        (c.description && c.description.toLowerCase().includes(query)),
-    );
-  }
+const selectedCollections = computed<IDatasetConfiguration[]>(() => {
+  return selectedIndices.value
+    .map((index) => filteredCollections.value[index])
+    .filter((c) => c && !isInProject(c.id));
+});
 
-  get selectedCollections(): IDatasetConfiguration[] {
-    return this.selectedIndices
-      .map((index) => this.filteredCollections[index])
-      .filter((c) => c && !this.isInProject(c.id));
-  }
+function isInProject(collectionId: string): boolean {
+  return existingCollectionIds.value.has(collectionId);
+}
 
-  mounted() {
-    this.fetchCollections();
-  }
-
-  @Watch("project")
-  onProjectChange() {
-    this.selectedIndices = [];
-  }
-
-  isInProject(collectionId: string): boolean {
-    return this.existingCollectionIds.has(collectionId);
-  }
-
-  async fetchCollections() {
-    this.loading = true;
-    try {
-      this.allCollections = await this.store.api.getAllConfigurations();
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  confirmAdd() {
-    if (this.selectedCollections.length === 0) return;
-    if (this.isShared || this.isPublic) {
-      this.showPermissionConfirm = true;
-    } else {
-      this.addCollections();
-    }
-  }
-
-  async addCollections() {
-    this.showPermissionConfirm = false;
-    if (this.selectedCollections.length === 0) return;
-
-    this.adding = true;
-    try {
-      for (const collection of this.selectedCollections) {
-        await this.projects.addCollectionToProject({
-          projectId: this.project.id,
-          collectionId: collection.id,
-        });
-      }
-      this.$emit(
-        "added",
-        this.selectedCollections.map((c) => c.id),
-      );
-      this.selectedIndices = [];
-    } finally {
-      this.adding = false;
-    }
+async function fetchCollections() {
+  loading.value = true;
+  try {
+    allCollections.value = await store.api.getAllConfigurations();
+  } finally {
+    loading.value = false;
   }
 }
+
+function confirmAdd() {
+  if (selectedCollections.value.length === 0) return;
+  if (props.isShared || props.isPublic) {
+    showPermissionConfirm.value = true;
+  } else {
+    addCollections();
+  }
+}
+
+async function addCollections() {
+  showPermissionConfirm.value = false;
+  if (selectedCollections.value.length === 0) return;
+
+  adding.value = true;
+  try {
+    for (const collection of selectedCollections.value) {
+      await projects.addCollectionToProject({
+        projectId: props.project.id,
+        collectionId: collection.id,
+      });
+    }
+    emit(
+      "added",
+      selectedCollections.value.map((c) => c.id),
+    );
+    selectedIndices.value = [];
+  } finally {
+    adding.value = false;
+  }
+}
+
+watch(
+  () => props.project,
+  () => {
+    selectedIndices.value = [];
+  },
+);
+
+onMounted(() => {
+  fetchCollections();
+});
+
+defineExpose({
+  searchQuery,
+  loading,
+  adding,
+  allCollections,
+  selectedIndices,
+  showPermissionConfirm,
+  existingCollectionIds,
+  filteredCollections,
+  selectedCollections,
+  isInProject,
+  fetchCollections,
+  confirmAdd,
+  addCollections,
+});
 </script>
 
 <style lang="scss" scoped>

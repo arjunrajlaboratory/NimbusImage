@@ -25,11 +25,11 @@
           'overflow-y-auto': embedded,
         }"
       >
-        <v-alert v-if="loading" type="info" text>
+        <v-alert v-if="loading" type="info" variant="tonal">
           Loading sample datasets...
         </v-alert>
 
-        <v-alert v-if="error" type="error" text>
+        <v-alert v-if="error" type="error" variant="tonal">
           {{ error }}
         </v-alert>
 
@@ -58,7 +58,7 @@
           <v-card
             v-for="dataset in datasets"
             :key="dataset.id"
-            outlined
+            variant="outlined"
             hover
             class="sample-dataset-card mb-3"
             @click="selectDataset(dataset)"
@@ -68,7 +68,7 @@
             <v-card-title class="pb-2">{{ dataset.title }}</v-card-title>
             <v-card-subtitle class="pb-2">
               <v-chip
-                x-small
+                size="x-small"
                 class="mr-1"
                 v-for="(creator, index) in dataset.metadata.creators"
                 :key="index"
@@ -85,10 +85,10 @@
                 v-html="dataset.metadata.description"
               ></div>
               <div class="mt-2">
-                <v-chip small color="primary" class="mr-1">
+                <v-chip size="small" color="primary" class="mr-1">
                   {{ dataset.files.length }} files
                 </v-chip>
-                <v-chip small>
+                <v-chip size="small">
                   {{ formatSize(getTotalSize(dataset.files)) }}
                 </v-chip>
               </div>
@@ -101,7 +101,7 @@
           v-if="totalPages > 1"
           v-model="currentPage"
           :length="totalPages"
-          @input="fetchCommunityRecords"
+          @update:model-value="fetchCommunityRecords"
           total-visible="7"
           class="mt-4"
         ></v-pagination>
@@ -110,8 +110,8 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, onMounted } from "vue";
 import store from "@/store";
 import ZenodoAPI, {
   IZenodoRecord,
@@ -121,92 +121,114 @@ import ZenodoAPI, {
 import { logError } from "@/utils/log";
 import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 
-@Component
-export default class ZenodoCommunityDisplay extends Vue {
-  @Prop({ default: "nimbusimagesampledatasets" })
-  readonly communityId!: string;
+const props = withDefaults(
+  defineProps<{
+    communityId?: string;
+    pageSize?: number;
+    embedded?: boolean;
+  }>(),
+  {
+    communityId: "nimbusimagesampledatasets",
+    pageSize: 10,
+    embedded: false,
+  },
+);
 
-  @Prop({ default: 10 })
-  readonly pageSize!: number;
+const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "dataset-selected", dataset: IZenodoRecord): void;
+}>();
 
-  @Prop({ default: false })
-  readonly embedded!: boolean;
+const zenodoApi = new ZenodoAPI(store.girderRestProxy);
 
-  private zenodoApi = new ZenodoAPI(store.girderRestProxy);
+const community = ref<IZenodoCommunity | null>(null);
+const datasets = ref<IZenodoRecord[]>([]);
 
-  getTourStepId = getTourStepId;
-  getTourTriggerId = getTourTriggerId;
+const loading = ref(true);
+const error = ref("");
 
-  community: IZenodoCommunity | null = null;
-  datasets: IZenodoRecord[] = [];
+const currentPage = ref(1);
+const totalPages = ref(1);
+const totalRecords = ref(0);
 
-  loading = true;
-  error = "";
+async function fetchCommunity() {
+  loading.value = true;
+  error.value = "";
 
-  currentPage = 1;
-  totalPages = 1;
-  totalRecords = 0;
-
-  async mounted() {
-    await this.fetchCommunity();
-    await this.fetchCommunityRecords();
-  }
-
-  async fetchCommunity() {
-    this.loading = true;
-    this.error = "";
-
-    try {
-      this.community = await this.zenodoApi.getCommunity(this.communityId);
-    } catch (err) {
-      this.error = "Failed to load community information.";
-      logError("Failed to fetch Zenodo community", err);
-    }
-  }
-
-  async fetchCommunityRecords() {
-    this.loading = true;
-    this.error = "";
-
-    try {
-      const response = await this.zenodoApi.getCommunityRecords(
-        this.communityId,
-        this.currentPage,
-        this.pageSize,
-      );
-
-      this.datasets = response.hits.hits;
-      this.totalRecords = response.hits.total;
-      this.totalPages = Math.ceil(this.totalRecords / this.pageSize);
-    } catch (err) {
-      this.error = "Failed to load sample datasets.";
-      logError("Failed to fetch Zenodo community records", err);
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  selectDataset(dataset: IZenodoRecord) {
-    this.$emit("dataset-selected", dataset);
-  }
-
-  formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    return date.toLocaleDateString();
-  }
-
-  formatSize(bytes: number): string {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
-    if (bytes < 1024 * 1024 * 1024)
-      return (bytes / (1024 * 1024)).toFixed(2) + " MB";
-    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
-  }
-
-  getTotalSize(files: IZenodoFile[]): number {
-    return files.reduce((total, file) => total + file.size, 0);
+  try {
+    community.value = await zenodoApi.getCommunity(props.communityId);
+  } catch (err) {
+    error.value = "Failed to load community information.";
+    logError("Failed to fetch Zenodo community", err);
   }
 }
+
+async function fetchCommunityRecords() {
+  loading.value = true;
+  error.value = "";
+
+  try {
+    const response = await zenodoApi.getCommunityRecords(
+      props.communityId,
+      currentPage.value,
+      props.pageSize,
+    );
+
+    datasets.value = response.hits.hits;
+    totalRecords.value = response.hits.total;
+    totalPages.value = Math.ceil(totalRecords.value / props.pageSize);
+  } catch (err) {
+    error.value = "Failed to load sample datasets.";
+    logError("Failed to fetch Zenodo community records", err);
+  } finally {
+    loading.value = false;
+  }
+}
+
+function selectDataset(dataset: IZenodoRecord) {
+  emit("dataset-selected", dataset);
+}
+
+function formatDate(dateString: string): string {
+  const date = new Date(dateString);
+  return date.toLocaleDateString();
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
+  if (bytes < 1024 * 1024 * 1024)
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+}
+
+function getTotalSize(files: IZenodoFile[]): number {
+  return files.reduce((total, file) => total + file.size, 0);
+}
+
+onMounted(async () => {
+  await fetchCommunity();
+  await fetchCommunityRecords();
+});
+
+defineExpose({
+  community,
+  datasets,
+  loading,
+  error,
+  currentPage,
+  totalPages,
+  totalRecords,
+  zenodoApi,
+  fetchCommunity,
+  fetchCommunityRecords,
+  selectDataset,
+  formatDate,
+  formatSize,
+  getTotalSize,
+  getTourStepId,
+  getTourTriggerId,
+});
 </script>
 
 <style scoped>

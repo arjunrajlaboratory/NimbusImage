@@ -1,11 +1,11 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header> Actions </v-expansion-panel-header>
-    <v-expansion-panel-content>
+    <v-expansion-panel-title> Actions </v-expansion-panel-title>
+    <v-expansion-panel-text>
       <v-container>
         <v-row>
           <v-col class="pa-1">
-            <v-btn :disabled="!undoEntry || isDoing" @click.native="undo" block>
+            <v-btn :disabled="!undoEntry || isDoing" @click="undo" block>
               <template v-if="undoEntry">
                 Undo {{ undoEntry.actionName }}
               </template>
@@ -13,7 +13,7 @@
             </v-btn>
           </v-col>
           <v-col class="pa-1">
-            <v-btn :disabled="!redoEntry || isDoing" @click.native="redo" block>
+            <v-btn :disabled="!redoEntry || isDoing" @click="redo" block>
               <template v-if="redoEntry">
                 Redo {{ redoEntry.actionName }}
               </template>
@@ -28,14 +28,10 @@
         </v-row>
         <v-row>
           <v-col class="pa-1">
-            <v-btn
-              v-if="selectionFilterEnabled"
-              @click.native="clearSelection"
-              block
-            >
+            <v-btn v-if="selectionFilterEnabled" @click="clearSelection" block>
               Clear selection filter
             </v-btn>
-            <v-btn v-else @click.native="filterBySelection" block>
+            <v-btn v-else @click="filterBySelection" block>
               Use selection as filter
             </v-btn>
           </v-col>
@@ -64,12 +60,12 @@
           </v-col>
         </v-row>
       </v-container>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
@@ -81,80 +77,65 @@ import AnnotationImport from "@/components/AnnotationBrowser/AnnotationImport.vu
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import IndexConversionDialog from "@/components/AnnotationBrowser/IndexConversionDialog.vue";
 
-@Component({
-  components: {
-    AnnotationCsvDialog,
-    AnnotationExport,
-    AnnotationImport,
-    DeleteConnections,
-    IndexConversionDialog,
-  },
-})
-export default class AnnotationActions extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
-  readonly propertyStore = propertyStore;
-  readonly filterStore = filterStore;
+const isDoing = ref(false);
 
-  isDoing: boolean = false;
+const propertyPaths = computed(() => propertyStore.computedPropertyPaths);
 
-  get propertyPaths() {
-    return propertyStore.computedPropertyPaths;
-  }
+const history = computed(() => store.history);
 
-  get undoEntry() {
-    return this.history.find((entry) => !entry.isUndone);
-  }
+const undoEntry = computed(() =>
+  history.value.find((entry) => !entry.isUndone),
+);
 
-  get redoEntry() {
-    // Use findLast(entry => entry.isUndone) as in undoEntry() when typescript agrees
-    const history = this.history;
-    for (let i = history.length; i-- > 0; ) {
-      if (history[i].isUndone) {
-        return history[i];
-      }
-    }
-    return undefined;
-  }
-
-  get filteredAnnotations() {
-    return this.filterStore.filteredAnnotations;
-  }
-
-  get selectionFilterEnabled() {
-    return this.filterStore.selectionFilter.enabled;
-  }
-
-  get propertyIds() {
-    return this.propertyStore.properties.map((p) => p.id);
-  }
-
-  get history() {
-    return this.store.history;
-  }
-
-  async undoOrRedo(undo: boolean) {
-    try {
-      this.isDoing = true;
-      await this.annotationStore.undoOrRedo(undo);
-    } finally {
-      this.isDoing = false;
+const redoEntry = computed(() => {
+  const h = history.value;
+  for (let i = h.length; i-- > 0; ) {
+    if (h[i].isUndone) {
+      return h[i];
     }
   }
+  return undefined;
+});
 
-  async undo() {
-    await this.undoOrRedo(true);
-  }
+const filteredAnnotations = computed(() => filterStore.filteredAnnotations);
+const selectionFilterEnabled = computed(
+  () => filterStore.selectionFilter.enabled,
+);
 
-  async redo() {
-    await this.undoOrRedo(false);
-  }
-
-  clearSelection() {
-    this.filterStore.clearSelection();
-  }
-  filterBySelection() {
-    this.filterStore.addSelectionAsFilter();
+async function undoOrRedo(undo: boolean) {
+  try {
+    isDoing.value = true;
+    await annotationStore.undoOrRedo(undo);
+  } finally {
+    isDoing.value = false;
   }
 }
+
+async function undo() {
+  await undoOrRedo(true);
+}
+
+async function redo() {
+  await undoOrRedo(false);
+}
+
+function clearSelection() {
+  filterStore.clearSelection();
+}
+
+function filterBySelection() {
+  filterStore.addSelectionAsFilter();
+}
+
+defineExpose({
+  undoEntry,
+  redoEntry,
+  undo,
+  redo,
+  clearSelection,
+  filterBySelection,
+  isDoing,
+  filteredAnnotations,
+  propertyPaths,
+});
 </script>

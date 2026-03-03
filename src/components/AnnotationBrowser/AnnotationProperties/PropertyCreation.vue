@@ -9,10 +9,10 @@
     <v-card-text>
       <v-container class="pa-2">
         <v-row align="center" class="mb-1" dense>
-          <v-col cols="3">
-            <v-subheader dense>Measure by tag:</v-subheader>
+          <v-col cols="4">
+            <v-list-subheader dense>Measure by tag:</v-list-subheader>
           </v-col>
-          <v-col cols="6">
+          <v-col cols="5">
             <tag-picker
               v-model="filteringTags"
               dense
@@ -25,23 +25,25 @@
               v-model="areTagsExclusive"
               label="Exclusive"
               hide-details
-              dense
+              density="compact"
             ></v-checkbox>
           </v-col>
         </v-row>
         <v-row align="center" dense>
-          <v-col cols="3">
-            <v-subheader dense id="shape-selection-tourstep">{{
+          <v-col cols="4">
+            <v-list-subheader dense id="shape-selection-tourstep">{{
               shapeSelectionString
-            }}</v-subheader>
+            }}</v-list-subheader>
           </v-col>
-          <v-col cols="9">
+          <v-col cols="8">
             <v-select
               v-model="filteringShape"
               :items="availableShapes"
+              item-title="text"
+              item-value="value"
               label="Shape"
               hide-details
-              dense
+              density="compact"
               :disabled="filteringTags.length > 0"
             ></v-select>
           </v-col>
@@ -76,7 +78,7 @@
                 v-model="originalName"
                 label="Property name"
                 rows="1"
-                dense
+                density="compact"
                 hide-details
                 :append-icon="isNameGenerated ? '' : 'mdi-refresh'"
                 @click:append="isNameGenerated = true"
@@ -90,7 +92,7 @@
         v-model="computeUponCreation"
         label="Compute upon creation"
         class="mt-2"
-        dense
+        density="compact"
         hide-details
       />
       <div class="button-bar mt-2">
@@ -98,20 +100,22 @@
         <v-btn
           class="mr-2"
           color="primary"
-          small
+          size="small"
           @click="createProperty"
           id="create-property-button-tourstep"
           v-tour-trigger="'create-property-button-tourtrigger'"
         >
           Create Property
         </v-btn>
-        <v-btn class="mr-2" color="warning" small @click="reset">Reset</v-btn>
+        <v-btn class="mr-2" color="warning" size="small" @click="reset"
+          >Reset</v-btn
+        >
       </div>
     </v-card-text>
   </v-card>
 </template>
-<script lang="ts">
-import { Vue, Component, Watch, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import store from "@/store";
 import propertiesStore from "@/store/properties";
 import annotationStore from "@/store/annotation";
@@ -120,8 +124,6 @@ import {
   IWorkerLabels,
   IWorkerInterfaceValues,
 } from "@/store/model";
-import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
-import LayerSelect from "@/components/LayerSelect.vue";
 import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import PropertyWorkerMenu from "@/components/PropertyWorkerMenu.vue";
@@ -151,186 +153,206 @@ function removeRepeatedWords(input: string): string {
   return result.join(" ");
 }
 
-// Popup for new tool configuration
-@Component({
-  components: {
-    LayerSelect,
-    TagFilterEditor,
-    DockerImageSelect,
-    TagPicker,
-    PropertyWorkerMenu,
+const props = withDefaults(
+  defineProps<{
+    applyToAllDatasets?: boolean;
+  }>(),
+  {
+    applyToAllDatasets: false,
   },
-})
-export default class PropertyCreation extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertiesStore;
-  readonly annotationStore = annotationStore;
+);
 
-  @Prop({ type: Boolean, default: false })
-  readonly applyToAllDatasets!: boolean;
+const emit = defineEmits<{
+  (e: "compute-property-batch", property: any): void;
+}>();
 
-  availableShapes = this.store.availableToolShapes;
+const availableShapes = store.availableToolShapes;
 
-  areTagsExclusive: boolean = false;
-  filteringTags: string[] = [];
-  filteringShape: AnnotationShape | null = null;
+const areTagsExclusive = ref<boolean>(false);
+const filteringTags = ref<string[]>([]);
+const filteringShape = ref<AnnotationShape | null>(null);
 
-  originalName = "New Property";
-  isNameGenerated = true;
+const originalName = ref("New Property");
+const isNameGenerated = ref(true);
 
-  interfaceValues: IWorkerInterfaceValues = {};
+const interfaceValues = ref<IWorkerInterfaceValues>({});
 
-  computeUponCreation = true;
+const computeUponCreation = ref(true);
 
-  get deduplicatedName() {
-    // Find a name which is not already taken
-    let count = 0;
-    let candidateName = this.originalName;
-    while (
-      this.propertyStore.properties.some(
-        (property) => property.name === candidateName,
-      )
-    ) {
-      candidateName = `${this.originalName} (${++count})`;
-    }
-    return candidateName;
+const dockerImage = ref<string | null>(null);
+
+const deduplicatedName = computed(() => {
+  // Find a name which is not already taken
+  let count = 0;
+  let candidateName = originalName.value;
+  while (
+    propertiesStore.properties.some(
+      (property) => property.name === candidateName,
+    )
+  ) {
+    candidateName = `${originalName.value} (${++count})`;
   }
+  return candidateName;
+});
 
-  get generatedName() {
-    let nameList = [];
-    if (this.filteringTags.length) {
-      nameList.push(this.filteringTags.join(", "));
+const generatedName = computed(() => {
+  let nameList = [];
+  if (filteringTags.value.length) {
+    nameList.push(filteringTags.value.join(", "));
+  } else {
+    if (areTagsExclusive.value) {
+      nameList.push("No tag");
     } else {
-      if (this.areTagsExclusive) {
-        nameList.push("No tag");
-      } else {
-        nameList.push("All");
-      }
+      nameList.push("All");
     }
-    if (this.dockerImage) {
-      const imageInterfaceName =
-        this.propertyStore.workerImageList[this.dockerImage]?.interfaceName;
-      if (imageInterfaceName) {
-        nameList.push(imageInterfaceName);
-      } else {
-        nameList.push(this.dockerImage);
-      }
+  }
+  if (dockerImage.value) {
+    const imageInterfaceName =
+      propertiesStore.workerImageList[dockerImage.value]?.interfaceName;
+    if (imageInterfaceName) {
+      nameList.push(imageInterfaceName);
     } else {
-      nameList.push("No image");
+      nameList.push(dockerImage.value);
     }
-    return removeRepeatedWords(nameList.join(" "));
+  } else {
+    nameList.push("No image");
   }
+  return removeRepeatedWords(nameList.join(" "));
+});
 
-  @Watch("isNameGenerated")
-  @Watch("generatedName")
-  generatedNameChanged() {
-    if (this.isNameGenerated) {
-      this.originalName = this.generatedName;
-    }
-  }
-
-  dockerImage: string | null = null;
-
-  get propertyImageFilter() {
-    return (labels: IWorkerLabels) => {
-      return (
-        labels.isPropertyWorker !== undefined &&
-        ((labels.annotationShape || null) === this.filteringShape ||
-          (labels.annotationShape || null) === AnnotationShape.Any)
-      );
-    };
-  }
-
-  @Watch("filteringShape")
-  filteringShapeChanged() {
-    this.dockerImage = null;
-  }
-
-  @Watch("filteringTags")
-  filteringTagsChanged() {
-    // If no tags are selected, then reset the shape to null
-    if (this.filteringTags.length === 0) {
-      this.filteringShape = null;
-      return;
-    }
-    // The keys of counts are in AnnotationShape
-    // Find the best matching shape for these tags
-    const counts: { [key: string]: number } = {};
-    for (const annotation of this.annotationStore.annotations) {
-      if (
-        tagFilterFunction(
-          annotation.tags,
-          this.filteringTags,
-          this.areTagsExclusive,
-        )
-      ) {
-        if (counts[annotation.shape] === undefined) {
-          counts[annotation.shape] = 0;
-        }
-        ++counts[annotation.shape];
-      }
-    }
-    let bestCount = 0;
-    for (const shape in counts) {
-      if (counts[shape] !== undefined && counts[shape] > bestCount) {
-        bestCount = counts[shape];
-        this.filteringShape = shape as AnnotationShape;
-      }
-    }
-  }
-
-  @Watch("dockerImage")
-  dockerImageChanged() {
-    this.isNameGenerated = true;
-    if (this.dockerImage) {
-      this.propertyStore.fetchWorkerInterface({ image: this.dockerImage });
-    }
-  }
-
-  createProperty() {
-    if (!this.dockerImage || !this.filteringShape) {
-      return;
-    }
-    this.propertyStore
-      .createProperty({
-        name: this.deduplicatedName,
-        image: this.dockerImage,
-        tags: {
-          tags: this.filteringTags,
-          exclusive: this.areTagsExclusive,
-        },
-        shape: this.filteringShape,
-        workerInterface: this.interfaceValues,
-      })
-      .then((property) => {
-        this.propertyStore.togglePropertyPathVisibility([property.id]);
-        if (this.computeUponCreation) {
-          if (this.applyToAllDatasets) {
-            this.$emit("compute-property-batch", property);
-          } else {
-            this.propertyStore.computeProperty({
-              property,
-              errorInfo: { errors: [] },
-            });
-          }
-        }
-      });
-    this.reset();
-  }
-
-  reset() {
-    this.filteringTags = [];
-    this.areTagsExclusive = false;
-    this.filteringShape = null;
-    this.dockerImage = null;
-    this.originalName = "New Property";
-    this.isNameGenerated = true;
-  }
-
-  get shapeSelectionString(): string {
-    return this.filteringTags.length > 0 ? "Of shape:" : "Or by shape:";
+function generatedNameChanged() {
+  if (isNameGenerated.value) {
+    originalName.value = generatedName.value;
   }
 }
+
+watch(isNameGenerated, generatedNameChanged);
+watch(generatedName, generatedNameChanged);
+
+const propertyImageFilter = computed(() => {
+  return (labels: IWorkerLabels) => {
+    return (
+      labels.isPropertyWorker !== undefined &&
+      ((labels.annotationShape || null) === filteringShape.value ||
+        (labels.annotationShape || null) === AnnotationShape.Any)
+    );
+  };
+});
+
+function filteringShapeChanged() {
+  dockerImage.value = null;
+}
+
+watch(filteringShape, filteringShapeChanged);
+
+function filteringTagsChanged() {
+  // If no tags are selected, then reset the shape to null
+  if (filteringTags.value.length === 0) {
+    filteringShape.value = null;
+    return;
+  }
+  // The keys of counts are in AnnotationShape
+  // Find the best matching shape for these tags
+  const counts: { [key: string]: number } = {};
+  for (const annotation of annotationStore.annotations) {
+    if (
+      tagFilterFunction(
+        annotation.tags,
+        filteringTags.value,
+        areTagsExclusive.value,
+      )
+    ) {
+      if (counts[annotation.shape] === undefined) {
+        counts[annotation.shape] = 0;
+      }
+      ++counts[annotation.shape];
+    }
+  }
+  let bestCount = 0;
+  for (const shape in counts) {
+    if (counts[shape] !== undefined && counts[shape] > bestCount) {
+      bestCount = counts[shape];
+      filteringShape.value = shape as AnnotationShape;
+    }
+  }
+}
+
+watch(filteringTags, filteringTagsChanged);
+
+function dockerImageChanged() {
+  isNameGenerated.value = true;
+  if (dockerImage.value) {
+    propertiesStore.fetchWorkerInterface({ image: dockerImage.value });
+  }
+}
+
+watch(dockerImage, dockerImageChanged);
+
+function createProperty() {
+  if (!dockerImage.value || !filteringShape.value) {
+    return;
+  }
+  propertiesStore
+    .createProperty({
+      name: deduplicatedName.value,
+      image: dockerImage.value,
+      tags: {
+        tags: filteringTags.value,
+        exclusive: areTagsExclusive.value,
+      },
+      shape: filteringShape.value,
+      workerInterface: interfaceValues.value,
+    })
+    .then((property) => {
+      propertiesStore.togglePropertyPathVisibility([property.id]);
+      if (computeUponCreation.value) {
+        if (props.applyToAllDatasets) {
+          emit("compute-property-batch", property);
+        } else {
+          propertiesStore.computeProperty({
+            property,
+            errorInfo: { errors: [] },
+          });
+        }
+      }
+    });
+  reset();
+}
+
+function reset() {
+  filteringTags.value = [];
+  areTagsExclusive.value = false;
+  filteringShape.value = null;
+  dockerImage.value = null;
+  originalName.value = "New Property";
+  isNameGenerated.value = true;
+}
+
+const shapeSelectionString = computed((): string => {
+  return filteringTags.value.length > 0 ? "Of shape:" : "Or by shape:";
+});
+
+defineExpose({
+  areTagsExclusive,
+  filteringTags,
+  filteringShape,
+  originalName,
+  isNameGenerated,
+  interfaceValues,
+  computeUponCreation,
+  dockerImage,
+  deduplicatedName,
+  generatedName,
+  propertyImageFilter,
+  shapeSelectionString,
+  createProperty,
+  reset,
+  availableShapes,
+  generatedNameChanged,
+  filteringShapeChanged,
+  filteringTagsChanged,
+  dockerImageChanged,
+});
 </script>
 <style lang="scss" scoped>
 .property-creation-card {

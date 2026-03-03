@@ -5,9 +5,9 @@ import NewConfiguration from "./NewConfiguration.vue";
 import DuplicateImportConfiguration from "./DuplicateImportConfiguration.vue";
 
 import { Main } from "@/store";
-import { RouteConfig } from "vue-router";
+import type { RouteRecordRaw } from "vue-router";
 
-const routes: RouteConfig[] = [
+const routes: RouteRecordRaw[] = [
   {
     path: "new",
     name: "newconfiguration",

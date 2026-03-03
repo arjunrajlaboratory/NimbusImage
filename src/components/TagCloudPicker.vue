@@ -12,33 +12,32 @@
       class="ma-1"
     />
     <v-chip-group
-      @change="setTagsFromUserInput($event)"
-      :value="tags"
+      @update:model-value="setTagsFromUserInput($event)"
+      :model-value="tags"
       column
       multiple
-      active-class="selected-chip"
+      selected-class=""
     >
       <v-chip
         v-for="tag in displayedTags"
         :key="tag"
         :value="tag"
-        :class="{
-          'selected-chip': tags.includes(tag),
-        }"
-        outlined
-        x-small
+        :variant="tags.includes(tag) ? 'flat' : 'outlined'"
+        :color="tags.includes(tag) ? 'white' : undefined"
+        :style="tags.includes(tag) ? {} : { opacity: 0.4 }"
+        size="x-small"
         class="d-flex align-center"
       >
         {{ tag }}
-        <v-menu offset-y :close-on-content-click="false" bottom>
-          <template v-slot:activator="{ on, attrs }">
-            <v-icon x-small class="ml-1" v-bind="attrs" v-on="on">
+        <v-menu :close-on-content-click="false" location="bottom">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-icon size="x-small" class="ml-1" v-bind="activatorProps">
               mdi-chevron-down
             </v-icon>
           </template>
           <v-card min-width="250" @click.stop :ripple="false">
             <v-card-text>
-              <v-list dense class="pa-0">
+              <v-list density="compact" class="pa-0">
                 <v-list-item @click="handleTagAddToAll(tag)">
                   <v-list-item-title
                     >Add tag to all annotations</v-list-item-title
@@ -80,116 +79,136 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch, VModel, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import SelectAllNoneChips from "./SelectAllNoneChips.vue";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import { IAnnotation } from "@/store/model";
 
-@Component({
-  components: {
-    SelectAllNoneChips,
-    ColorPickerMenu,
+const props = withDefaults(
+  defineProps<{
+    modelValue: string[];
+    allSelected: boolean;
+  }>(),
+  {
+    modelValue: () => [],
   },
-})
-export default class TagCloudPicker extends Vue {
-  @VModel({ type: Array, default: () => [] })
-  tags!: string[];
+);
 
-  readonly store = store;
-  readonly annotationStore = annotationStore;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: string[]): void;
+  (e: "update:allSelected", value: boolean): void;
+}>();
 
-  @Prop({ required: true })
-  allSelected!: boolean;
+const tags = computed({
+  get() {
+    return props.modelValue;
+  },
+  set(val: string[]) {
+    emit("update:modelValue", val);
+  },
+});
 
-  allSelectedInternal = false;
-  tagSearchFilter: string = "";
-  tagColor = "#FFFFFF";
-  colorOption = "defined";
+const allSelectedInternal = ref(false);
+const tagSearchFilter = ref("");
+const tagColor = ref("#FFFFFF");
+const colorOption = ref("defined");
 
-  @Watch("allSelectedInternal")
-  emiAllSelected() {
-    this.$emit("update:allSelected", this.allSelectedInternal);
+watch(allSelectedInternal, (val) => {
+  emit("update:allSelected", val);
+});
+
+watch(
+  () => props.allSelected,
+  (val) => {
+    allSelectedInternal.value = val;
+  },
+);
+
+const availableTags = computed((): string[] => {
+  return Array.from(
+    new Set([...annotationStore.annotationTags, ...store.toolTags]),
+  );
+});
+
+const displayedTags = computed((): string[] => {
+  if (!tagSearchFilter.value) {
+    return availableTags.value;
   }
+  const lowerCaseFilter = tagSearchFilter.value.toLowerCase();
+  return availableTags.value.filter((tag) =>
+    tag.toLowerCase().includes(lowerCaseFilter),
+  );
+});
 
-  @Watch("allSelected")
-  allSelectedPropChanged() {
-    this.allSelectedInternal = this.allSelected;
-  }
-
-  mounted() {
-    this.allSelectedPropChanged();
-    this.updateTagsIfAllSelected();
-  }
-
-  get availableTags(): string[] {
-    return Array.from(
-      new Set([...this.annotationStore.annotationTags, ...this.store.toolTags]),
-    );
-  }
-
-  get displayedTags(): string[] {
-    if (!this.tagSearchFilter) {
-      return this.availableTags;
-    }
-    const lowerCaseFilter = this.tagSearchFilter.toLowerCase();
-    return this.availableTags.filter((tag) =>
-      tag.toLowerCase().includes(lowerCaseFilter),
-    );
-  }
-
-  @Watch("availableTags")
-  @Watch("allSelected")
-  updateTagsIfAllSelected() {
-    if (this.allSelectedInternal) {
-      this.tags = [...this.availableTags];
-    }
-  }
-
-  setTagsFromUserInput(tags: string[]) {
-    this.allSelectedInternal = false;
-    this.tags = [...tags];
-  }
-
-  selectAll() {
-    this.allSelectedInternal = true;
-  }
-
-  selectNone() {
-    this.setTagsFromUserInput([]);
-  }
-
-  async handleTagAddToAll(tag: string) {
-    await this.annotationStore.addTagsToAllAnnotations([tag]);
-  }
-
-  async handleTagRemoveFromAll(tag: string) {
-    await this.annotationStore.removeTagsFromAllAnnotations([tag]);
-  }
-
-  async applyColorToTag(tag: string) {
-    const annotationsWithTag = this.annotationStore.annotations.filter(
-      (annotation: IAnnotation) => annotation.tags.includes(tag),
-    );
-    const annotationIds = annotationsWithTag.map((a: IAnnotation) => a.id);
-
-    // Determine the color based on the selected option
-    const isRandomColor = this.colorOption === "random";
-    const color = this.colorOption === "layer" ? null : this.tagColor;
-
-    await this.annotationStore.colorAnnotationIds({
-      annotationIds,
-      color,
-      randomize: isRandomColor,
-    });
+function updateTagsIfAllSelected() {
+  if (allSelectedInternal.value) {
+    tags.value = [...availableTags.value];
   }
 }
+
+watch(availableTags, updateTagsIfAllSelected);
+watch(() => props.allSelected, updateTagsIfAllSelected);
+
+function setTagsFromUserInput(newTags: string[]) {
+  allSelectedInternal.value = false;
+  tags.value = [...newTags];
+}
+
+function selectAll() {
+  allSelectedInternal.value = true;
+}
+
+function selectNone() {
+  setTagsFromUserInput([]);
+}
+
+async function handleTagAddToAll(tag: string) {
+  await annotationStore.addTagsToAllAnnotations([tag]);
+}
+
+async function handleTagRemoveFromAll(tag: string) {
+  await annotationStore.removeTagsFromAllAnnotations([tag]);
+}
+
+async function applyColorToTag(tag: string) {
+  const annotationsWithTag = annotationStore.annotations.filter(
+    (annotation: IAnnotation) => annotation.tags.includes(tag),
+  );
+  const annotationIds = annotationsWithTag.map((a: IAnnotation) => a.id);
+
+  const isRandomColor = colorOption.value === "random";
+  const color = colorOption.value === "layer" ? null : tagColor.value;
+
+  await annotationStore.colorAnnotationIds({
+    annotationIds,
+    color,
+    randomize: isRandomColor,
+  });
+}
+
+onMounted(() => {
+  allSelectedInternal.value = props.allSelected;
+  updateTagsIfAllSelected();
+});
+
+defineExpose({
+  tags,
+  allSelectedInternal,
+  tagSearchFilter,
+  tagColor,
+  colorOption,
+  availableTags,
+  displayedTags,
+  selectAll,
+  selectNone,
+  setTagsFromUserInput,
+  handleTagAddToAll,
+  handleTagRemoveFromAll,
+  applyColorToTag,
+});
 </script>
 
-<style lang="scss" scoped>
-.selected-chip {
-  border-color: #ffffff !important;
-}
-</style>
+<style lang="scss" scoped></style>

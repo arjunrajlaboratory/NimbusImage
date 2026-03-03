@@ -1,18 +1,35 @@
 <template>
   <v-card :class="{ menu: true, loaded: !fetchingWorkerInterface }" v-if="tool">
-    <v-card-title class="subtitle-1">
-      {{ tool.name || "Worker menu" }}
-      <v-spacer />
-      <v-btn small text class="mr-2" @click="resetInterfaceValues()">
-        <v-icon small left>mdi-refresh</v-icon>
-        Reset
-      </v-btn>
-      <v-icon
-        @click="updateInterface(true)"
-        v-tooltip="'Refresh worker interface from the server'"
-      >
-        mdi-sync
-      </v-icon>
+    <v-card-title class="subtitle-1 d-flex align-start">
+      <span class="flex-grow-1">{{ tool.name || "Worker menu" }}</span>
+      <div class="d-flex flex-column ml-2 action-buttons">
+        <v-tooltip text="Reset all values to defaults">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              size="x-small"
+              variant="text"
+              @click="resetInterfaceValues()"
+            >
+              <v-icon size="x-small" start>mdi-refresh</v-icon>
+              Reset defaults
+            </v-btn>
+          </template>
+        </v-tooltip>
+        <v-tooltip text="Refresh worker interface from the server">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              size="x-small"
+              variant="text"
+              @click="updateInterface(true)"
+            >
+              <v-icon size="x-small" start>mdi-sync</v-icon>
+              Reload interface
+            </v-btn>
+          </template>
+        </v-tooltip>
+      </div>
     </v-card-title>
     <v-card-subtitle v-if="tool.values.image.image" class="pt-0 pb-2">
       <small>Image: {{ tool.values.image.image }}</small>
@@ -25,7 +42,7 @@
         <v-row v-if="running">
           <v-progress-linear
             :indeterminate="!progressInfo.progress"
-            :value="100 * (progressInfo.progress || 0)"
+            :model-value="100 * (progressInfo.progress || 0)"
             class="text-progress"
           >
             <strong class="pr-4">
@@ -38,7 +55,7 @@
           v-for="(warning, index) in filteredWarnings"
           :key="'warning-' + index"
         >
-          <v-alert type="warning" dense class="mb-2">
+          <v-alert type="warning" density="compact" class="mb-2">
             <div class="error-main">
               {{ warning.title }}: {{ warning.warning }}
             </div>
@@ -46,7 +63,7 @@
           </v-alert>
         </v-row>
         <v-row v-for="(error, index) in filteredErrors" :key="'error-' + index">
-          <v-alert type="error" dense class="mb-2">
+          <v-alert type="error" density="compact" class="mb-2">
             <div class="error-main">{{ error.title }}: {{ error.error }}</div>
             <div v-if="error.info" class="error-info">{{ error.info }}</div>
           </v-alert>
@@ -62,16 +79,16 @@
         </v-row>
         <v-row>
           <v-btn @click="preview" v-if="hasPreview">Preview</v-btn>
+          <v-btn variant="text" @click="emit('close')">Close</v-btn>
           <v-spacer></v-spacer>
           <v-btn
             v-if="localJobLog"
-            small
-            text
+            variant="text"
             color="info"
             class="mr-2"
             @click="showLogDialog = true"
           >
-            <v-icon small left>mdi-text-box-outline</v-icon>
+            <v-icon start>mdi-text-box-outline</v-icon>
             Log
           </v-btn>
           <v-btn @click="compute" v-if="!running">
@@ -98,9 +115,9 @@
         </v-row>
         <!-- Batch processing checkbox -->
         <v-row v-if="canApplyToAllDatasets || batchDisabledReason">
-          <v-tooltip bottom :disabled="!batchDisabledReason">
-            <template v-slot:activator="{ on, attrs }">
-              <div v-bind="attrs" v-on="on" style="width: 100%">
+          <v-tooltip location="bottom" :disabled="!batchDisabledReason">
+            <template v-slot:activator="{ props: activatorProps }">
+              <div v-bind="activatorProps" style="width: 100%">
                 <v-checkbox
                   v-model="applyToAllDatasets"
                   :disabled="!canApplyToAllDatasets || running"
@@ -123,15 +140,15 @@
                 batchProgress.cancelled
               }}
               / {{ batchProgress.total }} datasets
-              <span v-if="batchProgress.failed > 0" class="error--text">
+              <span v-if="batchProgress.failed > 0" class="text-error">
                 ({{ batchProgress.failed }} failed)
               </span>
-              <span v-if="batchProgress.cancelled > 0" class="warning--text">
+              <span v-if="batchProgress.cancelled > 0" class="text-warning">
                 ({{ batchProgress.cancelled }} cancelled)
               </span>
             </div>
             <v-progress-linear
-              :value="batchProgressPercent"
+              :model-value="batchProgressPercent"
               color="primary"
               height="20"
               striped
@@ -154,9 +171,9 @@
         <v-card-title class="headline">
           Job Log
           <v-spacer></v-spacer>
-          <v-tooltip bottom>
-            <template v-slot:activator="{ on, attrs }">
-              <v-btn icon v-bind="attrs" v-on="on" @click="copyLogToClipboard">
+          <v-tooltip location="bottom">
+            <template v-slot:activator="{ props: activatorProps }">
+              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
@@ -171,7 +188,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" text @click="showLogDialog = false"
+          <v-btn color="primary" variant="text" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -189,8 +206,8 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch, Prop } from "vue-property-decorator";
+<script lang="ts" setup>
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import store from "@/store";
 import annotationsStore from "@/store/annotation";
 import {
@@ -201,367 +218,398 @@ import {
   IErrorInfoList,
   MessageType,
 } from "@/store/model";
-import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
-import LayerSelect from "@/components/LayerSelect.vue";
 import propertiesStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
 import { getDefault } from "@/utils/workerInterface";
 import { debounce } from "lodash";
 import { logError } from "@/utils/log";
-// Popup for new tool configuration
-@Component({
-  components: {
-    LayerSelect,
-    TagFilterEditor,
-    WorkerInterfaceValues,
+
+const props = defineProps<{
+  tool: IToolConfiguration;
+}>();
+
+const emit = defineEmits<{
+  (e: "loaded"): void;
+  (e: "close"): void;
+}>();
+
+// Create a debounced version of editToolInConfiguration
+const debouncedEditTool = debounce((tool: IToolConfiguration) => {
+  store.editToolInConfiguration(tool);
+}, 300);
+
+// Data
+const fetchingWorkerInterface = ref(false);
+const running = ref(false);
+const currentJob = ref<IComputeJob | null>(null);
+const previousRunStatus = ref<boolean | null>(null);
+const progressInfo = ref<IProgressInfo>({});
+const errorInfo = ref<IErrorInfoList>({ errors: [] });
+const interfaceValues = ref<IWorkerInterfaceValues>({});
+const showLogDialog = ref(false);
+const localJobLog = ref("");
+const showCopySnackbar = ref(false);
+
+// Batch processing state
+const applyToAllDatasets = ref(false);
+const batchProgress = ref<{
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  currentDatasetName: string;
+} | null>(null);
+const batchCancelFunction = ref<(() => void) | null>(null);
+const collectionDatasetCount = ref(0);
+const loadingDatasetCount = ref(false);
+
+const BATCH_DATASET_LIMIT = 10;
+
+onBeforeUnmount(() => {
+  debouncedEditTool.cancel();
+});
+
+// Computeds
+const workerInterface = computed(() => {
+  return propertiesStore.getWorkerInterface(image.value);
+});
+
+const image = computed(() => {
+  return props.tool?.values?.image?.image;
+});
+
+const workerPreview = computed(() => {
+  return (
+    propertiesStore.getWorkerPreview(image.value) || {
+      text: "null",
+      image: "",
+    }
+  );
+});
+
+const displayWorkerPreview = computed({
+  get: () => propertiesStore.displayWorkerPreview,
+  set: (value: boolean) => {
+    propertiesStore.setDisplayWorkerPreview(value);
   },
-})
-export default class AnnotationWorkerMenu extends Vue {
-  readonly store = store;
-  readonly annotationsStore = annotationsStore;
-  readonly propertyStore = propertiesStore;
-  readonly jobsStore = jobsStore;
+});
 
-  // Create a debounced version of editToolInConfiguration
-  debouncedEditTool = debounce((tool: IToolConfiguration) => {
-    this.store.editToolInConfiguration(tool);
-  }, 300);
+const currentJobId = computed(() => {
+  return props.tool ? jobsStore.jobIdForToolId[props.tool.id] : null;
+});
 
-  fetchingWorkerInterface: boolean = false;
-  running: boolean = false;
-  currentJob: IComputeJob | null = null;
-  previousRunStatus: boolean | null = null;
-  progressInfo: IProgressInfo = {};
-  errorInfo: IErrorInfoList = { errors: [] };
-  interfaceValues: IWorkerInterfaceValues = {};
-  showLogDialog: boolean = false;
-  localJobLog: string = "";
-  showCopySnackbar: boolean = false;
+const canApplyToAllDatasets = computed(() => {
+  return (
+    store.selectedConfigurationId !== null &&
+    collectionDatasetCount.value > 1 &&
+    collectionDatasetCount.value <= BATCH_DATASET_LIMIT
+  );
+});
 
-  // Batch processing state
-  applyToAllDatasets: boolean = false;
-  batchProgress: {
-    total: number;
-    completed: number;
-    failed: number;
-    cancelled: number;
-    currentDatasetName: string;
-  } | null = null;
-  batchCancelFunction: (() => void) | null = null;
-  collectionDatasetCount: number = 0;
-  loadingDatasetCount: boolean = false;
-
-  // TODO: This limit can be increased or removed once batch processing is proven stable
-  readonly BATCH_DATASET_LIMIT = 10;
-
-  beforeDestroy() {
-    // Cancel any pending debounced calls
-    this.debouncedEditTool.cancel();
-  }
-
-  @Prop()
-  readonly tool!: IToolConfiguration;
-
-  get workerInterface() {
-    return this.propertyStore.getWorkerInterface(this.image);
-  }
-
-  get image() {
-    return this.tool?.values?.image?.image;
-  }
-
-  get workerPreview() {
-    return (
-      this.propertyStore.getWorkerPreview(this.image) || {
-        text: "null",
-        image: "",
-      }
-    );
-  }
-
-  get displayWorkerPreview() {
-    return this.propertyStore.displayWorkerPreview;
-  }
-
-  set displayWorkerPreview(value: boolean) {
-    this.propertyStore.setDisplayWorkerPreview(value);
-  }
-
-  get currentJobId() {
-    return this.tool ? this.jobsStore.jobIdForToolId[this.tool.id] : null;
-  }
-
-  get canApplyToAllDatasets(): boolean {
-    // Only show checkbox if there's a configuration and dataset count is loaded
-    // and within the limit
-    return (
-      this.store.selectedConfigurationId !== null &&
-      this.collectionDatasetCount > 1 &&
-      this.collectionDatasetCount <= this.BATCH_DATASET_LIMIT
-    );
-  }
-
-  get batchDisabledReason(): string | null {
-    if (!this.store.selectedConfigurationId) {
-      return null;
-    }
-    if (this.loadingDatasetCount) {
-      return null;
-    }
-    if (this.collectionDatasetCount <= 1) {
-      return null;
-    }
-    if (this.collectionDatasetCount > this.BATCH_DATASET_LIMIT) {
-      return `Collection has more than ${this.BATCH_DATASET_LIMIT} datasets`;
-    }
+const batchDisabledReason = computed(() => {
+  if (!store.selectedConfigurationId) {
     return null;
   }
-
-  get batchProgressPercent(): number {
-    if (!this.batchProgress || this.batchProgress.total === 0) {
-      return 0;
-    }
-    const { completed, failed, cancelled, total } = this.batchProgress;
-    return ((completed + failed + cancelled) / total) * 100;
+  if (loadingDatasetCount.value) {
+    return null;
   }
-
-  get jobLog() {
-    if (this.currentJobId) {
-      // Update local log from store when a job is running
-      const storeLog = this.jobsStore.getJobLog(this.currentJobId);
-      if (storeLog && storeLog !== this.localJobLog) {
-        // If the log is empty, add a header with timestamp
-        if (!this.localJobLog) {
-          const timestamp = new Date().toLocaleString();
-          this.localJobLog = `=== Job started at ${timestamp} ===\n\n${storeLog}`;
-        } else {
-          this.localJobLog = storeLog;
-        }
-      }
-      return storeLog;
-    }
-    // Return local log when no current job (job completed)
-    return this.localJobLog;
+  if (collectionDatasetCount.value <= 1) {
+    return null;
   }
-
-  @Watch("store.selectedConfigurationId")
-  onConfigurationChanged() {
-    this.fetchCollectionDatasetCount();
+  if (collectionDatasetCount.value > BATCH_DATASET_LIMIT) {
+    return `Collection has more than ${BATCH_DATASET_LIMIT} datasets`;
   }
+  return null;
+});
 
-  @Watch("interfaceValues", { deep: true })
-  onInterfaceValuesChanged() {
-    let tool = this.tool; // Copy the tool object because it's a readonly prop
-    tool.values.workerInterfaceValues = this.interfaceValues;
-    this.debouncedEditTool(tool);
+const batchProgressPercent = computed(() => {
+  if (!batchProgress.value || batchProgress.value.total === 0) {
+    return 0;
   }
+  const { completed, failed, cancelled, total } = batchProgress.value;
+  return ((completed + failed + cancelled) / total) * 100;
+});
 
-  async compute() {
-    if (this.running) {
-      return;
-    }
-    this.localJobLog = "";
-    this.running = true;
-    this.currentJob = null;
-    this.previousRunStatus = null;
-
-    if (this.applyToAllDatasets && this.store.selectedConfigurationId) {
-      // Batch mode
-      await this.computeBatch();
-    } else {
-      // Single dataset mode
-      this.currentJob =
-        await this.annotationsStore.computeAnnotationsWithWorker({
-          tool: this.tool,
-          workerInterface: this.interfaceValues,
-          progress: this.progressInfo,
-          error: this.errorInfo,
-          callback: (success) => {
-            this.running = false;
-            this.previousRunStatus = success;
-            this.progressInfo = {};
-          },
-        });
-    }
+// Refactored: jobLog side-effect extracted to watch
+const jobLog = computed(() => {
+  if (currentJobId.value) {
+    return jobsStore.getJobLog(currentJobId.value);
   }
+  return localJobLog.value;
+});
 
-  async computeBatch() {
-    const configurationId = this.store.selectedConfigurationId;
-    if (!configurationId) {
-      this.running = false;
-      return;
-    }
-
-    this.batchProgress = {
-      total: this.collectionDatasetCount,
-      completed: 0,
-      failed: 0,
-      cancelled: 0,
-      currentDatasetName: "Starting...",
-    };
-
-    await this.annotationsStore.computeAnnotationsWithWorkerBatch({
-      tool: this.tool,
-      workerInterface: this.interfaceValues,
-      configurationId,
-      onBatchProgress: (status) => {
-        this.batchProgress = status;
-      },
-      onJobProgress: (_datasetId, progressInfo) => {
-        // Update progress info for current job display
-        Object.assign(this.progressInfo, progressInfo);
-      },
-      onJobError: (_datasetId, errorInfo) => {
-        // Accumulate errors from all jobs
-        this.errorInfo.errors.push(...errorInfo.errors);
-      },
-      onCancel: (cancel) => {
-        this.batchCancelFunction = cancel;
-      },
-      onComplete: (results) => {
-        this.running = false;
-        this.batchCancelFunction = null;
-        // Consider it a success if at least one succeeded and none failed
-        this.previousRunStatus = results.succeeded > 0 && results.failed === 0;
-        this.progressInfo = {};
-        // Keep batch progress visible for a moment so user can see final state
-        setTimeout(() => {
-          this.batchProgress = null;
-        }, 3000);
-      },
-    });
-  }
-
-  cancel() {
-    // Handle batch cancellation
-    if (this.batchCancelFunction) {
-      this.batchCancelFunction();
-      return;
-    }
-
-    // Handle single job cancellation
-    const jobId = this.currentJob?.jobId;
-    if (!jobId) {
-      return;
-    }
-    this.store.api.cancelJob(jobId);
-  }
-
-  preview() {
-    this.propertyStore.requestWorkerPreview({
-      image: this.image,
-      tool: this.tool,
-      workerInterface: this.interfaceValues,
-    });
-  }
-
-  mounted() {
-    if (this.tool.values.workerInterfaceValues) {
-      this.interfaceValues = this.tool.values.workerInterfaceValues;
-    }
-    this.updateInterface();
-    this.fetchCollectionDatasetCount();
-  }
-
-  async fetchCollectionDatasetCount() {
-    this.loadingDatasetCount = true;
-    try {
-      this.collectionDatasetCount =
-        await this.store.getCollectionDatasetCount();
-    } catch (error) {
-      logError("Failed to fetch collection dataset count:", error);
-      this.collectionDatasetCount = 0;
-    } finally {
-      this.loadingDatasetCount = false;
-    }
-  }
-
-  resetInterfaceValues() {
-    const interfaceValues: IWorkerInterfaceValues = {};
-    if (this.workerInterface) {
-      for (const id in this.workerInterface) {
-        const interfaceTemplate = this.workerInterface[id];
-        interfaceValues[id] = getDefault(
-          interfaceTemplate.type,
-          interfaceTemplate.default,
-        );
-      }
-    }
-    this.interfaceValues = interfaceValues;
-  }
-
-  @Watch("tool")
-  async updateInterface(force?: boolean) {
-    this.propertyStore.fetchWorkerImageList(); // Required to update docker image labels
-    if (
-      (force || this.workerInterface === undefined) &&
-      !this.fetchingWorkerInterface
-    ) {
-      this.fetchingWorkerInterface = true;
-      await this.propertyStore
-        .fetchWorkerInterface({ image: this.image, force })
-        .finally();
-      this.fetchingWorkerInterface = false;
-      // This "loaded" event is used to trigger the updateDimensions method on the menu
-      // That way, the menu will rescale appropriately once the elements are loaded
-      this.$emit("loaded");
-    }
-  }
-
-  get hasPreview() {
-    return this.propertyStore.hasPreview(this.image);
-  }
-
-  get filteredErrors() {
-    return this.errorInfo.errors.filter(
-      (error) => error.error && error.type === MessageType.ERROR,
-    );
-  }
-
-  get filteredWarnings() {
-    return this.errorInfo.errors.filter(
-      (error) => error.warning && error.type === MessageType.WARNING,
-    );
-  }
-
-  copyLogToClipboard() {
-    const log = this.jobLog;
-    if (log) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard
-          .writeText(log)
-          .then(() => {
-            this.showCopySnackbar = true;
-          })
-          .catch(() => {
-            // Fallback for browsers that don't support the Clipboard API
-            this.copyToClipboardFallback(log);
-          });
+// Watch for job log updates and sync to localJobLog
+watch(
+  [
+    currentJobId,
+    () => (currentJobId.value ? jobsStore.getJobLog(currentJobId.value) : null),
+  ],
+  ([jobId, storeLog]) => {
+    if (jobId && storeLog && storeLog !== localJobLog.value) {
+      if (!localJobLog.value) {
+        const timestamp = new Date().toLocaleString();
+        localJobLog.value = `=== Job started at ${timestamp} ===\n\n${storeLog}`;
       } else {
-        // Fallback for older browsers
-        this.copyToClipboardFallback(log);
+        localJobLog.value = storeLog;
       }
     }
+  },
+);
+
+const hasPreview = computed(() => {
+  return propertiesStore.hasPreview(image.value);
+});
+
+const filteredErrors = computed(() => {
+  return errorInfo.value.errors.filter(
+    (error) => error.error && error.type === MessageType.ERROR,
+  );
+});
+
+const filteredWarnings = computed(() => {
+  return errorInfo.value.errors.filter(
+    (error) => error.warning && error.type === MessageType.WARNING,
+  );
+});
+
+// Watchers
+watch(
+  () => store.selectedConfigurationId,
+  () => {
+    fetchCollectionDatasetCount();
+  },
+);
+
+watch(
+  interfaceValues,
+  () => {
+    let tool = props.tool;
+    tool.values.workerInterfaceValues = interfaceValues.value;
+    debouncedEditTool(tool);
+  },
+  { deep: true },
+);
+
+watch(
+  () => props.tool,
+  () => {
+    updateInterface();
+  },
+);
+
+// Methods
+async function compute() {
+  if (running.value) {
+    return;
   }
+  localJobLog.value = "";
+  running.value = true;
+  currentJob.value = null;
+  previousRunStatus.value = null;
 
-  copyToClipboardFallback(text: string) {
-    const tempTextArea = document.createElement("textarea");
-    tempTextArea.value = text;
-    tempTextArea.style.position = "fixed"; // Avoid scrolling to bottom
-    document.body.appendChild(tempTextArea);
-    tempTextArea.select();
-
-    try {
-      document.execCommand("copy");
-      this.showCopySnackbar = true;
-    } catch (err) {
-      logError("Failed to copy text: ", err);
-    }
-
-    document.body.removeChild(tempTextArea);
+  if (applyToAllDatasets.value && store.selectedConfigurationId) {
+    await computeBatch();
+  } else {
+    currentJob.value = await annotationsStore.computeAnnotationsWithWorker({
+      tool: props.tool,
+      workerInterface: interfaceValues.value,
+      progress: progressInfo.value,
+      error: errorInfo.value,
+      callback: (success) => {
+        running.value = false;
+        previousRunStatus.value = success;
+        progressInfo.value = {};
+      },
+    });
   }
 }
+
+async function computeBatch() {
+  const configurationId = store.selectedConfigurationId;
+  if (!configurationId) {
+    running.value = false;
+    return;
+  }
+
+  batchProgress.value = {
+    total: collectionDatasetCount.value,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    currentDatasetName: "Starting...",
+  };
+
+  await annotationsStore.computeAnnotationsWithWorkerBatch({
+    tool: props.tool,
+    workerInterface: interfaceValues.value,
+    configurationId,
+    onBatchProgress: (status) => {
+      batchProgress.value = status;
+    },
+    onJobProgress: (_datasetId, progressInfoUpdate) => {
+      Object.assign(progressInfo.value, progressInfoUpdate);
+    },
+    onJobError: (_datasetId, errorInfoUpdate) => {
+      errorInfo.value.errors.push(...errorInfoUpdate.errors);
+    },
+    onCancel: (cancel) => {
+      batchCancelFunction.value = cancel;
+    },
+    onComplete: (results) => {
+      running.value = false;
+      batchCancelFunction.value = null;
+      previousRunStatus.value = results.succeeded > 0 && results.failed === 0;
+      progressInfo.value = {};
+      setTimeout(() => {
+        batchProgress.value = null;
+      }, 3000);
+    },
+  });
+}
+
+function cancel() {
+  if (batchCancelFunction.value) {
+    batchCancelFunction.value();
+    return;
+  }
+
+  const jobId = currentJob.value?.jobId;
+  if (!jobId) {
+    return;
+  }
+  store.api.cancelJob(jobId);
+}
+
+function preview() {
+  propertiesStore.requestWorkerPreview({
+    image: image.value,
+    tool: props.tool,
+    workerInterface: interfaceValues.value,
+  });
+}
+
+async function fetchCollectionDatasetCount() {
+  loadingDatasetCount.value = true;
+  try {
+    collectionDatasetCount.value = await store.getCollectionDatasetCount();
+  } catch (error) {
+    logError("Failed to fetch collection dataset count:", error);
+    collectionDatasetCount.value = 0;
+  } finally {
+    loadingDatasetCount.value = false;
+  }
+}
+
+function resetInterfaceValues() {
+  const values: IWorkerInterfaceValues = {};
+  if (workerInterface.value) {
+    for (const id in workerInterface.value) {
+      const interfaceTemplate = workerInterface.value[id];
+      values[id] = getDefault(
+        interfaceTemplate.type,
+        interfaceTemplate.default,
+      );
+    }
+  }
+  interfaceValues.value = values;
+}
+
+async function updateInterface(force?: boolean) {
+  propertiesStore.fetchWorkerImageList();
+  if (
+    (force || workerInterface.value === undefined) &&
+    !fetchingWorkerInterface.value
+  ) {
+    fetchingWorkerInterface.value = true;
+    await propertiesStore
+      .fetchWorkerInterface({ image: image.value, force })
+      .finally();
+    fetchingWorkerInterface.value = false;
+    emit("loaded");
+  }
+}
+
+function copyLogToClipboard() {
+  const log = jobLog.value;
+  if (log) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard
+        .writeText(log)
+        .then(() => {
+          showCopySnackbar.value = true;
+        })
+        .catch(() => {
+          copyToClipboardFallback(log);
+        });
+    } else {
+      copyToClipboardFallback(log);
+    }
+  }
+}
+
+function copyToClipboardFallback(text: string) {
+  const tempTextArea = document.createElement("textarea");
+  tempTextArea.value = text;
+  tempTextArea.style.position = "fixed";
+  document.body.appendChild(tempTextArea);
+  tempTextArea.select();
+
+  try {
+    document.execCommand("copy");
+    showCopySnackbar.value = true;
+  } catch (err) {
+    logError("Failed to copy text: ", err);
+  }
+
+  document.body.removeChild(tempTextArea);
+}
+
+onMounted(() => {
+  if (props.tool.values.workerInterfaceValues) {
+    interfaceValues.value = props.tool.values.workerInterfaceValues;
+  }
+  updateInterface();
+  fetchCollectionDatasetCount();
+});
+
+defineExpose({
+  fetchingWorkerInterface,
+  running,
+  currentJob,
+  previousRunStatus,
+  progressInfo,
+  errorInfo,
+  interfaceValues,
+  showLogDialog,
+  localJobLog,
+  showCopySnackbar,
+  applyToAllDatasets,
+  batchProgress,
+  batchCancelFunction,
+  collectionDatasetCount,
+  loadingDatasetCount,
+  workerInterface,
+  image,
+  workerPreview,
+  displayWorkerPreview,
+  currentJobId,
+  canApplyToAllDatasets,
+  batchDisabledReason,
+  batchProgressPercent,
+  jobLog,
+  hasPreview,
+  filteredErrors,
+  filteredWarnings,
+  compute,
+  computeBatch,
+  cancel,
+  preview,
+  fetchCollectionDatasetCount,
+  resetInterfaceValues,
+  updateInterface,
+  copyLogToClipboard,
+});
 </script>
 
 <style lang="scss" scoped>
@@ -634,6 +682,12 @@ export default class AnnotationWorkerMenu extends Vue {
 }
 
 .batch-current-dataset {
+  opacity: 0.7;
+}
+
+.action-buttons {
+  flex-shrink: 0;
+  gap: 0;
   opacity: 0.7;
 }
 </style>

@@ -1,7 +1,7 @@
 <template>
   <div style="overflow-y: auto; scrollbar-width: none">
     <div v-mousetrap="mousetrapSliders" id="viewer-toolbar-tourstep">
-      <v-layout>
+      <div class="d-flex align-center">
         <value-slider
           v-model="xy"
           label="XY"
@@ -19,8 +19,8 @@
           label="Unroll"
           :disabled="!(maxXY > 0 || unrollXY)"
         />
-      </v-layout>
-      <v-layout>
+      </div>
+      <div class="d-flex align-center">
         <value-slider
           v-model="z"
           label="Z"
@@ -38,8 +38,8 @@
           label="Unroll"
           :disabled="!(maxZ > 0 || unrollZ)"
         />
-      </v-layout>
-      <v-layout>
+      </div>
+      <div class="d-flex align-center">
         <value-slider
           v-model="time"
           label="Time"
@@ -57,8 +57,8 @@
           label="Unroll"
           :disabled="!(maxTime > 0 || unrollT)"
         />
-      </v-layout>
-      <v-layout v-if="maxTime > 0 && !unrollT">
+      </div>
+      <div v-if="maxTime > 0 && !unrollT" class="d-flex align-center">
         <v-checkbox
           id="timelapse-mode-tourstep"
           v-tour-trigger="'timelapse-mode-tourtrigger'"
@@ -75,42 +75,42 @@
           :max="100"
           :title="'Track window size'"
         />
-      </v-layout>
+      </div>
       <!-- TODO: Only display if there is more than one large image -->
       <large-image-dropdown />
-      <v-layout v-if="timelapseMode">
+      <div v-if="timelapseMode" class="d-flex align-center">
         <tag-picker
           id="timelapse-tags-tourstep"
           class="ml-3"
           v-model="timelapseTags"
           style="max-width: 300px"
         />
-      </v-layout>
-      <v-layout v-if="timelapseMode">
+      </div>
+      <div v-if="timelapseMode" class="d-flex align-center">
         <v-checkbox
           id="timelapse-labels-tourstep"
           class="ml-3 my-checkbox"
           v-model="showTimelapseLabels"
           label="Show labels"
         />
-      </v-layout>
-      <v-layout v-if="timelapseMode">
+      </div>
+      <div v-if="timelapseMode" class="d-flex align-center">
         <v-btn
           class="ml-3"
-          small
+          size="small"
           @click="annotationStore.deleteAllTimelapseConnections"
         >
           Delete all timelapse connections
         </v-btn>
-      </v-layout>
+      </div>
     </div>
     <toolset></toolset>
     <v-radio-group
       v-model="layerMode"
       label="Layers: "
       mandatory
-      dense
-      row
+      density="compact"
+      inline
       hide-details
       class="layer-mode-controls"
     >
@@ -126,7 +126,10 @@
 </template>
 
 <style lang="scss" scoped>
-.my-checkbox::v-deep .v-input__control {
+.my-checkbox {
+  flex-shrink: 0;
+}
+.my-checkbox :deep(.v-input__control) {
   transform: scale(0.9) translateY(5%);
 }
 .v-input--selection-controls {
@@ -139,7 +142,7 @@
 }
 .layer-mode-controls {
   margin: 10px 0;
-  ::v-deep .v-radio {
+  :deep(.v-radio) {
     margin-right: 10px;
     > .v-input--selection-controls__input {
       margin-right: 0;
@@ -147,12 +150,13 @@
   }
 }
 </style>
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import ValueSlider from "./ValueSlider.vue";
-import SwitchToggle from "./SwitchToggle.vue";
 import Toolset from "@/tools/toolsets/Toolset.vue";
 import LargeImageDropdown from "./LargeImageDropdown.vue";
+import TagPicker from "./TagPicker.vue";
+import TagFilterEditor from "./AnnotationBrowser/TagFilterEditor.vue";
 import store from "@/store";
 import filterStore from "@/store/filters";
 import annotationStore from "@/store/annotation";
@@ -160,283 +164,221 @@ import { ITagAnnotationFilter, TLayerMode } from "@/store/model";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { logError } from "@/utils/log";
 
-@Component({
-  components: {
-    ValueSlider,
-    SwitchToggle,
-    Toolset,
-    LargeImageDropdown,
-  },
-})
-export default class ViewerToolbar extends Vue {
-  readonly store = store;
-  readonly filterStore = filterStore;
-  readonly annotationStore = annotationStore;
+const dimensionLabels = ref<{
+  xy: string[] | null;
+  z: string[] | null;
+  t: string[] | null;
+} | null>(null);
 
-  dimensionLabels: {
-    xy: string[] | null;
-    z: string[] | null;
-    t: string[] | null;
-  } | null = null;
-
-  async mounted() {
-    await this.loadDimensionLabels();
+async function loadDimensionLabels() {
+  if (!store.selectedDatasetId) {
+    dimensionLabels.value = null;
+    return;
   }
 
-  @Watch("store.selectedDatasetId")
-  async onDatasetChanged() {
-    await this.loadDimensionLabels();
-  }
-
-  async loadDimensionLabels() {
-    if (!this.store.selectedDatasetId) {
-      this.dimensionLabels = null;
-      return;
+  try {
+    const folder = await store.girderResources.getFolder(
+      store.selectedDatasetId,
+    );
+    if (folder && folder.meta && folder.meta.dimensionLabels) {
+      dimensionLabels.value = folder.meta.dimensionLabels;
+    } else {
+      dimensionLabels.value = null;
     }
-
-    try {
-      const folder = await this.store.girderResources.getFolder(
-        this.store.selectedDatasetId,
-      );
-      if (folder && folder.meta && folder.meta.dimensionLabels) {
-        this.dimensionLabels = folder.meta.dimensionLabels;
-      } else {
-        this.dimensionLabels = null;
-      }
-    } catch (error) {
-      logError("Failed to load dimension labels:", error);
-      this.dimensionLabels = null;
-    }
-  }
-
-  get xy() {
-    return this.store.xy;
-  }
-
-  get z() {
-    return this.store.z;
-  }
-
-  get time() {
-    return this.store.time;
-  }
-
-  set xy(value: number) {
-    this.store.setXY(value);
-  }
-
-  set z(value: number) {
-    this.store.setZ(value);
-  }
-
-  set time(value: number) {
-    this.store.setTime(value);
-  }
-
-  get unrollXY() {
-    return this.store.unrollXY;
-  }
-
-  set unrollXY(value: boolean) {
-    this.store.setUnrollXY(value);
-  }
-
-  @Watch("unrollXY")
-  watchUnrollXY() {
-    this.store.refreshDataset();
-  }
-
-  get unrollZ() {
-    return this.store.unrollZ;
-  }
-
-  set unrollZ(value: boolean) {
-    this.store.setUnrollZ(value);
-  }
-
-  @Watch("unrollZ")
-  watchUnrollZ() {
-    this.store.refreshDataset();
-  }
-
-  get unrollT() {
-    return this.store.unrollT;
-  }
-
-  set unrollT(value: boolean) {
-    this.store.setUnrollT(value);
-  }
-
-  @Watch("unrollT")
-  watchUnrollT() {
-    this.store.refreshDataset();
-  }
-
-  get maxXY() {
-    return this.store.dataset ? this.store.dataset.xy.length - 1 : this.xy;
-  }
-
-  get maxZ() {
-    return this.store.dataset ? this.store.dataset.z.length - 1 : this.z;
-  }
-
-  get maxTime() {
-    return this.store.dataset ? this.store.dataset.time.length - 1 : this.time;
-  }
-
-  get xyLabel() {
-    if (!this.store.showXYLabels) {
-      // User has disabled XY labels
-      return null;
-    }
-    if (!this.dimensionLabels || !this.dimensionLabels.xy) {
-      return null;
-    }
-    return this.dimensionLabels.xy[this.xy] || null;
-  }
-
-  get zLabel() {
-    if (!this.store.showZLabels) {
-      // User has disabled Z labels
-      return null;
-    }
-    if (!this.dimensionLabels || !this.dimensionLabels.z) {
-      return null;
-    }
-    return this.dimensionLabels.z[this.z] || null;
-  }
-
-  get timeLabel() {
-    if (!this.store.showTimeLabels) {
-      // User has disabled time labels
-      return null;
-    }
-    if (!this.dimensionLabels || !this.dimensionLabels.t) {
-      return null;
-    }
-    return this.dimensionLabels.t[this.time] || null;
-  }
-
-  get timelapseMode() {
-    return this.store.showTimelapseMode;
-  }
-
-  set timelapseMode(value: boolean) {
-    this.store.setShowTimelapseMode(value);
-  }
-
-  get timelapseModeWindow() {
-    return this.store.timelapseModeWindow;
-  }
-
-  set timelapseModeWindow(value: number) {
-    this.store.setTimelapseModeWindow(value);
-  }
-
-  get timelapseTags() {
-    return this.store.timelapseTags;
-  }
-
-  set timelapseTags(value: string[]) {
-    this.store.setTimelapseTags(value);
-  }
-
-  get showTimelapseLabels() {
-    return this.store.showTimelapseLabels;
-  }
-
-  set showTimelapseLabels(value: boolean) {
-    this.store.setShowTimelapseLabels(value);
-  }
-
-  set layerMode(value: TLayerMode) {
-    this.store.setLayerMode(value);
-  }
-
-  get layerMode() {
-    return this.store.layerMode;
-  }
-
-  get tagFilter() {
-    return this.filterStore.tagFilter;
-  }
-
-  set tagFilter(filter: ITagAnnotationFilter) {
-    this.filterStore.setTagFilter(filter);
-  }
-
-  // Mousetrap bindings
-  mousetrapSliders: IHotkey[] = [
-    {
-      // XY left
-      bind: "w",
-      handler: () => {
-        this.xy = Math.max(this.xy - 1, 0);
-      },
-      data: {
-        section: "Image Navigation",
-        description: "Decrease XY position",
-      },
-    },
-    {
-      // XY right
-      bind: "r",
-      handler: () => {
-        this.xy = Math.min(this.xy + 1, this.maxXY);
-      },
-      data: {
-        section: "Image Navigation",
-        description: "Increase XY position",
-      },
-    },
-    {
-      // Z down
-      bind: "d",
-      handler: () => {
-        this.z = Math.max(this.z - 1, 0);
-      },
-      data: {
-        section: "Image Navigation",
-        description: "Decrease Z position",
-      },
-    },
-    {
-      // Z up
-      bind: "e",
-      handler: () => {
-        this.z = Math.min(this.z + 1, this.maxZ);
-      },
-      data: {
-        section: "Image Navigation",
-        description: "Increase Z position",
-      },
-    },
-    {
-      // previous T
-      bind: "s",
-      handler: () => {
-        this.time = Math.max(this.time - 1, 0);
-      },
-      data: {
-        section: "Image Navigation",
-        description: "Decrease T position",
-      },
-    },
-    {
-      // next T
-      bind: "f",
-      handler: () => {
-        this.time = Math.min(this.time + 1, this.maxTime);
-      },
-      data: {
-        section: "Image Navigation",
-        description: "Increase T position",
-      },
-    },
-  ];
-
-  deleteAllTimelapseConnections() {
-    this.store.setTimelapseTags([]);
+  } catch (error) {
+    logError("Failed to load dimension labels:", error);
+    dimensionLabels.value = null;
   }
 }
+
+const xy = computed({
+  get: () => store.xy,
+  set: (value: number) => store.setXY(value),
+});
+
+const z = computed({
+  get: () => store.z,
+  set: (value: number) => store.setZ(value),
+});
+
+const time = computed({
+  get: () => store.time,
+  set: (value: number) => store.setTime(value),
+});
+
+const unrollXY = computed({
+  get: () => store.unrollXY,
+  set: (value: boolean) => store.setUnrollXY(value),
+});
+
+const unrollZ = computed({
+  get: () => store.unrollZ,
+  set: (value: boolean) => store.setUnrollZ(value),
+});
+
+const unrollT = computed({
+  get: () => store.unrollT,
+  set: (value: boolean) => store.setUnrollT(value),
+});
+
+watch([unrollXY, unrollZ, unrollT], () => {
+  store.refreshDataset();
+});
+
+const maxXY = computed(() =>
+  store.dataset ? store.dataset.xy.length - 1 : xy.value,
+);
+
+const maxZ = computed(() =>
+  store.dataset ? store.dataset.z.length - 1 : z.value,
+);
+
+const maxTime = computed(() =>
+  store.dataset ? store.dataset.time.length - 1 : time.value,
+);
+
+const xyLabel = computed(() => {
+  if (!store.showXYLabels) return null;
+  if (!dimensionLabels.value || !dimensionLabels.value.xy) return null;
+  return dimensionLabels.value.xy[xy.value] || null;
+});
+
+const zLabel = computed(() => {
+  if (!store.showZLabels) return null;
+  if (!dimensionLabels.value || !dimensionLabels.value.z) return null;
+  return dimensionLabels.value.z[z.value] || null;
+});
+
+const timeLabel = computed(() => {
+  if (!store.showTimeLabels) return null;
+  if (!dimensionLabels.value || !dimensionLabels.value.t) return null;
+  return dimensionLabels.value.t[time.value] || null;
+});
+
+const timelapseMode = computed({
+  get: () => store.showTimelapseMode,
+  set: (value: boolean) => store.setShowTimelapseMode(value),
+});
+
+const timelapseModeWindow = computed({
+  get: () => store.timelapseModeWindow,
+  set: (value: number) => store.setTimelapseModeWindow(value),
+});
+
+const timelapseTags = computed({
+  get: () => store.timelapseTags,
+  set: (value: string[]) => store.setTimelapseTags(value),
+});
+
+const showTimelapseLabels = computed({
+  get: () => store.showTimelapseLabels,
+  set: (value: boolean) => store.setShowTimelapseLabels(value),
+});
+
+const layerMode = computed({
+  get: () => store.layerMode,
+  set: (value: TLayerMode) => store.setLayerMode(value),
+});
+
+const tagFilter = computed({
+  get: () => filterStore.tagFilter,
+  set: (filter: ITagAnnotationFilter) => filterStore.setTagFilter(filter),
+});
+
+// Mousetrap bindings
+const mousetrapSliders: IHotkey[] = [
+  {
+    bind: "w",
+    handler: () => {
+      xy.value = Math.max(xy.value - 1, 0);
+    },
+    data: {
+      section: "Image Navigation",
+      description: "Decrease XY position",
+    },
+  },
+  {
+    bind: "r",
+    handler: () => {
+      xy.value = Math.min(xy.value + 1, maxXY.value);
+    },
+    data: {
+      section: "Image Navigation",
+      description: "Increase XY position",
+    },
+  },
+  {
+    bind: "d",
+    handler: () => {
+      z.value = Math.max(z.value - 1, 0);
+    },
+    data: {
+      section: "Image Navigation",
+      description: "Decrease Z position",
+    },
+  },
+  {
+    bind: "e",
+    handler: () => {
+      z.value = Math.min(z.value + 1, maxZ.value);
+    },
+    data: {
+      section: "Image Navigation",
+      description: "Increase Z position",
+    },
+  },
+  {
+    bind: "s",
+    handler: () => {
+      time.value = Math.max(time.value - 1, 0);
+    },
+    data: {
+      section: "Image Navigation",
+      description: "Decrease T position",
+    },
+  },
+  {
+    bind: "f",
+    handler: () => {
+      time.value = Math.min(time.value + 1, maxTime.value);
+    },
+    data: {
+      section: "Image Navigation",
+      description: "Increase T position",
+    },
+  },
+];
+
+watch(
+  () => store.selectedDatasetId,
+  () => loadDimensionLabels(),
+);
+
+onMounted(async () => {
+  await loadDimensionLabels();
+});
+
+defineExpose({
+  dimensionLabels,
+  xy,
+  z,
+  time,
+  unrollXY,
+  unrollZ,
+  unrollT,
+  maxXY,
+  maxZ,
+  maxTime,
+  xyLabel,
+  zLabel,
+  timeLabel,
+  timelapseMode,
+  timelapseModeWindow,
+  timelapseTags,
+  showTimelapseLabels,
+  layerMode,
+  tagFilter,
+  mousetrapSliders,
+  loadDimensionLabels,
+});
 </script>

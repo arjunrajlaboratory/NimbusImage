@@ -2,24 +2,24 @@
   <v-dialog v-model="dialogModel" max-width="500" persistent>
     <v-card>
       <v-card-title>
-        <v-icon left color="#8e24aa">mdi-folder-star</v-icon>
+        <v-icon start color="#8e24aa">mdi-folder-star</v-icon>
         Add to Project
       </v-card-title>
 
       <v-card-text>
         <div v-if="datasetName" class="mb-3">
-          <span class="text-body-2 grey--text">Dataset:</span>
+          <span class="text-body-2 text-grey">Dataset:</span>
           <span class="ml-1 font-weight-medium">{{ datasetName }}</span>
         </div>
 
-        <v-tabs v-model="tab" grow>
+        <v-tabs v-model="tab">
           <v-tab>Existing Project</v-tab>
           <v-tab>New Project</v-tab>
         </v-tabs>
 
-        <v-tabs-items v-model="tab">
+        <v-window v-model="tab">
           <!-- Existing Project Tab -->
-          <v-tab-item>
+          <v-window-item>
             <div class="pt-4">
               <v-progress-linear v-if="loadingProjects" indeterminate />
 
@@ -28,76 +28,65 @@
                 class="text-center pa-4"
               >
                 <v-icon size="48" color="grey">mdi-folder-star-outline</v-icon>
-                <div class="text-body-2 grey--text mt-2">
+                <div class="text-body-2 text-grey mt-2">
                   No projects available. Create one to get started.
                 </div>
               </div>
 
-              <v-list v-else dense class="project-select-list">
-                <v-list-item-group
-                  v-model="selectedProjectIndex"
-                  color="primary"
+              <v-list v-else density="compact" class="project-select-list">
+                <v-list-item
+                  v-for="project in availableProjects"
+                  :key="project.id"
+                  :disabled="isDatasetInProject(project)"
                 >
-                  <v-list-item
-                    v-for="project in availableProjects"
-                    :key="project.id"
-                    :disabled="isDatasetInProject(project)"
+                  <v-icon
+                    :color="isDatasetInProject(project) ? 'grey' : '#8e24aa'"
                   >
-                    <v-list-item-icon>
-                      <v-icon
-                        :color="
-                          isDatasetInProject(project) ? 'grey' : '#8e24aa'
-                        "
-                      >
-                        {{
-                          isDatasetInProject(project)
-                            ? "mdi-check-circle"
-                            : "mdi-folder-star"
-                        }}
-                      </v-icon>
-                    </v-list-item-icon>
-                    <v-list-item-content>
-                      <v-list-item-title>{{ project.name }}</v-list-item-title>
-                      <v-list-item-subtitle>
-                        {{ project.meta.datasets.length }} dataset{{
-                          project.meta.datasets.length !== 1 ? "s" : ""
-                        }}
-                        <span v-if="isDatasetInProject(project)" class="ml-1">
-                          (already added)
-                        </span>
-                      </v-list-item-subtitle>
-                    </v-list-item-content>
-                  </v-list-item>
-                </v-list-item-group>
+                    {{
+                      isDatasetInProject(project)
+                        ? "mdi-check-circle"
+                        : "mdi-folder-star"
+                    }}
+                  </v-icon>
+                  <v-list-item-title>{{ project.name }}</v-list-item-title>
+                  <v-list-item-subtitle>
+                    {{ project.meta.datasets.length }} dataset{{
+                      project.meta.datasets.length !== 1 ? "s" : ""
+                    }}
+                    <span v-if="isDatasetInProject(project)" class="ml-1">
+                      (already added)
+                    </span>
+                  </v-list-item-subtitle>
+                </v-list-item>
               </v-list>
             </div>
-          </v-tab-item>
+          </v-window-item>
 
           <!-- New Project Tab -->
-          <v-tab-item>
+          <v-window-item>
             <div class="pt-4">
               <v-text-field
                 v-model="newProjectName"
                 label="Project Name"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 autofocus
               />
               <v-textarea
                 v-model="newProjectDescription"
                 label="Description (optional)"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 rows="3"
               />
             </div>
-          </v-tab-item>
-        </v-tabs-items>
+          </v-window-item>
+        </v-window>
       </v-card-text>
 
       <v-card-actions>
         <v-spacer />
-        <v-btn text @click="cancel">Cancel</v-btn>
+        <v-btn variant="text" @click="cancel">Cancel</v-btn>
         <v-btn
           color="primary"
           :disabled="!canAdd"
@@ -111,131 +100,154 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
-import store from "@/store";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import projects from "@/store/projects";
 import { IProject } from "@/store/model";
 
-@Component
-export default class AddToProjectDialog extends Vue {
-  @Prop({ type: Boolean, default: false }) value!: boolean;
-  @Prop({ type: String, required: true }) datasetId!: string;
-  @Prop({ type: String, default: "" }) datasetName!: string;
+const props = withDefaults(
+  defineProps<{
+    modelValue?: boolean;
+    datasetId: string;
+    datasetName?: string;
+  }>(),
+  {
+    modelValue: false,
+    datasetName: "",
+  },
+);
 
-  readonly store = store;
-  readonly projects = projects;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: boolean): void;
+  (e: "added", projectId: string): void;
+}>();
 
-  tab = 0;
-  loadingProjects = false;
-  selectedProjectIndex: number | null = null;
-  newProjectName = "";
-  newProjectDescription = "";
-  adding = false;
+const tab = ref(0);
+const loadingProjects = ref(false);
+const selectedProjectIndex = ref<number | null>(null);
+const newProjectName = ref("");
+const newProjectDescription = ref("");
+const adding = ref(false);
 
-  get dialogModel(): boolean {
-    return this.value;
+const dialogModel = computed({
+  get: () => props.modelValue,
+  set: (val: boolean) => emit("update:modelValue", val),
+});
+
+const availableProjects = computed<IProject[]>(() => {
+  return projects.projects;
+});
+
+const selectedProject = computed<IProject | null>(() => {
+  if (
+    selectedProjectIndex.value === null ||
+    selectedProjectIndex.value === undefined
+  ) {
+    return null;
   }
+  return availableProjects.value[selectedProjectIndex.value] || null;
+});
 
-  set dialogModel(val: boolean) {
-    this.$emit("input", val);
+const canAdd = computed<boolean>(() => {
+  if (tab.value === 0) {
+    // Existing project tab
+    return (
+      selectedProject.value !== null &&
+      !isDatasetInProject(selectedProject.value)
+    );
+  } else {
+    // New project tab
+    return newProjectName.value.trim().length > 0;
   }
+});
 
-  get availableProjects(): IProject[] {
-    return this.projects.projects;
-  }
+function isDatasetInProject(project: IProject): boolean {
+  return project.meta.datasets.some((d) => d.datasetId === props.datasetId);
+}
 
-  get selectedProject(): IProject | null {
-    if (
-      this.selectedProjectIndex === null ||
-      this.selectedProjectIndex === undefined
-    ) {
-      return null;
-    }
-    return this.availableProjects[this.selectedProjectIndex] || null;
-  }
-
-  get canAdd(): boolean {
-    if (this.tab === 0) {
-      // Existing project tab
-      return (
-        this.selectedProject !== null &&
-        !this.isDatasetInProject(this.selectedProject)
-      );
-    } else {
-      // New project tab
-      return this.newProjectName.trim().length > 0;
-    }
-  }
-
-  @Watch("value")
-  onValueChange(newVal: boolean) {
-    if (newVal) {
-      this.loadProjects();
-      this.reset();
-    }
-  }
-
-  isDatasetInProject(project: IProject): boolean {
-    return project.meta.datasets.some((d) => d.datasetId === this.datasetId);
-  }
-
-  async loadProjects() {
-    this.loadingProjects = true;
-    try {
-      await this.projects.fetchProjects();
-    } finally {
-      this.loadingProjects = false;
-    }
-  }
-
-  reset() {
-    this.tab = 0;
-    this.selectedProjectIndex = null;
-    this.newProjectName = "";
-    this.newProjectDescription = "";
-  }
-
-  cancel() {
-    this.dialogModel = false;
-  }
-
-  async addToProject() {
-    if (!this.canAdd) return;
-
-    this.adding = true;
-    try {
-      let projectId: string;
-
-      if (this.tab === 0) {
-        // Use existing project
-        if (!this.selectedProject) return;
-        projectId = this.selectedProject.id;
-      } else {
-        // Create new project first
-        const newProject = await this.projects.createProject({
-          name: this.newProjectName.trim(),
-          description: this.newProjectDescription.trim(),
-        });
-        if (!newProject) {
-          return;
-        }
-        projectId = newProject.id;
-      }
-
-      // Add dataset to project
-      await this.projects.addDatasetToProject({
-        projectId,
-        datasetId: this.datasetId,
-      });
-
-      this.$emit("added", projectId);
-      this.dialogModel = false;
-    } finally {
-      this.adding = false;
-    }
+async function loadProjects() {
+  loadingProjects.value = true;
+  try {
+    await projects.fetchProjects();
+  } finally {
+    loadingProjects.value = false;
   }
 }
+
+function reset() {
+  tab.value = 0;
+  selectedProjectIndex.value = null;
+  newProjectName.value = "";
+  newProjectDescription.value = "";
+}
+
+function cancel() {
+  dialogModel.value = false;
+}
+
+async function addToProject() {
+  if (!canAdd.value) return;
+
+  adding.value = true;
+  try {
+    let projectId: string;
+
+    if (tab.value === 0) {
+      // Use existing project
+      if (!selectedProject.value) return;
+      projectId = selectedProject.value.id;
+    } else {
+      // Create new project first
+      const newProject = await projects.createProject({
+        name: newProjectName.value.trim(),
+        description: newProjectDescription.value.trim(),
+      });
+      if (!newProject) {
+        return;
+      }
+      projectId = newProject.id;
+    }
+
+    // Add dataset to project
+    await projects.addDatasetToProject({
+      projectId,
+      datasetId: props.datasetId,
+    });
+
+    emit("added", projectId);
+    dialogModel.value = false;
+  } finally {
+    adding.value = false;
+  }
+}
+
+watch(
+  () => props.modelValue,
+  (newVal: boolean) => {
+    if (newVal) {
+      loadProjects();
+      reset();
+    }
+  },
+);
+
+defineExpose({
+  dialogModel,
+  tab,
+  loadingProjects,
+  selectedProjectIndex,
+  newProjectName,
+  newProjectDescription,
+  adding,
+  availableProjects,
+  selectedProject,
+  canAdd,
+  isDatasetInProject,
+  loadProjects,
+  reset,
+  cancel,
+  addToProject,
+});
 </script>
 
 <style lang="scss" scoped>

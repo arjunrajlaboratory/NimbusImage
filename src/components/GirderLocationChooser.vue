@@ -1,9 +1,14 @@
 <template>
   <v-dialog v-model="dialogInternal" scrollable width="auto">
-    <template #activator="{ on }" v-if="activatorDisabled === false">
+    <template
+      #activator="{ props: activatorProps }"
+      v-if="activatorDisabled === false"
+    >
       <div class="d-flex">
-        <slot name="activator" v-bind="{ on }">
-          <v-btn v-on="on" :disabled="disabled"> Choose... </v-btn>
+        <slot name="activator" v-bind="{ props: activatorProps }">
+          <v-btn v-bind="activatorProps" :disabled="disabled">
+            Choose...
+          </v-btn>
         </slot>
         <girder-breadcrumb
           v-if="breadcrumb && selected"
@@ -18,7 +23,7 @@
       <v-card-title>{{ title }}</v-card-title>
       <v-card-text style="height: 70vh">
         <custom-file-manager
-          :location.sync="selected"
+          v-model:location="selected"
           v-bind="$attrs"
           :initial-items-per-page="-1"
           :items-per-page-options="[-1]"
@@ -34,7 +39,7 @@
         </v-btn>
         <v-btn
           @click.prevent="select"
-          :disabled="!selected || selected._modelType !== 'folder'"
+          :disabled="!isFolderSelected"
           color="primary"
         >
           Select
@@ -44,78 +49,76 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
-import store from "@/store";
-import { IGirderSelectAble } from "@/girder";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
+import { IGirderLocation } from "@/girder";
 
-@Component({
-  components: {
-    CustomFileManager: () => import("@/components/CustomFileManager.vue"),
-    GirderBreadcrumb: () =>
-      import("@/girder/components").then((mod) => mod.Breadcrumb),
+import CustomFileManager from "@/components/CustomFileManager.vue";
+import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
+
+const props = withDefaults(
+  defineProps<{
+    modelValue?: IGirderLocation | null;
+    title?: string;
+    breadcrumb?: boolean;
+    activatorDisabled?: boolean;
+    disabled?: boolean;
+    dialog?: boolean | null;
+  }>(),
+  {
+    modelValue: null,
+    title: "Select a Folder",
+    breadcrumb: false,
+    activatorDisabled: false,
+    disabled: false,
+    dialog: null,
   },
-})
-export default class GirderLocationChooser extends Vue {
-  readonly store = store;
+);
 
-  @Prop()
-  value!: IGirderSelectAble | null;
+const emit = defineEmits<{
+  (e: "update:dialog", value: boolean): void;
+  (e: "update:modelValue", value: any): void;
+}>();
 
-  @Prop({
-    default: "Select a Folder",
-  })
-  title!: string;
+const dialogInternalCache = ref(false);
+const selected = ref<IGirderLocation | null>(null);
 
-  @Prop({
-    default: false,
-  })
-  breadcrumb!: boolean;
+const dialogInternal = computed({
+  get: () => props.dialog ?? dialogInternalCache.value,
+  set: (value: boolean) => {
+    dialogInternalCache.value = value;
+    emit("update:dialog", value);
+  },
+});
 
-  @Prop({
-    default: false,
-  })
-  activatorDisabled!: boolean;
+const isFolderSelected = computed(
+  () =>
+    selected.value &&
+    "_modelType" in selected.value &&
+    selected.value._modelType === "folder",
+);
 
-  @Prop({
-    default: false,
-  })
-  disabled!: boolean;
+const selectedName = computed(() =>
+  selected.value && "name" in selected.value
+    ? selected.value.name
+    : "Select a folder...",
+);
 
-  // Use the computed dialogInternal instead of dialog or dialogInternalCache
-  @Prop({
-    default: null,
-  })
-  private dialog!: boolean | null;
-  private dialogInternalCache: boolean = false;
+onMounted(() => {
+  selected.value = props.modelValue ?? null;
+});
 
-  selected: IGirderSelectAble | null = null;
+watch(
+  () => props.modelValue,
+  () => {
+    selected.value = props.modelValue ?? null;
+  },
+);
 
-  mounted() {
-    this.valueChanged();
-  }
-
-  @Watch("value")
-  valueChanged() {
-    this.selected = this.value;
-  }
-
-  get dialogInternal() {
-    return this.dialog ?? this.dialogInternalCache;
-  }
-
-  set dialogInternal(value: boolean) {
-    this.dialogInternalCache = value;
-    this.$emit("update:dialog", value);
-  }
-
-  get selectedName() {
-    return this.selected ? this.selected.name : "Select a folder...";
-  }
-
-  select() {
-    this.dialogInternal = false;
-    this.$emit("input", this.selected);
-  }
+function select() {
+  dialogInternal.value = false;
+  emit("update:modelValue", selected.value);
 }
+
+defineExpose({ dialogInternal, selectedName, select, selected });
 </script>

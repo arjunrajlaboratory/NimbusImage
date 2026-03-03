@@ -1,71 +1,83 @@
 <template>
   <div class="body-1 d-flex flex-wrap">
-    <tag-cloud-picker v-model="tags" :allSelected.sync="allSelected" />
+    <tag-cloud-picker v-model="tags" v-model:allSelected="allSelected" />
     <div>
       Tag match:
       <v-select
-        dense
+        density="compact"
         hide-details
         single-line
         class="mx-2 select-exclusive-filter"
         v-model="exclusive"
         :items="exclusiveItems"
-        item-text="text"
+        item-title="text"
         item-value="value"
       />
     </div>
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import { ITagAnnotationFilter } from "@/store/model";
 import TagCloudPicker from "@/components/TagCloudPicker.vue";
 
-@Component({
-  components: {
-    TagCloudPicker,
+const props = defineProps<{
+  modelValue: ITagAnnotationFilter;
+}>();
+
+const emit = defineEmits<{
+  (e: "update:modelValue", value: ITagAnnotationFilter): void;
+}>();
+
+const exclusiveItems = [
+  {
+    text: "Any",
+    value: false,
   },
-})
-export default class TagFilterEditor extends Vue {
-  @VModel({ type: Object }) filter!: ITagAnnotationFilter;
+  {
+    text: "Only",
+    value: true,
+  },
+];
 
-  readonly exclusiveItems = [
-    {
-      text: "Any",
-      value: false,
-    },
-    {
-      text: "Only",
-      value: true,
-    },
-  ];
+const tags = computed({
+  get() {
+    return props.modelValue.tags;
+  },
+  set(newTags: string[]) {
+    emit("update:modelValue", { ...props.modelValue, tags: newTags });
+  },
+});
 
-  get tags() {
-    return this.filter.tags;
-  }
+const allSelected = computed({
+  get() {
+    return !props.modelValue.enabled;
+  },
+  set(val: boolean) {
+    const exclusive = val ? false : props.modelValue.exclusive;
+    emit("update:modelValue", {
+      ...props.modelValue,
+      enabled: !val,
+      exclusive,
+    });
+  },
+});
 
-  set tags(tags: string[]) {
-    this.filter = { ...this.filter, tags };
-  }
+const exclusive = computed({
+  get() {
+    return props.modelValue.exclusive;
+  },
+  set(val: boolean) {
+    emit("update:modelValue", {
+      ...props.modelValue,
+      enabled: true,
+      exclusive: val,
+    });
+  },
+});
 
-  get allSelected() {
-    return !this.filter.enabled;
-  }
-
-  set allSelected(allSelected: boolean) {
-    const exclusive = allSelected ? false : this.filter.exclusive;
-    this.filter = { ...this.filter, enabled: !allSelected, exclusive };
-  }
-
-  get exclusive() {
-    return this.filter.exclusive;
-  }
-
-  set exclusive(exclusive: boolean) {
-    this.filter = { ...this.filter, enabled: true, exclusive };
-  }
-}
+defineExpose({ tags, allSelected, exclusive, exclusiveItems });
 </script>
 
 <style lang="scss">

@@ -1,8 +1,10 @@
 <template>
   <v-list-item
-    dense
+    density="compact"
     :value="tool.id"
-    :style="{ 'max-height': '32px' }"
+    :active="isToolSelected"
+    :color="isToolSelected ? 'primary' : undefined"
+    :class="['tool-item', { 'tool-item--active': isToolSelected }]"
     :id="getTourStepId(tool.name)"
     v-tour-trigger="getTourTriggerId(tool.name)"
     v-mousetrap="
@@ -18,96 +20,149 @@
         : []
     "
     v-bind="$attrs"
-    v-on="$listeners"
+    @click="toggleTool"
     @mouseover="isHovering = true"
     @mouseleave="isHovering = false"
   >
-    <v-list-item-avatar>
-      <tool-icon :tool="tool" />
-    </v-list-item-avatar>
-    <v-list-item-content>
-      <v-list-item-title>
-        {{ tool.name }}
-        <v-progress-circular
-          v-if="isToolLoading"
-          indeterminate
-          width="4"
-          size="16"
-        />
-        <v-icon v-else-if="statusIcon">{{ statusIcon }}</v-icon>
-      </v-list-item-title>
-    </v-list-item-content>
-    <v-list-item-action>
+    <template #prepend>
+      <span v-if="isToolSelected" class="tool-item__active-dot" />
+      <tool-icon :tool="tool" :size="18" />
+    </template>
+    <v-list-item-title>
+      {{ tool.name }}
+      <v-progress-circular
+        v-if="isToolLoading"
+        indeterminate
+        width="4"
+        size="16"
+      />
+      <v-icon v-else-if="statusIcon">{{ statusIcon }}</v-icon>
+    </v-list-item-title>
+    <template #append>
       <v-btn
+        size="x-small"
+        variant="text"
         icon
-        :max-height="32"
         @click.stop="editDialog = true"
         v-show="isHovering"
       >
-        <v-icon>mdi-pen</v-icon>
+        <v-icon size="14">mdi-pen</v-icon>
       </v-btn>
-    </v-list-item-action>
+    </template>
     <v-dialog v-model="editDialog">
       <tool-edition :tool="tool" @close="editDialog = false" />
     </v-dialog>
   </v-list-item>
 </template>
 
-<script lang="ts">
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import { IToolConfiguration } from "@/store/model";
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
 import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
 import { getTourStepId, getTourTriggerId } from "@/utils/strings";
 
-@Component({
-  components: { ToolIcon, ToolEdition },
-})
-export default class Toolset extends Vue {
-  readonly store = store;
-  @Prop()
-  tool!: IToolConfiguration;
+const props = defineProps<{
+  tool: IToolConfiguration;
+}>();
 
-  getTourStepId = getTourStepId;
-  getTourTriggerId = getTourTriggerId;
+const isHovering = ref(false);
+const editDialog = ref(false);
+const statusIcon = ref<string | null>(null);
 
-  isHovering = false;
-  editDialog = false;
-  statusIcon: null | string = null;
-
-  toggleTool() {
-    if (this.isToolSelected) {
-      this.store.setSelectedToolId(null);
-    } else {
-      this.store.setSelectedToolId(this.tool.id);
-    }
-  }
-
-  get isToolSelected() {
-    return this.store.selectedTool?.configuration.id === this.tool.id;
-  }
-
-  get isToolLoading() {
-    return !this.isToolSelected && !!this.jobId;
-  }
-
-  get jobId(): string | null {
-    const jobId = jobs.jobIdForToolId[this.tool.id];
-    return jobId ?? null;
-  }
-
-  @Watch("jobId")
-  onJobChanged() {
-    if (!this.jobId) {
-      return;
-    }
-    jobs
-      .getPromiseForJobId(this.jobId)
-      .then(
-        (success) => (this.statusIcon = success ? "mdi-check" : "mdi-close"),
-      );
+function toggleTool() {
+  if (isToolSelected.value) {
+    store.setSelectedToolId(null);
+  } else {
+    store.setSelectedToolId(props.tool.id);
   }
 }
+
+const isToolSelected = computed(() => {
+  return store.selectedTool?.configuration.id === props.tool.id;
+});
+
+const isToolLoading = computed(() => {
+  return !isToolSelected.value && !!jobId.value;
+});
+
+const jobId = computed((): string | null => {
+  return jobs.jobIdForToolId[props.tool.id] ?? null;
+});
+
+function onJobChanged() {
+  if (!jobId.value) {
+    return;
+  }
+  jobs
+    .getPromiseForJobId(jobId.value)
+    .then(
+      (success: boolean) =>
+        (statusIcon.value = success ? "mdi-check" : "mdi-close"),
+    );
+}
+
+watch(jobId, onJobChanged);
+
+defineExpose({
+  isHovering,
+  editDialog,
+  statusIcon,
+  toggleTool,
+  isToolSelected,
+  isToolLoading,
+  jobId,
+  onJobChanged,
+});
 </script>
+
+<style scoped>
+.tool-item {
+  --v-list-prepend-gap: 6px;
+  min-height: 36px;
+  border-left: 3px solid transparent;
+  border-radius: 0 4px 4px 0;
+  margin: 1px 4px 1px 0;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.tool-item--active {
+  border-left-color: rgb(var(--v-theme-primary));
+  background-color: rgba(var(--v-theme-primary), 0.12);
+  --v-activated-opacity: 0;
+}
+
+.tool-item:hover:not(.tool-item--active) {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.tool-item :deep(.v-list-item-title) {
+  opacity: 0.7;
+  transition:
+    opacity 0.15s ease,
+    font-weight 0.15s ease;
+}
+
+.tool-item--active :deep(.v-list-item-title) {
+  opacity: 1;
+  font-weight: 500;
+}
+
+.tool-item__active-dot {
+  display: inline-block;
+  width: 6px;
+  min-width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: rgb(var(--v-theme-primary));
+}
+
+.tool-item :deep(.v-list-item__prepend) {
+  gap: 6px;
+}
+</style>

@@ -1,8 +1,8 @@
 <template>
   <div class="server-status">
-    <v-tooltip left>
-      <template #activator="{ on }">
-        <div v-on="on">
+    <v-tooltip location="start">
+      <template #activator="{ props: activatorProps }">
+        <div v-bind="activatorProps">
           <v-icon class="save" v-if="saving">mdi-database-sync</v-icon>
           <v-icon class="loading" v-else-if="loading">mdi-database-sync</v-icon>
           <v-icon v-else-if="lastError" color="error">
@@ -19,30 +19,22 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
-import sync from "../store/sync";
+<script setup lang="ts">
+import { computed } from "vue";
+import sync from "@/store/sync";
 
-@Component
-export default class ServerStatus extends Vue {
-  readonly store = sync;
-
-  get lastError() {
-    if (!this.store.lastError) {
-      return "";
-    }
-
-    return this.store.lastError.message;
+const lastError = computed(() => {
+  if (!sync.lastError) {
+    return "";
   }
+  return sync.lastError.message;
+});
 
-  get loading() {
-    return this.store.loading;
-  }
+const loading = computed(() => sync.loading);
 
-  get saving() {
-    return this.store.saving;
-  }
-}
+const saving = computed(() => sync.saving);
+
+defineExpose({ lastError, loading, saving });
 </script>
 
 <style lang="scss" scoped>

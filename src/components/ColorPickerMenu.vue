@@ -1,34 +1,42 @@
 <template>
-  <v-menu
-    :close-on-content-click="false"
-    transition="scale-transition"
-    offset-x
-  >
-    <template #activator="{ on }">
+  <v-menu :close-on-content-click="false" transition="scale-transition">
+    <template #activator="{ props: activatorProps }">
       <div
-        v-on="on"
-        v-bind="{
-          class: $vnode.data && $vnode.data.staticClass,
-          style: $vnode.data && $vnode.data.staticStyle,
-        }"
-        style="cursor: pointer"
+        v-bind="activatorProps"
+        :class="parentClass"
+        :style="[{ cursor: 'pointer' }, parentStyle]"
         class="d-flex align-center"
       >
         <span class="subtitle-2 mr-2">Color</span>
         <span :style="{ backgroundColor: color }" class="color-bar"></span>
       </div>
     </template>
-    <v-color-picker v-model="color" />
+    <v-color-picker
+      :model-value="color"
+      @update:model-value="emit('update:modelValue', $event)"
+    />
   </v-menu>
 </template>
 
-<script lang="ts">
-import { Vue, Component, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed, useAttrs } from "vue";
 
-@Component({ inheritAttrs: false })
-export default class ColorPickerMenu extends Vue {
-  @VModel({ type: String, default: "#FFFFFF" }) color!: string;
-}
+defineOptions({ inheritAttrs: false });
+
+const props = defineProps<{
+  modelValue?: string;
+}>();
+
+const emit = defineEmits<{
+  (e: "update:modelValue", value: string): void;
+}>();
+
+const attrs = useAttrs();
+
+const color = computed(() => props.modelValue ?? "#FFFFFF");
+
+const parentClass = computed(() => (attrs as any).class);
+const parentStyle = computed(() => (attrs as any).style);
 </script>
 
 <style lang="scss" scoped>

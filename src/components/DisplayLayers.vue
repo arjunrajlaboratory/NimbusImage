@@ -1,12 +1,10 @@
 <template>
-  <v-expansion-panels
+  <div
     id="layer-controls-tourstep"
     class="d-block mt-2"
-    multiple
-    accordion
     v-mousetrap="mousetrapGlobalToggles"
   >
-    <v-expansion-panel>
+    <div>
       <div class="pr-8">
         <v-row dense>
           <v-col cols="7">
@@ -15,8 +13,14 @@
               group="layerZoneElement"
               class="ma-1 pa-1 drop"
               :class="{ dragging: isDragging, 'not-dragging': !isDragging }"
+              :item-key="(el: any) => el.layer?.id || String(el)"
             >
-              Drag layer here to create group
+              <template #item="{ element }">
+                <div>{{ element }}</div>
+              </template>
+              <template #footer>
+                <span>Drag layer here to create group</span>
+              </template>
             </draggable>
           </v-col>
           <v-col
@@ -31,48 +35,50 @@
           </v-col>
         </v-row>
       </div>
-    </v-expansion-panel>
+    </div>
     <v-divider />
     <draggable
       v-model="groupsArrayWithSpacers"
       :animation="200"
       :fallbackOnBody="true"
       :swapThreshold="0.65"
+      :item-key="(el: any) => el[0]"
     >
-      <transition-group type="transition">
-        <template v-for="[groupId, combinedLayers] in groupsArrayWithSpacers">
-          <display-layer-group
-            v-if="combinedLayers"
-            :key="groupId + '_layers'"
-            group="layerZoneElement"
-            :single-layer="groupId.startsWith(singleLayerPrefix)"
-            :combined-layers="combinedLayers"
-            @start="isDragging = true"
-            @end="isDragging = false"
-            @update="changeLayersInGroup($event, groupId)"
-          />
-          <draggable
-            v-else
-            :value="[]"
-            :key="groupId + '_spacer'"
-            @input="spacerUpdate($event, groupId)"
-            group="layerZoneElement"
-            class="group-spacer"
-          />
-        </template>
-      </transition-group>
+      <template #item="{ element }">
+        <display-layer-group
+          v-if="element[1]"
+          group="layerZoneElement"
+          :single-layer="element[0].startsWith(singleLayerPrefix)"
+          :combined-layers="element[1]"
+          @start="isDragging = true"
+          @end="isDragging = false"
+          @update="changeLayersInGroup($event, element[0])"
+        />
+        <draggable
+          v-else
+          :model-value="[]"
+          @update:model-value="spacerUpdate($event, element[0])"
+          group="layerZoneElement"
+          class="group-spacer"
+          :item-key="(el: any) => el.layer?.id || String(el)"
+        >
+          <template #item="{ element: spacerEl }">
+            <div>{{ spacerEl }}</div>
+          </template>
+        </draggable>
+      </template>
     </draggable>
-    <v-expansion-panel readonly class="add-layer">
+    <div class="add-layer">
       <v-btn @click="addLayer" icon title="Add new layer">
         <v-icon>mdi-plus-circle</v-icon>
       </v-btn>
-    </v-expansion-panel>
-  </v-expansion-panels>
+    </div>
+  </div>
 </template>
-<script lang="ts">
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import { IDisplayLayer, ICombinedLayer } from "@/store/model";
 import { v4 as uuidv4 } from "uuid";
-import { Vue, Component } from "vue-property-decorator";
 import DisplayLayerGroup from "./DisplayLayerGroup.vue";
 import draggable from "vuedraggable";
 import store from "@/store";
@@ -85,8 +91,10 @@ function groupIdFromLayer(layer: IDisplayLayer) {
   return layer.layerGroup ?? singleLayerPrefix + layer.id;
 }
 
-function spacerIdBeforeGroup(groupIdAfterSpacer?: string) {
-  return groupIdAfterSpacer ? spacerPrefix + groupIdAfterSpacer : spacerPrefix;
+function spacerIdBeforeGroup(groupIdAfterSpacerValue?: string) {
+  return groupIdAfterSpacerValue
+    ? spacerPrefix + groupIdAfterSpacerValue
+    : spacerPrefix;
 }
 
 function groupIdAfterSpacer(spacerId: string) {
@@ -96,235 +104,242 @@ function groupIdAfterSpacer(spacerId: string) {
   return spacerId.slice(spacerPrefix.length);
 }
 
-@Component({
-  components: {
-    DisplayLayerGroup,
-    draggable,
-  },
-})
-export default class DisplayLayers extends Vue {
-  readonly store = store;
-  readonly singleLayerPrefix = singleLayerPrefix;
+const isDragging = ref(false);
 
-  isDragging: boolean = false;
+const hasMultipleZ = computed(() => {
+  return store.dataset && store.dataset.z.length > 1;
+});
 
-  get hasMultipleZ() {
-    return this.store.dataset && this.store.dataset.z.length > 1;
-  }
-
-  // Maps a layer groupId to a list of layers
-  get groupsMap() {
-    // A Map remembers order of insertion
-    const groups: Map<string, ICombinedLayer[]> = new Map();
-    if (!this.store.configuration) {
-      return groups;
-    }
-    const configurationLayers = this.store.configuration.layers;
-    const layers = this.store.layers;
-    for (let layerIdx = 0; layerIdx < layers.length; ++layerIdx) {
-      const layer = layers[layerIdx];
-      const configurationLayer = configurationLayers[layerIdx];
-      const groupId = groupIdFromLayer(layer);
-      if (!groups.has(groupId)) {
-        groups.set(groupId, []);
-      }
-      groups.get(groupId)!.push({ layer, configurationLayer });
-    }
+// Maps a layer groupId to a list of layers
+const groupsMap = computed(() => {
+  // A Map remembers order of insertion
+  const groups: Map<string, ICombinedLayer[]> = new Map();
+  if (!store.configuration) {
     return groups;
   }
+  const configurationLayers = store.configuration.layers;
+  const layers = store.layers;
+  for (let layerIdx = 0; layerIdx < layers.length; ++layerIdx) {
+    const layer = layers[layerIdx];
+    const configurationLayer = configurationLayers[layerIdx];
+    const groupId = groupIdFromLayer(layer);
+    if (!groups.has(groupId)) {
+      groups.set(groupId, []);
+    }
+    groups.get(groupId)!.push({ layer, configurationLayer });
+  }
+  return groups;
+});
 
-  // A list of tuples [groupId | spacerId, layers | null]
-  get groupsArrayWithSpacers() {
-    const groupsArray = Array.from(this.groupsMap.entries());
+// A list of tuples [groupId | spacerId, layers | null]
+const groupsArrayWithSpacers = computed({
+  get() {
+    const groupsArray = Array.from(groupsMap.value.entries());
     const withSpacers: [string, ICombinedLayer[] | null][] = [];
     groupsArray.forEach((e) =>
       withSpacers.push([spacerIdBeforeGroup(e[0]), null], e),
     );
     withSpacers.push([spacerIdBeforeGroup(), null]);
     return withSpacers;
-  }
-
+  },
   // Changes the order of the groups
-  set groupsArrayWithSpacers(value) {
-    this.changeGroupsInWrapper(value);
-  }
+  set(value) {
+    changeGroupsInWrapper(value);
+  },
+});
 
-  get dropZoneArray() {
-    return [];
-  }
-
+const dropZoneArray = computed({
+  get() {
+    return [] as ICombinedLayer[];
+  },
   // Create a group from the layer dropped in the zone
-  set dropZoneArray(value: ICombinedLayer[]) {
+  set(value: ICombinedLayer[]) {
     if (value.length <= 0) {
       return;
     }
-    this.createGroupFromLayer(value[0]);
-  }
+    createGroupFromLayer(value[0]);
+  },
+});
 
-  // Change the order of the groups
-  changeGroupsInWrapper(groups: [string, ICombinedLayer[] | null][]) {
-    this.isDragging = false;
-    // Groups have changed position
-    const newConfigurationLayers = [];
-    for (const [, combinedLayers] of groups) {
-      if (combinedLayers) {
-        for (const { configurationLayer } of combinedLayers) {
-          newConfigurationLayers.push(configurationLayer);
-        }
+// Change the order of the groups
+function changeGroupsInWrapper(groups: [string, ICombinedLayer[] | null][]) {
+  isDragging.value = false;
+  // Groups have changed position
+  const newConfigurationLayers = [];
+  for (const [, combinedLayers] of groups) {
+    if (combinedLayers) {
+      for (const { configurationLayer } of combinedLayers) {
+        newConfigurationLayers.push(configurationLayer);
       }
     }
-    this.store.setConfigurationLayers(newConfigurationLayers);
   }
-
-  // The user dropped a layer in the spacer between two groups
-  spacerUpdate(combinedLayers: ICombinedLayer[], spacerId: string) {
-    this.isDragging = false;
-    if (!this.store.configuration || combinedLayers.length !== 1) {
-      return;
-    }
-    const configurationLayers = this.store.configuration.layers;
-    const layerToMove = combinedLayers[0].layer;
-    const groupId = groupIdAfterSpacer(spacerId);
-
-    // Find current position of item to move
-    const currentPosition = this.store.getLayerIndexFromId(layerToMove.id);
-    if (currentPosition === null) {
-      return;
-    }
-
-    // Find position of insertion
-    let insertPosition = groupId
-      ? configurationLayers.findIndex(
-          (layer) => groupIdFromLayer(layer) === groupId,
-        )
-      : configurationLayers.length;
-    if (insertPosition < 0) {
-      return;
-    }
-
-    // Move the element
-    if (
-      currentPosition !== insertPosition &&
-      currentPosition !== insertPosition - 1
-    ) {
-      const layer = configurationLayers[currentPosition];
-      if (currentPosition < insertPosition) {
-        for (let i = currentPosition; i < insertPosition - 1; i++) {
-          configurationLayers[i] = configurationLayers[i + 1];
-        }
-        configurationLayers[insertPosition - 1] = layer;
-      } else {
-        for (let i = currentPosition; i > insertPosition; i--) {
-          configurationLayers[i] = configurationLayers[i - 1];
-        }
-        configurationLayers[insertPosition] = layer;
-      }
-    }
-    this.store.setConfigurationLayers(configurationLayers);
-  }
-
-  // The user moved a layer within a group
-  changeLayersInGroup(combinedLayers: ICombinedLayer[], groupId: string) {
-    this.isDragging = false;
-    // Layers of this group have changed (layer added, removed or changed position)
-    if (!this.store.configuration) {
-      return;
-    }
-    const configurationLayers = this.store.configuration.layers;
-
-    // Get the id of all layers in the group
-    const layerIdsInGroup = new Set();
-    for (const { configurationLayer } of combinedLayers) {
-      layerIdsInGroup.add(configurationLayer.id);
-    }
-
-    const layerGroup = groupId.startsWith(this.singleLayerPrefix)
-      ? null
-      : groupId;
-
-    // Create 3 groups of layers: before group, in group, after group
-    // Also set the layerGroup attribute of each layer
-    const layersBeforeGroup: IDisplayLayer[] = [];
-    const layersAfterGroup: IDisplayLayer[] = [];
-    const layersInGroup: Map<string, IDisplayLayer> = new Map();
-    let isLayerBeforeGroup = true;
-    for (const currentLayer of configurationLayers) {
-      const currentGroupId = groupIdFromLayer(currentLayer);
-      const wasInGroup = currentGroupId === groupId;
-      const isInGroup = layerIdsInGroup.has(currentLayer.id);
-      if (wasInGroup && !isInGroup) {
-        // Removed from the group
-        currentLayer.layerGroup = null;
-      } else if (!wasInGroup && isInGroup) {
-        // Added to the group
-        currentLayer.layerGroup = layerGroup;
-      }
-      if (isInGroup) {
-        layersInGroup.set(currentLayer.id, currentLayer);
-      } else {
-        if (isLayerBeforeGroup) {
-          layersBeforeGroup.push(currentLayer);
-        } else {
-          layersAfterGroup.push(currentLayer);
-        }
-      }
-      if (wasInGroup) {
-        isLayerBeforeGroup = false;
-      }
-    }
-
-    // Sort layers in group as in combinedLayers parameter
-    const orderedLayersInGroup = [];
-    for (const { configurationLayer } of combinedLayers) {
-      const layerId = configurationLayer.id;
-      const newLayer = layersInGroup.get(layerId);
-      if (newLayer) {
-        orderedLayersInGroup.push(newLayer);
-      }
-    }
-
-    // Set the new configuration layers
-    this.store.setConfigurationLayers([
-      ...layersBeforeGroup,
-      ...orderedLayersInGroup,
-      ...layersAfterGroup,
-    ]);
-  }
-
-  createGroupFromLayer(combinedLayer: ICombinedLayer) {
-    const newGroupId = uuidv4();
-    this.store.changeLayer({
-      layerId: combinedLayer.layer.id,
-      delta: {
-        layerGroup: newGroupId,
-      },
-    });
-  }
-
-  addLayer() {
-    this.store.addLayer();
-  }
-
-  // Mousetrap bindings
-  mousetrapGlobalToggles: IHotkey[] = [
-    {
-      bind: "z",
-      handler: this.store.toggleGlobalZMaxMerge,
-      data: {
-        section: "Layer control",
-        description: "Toggle Z max-merge for all layers",
-      },
-    },
-    {
-      bind: "0",
-      handler: this.store.toggleGlobalLayerVisibility,
-      data: {
-        section: "Layer control",
-        description: "Show/hide all layers",
-      },
-    },
-  ];
+  store.setConfigurationLayers(newConfigurationLayers);
 }
+
+// The user dropped a layer in the spacer between two groups
+function spacerUpdate(combinedLayers: ICombinedLayer[], spacerId: string) {
+  isDragging.value = false;
+  if (!store.configuration || combinedLayers.length !== 1) {
+    return;
+  }
+  const configurationLayers = store.configuration.layers;
+  const layerToMove = combinedLayers[0].layer;
+  const groupId = groupIdAfterSpacer(spacerId);
+
+  // Find current position of item to move
+  const currentPosition = store.getLayerIndexFromId(layerToMove.id);
+  if (currentPosition === null) {
+    return;
+  }
+
+  // Find position of insertion
+  let insertPosition = groupId
+    ? configurationLayers.findIndex(
+        (layer) => groupIdFromLayer(layer) === groupId,
+      )
+    : configurationLayers.length;
+  if (insertPosition < 0) {
+    return;
+  }
+
+  // Move the element
+  if (
+    currentPosition !== insertPosition &&
+    currentPosition !== insertPosition - 1
+  ) {
+    const layer = configurationLayers[currentPosition];
+    if (currentPosition < insertPosition) {
+      for (let i = currentPosition; i < insertPosition - 1; i++) {
+        configurationLayers[i] = configurationLayers[i + 1];
+      }
+      configurationLayers[insertPosition - 1] = layer;
+    } else {
+      for (let i = currentPosition; i > insertPosition; i--) {
+        configurationLayers[i] = configurationLayers[i - 1];
+      }
+      configurationLayers[insertPosition] = layer;
+    }
+  }
+  store.setConfigurationLayers(configurationLayers);
+}
+
+// The user moved a layer within a group
+function changeLayersInGroup(
+  combinedLayers: ICombinedLayer[],
+  groupId: string,
+) {
+  isDragging.value = false;
+  // Layers of this group have changed (layer added, removed or changed position)
+  if (!store.configuration) {
+    return;
+  }
+  const configurationLayers = store.configuration.layers;
+
+  // Get the id of all layers in the group
+  const layerIdsInGroup = new Set();
+  for (const { configurationLayer } of combinedLayers) {
+    layerIdsInGroup.add(configurationLayer.id);
+  }
+
+  const layerGroup = groupId.startsWith(singleLayerPrefix) ? null : groupId;
+
+  // Create 3 groups of layers: before group, in group, after group
+  // Also set the layerGroup attribute of each layer
+  const layersBeforeGroup: IDisplayLayer[] = [];
+  const layersAfterGroup: IDisplayLayer[] = [];
+  const layersInGroup: Map<string, IDisplayLayer> = new Map();
+  let isLayerBeforeGroup = true;
+  for (const currentLayer of configurationLayers) {
+    const currentGroupId = groupIdFromLayer(currentLayer);
+    const wasInGroup = currentGroupId === groupId;
+    const isInGroup = layerIdsInGroup.has(currentLayer.id);
+    if (wasInGroup && !isInGroup) {
+      // Removed from the group
+      currentLayer.layerGroup = null;
+    } else if (!wasInGroup && isInGroup) {
+      // Added to the group
+      currentLayer.layerGroup = layerGroup;
+    }
+    if (isInGroup) {
+      layersInGroup.set(currentLayer.id, currentLayer);
+    } else {
+      if (isLayerBeforeGroup) {
+        layersBeforeGroup.push(currentLayer);
+      } else {
+        layersAfterGroup.push(currentLayer);
+      }
+    }
+    if (wasInGroup) {
+      isLayerBeforeGroup = false;
+    }
+  }
+
+  // Sort layers in group as in combinedLayers parameter
+  const orderedLayersInGroup = [];
+  for (const { configurationLayer } of combinedLayers) {
+    const layerId = configurationLayer.id;
+    const newLayer = layersInGroup.get(layerId);
+    if (newLayer) {
+      orderedLayersInGroup.push(newLayer);
+    }
+  }
+
+  // Set the new configuration layers
+  store.setConfigurationLayers([
+    ...layersBeforeGroup,
+    ...orderedLayersInGroup,
+    ...layersAfterGroup,
+  ]);
+}
+
+function createGroupFromLayer(combinedLayer: ICombinedLayer) {
+  const newGroupId = uuidv4();
+  store.changeLayer({
+    layerId: combinedLayer.layer.id,
+    delta: {
+      layerGroup: newGroupId,
+    },
+  });
+}
+
+function addLayer() {
+  store.addLayer();
+}
+
+// Mousetrap bindings
+const mousetrapGlobalToggles: IHotkey[] = [
+  {
+    bind: "z",
+    handler: store.toggleGlobalZMaxMerge,
+    data: {
+      section: "Layer control",
+      description: "Toggle Z max-merge for all layers",
+    },
+  },
+  {
+    bind: "0",
+    handler: store.toggleGlobalLayerVisibility,
+    data: {
+      section: "Layer control",
+      description: "Show/hide all layers",
+    },
+  },
+];
+
+defineExpose({
+  isDragging,
+  hasMultipleZ,
+  groupsMap,
+  groupsArrayWithSpacers,
+  dropZoneArray,
+  changeGroupsInWrapper,
+  spacerUpdate,
+  changeLayersInGroup,
+  createGroupFromLayer,
+  addLayer,
+  mousetrapGlobalToggles,
+  singleLayerPrefix,
+});
 </script>
 
 <style lang="scss" scoped>

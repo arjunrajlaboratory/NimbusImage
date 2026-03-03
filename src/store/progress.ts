@@ -16,7 +16,7 @@ import {
   NotificationType,
   INotification,
 } from "./model";
-import { jobStates } from "./jobs";
+import { jobStates } from "./jobConstants";
 import { v4 as uuidv4 } from "uuid";
 
 // These are the endpoints that are sent to the fetchAllJobs call. We can capture them to
@@ -462,3 +462,9 @@ class Progress extends VuexModule {
 }
 
 export default getModule(Progress);
+
+// Self-accept HMR to prevent vuex-module-decorators from re-registering
+// the dynamic module (which causes duplicate getters and state overwrites).
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}

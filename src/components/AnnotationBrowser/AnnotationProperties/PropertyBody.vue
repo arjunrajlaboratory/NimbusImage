@@ -21,20 +21,19 @@
       <v-spacer />
       <v-btn
         v-if="currentJobId || localJobLog"
-        small
-        text
+        size="small"
+        variant="text"
         color="info"
         class="mr-2"
         @click="showLogDialog = true"
       >
-        <v-icon small left>mdi-text-box-outline</v-icon>
+        <v-icon size="small" start>mdi-text-box-outline</v-icon>
         Log
       </v-btn>
       <v-dialog v-model="deleteDialog">
-        <template v-slot:activator="{ on, attrs }">
+        <template v-slot:activator="{ props: activatorProps }">
           <v-btn
-            v-bind="attrs"
-            v-on="on"
+            v-bind="activatorProps"
             @click.stop="deleteComputedValues = true"
             color="red"
           >
@@ -59,7 +58,7 @@
                 <v-col>
                   <v-checkbox
                     hide-details
-                    dense
+                    density="compact"
                     label="Also delete the computed values for this property"
                     v-model="deleteComputedValues"
                   />
@@ -91,9 +90,9 @@
         <v-card-title class="headline">
           Job Log: {{ property.name }}
           <v-spacer></v-spacer>
-          <v-tooltip bottom>
-            <template v-slot:activator="{ on, attrs }">
-              <v-btn icon v-bind="attrs" v-on="on" @click="copyLogToClipboard">
+          <v-tooltip location="bottom">
+            <template v-slot:activator="{ props: activatorProps }">
+              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
@@ -108,7 +107,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" text @click="showLogDialog = false"
+          <v-btn color="primary" variant="text" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -122,98 +121,110 @@
   </v-container>
 </template>
 
-<script lang="ts">
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
 import { IAnnotationProperty, AnnotationNames } from "@/store/model";
-import { Vue, Component, Prop } from "vue-property-decorator";
 import { logError } from "@/utils/log";
 
-@Component({})
-export default class AnnotationPropertyBody extends Vue {
-  readonly propertyStore = propertyStore;
-  readonly jobsStore = jobsStore;
+const props = defineProps<{
+  property: IAnnotationProperty;
+}>();
 
-  @Prop()
-  readonly property!: IAnnotationProperty;
+const annotationNames = AnnotationNames;
 
-  annotationNames = AnnotationNames;
+const deleteDialog = ref(false);
+const deleteComputedValues = ref(false);
+const showLogDialog = ref(false);
+const localJobLog = ref("");
+const showCopySnackbar = ref(false);
 
-  deleteDialog: boolean = false;
-  deleteComputedValues: boolean = false;
-  showLogDialog: boolean = false;
-  localJobLog: string = "";
-  showCopySnackbar: boolean = false;
+const currentJobId = computed(() => {
+  return props.property
+    ? jobsStore.jobIdForPropertyId[props.property.id]
+    : null;
+});
 
-  get currentJobId() {
-    return this.property
-      ? this.jobsStore.jobIdForPropertyId[this.property.id]
-      : null;
+const jobLog = computed(() => {
+  if (currentJobId.value) {
+    return jobsStore.getJobLog(currentJobId.value) || localJobLog.value;
   }
+  return localJobLog.value;
+});
 
-  get jobLog() {
-    if (this.currentJobId) {
-      // Update local log from store when a job is running
-      const storeLog = this.jobsStore.getJobLog(this.currentJobId);
-      if (storeLog && storeLog !== this.localJobLog) {
-        // If the log is empty, add a header with timestamp
-        if (!this.localJobLog) {
-          const timestamp = new Date().toLocaleString();
-          this.localJobLog = `=== Job started at ${timestamp} ===\n\n${storeLog}`;
-        } else {
-          this.localJobLog = storeLog;
-        }
-      }
-      return storeLog;
-    }
-    // Return local log when no current job (job completed)
-    return this.localJobLog;
-  }
-
-  deleteProperty() {
-    this.propertyStore.deleteProperty(this.property.id);
-    if (this.deleteComputedValues) {
-      this.propertyStore.deletePropertyValues(this.property.id);
-    }
-  }
-
-  copyLogToClipboard() {
-    const log = this.jobLog;
-    if (log) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard
-          .writeText(log)
-          .then(() => {
-            this.showCopySnackbar = true;
-          })
-          .catch(() => {
-            // Fallback for browsers that don't support the Clipboard API
-            this.copyToClipboardFallback(log);
-          });
+// Sync store log to local log (side effect kept out of computed)
+watch(
+  () => (currentJobId.value ? jobsStore.getJobLog(currentJobId.value) : null),
+  (storeLog) => {
+    if (storeLog && storeLog !== localJobLog.value) {
+      if (!localJobLog.value) {
+        const timestamp = new Date().toLocaleString();
+        localJobLog.value = `=== Job started at ${timestamp} ===\n\n${storeLog}`;
       } else {
-        // Fallback for older browsers
-        this.copyToClipboardFallback(log);
+        localJobLog.value = storeLog;
       }
     }
-  }
+  },
+);
 
-  copyToClipboardFallback(text: string) {
-    const tempTextArea = document.createElement("textarea");
-    tempTextArea.value = text;
-    tempTextArea.style.position = "fixed"; // Avoid scrolling to bottom
-    document.body.appendChild(tempTextArea);
-    tempTextArea.select();
-
-    try {
-      document.execCommand("copy");
-      this.showCopySnackbar = true;
-    } catch (err) {
-      logError("Failed to copy text: ", err);
-    }
-
-    document.body.removeChild(tempTextArea);
+function deleteProperty() {
+  propertyStore.deleteProperty(props.property.id);
+  if (deleteComputedValues.value) {
+    propertyStore.deletePropertyValues(props.property.id);
   }
 }
+
+function copyLogToClipboard() {
+  const log = jobLog.value;
+  if (log) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard
+        .writeText(log)
+        .then(() => {
+          showCopySnackbar.value = true;
+        })
+        .catch(() => {
+          // Fallback for browsers that don't support the Clipboard API
+          copyToClipboardFallback(log);
+        });
+    } else {
+      // Fallback for older browsers
+      copyToClipboardFallback(log);
+    }
+  }
+}
+
+function copyToClipboardFallback(text: string) {
+  const tempTextArea = document.createElement("textarea");
+  tempTextArea.value = text;
+  tempTextArea.style.position = "fixed"; // Avoid scrolling to bottom
+  document.body.appendChild(tempTextArea);
+  tempTextArea.select();
+
+  try {
+    document.execCommand("copy");
+    showCopySnackbar.value = true;
+  } catch (err) {
+    logError("Failed to copy text: ", err);
+  }
+
+  document.body.removeChild(tempTextArea);
+}
+
+defineExpose({
+  deleteDialog,
+  deleteComputedValues,
+  showLogDialog,
+  localJobLog,
+  showCopySnackbar,
+  currentJobId,
+  jobLog,
+  deleteProperty,
+  copyLogToClipboard,
+  copyToClipboardFallback,
+  annotationNames,
+});
 </script>
 
 <style lang="scss" scoped>

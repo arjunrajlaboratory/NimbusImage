@@ -16,16 +16,17 @@
     "noUnusedParameters": true,
     "jsxFactory": "h",
     "noEmit": true,
+    "skipLibCheck": true,
     "downlevelIteration": true,
     "sourceMap": true,
     "baseUrl": ".",
-    "types": ["vitest/globals", "vue-router", "vuetify", "vue", "node", "jquery"],
+    "types": ["vitest/globals", "node", "jquery"],
     "paths": {
       "@/test/*": ["test/*"],
       "@/*": ["src/*"],
-      "vue/*": ["node_modules/vue/*"],
+      "vue/*": ["node_modules/vue/*"]
     },
-    "lib": ["esnext", "dom", "dom.iterable", "scripthost"],
+    "lib": ["esnext", "dom", "dom.iterable", "scripthost"]
   },
   "include": [
     "src/**/*.ts",
@@ -34,18 +35,5 @@
     "tests/**/*.ts",
     "tests/**/*.tsx"
   ],
-  "exclude": ["node_modules"],
-  // Needed to fix lists of v-checkboxes with Vue2.7
-  // See https://github.com/vuejs/language-tools/issues/1969
-  "vueCompilerOptions": {
-    "target": 2.7,
-    "experimentalModelPropName": {
-      "checked": {
-        "input": {
-          "type": "checkbox"
-        },
-        "v-checkbox": true
-      }
-    }
-  }
+  "exclude": ["node_modules"]
 }

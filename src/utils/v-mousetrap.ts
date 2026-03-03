@@ -1,7 +1,6 @@
 import Mousetrap from "mousetrap";
 import { isArray } from "lodash";
-import { reactive } from "vue";
-import { Vue } from "vue-property-decorator";
+import { ref } from "vue";
 
 export interface IHotkey {
   bind: string;
@@ -15,7 +14,15 @@ export interface IHotkeyDescription {
   description: string;
 }
 
-export const boundKeys: { [hotkey: string]: IHotkeyDescription } = reactive({});
+// Internal mutable store — not reactive, so directive hooks don't create
+// dependency-tracking loops when they run inside a component's render watcher.
+const _raw: Record<string, IHotkeyDescription> = {};
+// Exposed reactive ref — consumers (HelpPanel) read this to render.
+export const boundKeys = ref<Record<string, IHotkeyDescription>>({});
+
+function flush() {
+  boundKeys.value = { ..._raw };
+}
 
 function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
   const mousetrap = new Mousetrap(bindElement ? el : undefined);
@@ -24,6 +31,7 @@ function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
     value = [value];
   }
   el.mousetrapValues = value;
+  let changed = false;
   value.forEach(({ bind: _bind, handler, disabled, data }: IHotkey) => {
     if (disabled) {
       return;
@@ -32,37 +40,53 @@ function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
       handler.apply(this, [el, ...args]);
     });
     if (data) {
-      Vue.set(boundKeys, _bind, data);
+      _raw[_bind] = data;
+      changed = true;
     }
   });
+  if (changed) {
+    flush();
+  }
 }
 
 function unbind(el: any) {
   el.mousetrap.reset();
+  let changed = false;
   el.mousetrapValues.forEach(({ bind: _bind, data }: IHotkey) => {
     if (data) {
-      Vue.delete(boundKeys, _bind);
+      delete _raw[_bind];
+      changed = true;
     }
   });
+  if (changed) {
+    flush();
+  }
 }
 
-export default function install(Vue: any) {
-  Vue.directive("mousetrap", {
-    inserted(
-      el: any,
-      { value, modifiers }: { value: IHotkey | IHotkey[]; modifiers: any },
-    ) {
-      bind(el, value, modifiers.element);
+export const mousetrapDirective = {
+  mounted(
+    el: any,
+    { value, modifiers }: { value: IHotkey | IHotkey[]; modifiers: any },
+  ) {
+    bind(el, value, modifiers.element);
+  },
+  updated(
+    el: any,
+    {
+      value,
+      oldValue,
+      modifiers,
+    }: {
+      value: IHotkey | IHotkey[];
+      oldValue: IHotkey | IHotkey[];
+      modifiers: any;
     },
-    update(
-      el: any,
-      { value, modifiers }: { value: IHotkey | IHotkey[]; modifiers: any },
-    ) {
-      unbind(el);
-      bind(el, value, modifiers.element);
-    },
-    unbind(el: any) {
-      unbind(el);
-    },
-  });
-}
+  ) {
+    if (value === oldValue) return;
+    unbind(el);
+    bind(el, value, modifiers.element);
+  },
+  unmounted(el: any) {
+    unbind(el);
+  },
+};

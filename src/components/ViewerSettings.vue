@@ -1,26 +1,26 @@
 <template>
   <div>
     <v-expansion-panel>
-      <v-expansion-panel-header> Viewer settings </v-expansion-panel-header>
-      <v-expansion-panel-content>
+      <v-expansion-panel-title> Viewer settings </v-expansion-panel-title>
+      <v-expansion-panel-text>
         <v-container>
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="showXYLabels"
             label="Show XY position labels"
             title="Display coordinate labels for XY positions"
           />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="showZLabels"
             label="Show Z position labels"
             title="Display coordinate labels for Z positions"
           />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="showTimeLabels"
             label="Show time labels"
             title="Display time labels"
@@ -28,7 +28,7 @@
           <v-divider class="my-2" />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="valueOnHover"
             label="Show channel values on hover"
             title="Show pixel intensity values when hovering cursor over image"
@@ -41,7 +41,7 @@
           />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="overview"
             label="Show minimap"
             v-description="{
@@ -52,7 +52,7 @@
           />
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="showScalebar"
             label="Show scalebar"
             title="Show the scalebar on top of the image"
@@ -74,7 +74,7 @@
           </span>
           <v-switch
             hide-details
-            dense
+            density="compact"
             v-model="scaleAnnotationsWithZoom"
             label="Scale points with zoom"
             title="Make point annotations scale with zoom level or stay a fixed size"
@@ -104,15 +104,17 @@
             hide-details
             label="Compositing mode"
             v-model="compositionMode"
-            :items="compositionItems"
+            :items="compositionItemsList"
+            item-title="text"
+            item-value="value"
           >
-            <template #item="{ item }">
+            <template #item="{ item: listItem }">
               <div style="width: 100%">
                 <strong>
-                  {{ item.text }}
+                  {{ (listItem as any).raw?.text ?? listItem.title }}
                 </strong>
-                <div class="body-2 text--secondary">
-                  {{ item.help }}
+                <div class="body-2 text-medium-emphasis">
+                  {{ (listItem as any).raw?.help }}
                 </div>
                 <v-divider />
               </div>
@@ -122,16 +124,18 @@
             label="Background color"
             v-model="backgroundColor"
             :items="backgroundItems"
+            item-title="text"
+            item-value="value"
           />
 
           <v-divider class="my-4" />
 
           <v-btn color="primary" @click="showColorDialog = true" block>
-            <v-icon left>mdi-palette</v-icon>
+            <v-icon start>mdi-palette</v-icon>
             Customize Default Channel Colors
           </v-btn>
         </v-container>
-      </v-expansion-panel-content>
+      </v-expansion-panel-text>
     </v-expansion-panel>
 
     <!-- Channel Color Customization Dialog -->
@@ -144,141 +148,146 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
+import { debounce } from "lodash";
 import store from "@/store/index";
 import {
   TCompositionMode,
   compositionItems,
   advancedCompositionItems,
 } from "@/utils/compositionModes";
+import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import PixelScaleBarSetting from "@/components/PixelScaleBarSetting.vue";
 import UserColorSettings from "@/components/UserColorSettings.vue";
-import { Debounce } from "@/utils/debounce";
 
-@Component({ components: { PixelScaleBarSetting, UserColorSettings } })
-export default class ViewerSettings extends Vue {
-  readonly store = store;
-  showColorDialog = false;
+const showColorDialog = ref(false);
 
-  readonly compositionItems = [
-    { header: "Base Composition Modes" },
-    ...compositionItems,
-    { header: "Advanced Composition Modes" },
-    ...advancedCompositionItems,
-  ];
-  readonly backgroundItems = [
-    { value: "white", text: "White" },
-    { value: "black", text: "Black" },
-  ];
+const compositionItemsList = [
+  { header: "Base Composition Modes" },
+  ...compositionItems,
+  { header: "Advanced Composition Modes" },
+  ...advancedCompositionItems,
+];
+const backgroundItems = [
+  { value: "white", text: "White" },
+  { value: "black", text: "Black" },
+];
 
-  get valueOnHover() {
-    return this.store.valueOnHover;
-  }
+const valueOnHover = computed({
+  get: () => store.valueOnHover,
+  set: (value: boolean) => {
+    store.setValueOnHover(value);
+  },
+});
 
-  set valueOnHover(value) {
-    this.store.setValueOnHover(value);
-  }
+const overview = computed({
+  get: () => store.overview,
+  set: (value: boolean) => {
+    store.setOverview(value);
+  },
+});
 
-  get overview() {
-    return this.store.overview;
-  }
+const showScalebar = computed({
+  get: () => store.showScalebar,
+  set: (value: boolean) => {
+    store.setShowScalebar(value);
+  },
+});
 
-  set overview(value) {
-    this.store.setOverview(value);
-  }
+const scalebarColor = computed({
+  get: () => store.scalebarColor,
+  set: (color: string) => {
+    store.setScalebarColor(color);
+  },
+});
 
-  get showScalebar() {
-    return this.store.showScalebar;
-  }
+const scaleAnnotationsWithZoom = computed({
+  get: () => store.scaleAnnotationsWithZoom,
+  set: (value: boolean) => {
+    store.setScaleAnnotationsWithZoom(value);
+  },
+});
 
-  set showScalebar(value) {
-    this.store.setShowScalebar(value);
-  }
-
-  get scalebarColor() {
-    return this.store.scalebarColor;
-  }
-
-  set scalebarColor(color: string) {
-    this.store.setScalebarColor(color);
-  }
-
-  get scaleAnnotationsWithZoom() {
-    return this.store.scaleAnnotationsWithZoom;
-  }
-
-  set scaleAnnotationsWithZoom(value: boolean) {
-    this.store.setScaleAnnotationsWithZoom(value);
-  }
-
-  get annotationOpacity() {
-    return this.store.annotationOpacity;
-  }
-
-  set annotationOpacity(value: number) {
-    this.setOpacityDebounced(value);
-  }
-
-  @Debounce(250, { leading: false, trailing: true })
-  private setOpacityDebounced(value: number) {
+const setOpacityDebounced = debounce(
+  (value: number) => {
     const opacity = typeof value === "string" ? parseFloat(value) : value;
-    this.store.setAnnotationOpacity(opacity);
-  }
+    store.setAnnotationOpacity(opacity);
+  },
+  250,
+  { leading: false, trailing: true },
+);
 
-  get annotationsRadius() {
-    return this.store.annotationsRadius;
-  }
+const annotationOpacity = computed({
+  get: () => store.annotationOpacity,
+  set: (value: number) => {
+    setOpacityDebounced(value);
+  },
+});
 
-  set annotationsRadius(value: number) {
+const annotationsRadius = computed({
+  get: () => store.annotationsRadius,
+  set: (value: number) => {
     const zoom = typeof value === "string" ? parseFloat(value) : value;
-    this.store.setAnnotationsRadius(zoom);
-  }
+    store.setAnnotationsRadius(zoom);
+  },
+});
 
-  get compositionMode() {
-    return this.store.compositionMode;
-  }
+const compositionMode = computed({
+  get: () => store.compositionMode,
+  set: (value: TCompositionMode) => {
+    store.setCompositionMode(value);
+  },
+});
 
-  set compositionMode(value: TCompositionMode) {
-    this.store.setCompositionMode(value);
-  }
+const backgroundColor = computed({
+  get: () => store.backgroundColor,
+  set: (value: string) => {
+    store.setBackgroundColor(value);
+  },
+});
 
-  get backgroundColor() {
-    return this.store.backgroundColor;
-  }
+const showXYLabels = computed({
+  get: () => store.showXYLabels,
+  set: (value: boolean) => {
+    store.setShowXYLabels(value);
+  },
+});
 
-  set backgroundColor(value: string) {
-    this.store.setBackgroundColor(value);
-  }
+const showZLabels = computed({
+  get: () => store.showZLabels,
+  set: (value: boolean) => {
+    store.setShowZLabels(value);
+  },
+});
 
-  get showXYLabels() {
-    return this.store.showXYLabels;
-  }
+const showTimeLabels = computed({
+  get: () => store.showTimeLabels,
+  set: (value: boolean) => {
+    store.setShowTimeLabels(value);
+  },
+});
 
-  set showXYLabels(value: boolean) {
-    this.store.setShowXYLabels(value);
-  }
-
-  get showZLabels() {
-    return this.store.showZLabels;
-  }
-
-  set showZLabels(value: boolean) {
-    this.store.setShowZLabels(value);
-  }
-
-  get showTimeLabels() {
-    return this.store.showTimeLabels;
-  }
-
-  set showTimeLabels(value: boolean) {
-    this.store.setShowTimeLabels(value);
-  }
-}
+defineExpose({
+  showColorDialog,
+  valueOnHover,
+  overview,
+  showScalebar,
+  scalebarColor,
+  scaleAnnotationsWithZoom,
+  annotationOpacity,
+  annotationsRadius,
+  compositionMode,
+  backgroundColor,
+  showXYLabels,
+  showZLabels,
+  showTimeLabels,
+  setOpacityDebounced,
+});
 </script>
 
 <style lang="scss">
-.v-select-list .v-subheader {
+.v-select-list .v-list-subheader {
   justify-content: center;
   font-weight: bold;
   border-top: solid 2px;

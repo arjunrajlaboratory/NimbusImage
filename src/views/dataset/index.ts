@@ -3,10 +3,10 @@ import NewDataset from "./NewDataset.vue";
 import ImportDataset from "./ImportDataset.vue";
 import DatasetInfo from "./DatasetInfo.vue";
 import { Main } from "@/store";
-import { RouteConfig } from "vue-router";
+import type { RouteRecordRaw } from "vue-router";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 
-const routes: RouteConfig[] = [
+const routes: RouteRecordRaw[] = [
   {
     path: "new",
     name: "newdataset",

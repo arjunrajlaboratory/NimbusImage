@@ -3,73 +3,69 @@
   <v-combobox
     v-model="tags"
     :items="tagList"
-    :search-input.sync="tagSearchInput"
+    v-model:search="tagSearchInput"
     multiple
     hide-selected
     hide-details
-    small-chips
-    dense
+    chips
+    density="compact"
     label="Tags"
     :disabled="disabled"
     @change="onTagChange"
     ref="combobox"
   >
-    <template v-slot:selection="{ attrs, index, item, parent }">
-      <v-chip
-        :key="index"
-        class="pa-2"
-        v-bind="attrs"
-        close
-        pill
-        x-small
-        @click:close="parent.selectItem(item)"
-      >
-        {{ item }}
+    <template v-slot:chip="{ item, props: chipProps }">
+      <v-chip v-bind="chipProps" class="pa-2" closable pill size="x-small">
+        {{ item.raw }}
       </v-chip>
     </template>
   </v-combobox>
 </template>
 
-<script lang="ts">
-import { Vue, Component, VModel, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, nextTick } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 
-// Interface element for the input of annotation tags
-@Component({
-  components: {},
-})
-export default class TagPicker extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
+const props = withDefaults(
+  defineProps<{
+    modelValue: string[];
+    disabled?: boolean;
+  }>(),
+  {
+    disabled: false,
+  },
+);
 
-  @Prop({ default: false })
-  readonly disabled!: boolean;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: string[]): void;
+}>();
 
-  @VModel({ type: Array }) tags!: string[];
+const tags = computed({
+  get() {
+    return props.modelValue;
+  },
+  set(val: string[]) {
+    emit("update:modelValue", val);
+  },
+});
 
-  get tagList(): string[] {
-    return Array.from(
-      new Set([...this.annotationStore.annotationTags, ...this.store.toolTags]),
-    );
-  }
+const tagSearchInput = ref("");
+const combobox = ref<HTMLFormElement>();
 
-  tagSearchInput: string = "";
-  get layers() {
-    return this.store.layers;
-  }
+const tagList = computed((): string[] => {
+  return Array.from(
+    new Set([...annotationStore.annotationTags, ...store.toolTags]),
+  );
+});
 
-  $refs!: {
-    combobox: HTMLFormElement;
-  };
-
-  onTagChange() {
-    // Close the combobox and remove focus
-    Vue.nextTick(() => {
-      if (this.$refs.combobox) {
-        this.$refs.combobox.blur();
-      }
-    });
-  }
+function onTagChange() {
+  nextTick(() => {
+    if (combobox.value) {
+      combobox.value.blur();
+    }
+  });
 }
+
+defineExpose({ tags, tagList, tagSearchInput, onTagChange });
 </script>

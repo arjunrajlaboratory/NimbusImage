@@ -3,66 +3,64 @@
   <v-select
     v-bind="$attrs"
     :items="layerItems"
-    item-text="label"
-    dense
+    item-title="label"
+    density="compact"
     v-model="layer"
     :label="label"
   />
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, VModel, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed, watch, onMounted } from "vue";
+import type { PropType } from "vue";
 import store from "@/store";
 
-// Interface element selecting a layer
-@Component({})
-export default class LayerSelect extends Vue {
-  readonly store = store;
+const props = defineProps({
+  modelValue: { type: String as PropType<string | null> },
+  any: { type: undefined as any, default: undefined },
+  label: { type: undefined as any, default: undefined },
+});
 
-  // Adds an "Any" selection choice
-  @Prop()
-  readonly any: any;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: string | null): void;
+}>();
 
-  @Prop()
-  readonly label: any;
+const layer = computed<string | null | undefined>({
+  get() {
+    return props.modelValue;
+  },
+  set(val: string | null | undefined) {
+    emit("update:modelValue", val as string | null);
+  },
+});
 
-  @VModel() layer!: string | null;
-
-  mounted() {
-    this.ensureLayer();
+const layerItems = computed(() => {
+  const layers: { label: string; value: string | null }[] = store.layers.map(
+    (l: any) => ({
+      label: l.name,
+      value: l.id,
+    }),
+  );
+  if (props.any !== undefined) {
+    return [...layers, { label: "Any", value: null }];
   }
+  return layers;
+});
 
-  @Watch("layer")
-  ensureLayer() {
-    if (this.any) {
-      if (this.layer === undefined) {
-        this.layer = null;
-      }
-    } else {
-      if (this.layer == null) {
-        this.layer = this.layerItems[0].value;
-      }
+function ensureLayer() {
+  if (props.any !== undefined) {
+    if (layer.value === undefined) {
+      layer.value = null;
     }
-  }
-
-  get layers() {
-    return this.store.layers;
-  }
-
-  get layerItems() {
-    const layers: { label: string; value: string | null }[] = this.layers.map(
-      (layer) => ({
-        label: layer.name,
-        value: layer.id,
-      }),
-    );
-    if (this.any !== undefined) {
-      Vue.set(layers, layers.length, {
-        label: "Any",
-        value: null,
-      });
+  } else {
+    if (layer.value == null) {
+      layer.value = layerItems.value[0].value;
     }
-    return layers;
   }
 }
+
+onMounted(ensureLayer);
+watch(layer, ensureLayer);
+
+defineExpose({ layer, layerItems, ensureLayer });
 </script>

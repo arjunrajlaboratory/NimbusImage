@@ -6,35 +6,39 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 
 export interface IAlert {
   type: "success" | "info" | "warning" | "error" | undefined;
   message: string;
 }
 
-@Component({})
-export default class AlertDialog extends Vue {
-  alert: IAlert | null = null;
+// Interface for template ref typing when used from Class Components
+export interface IAlertDialogRef {
+  openAlert(alert: IAlert): void;
+}
 
-  get isAlertOpen() {
-    return this.alert !== null;
-  }
+const alert = ref<IAlert | null>(null);
 
-  set isAlertOpen(val: boolean) {
+const isAlertOpen = computed({
+  get: () => alert.value !== null,
+  set: (val: boolean) => {
     if (!val) {
-      this.alert = null;
+      alert.value = null;
     } else {
-      this.alert = {
+      alert.value = {
         type: "info",
         message: "Unknown alert",
       };
     }
-  }
+  },
+});
 
-  openAlert(alert: IAlert) {
-    this.alert = alert;
-  }
+function openAlert(newAlert: IAlert) {
+  alert.value = newAlert;
 }
+
+// Expose method for parent components using template refs
+defineExpose({ openAlert });
 </script>

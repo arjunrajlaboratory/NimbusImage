@@ -1,6 +1,6 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header
+    <v-expansion-panel-title
       id="properties-header-tourstep"
       v-tour-trigger="'properties-header-tourtrigger'"
     >
@@ -9,8 +9,7 @@
       <v-btn
         color="primary"
         dark
-        small
-        dense
+        size="default"
         @click.stop="showAnalyzeDialog = true"
         id="measure-objects-button-tourstep"
         v-tour-trigger="'measure-objects-button-tourtrigger'"
@@ -18,14 +17,14 @@
       >
         Measure objects
       </v-btn>
-    </v-expansion-panel-header>
+    </v-expansion-panel-title>
 
     <v-dialog
       v-model="showAnalyzeDialog"
-      min-width="900px"
-      max-width="1000px"
-      width="80%"
-      @input="onDialogClose"
+      min-width="1150px"
+      max-width="1300px"
+      width="85%"
+      @update:model-value="onDialogClose"
     >
       <v-card>
         <v-card-title>Measure objects</v-card-title>
@@ -46,15 +45,15 @@
               batchProgress.cancelled
             }}
             / {{ batchProgress.total }} datasets
-            <span v-if="batchProgress.failed > 0" class="error--text">
+            <span v-if="batchProgress.failed > 0" class="text-error">
               ({{ batchProgress.failed }} failed)
             </span>
-            <span v-if="batchProgress.cancelled > 0" class="warning--text">
+            <span v-if="batchProgress.cancelled > 0" class="text-warning">
               ({{ batchProgress.cancelled }} cancelled)
             </span>
           </div>
           <v-progress-linear
-            :value="batchProgressPercent"
+            :model-value="batchProgressPercent"
             color="primary"
             height="20"
             striped
@@ -69,12 +68,12 @@
         </div>
         <v-card-actions>
           <v-tooltip
-            bottom
+            location="bottom"
             :disabled="!batchDisabledReason"
             v-if="canApplyToAllDatasets || batchDisabledReason"
           >
-            <template v-slot:activator="{ on, attrs }">
-              <div v-bind="attrs" v-on="on">
+            <template v-slot:activator="{ props: activatorProps }">
+              <div v-bind="activatorProps">
                 <v-checkbox
                   v-model="applyToAllDatasets"
                   :disabled="!canApplyToAllDatasets || !!batchProgress"
@@ -89,7 +88,7 @@
           <v-btn
             v-if="batchProgress"
             color="orange"
-            small
+            size="small"
             class="ml-4"
             @click="cancelBatch"
           >
@@ -107,55 +106,55 @@
       </v-card>
     </v-dialog>
 
-    <v-expansion-panel-content id="properties-content-tourstep">
+    <v-expansion-panel-text id="properties-content-tourstep">
       <v-text-field
         v-model="propFilter"
         label="Search properties"
         single-line
         clearable
       />
-      <v-tabs v-model="activeTabIndex" grow>
+      <v-tabs v-model="activeTabIndex">
         <v-tab v-for="{ key, text } in tabs" :key="key">{{ text }}</v-tab>
       </v-tabs>
       <div class="miller-columns-container">
         <div
           :class="{
             'miller-column': true,
-            dark: $vuetify.theme.dark,
+            dark: $vuetify.theme.current.dark,
           }"
           v-for="(column, colIndex) in columns"
           :key="colIndex"
         >
-          <v-list dense>
+          <v-list density="compact">
             <v-list-item
               v-for="item in column"
               :key="item.path.join('.')"
               @click="selectedPath = item.path"
               :class="{ 'v-list-item--active': item.isSelected }"
             >
-              <v-list-item-content>
-                <v-list-item-title>
-                  {{ item.name }}
-                </v-list-item-title>
-              </v-list-item-content>
-              <v-list-item-action class="my-2">
-                <v-simple-checkbox
+              <v-list-item-title>
+                {{ item.name }}
+              </v-list-item-title>
+              <template #append>
+                <v-checkbox
                   v-if="item.isLeaf"
-                  :value="getPropertySettings(item.path)"
-                  @input="togglePropertySettings(item.path)"
+                  :model-value="getPropertySettings(item.path)"
+                  @update:model-value="togglePropertySettings(item.path)"
+                  hide-details
+                  density="compact"
                 />
-                <v-icon v-else>mdi-chevron-right</v-icon>
-              </v-list-item-action>
+                <v-icon v-else size="small">mdi-chevron-right</v-icon>
+              </template>
             </v-list-item>
           </v-list>
         </div>
       </div>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
@@ -184,255 +183,244 @@ const tabs = [
 
 type TTabKey = (typeof tabs)[number]["key"];
 
-@Component({
-  components: {
-    AnalyzePanel,
+const emit = defineEmits<{ (e: "expand"): void }>();
+
+const propFilter = ref<string | null>(null);
+const selectedPath = ref<string[]>([]);
+const activeTabKey = ref<TTabKey>("display");
+const showAnalyzeDialog = ref(false);
+
+// Batch processing state
+const applyToAllDatasets = ref(false);
+const batchProgress = ref<{
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  currentDatasetName: string;
+} | null>(null);
+const batchCancelFunction = ref<(() => void) | null>(null);
+const collectionDatasetCount = ref(0);
+const loadingDatasetCount = ref(false);
+const BATCH_DATASET_LIMIT = 10;
+
+const activeTabIndex = computed({
+  get: () => tabs.findIndex(({ key }) => activeTabKey.value === key),
+  set: (index: number) => {
+    activeTabKey.value = tabs[index].key;
   },
-})
-export default class AnnotationProperties extends Vue {
-  readonly store = store;
-  readonly propertyStore = propertyStore;
-  readonly filterStore = filterStore;
-  readonly findIndexOfPath = findIndexOfPath;
-  readonly tabs = tabs;
+});
 
-  propFilter: string | null = null;
-  selectedPath: string[] = [];
-  activeTabKey: TTabKey = "display";
-  showAnalyzeDialog = false;
+const isLoggedIn = computed(() => store.isLoggedIn);
 
-  // Batch processing state
-  applyToAllDatasets: boolean = false;
-  batchProgress: {
-    total: number;
-    completed: number;
-    failed: number;
-    cancelled: number;
-    currentDatasetName: string;
-  } | null = null;
-  batchCancelFunction: (() => void) | null = null;
-  collectionDatasetCount: number = 0;
-  loadingDatasetCount: boolean = false;
-  readonly BATCH_DATASET_LIMIT = 10;
-
-  get activeTabIndex(): number {
-    return tabs.findIndex(({ key }) => this.activeTabKey === key);
-  }
-
-  set activeTabIndex(index: number) {
-    this.activeTabKey = tabs[index].key;
-  }
-
-  get isLoggedIn() {
-    return this.store.isLoggedIn;
-  }
-
-  togglePropertySettings(path: string[]): void {
-    switch (this.activeTabKey) {
-      case "display":
-        this.toggleList(path);
-        break;
-      case "filter":
-        this.toggleFilter(path);
-        break;
-    }
-  }
-
-  getPropertySettings(path: string[]): boolean {
-    switch (this.activeTabKey) {
-      case "display":
-        return this.isPropertyDisplayed(path);
-      case "filter":
-        return this.isPropertyFiltered(path);
-    }
-  }
-
-  get filteredPaths() {
-    const lowerCaseFilter = this.propFilter?.toLowerCase();
-    const allPaths = this.propertyStore.computedPropertyPaths;
-    return lowerCaseFilter
-      ? allPaths.filter(
-          (path) =>
-            this.propertyStore
-              .getFullNameFromPath(path)
-              ?.toLowerCase()
-              .includes(lowerCaseFilter) ?? true,
-        )
-      : allPaths;
-  }
-
-  get columns(): PropertyItem[][] {
-    // Add a column for each segment in the path
-    let remainingPaths = this.filteredPaths;
-    const columns: PropertyItem[][] = [];
-    for (
-      let columnIdx = 0;
-      columnIdx < this.selectedPath.length + 1;
-      ++columnIdx
-    ) {
-      // Remove paths that don't belong to this column
-      const currentSelectedPath = this.selectedPath.slice(0, columnIdx);
-      remainingPaths = remainingPaths.filter((path) =>
-        currentSelectedPath.every(
-          (pathSegment, pathSegmentIdx) => pathSegment === path[pathSegmentIdx],
-        ),
-      );
-      // Find all unique segments for this column
-      const segmentItems: Map<string, PropertyItem> = new Map();
-      remainingPaths.forEach((path) => {
-        const segment = path[columnIdx]; // Property ID for column 0, sub-name otherwise
-        if (!segment || segmentItems.has(segment)) {
-          return;
-        }
-        const itemName =
-          columnIdx === 0
-            ? this.propertyStore.getPropertyById(segment)?.name ?? segment // Handle root level
-            : segment; // Handle custom sub levels
-
-        segmentItems.set(segment, {
-          name: itemName,
-          path: path.slice(0, columnIdx + 1),
-          isLeaf: path.length === columnIdx + 1,
-          isSelected: segment === this.selectedPath[columnIdx],
-        });
-      });
-      // Create the new column
-      if (segmentItems.size <= 0) {
-        break;
-      }
-      columns.push([...segmentItems.values()]);
-    }
-    return columns;
-  }
-
-  getTagsForPath(path: string[]) {
-    const property = this.propertyStore.getPropertyById(path[0]);
-    return property?.tags.tags || [];
-  }
-
-  isPropertyDisplayed(path: string[]): boolean {
-    return (
-      this.findIndexOfPath(path, this.propertyStore.displayedPropertyPaths) >= 0
-    );
-  }
-
-  isPropertyFiltered(path: string[]): boolean {
-    return this.findIndexOfPath(path, this.filterStore.filterPaths) >= 0;
-  }
-
-  toggleList(propertyPath: string[]) {
-    this.propertyStore.togglePropertyPathVisibility(propertyPath);
-  }
-
-  toggleFilter(propertyPath: string[]) {
-    this.filterStore.togglePropertyPathFiltering(propertyPath);
-  }
-
-  get canApplyToAllDatasets(): boolean {
-    return (
-      this.store.selectedConfigurationId !== null &&
-      this.collectionDatasetCount > 1 &&
-      this.collectionDatasetCount <= this.BATCH_DATASET_LIMIT
-    );
-  }
-
-  get batchDisabledReason(): string | null {
-    if (!this.store.selectedConfigurationId) {
-      return null;
-    }
-    if (this.loadingDatasetCount) {
-      return null;
-    }
-    if (this.collectionDatasetCount <= 1) {
-      return null;
-    }
-    if (this.collectionDatasetCount > this.BATCH_DATASET_LIMIT) {
-      return `Collection has more than ${this.BATCH_DATASET_LIMIT} datasets`;
-    }
-    return null;
-  }
-
-  get batchProgressPercent(): number {
-    if (!this.batchProgress || this.batchProgress.total === 0) {
-      return 0;
-    }
-    const { completed, failed, cancelled, total } = this.batchProgress;
-    return ((completed + failed + cancelled) / total) * 100;
-  }
-
-  mounted() {
-    this.fetchCollectionDatasetCount();
-  }
-
-  @Watch("store.selectedConfigurationId")
-  onConfigurationChanged() {
-    this.fetchCollectionDatasetCount();
-  }
-
-  async fetchCollectionDatasetCount() {
-    this.loadingDatasetCount = true;
-    try {
-      this.collectionDatasetCount =
-        await this.store.getCollectionDatasetCount();
-    } catch (error) {
-      logError("Failed to fetch collection dataset count:", error);
-      this.collectionDatasetCount = 0;
-    } finally {
-      this.loadingDatasetCount = false;
-    }
-  }
-
-  async onComputePropertyBatch(property: IAnnotationProperty) {
-    const configurationId = this.store.selectedConfigurationId;
-    if (!configurationId) {
-      return;
-    }
-
-    this.batchProgress = {
-      total: this.collectionDatasetCount,
-      completed: 0,
-      failed: 0,
-      cancelled: 0,
-      currentDatasetName: "Starting...",
-    };
-
-    await this.propertyStore.computePropertyBatch({
-      property,
-      configurationId,
-      onBatchProgress: (status) => {
-        this.batchProgress = status;
-      },
-      onCancel: (cancel) => {
-        this.batchCancelFunction = cancel;
-      },
-      onComplete: () => {
-        this.batchCancelFunction = null;
-        setTimeout(() => {
-          this.batchProgress = null;
-        }, 3000);
-      },
-    });
-  }
-
-  async onComputePropertiesBatch(properties: IAnnotationProperty[]) {
-    for (const property of properties) {
-      await this.onComputePropertyBatch(property);
-    }
-  }
-
-  cancelBatch() {
-    if (this.batchCancelFunction) {
-      this.batchCancelFunction();
-    }
-  }
-
-  onDialogClose(value: boolean) {
-    if (!value) {
-      this.showAnalyzeDialog = false;
-      this.$emit("expand");
-    }
+function togglePropertySettings(path: string[]): void {
+  switch (activeTabKey.value) {
+    case "display":
+      toggleList(path);
+      break;
+    case "filter":
+      toggleFilter(path);
+      break;
   }
 }
+
+function getPropertySettings(path: string[]): boolean {
+  switch (activeTabKey.value) {
+    case "display":
+      return isPropertyDisplayed(path);
+    case "filter":
+      return isPropertyFiltered(path);
+  }
+}
+
+const filteredPaths = computed(() => {
+  const lowerCaseFilter = propFilter.value?.toLowerCase();
+  const allPaths = propertyStore.computedPropertyPaths;
+  return lowerCaseFilter
+    ? allPaths.filter(
+        (path) =>
+          propertyStore
+            .getFullNameFromPath(path)
+            ?.toLowerCase()
+            .includes(lowerCaseFilter) ?? true,
+      )
+    : allPaths;
+});
+
+const columns = computed((): PropertyItem[][] => {
+  let remainingPaths = filteredPaths.value;
+  const cols: PropertyItem[][] = [];
+  for (
+    let columnIdx = 0;
+    columnIdx < selectedPath.value.length + 1;
+    ++columnIdx
+  ) {
+    const currentSelectedPath = selectedPath.value.slice(0, columnIdx);
+    remainingPaths = remainingPaths.filter((path) =>
+      currentSelectedPath.every(
+        (pathSegment, pathSegmentIdx) => pathSegment === path[pathSegmentIdx],
+      ),
+    );
+    const segmentItems: Map<string, PropertyItem> = new Map();
+    remainingPaths.forEach((path) => {
+      const segment = path[columnIdx];
+      if (!segment || segmentItems.has(segment)) {
+        return;
+      }
+      const itemName =
+        columnIdx === 0
+          ? propertyStore.getPropertyById(segment)?.name ?? segment
+          : segment;
+
+      segmentItems.set(segment, {
+        name: itemName,
+        path: path.slice(0, columnIdx + 1),
+        isLeaf: path.length === columnIdx + 1,
+        isSelected: segment === selectedPath.value[columnIdx],
+      });
+    });
+    if (segmentItems.size <= 0) {
+      break;
+    }
+    cols.push([...segmentItems.values()]);
+  }
+  return cols;
+});
+
+function isPropertyDisplayed(path: string[]): boolean {
+  return findIndexOfPath(path, propertyStore.displayedPropertyPaths) >= 0;
+}
+
+function isPropertyFiltered(path: string[]): boolean {
+  return findIndexOfPath(path, filterStore.filterPaths) >= 0;
+}
+
+function toggleList(propertyPath: string[]) {
+  propertyStore.togglePropertyPathVisibility(propertyPath);
+}
+
+function toggleFilter(propertyPath: string[]) {
+  filterStore.togglePropertyPathFiltering(propertyPath);
+}
+
+const canApplyToAllDatasets = computed(
+  () =>
+    store.selectedConfigurationId !== null &&
+    collectionDatasetCount.value > 1 &&
+    collectionDatasetCount.value <= BATCH_DATASET_LIMIT,
+);
+
+const batchDisabledReason = computed((): string | null => {
+  if (!store.selectedConfigurationId) return null;
+  if (loadingDatasetCount.value) return null;
+  if (collectionDatasetCount.value <= 1) return null;
+  if (collectionDatasetCount.value > BATCH_DATASET_LIMIT) {
+    return `Collection has more than ${BATCH_DATASET_LIMIT} datasets`;
+  }
+  return null;
+});
+
+const batchProgressPercent = computed(() => {
+  if (!batchProgress.value || batchProgress.value.total === 0) return 0;
+  const { completed, failed, cancelled, total } = batchProgress.value;
+  return ((completed + failed + cancelled) / total) * 100;
+});
+
+async function fetchCollectionDatasetCount() {
+  loadingDatasetCount.value = true;
+  try {
+    collectionDatasetCount.value = await store.getCollectionDatasetCount();
+  } catch (error) {
+    logError("Failed to fetch collection dataset count:", error);
+    collectionDatasetCount.value = 0;
+  } finally {
+    loadingDatasetCount.value = false;
+  }
+}
+
+async function onComputePropertyBatch(property: IAnnotationProperty) {
+  const configurationId = store.selectedConfigurationId;
+  if (!configurationId) return;
+
+  batchProgress.value = {
+    total: collectionDatasetCount.value,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    currentDatasetName: "Starting...",
+  };
+
+  await propertyStore.computePropertyBatch({
+    property,
+    configurationId,
+    onBatchProgress: (status) => {
+      batchProgress.value = status;
+    },
+    onCancel: (cancel) => {
+      batchCancelFunction.value = cancel;
+    },
+    onComplete: () => {
+      batchCancelFunction.value = null;
+      setTimeout(() => {
+        batchProgress.value = null;
+      }, 3000);
+    },
+  });
+}
+
+async function onComputePropertiesBatch(properties: IAnnotationProperty[]) {
+  for (const property of properties) {
+    await onComputePropertyBatch(property);
+  }
+}
+
+function cancelBatch() {
+  if (batchCancelFunction.value) {
+    batchCancelFunction.value();
+  }
+}
+
+function onDialogClose(value: boolean) {
+  if (!value) {
+    showAnalyzeDialog.value = false;
+    emit("expand");
+  }
+}
+
+watch(
+  () => store.selectedConfigurationId,
+  () => fetchCollectionDatasetCount(),
+);
+
+onMounted(() => {
+  fetchCollectionDatasetCount();
+});
+
+defineExpose({
+  propFilter,
+  selectedPath,
+  activeTabKey,
+  activeTabIndex,
+  showAnalyzeDialog,
+  applyToAllDatasets,
+  batchProgress,
+  batchCancelFunction,
+  collectionDatasetCount,
+  loadingDatasetCount,
+  isLoggedIn,
+  filteredPaths,
+  columns,
+  canApplyToAllDatasets,
+  batchDisabledReason,
+  batchProgressPercent,
+  togglePropertySettings,
+  getPropertySettings,
+  fetchCollectionDatasetCount,
+  onComputePropertyBatch,
+  onComputePropertiesBatch,
+  cancelBatch,
+  onDialogClose,
+});
 </script>
 
 <style lang="scss" scoped>
@@ -449,10 +437,15 @@ export default class AnnotationProperties extends Vue {
   max-width: 300px;
   padding: 0px 2px;
   border-right: 1px solid;
+  font-size: 0.8rem;
 
   border-color: rgba(0, 0, 0, 0.12);
   &.dark {
     border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  :deep(.v-list-item-title) {
+    font-size: 0.8rem;
   }
 }
 </style>

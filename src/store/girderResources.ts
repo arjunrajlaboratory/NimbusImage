@@ -15,7 +15,6 @@ import {
   IGirderUser,
   IUPennCollection,
 } from "@/girder";
-import Vue from "vue";
 import { IDataset, IDatasetConfiguration } from "./model";
 import { setBaseCollectionValues, asDataset, parseTiles } from "./GirderAPI";
 import { logError } from "@/utils/log";
@@ -36,7 +35,7 @@ export class GirderResources extends VuexModule {
     id: string;
     resource: IGirderSelectAble | null;
   }) {
-    Vue.set(this.resources, id, resource);
+    this.resources[id] = resource;
   }
 
   @Action
@@ -153,8 +152,8 @@ export class GirderResources extends VuexModule {
 
   @Mutation
   private resetResource(id: string) {
-    Vue.delete(this.resources, id);
-    Vue.delete(this.resourcesLocks, id);
+    delete this.resources[id];
+    delete this.resourcesLocks[id];
   }
 
   @Action
@@ -359,3 +358,9 @@ export class GirderResources extends VuexModule {
 }
 
 export default getModule(GirderResources);
+
+// Self-accept HMR to prevent vuex-module-decorators from re-registering
+// the dynamic module (which causes duplicate getters and state overwrites).
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}

@@ -1,2 +1,2 @@
-import Vue from "vue";
-export const tourBus = new Vue();
+import mitt from "mitt";
+export const tourBus = mitt();

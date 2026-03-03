@@ -1,20 +1,19 @@
 <template>
   <div>
-    <v-btn small @click="addNewFilter"> Region filter </v-btn>
+    <v-btn size="small" @click="addNewFilter"> Region filter </v-btn>
     <div class="d-flex flex-column">
       <div
         v-for="filter in filters"
         :key="filter.id"
         class="d-flex justify-space-between align-center"
       >
-        <v-simple-checkbox
+        <v-checkbox
           class="d-inline ml-2"
-          :value="filter.enabled"
-          :input-value="filter.enabled"
+          :model-value="filter.enabled"
           @click="toggleEnabled(filter.id)"
         />
         {{ filter.id }}
-        <v-btn class="mx-2" icon small @click="removeFilter(filter.id)">
+        <v-btn class="mx-2" icon size="small" @click="removeFilter(filter.id)">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </div>
@@ -22,29 +21,23 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
-
+<script setup lang="ts">
+import { computed } from "vue";
 import filterStore from "@/store/filters";
 
-@Component({})
-export default class ROIFilters extends Vue {
-  readonly filterStore = filterStore;
+const filters = computed(() => filterStore.roiFilters);
 
-  addNewFilter() {
-    this.filterStore.newROIFilter();
-  }
-
-  removeFilter(id: string) {
-    this.filterStore.removeROIFilter(id);
-  }
-
-  get filters() {
-    return this.filterStore.roiFilters;
-  }
-
-  toggleEnabled(id: string) {
-    this.filterStore.toggleRoiFilterEnabled(id);
-  }
+function addNewFilter() {
+  filterStore.newROIFilter();
 }
+
+function removeFilter(id: string) {
+  filterStore.removeROIFilter(id);
+}
+
+function toggleEnabled(id: string) {
+  filterStore.toggleRoiFilterEnabled(id);
+}
+
+defineExpose({ filters, addNewFilter, removeFilter, toggleEnabled });
 </script>

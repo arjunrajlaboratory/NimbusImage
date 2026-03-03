@@ -1,22 +1,25 @@
 <template>
   <div class="flex-grow-1 d-flex align-center">
     <!-- Collection type indicator -->
-    <v-chip x-small class="ma-1 type-indicator" color="grey darken-1">
+    <v-chip size="x-small" class="ma-1 type-indicator" color="grey-darken-1">
       Collection
     </v-chip>
 
-    <span
-      class="text-caption grey--text mx-2"
-      v-tooltip="{
-        content: `Created: ${collection.created ? formatDateString(collection.created) : 'Unknown'}`,
-        position: 'right',
-      }"
+    <v-tooltip
+      :text="`Created: ${collection.created ? formatDateString(collection.created) : 'Unknown'}`"
+      location="end"
     >
-      Modified:
-      {{
-        collection.updated ? formatDateString(collection.updated) : "Unknown"
-      }}
-    </span>
+      <template v-slot:activator="{ props: activatorProps }">
+        <span v-bind="activatorProps" class="text-caption text-grey mx-2">
+          Modified:
+          {{
+            collection.updated
+              ? formatDateString(collection.updated)
+              : "Unknown"
+          }}
+        </span>
+      </template>
+    </v-tooltip>
 
     <v-spacer />
 
@@ -26,7 +29,7 @@
       <!-- Dataset chips -->
       <template v-if="debouncedChipsPerItemId[collection._id]?.chips">
         <v-chip
-          x-small
+          size="x-small"
           v-for="(chipItem, i) in debouncedChipsPerItemId[collection._id]
             ?.chips"
           :key="'chip ' + i + ' collection ' + collection._id"
@@ -41,52 +44,48 @@
       <!-- Loading state -->
       <v-chip
         v-else-if="computedChipsIds.has(collection._id)"
-        x-small
+        size="x-small"
         class="ma-1"
-        color="grey lighten-1"
+        color="grey-lighten-1"
       >
         Loading datasets...
       </v-chip>
 
       <!-- No datasets state -->
-      <v-chip v-else x-small class="ma-1" color="grey lighten-2">
+      <v-chip v-else size="x-small" class="ma-1" color="grey-lighten-2">
         No datasets
       </v-chip>
     </div>
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { useRouter } from "vue-router";
 import { IUPennCollection } from "@/girder";
 import { formatDateString } from "@/utils/date";
-import { RawLocation } from "vue-router";
+import type { RouteLocationRaw } from "vue-router";
 
 interface IChipAttrs {
   text: string;
   color: string;
-  to?: RawLocation;
+  to?: RouteLocationRaw;
 }
 
-@Component
-export default class CollectionItemRow extends Vue {
-  @Prop({ required: true })
-  collection!: IUPennCollection;
+defineProps<{
+  collection: IUPennCollection;
+  debouncedChipsPerItemId: { [itemId: string]: any };
+  computedChipsIds: Set<string>;
+}>();
 
-  @Prop({ required: true })
-  debouncedChipsPerItemId!: { [itemId: string]: any };
+const router = useRouter();
 
-  @Prop({ required: true })
-  computedChipsIds!: Set<string>;
-
-  formatDateString = formatDateString;
-
-  navigateToChip(chipItem: IChipAttrs) {
-    if (chipItem.to) {
-      this.$router.push(chipItem.to);
-    }
+function navigateToChip(chipItem: IChipAttrs) {
+  if (chipItem.to) {
+    router.push(chipItem.to);
   }
 }
+
+defineExpose({ navigateToChip });
 </script>
 
 <style lang="scss" scoped>

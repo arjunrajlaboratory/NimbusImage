@@ -6,8 +6,8 @@
         Customize the default colors for your fluorescence channels. These
         preferences will be applied when creating new layers.
       </p>
-      <p class="text-caption mb-4 text--secondary">
-        <v-icon small class="mr-1">mdi-asterisk</v-icon>
+      <p class="text-caption mb-4 text-medium-emphasis">
+        <v-icon size="small" class="mr-1">mdi-asterisk</v-icon>
         Channels marked with * have custom overrides
       </p>
 
@@ -22,11 +22,11 @@
           <v-row align="center" no-gutters>
             <v-col cols="8">
               <v-text-field
-                :value="displayColors[channel]"
-                @input="onColorInput(String(channel), $event)"
+                :model-value="displayColors[channel]"
+                @update:model-value="onColorInput(String(channel), $event)"
                 :label="getChannelLabel(String(channel))"
-                dense
-                outlined
+                density="compact"
+                variant="outlined"
                 hide-details
                 :rules="[colorRule]"
               />
@@ -39,7 +39,7 @@
                     : '#FFFFFF'
                 "
                 block
-                small
+                size="small"
                 @click="openColorPicker(String(channel))"
               >
                 <v-icon>mdi-palette</v-icon>
@@ -49,7 +49,7 @@
               <v-btn
                 v-if="!isCustomChannel(String(channel))"
                 icon
-                small
+                size="small"
                 @click="resetColor(String(channel))"
                 title="Reset to default"
               >
@@ -58,7 +58,7 @@
               <v-btn
                 v-else
                 icon
-                small
+                size="small"
                 @click="resetColor(String(channel))"
                 title="Remove override"
               >
@@ -72,12 +72,12 @@
       <v-row class="mt-4">
         <v-col>
           <v-btn
-            outlined
+            variant="outlined"
             color="secondary"
             @click="showAddChannelDialog = true"
             class="mb-2"
           >
-            <v-icon left>mdi-plus</v-icon>
+            <v-icon start>mdi-plus</v-icon>
             Add New Channel Default
           </v-btn>
         </v-col>
@@ -89,7 +89,9 @@
             Save Preferences
           </v-btn>
           <v-btn class="ml-2" @click="resetAllColors"> Reset All </v-btn>
-          <v-btn class="ml-2" text @click="cancelChanges"> Cancel </v-btn>
+          <v-btn class="ml-2" variant="text" @click="cancelChanges">
+            Cancel
+          </v-btn>
         </v-col>
       </v-row>
 
@@ -107,7 +109,9 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="colorPickerDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="colorPickerDialog = false"
+            >Cancel</v-btn
+          >
           <v-btn color="primary" @click="applyPickerColor">Apply</v-btn>
         </v-card-actions>
       </v-card>
@@ -133,8 +137,8 @@
             :rules="[colorRule]"
             @keyup.enter="addNewChannel"
           >
-            <template #append-outer>
-              <v-btn icon small @click="openNewChannelColorPicker">
+            <template #append>
+              <v-btn icon size="small" @click="openNewChannelColorPicker">
                 <v-icon :color="newChannelColor">mdi-palette</v-icon>
               </v-btn>
             </template>
@@ -142,7 +146,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="cancelAddChannel">Cancel</v-btn>
+          <v-btn variant="text" @click="cancelAddChannel">Cancel</v-btn>
           <v-btn
             color="primary"
             @click="addNewChannel"
@@ -163,7 +167,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="newChannelColorPickerDialog = false"
+          <v-btn variant="text" @click="newChannelColorPickerDialog = false"
             >Cancel</v-btn
           >
           <v-btn color="primary" @click="applyNewChannelColor">Apply</v-btn>
@@ -173,245 +177,269 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import Vue from "vue";
-import {
-  Component,
-  Watch,
-  Prop,
-  Vue as VueClass,
-} from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import { getChannelColors, COLOR } from "@/store/model";
 import { logError } from "@/utils/log";
 
-@Component
-export default class UserColorSettings extends VueClass {
-  readonly store = store;
+const props = withDefaults(
+  defineProps<{
+    visible: boolean;
+  }>(),
+  { visible: false },
+);
 
-  @Prop({ type: Boolean, default: false })
-  visible!: boolean;
+const emit = defineEmits<{
+  (e: "close"): void;
+}>();
 
-  // Store ONLY user overrides locally for editing
-  localOverrides: { [key: string]: string } = {};
+// Store ONLY user overrides locally for editing
+const localOverrides = ref<Record<string, string>>({});
 
-  saving = false;
-  showSuccess = false;
-  colorPickerDialog = false;
-  selectedChannel = "";
-  pickerColor: string = COLOR.RED;
+const saving = ref(false);
+const showSuccess = ref(false);
+const colorPickerDialog = ref(false);
+const selectedChannel = ref("");
+const pickerColor = ref<string>(COLOR.RED);
 
-  // Add new channel dialog state
-  showAddChannelDialog = false;
-  newChannelName = "";
-  newChannelColor: string = COLOR.RED;
-  newChannelColorPickerDialog = false;
-  newChannelColorPicker: string = COLOR.RED;
+// Add new channel dialog state
+const showAddChannelDialog = ref(false);
+const newChannelName = ref("");
+const newChannelColor = ref<string>(COLOR.RED);
+const newChannelColorPickerDialog = ref(false);
+const newChannelColorPicker = ref<string>(COLOR.RED);
 
-  // Common channels that we should list first
-  commonChannels = [
-    "DAPI",
-    "GFP",
-    "YFP",
-    "CY3",
-    "CY5",
-    "CY7",
-    "FITC",
-    "TRITC",
-    "ALEXA488",
-    "ALEXA594",
-    "MCHERRY",
-    "BFP",
-    "CFP",
-    "DEFAULT",
-  ];
+// Common channels that we should list first
+const commonChannels = [
+  "DAPI",
+  "GFP",
+  "YFP",
+  "CY3",
+  "CY5",
+  "CY7",
+  "FITC",
+  "TRITC",
+  "ALEXA488",
+  "ALEXA594",
+  "MCHERRY",
+  "BFP",
+  "CFP",
+  "DEFAULT",
+];
 
-  // Computed property: all channels to display (base + custom overrides)
-  get allChannels(): string[] {
-    const base = Object.keys(getChannelColors());
-    // Order base by common channels
-    const orderedBase = this.commonChannels.filter((channel) =>
-      base.includes(channel),
-    );
-    const remainingBase = base.filter(
-      (channel) => !this.commonChannels.includes(channel),
-    );
-    const custom = Object.keys(this.localOverrides).filter(
-      (channel) => !base.includes(channel),
-    );
-    return [...orderedBase, ...remainingBase, ...custom];
-  }
+// Computed property: all channels to display (base + custom overrides)
+const allChannels = computed<string[]>(() => {
+  const base = Object.keys(getChannelColors());
+  // Order base by common channels
+  const orderedBase = commonChannels.filter((channel) =>
+    base.includes(channel),
+  );
+  const remainingBase = base.filter(
+    (channel) => !commonChannels.includes(channel),
+  );
+  const custom = Object.keys(localOverrides.value).filter(
+    (channel) => !base.includes(channel),
+  );
+  return [...orderedBase, ...remainingBase, ...custom];
+});
 
-  isCustomChannel(channel: string): boolean {
-    const base = Object.keys(getChannelColors());
-    return !base.includes(channel) && channel in this.localOverrides;
-  }
+function isCustomChannel(channel: string): boolean {
+  const base = Object.keys(getChannelColors());
+  return !base.includes(channel) && channel in localOverrides.value;
+}
 
-  // Computed property: merged display colors (defaults + overrides)
-  get displayColors(): { [key: string]: string } {
-    return getChannelColors(this.localOverrides);
-  }
+// Computed property: merged display colors (defaults + overrides)
+const displayColors = computed<Record<string, string>>(() => {
+  return getChannelColors(localOverrides.value);
+});
 
-  @Watch("visible")
-  async onVisibleChanged(isVisible: boolean) {
+watch(
+  () => props.visible,
+  async (isVisible) => {
     if (isVisible) {
       // Refresh store from database, then load into local state
-      await this.store.loadUserColors();
-
-      this.loadColors();
+      await store.loadUserColors();
+      loadColors();
     }
+  },
+);
+
+function getChannelLabel(channel: string): string {
+  return hasUserOverride(channel) ? `${channel} *` : channel;
+}
+
+function hasUserOverride(channel: string): boolean {
+  return channel in localOverrides.value;
+}
+
+function loadColors() {
+  // Load overrides from store only (do not include defaults)
+  const userColors = store.userChannelColors || {};
+
+  const newOverrides: Record<string, string> = {};
+  for (const [channel, color] of Object.entries(userColors)) {
+    newOverrides[channel] = String(color);
   }
 
-  getChannelLabel(channel: string): string {
-    return this.hasUserOverride(channel) ? `${channel} *` : channel;
-  }
+  // Replace the entire overrides object to trigger reactivity
+  localOverrides.value = newOverrides;
+}
 
-  hasUserOverride(channel: string): boolean {
-    // Check if this channel has a user override
-    return channel in this.localOverrides;
-  }
-
-  async mounted() {
-    // Refresh store from database, then load into local state
-    try {
-      await this.store.loadUserColors();
-    } catch (error) {
-      logError("Failed to load user colors from backend:", error);
-    }
-    this.loadColors();
-  }
-
-  loadColors() {
-    // Load overrides from store only (do not include defaults)
-    const userColors = this.store.userChannelColors || {};
-
-    const newOverrides: { [key: string]: string } = {};
-    for (const [channel, color] of Object.entries(userColors)) {
-      newOverrides[channel] = String(color);
-    }
-
-    // Replace the entire overrides object to trigger reactivity
-    this.localOverrides = newOverrides;
-  }
-
-  async saveColors() {
-    this.saving = true;
-    try {
-      // Save ONLY the overrides (matches DB schema)
-      await this.store.saveUserColors(this.localOverrides);
-
-      this.showSuccess = true;
-    } catch (error) {
-      logError("Failed to save color preferences:", error);
-    } finally {
-      this.saving = false;
-    }
-  }
-
-  resetColor(channel: string) {
-    // Remove the override, falling back to default
-    if (channel in this.localOverrides) {
-      Vue.delete(this.localOverrides, channel);
-    }
-  }
-
-  openColorPicker(channel: string) {
-    this.selectedChannel = channel;
-    this.pickerColor = this.displayColors[channel];
-    this.colorPickerDialog = true;
-  }
-
-  applyPickerColor() {
-    if (this.selectedChannel) {
-      // Set/override user color using Vue.set for reactivity
-      Vue.set(this.localOverrides, this.selectedChannel, this.pickerColor);
-    }
-    this.colorPickerDialog = false;
-  }
-
-  onColorInput(channel: string, value: string) {
-    // Validate input via rule; if valid, set override, else ignore
-    const isValid = this.colorRule(value) === true;
-    if (isValid) {
-      Vue.set(this.localOverrides, channel, value);
-    }
-  }
-
-  colorRule(value: string) {
-    return (
-      /^#[0-9A-F]{6}$/i.test(value) ||
-      "Must be a valid hex color (e.g., #FF0000)"
-    );
-  }
-
-  channelNameRule(value: string) {
-    if (!value || value.trim() === "") {
-      return "Channel name is required";
-    }
-    // Prevent duplicates against merged map (defaults + overrides)
-    if (value.toUpperCase() in getChannelColors(this.localOverrides)) {
-      return "Channel name already exists";
-    }
-    if (!/^[A-Z0-9_]+$/i.test(value)) {
-      return "Channel name can only contain letters, numbers, and underscores";
-    }
-    return true;
-  }
-
-  get isNewChannelValid() {
-    return (
-      this.channelNameRule(this.newChannelName) === true &&
-      this.colorRule(this.newChannelColor) === true
-    );
-  }
-
-  openNewChannelColorPicker() {
-    this.newChannelColorPicker = this.newChannelColor;
-    this.newChannelColorPickerDialog = true;
-  }
-
-  applyNewChannelColor() {
-    this.newChannelColor = this.newChannelColorPicker;
-    this.newChannelColorPickerDialog = false;
-  }
-
-  cancelAddChannel() {
-    this.showAddChannelDialog = false;
-    this.newChannelName = "";
-    this.newChannelColor = COLOR.RED;
-  }
-
-  addNewChannel() {
-    if (!this.isNewChannelValid) {
-      return;
-    }
-
-    const channelName = this.newChannelName.trim().toUpperCase();
-
-    // Add override using Vue.set for reactivity
-    Vue.set(this.localOverrides, channelName, this.newChannelColor);
-
-    // Reset the form
-    this.cancelAddChannel();
-  }
-
-  async saveAndClose() {
-    await this.saveColors();
-    if (!this.saving) {
-      // Close dialog - store should already be updated
-      this.$emit("close");
-    }
-  }
-
-  resetAllColors() {
-    // Clear all local overrides (reverts to defaults in UI)
-    this.localOverrides = {};
-  }
-
-  cancelChanges() {
-    // Reload from store to discard any unsaved changes
-    this.loadColors();
-    this.$emit("close");
+async function saveColors() {
+  saving.value = true;
+  try {
+    // Save ONLY the overrides (matches DB schema)
+    await store.saveUserColors(localOverrides.value);
+    showSuccess.value = true;
+  } catch (error) {
+    logError("Failed to save color preferences:", error);
+  } finally {
+    saving.value = false;
   }
 }
+
+function resetColor(channel: string) {
+  // Remove the override, falling back to default
+  if (channel in localOverrides.value) {
+    const copy = { ...localOverrides.value };
+    delete copy[channel];
+    localOverrides.value = copy;
+  }
+}
+
+function openColorPicker(channel: string) {
+  selectedChannel.value = channel;
+  pickerColor.value = displayColors.value[channel];
+  colorPickerDialog.value = true;
+}
+
+function applyPickerColor() {
+  if (selectedChannel.value) {
+    localOverrides.value = {
+      ...localOverrides.value,
+      [selectedChannel.value]: pickerColor.value,
+    };
+  }
+  colorPickerDialog.value = false;
+}
+
+function onColorInput(channel: string, value: string) {
+  // Validate input via rule; if valid, set override, else ignore
+  const isValid = colorRule(value) === true;
+  if (isValid) {
+    localOverrides.value = { ...localOverrides.value, [channel]: value };
+  }
+}
+
+function colorRule(value: string) {
+  return (
+    /^#[0-9A-F]{6}$/i.test(value) || "Must be a valid hex color (e.g., #FF0000)"
+  );
+}
+
+function channelNameRule(value: string) {
+  if (!value || value.trim() === "") {
+    return "Channel name is required";
+  }
+  // Prevent duplicates against merged map (defaults + overrides)
+  if (value.toUpperCase() in getChannelColors(localOverrides.value)) {
+    return "Channel name already exists";
+  }
+  if (!/^[A-Z0-9_]+$/i.test(value)) {
+    return "Channel name can only contain letters, numbers, and underscores";
+  }
+  return true;
+}
+
+const isNewChannelValid = computed(() => {
+  return (
+    channelNameRule(newChannelName.value) === true &&
+    colorRule(newChannelColor.value) === true
+  );
+});
+
+function openNewChannelColorPicker() {
+  newChannelColorPicker.value = newChannelColor.value;
+  newChannelColorPickerDialog.value = true;
+}
+
+function applyNewChannelColor() {
+  newChannelColor.value = newChannelColorPicker.value;
+  newChannelColorPickerDialog.value = false;
+}
+
+function cancelAddChannel() {
+  showAddChannelDialog.value = false;
+  newChannelName.value = "";
+  newChannelColor.value = COLOR.RED;
+}
+
+function addNewChannel() {
+  if (!isNewChannelValid.value) {
+    return;
+  }
+
+  const channelName = newChannelName.value.trim().toUpperCase();
+
+  // Replace entire object to trigger Vue 2.7 reactivity for new keys
+  localOverrides.value = {
+    ...localOverrides.value,
+    [channelName]: newChannelColor.value,
+  };
+
+  // Reset the form
+  cancelAddChannel();
+}
+
+async function saveAndClose() {
+  await saveColors();
+  if (!saving.value) {
+    // Close dialog - store should already be updated
+    emit("close");
+  }
+}
+
+function resetAllColors() {
+  // Clear all local overrides (reverts to defaults in UI)
+  localOverrides.value = {};
+}
+
+function cancelChanges() {
+  // Reload from store to discard any unsaved changes
+  loadColors();
+  emit("close");
+}
+
+onMounted(async () => {
+  // Refresh store from database, then load into local state
+  try {
+    await store.loadUserColors();
+  } catch (error) {
+    logError("Failed to load user colors from backend:", error);
+  }
+  loadColors();
+});
+
+defineExpose({
+  localOverrides,
+  saving,
+  allChannels,
+  displayColors,
+  isNewChannelValid,
+  colorRule,
+  channelNameRule,
+  isCustomChannel,
+  getChannelLabel,
+  loadColors,
+  saveColors,
+  resetColor,
+  openColorPicker,
+  applyPickerColor,
+  onColorInput,
+  addNewChannel,
+  saveAndClose,
+  resetAllColors,
+  cancelChanges,
+});
 </script>

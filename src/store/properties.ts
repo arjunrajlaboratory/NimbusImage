@@ -6,6 +6,7 @@ import {
   VuexModule,
 } from "vuex-module-decorators";
 import store from "./root";
+import { markRaw } from "vue";
 
 import {
   IAnnotationProperty,
@@ -25,12 +26,9 @@ import {
   IDatasetView,
 } from "./model";
 
-import Vue from "vue";
-
 import main from "./index";
 
 import { canComputeAnnotationProperty } from "@/utils/annotation";
-import filters from "./filters";
 import annotations from "./annotation";
 import jobs, {
   createProgressEventCallback,
@@ -127,7 +125,7 @@ export class Properties extends VuexModule {
 
   @Mutation
   deleteWorkerInterface(image: string) {
-    Vue.delete(this.workerInterfaces, image);
+    delete this.workerInterfaces[image];
   }
 
   @Mutation
@@ -165,7 +163,7 @@ export class Properties extends VuexModule {
   @Mutation
   updatePropertyValues(values: IAnnotationPropertyValues) {
     // TODO(performance): merge instead
-    this.propertyValues = values;
+    this.propertyValues = markRaw(values);
   }
 
   @Mutation
@@ -175,7 +173,7 @@ export class Properties extends VuexModule {
     if (!prev) {
       return;
     }
-    Vue.set(this.properties, this.properties.indexOf(prev), property);
+    this.properties.splice(this.properties.indexOf(prev), 1, property);
   }
 
   get getPropertyById() {
@@ -189,9 +187,11 @@ export class Properties extends VuexModule {
   togglePropertyPathVisibility(path: string[]) {
     const pathIdx = findIndexOfPath(path, this.displayedPropertyPaths);
     if (pathIdx < 0) {
-      this.displayedPropertyPaths.push(path);
+      this.displayedPropertyPaths = [...this.displayedPropertyPaths, path];
     } else {
-      this.displayedPropertyPaths.splice(pathIdx, 1);
+      this.displayedPropertyPaths = this.displayedPropertyPaths.filter(
+        (_, i) => i !== pathIdx,
+      );
     }
   }
 
@@ -348,15 +348,15 @@ export class Properties extends VuexModule {
 
     // Set up the old progress tracking
     if (!this.propertyStatuses[propertyId]) {
-      Vue.set(this.propertyStatuses, propertyId, defaultStatus());
+      this.propertyStatuses[propertyId] = defaultStatus();
     }
     const status = this.propertyStatuses[propertyId];
-    Vue.set(status, "running", true);
-    Vue.set(status, "previousRun", null);
+    status.running = true;
+    status.previousRun = null;
 
-    // Clear errors while maintaining reactivity if errorInfo is provided
+    // Clear errors if errorInfo is provided
     if (errorInfo) {
-      Vue.set(errorInfo, "errors", []);
+      errorInfo.errors = [];
     }
 
     const response = await this.propertiesAPI.computeProperty(
@@ -395,14 +395,14 @@ export class Properties extends VuexModule {
 
     jobs.addJob(computeJob).then(async (success: boolean) => {
       await this.fetchPropertyValues();
-      await filters.updateHistograms();
+      await (await import("./filters")).default.updateHistograms();
       // Update both progress systems
       progress.complete(progressId);
-      Vue.set(status, "running", false);
-      Vue.set(status, "previousRun", success);
-      Vue.set(status, "progressInfo", {});
+      status.running = false;
+      status.previousRun = success;
+      status.progressInfo = {};
       if (errorInfo) {
-        Vue.set(status, "errorInfo", errorInfo);
+        status.errorInfo = errorInfo;
       }
     });
 
@@ -484,11 +484,11 @@ export class Properties extends VuexModule {
 
     // Set property status to running
     if (!this.propertyStatuses[propertyId]) {
-      Vue.set(this.propertyStatuses, propertyId, defaultStatus());
+      this.propertyStatuses[propertyId] = defaultStatus();
     }
     const status = this.propertyStatuses[propertyId];
-    Vue.set(status, "running", true);
-    Vue.set(status, "previousRun", null);
+    status.running = true;
+    status.previousRun = null;
 
     let completed = 0;
     let failed = 0;
@@ -590,12 +590,12 @@ export class Properties extends VuexModule {
 
     // Refresh property values for the current dataset
     await this.fetchPropertyValues();
-    await filters.updateHistograms();
+    await (await import("./filters")).default.updateHistograms();
 
     // Update property status
-    Vue.set(status, "running", false);
-    Vue.set(status, "previousRun", completed > 0 && failed === 0);
-    Vue.set(status, "progressInfo", {});
+    status.running = false;
+    status.previousRun = completed > 0 && failed === 0;
+    status.progressInfo = {};
 
     onComplete({ succeeded: completed, failed, cancelled });
   }
@@ -780,3 +780,9 @@ export class Properties extends VuexModule {
 }
 
 export default getModule(Properties);
+
+// Self-accept HMR to prevent vuex-module-decorators from re-registering
+// the dynamic module (which causes duplicate getters and state overwrites).
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}

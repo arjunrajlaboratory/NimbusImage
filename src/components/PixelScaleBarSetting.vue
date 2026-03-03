@@ -1,7 +1,7 @@
 <template>
   <v-switch
     hide-details
-    dense
+    density="compact"
     v-model="showPixelScalebar"
     label="Show pixel scalebar"
     title="Show the scalebarwidget on top of the image for the number of pixels"
@@ -14,20 +14,14 @@
   />
 </template>
 
-<script lang="ts">
-import { Vue, Component } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import store from "@/store/index";
 
-@Component
-export default class PixelScaleBarSetting extends Vue {
-  readonly store = store;
+const showPixelScalebar = computed({
+  get: () => store.showPixelScalebar,
+  set: (value: boolean) => store.setShowPixelScalebar(value),
+});
 
-  get showPixelScalebar() {
-    return this.store.showPixelScalebar;
-  }
-
-  set showPixelScalebar(value) {
-    this.store.setShowPixelScalebar(value);
-  }
-}
+defineExpose({ showPixelScalebar });
 </script>

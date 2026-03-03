@@ -7,80 +7,75 @@
     <!-- Show normal slider when not unrolled -->
     <template v-else>
       <!-- Row 1: Label and Text Input -->
-      <v-row no-gutters class="mb-1">
-        <v-col cols="2" class="text-right align-center label-column pa-0">
-          {{ label }}:
-        </v-col>
-        <v-col cols="10" class="text-left align-center value-column pa-0 pl-2">
-          <div class="d-flex align-center">
-            <v-text-field
-              :value="displayValue"
-              class="mt-0 pt-0 no-underline flex-grow-0"
-              hide-details
-              single-line
-              type="text"
-              dense
-              @input="handleInput"
-              @blur="handleBlur"
-            />
-            <div class="step-arrows ml-1">
-              <v-btn
-                x-small
-                icon
-                class="step-btn"
-                :disabled="value >= max"
-                @click="increment"
-              >
-                <v-icon x-small>mdi-chevron-up</v-icon>
-              </v-btn>
-              <v-btn
-                x-small
-                icon
-                class="step-btn"
-                :disabled="value <= min"
-                @click="decrement"
-              >
-                <v-icon x-small>mdi-chevron-down</v-icon>
-              </v-btn>
-            </div>
-          </div>
-        </v-col>
-      </v-row>
+      <div class="d-flex align-center mb-1">
+        <div class="label-column text-right pa-0">{{ label }}:</div>
+        <v-text-field
+          :model-value="displayValue"
+          class="mt-0 pt-0 no-underline flex-grow-1 ml-2"
+          hide-details
+          single-line
+          type="text"
+          density="compact"
+          @update:model-value="handleInput"
+          @blur="handleBlur"
+        />
+        <div class="step-arrows ml-1">
+          <v-btn
+            size="x-small"
+            icon
+            class="step-btn"
+            :disabled="modelValue >= max"
+            @click="increment"
+          >
+            <v-icon size="x-small">mdi-chevron-up</v-icon>
+          </v-btn>
+          <v-btn
+            size="x-small"
+            icon
+            class="step-btn"
+            :disabled="modelValue <= min"
+            @click="decrement"
+          >
+            <v-icon size="x-small">mdi-chevron-down</v-icon>
+          </v-btn>
+        </div>
+      </div>
 
       <!-- Row 2: Slider and Counter -->
-      <v-row no-gutters class="mt-0">
-        <v-col cols="6" class="slider-column pa-0 pl-2 offset-2">
+      <div class="d-flex align-center mt-0">
+        <div class="label-column flex-shrink-0"></div>
+        <div class="slider-column flex-grow-1 ml-2">
           <v-slider
             v-model="slider"
             :max="max + offset"
             :min="min + offset"
+            :step="1"
             hide-details
           />
-        </v-col>
-        <v-col
-          cols="4"
-          class="text-right align-center counter-column pa-0 pl-2"
-        >
-          <span class="caption font-weight-light">
-            {{ `${value + offset} of ${max + offset}` }}
-          </span>
-        </v-col>
-      </v-row>
+        </div>
+        <span class="caption font-weight-light counter-label ml-2">
+          {{ `${modelValue + offset} of ${max + offset}` }}
+        </span>
+      </div>
     </template>
   </div>
 </template>
 
 <style scoped>
 .value-slider {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .label-column {
-  transform: translateY(2px); /* Move the label vertically */
+  width: 3em;
+  min-width: 3em;
+  flex-shrink: 0;
 }
 
-.counter-column {
-  transform: translateY(2px); /* Align counter with other elements */
+.counter-label {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .unrolled-message {
@@ -89,17 +84,17 @@
 }
 
 /* Kill the v-text-field underline (normal and focused) */
-.no-underline ::v-deep .v-text-field__details {
+.no-underline :deep(.v-text-field__details) {
   display: none;
 }
 
-.no-underline ::v-deep .v-input__slot:before,
-.no-underline ::v-deep .v-input__slot:after {
+.no-underline :deep(.v-input__slot:before),
+.no-underline :deep(.v-input__slot:after) {
   display: none !important;
 }
 
 /* Keep vertical rhythm tight */
-.slider-column ::v-deep .v-slider {
+.slider-column :deep(.v-slider) {
   margin-top: 1px;
   margin-bottom: 0;
 }
@@ -122,91 +117,82 @@
 }
 </style>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 
-@Component
-export default class ValueSlider extends Vue {
-  @Prop({ required: true })
-  readonly value!: number;
-  @Prop({ required: true })
-  readonly min!: number;
-  @Prop({ required: true })
-  readonly max!: number;
-  @Prop({ required: true })
-  readonly label!: string;
-  @Prop({ default: 0 })
-  readonly offset!: number;
-  @Prop({ default: null })
-  readonly valueLabel!: string | null;
-  @Prop({ default: false })
-  readonly isUnrolled!: boolean;
+const props = withDefaults(
+  defineProps<{
+    modelValue: number;
+    min: number;
+    max: number;
+    label: string;
+    offset?: number;
+    valueLabel?: string | null;
+    isUnrolled?: boolean;
+  }>(),
+  {
+    offset: 0,
+    valueLabel: null,
+    isUnrolled: false,
+  },
+);
 
-  // Will be immediatiely updated by watchValue()
-  private internalValue = 0;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: number): void;
+}>();
 
-  get slider() {
-    return this.internalValue;
-  }
+const internalValue = ref(0);
 
-  set slider(value: number) {
+const slider = computed({
+  get: () => internalValue.value,
+  set: (value: number) => {
     const numberValue = typeof value === "number" ? value : parseInt(value);
-    if (numberValue === this.internalValue) {
+    if (numberValue === internalValue.value) {
       return;
     }
-    this.internalValue = numberValue;
-    this.$emit("input", numberValue - this.offset);
+    internalValue.value = numberValue;
+    emit("update:modelValue", numberValue - props.offset);
+  },
+});
+
+const displayValue = computed(
+  () => props.valueLabel || (props.modelValue + props.offset).toString(),
+);
+
+const unrolledMessage = computed(() => `${props.label} is unrolled`);
+
+function updateInternalValue() {
+  internalValue.value = props.modelValue + props.offset;
+}
+
+watch(() => props.modelValue, updateInternalValue, { immediate: true });
+
+function handleInput(value: string) {
+  const numValue = parseInt(value);
+  if (!isNaN(numValue)) {
+    slider.value = numValue;
+    return;
   }
-
-  get displayValue() {
-    return this.valueLabel || (this.value + this.offset).toString();
-  }
-
-  get unrolledMessage() {
-    return `${this.label} is unrolled`;
-  }
-
-  private updateInternalValue() {
-    this.internalValue = this.value + this.offset;
-  }
-
-  @Watch("value", { immediate: true })
-  watchValue() {
-    this.updateInternalValue();
-  }
-
-  handleInput(value: string) {
-    // Try to parse as number first
-    const numValue = parseInt(value);
-    if (!isNaN(numValue)) {
-      this.slider = numValue;
-      return;
-    }
-
-    // If not a number, check if the input matches the current value label
-    // (If the user types the same label that's already displayed, do nothing)
-    if (this.valueLabel && value === this.valueLabel) {
-      return;
-    }
-    // Otherwise, if input is not a number and doesn't match the label, do nothing
-    // (The display will be corrected on blur via handleBlur)
-  }
-
-  handleBlur() {
-    // On blur, ensure we show the correct value
-    this.updateInternalValue();
-  }
-
-  increment() {
-    if (this.value < this.max) {
-      this.$emit("input", this.value + 1);
-    }
-  }
-
-  decrement() {
-    if (this.value > this.min) {
-      this.$emit("input", this.value - 1);
-    }
+  if (props.valueLabel && value === props.valueLabel) {
+    return;
   }
 }
+
+function handleBlur() {
+  updateInternalValue();
+}
+
+function increment() {
+  if (props.modelValue < props.max) {
+    emit("update:modelValue", props.modelValue + 1);
+  }
+}
+
+function decrement() {
+  if (props.modelValue > props.min) {
+    emit("update:modelValue", props.modelValue - 1);
+  }
+}
+
+defineExpose({ slider, displayValue, unrolledMessage, increment, decrement });
 </script>

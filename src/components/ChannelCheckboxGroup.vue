@@ -1,13 +1,13 @@
 <template>
   <v-container class="pa-0">
-    <v-subheader v-if="label" class="px-0">{{ label }}</v-subheader>
+    <v-list-subheader v-if="label" class="px-0">{{ label }}</v-list-subheader>
     <template v-if="channelItems && channelItems.length">
       <v-row v-for="item in channelItems" :key="item.value" class="ma-0">
         <v-col cols="12" class="pa-1">
           <v-checkbox
             v-model="selectedChannels[item.value]"
             :label="item.text"
-            dense
+            density="compact"
             hide-details
             v-bind="$attrs"
           ></v-checkbox>
@@ -17,44 +17,54 @@
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import store from "@/store";
 
-@Component({})
-export default class ChannelCheckboxGroup extends Vue {
-  readonly store = store;
+const props = withDefaults(
+  defineProps<{
+    modelValue?: Record<number, boolean>;
+    label?: string;
+  }>(),
+  {
+    modelValue: () => ({}),
+    label: "",
+  },
+);
 
-  @Prop({ default: "" })
-  readonly label!: string;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: Record<number, boolean>): void;
+}>();
 
-  @VModel({ type: Object, default: () => ({}) })
-  selectedChannels!: { [key: number]: boolean };
+// Computed getter/setter mirrors the original @VModel behavior:
+// checkbox mutations go directly through Vue's reactivity on the object,
+// and full-object assignments emit "update:modelValue" to the parent.
+const selectedChannels = computed({
+  get() {
+    return props.modelValue;
+  },
+  set(val: Record<number, boolean>) {
+    emit("update:modelValue", val);
+  },
+});
 
-  get channelItems() {
-    if (!this.store.dataset) return [];
+const channelItems = computed(() => {
+  if (!store.dataset) return [];
+  return store.dataset.channels.map((channel: number) => ({
+    text: store.dataset?.channelNames?.get(channel) || `Channel ${channel}`,
+    value: channel,
+  }));
+});
 
-    return this.store.dataset.channels.map((channel: number) => ({
-      text:
-        this.store.dataset?.channelNames?.get(channel) || `Channel ${channel}`,
-      value: channel,
-    }));
-  }
-
-  created() {
-    // Initialize selectedChannels with an empty object if undefined
-    this.selectedChannels = this.selectedChannels || {};
-
-    // Then add any missing channels
-    if (this.store.dataset?.channels) {
-      const updatedChannels = { ...this.selectedChannels };
-      for (const channel of this.store.dataset.channels) {
-        if (!(channel in updatedChannels)) {
-          updatedChannels[channel] = false;
-        }
-      }
-      this.selectedChannels = updatedChannels;
+// Initialize missing channels (equivalent to created() hook)
+if (store.dataset?.channels) {
+  const current = selectedChannels.value || {};
+  const updatedChannels = { ...current };
+  for (const channel of store.dataset.channels) {
+    if (!(channel in updatedChannels)) {
+      updatedChannels[channel] = false;
     }
   }
+  selectedChannels.value = updatedChannels;
 }
 </script>

@@ -3,16 +3,13 @@
     open-on-hover
     open-delay="200"
     close-delay="100"
-    bottom
-    offset-y
-    :nudge-width="200"
+    location="bottom"
     content-class="sharing-tooltip-menu"
   >
-    <template #activator="{ on, attrs }">
+    <template #activator="{ props: activatorProps }">
       <v-icon
-        v-bind="attrs"
-        v-on="on"
-        small
+        v-bind="activatorProps"
+        size="small"
         :color="iconColor"
         class="sharing-icon ml-1"
       >
@@ -29,7 +26,11 @@
       <div v-else>
         <!-- Public/Private Badge -->
         <div class="d-flex align-center mb-1">
-          <v-icon x-small class="mr-1" :color="isPublic ? 'green' : 'grey'">
+          <v-icon
+            size="x-small"
+            class="mr-1"
+            :color="isPublic ? 'green' : 'grey'"
+          >
             {{ isPublic ? "mdi-earth" : "mdi-lock" }}
           </v-icon>
           <span class="text-caption font-weight-medium">
@@ -39,7 +40,7 @@
 
         <!-- User Summary -->
         <div v-if="users && users.length > 0">
-          <div class="text-caption grey--text mb-1">
+          <div class="text-caption text-grey mb-1">
             {{ users.length }}
             {{ users.length === 1 ? "user" : "users" }} with access:
           </div>
@@ -53,7 +54,7 @@
             </span>
             <v-spacer />
             <v-chip
-              x-small
+              size="x-small"
               :color="accessLevelColor(user.level)"
               dark
               class="ml-1"
@@ -63,49 +64,54 @@
           </div>
           <div
             v-if="users.length > maxDisplayUsers"
-            class="text-caption grey--text mt-1"
+            class="text-caption text-grey mt-1"
           >
             +{{ users.length - maxDisplayUsers }} more...
           </div>
         </div>
-        <div v-else class="text-caption grey--text">No additional users.</div>
+        <div v-else class="text-caption text-grey">No additional users.</div>
       </div>
     </v-card>
   </v-menu>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed } from "vue";
 import { IDatasetAccessUser } from "@/store/model";
 import { accessLevelLabel, accessLevelColor } from "@/utils/accessLevel";
 
-@Component
-export default class SharingStatusIcon extends Vue {
-  @Prop({ default: false }) readonly isPublic!: boolean;
-  @Prop({ default: () => [] }) readonly users!: IDatasetAccessUser[];
-  @Prop({ default: false }) readonly loading!: boolean;
+const props = defineProps<{
+  isPublic?: boolean;
+  users?: IDatasetAccessUser[];
+  loading?: boolean;
+}>();
 
-  readonly maxDisplayUsers = 5;
+const maxDisplayUsers = 5;
 
-  accessLevelLabel = accessLevelLabel;
-  accessLevelColor = accessLevelColor;
+const iconName = computed((): string => {
+  if (props.isPublic) return "mdi-earth";
+  if (props.users && props.users.length > 1) return "mdi-account-multiple";
+  return "mdi-lock";
+});
 
-  get iconName(): string {
-    if (this.isPublic) return "mdi-earth";
-    if (this.users && this.users.length > 1) return "mdi-account-multiple";
-    return "mdi-lock";
-  }
+const iconColor = computed((): string => {
+  if (props.isPublic) return "green";
+  if (props.users && props.users.length > 1) return "blue";
+  return "grey";
+});
 
-  get iconColor(): string {
-    if (this.isPublic) return "green";
-    if (this.users && this.users.length > 1) return "blue";
-    return "grey";
-  }
+const displayedUsers = computed((): IDatasetAccessUser[] => {
+  return (props.users || []).slice(0, maxDisplayUsers);
+});
 
-  get displayedUsers(): IDatasetAccessUser[] {
-    return this.users.slice(0, this.maxDisplayUsers);
-  }
-}
+defineExpose({
+  maxDisplayUsers,
+  iconName,
+  iconColor,
+  displayedUsers,
+  accessLevelLabel,
+  accessLevelColor,
+});
 </script>
 
 <style lang="scss" scoped>

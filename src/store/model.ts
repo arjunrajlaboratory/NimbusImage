@@ -1,5 +1,5 @@
 import { IGirderItem } from "@/girder";
-import { ITileHistogram } from "./images";
+import type { ITileHistogram } from "./images";
 import Shepherd from "shepherd.js";
 
 interface IObject<Values = any> {
@@ -136,6 +136,11 @@ export interface ISamAnnotationToolState {
   type: TSamAnnotationToolStateSymbol;
   nodes: TSamNodes;
   loadingMessages: string[];
+  // Reactive mirror of nodes.input.geoJSMap.output. In Vue 3, pipeline node
+  // outputs are not reactive (markRaw'd ComputeNode instances write to raw
+  // targets, bypassing Proxy). This property is updated by an onOutputUpdate
+  // callback and can be safely read by Vue computeds.
+  mapEntry: IMapEntry | null;
   mouseState: {
     path: IGeoJSPoint2D[]; // In GCS coordinates
   };
@@ -1587,8 +1592,8 @@ export interface ITourConfig extends ITourMetadata {
   };
 }
 
-declare module "vue/types/vue" {
-  interface Vue {
+declare module "vue" {
+  interface ComponentCustomProperties {
     $startTour: (tourName: string) => Promise<void>;
     $nextStep: (targetElementId?: string) => Promise<void>;
     $loadAllTours: () => Promise<Record<string, ITourMetadata>>;
@@ -1802,9 +1807,9 @@ export function getChannelColors(userColors?: { [key: string]: string }): {
 
 import { v4 as uuidv4 } from "uuid";
 import { ISetQuadStatus } from "@/utils/setFrameQuad";
-import { ITileMeta } from "./GirderAPI";
+import type { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
-import { TSamNodes } from "@/pipelines/samPipeline";
+import type { TSamNodes } from "@/pipelines/samPipeline";
 
 // TODO: It's kind of weird to have this function here.
 export function newLayer(
@@ -1956,4 +1961,10 @@ export interface IDimensionStrategy {
   T: { source: "file" | "filename" | "images"; guess: string } | null;
   C: { source: "file" | "filename" | "images"; guess: string } | null;
   transcode: boolean;
+}
+
+// Self-accept HMR to prevent vuex-module-decorators from re-registering
+// the dynamic module (which causes duplicate getters and state overwrites).
+if (import.meta.hot) {
+  import.meta.hot.accept();
 }

@@ -5,10 +5,15 @@ import {
   Action,
   getModule,
 } from "vuex-module-decorators";
+import { toRaw } from "vue";
 import { logError } from "@/utils/log";
 import store from "./root";
 import { IChatMessage } from "./model";
 import main from "./index";
+
+// Stored outside Vuex state to avoid Vue 3 reactive proxy wrapping.
+// IDBDatabase is a native browser object whose methods break when proxied.
+let database: IDBDatabase | null = null;
 
 // Returns a promise and its associated "resolve" and "reject" functions
 function getPromiseResolveReject<T>() {
@@ -45,17 +50,11 @@ function openDatabase(): Promise<IDBDatabase> {
 @Module({ dynamic: true, store, name: "chat" })
 export class Chat extends VuexModule {
   messages: IChatMessage[] = [];
-  database: IDBDatabase | null = null;
   initialized: boolean = false;
 
   @Mutation
   private setInitialized(value: boolean) {
     this.initialized = value;
-  }
-
-  @Mutation
-  private setDatabase(database: IDBDatabase) {
-    this.database = database;
   }
 
   @Mutation
@@ -73,10 +72,8 @@ export class Chat extends VuexModule {
     if (this.initialized) {
       return;
     }
-    let database;
     try {
       database = await openDatabase();
-      this.setDatabase(database);
     } catch (e) {
       logError(`Failed to open chat database: ${e}.`);
       return;
@@ -105,13 +102,15 @@ export class Chat extends VuexModule {
   // This action adds a message to the database but doesn't ask for an answer
   @Action
   private async addMessage(message: IChatMessage) {
-    if (!this.database) {
+    if (!database) {
       logError("Can't add a message when database is not open.");
       return;
     }
-    const transaction = this.database.transaction(["messages"], "readwrite");
+    const transaction = database.transaction(["messages"], "readwrite");
     const store = transaction.objectStore("messages");
-    const addRequest = store.add(message);
+    // Strip Vue reactive proxies — IndexedDB's structured clone can't handle them
+    const plainMessage = JSON.parse(JSON.stringify(toRaw(message)));
+    const addRequest = store.add(plainMessage);
 
     const { promise, resolve, reject } = getPromiseResolveReject<void>();
     addRequest.onerror = () => {
@@ -149,12 +148,12 @@ export class Chat extends VuexModule {
 
   @Action
   async clearAll() {
-    if (!this.database) {
+    if (!database) {
       logError("Can't clear messages when database is not open.");
       return;
     }
 
-    const transaction = this.database.transaction(["messages"], "readwrite");
+    const transaction = database.transaction(["messages"], "readwrite");
     const store = transaction.objectStore("messages");
     const clearRequest = store.clear();
 
@@ -171,3 +170,9 @@ export class Chat extends VuexModule {
 }
 
 export default getModule(Chat);
+
+// Self-accept HMR to prevent vuex-module-decorators from re-registering
+// the dynamic module (which causes duplicate getters and state overwrites).
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}

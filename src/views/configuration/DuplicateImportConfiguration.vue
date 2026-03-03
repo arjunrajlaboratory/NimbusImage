@@ -23,79 +23,70 @@
     />
   </v-container>
 </template>
-<script lang="ts">
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { IDatasetConfiguration } from "@/store/model";
-import { IGirderSelectAble } from "@/girder";
-import { Vue, Component, Watch } from "vue-property-decorator";
+import { IGirderLocation } from "@/girder";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import ConfigurationSelect from "@/components/ConfigurationSelect.vue";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 
-@Component({
-  components: {
-    ConfigurationSelect,
-    GirderLocationChooser,
-  },
-})
-export default class DuplicateImportConfiguration extends Vue {
-  readonly store = store;
-  readonly girderResources = girderResources;
+const router = useRouter();
 
-  path: IGirderSelectAble | null = null;
+const path = ref<IGirderLocation | null>(null);
 
-  get dataset() {
-    return this.store.dataset;
+const dataset = computed(() => store.dataset);
+
+const datasetName = computed(() => dataset.value?.name || "");
+
+async function fetchParentFolder() {
+  path.value = null;
+  if (!dataset.value) {
+    return;
   }
-
-  get datasetName() {
-    return this.dataset?.name || "";
+  const datasetFolder = await girderResources.getFolder(dataset.value.id);
+  const parentId = datasetFolder?.parentId;
+  if (!parentId) {
+    return;
   }
-
-  @Watch("dataset")
-  async fetchParentFolder() {
-    this.path = null;
-    if (!this.dataset) {
-      return;
-    }
-    const datasetFolder = await this.girderResources.getFolder(this.dataset.id);
-    const parentId = datasetFolder?.parentId;
-    if (!parentId) {
-      return;
-    }
-    this.path = await this.girderResources.getFolder(parentId);
-  }
-
-  mounted() {
-    this.fetchParentFolder();
-  }
-
-  async submit(configurations: IDatasetConfiguration[]) {
-    const dataset = this.dataset;
-    const parentFolder = this.path;
-    if (!dataset || !parentFolder) {
-      return;
-    }
-
-    // Duplicate each configuration and create a view for it
-    await Promise.all(
-      configurations.map((configuration) =>
-        this.store.api
-          .duplicateConfiguration(configuration, parentFolder?._id)
-          .then((newConfiguration) =>
-            this.store.createDatasetView({
-              configurationId: newConfiguration.id,
-              datasetId: dataset.id,
-            }),
-          ),
-      ),
-    );
-
-    this.$router.back();
-  }
-
-  cancel() {
-    this.$router.back();
-  }
+  path.value = await girderResources.getFolder(parentId);
 }
+
+async function submit(configurations: IDatasetConfiguration[]) {
+  const ds = dataset.value;
+  const parentFolder = path.value;
+  if (!ds || !parentFolder) {
+    return;
+  }
+
+  await Promise.all(
+    configurations.map((configuration) =>
+      store.api
+        .duplicateConfiguration(configuration, (parentFolder as any)._id)
+        .then((newConfiguration: any) =>
+          store.createDatasetView({
+            configurationId: newConfiguration.id,
+            datasetId: ds.id,
+          }),
+        ),
+    ),
+  );
+
+  router.back();
+}
+
+function cancel() {
+  router.back();
+}
+
+watch(dataset, fetchParentFolder);
+
+onMounted(() => {
+  fetchParentFolder();
+});
+
+defineExpose({ path, dataset, datasetName, fetchParentFolder, submit, cancel });
 </script>

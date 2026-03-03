@@ -10,8 +10,8 @@
         <v-alert
           v-model="showError"
           type="error"
-          dense
-          dismissible
+          density="compact"
+          closable
           class="mb-4"
         >
           {{ errorString }}
@@ -37,7 +37,7 @@
                 :label="config.name"
                 :value="config.id"
                 :hide-details="true"
-                :dense="true"
+                density="compact"
               />
             </v-col>
           </v-row>
@@ -53,7 +53,7 @@
                 :loading="publicLoading"
                 :disabled="publicLoading"
                 hide-details
-                dense
+                density="compact"
                 @change="togglePublic"
               />
             </v-col>
@@ -63,11 +63,11 @@
           <v-row v-else>
             <v-col cols="12">
               <v-chip
-                small
+                size="small"
                 :color="isPublic ? 'green' : 'grey'"
                 text-color="white"
               >
-                <v-icon left small>
+                <v-icon start size="small">
                   {{ isPublic ? "mdi-earth" : "mdi-lock" }}
                 </v-icon>
                 {{ isPublic ? "Public" : "Private" }}
@@ -81,10 +81,10 @@
           <v-row>
             <v-col cols="12">
               <div class="subtitle-2 mb-2">Current Access:</div>
-              <div v-if="users.length === 0" class="text-body-2 grey--text">
+              <div v-if="users.length === 0" class="text-body-2 text-grey">
                 No users have been granted access yet.
               </div>
-              <v-simple-table v-else dense>
+              <v-table v-else density="compact">
                 <template #default>
                   <thead>
                     <tr>
@@ -107,7 +107,7 @@
                         <div class="font-weight-medium">
                           {{ user.name || user.login }}
                         </div>
-                        <div class="text-caption grey--text text-left">
+                        <div class="text-caption text-grey text-left">
                           {{ user.email || user.login }}
                         </div>
                       </td>
@@ -120,13 +120,15 @@
                         </span>
                         <template v-else-if="isResourceAdmin">
                           <v-select
-                            :value="user.level"
+                            :model-value="user.level"
                             :items="accessLevelItems"
-                            dense
+                            item-title="text"
+                            item-value="value"
+                            density="compact"
                             hide-details
                             :loading="userLoading === user.id"
                             :disabled="userLoading === user.id"
-                            @change="updateUserAccess(user, $event)"
+                            @update:model-value="updateUserAccess(user, $event)"
                           />
                         </template>
                         <span v-else class="font-weight-medium">
@@ -137,21 +139,20 @@
                         <v-btn
                           v-if="user.level !== 2"
                           icon
-                          small
+                          size="small"
                           color="error"
                           :loading="userLoading === user.id"
                           :disabled="userLoading === user.id"
                           @click="confirmRemoveUser(user)"
                         >
-                          <v-icon small>mdi-close</v-icon>
+                          <v-icon size="small">mdi-close</v-icon>
                         </v-btn>
                         <v-tooltip v-else bottom>
-                          <template #activator="{ on, attrs }">
+                          <template #activator="{ props: activatorProps }">
                             <v-icon
-                              small
-                              color="grey lighten-1"
-                              v-bind="attrs"
-                              v-on="on"
+                              size="small"
+                              color="grey-lighten-1"
+                              v-bind="activatorProps"
                             >
                               mdi-lock
                             </v-icon>
@@ -162,7 +163,7 @@
                     </tr>
                   </tbody>
                 </template>
-              </v-simple-table>
+              </v-table>
             </v-col>
           </v-row>
 
@@ -177,8 +178,8 @@
                     <v-text-field
                       v-model="newUserEmail"
                       label="Username or Email"
-                      dense
-                      outlined
+                      density="compact"
+                      variant="outlined"
                       hide-details
                       :disabled="addUserLoading"
                     />
@@ -187,9 +188,11 @@
                     <v-select
                       v-model="newUserAccessLevel"
                       :items="accessLevelItems"
+                      item-title="text"
+                      item-value="value"
                       label="Access"
-                      dense
-                      outlined
+                      density="compact"
+                      variant="outlined"
                       hide-details
                       :disabled="addUserLoading"
                     />
@@ -201,7 +204,7 @@
                       :disabled="!newUserEmail || addUserLoading"
                       @click="addUser"
                     >
-                      <v-icon left small>mdi-plus</v-icon>
+                      <v-icon start size="small">mdi-plus</v-icon>
                       Add
                     </v-btn>
                   </v-col>
@@ -213,7 +216,7 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn color="primary" text @click="close">Done</v-btn>
+        <v-btn color="primary" variant="text" @click="close">Done</v-btn>
       </v-card-actions>
     </v-card>
 
@@ -228,16 +231,16 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="confirmDialog = false">Cancel</v-btn>
-          <v-btn color="error" text @click="removeUser">Remove</v-btn>
+          <v-btn variant="text" @click="confirmDialog = false">Cancel</v-btn>
+          <v-btn color="error" variant="text" @click="removeUser">Remove</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import { IGirderSelectAble } from "@/girder";
 import store from "@/store";
 import { logError } from "@/utils/log";
@@ -248,265 +251,291 @@ import {
   IDatasetView,
 } from "@/store/model";
 
-@Component
-export default class ShareDataset extends Vue {
-  readonly store = store;
+const props = defineProps<{
+  dataset: IGirderSelectAble | null;
+  modelValue: boolean;
+}>();
 
-  @Prop({ required: true }) readonly dataset!: IGirderSelectAble | null;
-  @Prop({ default: false }) readonly value!: boolean;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: boolean): void;
+}>();
 
-  dialog = false;
-  loading = false;
-  showError = false;
-  errorString = "";
+const dialog = computed({
+  get: () => props.modelValue,
+  set: (val: boolean) => emit("update:modelValue", val),
+});
 
-  // Access list data
-  isPublic = false;
-  users: IDatasetAccessUser[] = [];
-  configurations: IDatasetAccessConfiguration[] = [];
-  selectedConfigIds: string[] = [];
+const loading = ref(false);
+const showError = ref(false);
+const errorString = ref("");
 
-  // Associated dataset views (needed for API calls)
-  associatedViews: IDatasetView[] = [];
+// Access list data
+const isPublic = ref(false);
+const users = ref<IDatasetAccessUser[]>([]);
+const configurations = ref<IDatasetAccessConfiguration[]>([]);
+const selectedConfigIds = ref<string[]>([]);
 
-  // Loading states
-  publicLoading = false;
-  userLoading: string | null = null; // User ID being modified
-  addUserLoading = false;
+// Associated dataset views (needed for API calls)
+const associatedViews = ref<IDatasetView[]>([]);
 
-  // Add user form
-  newUserEmail = "";
-  newUserAccessLevel = 0; // Default to READ
+// Loading states
+const publicLoading = ref(false);
+const userLoading = ref<string | null>(null);
+const addUserLoading = ref(false);
 
-  // Confirmation dialog
-  confirmDialog = false;
-  userToRemove: IDatasetAccessUser | null = null;
+// Add user form
+const newUserEmail = ref("");
+const newUserAccessLevel = ref(0); // Default to READ
 
-  readonly accessLevelItems = [
-    { text: "Read", value: 0 },
-    { text: "Write", value: 1 },
-  ];
+// Confirmation dialog
+const confirmDialog = ref(false);
+const userToRemove = ref<IDatasetAccessUser | null>(null);
 
-  accessLevelLabel = accessLevelLabel;
+const accessLevelItems = [
+  { text: "Read", value: 0 },
+  { text: "Write", value: 1 },
+];
 
-  get isResourceAdmin(): boolean {
-    const userId = this.store.girderUser?._id;
-    if (!userId) return false;
-    return this.users.some((u) => u.id === userId && u.level === 2);
+const isResourceAdmin = computed((): boolean => {
+  const userId = store.girderUser?._id;
+  if (!userId) return false;
+  return users.value.some((u) => u.id === userId && u.level === 2);
+});
+
+watch(dialog, (val) => {
+  if (val && props.dataset) {
+    fetchAccessInfo(props.dataset._id);
+  } else if (!val) {
+    resetState();
   }
+});
 
-  @Watch("value")
-  onValueChanged(val: boolean) {
-    this.dialog = val;
-    if (val && this.dataset) {
-      this.fetchAccessInfo(this.dataset._id);
-    } else {
-      this.resetState();
-    }
-  }
+function resetState() {
+  loading.value = false;
+  showError.value = false;
+  errorString.value = "";
+  isPublic.value = false;
+  users.value = [];
+  configurations.value = [];
+  selectedConfigIds.value = [];
+  associatedViews.value = [];
+  newUserEmail.value = "";
+  newUserAccessLevel.value = 0;
+  userToRemove.value = null;
+}
 
-  @Watch("dialog")
-  onDialogChanged(val: boolean) {
-    this.$emit("input", val);
-  }
+async function fetchAccessInfo(datasetId: string) {
+  loading.value = true;
+  showError.value = false;
+  try {
+    // Fetch access list from new endpoint
+    const accessList = await store.api.getDatasetAccess(datasetId);
 
-  resetState() {
-    this.loading = false;
-    this.showError = false;
-    this.errorString = "";
-    this.isPublic = false;
-    this.users = [];
-    this.configurations = [];
-    this.selectedConfigIds = [];
-    this.associatedViews = [];
-    this.newUserEmail = "";
-    this.newUserAccessLevel = 0;
-    this.userToRemove = null;
-  }
+    isPublic.value = accessList.public;
+    users.value = accessList.users;
+    configurations.value = accessList.configurations;
+    // Select all configurations by default
+    selectedConfigIds.value = accessList.configurations.map((c) => c.id);
 
-  async fetchAccessInfo(datasetId: string) {
-    this.loading = true;
-    this.showError = false;
-    try {
-      // Fetch access list from new endpoint
-      const accessList = await this.store.api.getDatasetAccess(datasetId);
-
-      this.isPublic = accessList.public;
-      this.users = accessList.users;
-      this.configurations = accessList.configurations;
-      // Select all configurations by default
-      this.selectedConfigIds = accessList.configurations.map((c) => c.id);
-
-      // Also fetch dataset views for the share API calls
-      this.associatedViews = await this.store.api.findDatasetViews({
-        datasetId,
-      });
-    } catch (error) {
-      logError(`Failed to fetch access info for dataset ${datasetId}`, error);
-      this.errorString = "Failed to load access information";
-      this.showError = true;
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  close() {
-    this.dialog = false;
-  }
-
-  getSelectedViews(): IDatasetView[] {
-    // Filter views to only include those with selected configurations
-    return this.associatedViews.filter((view) =>
-      this.selectedConfigIds.includes(view.configurationId),
-    );
-  }
-
-  async togglePublic(newValue: boolean) {
-    if (!this.dataset) return;
-
-    this.publicLoading = true;
-    this.showError = false;
-    try {
-      await this.store.api.setDatasetPublic(this.dataset._id, newValue);
-      this.isPublic = newValue;
-    } catch (error) {
-      logError("Failed to toggle public access", error);
-      this.errorString = "Failed to update public access";
-      this.showError = true;
-      // Revert the checkbox
-      this.isPublic = !newValue;
-    } finally {
-      this.publicLoading = false;
-    }
-  }
-
-  async updateUserAccess(user: IDatasetAccessUser, newLevel: number) {
-    const selectedViews = this.getSelectedViews();
-    if (selectedViews.length === 0) {
-      this.errorString = "Please select at least one collection";
-      this.showError = true;
-      return;
-    }
-
-    this.userLoading = user.id;
-    this.showError = false;
-    try {
-      const response = await this.store.api.shareDatasetView(
-        selectedViews,
-        user.login,
-        newLevel,
-      );
-
-      if (typeof response === "string") {
-        this.errorString =
-          response === "badEmailOrUsername"
-            ? "User not found"
-            : "An error occurred";
-        this.showError = true;
-      } else {
-        // Update local state
-        const userIndex = this.users.findIndex((u) => u.id === user.id);
-        if (userIndex >= 0) {
-          this.users[userIndex].level = newLevel as 0 | 1 | 2;
-        }
-      }
-    } catch (error) {
-      logError("Failed to update user access", error);
-      this.errorString = "Failed to update user access";
-      this.showError = true;
-    } finally {
-      this.userLoading = null;
-    }
-  }
-
-  confirmRemoveUser(user: IDatasetAccessUser) {
-    this.userToRemove = user;
-    this.confirmDialog = true;
-  }
-
-  async removeUser() {
-    if (!this.userToRemove) return;
-
-    const user = this.userToRemove;
-    this.confirmDialog = false;
-
-    const selectedViews = this.getSelectedViews();
-    if (selectedViews.length === 0) {
-      this.errorString = "Please select at least one collection";
-      this.showError = true;
-      return;
-    }
-
-    this.userLoading = user.id;
-    this.showError = false;
-    try {
-      const response = await this.store.api.shareDatasetView(
-        selectedViews,
-        user.login,
-        -1, // -1 to remove access (Girder convention)
-      );
-
-      if (typeof response === "string") {
-        this.errorString =
-          response === "badEmailOrUsername"
-            ? "User not found"
-            : "An error occurred";
-        this.showError = true;
-      } else {
-        // Remove user from local state
-        this.users = this.users.filter((u) => u.id !== user.id);
-      }
-    } catch (error) {
-      logError("Failed to remove user access", error);
-      this.errorString = "Failed to remove user access";
-      this.showError = true;
-    } finally {
-      this.userLoading = null;
-      this.userToRemove = null;
-    }
-  }
-
-  async addUser() {
-    if (!this.newUserEmail) return;
-
-    const selectedViews = this.getSelectedViews();
-    if (selectedViews.length === 0) {
-      this.errorString = "Please select at least one collection";
-      this.showError = true;
-      return;
-    }
-
-    this.addUserLoading = true;
-    this.showError = false;
-    try {
-      const response = await this.store.api.shareDatasetView(
-        selectedViews,
-        this.newUserEmail,
-        this.newUserAccessLevel,
-      );
-
-      if (typeof response === "string") {
-        this.errorString =
-          response === "badEmailOrUsername"
-            ? "Unknown user. Please check the username or email."
-            : "An error occurred";
-        this.showError = true;
-      } else {
-        // Refresh the access list to show the new user
-        if (this.dataset) {
-          await this.fetchAccessInfo(this.dataset._id);
-        }
-        // Clear the form
-        this.newUserEmail = "";
-        this.newUserAccessLevel = 0;
-      }
-    } catch (error) {
-      logError("Failed to add user", error);
-      this.errorString = "Failed to add user";
-      this.showError = true;
-    } finally {
-      this.addUserLoading = false;
-    }
+    // Also fetch dataset views for the share API calls
+    associatedViews.value = await store.api.findDatasetViews({
+      datasetId,
+    });
+  } catch (error) {
+    logError(`Failed to fetch access info for dataset ${datasetId}`, error);
+    errorString.value = "Failed to load access information";
+    showError.value = true;
+  } finally {
+    loading.value = false;
   }
 }
+
+function close() {
+  dialog.value = false;
+}
+
+function getSelectedViews(): IDatasetView[] {
+  // Filter views to only include those with selected configurations
+  return associatedViews.value.filter((view) =>
+    selectedConfigIds.value.includes(view.configurationId),
+  );
+}
+
+async function togglePublic(newValue: boolean) {
+  if (!props.dataset) return;
+
+  publicLoading.value = true;
+  showError.value = false;
+  try {
+    await store.api.setDatasetPublic(props.dataset._id, newValue);
+    isPublic.value = newValue;
+  } catch (error) {
+    logError("Failed to toggle public access", error);
+    errorString.value = "Failed to update public access";
+    showError.value = true;
+    // Revert the checkbox
+    isPublic.value = !newValue;
+  } finally {
+    publicLoading.value = false;
+  }
+}
+
+async function updateUserAccess(user: IDatasetAccessUser, newLevel: number) {
+  const selectedViews = getSelectedViews();
+  if (selectedViews.length === 0) {
+    errorString.value = "Please select at least one collection";
+    showError.value = true;
+    return;
+  }
+
+  userLoading.value = user.id;
+  showError.value = false;
+  try {
+    const response = await store.api.shareDatasetView(
+      selectedViews,
+      user.login,
+      newLevel,
+    );
+
+    if (typeof response === "string") {
+      errorString.value =
+        response === "badEmailOrUsername"
+          ? "User not found"
+          : "An error occurred";
+      showError.value = true;
+    } else {
+      // Update local state
+      const userIndex = users.value.findIndex((u) => u.id === user.id);
+      if (userIndex >= 0) {
+        users.value[userIndex].level = newLevel as 0 | 1 | 2;
+      }
+    }
+  } catch (error) {
+    logError("Failed to update user access", error);
+    errorString.value = "Failed to update user access";
+    showError.value = true;
+  } finally {
+    userLoading.value = null;
+  }
+}
+
+function confirmRemoveUser(user: IDatasetAccessUser) {
+  userToRemove.value = user;
+  confirmDialog.value = true;
+}
+
+async function removeUser() {
+  if (!userToRemove.value) return;
+
+  const user = userToRemove.value;
+  confirmDialog.value = false;
+
+  const selectedViews = getSelectedViews();
+  if (selectedViews.length === 0) {
+    errorString.value = "Please select at least one collection";
+    showError.value = true;
+    return;
+  }
+
+  userLoading.value = user.id;
+  showError.value = false;
+  try {
+    const response = await store.api.shareDatasetView(
+      selectedViews,
+      user.login,
+      -1, // -1 to remove access (Girder convention)
+    );
+
+    if (typeof response === "string") {
+      errorString.value =
+        response === "badEmailOrUsername"
+          ? "User not found"
+          : "An error occurred";
+      showError.value = true;
+    } else {
+      // Remove user from local state
+      users.value = users.value.filter((u) => u.id !== user.id);
+    }
+  } catch (error) {
+    logError("Failed to remove user access", error);
+    errorString.value = "Failed to remove user access";
+    showError.value = true;
+  } finally {
+    userLoading.value = null;
+    userToRemove.value = null;
+  }
+}
+
+async function addUser() {
+  if (!newUserEmail.value) return;
+
+  const selectedViews = getSelectedViews();
+  if (selectedViews.length === 0) {
+    errorString.value = "Please select at least one collection";
+    showError.value = true;
+    return;
+  }
+
+  addUserLoading.value = true;
+  showError.value = false;
+  try {
+    const response = await store.api.shareDatasetView(
+      selectedViews,
+      newUserEmail.value,
+      newUserAccessLevel.value,
+    );
+
+    if (typeof response === "string") {
+      errorString.value =
+        response === "badEmailOrUsername"
+          ? "Unknown user. Please check the username or email."
+          : "An error occurred";
+      showError.value = true;
+    } else {
+      // Refresh the access list to show the new user
+      if (props.dataset) {
+        await fetchAccessInfo(props.dataset._id);
+      }
+      // Clear the form
+      newUserEmail.value = "";
+      newUserAccessLevel.value = 0;
+    }
+  } catch (error) {
+    logError("Failed to add user", error);
+    errorString.value = "Failed to add user";
+    showError.value = true;
+  } finally {
+    addUserLoading.value = false;
+  }
+}
+
+defineExpose({
+  dialog,
+  loading,
+  showError,
+  errorString,
+  isPublic,
+  users,
+  configurations,
+  selectedConfigIds,
+  associatedViews,
+  publicLoading,
+  userLoading,
+  addUserLoading,
+  newUserEmail,
+  newUserAccessLevel,
+  confirmDialog,
+  userToRemove,
+  accessLevelItems,
+  isResourceAdmin,
+  resetState,
+  fetchAccessInfo,
+  close,
+  getSelectedViews,
+  togglePublic,
+  updateUserAccess,
+  confirmRemoveUser,
+  removeUser,
+  addUser,
+});
 </script>

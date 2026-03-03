@@ -12,7 +12,7 @@
       class="flex-column align-center justify-center fill-height dropzone-message"
     >
       <slot name="default">
-        <v-icon size="50px"> $vuetify.icons.fileUpload </v-icon>
+        <v-icon size="50px">mdi-file-upload</v-icon>
         <div class="title mt-3">
           <template v-if="multiple">
             Drag files here or click to select them
@@ -32,32 +32,42 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed, ref } from "vue";
 
-@Component({ components: {} })
-export default class FileDropzone extends Vue {
-  @VModel({ type: Array, default: () => [] })
-  files!: File[];
+const props = withDefaults(
+  defineProps<{
+    modelValue?: File[];
+    message?: string;
+    multiple?: boolean;
+    accept?: string;
+  }>(),
+  {
+    modelValue: () => [],
+    message: "",
+    multiple: true,
+    accept: undefined,
+  },
+);
 
-  @Prop({ default: "" })
-  readonly message!: string;
+const emit = defineEmits<{
+  (e: "update:modelValue", files: File[]): void;
+}>();
 
-  @Prop({ default: true })
-  readonly multiple!: boolean;
+const files = computed({
+  get: () => props.modelValue,
+  set: (val: File[]) => emit("update:modelValue", val),
+});
 
-  @Prop({ default: undefined })
-  readonly accept: string | undefined;
+const dropzoneClass = ref<string | null>(null);
 
-  dropzoneClass: string | null = null;
-
-  onChange(event: Event) {
-    const inputElem = event.target as HTMLInputElement | null;
-    const files = inputElem?.files || [];
-    const fileArray = [...files];
-    this.files = fileArray;
-  }
+function onChange(event: Event) {
+  const inputElem = event.target as HTMLInputElement | null;
+  const fileList = inputElem?.files || [];
+  files.value = [...fileList];
 }
+
+defineExpose({ dropzoneClass });
 </script>
 
 <style lang="scss" scoped>
@@ -151,7 +161,7 @@ $overlayLight: linear-gradient(
   background-repeat: no-repeat;
 }
 
-.theme--dark .dropzone-overlay {
+.v-theme--dark .dropzone-overlay {
   background:
     $overlayDark top left,
     $overlayDark top left,

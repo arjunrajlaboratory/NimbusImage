@@ -1,8 +1,10 @@
 <template>
   <div>
     <v-dialog v-model="userMenu" v-if="!store.isLoggedIn" max-width="400px">
-      <template #activator="{ on }">
-        <v-btn v-if="!store.isLoggedIn" v-on="on" color="primary">Login</v-btn>
+      <template #activator="{ props: activatorProps }">
+        <v-btn v-if="!store.isLoggedIn" v-bind="activatorProps" color="primary"
+          >Login</v-btn
+        >
       </template>
       <v-container class="pa-0">
         <v-card class="pa-6">
@@ -46,11 +48,10 @@
       v-else
       v-model="userMenu"
       close-on-click
-      offset-y
       :close-on-content-click="false"
     >
-      <template #activator="{ on }">
-        <v-btn icon v-on="on">
+      <template #activator="{ props: activatorProps }">
+        <v-btn icon v-bind="activatorProps">
           <v-icon>mdi-account-circle</v-icon>
         </v-btn>
       </template>
@@ -61,38 +62,34 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import UserProfileSettings from "@/layout/UserProfileSettings.vue";
 import UserMenuLoginForm from "@/layout/UserMenuLoginForm.vue";
 
-@Component({
-  components: {
-    UserProfileSettings,
-    UserMenuLoginForm,
-  },
-})
-export default class UserMenu extends Vue {
-  readonly store = store;
+const route = useRoute();
 
-  @Watch("store.isLoggedIn")
-  @Watch("store.hasUserLoggedOut")
-  loggedInOrOut() {
-    // Only close the dialog when user logs in, don't reopen on logout
-    if (store.isLoggedIn || store.hasUserLoggedOut) {
-      this.userMenu = false;
-    }
+const userMenu = ref(route.name === "root");
+
+const isDomainLocked = !!import.meta.env.VITE_GIRDER_URL;
+
+const domain = ref(
+  import.meta.env.VITE_GIRDER_URL ||
+    girderUrlFromApiRoot(store.girderRest.apiRoot),
+);
+
+function loggedInOrOut() {
+  if (store.isLoggedIn || store.hasUserLoggedOut) {
+    userMenu.value = false;
   }
-
-  userMenu: boolean = this.$route.name == "root";
-
-  isDomainLocked = !!import.meta.env.VITE_GIRDER_URL;
-
-  domain =
-    import.meta.env.VITE_GIRDER_URL ||
-    girderUrlFromApiRoot(store.girderRest.apiRoot);
 }
+
+watch(() => store.isLoggedIn, loggedInOrOut);
+watch(() => store.hasUserLoggedOut, loggedInOrOut);
+
+defineExpose({ userMenu, isDomainLocked, domain, loggedInOrOut });
 </script>
 
 <style lang="scss" scoped>

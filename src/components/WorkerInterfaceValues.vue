@@ -4,21 +4,21 @@
       Dummy item group to prevent "change" events to be registered by a parent item group
       See: https://github.com/Kitware/UPennContrast/pull/391#issuecomment-1557606390
     -->
-    <v-list-item-group>
-      <template v-for="[id, item] in orderItemEntries">
-        <span
-          v-tooltip="{
-            content: item.tooltip ? formattedTooltip(item.tooltip) : '',
-            position: tooltipPosition,
-            enabled: !!item.tooltip,
-          }"
-          :key="id"
-        >
-          <v-row class="pa-0 ma-0">
+    <template v-for="[id, item] in orderItemEntries" :key="id">
+      <v-tooltip
+        :text="item.tooltip ? formattedTooltip(item.tooltip) : undefined"
+        :disabled="!item.tooltip"
+        :location="tooltipPosition === 'left' ? 'start' : 'end'"
+      >
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-row v-bind="activatorProps" class="pa-0 ma-0">
             <v-col class="pa-0 ma-0" cols="4">
-              <v-subheader class="font-weight-bold" :id="getTourStepId(id)">
+              <v-list-subheader
+                class="font-weight-bold"
+                :id="getTourStepId(id)"
+              >
                 {{ id }}
-              </v-subheader>
+              </v-list-subheader>
             </v-col>
             <v-col class="pa-0 ma-0">
               <v-slider
@@ -37,7 +37,7 @@
                     :max="item.max"
                     :min="item.min"
                     :step="item.step || -1"
-                    style="width: 60px"
+                    style="width: 90px"
                     class="mt-0 pt-0"
                     :label="item.unit ? item.unit : undefined"
                   ></v-text-field>
@@ -52,7 +52,7 @@
                 v-if="item.type === 'text'"
                 v-bind="item.vueAttrs"
                 v-model="interfaceValues[id]"
-                dense
+                density="compact"
               ></v-text-field>
               <tag-picker
                 v-if="item.type === 'tags'"
@@ -90,14 +90,14 @@
               ></v-checkbox>
             </v-col>
           </v-row>
-        </span>
-      </template>
-    </v-list-item-group>
+        </template>
+      </v-tooltip>
+    </template>
   </v-container>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch, VModel } from "vue-property-decorator";
+<script setup lang="ts">
+import { computed, watch, onMounted } from "vue";
 import {
   IToolConfiguration,
   IWorkerInterface,
@@ -110,77 +110,79 @@ import TagPicker from "@/components/TagPicker.vue";
 import { getTourStepId } from "@/utils/strings";
 import { getDefault } from "@/utils/workerInterface";
 
-// Popup for new tool configuration
-@Component({
-  components: {
-    LayerSelect,
-    ChannelSelect,
-    ChannelCheckboxGroup,
-    TagPicker,
+const props = withDefaults(
+  defineProps<{
+    modelValue: IWorkerInterfaceValues;
+    workerInterface: IWorkerInterface;
+    tool?: IToolConfiguration | null;
+    tooltipPosition?: "left" | "right";
+  }>(),
+  {
+    tool: null,
+    tooltipPosition: "right",
   },
-})
-export default class WorkerInterfaceValues extends Vue {
-  @Prop()
-  readonly workerInterface!: IWorkerInterface;
+);
 
-  // The tool is not always available, e.g. when this component is being
-  // called from the PropertyWorkerMenu. In that case, set to null so that
-  // we don't try to access the tool.values.workerInterfaceValues property.
-  @Prop({ default: null })
-  readonly tool!: IToolConfiguration | null;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: IWorkerInterfaceValues): void;
+}>();
 
-  @VModel({ type: Object }) interfaceValues!: IWorkerInterfaceValues;
-  @Prop({ default: "right", type: String })
-  readonly tooltipPosition!: "left" | "right";
+const interfaceValues = computed<any>({
+  get() {
+    return props.modelValue;
+  },
+  set(val: IWorkerInterfaceValues) {
+    emit("update:modelValue", val);
+  },
+});
 
-  getTourStepId = getTourStepId;
+const isLeft = computed(() => props.tooltipPosition === "left");
+const isRight = computed(() => props.tooltipPosition === "right");
 
-  // Computed properties to determine tooltip alignment
-  get isLeft() {
-    return this.tooltipPosition === "left";
-  }
-  get isRight() {
-    return this.tooltipPosition === "right";
-  }
+const orderItemEntries = computed(() => {
+  const allEntries = Object.entries(props.workerInterface);
+  const alphabeticalOrderItems = allEntries.filter(
+    ([, { displayOrder }]) => displayOrder === undefined,
+  );
+  const explicitlySortedItems = allEntries
+    .filter(([, { displayOrder }]) => displayOrder !== undefined)
+    .sort(([, { displayOrder: a }], [, { displayOrder: b }]) => a! - b!);
+  return [...explicitlySortedItems, ...alphabeticalOrderItems];
+});
 
-  get orderItemEntries() {
-    const allEntries = Object.entries(this.workerInterface);
-    const alphabeticalOrderItems = allEntries.filter(
-      ([, { displayOrder }]) => displayOrder === undefined,
-    );
-    const explicitlySortedItems = allEntries
-      .filter(([, { displayOrder }]) => displayOrder !== undefined)
-      .sort(([, { displayOrder: a }], [, { displayOrder: b }]) => a! - b!);
-    return [...explicitlySortedItems, ...alphabeticalOrderItems];
-  }
-
-  formattedTooltip(text: string): string {
-    return text.replace(/\n/g, "<br>");
-  }
-
-  mounted() {
-    this.populateValues();
-  }
-
-  @Watch("workerInterface")
-  populateValues() {
-    const interfaceValues: IWorkerInterfaceValues = {};
-    for (const id in this.workerInterface) {
-      if (this.tool?.values?.workerInterfaceValues) {
-        if (id in this.tool.values.workerInterfaceValues) {
-          interfaceValues[id] = this.tool.values.workerInterfaceValues[id];
-        }
-      } else {
-        const interfaceTemplate = this.workerInterface[id];
-        interfaceValues[id] = getDefault(
-          interfaceTemplate.type,
-          interfaceTemplate.default,
-        );
-      }
-    }
-    this.interfaceValues = interfaceValues;
-  }
+function formattedTooltip(text: string): string {
+  return text.replace(/\n/g, "<br>");
 }
+
+function populateValues() {
+  const values: IWorkerInterfaceValues = {};
+  for (const id in props.workerInterface) {
+    if (props.tool?.values?.workerInterfaceValues) {
+      if (id in props.tool.values.workerInterfaceValues) {
+        values[id] = props.tool.values.workerInterfaceValues[id];
+      }
+    } else {
+      const interfaceTemplate = props.workerInterface[id];
+      values[id] = getDefault(
+        interfaceTemplate.type,
+        interfaceTemplate.default,
+      );
+    }
+  }
+  interfaceValues.value = values;
+}
+
+onMounted(populateValues);
+watch(() => props.workerInterface, populateValues);
+
+defineExpose({
+  interfaceValues,
+  isLeft,
+  isRight,
+  orderItemEntries,
+  formattedTooltip,
+  populateValues,
+});
 </script>
 
 <style scoped>

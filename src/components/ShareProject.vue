@@ -9,15 +9,15 @@
         <v-alert
           v-model="showError"
           type="error"
-          dense
-          dismissible
+          density="compact"
+          closable
           class="mb-4"
         >
           {{ errorString }}
         </v-alert>
 
         <!-- Info Alert -->
-        <v-alert type="info" dense class="mb-4">
+        <v-alert type="info" density="compact" class="mb-4">
           Sharing this project will grant access to all datasets and collections
           within it.
         </v-alert>
@@ -38,7 +38,7 @@
                 :loading="publicLoading"
                 :disabled="publicLoading"
                 hide-details
-                dense
+                density="compact"
                 @change="confirmTogglePublic"
               />
             </v-col>
@@ -50,10 +50,10 @@
           <v-row>
             <v-col cols="12">
               <div class="subtitle-2 mb-2">Current Access:</div>
-              <div v-if="users.length === 0" class="text-body-2 grey--text">
+              <div v-if="users.length === 0" class="text-body-2 text-grey">
                 No users have been granted access yet.
               </div>
-              <v-simple-table v-else dense>
+              <v-table v-else density="compact">
                 <template #default>
                   <thead>
                     <tr>
@@ -70,7 +70,7 @@
                         <div class="font-weight-medium">
                           {{ user.name || user.login }}
                         </div>
-                        <div class="text-caption grey--text text-left">
+                        <div class="text-caption text-grey text-left">
                           {{ user.email || user.login }}
                         </div>
                       </td>
@@ -83,34 +83,37 @@
                         </span>
                         <v-select
                           v-else
-                          :value="user.level"
+                          :model-value="user.level"
                           :items="accessLevelItems"
-                          dense
+                          item-title="text"
+                          item-value="value"
+                          density="compact"
                           hide-details
                           :loading="userLoading === user.id"
                           :disabled="userLoading === user.id"
-                          @change="confirmUpdateUserAccess(user, $event)"
+                          @update:model-value="
+                            confirmUpdateUserAccess(user, $event)
+                          "
                         />
                       </td>
                       <td class="text-center">
                         <v-btn
                           v-if="user.level !== 2"
                           icon
-                          small
+                          size="small"
                           color="error"
                           :loading="userLoading === user.id"
                           :disabled="userLoading === user.id"
                           @click="confirmRemoveUser(user)"
                         >
-                          <v-icon small>mdi-close</v-icon>
+                          <v-icon size="small">mdi-close</v-icon>
                         </v-btn>
                         <v-tooltip v-else bottom>
-                          <template #activator="{ on, attrs }">
+                          <template #activator="{ props: activatorProps }">
                             <v-icon
-                              small
-                              color="grey lighten-1"
-                              v-bind="attrs"
-                              v-on="on"
+                              size="small"
+                              color="grey-lighten-1"
+                              v-bind="activatorProps"
                             >
                               mdi-lock
                             </v-icon>
@@ -121,7 +124,7 @@
                     </tr>
                   </tbody>
                 </template>
-              </v-simple-table>
+              </v-table>
             </v-col>
           </v-row>
 
@@ -136,8 +139,8 @@
                   <v-text-field
                     v-model="newUserEmail"
                     label="Username or Email"
-                    dense
-                    outlined
+                    density="compact"
+                    variant="outlined"
                     hide-details
                     :disabled="addUserLoading"
                   />
@@ -146,9 +149,11 @@
                   <v-select
                     v-model="newUserAccessLevel"
                     :items="accessLevelItems"
+                    item-title="text"
+                    item-value="value"
                     label="Access"
-                    dense
-                    outlined
+                    density="compact"
+                    variant="outlined"
                     hide-details
                     :disabled="addUserLoading"
                   />
@@ -160,7 +165,7 @@
                     :disabled="!newUserEmail || addUserLoading"
                     @click="confirmAddUser"
                   >
-                    <v-icon left small>mdi-plus</v-icon>
+                    <v-icon start size="small">mdi-plus</v-icon>
                     Add
                   </v-btn>
                 </v-col>
@@ -171,7 +176,7 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn color="primary" text @click="close">Done</v-btn>
+        <v-btn color="primary" variant="text" @click="close">Done</v-btn>
       </v-card-actions>
     </v-card>
 
@@ -193,8 +198,12 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="confirmDialog = false">Cancel</v-btn>
-          <v-btn :color="confirmColor" text @click="executeConfirmedAction">
+          <v-btn variant="text" @click="confirmDialog = false">Cancel</v-btn>
+          <v-btn
+            :color="confirmColor"
+            variant="text"
+            @click="executeConfirmedAction"
+          >
             {{ confirmActionLabel }}
           </v-btn>
         </v-card-actions>
@@ -203,297 +212,328 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import { isAxiosError } from "axios";
 import store from "@/store";
 import { logError } from "@/utils/log";
 import { IDatasetAccessUser, IProject } from "@/store/model";
 
-@Component
-export default class ShareProject extends Vue {
-  readonly store = store;
+const props = defineProps<{
+  project: IProject | null;
+  modelValue: boolean;
+}>();
 
-  @Prop({ required: true }) readonly project!: IProject | null;
-  @Prop({ default: false }) readonly value!: boolean;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: boolean): void;
+}>();
 
-  dialog = false;
-  loading = false;
-  showError = false;
-  errorString = "";
+const dialog = computed({
+  get: () => props.modelValue,
+  set: (val: boolean) => emit("update:modelValue", val),
+});
 
-  isPublic = false;
-  users: IDatasetAccessUser[] = [];
+const loading = ref(false);
+const showError = ref(false);
+const errorString = ref("");
 
-  publicLoading = false;
-  userLoading: string | null = null;
-  addUserLoading = false;
+const isPublic = ref(false);
+const users = ref<IDatasetAccessUser[]>([]);
 
-  newUserEmail = "";
-  newUserAccessLevel = 0;
+const publicLoading = ref(false);
+const userLoading = ref<string | null>(null);
+const addUserLoading = ref(false);
 
-  confirmDialog = false;
-  confirmTitle = "";
-  confirmMessage = "";
-  confirmColor = "primary";
-  confirmActionLabel = "Confirm";
-  pendingAction: (() => Promise<void>) | null = null;
+const newUserEmail = ref("");
+const newUserAccessLevel = ref(0);
 
-  userToRemove: IDatasetAccessUser | null = null;
+const confirmDialog = ref(false);
+const confirmTitle = ref("");
+const confirmMessage = ref("");
+const confirmColor = ref("primary");
+const confirmActionLabel = ref("Confirm");
+const pendingAction = ref<(() => Promise<void>) | null>(null);
 
-  readonly accessLevelItems = [
-    { text: "Read", value: 0 },
-    { text: "Write", value: 1 },
-  ];
+const userToRemove = ref<IDatasetAccessUser | null>(null);
 
-  readonly accessLevelLabels: Record<number, string> = {
-    0: "Read",
-    1: "Write",
-  };
+const accessLevelItems = [
+  { text: "Read", value: 0 },
+  { text: "Write", value: 1 },
+];
 
-  @Watch("value")
-  onValueChanged(val: boolean) {
-    this.dialog = val;
-    if (val && this.project) {
-      this.fetchAccessInfo(this.project.id);
-    } else {
-      this.resetState();
-    }
+const accessLevelLabels: Record<number, string> = {
+  0: "Read",
+  1: "Write",
+};
+
+const datasetCount = computed((): number => {
+  return props.project?.meta.datasets.length ?? 0;
+});
+
+const collectionCount = computed((): number => {
+  return props.project?.meta.collections.length ?? 0;
+});
+
+watch(dialog, (val) => {
+  if (val && props.project) {
+    fetchAccessInfo(props.project.id);
+  } else if (!val) {
+    resetState();
   }
+});
 
-  @Watch("dialog")
-  onDialogChanged(val: boolean) {
-    this.$emit("input", val);
-  }
+function resetState() {
+  loading.value = false;
+  showError.value = false;
+  errorString.value = "";
+  isPublic.value = false;
+  users.value = [];
+  newUserEmail.value = "";
+  newUserAccessLevel.value = 0;
+  userToRemove.value = null;
+}
 
-  resetState() {
-    this.loading = false;
-    this.showError = false;
-    this.errorString = "";
-    this.isPublic = false;
-    this.users = [];
-    this.newUserEmail = "";
-    this.newUserAccessLevel = 0;
-    this.userToRemove = null;
-  }
-
-  async fetchAccessInfo(projectId: string) {
-    this.loading = true;
-    this.showError = false;
-    try {
-      const accessList =
-        await this.store.projectsAPI.getProjectAccess(projectId);
-      this.isPublic = accessList.public;
-      this.users = accessList.users;
-    } catch (error) {
-      logError(`Failed to fetch access info for project ${projectId}`, error);
-      this.errorString = "Failed to load access information";
-      this.showError = true;
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  get datasetCount(): number {
-    return this.project?.meta.datasets.length ?? 0;
-  }
-
-  get collectionCount(): number {
-    return this.project?.meta.collections.length ?? 0;
-  }
-
-  close() {
-    this.dialog = false;
-  }
-
-  // --- Confirmation helpers ---
-
-  showConfirm(
-    title: string,
-    message: string,
-    actionLabel: string,
-    color: string,
-    action: () => Promise<void>,
-  ) {
-    this.confirmTitle = title;
-    this.confirmMessage = message;
-    this.confirmActionLabel = actionLabel;
-    this.confirmColor = color;
-    this.pendingAction = action;
-    this.confirmDialog = true;
-  }
-
-  async executeConfirmedAction() {
-    this.confirmDialog = false;
-    if (this.pendingAction) {
-      await this.pendingAction();
-      this.pendingAction = null;
-    }
-  }
-
-  shareErrorMessage(error: unknown): string {
-    if (
-      isAxiosError(error) &&
-      error.response?.data?.message === "badEmailOrUsername"
-    ) {
-      return "Unknown user. Please check the username or email.";
-    }
-    return "An error occurred while updating sharing";
-  }
-
-  // --- Public toggle ---
-
-  confirmTogglePublic(newValue: boolean) {
-    if (newValue) {
-      this.showConfirm(
-        "Make Project Public",
-        "This will grant read-only access to everyone, including " +
-          "anonymous users who are not logged in.",
-        "Make Public",
-        "primary",
-        () => this.togglePublic(true),
-      );
-    } else {
-      this.showConfirm(
-        "Make Project Private",
-        "This will remove public access. Only users explicitly shared " +
-          "on this project will retain access.",
-        "Make Private",
-        "warning",
-        () => this.togglePublic(false),
-      );
-    }
-    // Revert the checkbox until confirmed
-    this.isPublic = !newValue;
-  }
-
-  async togglePublic(newValue: boolean) {
-    if (!this.project) return;
-    this.publicLoading = true;
-    this.showError = false;
-    try {
-      await this.store.projectsAPI.setProjectPublic(this.project.id, newValue);
-      this.isPublic = newValue;
-    } catch (error) {
-      logError("Failed to toggle public access", error);
-      this.errorString = "Failed to update public access";
-      this.showError = true;
-    } finally {
-      this.publicLoading = false;
-    }
-  }
-
-  // --- Update user access level ---
-
-  confirmUpdateUserAccess(user: IDatasetAccessUser, newLevel: number) {
-    const levelLabel = this.accessLevelLabels[newLevel] ?? "Unknown";
-    this.showConfirm(
-      "Change Access Level",
-      `Change access for ${user.name || user.login} to ${levelLabel}? ` +
-        "This will update their permissions on all resources in this project.",
-      "Change",
-      "primary",
-      () => this.updateUserAccess(user, newLevel),
-    );
-  }
-
-  async updateUserAccess(user: IDatasetAccessUser, newLevel: number) {
-    if (!this.project) return;
-    this.userLoading = user.id;
-    this.showError = false;
-    try {
-      await this.store.projectsAPI.shareProject(
-        this.project.id,
-        user.login,
-        newLevel,
-      );
-      const userIndex = this.users.findIndex((u) => u.id === user.id);
-      if (userIndex >= 0) {
-        this.users[userIndex].level = newLevel as 0 | 1 | 2;
-      }
-    } catch (error) {
-      logError("Failed to update user access", error);
-      this.errorString = this.shareErrorMessage(error);
-      this.showError = true;
-    } finally {
-      this.userLoading = null;
-    }
-  }
-
-  // --- Remove user ---
-
-  confirmRemoveUser(user: IDatasetAccessUser) {
-    this.userToRemove = user;
-    this.showConfirm(
-      "Remove Access",
-      `Remove access for ${user.name || user.login}? ` +
-        "This will also remove their access to all datasets and " +
-        "collections in this project.",
-      "Remove",
-      "error",
-      () => this.removeUser(),
-    );
-  }
-
-  async removeUser() {
-    if (!this.userToRemove || !this.project) return;
-    const user = this.userToRemove;
-    this.userLoading = user.id;
-    this.showError = false;
-    try {
-      await this.store.projectsAPI.shareProject(
-        this.project.id,
-        user.login,
-        -1,
-      );
-      this.users = this.users.filter((u) => u.id !== user.id);
-    } catch (error) {
-      logError("Failed to remove user access", error);
-      this.errorString = this.shareErrorMessage(error);
-      this.showError = true;
-    } finally {
-      this.userLoading = null;
-      this.userToRemove = null;
-    }
-  }
-
-  // --- Add user ---
-
-  confirmAddUser() {
-    if (!this.newUserEmail) return;
-    const levelLabel =
-      this.accessLevelLabels[this.newUserAccessLevel] ?? "Unknown";
-    this.showConfirm(
-      "Share Project",
-      `Grant ${levelLabel} access to "${this.newUserEmail}"? ` +
-        "This will give them access to all datasets and collections " +
-        "in this project.",
-      "Share",
-      "primary",
-      () => this.addUser(),
-    );
-  }
-
-  async addUser() {
-    if (!this.newUserEmail || !this.project) return;
-    this.addUserLoading = true;
-    this.showError = false;
-    try {
-      await this.store.projectsAPI.shareProject(
-        this.project.id,
-        this.newUserEmail,
-        this.newUserAccessLevel,
-      );
-      await this.fetchAccessInfo(this.project.id);
-      this.newUserEmail = "";
-      this.newUserAccessLevel = 0;
-    } catch (error) {
-      logError("Failed to add user", error);
-      this.errorString = this.shareErrorMessage(error);
-      this.showError = true;
-    } finally {
-      this.addUserLoading = false;
-    }
+async function fetchAccessInfo(projectId: string) {
+  loading.value = true;
+  showError.value = false;
+  try {
+    const accessList = await store.projectsAPI.getProjectAccess(projectId);
+    isPublic.value = accessList.public;
+    users.value = accessList.users;
+  } catch (error) {
+    logError(`Failed to fetch access info for project ${projectId}`, error);
+    errorString.value = "Failed to load access information";
+    showError.value = true;
+  } finally {
+    loading.value = false;
   }
 }
+
+function close() {
+  dialog.value = false;
+}
+
+// --- Confirmation helpers ---
+
+function showConfirm(
+  title: string,
+  message: string,
+  actionLabel: string,
+  color: string,
+  action: () => Promise<void>,
+) {
+  confirmTitle.value = title;
+  confirmMessage.value = message;
+  confirmActionLabel.value = actionLabel;
+  confirmColor.value = color;
+  pendingAction.value = action;
+  confirmDialog.value = true;
+}
+
+async function executeConfirmedAction() {
+  confirmDialog.value = false;
+  if (pendingAction.value) {
+    await pendingAction.value();
+    pendingAction.value = null;
+  }
+}
+
+function shareErrorMessage(error: unknown): string {
+  if (
+    isAxiosError(error) &&
+    error.response?.data?.message === "badEmailOrUsername"
+  ) {
+    return "Unknown user. Please check the username or email.";
+  }
+  return "An error occurred while updating sharing";
+}
+
+// --- Public toggle ---
+
+function confirmTogglePublic(newValue: boolean) {
+  if (newValue) {
+    showConfirm(
+      "Make Project Public",
+      "This will grant read-only access to everyone, including " +
+        "anonymous users who are not logged in.",
+      "Make Public",
+      "primary",
+      () => togglePublic(true),
+    );
+  } else {
+    showConfirm(
+      "Make Project Private",
+      "This will remove public access. Only users explicitly shared " +
+        "on this project will retain access.",
+      "Make Private",
+      "warning",
+      () => togglePublic(false),
+    );
+  }
+  // Revert the checkbox until confirmed
+  isPublic.value = !newValue;
+}
+
+async function togglePublic(newValue: boolean) {
+  if (!props.project) return;
+  publicLoading.value = true;
+  showError.value = false;
+  try {
+    await store.projectsAPI.setProjectPublic(props.project.id, newValue);
+    isPublic.value = newValue;
+  } catch (error) {
+    logError("Failed to toggle public access", error);
+    errorString.value = "Failed to update public access";
+    showError.value = true;
+  } finally {
+    publicLoading.value = false;
+  }
+}
+
+// --- Update user access level ---
+
+function confirmUpdateUserAccess(user: IDatasetAccessUser, newLevel: number) {
+  const levelLabel = accessLevelLabels[newLevel] ?? "Unknown";
+  showConfirm(
+    "Change Access Level",
+    `Change access for ${user.name || user.login} to ${levelLabel}? ` +
+      "This will update their permissions on all resources in this project.",
+    "Change",
+    "primary",
+    () => updateUserAccess(user, newLevel),
+  );
+}
+
+async function updateUserAccess(user: IDatasetAccessUser, newLevel: number) {
+  if (!props.project) return;
+  userLoading.value = user.id;
+  showError.value = false;
+  try {
+    await store.projectsAPI.shareProject(
+      props.project.id,
+      user.login,
+      newLevel,
+    );
+    const userIndex = users.value.findIndex((u) => u.id === user.id);
+    if (userIndex >= 0) {
+      users.value[userIndex].level = newLevel as 0 | 1 | 2;
+    }
+  } catch (error) {
+    logError("Failed to update user access", error);
+    errorString.value = shareErrorMessage(error);
+    showError.value = true;
+  } finally {
+    userLoading.value = null;
+  }
+}
+
+// --- Remove user ---
+
+function confirmRemoveUser(user: IDatasetAccessUser) {
+  userToRemove.value = user;
+  showConfirm(
+    "Remove Access",
+    `Remove access for ${user.name || user.login}? ` +
+      "This will also remove their access to all datasets and " +
+      "collections in this project.",
+    "Remove",
+    "error",
+    () => removeUser(),
+  );
+}
+
+async function removeUser() {
+  if (!userToRemove.value || !props.project) return;
+  const user = userToRemove.value;
+  userLoading.value = user.id;
+  showError.value = false;
+  try {
+    await store.projectsAPI.shareProject(props.project.id, user.login, -1);
+    users.value = users.value.filter((u) => u.id !== user.id);
+  } catch (error) {
+    logError("Failed to remove user access", error);
+    errorString.value = shareErrorMessage(error);
+    showError.value = true;
+  } finally {
+    userLoading.value = null;
+    userToRemove.value = null;
+  }
+}
+
+// --- Add user ---
+
+function confirmAddUser() {
+  if (!newUserEmail.value) return;
+  const levelLabel = accessLevelLabels[newUserAccessLevel.value] ?? "Unknown";
+  showConfirm(
+    "Share Project",
+    `Grant ${levelLabel} access to "${newUserEmail.value}"? ` +
+      "This will give them access to all datasets and collections " +
+      "in this project.",
+    "Share",
+    "primary",
+    () => addUser(),
+  );
+}
+
+async function addUser() {
+  if (!newUserEmail.value || !props.project) return;
+  addUserLoading.value = true;
+  showError.value = false;
+  try {
+    await store.projectsAPI.shareProject(
+      props.project.id,
+      newUserEmail.value,
+      newUserAccessLevel.value,
+    );
+    await fetchAccessInfo(props.project.id);
+    newUserEmail.value = "";
+    newUserAccessLevel.value = 0;
+  } catch (error) {
+    logError("Failed to add user", error);
+    errorString.value = shareErrorMessage(error);
+    showError.value = true;
+  } finally {
+    addUserLoading.value = false;
+  }
+}
+
+defineExpose({
+  dialog,
+  loading,
+  showError,
+  errorString,
+  isPublic,
+  users,
+  publicLoading,
+  userLoading,
+  addUserLoading,
+  newUserEmail,
+  newUserAccessLevel,
+  confirmDialog,
+  confirmTitle,
+  confirmMessage,
+  confirmColor,
+  confirmActionLabel,
+  pendingAction,
+  userToRemove,
+  accessLevelItems,
+  accessLevelLabels,
+  datasetCount,
+  collectionCount,
+  resetState,
+  fetchAccessInfo,
+  close,
+  showConfirm,
+  executeConfirmedAction,
+  shareErrorMessage,
+  confirmTogglePublic,
+  togglePublic,
+  confirmUpdateUserAccess,
+  updateUserAccess,
+  confirmRemoveUser,
+  removeUser,
+  confirmAddUser,
+  addUser,
+});
 </script>

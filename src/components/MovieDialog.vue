@@ -13,7 +13,7 @@
                 type="number"
                 :min="1"
                 :max="displayMaxTimePoint"
-                dense
+                density="compact"
                 hide-details
               />
             </v-col>
@@ -24,7 +24,7 @@
                 type="number"
                 :min="1"
                 :max="displayMaxTimePoint"
-                dense
+                density="compact"
                 hide-details
               />
             </v-col>
@@ -38,7 +38,7 @@
                 type="number"
                 :min="1"
                 :max="30"
-                dense
+                density="compact"
                 hide-details
               />
             </v-col>
@@ -46,7 +46,7 @@
 
           <v-row class="mt-4">
             <v-col cols="12">
-              <v-radio-group v-model="downloadFormat" row>
+              <v-radio-group v-model="downloadFormat" inline>
                 <v-radio
                   label="Download zipped sequence of image files"
                   :value="MovieFormat.ZIP"
@@ -74,7 +74,7 @@
               <v-checkbox
                 v-model="shouldAddTimeStamp"
                 label="Insert time stamp"
-                dense
+                density="compact"
                 hide-details
               />
             </v-col>
@@ -87,7 +87,7 @@
                   label="Initial time"
                   v-model.number="initialTimeStampTime"
                   type="number"
-                  dense
+                  density="compact"
                   hide-details
                 />
               </v-col>
@@ -96,7 +96,7 @@
                   label="Time step"
                   v-model.number="timeStampStep"
                   type="number"
-                  dense
+                  density="compact"
                   hide-details
                 />
               </v-col>
@@ -108,7 +108,7 @@
                   label="Units"
                   v-model="timeStampUnits"
                   :items="timeUnits"
-                  dense
+                  density="compact"
                   hide-details
                 />
               </v-col>
@@ -117,7 +117,12 @@
 
           <v-row v-if="warningText" class="mt-4">
             <v-col cols="12">
-              <v-alert type="warning" dense text class="mb-0">
+              <v-alert
+                type="warning"
+                density="compact"
+                variant="tonal"
+                class="mb-0"
+              >
                 {{ warningText }}
               </v-alert>
             </v-col>
@@ -127,7 +132,7 @@
 
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn text @click="dialog = false"> Cancel </v-btn>
+        <v-btn variant="text" @click="dialog = false"> Cancel </v-btn>
         <v-btn
           color="primary"
           @click="handleDownload"
@@ -140,140 +145,155 @@
   </v-dialog>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
 import { IDataset } from "@/store/model";
 import { MovieFormat } from "./Snapshots.vue";
 
-@Component
-export default class MovieDialog extends Vue {
-  @Prop({ required: true })
-  value!: boolean;
+const props = defineProps<{
+  modelValue: boolean;
+  currentTime: number;
+  dataset: IDataset;
+}>();
 
-  @Prop({ required: true })
-  currentTime!: number;
+const emit = defineEmits<{
+  (e: "update:modelValue", value: boolean): void;
+  (e: "download", payload: object): void;
+}>();
 
-  @Prop({ required: true })
-  dataset!: IDataset;
+const startTime = ref<number>(0);
+const endTime = ref<number>(0);
+const fps = ref<number>(10);
+const downloadFormat = ref<MovieFormat>(MovieFormat.ZIP);
+const shouldAddTimeStamp = ref<boolean>(false);
+const initialTimeStampTime = ref<number>(0.0);
+const timeStampStep = ref<number>(1.0);
+const timeStampUnits = ref<string>("hours");
+const timeUnits = ref<string[]>([
+  "months",
+  "weeks",
+  "days",
+  "hours",
+  "minutes",
+  "seconds",
+  "milliseconds",
+  "microseconds",
+]);
 
-  MovieFormat = MovieFormat; // Make enum available in template
+const mp4Supported = computed<boolean>(() => {
+  return (
+    typeof MediaRecorder !== "undefined" &&
+    (MediaRecorder.isTypeSupported("video/mp4") ||
+      MediaRecorder.isTypeSupported(
+        'video/mp4; codecs="avc1.42E01E,mp4a.40.2"',
+      ))
+  );
+});
 
-  get mp4Supported(): boolean {
-    return (
-      typeof MediaRecorder !== "undefined" &&
-      (MediaRecorder.isTypeSupported("video/mp4") ||
-        MediaRecorder.isTypeSupported(
-          'video/mp4; codecs="avc1.42E01E,mp4a.40.2"',
-        ))
-    );
+const webmSupported = computed<boolean>(() => {
+  return (
+    typeof MediaRecorder !== "undefined" &&
+    (MediaRecorder.isTypeSupported("video/webm") ||
+      MediaRecorder.isTypeSupported('video/webm; codecs="vp9,opus"') ||
+      MediaRecorder.isTypeSupported('video/webm; codecs="vp8,opus"'))
+  );
+});
+
+const dialog = computed({
+  get: () => props.modelValue,
+  set: (value: boolean) => emit("update:modelValue", value),
+});
+
+const maxTimePoint = computed<number>(() => {
+  if (props.dataset) {
+    return Math.max(...props.dataset.time);
   }
+  return 0;
+});
 
-  get webmSupported(): boolean {
-    return (
-      typeof MediaRecorder !== "undefined" &&
-      (MediaRecorder.isTypeSupported("video/webm") ||
-        MediaRecorder.isTypeSupported('video/webm; codecs="vp9,opus"') ||
-        MediaRecorder.isTypeSupported('video/webm; codecs="vp8,opus"'))
-    );
+const displayMaxTimePoint = computed<number>(() => {
+  return maxTimePoint.value + 1;
+});
+
+const displayStartTime = computed({
+  get: () => startTime.value + 1,
+  set: (value: number) => {
+    startTime.value = value - 1;
+  },
+});
+
+const displayEndTime = computed({
+  get: () => endTime.value + 1,
+  set: (value: number) => {
+    endTime.value = value - 1;
+  },
+});
+
+const warningText = computed<string>(() => {
+  if (startTime.value > endTime.value) {
+    return "Start time must be less than or equal to end time";
   }
+  if (startTime.value < 0) {
+    return "Start time must be greater than or equal to 1";
+  }
+  if (endTime.value > maxTimePoint.value) {
+    return "End time must be less than or equal to the maximum time point";
+  }
+  if (fps.value < 1 || fps.value > 30) {
+    return "Frames per second must be between 1 and 30";
+  }
+  if (endTime.value - startTime.value > 200) {
+    return "Time range cannot exceed 200 frames";
+  }
+  return "";
+});
 
-  startTime: number = 0;
-  endTime: number = 0;
-  fps: number = 10;
-  downloadFormat: MovieFormat = MovieFormat.ZIP;
-  shouldAddTimeStamp: boolean = false;
-  initialTimeStampTime: number = 0.0;
-  timeStampStep: number = 1.0;
-  timeStampUnits: string = "hours";
-  timeUnits: string[] = [
-    "months",
-    "weeks",
-    "days",
-    "hours",
-    "minutes",
-    "seconds",
-    "milliseconds",
-    "microseconds",
-  ];
-
-  @Watch("value")
-  onDialogOpen(newValue: boolean) {
+watch(
+  () => props.modelValue,
+  (newValue: boolean) => {
     if (newValue) {
-      this.startTime = this.currentTime;
-      this.endTime = this.maxTimePoint;
+      startTime.value = props.currentTime;
+      endTime.value = maxTimePoint.value;
     }
+  },
+);
+
+function handleDownload() {
+  if (warningText.value) {
+    return;
   }
 
-  get dialog() {
-    return this.value;
-  }
-
-  set dialog(value: boolean) {
-    this.$emit("input", value);
-  }
-
-  get maxTimePoint(): number {
-    if (this.dataset) {
-      return Math.max(...this.dataset.time);
-    }
-    return 0;
-  }
-
-  get displayMaxTimePoint(): number {
-    return this.maxTimePoint + 1;
-  }
-
-  get displayStartTime(): number {
-    return this.startTime + 1;
-  }
-
-  set displayStartTime(value: number) {
-    this.startTime = value - 1;
-  }
-
-  get displayEndTime(): number {
-    return this.endTime + 1;
-  }
-
-  set displayEndTime(value: number) {
-    this.endTime = value - 1;
-  }
-
-  get warningText(): string {
-    if (this.startTime > this.endTime) {
-      return "Start time must be less than or equal to end time";
-    }
-    if (this.startTime < 0) {
-      return "Start time must be greater than or equal to 1";
-    }
-    if (this.endTime > this.maxTimePoint) {
-      return "End time must be less than or equal to the maximum time point";
-    }
-    if (this.fps < 1 || this.fps > 30) {
-      return "Frames per second must be between 1 and 30";
-    }
-    if (this.endTime - this.startTime > 200) {
-      return "Time range cannot exceed 200 frames";
-    }
-    return "";
-  }
-
-  handleDownload() {
-    if (this.warningText) {
-      return;
-    }
-
-    this.$emit("download", {
-      startTime: this.startTime,
-      endTime: this.endTime,
-      fps: this.fps,
-      format: this.downloadFormat,
-      shouldAddTimeStamp: this.shouldAddTimeStamp,
-      initialTimeStampTime: this.initialTimeStampTime,
-      timeStampStep: this.timeStampStep,
-      timeStampUnits: this.timeStampUnits,
-    });
-    this.dialog = false;
-  }
+  emit("download", {
+    startTime: startTime.value,
+    endTime: endTime.value,
+    fps: fps.value,
+    format: downloadFormat.value,
+    shouldAddTimeStamp: shouldAddTimeStamp.value,
+    initialTimeStampTime: initialTimeStampTime.value,
+    timeStampStep: timeStampStep.value,
+    timeStampUnits: timeStampUnits.value,
+  });
+  dialog.value = false;
 }
+
+defineExpose({
+  dialog,
+  startTime,
+  endTime,
+  fps,
+  downloadFormat,
+  warningText,
+  maxTimePoint,
+  displayMaxTimePoint,
+  displayStartTime,
+  displayEndTime,
+  mp4Supported,
+  webmSupported,
+  handleDownload,
+  shouldAddTimeStamp,
+  initialTimeStampTime,
+  timeStampStep,
+  timeStampUnits,
+  timeUnits,
+});
 </script>

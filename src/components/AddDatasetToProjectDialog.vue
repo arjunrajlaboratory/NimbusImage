@@ -1,8 +1,8 @@
 <template>
   <v-card class="dataset-dialog-card">
     <v-card-title class="flex-shrink-0">
-      <span class="text--secondary">Adding dataset to project:</span>
-      <span class="text--primary ml-1">{{ project.name }}</span>
+      <span class="text-medium-emphasis">Adding dataset to project:</span>
+      <span class="text-high-emphasis ml-1">{{ project.name }}</span>
     </v-card-title>
     <v-card-text class="dataset-dialog-content">
       <custom-file-manager
@@ -11,7 +11,7 @@
         :breadcrumb="true"
         :selectable="true"
         @selected="onSelectDataset"
-        :location.sync="selectLocation"
+        v-model:location="selectLocation"
         :initial-items-per-page="-1"
         :items-per-page-options="[-1]"
         :menu-enabled="false"
@@ -23,7 +23,7 @@
         :key="index + '-warning'"
         type="warning"
         class="my-2"
-        dense
+        density="compact"
       >
         {{ warning }}
       </v-alert>
@@ -31,7 +31,7 @@
         v-if="selectedDatasets.length > 0"
         type="success"
         class="my-2"
-        dense
+        density="compact"
       >
         Selected {{ selectedDatasets.length }} dataset(s):
         <v-divider />
@@ -45,7 +45,7 @@
       </v-alert>
     </v-card-text>
     <v-card-actions class="ma-2">
-      <v-btn text @click="$emit('done')">Cancel</v-btn>
+      <v-btn variant="text" @click="$emit('done')">Cancel</v-btn>
       <v-spacer />
       <v-btn
         color="primary"
@@ -71,7 +71,9 @@
           permissions to match the project's access settings.
         </v-card-text>
         <v-card-actions class="justify-end" style="gap: 8px">
-          <v-btn text @click="showPermissionConfirm = false">Cancel</v-btn>
+          <v-btn variant="text" @click="showPermissionConfirm = false"
+            >Cancel</v-btn
+          >
           <v-btn color="primary" @click="addDatasets">Continue</v-btn>
         </v-card-actions>
       </v-card>
@@ -79,119 +81,125 @@
   </v-card>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Prop } from "vue-property-decorator";
+<script setup lang="ts">
+import { ref, computed } from "vue";
 import { IDataset, IProject } from "@/store/model";
 import girderResources from "@/store/girderResources";
 import projects from "@/store/projects";
 import { isDatasetFolder } from "@/utils/girderSelectable";
-import { IGirderSelectAble } from "@/girder";
+import { IGirderSelectAble, IGirderLocation } from "@/girder";
 import CustomFileManager from "@/components/CustomFileManager.vue";
 
-@Component({
-  components: { CustomFileManager },
-})
-export default class AddDatasetToProjectDialog extends Vue {
-  readonly girderResources = girderResources;
-  readonly projects = projects;
+const props = defineProps<{
+  project: IProject;
+  isShared?: boolean;
+  isPublic?: boolean;
+}>();
 
-  @Prop({ required: true })
-  project!: IProject;
+const emit = defineEmits<{
+  (e: "done"): void;
+  (e: "added", datasetIds: string[]): void;
+}>();
 
-  @Prop({ default: false })
-  isShared!: boolean;
+const selectLocation = ref<IGirderLocation | null>(null);
+const selectedDatasets = ref<IDataset[]>([]);
+const warnings = ref<string[]>([]);
+const adding = ref(false);
+const showPermissionConfirm = ref(false);
 
-  @Prop({ default: false })
-  isPublic!: boolean;
+const existingDatasetIds = computed<Set<string>>(() => {
+  return new Set(props.project.meta.datasets.map((d) => d.datasetId));
+});
 
-  selectLocation: IGirderSelectAble | null = null;
-  selectedDatasets: IDataset[] = [];
-  warnings: string[] = [];
-  adding = false;
-  showPermissionConfirm = false;
-
-  get existingDatasetIds(): Set<string> {
-    return new Set(this.project.meta.datasets.map((d) => d.datasetId));
+async function onSelectDataset(selectedLocations: IGirderSelectAble[]) {
+  if (selectedLocations.length === 0) {
+    selectedDatasets.value = [];
+    warnings.value = [];
+    return;
   }
 
-  async onSelectDataset(selectedLocations: IGirderSelectAble[]) {
-    if (selectedLocations.length === 0) {
-      this.selectedDatasets = [];
-      this.warnings = [];
-      return;
-    }
+  const currentWarnings: string[] = [];
+  const newSelectedDatasets: IDataset[] = [];
 
-    const currentWarnings: string[] = [];
-    const selectedDatasets: IDataset[] = [];
-
-    // Process selected locations
-    await Promise.all(
-      selectedLocations.map(async (location) => {
-        if (!isDatasetFolder(location)) {
-          return;
-        }
-        const dataset = await this.girderResources.getDataset({
-          id: location._id,
-        });
-        if (!dataset) {
-          return;
-        }
-        // Check if already in project
-        if (this.existingDatasetIds.has(dataset.id)) {
-          currentWarnings.push(`"${dataset.name}" is already in this project`);
-          return;
-        }
-        selectedDatasets.push(dataset);
-      }),
-    );
-
-    // Count non-dataset selections
-    const nonDatasetCount =
-      selectedLocations.length -
-      selectedDatasets.length -
-      currentWarnings.length;
-    if (nonDatasetCount > 0) {
-      currentWarnings.push(
-        `${nonDatasetCount} selected item(s) are not datasets`,
-      );
-    }
-
-    this.selectedDatasets = selectedDatasets;
-    this.warnings = currentWarnings;
-  }
-
-  confirmAdd() {
-    if (this.selectedDatasets.length === 0) return;
-    if (this.isShared || this.isPublic) {
-      this.showPermissionConfirm = true;
-    } else {
-      this.addDatasets();
-    }
-  }
-
-  async addDatasets() {
-    this.showPermissionConfirm = false;
-    if (this.selectedDatasets.length === 0) return;
-
-    this.adding = true;
-    try {
-      for (const dataset of this.selectedDatasets) {
-        await this.projects.addDatasetToProject({
-          projectId: this.project.id,
-          datasetId: dataset.id,
-        });
+  // Process selected locations
+  await Promise.all(
+    selectedLocations.map(async (location) => {
+      if (!isDatasetFolder(location)) {
+        return;
       }
-      this.$emit(
-        "added",
-        this.selectedDatasets.map((d) => d.id),
-      );
-      this.selectedDatasets = [];
-      this.warnings = [];
-    } finally {
-      this.adding = false;
-    }
+      const dataset = await girderResources.getDataset({
+        id: location._id,
+      });
+      if (!dataset) {
+        return;
+      }
+      // Check if already in project
+      if (existingDatasetIds.value.has(dataset.id)) {
+        currentWarnings.push(`"${dataset.name}" is already in this project`);
+        return;
+      }
+      newSelectedDatasets.push(dataset);
+    }),
+  );
+
+  // Count non-dataset selections
+  const nonDatasetCount =
+    selectedLocations.length -
+    newSelectedDatasets.length -
+    currentWarnings.length;
+  if (nonDatasetCount > 0) {
+    currentWarnings.push(
+      `${nonDatasetCount} selected item(s) are not datasets`,
+    );
+  }
+
+  selectedDatasets.value = newSelectedDatasets;
+  warnings.value = currentWarnings;
+}
+
+function confirmAdd() {
+  if (selectedDatasets.value.length === 0) return;
+  if (props.isShared || props.isPublic) {
+    showPermissionConfirm.value = true;
+  } else {
+    addDatasets();
   }
 }
+
+async function addDatasets() {
+  showPermissionConfirm.value = false;
+  if (selectedDatasets.value.length === 0) return;
+
+  adding.value = true;
+  try {
+    for (const dataset of selectedDatasets.value) {
+      await projects.addDatasetToProject({
+        projectId: props.project.id,
+        datasetId: dataset.id,
+      });
+    }
+    emit(
+      "added",
+      selectedDatasets.value.map((d) => d.id),
+    );
+    selectedDatasets.value = [];
+    warnings.value = [];
+  } finally {
+    adding.value = false;
+  }
+}
+
+defineExpose({
+  selectLocation,
+  selectedDatasets,
+  warnings,
+  adding,
+  showPermissionConfirm,
+  existingDatasetIds,
+  onSelectDataset,
+  confirmAdd,
+  addDatasets,
+});
 </script>
 
 <style lang="scss" scoped>
@@ -221,7 +229,7 @@ export default class AddDatasetToProjectDialog extends Vue {
 }
 
 // Ensure the girder file manager takes up available space
-::v-deep .custom-file-manager-wrapper {
+:deep(.custom-file-manager-wrapper) {
   display: flex;
   flex-direction: column;
   flex: 1;

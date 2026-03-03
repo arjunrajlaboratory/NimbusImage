@@ -1,6 +1,6 @@
 <template>
   <v-expansion-panel>
-    <v-expansion-panel-header class="py-1">
+    <v-expansion-panel-title class="py-1">
       Annotation List
       <v-spacer />
       <v-container style="width: auto">
@@ -8,8 +8,8 @@
           <v-col class="pa-0 mx-1">
             <v-btn
               color="error"
-              small
-              outlined
+              size="small"
+              variant="outlined"
               :loading="isDeletingAnnotations"
               :disabled="isDeletingAnnotations"
               @click.stop="deleteSelected"
@@ -18,11 +18,11 @@
             </v-btn>
           </v-col>
           <v-col class="pa-0 mx-1">
-            <v-menu offset-y>
-              <template v-slot:activator="{ on, attrs }">
-                <v-btn small v-bind="attrs" v-on="on">
+            <v-menu>
+              <template v-slot:activator="{ props: activatorProps }">
+                <v-btn size="small" v-bind="activatorProps">
                   More Actions
-                  <v-icon small right>mdi-chevron-down</v-icon>
+                  <v-icon size="small" end>mdi-chevron-down</v-icon>
                 </v-btn>
               </template>
               <v-list>
@@ -30,23 +30,17 @@
                   @click="deleteUnselected"
                   :disabled="isDeletingAnnotations"
                 >
-                  <v-list-item-icon>
-                    <v-icon>mdi-delete-outline</v-icon>
-                  </v-list-item-icon>
+                  <v-icon>mdi-delete-outline</v-icon>
                   <v-list-item-title>Delete Unselected</v-list-item-title>
                 </v-list-item>
 
                 <v-list-item @click="showTagDialog = true">
-                  <v-list-item-icon>
-                    <v-icon>mdi-tag</v-icon>
-                  </v-list-item-icon>
+                  <v-icon>mdi-tag</v-icon>
                   <v-list-item-title>Tag Selected</v-list-item-title>
                 </v-list-item>
 
                 <v-list-item @click="showColorDialog = true">
-                  <v-list-item-icon>
-                    <v-icon>mdi-palette</v-icon>
-                  </v-list-item-icon>
+                  <v-icon>mdi-palette</v-icon>
                   <v-list-item-title>Color Selected</v-list-item-title>
                 </v-list-item>
               </v-list>
@@ -54,19 +48,19 @@
           </v-col>
         </v-row>
       </v-container>
-    </v-expansion-panel-header>
+    </v-expansion-panel-title>
 
     <tag-selection-dialog
-      :show.sync="showTagDialog"
+      v-model:show="showTagDialog"
       @submit="handleTagSubmit"
     />
 
     <color-selection-dialog
-      :show.sync="showColorDialog"
+      v-model:show="showColorDialog"
       @submit="handleColorSubmit"
     />
 
-    <v-expansion-panel-content id="annotation-list-content-tourstep">
+    <v-expansion-panel-text id="annotation-list-content-tourstep">
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>
@@ -74,7 +68,7 @@
           </v-card-title>
           <v-card-actions>
             <v-spacer />
-            <v-btn @click.native="annotationFilteredDialog = false">OK</v-btn>
+            <v-btn @click="annotationFilteredDialog = false">OK</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -84,19 +78,24 @@
             v-model="selectedColumns"
             column
             multiple
-            active-class="selected-chip"
+            selected-class=""
           >
             <v-chip
               v-for="option in columnOptions"
-              :key="option.value"
-              :value="option.value"
-              :class="{
-                'selected-chip': selectedColumns.includes(option.value),
-              }"
-              outlined
-              x-small
+              :key="option.key"
+              :value="option.key"
+              :variant="
+                selectedColumns.includes(option.key) ? 'flat' : 'outlined'
+              "
+              :color="
+                selectedColumns.includes(option.key) ? 'white' : undefined
+              "
+              :style="
+                selectedColumns.includes(option.key) ? {} : { opacity: 0.4 }
+              "
+              size="x-small"
             >
-              {{ option.text }}
+              {{ option.title }}
             </v-chip>
           </v-chip-group>
         </v-col>
@@ -113,121 +112,117 @@
         :items="filteredItems"
         :headers="headers"
         show-select
-        item-key="annotation.id"
+        item-value="annotation.id"
         v-model="selectedItems"
         :page="page"
-        :footer-props="{
-          'items-per-page-options': [10, 50, 200],
-        }"
+        :items-per-page-options="[10, 50, 200]"
+        :sort-by="sortBy"
         @update:items-per-page="itemsPerPage = $event"
+        @update:page="page = $event"
+        @update:sort-by="sortBy = $event"
         @update:group-by="groupBy = $event"
         ref="dataTable"
       >
         <template v-slot:header.data-table-select>
-          <v-simple-checkbox
-            :value="selectAllValue"
+          <v-checkbox
+            :model-value="selectAllValue"
             :indeterminate="selectAllIndeterminate"
             @click="selectAllCallback"
+            hide-details
           />
         </template>
-        <template v-slot:body="{ items }">
-          <tbody>
-            <tr
-              v-for="item in items"
-              :key="item.annotation.id"
-              @mouseover="hover(item.annotation.id)"
-              @mouseleave="hover(null)"
-              @click="goToAnnotationIdLocation(item.annotation.id)"
-              title="Go to annotation location"
-              :class="item.annotation.id === hoveredId ? 'is-hovered' : ''"
-              :ref="item.annotation.id"
+        <template v-slot:item="{ item }">
+          <tr
+            @mouseover="hover(item.annotation.id)"
+            @mouseleave="hover(null)"
+            @click="goToAnnotationIdLocation(item.annotation.id)"
+            title="Go to annotation location"
+            :class="item.annotation.id === hoveredId ? 'is-hovered' : ''"
+            :ref="(el) => setAnnotationRef(item.annotation.id, el)"
+          >
+            <td :class="tableItemClass">
+              <v-checkbox
+                hide-details
+                title
+                :model-value="item.isSelected"
+                @click.stop="() => toggleAnnotationSelection(item.annotation)"
+              />
+            </td>
+            <td
+              :class="tableItemClass"
+              v-if="selectedColumns.includes('annotation.id')"
             >
-              <td :class="tableItemClass">
-                <v-checkbox
-                  hide-details
-                  title
-                  :input-value="item.isSelected"
-                  @click.stop="() => toggleAnnotationSelection(item.annotation)"
-                />
-              </td>
-              <td
-                :class="tableItemClass"
-                v-if="selectedColumns.includes('annotation.id')"
-              >
-                <span class="user-select-text">{{ item.annotation.id }}</span>
-              </td>
-              <td
-                :class="tableItemClass"
-                v-if="selectedColumns.includes('index')"
-              >
-                <span>{{ item.index }}</span>
-              </td>
-              <td
-                :class="tableItemClass"
-                v-if="selectedColumns.includes('shapeName')"
-              >
-                <span>{{ item.shapeName }}</span>
-              </td>
-              <td
-                :class="tableItemClass"
-                v-if="selectedColumns.includes('annotation.tags')"
-              >
-                <span>
-                  <v-chip
-                    v-for="tag in item.annotation.tags"
-                    :key="tag"
-                    x-small
-                    @click="clickedTag(tag)"
-                    >{{ tag }}</v-chip
-                  >
-                </span>
-              </td>
-              <td v-if="selectedColumns.includes('annotation.location.XY')">
-                {{ item.annotation.location.XY + 1 }}
-              </td>
-              <td v-if="selectedColumns.includes('annotation.location.Z')">
-                {{ item.annotation.location.Z + 1 }}
-              </td>
-              <td v-if="selectedColumns.includes('annotation.location.Time')">
-                {{ item.annotation.location.Time + 1 }}
-              </td>
-              <td
-                :class="tableItemClass"
-                v-if="selectedColumns.includes('annotation.name')"
-              >
-                <v-text-field
-                  hide-details
-                  :value="item.annotation.name || ''"
-                  dense
-                  flat
-                  outlined
-                  @change="updateAnnotationName($event, item.annotation.id)"
-                  @click.capture.stop
-                  title
-                ></v-text-field>
-              </td>
-              <td
-                v-for="(propertyPath, idx) in displayedPropertyPaths"
-                :key="item.annotation.id + ' property ' + idx"
-                :class="tableItemClass"
-              >
-                <span>{{
-                  getStringFromPropertiesAndPath(
-                    item.properties,
-                    propertyPath,
-                  ) ?? "-"
-                }}</span>
-              </td>
-            </tr>
-          </tbody>
+              <span class="user-select-text">{{ item.annotation.id }}</span>
+            </td>
+            <td
+              :class="tableItemClass"
+              v-if="selectedColumns.includes('index')"
+            >
+              <span>{{ item.index }}</span>
+            </td>
+            <td
+              :class="tableItemClass"
+              v-if="selectedColumns.includes('shapeName')"
+            >
+              <span>{{ item.shapeName }}</span>
+            </td>
+            <td
+              :class="tableItemClass"
+              v-if="selectedColumns.includes('annotation.tags')"
+            >
+              <span>
+                <v-chip
+                  v-for="tag in item.annotation.tags"
+                  :key="tag"
+                  size="x-small"
+                  @click="clickedTag(tag)"
+                  >{{ tag }}</v-chip
+                >
+              </span>
+            </td>
+            <td v-if="selectedColumns.includes('annotation.location.XY')">
+              {{ item.annotation.location.XY + 1 }}
+            </td>
+            <td v-if="selectedColumns.includes('annotation.location.Z')">
+              {{ item.annotation.location.Z + 1 }}
+            </td>
+            <td v-if="selectedColumns.includes('annotation.location.Time')">
+              {{ item.annotation.location.Time + 1 }}
+            </td>
+            <td
+              :class="tableItemClass"
+              v-if="selectedColumns.includes('annotation.name')"
+            >
+              <v-text-field
+                hide-details
+                :model-value="item.annotation.name || ''"
+                density="compact"
+                flat
+                variant="outlined"
+                @change="updateAnnotationName($event, item.annotation.id)"
+                @click.capture.stop
+                title
+              ></v-text-field>
+            </td>
+            <td
+              v-for="(propertyPath, idx) in displayedPropertyPaths"
+              :key="item.annotation.id + ' property ' + idx"
+              :class="tableItemClass"
+            >
+              <span>{{
+                getStringFromPropertiesAndPath(item.properties, propertyPath) ??
+                "-"
+              }}</span>
+            </td>
+          </tr>
         </template>
       </v-data-table>
-    </v-expansion-panel-content>
+    </v-expansion-panel-text>
   </v-expansion-panel>
 </template>
 
-<script lang="ts">
-import { Vue, Component, Emit, Watch } from "vue-property-decorator";
+<script lang="ts" setup>
+import { ref, computed, watch } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
@@ -235,8 +230,6 @@ import filterStore from "@/store/filters";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import { simpleCentroid } from "@/utils/annotation";
 
-import TagPicker from "@/components/TagPicker.vue";
-import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
@@ -247,20 +240,20 @@ import {
 } from "@/store/model";
 
 const allHeaders = [
-  { text: "Annotation ID", value: "annotation.id" },
-  { text: "Index", value: "index" },
-  { text: "Shape", value: "shapeName" },
-  { text: "Tags", value: "annotation.tags" },
-  { text: "XY", value: "annotation.location.XY" },
-  { text: "Z", value: "annotation.location.Z" },
-  { text: "Time", value: "annotation.location.Time" },
-  { text: "Name", value: "annotation.name" },
+  { title: "Annotation ID", key: "annotation.id" },
+  { title: "Index", key: "index" },
+  { title: "Shape", key: "shapeName" },
+  { title: "Tags", key: "annotation.tags" },
+  { title: "XY", key: "annotation.location.XY" },
+  { title: "Z", key: "annotation.location.Z" },
+  { title: "Time", key: "annotation.location.Time" },
+  { title: "Name", key: "annotation.name" },
 ] as const satisfies readonly {
-  readonly text: string;
-  readonly value: string;
+  readonly title: string;
+  readonly key: string;
 }[];
 
-const allHeaderIds = allHeaders.map(({ value }) => value);
+const allHeaderIds = allHeaders.map(({ key }) => key);
 
 // Remove a few headers by default because they are not commonly used and clutter the interface
 const headersToRemoveByDefault: THeaderId[] = [
@@ -282,291 +275,334 @@ interface IAnnotationListItem {
   properties: IAnnotationPropertyValues[string];
 }
 
-@Component({
-  components: {
-    TagPicker,
-    ColorPickerMenu,
-    TagSelectionDialog,
-    ColorSelectionDialog,
-  },
-})
-export default class AnnotationList extends Vue {
-  readonly store = store;
-  readonly annotationStore = annotationStore;
-  readonly propertyStore = propertyStore;
-  readonly filterStore = filterStore;
-  readonly getStringFromPropertiesAndPath = getStringFromPropertiesAndPath;
+const emit = defineEmits<{
+  (e: "clickedTag", tag: string): void;
+}>();
 
-  get isDeletingAnnotations() {
-    return this.annotationStore.isDeleting;
-  }
-
-  readonly columnOptions = allHeaders;
-
-  // Pick the default columns to display
-  selectedColumns: THeaderId[] = initialSelectedColumns;
-
-  tableItemClass = "px-1"; // To enable dividers, use v-data-table__divider
-
-  annotationFilteredDialog: boolean = false;
-  localIdFilter?: string = "";
-
-  addOrRemove: "add" | "remove" = "add";
-
-  // These are "from" or "to" v-data-table
-  page: number = 0; // one-way binding :page
-  itemsPerPage: number = 10; // one-way binding @update:items-per-page
-  groupBy: string | string[] = []; // one-way binding @update:group-by
-
-  get selected() {
-    return this.annotationStore.selectedAnnotations.filter((annotation) =>
-      this.filteredAnnotationIdToIdx.has(annotation.id),
-    );
-  }
-
-  set selected(selected: IAnnotation[]) {
-    this.annotationStore.setSelected(selected);
-  }
-
-  get selectedItems() {
-    return this.filteredItems.filter((item) => item.isSelected);
-  }
-
-  set selectedItems(items) {
-    this.selected = items.map((item) => item.annotation);
-  }
-
-  toggleAnnotationSelection(annotation: IAnnotation) {
-    this.annotationStore.toggleSelected([annotation]);
-  }
-
-  get filteredAnnotationIdToIdx() {
-    return this.filterStore.filteredAnnotationIdToIdx;
-  }
-
-  get listedAnnotations() {
-    let annotations = this.filterStore.filteredAnnotations;
-    const idFilter = this.localIdFilter?.trim();
-    if (idFilter) {
-      annotations = annotations.filter((annotation) =>
-        annotation.id.includes(idFilter),
-      );
-    }
-    return annotations;
-  }
-
-  get filteredItems() {
-    return this.listedAnnotations.map(this.annotationToItem);
-  }
-
-  get annotationToItem() {
-    return (annotation: IAnnotation) => ({
-      annotation,
-      index: this.annotationIdToIndex[annotation.id],
-      shapeName: AnnotationNames[annotation.shape],
-      isSelected: this.annotationStore.isAnnotationSelected(annotation.id),
-      properties: this.propertyStore.propertyValues[annotation.id] || {},
-    });
-  }
-
-  get displayedPropertyPaths() {
-    return this.propertyStore.displayedPropertyPaths;
-  }
-
-  get annotationIdToIndex() {
-    return this.annotationStore.annotationIdToIdx;
-  }
-
-  updateAnnotationName(name: string, id: string) {
-    this.annotationStore.updateAnnotationName({ name, id });
-  }
-
-  get selectAllIndeterminate() {
-    const nSelected = this.selectedItems.length;
-    return nSelected > 0 && nSelected < this.filteredItems.length;
-  }
-
-  get selectAllValue() {
-    return this.selectedItems.length === this.filteredItems.length;
-  }
-
-  selectAllCallback() {
-    if (this.selectAllValue) {
-      this.selectedItems = [];
-    } else {
-      this.selectedItems = this.filteredItems;
-    }
-  }
-
-  get headers() {
-    // Filter headers based on selectedColumns while preserving the order defined above
-    const filteredHeaders = allHeaders.filter((header) =>
-      this.selectedColumns.includes(header.value),
-    );
-
-    // Return the filtered headers with propertyHeaders appended at the end
-    return [...filteredHeaders, ...this.propertyHeaders];
-  }
-
-  get propertyHeaders() {
-    const propertyHeaders = [];
-    // Order is important, it should be the same as in the <td v-for="x in y"> above
-    for (const path of this.displayedPropertyPaths) {
-      const fullName = this.propertyStore.getFullNameFromPath(path);
-      propertyHeaders.push({
-        text: fullName,
-        value: "properties." + path.join("."),
-      });
-    }
-    return propertyHeaders;
-  }
-
-  goToAnnotationIdLocation(annotationId: string) {
-    const annotation = this.annotationStore.getAnnotationFromId(annotationId);
-    if (!annotation) {
-      return;
-    }
-    this.store.setXY(annotation.location.XY);
-    this.store.setZ(annotation.location.Z);
-    this.store.setTime(annotation.location.Time);
-    // Also center the view on the annotation
-    this.store.setCameraInfo({
-      ...this.store.cameraInfo,
-      center: simpleCentroid(annotation.coordinates),
-    });
-    this.annotationStore.setHoveredAnnotationId(annotationId);
-  }
-
-  get hoveredId() {
-    return this.annotationStore.hoveredAnnotationId;
-  }
-
-  get vDataTable() {
-    const vDataTableParent = this.$refs.dataTable as any;
-    if (!vDataTableParent) {
-      return null;
-    }
-    return vDataTableParent.$children?.[0] || null;
-  }
-
-  get dataTableItems(): IAnnotationListItem[] {
-    const vDataTable = this.vDataTable;
-    if (!vDataTable) {
-      return [];
-    }
-    let tableItems = vDataTable.filteredItems.slice();
-    if (
-      (!vDataTable.disableSort || this.groupBy?.length) &&
-      vDataTable.serverItemsLength <= 0
-    ) {
-      tableItems = vDataTable.sortItems(tableItems);
-    }
-    return tableItems;
-  }
-
-  get getPageFromItemId() {
-    return (itemId: string) => {
-      const entryIndex = this.dataTableItems.findIndex(
-        ({ annotation }) => annotation.id === itemId,
-      );
-      if (entryIndex <= 0) {
-        return 0;
-      }
-      const itemsPerPage = this.itemsPerPage;
-      if (itemsPerPage <= 0) {
-        return 0;
-      } else {
-        return (Math.floor(entryIndex / itemsPerPage) || 0) + 1;
-      }
-    };
-  }
-
-  @Watch("hoveredId")
-  @Watch("itemsPerPage")
-  hoveredAnnotationChanged() {
-    if (this.hoveredId === null) {
-      return;
-    }
-    // Change page
-    this.page = this.getPageFromItemId(this.hoveredId);
-    // Get the tr element from the refs if it exists
-    let annotationRef = this.$refs[this.hoveredId];
-    if (annotationRef === undefined) {
-      return;
-    }
-    if (Array.isArray(annotationRef)) {
-      if (annotationRef.length <= 0) {
-        return;
-      }
-      annotationRef = annotationRef[0];
-    }
-    // Scroll to the element
-    (annotationRef as Element).scrollIntoView({
-      behavior: "smooth",
-      block: "nearest",
-    });
-  }
-
-  @Emit("clickedTag")
-  clickedTag(tag: string) {
-    return tag;
-  }
-
-  hover(annotationId: string | null) {
-    // Only update the hover if the total number of annotations is less than 5000
-    // Otherwise the update will be too slow for the UI to be responsive
-    // TODO: This could probably be relaxed by conditioning on the number of displayedAnnotations
-    if (this.annotationStore.annotations.length < 5000) {
-      this.annotationStore.setHoveredAnnotationId(annotationId);
-    }
-  }
-
-  showTagDialog = false;
-  showColorDialog = false;
-
-  handleTagSubmit({
-    tags,
-    addOrRemove,
-    replaceExisting,
-  }: {
-    tags: string[];
-    addOrRemove: "add" | "remove";
-    replaceExisting: boolean;
-  }) {
-    if (addOrRemove === "add") {
-      this.annotationStore.tagSelectedAnnotations({
-        tags,
-        replace: replaceExisting,
-      });
-    } else {
-      this.annotationStore.removeTagsFromSelectedAnnotations(tags);
-    }
-  }
-
-  handleColorSubmit({
-    useColorFromLayer,
-    color,
-    randomize,
-  }: {
-    useColorFromLayer: boolean;
-    color: string;
-    randomize?: boolean;
-  }) {
-    const newColor = useColorFromLayer ? null : color;
-    this.annotationStore.colorSelectedAnnotations({
-      color: newColor,
-      randomize,
-    });
-  }
-
-  deleteSelected() {
-    this.annotationStore.deleteSelectedAnnotations();
-  }
-
-  deleteUnselected() {
-    this.annotationStore.deleteUnselectedAnnotations();
+const annotationRefMap = new Map<string, Element>();
+function setAnnotationRef(id: string, el: any) {
+  if (el) {
+    // In Vue 2, component refs resolve to the component instance; get the $el
+    const element = el.$el || el;
+    annotationRefMap.set(id, element);
+  } else {
+    annotationRefMap.delete(id);
   }
 }
+
+// Template ref
+const dataTable = ref<any>(null);
+
+// Data
+const columnOptions = allHeaders;
+const selectedColumns = ref<THeaderId[]>(initialSelectedColumns);
+const tableItemClass = "px-1";
+const annotationFilteredDialog = ref(false);
+const localIdFilter = ref<string | undefined>("");
+const addOrRemove = ref<"add" | "remove">("add");
+
+// These are "from" or "to" v-data-table
+const page = ref(1);
+const itemsPerPage = ref(10);
+const groupBy = ref<string | string[]>([]);
+const sortBy = ref<{ key: string; order: "asc" | "desc" }[]>([]);
+
+const showTagDialog = ref(false);
+const showColorDialog = ref(false);
+
+// Computeds
+const isDeletingAnnotations = computed(() => {
+  return annotationStore.isDeleting;
+});
+
+const selected = computed({
+  get: () => {
+    return annotationStore.selectedAnnotations.filter((annotation) =>
+      filteredAnnotationIdToIdx.value.has(annotation.id),
+    );
+  },
+  set: (selected: IAnnotation[]) => {
+    annotationStore.setSelected(selected);
+  },
+});
+
+const selectedItems = computed({
+  get: () => {
+    return filteredItems.value.filter((item) => item.isSelected);
+  },
+  set: (items: IAnnotationListItem[]) => {
+    selected.value = items.map((item) => item.annotation);
+  },
+});
+
+function toggleAnnotationSelection(annotation: IAnnotation) {
+  annotationStore.toggleSelected([annotation]);
+}
+
+const filteredAnnotationIdToIdx = computed(() => {
+  return filterStore.filteredAnnotationIdToIdx;
+});
+
+const listedAnnotations = computed(() => {
+  let annotations = filterStore.filteredAnnotations;
+  const idFilter = localIdFilter.value?.trim();
+  if (idFilter) {
+    annotations = annotations.filter((annotation) =>
+      annotation.id.includes(idFilter),
+    );
+  }
+  return annotations;
+});
+
+const filteredItems = computed(() => {
+  return listedAnnotations.value.map(annotationToItem.value);
+});
+
+const annotationToItem = computed(() => {
+  return (annotation: IAnnotation) => ({
+    annotation,
+    index: annotationIdToIndex.value[annotation.id],
+    shapeName: AnnotationNames[annotation.shape],
+    isSelected: annotationStore.isAnnotationSelected(annotation.id),
+    properties: propertyStore.propertyValues[annotation.id] || {},
+  });
+});
+
+const displayedPropertyPaths = computed(() => {
+  return propertyStore.displayedPropertyPaths;
+});
+
+const annotationIdToIndex = computed(() => {
+  return annotationStore.annotationIdToIdx;
+});
+
+function updateAnnotationName(name: string, id: string) {
+  annotationStore.updateAnnotationName({ name, id });
+}
+
+const selectAllIndeterminate = computed(() => {
+  const nSelected = selectedItems.value.length;
+  return nSelected > 0 && nSelected < filteredItems.value.length;
+});
+
+const selectAllValue = computed(() => {
+  return selectedItems.value.length === filteredItems.value.length;
+});
+
+function selectAllCallback() {
+  if (selectAllValue.value) {
+    selectedItems.value = [];
+  } else {
+    selectedItems.value = filteredItems.value;
+  }
+}
+
+const headers = computed(() => {
+  const filteredHeaders = allHeaders.filter((header) =>
+    selectedColumns.value.includes(header.key),
+  );
+  return [...filteredHeaders, ...propertyHeaders.value];
+});
+
+const propertyHeaders = computed(() => {
+  const result = [];
+  for (const path of displayedPropertyPaths.value) {
+    const fullName = propertyStore.getFullNameFromPath(path);
+    result.push({
+      title: fullName ?? "",
+      key: "properties." + path.join("."),
+    });
+  }
+  return result;
+});
+
+function goToAnnotationIdLocation(annotationId: string) {
+  const annotation = annotationStore.getAnnotationFromId(annotationId);
+  if (!annotation) {
+    return;
+  }
+  store.setXY(annotation.location.XY);
+  store.setZ(annotation.location.Z);
+  store.setTime(annotation.location.Time);
+  store.setCameraInfo({
+    ...store.cameraInfo,
+    center: simpleCentroid(annotation.coordinates),
+  });
+  annotationStore.setHoveredAnnotationId(annotationId);
+}
+
+const hoveredId = computed(() => {
+  return annotationStore.hoveredAnnotationId;
+});
+
+// In Vuetify 3, $children is not available. Instead, we track sort state
+// via @update:sort-by and sort the items ourselves.
+function getNestedValue(obj: any, path: string): any {
+  return path.split(".").reduce((acc, key) => acc?.[key], obj);
+}
+
+const dataTableItems = computed((): IAnnotationListItem[] => {
+  const items = filteredItems.value.slice();
+  if (sortBy.value.length) {
+    const { key, order } = sortBy.value[0];
+    items.sort((a, b) => {
+      const valA = getNestedValue(a, key);
+      const valB = getNestedValue(b, key);
+      // Sort null/undefined to end regardless of sort direction
+      // (matches Vuetify's internal sort behavior)
+      if (valA == null && valB == null) return 0;
+      if (valA == null) return 1;
+      if (valB == null) return -1;
+      if (valA < valB) return order === "asc" ? -1 : 1;
+      if (valA > valB) return order === "asc" ? 1 : -1;
+      return 0;
+    });
+  }
+  return items;
+});
+
+const getPageFromItemId = computed(() => {
+  return (itemId: string) => {
+    const entryIndex = dataTableItems.value.findIndex(
+      ({ annotation }) => annotation.id === itemId,
+    );
+    if (entryIndex <= 0) {
+      return 1;
+    }
+    const perPage = itemsPerPage.value;
+    if (perPage <= 0) {
+      return 1;
+    } else {
+      return (Math.floor(entryIndex / perPage) || 0) + 1;
+    }
+  };
+});
+
+// Track whether hover originated from within the list itself.
+// When hovering a row in the list, the annotation is already visible —
+// no page change or scroll is needed. The page/scroll logic only matters
+// for external hovers (e.g., hovering an annotation in the image viewer).
+let hoverFromList = false;
+
+// Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
+watch([hoveredId, itemsPerPage], () => {
+  if (hoveredId.value === null) {
+    hoverFromList = false;
+    return;
+  }
+  if (hoverFromList) {
+    hoverFromList = false;
+    return;
+  }
+  // Change page (only for external hovers, e.g., from image viewer)
+  page.value = getPageFromItemId.value(hoveredId.value);
+  // Get the tr element from the ref map if it exists
+  const annotationEl = annotationRefMap.get(hoveredId.value);
+  if (!annotationEl) {
+    return;
+  }
+  // Scroll to the element
+  annotationEl.scrollIntoView({
+    behavior: "smooth",
+    block: "nearest",
+  });
+});
+
+function clickedTag(tag: string) {
+  emit("clickedTag", tag);
+}
+
+function hover(annotationId: string | null) {
+  if (annotationStore.annotations.length < 5000) {
+    hoverFromList = true;
+    annotationStore.setHoveredAnnotationId(annotationId);
+  }
+}
+
+function handleTagSubmit({
+  tags,
+  addOrRemove,
+  replaceExisting,
+}: {
+  tags: string[];
+  addOrRemove: "add" | "remove";
+  replaceExisting: boolean;
+}) {
+  if (addOrRemove === "add") {
+    annotationStore.tagSelectedAnnotations({
+      tags,
+      replace: replaceExisting,
+    });
+  } else {
+    annotationStore.removeTagsFromSelectedAnnotations(tags);
+  }
+}
+
+function handleColorSubmit({
+  useColorFromLayer,
+  color,
+  randomize,
+}: {
+  useColorFromLayer: boolean;
+  color: string;
+  randomize?: boolean;
+}) {
+  const newColor = useColorFromLayer ? null : color;
+  annotationStore.colorSelectedAnnotations({
+    color: newColor,
+    randomize,
+  });
+}
+
+function deleteSelected() {
+  annotationStore.deleteSelectedAnnotations();
+}
+
+function deleteUnselected() {
+  annotationStore.deleteUnselectedAnnotations();
+}
+
+defineExpose({
+  isDeletingAnnotations,
+  columnOptions,
+  selectedColumns,
+  tableItemClass,
+  annotationFilteredDialog,
+  localIdFilter,
+  addOrRemove,
+  page,
+  itemsPerPage,
+  groupBy,
+  selected,
+  selectedItems,
+  toggleAnnotationSelection,
+  filteredAnnotationIdToIdx,
+  listedAnnotations,
+  filteredItems,
+  annotationToItem,
+  displayedPropertyPaths,
+  annotationIdToIndex,
+  updateAnnotationName,
+  selectAllIndeterminate,
+  selectAllValue,
+  selectAllCallback,
+  headers,
+  propertyHeaders,
+  goToAnnotationIdLocation,
+  hoveredId,
+  dataTableItems,
+  sortBy,
+  getPageFromItemId,
+  clickedTag,
+  hover,
+  showTagDialog,
+  showColorDialog,
+  handleTagSubmit,
+  handleColorSubmit,
+  deleteSelected,
+  deleteUnselected,
+  getStringFromPropertiesAndPath,
+});
 </script>
 <style>
 tbody tr:hover,
@@ -595,14 +631,11 @@ tbody tr.is-hovered:hover {
   justify-content: center;
 }
 
-.selected-chip {
-  border-color: #ffffff !important; /* Change to your preferred color */
-}
-
 .v-chip {
   transition:
     background-color 0.3s,
-    color 0.3s; /* Smooth transition */
+    color 0.3s,
+    opacity 0.3s;
 }
 
 td span {
