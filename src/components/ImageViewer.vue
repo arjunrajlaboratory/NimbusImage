@@ -1383,6 +1383,8 @@ watch(dataset, () => {
 
 // ---- Lifecycle ----
 
+let resizeObserver: ResizeObserver | null = null;
+
 onMounted(() => {
   refsMounted.value = true;
   datasetReset();
@@ -1390,9 +1392,34 @@ onMounted(() => {
   draw();
   // Trigger mapsChanged logic
   samMapEntry.value = maps.value[0] ?? null;
+
+  // Watch for container resizes (e.g. navigation drawer open/close)
+  // and update GeoJS map sizes accordingly
+  if (mapLayout.value) {
+    resizeObserver = new ResizeObserver(() => {
+      for (const mapentry of maps.value) {
+        const map = mapentry.map;
+        const mapnode = map.node();
+        const nodeWidth = mapnode.width();
+        const nodeHeight = mapnode.height();
+        if (
+          nodeWidth &&
+          nodeHeight &&
+          (nodeWidth !== map.size().width || nodeHeight !== map.size().height)
+        ) {
+          map.size({ width: nodeWidth, height: nodeHeight });
+        }
+      }
+    });
+    resizeObserver.observe(mapLayout.value);
+  }
 });
 
 onBeforeUnmount(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
   if (maps.value) {
     maps.value.forEach((mapentry) => mapentry.map.exit());
     maps.value = [];
