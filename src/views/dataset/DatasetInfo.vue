@@ -121,12 +121,12 @@
               <v-card-text>
                 <div v-if="dataset && datasetViewItems.length <= 0">
                   <v-text-field
-                    v-tooltip
                     v-model="defaultConfigurationName"
                     label="New collection name"
                     density="compact"
                     hide-details
-                    class="ma-1 pb-2 important-field"
+                    variant="outlined"
+                    class="ma-1 pb-2"
                   />
                   <v-divider class="my-4" />
                 </div>
@@ -828,11 +828,6 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.important-field :deep(.v-label) {
-  font-size: 22px;
-  font-weight: bold;
-}
-
 .button-bar {
   display: flex;
   align-items: center;
