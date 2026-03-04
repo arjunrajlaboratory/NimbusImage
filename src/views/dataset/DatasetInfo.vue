@@ -213,7 +213,11 @@
               </div>
             </v-radio-group>
             <div>
-              <v-tooltip location="top" max-width="50vh">
+              <v-tooltip
+                location="top"
+                max-width="300"
+                text="Add this dataset to an existing collection. Shows a list of all collections that are compatible with the current dataset."
+              >
                 <template v-slot:activator="{ props: activatorProps }">
                   <v-btn
                     v-bind="activatorProps"
@@ -228,12 +232,14 @@
                     Add to an existing collection…
                   </v-btn>
                 </template>
-                Add this dataset to an existing collection. Shows a list of all
-                collections that are compatible with the current dataset.
               </v-tooltip>
             </div>
             <div>
-              <v-tooltip location="top" max-width="50vh">
+              <v-tooltip
+                location="top"
+                max-width="300"
+                text="Make a copy of an existing collection and apply it to the current dataset, leaving the original collection unchanged."
+              >
                 <template v-slot:activator="{ props: activatorProps }">
                   <v-btn
                     v-bind="activatorProps"
@@ -248,12 +254,14 @@
                     Copy existing collection…
                   </v-btn>
                 </template>
-                Make a copy of an existing collection and apply it to the
-                current dataset, leaving the original collection unchanged.
               </v-tooltip>
             </div>
             <div v-if="dataset && datasetViewItems.length > 0">
-              <v-tooltip location="top" max-width="50vh">
+              <v-tooltip
+                location="top"
+                max-width="300"
+                text="Create a new collection with a custom name and location for this dataset."
+              >
                 <template v-slot:activator="{ props: activatorProps }">
                   <v-btn
                     v-bind="activatorProps"
@@ -265,8 +273,6 @@
                     Add a new collection…
                   </v-btn>
                 </template>
-                Create a new collection with a custom name and location for this
-                dataset.
               </v-tooltip>
             </div>
 
