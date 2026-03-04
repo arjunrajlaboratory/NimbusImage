@@ -1,5 +1,5 @@
 diff --git a/dist/girder.es.js b/dist/girder.es.js
-index bb491287c4008cb3cb54608deb7a0d71314928d7..c7ae13d3e24ae01af8c8e89f22faa33cec18063f 100644
+index bb491287c4008cb3cb54608deb7a0d71314928d7..bacb64835be27b27595206fe26987cdf9fdd7679 100644
 --- a/dist/girder.es.js
 +++ b/dist/girder.es.js
 @@ -4020,7 +4020,7 @@ function j4({ girderRest: e, onFilesChanged: t, onError: n, onDone: r }) {
@@ -16,7 +16,7 @@ index bb491287c4008cb3cb54608deb7a0d71314928d7..c7ae13d3e24ae01af8c8e89f22faa33c
      }), m = B(
        () => e.multiple ? "Drag files here or click to select them" : "Drag a file here or click to select one"
 -    ), y = B(() => a ? `${zr(s)} / ${zr(d)} (${zr(f)}%)` : `${r.length} selected (${zr(d)} total)`);
-+    ), y = B(() => a.value ? `${zr(s.value)} / ${zr(d.value)} (${zr(f.value)}%)` : `${r.value.length} selected (${zr(d.value)} total)`);
++    ), y = B(() => a.value ? `${zr(s.value)} / ${zr(d.value)} (${Math.round(f.value)}%)` : `${r.value.length} selected (${zr(d.value)} total)`);
      function x() {
        b({
          dest: e.dest,
@@ -34,7 +34,7 @@ index bb491287c4008cb3cb54608deb7a0d71314928d7..c7ae13d3e24ae01af8c8e89f22faa33c
            _: 1
          })
 diff --git a/src/components/Upload/Upload.vue b/src/components/Upload/Upload.vue
-index 92a607afbe3b090ead78a29e73022f15b1afa0d7..d2a4ceef11ad58032469de7f33cec948cf357b66 100644
+index 92a607afbe3b090ead78a29e73022f15b1afa0d7..22d687db8f1a4046fa42ccee3664310fa613c5a3 100644
 --- a/src/components/Upload/Upload.vue
 +++ b/src/components/Upload/Upload.vue
 @@ -61,10 +61,10 @@ export default {
@@ -44,7 +44,7 @@ index 92a607afbe3b090ead78a29e73022f15b1afa0d7..d2a4ceef11ad58032469de7f33cec948
 -      if (uploading) {
 -        return `${formatSize(totalProgress)} / ${formatSize(totalSize)} (${formatSize(totalProgressPercent)}%)`;
 +      if (uploading.value) {
-+        return `${formatSize(totalProgress.value)} / ${formatSize(totalSize.value)} (${formatSize(totalProgressPercent.value)}%)`;
++        return `${formatSize(totalProgress.value)} / ${formatSize(totalSize.value)} (${Math.round(totalProgressPercent.value)}%)`;
        }
 -      return `${files.length} selected (${formatSize(totalSize)} total)`;
 +      return `${files.value.length} selected (${formatSize(totalSize.value)} total)`;
