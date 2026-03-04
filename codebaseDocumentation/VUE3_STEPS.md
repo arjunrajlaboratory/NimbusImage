@@ -882,6 +882,17 @@ Tooltips on the "Add to an existing collection", "Copy existing collection", and
 
 - [x] Fixed 3 tooltips in `src/views/dataset/DatasetInfo.vue`
 
+### P23. Collection name field label overlap fix (DatasetInfo.vue) ✅
+
+The "New collection name" label in the "Create new collection" card overlapped the input value text, making both unreadable.
+
+**Root cause:** The `.important-field` CSS class set `font-size: 22px; font-weight: bold` on the `v-text-field` label. In Vuetify 3 with `density="compact"`, the floating label doesn't have enough vertical space for a 22px font, so it overlaps the input value and the card title above.
+
+**Fix:** Removed the `.important-field` class and its CSS rule. Added `variant="outlined"` to keep the field visually distinct without oversized label text.
+
+- [x] Removed `important-field` class and CSS from `src/views/dataset/DatasetInfo.vue`
+- [x] Added `variant="outlined"` to the text field
+
 ### SAM integration test failures — FIXED (Phase 4)
 4 tests in `src/components/AnnotationViewer.test.ts` were failing (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). Root cause: R35 changed the runtime code to read `state.mapEntry` (a reactive mirror) instead of `state.nodes.input.geoJSMap.output` (markRaw'd, not reactive). The test mocks didn't include the `mapEntry` field.
 
