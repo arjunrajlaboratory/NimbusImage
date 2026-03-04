@@ -59,12 +59,21 @@ const channelItems = computed(() => {
 // Initialize missing channels (equivalent to created() hook)
 if (store.dataset?.channels) {
   const current = selectedChannels.value || {};
-  const updatedChannels = { ...current };
+  let needsUpdate = false;
   for (const channel of store.dataset.channels) {
-    if (!(channel in updatedChannels)) {
-      updatedChannels[channel] = false;
+    if (!(channel in current)) {
+      needsUpdate = true;
+      break;
     }
   }
-  selectedChannels.value = updatedChannels;
+  if (needsUpdate) {
+    const updatedChannels = { ...current };
+    for (const channel of store.dataset.channels) {
+      if (!(channel in updatedChannels)) {
+        updatedChannels[channel] = false;
+      }
+    }
+    selectedChannels.value = updatedChannels;
+  }
 }
 </script>

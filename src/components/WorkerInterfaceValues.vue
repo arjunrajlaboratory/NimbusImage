@@ -97,28 +97,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch, onMounted } from "vue";
-import {
-  IToolConfiguration,
-  IWorkerInterface,
-  IWorkerInterfaceValues,
-} from "@/store/model";
+import { computed } from "vue";
+import { IWorkerInterface, IWorkerInterfaceValues } from "@/store/model";
 import LayerSelect from "@/components/LayerSelect.vue";
 import ChannelSelect from "@/components/ChannelSelect.vue";
 import ChannelCheckboxGroup from "@/components/ChannelCheckboxGroup.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import { getTourStepId } from "@/utils/strings";
-import { getDefault } from "@/utils/workerInterface";
 
 const props = withDefaults(
   defineProps<{
     modelValue: IWorkerInterfaceValues;
     workerInterface: IWorkerInterface;
-    tool?: IToolConfiguration | null;
     tooltipPosition?: "left" | "right";
   }>(),
   {
-    tool: null,
     tooltipPosition: "right",
   },
 );
@@ -154,34 +147,12 @@ function formattedTooltip(text: string): string {
   return text.replace(/\n/g, "<br>");
 }
 
-function populateValues() {
-  const values: IWorkerInterfaceValues = {};
-  for (const id in props.workerInterface) {
-    if (props.tool?.values?.workerInterfaceValues) {
-      if (id in props.tool.values.workerInterfaceValues) {
-        values[id] = props.tool.values.workerInterfaceValues[id];
-      }
-    } else {
-      const interfaceTemplate = props.workerInterface[id];
-      values[id] = getDefault(
-        interfaceTemplate.type,
-        interfaceTemplate.default,
-      );
-    }
-  }
-  interfaceValues.value = values;
-}
-
-onMounted(populateValues);
-watch(() => props.workerInterface, populateValues);
-
 defineExpose({
   interfaceValues,
   isLeft,
   isRight,
   orderItemEntries,
   formattedTooltip,
-  populateValues,
 });
 </script>
 

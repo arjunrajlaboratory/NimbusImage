@@ -74,7 +74,6 @@
           <worker-interface-values
             v-if="workerInterface"
             :workerInterface="workerInterface"
-            :tool="tool"
             v-model="interfaceValues"
             tooltipPosition="right"
           />
@@ -269,7 +268,7 @@ const loadingDatasetCount = ref(false);
 const BATCH_DATASET_LIMIT = 10;
 
 onBeforeUnmount(() => {
-  debouncedEditTool.cancel();
+  debouncedEditTool.flush();
 });
 
 // Computeds
@@ -503,6 +502,37 @@ async function fetchCollectionDatasetCount() {
   }
 }
 
+function populateInterfaceValues() {
+  if (!workerInterface.value) {
+    return;
+  }
+  const values: IWorkerInterfaceValues = {};
+  const saved = props.tool?.values?.workerInterfaceValues;
+  for (const id in workerInterface.value) {
+    // Prefer existing in-memory values (user changes), then saved, then defaults
+    if (interfaceValues.value && id in interfaceValues.value) {
+      values[id] = interfaceValues.value[id];
+    } else if (saved && id in saved) {
+      values[id] = saved[id];
+    } else {
+      const interfaceTemplate = workerInterface.value[id];
+      values[id] = getDefault(
+        interfaceTemplate.type,
+        interfaceTemplate.default,
+      );
+    }
+  }
+  interfaceValues.value = values;
+}
+
+watch(
+  workerInterface,
+  () => {
+    populateInterfaceValues();
+  },
+  { immediate: true },
+);
+
 function resetInterfaceValues() {
   const values: IWorkerInterfaceValues = {};
   if (workerInterface.value) {
@@ -568,9 +598,6 @@ function copyToClipboardFallback(text: string) {
 }
 
 onMounted(() => {
-  if (props.tool.values.workerInterfaceValues) {
-    interfaceValues.value = props.tool.values.workerInterfaceValues;
-  }
   updateInterface();
   fetchCollectionDatasetCount();
 });
