@@ -853,6 +853,35 @@ The "Preparing layers (0/2)" progress bar could get stuck permanently when switc
 
 - [x] Refactored `draw()` layer tracking in `ImageViewer.vue` into two-pass approach
 
+### P22. Vuetify 3 v-tooltip narrow vertical stripe fix (DatasetInfo.vue) ✅
+
+Tooltips on the "Add to an existing collection", "Copy existing collection", and "Add a new collection" buttons rendered as a narrow vertical stripe instead of a normal-width tooltip box.
+
+**Root cause:** In Vuetify 3, placing raw text directly in the `v-tooltip` default slot (outside the `#activator` template) can cause the tooltip overlay to render with an incorrect width, producing a narrow vertical column of text. This did not happen in Vuetify 2.
+
+**Fix:** Use the `text` prop on `<v-tooltip>` instead of placing content in the default slot. Also changed `max-width` from `"50vh"` (viewport-height units, unusual for width) to `"300"` (pixels). The `text` prop is the recommended Vuetify 3 pattern for simple text tooltips and correctly handles content sizing.
+
+**Before:**
+```html
+<v-tooltip location="top" max-width="50vh">
+  <template #activator="{ props }">
+    <v-btn v-bind="props">Button</v-btn>
+  </template>
+  Raw tooltip text here that renders as vertical stripe
+</v-tooltip>
+```
+
+**After:**
+```html
+<v-tooltip location="top" max-width="300" text="Tooltip text here">
+  <template #activator="{ props }">
+    <v-btn v-bind="props">Button</v-btn>
+  </template>
+</v-tooltip>
+```
+
+- [x] Fixed 3 tooltips in `src/views/dataset/DatasetInfo.vue`
+
 ### SAM integration test failures — FIXED (Phase 4)
 4 tests in `src/components/AnnotationViewer.test.ts` were failing (SAM integration: `samToolState`, `samPrompts`, `onSamMainOutputChanged`, `onSamLivePreviewOutputChanged`). Root cause: R35 changed the runtime code to read `state.mapEntry` (a reactive mirror) instead of `state.nodes.input.geoJSMap.output` (markRaw'd, not reactive). The test mocks didn't include the `mapEntry` field.
 
