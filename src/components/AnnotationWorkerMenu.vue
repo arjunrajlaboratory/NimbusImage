@@ -43,6 +43,8 @@
           <v-progress-linear
             :indeterminate="!progressInfo.progress"
             :model-value="100 * (progressInfo.progress || 0)"
+            color="primary"
+            bg-color="surface"
             class="text-progress"
           >
             <strong class="pr-4">

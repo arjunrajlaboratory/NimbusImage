@@ -30,6 +30,8 @@
       <v-progress-linear
         :indeterminate="!status.progressInfo.progress"
         :model-value="100 * (status.progressInfo.progress || 0)"
+        color="primary"
+        bg-color="surface"
         class="text-progress"
       >
         <strong class="pr-4">
@@ -147,6 +149,7 @@ defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
 
 .text-progress .v-progress-linear__content {
   position: relative;
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .text-progress .v-progress-linear__background {
@@ -154,6 +157,18 @@ defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
 }
 
 .text-progress .v-progress-linear__buffer {
+  height: 100%;
+}
+
+.text-progress .v-progress-linear__indeterminate {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+
+.text-progress .v-progress-linear__indeterminate.long {
   height: 100%;
 }
 
