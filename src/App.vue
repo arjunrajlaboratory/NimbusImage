@@ -189,7 +189,7 @@
       location="right"
       :scrim="false"
       :width="480"
-      temporary
+      :mobile="false"
     >
       <analyze-annotations />
     </v-navigation-drawer>
@@ -199,7 +199,7 @@
       location="right"
       :scrim="false"
       :width="480"
-      temporary
+      :mobile="false"
     >
       <annotations-settings />
     </v-navigation-drawer>
@@ -209,7 +209,7 @@
       location="right"
       :scrim="false"
       :width="480"
-      temporary
+      :mobile="false"
       @transitionend="snapshotPanelFull = snapshotPanel"
     >
       <snapshots :snapshotVisible="snapshotPanel && snapshotPanelFull" />
@@ -220,7 +220,7 @@
       location="right"
       :scrim="false"
       :width="640"
-      temporary
+      :mobile="false"
     >
       <annotation-browser></annotation-browser>
     </v-navigation-drawer>
