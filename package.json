@@ -11,7 +11,7 @@
     "tsc": "vue-tsc --noEmit",
     "serve": "vite preview --host 0.0.0.0",
     "preinstall": "npx only-allow pnpm",
-    "postinstall": "patch-package",
+    "postinstall": "patch-package --patch-dir patches/patch-package",
     "emscripten-build": "pnpm emscripten-build:release",
     "emscripten-build:release": "itk-wasm --source-dir itk build",
     "emscripten-build:debug": "itk-wasm --source-dir itk build -- -DCMAKE_BUILD_TYPE=Debug",
