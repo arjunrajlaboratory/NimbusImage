@@ -29,3 +29,27 @@ body {
 .girder-data-table.v-data-table td {
   max-width: 100vh;
 }
+
+// Subtle pulse animation for indeterminate progress bars
+// Replaces the default Material Design left-to-right sweep.
+// Vuetify 3 does NOT add a --indeterminate class to the root element,
+// so we use :has() to detect the indeterminate inner structure.
+// We keep the .long bar (which carries the primary color) but replace
+// its sweep animation with a full-width pulse. The .short bar is hidden.
+@keyframes progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+// Make the .long bar fill 100% and pulse instead of sweeping
+.v-progress-linear__indeterminate.long {
+  left: 0 !important;
+  right: 0 !important;
+  width: auto !important;
+  animation: progress-pulse 2s ease-in-out infinite !important;
+}
+
+// Hide the .short bar (second sweep element)
+.v-progress-linear__indeterminate.short {
+  display: none !important;
+}
