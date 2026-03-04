@@ -25,6 +25,9 @@
       "@girder/components>js-cookie": "^3.0.5",
       "@girder/components>markdown-it": "^14.0.0",
       "uc.micro": "2.0.0"
+    },
+    "patchedDependencies": {
+      "@girder/components": "patches/@girder__components.patch"
     }
   },
   "dependencies": {
