@@ -11,7 +11,7 @@
     "tsc": "vue-tsc --noEmit",
     "serve": "vite preview --host 0.0.0.0",
     "preinstall": "npx only-allow pnpm",
-    "postinstall": "patch-package",
+    "postinstall": "patch-package --patch-dir patches/patch-package",
     "emscripten-build": "pnpm emscripten-build:release",
     "emscripten-build:release": "itk-wasm --source-dir itk build",
     "emscripten-build:debug": "itk-wasm --source-dir itk build -- -DCMAKE_BUILD_TYPE=Debug",
@@ -25,6 +25,9 @@
       "@girder/components>js-cookie": "^3.0.5",
       "@girder/components>markdown-it": "^14.0.0",
       "uc.micro": "2.0.0"
+    },
+    "patchedDependencies": {
+      "@girder/components": "patches/@girder__components.patch"
     }
   },
   "dependencies": {
