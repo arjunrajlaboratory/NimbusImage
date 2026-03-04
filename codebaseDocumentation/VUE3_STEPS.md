@@ -1001,3 +1001,67 @@ Upgraded vue-tsc and cleaned up all lint/prettier/unused-var issues to reach 0 e
   - **patch-package** (postinstall): Patches for `d3` and `mousetrap` live in `patches/patch-package/`. The postinstall script uses `--patch-dir patches/patch-package` to scope its scan.
   - **pnpm `patchedDependencies`** (install-time): The `@girder/components` patch lives at `patches/@girder__components.patch` and is registered in `package.json` under `pnpm.patchedDependencies`. pnpm applies it automatically during `pnpm install`.
   - This separation prevents patch-package from warning about unrecognized pnpm patch files.
+
+---
+
+## Bug Fix: Worker Interface Values Lost on Close/Reopen
+
+### Problem
+
+When using the AnnotationWorkerMenu (the panel that appears when clicking a segmentation/worker tool), worker interface values are lost when the panel is closed and reopened after changing values. The panel reverts to defaults instead of showing the user's changes.
+
+### Root Cause: Vue 3 Mount Order
+
+In Vue 3, **child components mount before parent components** (opposite of Vue 2). This created two competing sources of truth for `interfaceValues`:
+
+1. `WorkerInterfaceValues.onMounted` (child) ran first → `populateValues()` created a complete object with saved values + defaults → emitted to parent
+2. `AnnotationWorkerMenu.onMounted` (parent) ran second → set `interfaceValues.value = props.tool.values.workerInterfaceValues` (partial save with fewer keys) → **overwrote the complete values**
+
+Additional contributing factors:
+- **`ChannelCheckboxGroup` side effect:** Initialization code always created a new object and emitted `update:modelValue` unconditionally, even when all channels were already present, causing unnecessary intermediate state changes.
+- **`debouncedEditTool.cancel()` on unmount:** Discarded pending saves. If user changed a value and closed within 300ms (the debounce delay), the change was never saved. Should be `.flush()`.
+
+### Fix (5 files)
+
+| File | Change |
+|------|--------|
+| `AnnotationWorkerMenu.vue` | Added `populateInterfaceValues()` with `watch(workerInterface, { immediate: true })`. Removed `onMounted` value assignment. Changed `cancel()` → `flush()`. Removed `:tool` prop from `<worker-interface-values>`. |
+| `WorkerInterfaceValues.vue` | Simplified to pure display/edit component. Removed `populateValues()`, `onMounted`, `watch`, `tool` prop, `getDefault` import, `IToolConfiguration` import. |
+| `PropertyWorkerMenu.vue` | Added same `populateInterfaceValues()` + `watch(workerInterface, { immediate: true })` pattern. This component also uses `WorkerInterfaceValues` and needs to seed defaults since the child no longer does initialization. |
+| `ChannelCheckboxGroup.vue` | Guarded initialization to only emit when channels are actually missing. |
+| `WorkerInterfaceValues.test.ts` | Removed `populateValues`/`tool` prop tests. Added test verifying component renders without emitting initialization. |
+
+### Key Pattern: Single Source of Truth for Value Initialization
+
+When a parent component owns state via `v-model` and passes it to a child, **only the parent should initialize/populate that state**. The child should be a pure display/edit component.
+
+Use `watch(dependency, callback, { immediate: true })` instead of `onMounted` for initialization that depends on computed/reactive data. The `immediate` watcher runs during setup (before any child mounts), avoiding the Vue 3 child-before-parent mount order issue.
+
+Priority order for `populateInterfaceValues`:
+1. **Current in-memory values first** — preserves user changes that haven't been saved yet
+2. **Saved tool config values second** — used on fresh mount when in-memory is empty
+3. **Schema defaults last** — fallback for keys not present in either source
+
+### Data Flow After Fix
+
+```
+AnnotationWorkerMenu (owner of interfaceValues ref)
+  │
+  ├─ populateInterfaceValues() ← called by watch(workerInterface, { immediate: true })
+  │   reads: interfaceValues.value (current), tool.values.workerInterfaceValues (saved), schema defaults
+  │   writes: interfaceValues.value = merged values
+  │
+  ├─ deep watcher on interfaceValues
+  │   writes: tool.values.workerInterfaceValues = interfaceValues.value
+  │   calls: debouncedEditTool(tool) → store.editToolInConfiguration → syncConfiguration("tools")
+  │
+  ├─ onBeforeUnmount → debouncedEditTool.flush() (ensures pending saves complete)
+  │
+  └─ v-model="interfaceValues" ──→ WorkerInterfaceValues (pure display/edit)
+                                      │
+                                      └─ v-model="interfaceValues[id]" ──→ child components
+                                          (sliders, text fields, channel checkboxes, etc.)
+                                          In-place mutations bubble up through Vue reactivity
+```
+
+PR: #1060

@@ -25,10 +25,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { IWorkerInterfaceValues } from "@/store/model";
 import propertiesStore from "@/store/properties";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
+import { getDefault } from "@/utils/workerInterface";
 
 const props = defineProps<{
   modelValue: IWorkerInterfaceValues;
@@ -46,6 +47,33 @@ const interfaceValues = computed({
 
 const workerInterface = computed(() =>
   props.image !== null ? propertiesStore.getWorkerInterface(props.image) : null,
+);
+
+function populateInterfaceValues() {
+  if (!workerInterface.value) {
+    return;
+  }
+  const values: IWorkerInterfaceValues = {};
+  for (const id in workerInterface.value) {
+    if (interfaceValues.value && id in interfaceValues.value) {
+      values[id] = interfaceValues.value[id];
+    } else {
+      const interfaceTemplate = workerInterface.value[id];
+      values[id] = getDefault(
+        interfaceTemplate.type,
+        interfaceTemplate.default,
+      );
+    }
+  }
+  interfaceValues.value = values;
+}
+
+watch(
+  workerInterface,
+  () => {
+    populateInterfaceValues();
+  },
+  { immediate: true },
 );
 
 defineExpose({ workerInterface, interfaceValues });

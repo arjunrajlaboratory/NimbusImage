@@ -78,31 +78,12 @@ describe("WorkerInterfaceValues", () => {
     );
   });
 
-  it("populateValues uses tool values when available", () => {
-    const tool = {
-      values: {
-        workerInterfaceValues: {
-          threshold: 75,
-          alpha: 0.2,
-        },
-      },
-    };
-    const wrapper = mountComponent({ tool });
+  it("renders with provided modelValue without emitting initialization", () => {
+    const modelValue = { threshold: 75, alpha: 0.2, name: "custom" };
+    const wrapper = mountComponent({ modelValue });
+    // Should not emit update:modelValue — parent owns initialization
     const emitted = wrapper.emitted("update:modelValue");
-    expect(emitted).toBeTruthy();
-    const lastValues = emitted![emitted!.length - 1][0] as any;
-    expect(lastValues.threshold).toBe(75);
-    expect(lastValues.alpha).toBe(0.2);
-  });
-
-  it("populateValues falls back to getDefault when no tool", () => {
-    const wrapper = mountComponent({ tool: null });
-    const emitted = wrapper.emitted("update:modelValue");
-    expect(emitted).toBeTruthy();
-    const lastValues = emitted![emitted!.length - 1][0] as any;
-    expect(lastValues.threshold).toBe(50); // default from interface
-    expect(lastValues.name).toBe("test"); // default from interface
-    expect(lastValues.alpha).toBe(0.5);
+    expect(emitted).toBeFalsy();
   });
 
   it("isLeft and isRight derive from tooltipPosition prop", () => {
