@@ -64,14 +64,20 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import UserProfileSettings from "@/layout/UserProfileSettings.vue";
 import UserMenuLoginForm from "@/layout/UserMenuLoginForm.vue";
 
+useRouter()
+  .isReady()
+  .then(() => {
+    userMenu.value = route.name === "root";
+  });
+
 const route = useRoute();
 
-const userMenu = ref(route.name === "root");
+const userMenu = ref(false);
 
 const isDomainLocked = !!import.meta.env.VITE_GIRDER_URL;
 
