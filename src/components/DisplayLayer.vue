@@ -42,7 +42,7 @@
       <v-expansion-panel-text :class="{ notVisible: !modelValue.visible }">
         <v-text-field
           :model-value="modelValue.name"
-          @change="changeProp('name', $event)"
+          @update:model-value="changeProp('name', $event)"
           label="Name"
           density="compact"
           hide-details
