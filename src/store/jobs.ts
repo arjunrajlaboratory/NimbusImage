@@ -194,6 +194,9 @@ export class Jobs extends VuexModule {
       await this.initializeNotificationSubscription();
     }
     this.rawAddJob(job);
+    // Save promise reference before replaying buffered events, since replay
+    // of a terminal event will remove the entry from jobInfoMap.
+    const { successPromise } = this.jobInfoMap[job.jobId];
     // If there are messages in the message store for this job, handle them now
     if (job.jobId in this.messageStore) {
       for (const jobEvent of this.messageStore[job.jobId]) {
@@ -201,7 +204,7 @@ export class Jobs extends VuexModule {
       }
       this.clearStoredMessages(job.jobId);
     }
-    return this.jobInfoMap[job.jobId].successPromise;
+    return successPromise;
   }
 
   @Mutation
