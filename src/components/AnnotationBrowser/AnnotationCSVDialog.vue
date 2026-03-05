@@ -56,7 +56,7 @@
             v-model="selectedPropertyPaths"
             :headers="[{ title: 'Property Name', key: 'name' }]"
             :items="filteredPropertyItems"
-            item-key="pathString"
+            item-value="pathString"
             show-select
             class="mb-4"
             height="300px"
@@ -189,7 +189,7 @@ const displayText = ref("");
 
 const propertyExportMode = ref<"all" | "selected" | "listed">("all");
 const propertyFilter = ref("");
-const selectedPropertyPaths = ref<PropertyPathItem[]>([]);
+const selectedPropertyPaths = ref<string[]>([]);
 
 const undefinedHandling = ref<"empty" | "na" | "nan">("empty");
 
@@ -389,9 +389,7 @@ function shouldIncludePropertyPath(path: string[]) {
         (displayPath: string[]) => displayPath.join(".") === pathString,
       )) ||
     (propertyExportMode.value === "selected" &&
-      selectedPropertyPaths.value.some(
-        (selectedPath) => selectedPath.pathString === pathString,
-      ))
+      selectedPropertyPaths.value.includes(pathString))
   );
 }
 

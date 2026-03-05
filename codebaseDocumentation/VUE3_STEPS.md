@@ -1128,6 +1128,14 @@ server: {
 },
 ```
 
+### AnnotationCSVDialog v-data-table Selection Fix
+
+In Vuetify 3, `v-data-table` uses `item-value` (not `item-key`) to identify rows for selection. The `v-model` with `show-select` stores an array of the `item-value` values (strings), not full objects. The "Select properties to export" mode was broken (clicking any checkbox selected all) because:
+
+1. `item-key="pathString"` → changed to `item-value="pathString"`
+2. `selectedPropertyPaths` typed as `PropertyPathItem[]` → changed to `string[]`
+3. `shouldIncludePropertyPath` comparison updated from `.some(p => p.pathString === ...)` to `.includes(pathString)`
+
 ### Rebuilding After Switching Branches
 
 When switching to or from the `girder5-harmonized` branch, you must rebuild the Docker containers since the Girder version changes:
