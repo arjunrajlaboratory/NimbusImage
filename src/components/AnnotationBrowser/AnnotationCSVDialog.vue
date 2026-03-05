@@ -159,12 +159,6 @@ import Papa from "papaparse";
 import { IAnnotation } from "@/store/model";
 import { getValueFromObjectAndPath } from "@/utils/paths";
 
-interface PropertyPathItem {
-  name: string;
-  path: string[];
-  pathString: string;
-}
-
 const UNDEFINED_VALUE_MAP = {
   na: "NA",
   nan: "NaN",
