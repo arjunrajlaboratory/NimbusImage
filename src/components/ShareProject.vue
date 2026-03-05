@@ -39,7 +39,7 @@
                 :disabled="publicLoading"
                 hide-details
                 density="compact"
-                @change="confirmTogglePublic"
+                @update:model-value="confirmTogglePublic"
               />
             </v-col>
           </v-row>

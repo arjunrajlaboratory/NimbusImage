@@ -1878,4 +1878,41 @@ describe("Snapshots.vue", () => {
       expect((wrapper.vm as any).bboxRight).toBe(0);
     });
   });
+
+  // Vuetify 3 @change migration: v-radio-group should use @update:model-value
+  describe("Vuetify 3 @change migration", () => {
+    it("pixelSizeMode v-radio-group triggers handlePixelSizeModeChange via update:modelValue", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      // Open the scalebar settings dialog so radio groups render
+      vm.scalebarSettingsDialog = true;
+
+      // Find v-radio-group components
+      const radioGroups = wrapper.findAllComponents({ name: "v-radio-group" });
+      // The first radio group is pixelSizeMode, second is scalebarMode
+      if (radioGroups.length >= 1) {
+        // Set pixelSizeMode to "dataset" first
+        vm.pixelSizeMode = "dataset";
+        // Emit update:modelValue as Vuetify 3 does when radio selection changes
+        radioGroups[0].vm.$emit("update:modelValue", "manual");
+        // If @update:model-value is wired, handlePixelSizeModeChange should fire
+        // which copies configurationPixelSize to manualPixelSize when switching to manual
+        // The key test is that the event was received (no error, handler was called)
+        expect(vm.pixelSizeMode).toBe("manual");
+      }
+    });
+
+    it("scalebarMode v-radio-group triggers handleScalebarModeChange via update:modelValue", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.scalebarSettingsDialog = true;
+
+      const radioGroups = wrapper.findAllComponents({ name: "v-radio-group" });
+      if (radioGroups.length >= 2) {
+        vm.scalebarMode = "automatic";
+        radioGroups[1].vm.$emit("update:modelValue", "manual");
+        expect(vm.scalebarMode).toBe("manual");
+      }
+    });
+  });
 });

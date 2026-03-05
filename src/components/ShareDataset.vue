@@ -54,7 +54,7 @@
                 :disabled="publicLoading"
                 hide-details
                 density="compact"
-                @change="togglePublic"
+                @update:model-value="togglePublic"
               />
             </v-col>
           </v-row>

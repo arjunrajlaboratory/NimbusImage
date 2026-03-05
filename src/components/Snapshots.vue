@@ -313,7 +313,7 @@
                     <div class="subtitle-1 mb-2">Pixel size</div>
                     <v-radio-group
                       v-model="pixelSizeMode"
-                      @change="handlePixelSizeModeChange"
+                      @update:model-value="handlePixelSizeModeChange"
                     >
                       <v-radio
                         value="dataset"
@@ -351,7 +351,7 @@
                     <div class="subtitle-1 mb-2">Scalebar length</div>
                     <v-radio-group
                       v-model="scalebarMode"
-                      @change="handleScalebarModeChange"
+                      @update:model-value="handleScalebarModeChange"
                     >
                       <v-radio
                         value="automatic"

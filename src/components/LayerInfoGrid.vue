@@ -9,7 +9,7 @@
             <v-spacer></v-spacer>
             <v-switch
               v-model="layer.visible"
-              @change="toggleVisibility(layer.id)"
+              @update:model-value="toggleVisibility(layer.id)"
               density="compact"
               hide-details
               class="mt-0"

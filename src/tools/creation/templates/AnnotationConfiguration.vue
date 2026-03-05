@@ -11,7 +11,7 @@
               item-title="text"
               item-value="value"
               v-model="shape"
-              @change="changed"
+              @update:model-value="changed"
               density="compact"
             >
             </v-select>
@@ -53,7 +53,7 @@
             class="py-0"
           >
             <v-radio-group
-              @change="changed"
+              @update:model-value="changed"
               :label="coordinate"
               v-model="coordinateAssignments[coordinate].type"
               :key="`${index}Radio`"
@@ -74,7 +74,7 @@
                     :min="1"
                     class="pl-4"
                     v-model.number="coordinateAssignments[coordinate].value"
-                    @change="changed"
+                    @update:model-value="changed"
                     :disabled="
                       coordinateAssignments[coordinate].type === 'layer'
                     "
