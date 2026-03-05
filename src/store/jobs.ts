@@ -199,7 +199,7 @@ export class Jobs extends VuexModule {
       for (const jobEvent of this.messageStore[job.jobId]) {
         await this.handleJobEventImp(jobEvent);
       }
-      delete this.messageStore[job.jobId];
+      this.clearStoredMessages(job.jobId);
     }
     return this.jobInfoMap[job.jobId].successPromise;
   }
@@ -219,6 +219,24 @@ export class Jobs extends VuexModule {
     this.connectionErrors = value;
   }
 
+  @Mutation
+  storeMessage(payload: { jobId: string; event: IJobEventData }) {
+    if (!(payload.jobId in this.messageStore)) {
+      this.messageStore[payload.jobId] = [];
+    }
+    this.messageStore[payload.jobId].push(payload.event);
+  }
+
+  @Mutation
+  clearStoredMessages(jobId: string) {
+    delete this.messageStore[jobId];
+  }
+
+  @Mutation
+  removeJobInfo(jobId: string) {
+    delete this.jobInfoMap[jobId];
+  }
+
   @Action
   async handleJobEvent(event: MessageEvent) {
     let data: any;
@@ -235,15 +253,11 @@ export class Jobs extends VuexModule {
     this.setLatestNotificationTime(notificationTime);
 
     const jobEvent = data.data;
-    const jobId = jobEvent._id;
+    const jobId = jobEvent?._id;
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
-    // If the jobId from the message hasn't been registered, store the message to be handled later.
     if (!jobInfo) {
       if (jobId) {
-        if (!(jobId in this.messageStore)) {
-          this.messageStore[jobId] = [];
-        }
-        this.messageStore[jobId].push(jobEvent);
+        this.storeMessage({ jobId, event: jobEvent });
       }
       return;
     }
@@ -255,6 +269,7 @@ export class Jobs extends VuexModule {
   async handleJobEventImp(jobEvent: IJobEventData) {
     const jobId = jobEvent._id;
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
+    if (!jobInfo) return;
     // Append to the log if there's text
     if (jobEvent.text && typeof jobEvent.text === "string") {
       jobInfo.log = jobInfo.log + jobEvent.text;
@@ -293,9 +308,7 @@ export class Jobs extends VuexModule {
       });
     }
     jobInfo.successResolve(success);
-    jobInfo.listeners = jobInfo.listeners.filter(
-      (listener) => listener.jobId !== jobId,
-    );
+    this.removeJobInfo(jobId);
     // A job is done, add badge to annotation panel if it is closed
     if (!main.isAnnotationPanelOpen) {
       main.setAnnotationPanelBadge(true);
@@ -303,7 +316,12 @@ export class Jobs extends VuexModule {
   }
 
   @Action
-  async handleError() {
+  async handleError(event: Event) {
+    logError(
+      "[jobs] WebSocket error, attempt:",
+      this.connectionErrors + 1,
+      event,
+    );
     this.setConnectionErrors(this.connectionErrors + 1);
     if (this.connectionErrors <= 3) {
       await this.initializeNotificationSubscription();
@@ -322,9 +340,9 @@ export class Jobs extends VuexModule {
   @Action
   async initializeNotificationSubscription() {
     await this.closeNotificationSubscription();
-    const notificationSource = new WebSocket(
-      `${import.meta.env.VITE_GIRDER_URL}/notifications/me?token=${main.girderRest.token}`,
-    );
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${wsProtocol}//${window.location.host}/notifications/me?token=${main.girderRest.token}`;
+    const notificationSource = new WebSocket(wsUrl);
     notificationSource.onmessage = this.handleJobEvent;
     notificationSource.onerror = this.handleError;
     notificationSource.onopen = this.handleOpen;
