@@ -199,7 +199,9 @@
                 density="compact"
                 flat
                 variant="outlined"
-                @change="updateAnnotationName($event.target.value, item.annotation.id)"
+                @change="
+                  updateAnnotationName($event.target.value, item.annotation.id)
+                "
                 @click.capture.stop
                 title
               ></v-text-field>

@@ -218,8 +218,7 @@ describe("DisplayLayer", () => {
     // Find VTextField stub (the one with label="Name")
     const textFields = wrapper.findAllComponents({ name: "v-text-field" });
     const nameField = textFields.find(
-      (c) =>
-        c.props("label") === "Name" || c.attributes("label") === "Name",
+      (c) => c.props("label") === "Name" || c.attributes("label") === "Name",
     );
     expect(nameField).toBeTruthy();
     // Emit update:modelValue — this is what Vuetify 3 does when value changes

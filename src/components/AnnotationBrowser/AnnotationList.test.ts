@@ -581,7 +581,9 @@ describe("AnnotationList", () => {
       // Find the v-text-field that is used for annotation names
       const textFields = wrapper.findAllComponents({ name: "v-text-field" });
       const nameField = textFields.find(
-        (c) => c.attributes("model-value") === "Old Name" || c.props("modelValue") === "Old Name",
+        (c) =>
+          c.attributes("model-value") === "Old Name" ||
+          c.props("modelValue") === "Old Name",
       );
 
       if (nameField) {
