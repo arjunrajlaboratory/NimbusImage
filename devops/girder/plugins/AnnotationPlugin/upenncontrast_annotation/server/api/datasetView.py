@@ -1,6 +1,7 @@
+import logging
+
 from bson import ObjectId
 
-from girder import logprint
 from girder.api import access
 from girder.api.describe import autoDescribeRoute, Description, describeRoute
 from girder.api.rest import Resource, loadmodel
@@ -17,6 +18,8 @@ from upenncontrast_annotation.server.models.datasetView import \
     DatasetView as DatasetViewModel
 from upenncontrast_annotation.server.models.collection import \
     Collection as CollectionModel
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetView(Resource):
@@ -249,7 +252,7 @@ class DatasetView(Resource):
             {"$or": [{"login": body["userMailOrUsername"]},
                      {"email": body["userMailOrUsername"]}]})
         if not targetUser:
-            logprint.error(f"Cannot find user {body['userMailOrUsername']}")
+            logger.error(f"Cannot find user {body['userMailOrUsername']}")
             raise RestException("badEmailOrUsername")
 
         # Will raise if accessType is a bad value
