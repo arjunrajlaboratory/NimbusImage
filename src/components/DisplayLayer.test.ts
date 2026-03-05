@@ -197,11 +197,10 @@ describe("DisplayLayer", () => {
     expect((wrapper.vm as any).zMaxMergeBinding).toBe("shift+1");
   });
 
-  // Vuetify 3 @change migration: v-text-field should use @update:model-value
-  it("name text-field emits value via update:modelValue, not @change", async () => {
+  // The name text-field uses native @change with $event.target.value
+  // to avoid [object Event] issues with Vuetify 3
+  it("name text-field calls changeLayer on native change event", async () => {
     (store.changeLayer as any).mockClear();
-    // Use shallowMount with slot-rendering stubs for expansion panels
-    // so VTextField inside them gets rendered
     const wrapper = shallowMount(DisplayLayer, {
       props: {
         modelValue: { ...sampleLayer } as any,
@@ -215,16 +214,16 @@ describe("DisplayLayer", () => {
         },
       },
     });
-    // Find VTextField stub (the one with label="Name")
     const textFields = wrapper.findAllComponents({ name: "v-text-field" });
     const nameField = textFields.find(
       (c) => c.props("label") === "Name" || c.attributes("label") === "Name",
     );
     expect(nameField).toBeTruthy();
-    // Emit update:modelValue — this is what Vuetify 3 does when value changes
-    nameField!.vm.$emit("update:modelValue", "NewLayerName");
+    // Simulate native change event with target.value
+    nameField!.vm.$emit("change", {
+      target: { value: "NewLayerName" },
+    });
     await wrapper.vm.$nextTick();
-    // If template uses @update:model-value, changeProp('name', 'NewLayerName') is called
     expect(store.changeLayer).toHaveBeenCalledWith({
       layerId: "l1",
       delta: { name: "NewLayerName" },
