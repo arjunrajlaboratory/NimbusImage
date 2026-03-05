@@ -1065,3 +1065,82 @@ AnnotationWorkerMenu (owner of interfaceValues ref)
 ```
 
 PR: #1060
+
+## Girder 5 Backend Upgrade
+
+Branch: `girder5-harmonized` (PR: #1061)
+
+### Overview
+
+Upgrades the backend from Girder 3 to Girder 5, with corresponding frontend changes to the notification system. The Girder 5 backend uses WebSocket-based notifications instead of the SSE (Server-Sent Events) stream used by Girder 3.
+
+### Backend Changes
+
+| File | Change |
+|------|--------|
+| `devops/girder/Dockerfile` | Updated base image, clones `girder-5` branch of `large_image` |
+| `docker-compose.yaml` | Updated service configuration, env file references |
+| `girder.env` | New env file for Girder configuration (replaces `girder.cfg`) |
+| `worker.env` | Renamed from `docker.env` |
+| `devops/girder/provision.py` | Simplified provisioning for Girder 5 |
+| `devops/girder/girder.cfg` | Removed (replaced by `girder.env`) |
+| Plugin `setup.py` | Updated dependencies for Girder 5 compatibility |
+| Plugin `tox.ini` | Updated test dependencies |
+| `datasetView.py`, `user_assetstore.py`, `workerInterfaces.py` | Minor API compatibility fixes |
+| `system.py` | Updated system configuration |
+
+### Frontend Changes
+
+#### Notification System: EventSource → WebSocket (`src/store/jobs.ts`)
+
+The Girder 5 notification endpoint uses WebSocket at `/notifications/me` instead of SSE at `/api/v1/notification/stream`.
+
+**Key changes:**
+- `notificationSource` type changed from `EventSource` to `WebSocket`
+- WebSocket URL derived from `window.location` (not `VITE_GIRDER_URL` env var) to correctly handle user-configured domains and `ws:`/`wss:` protocols
+- Added message buffering (`messageStore`) to handle race condition where WebSocket notifications arrive before `addJob()` registers the job listener
+- Proper `@Mutation` methods (`storeMessage`, `clearStoredMessages`, `removeJobInfo`) replace direct state mutations in Actions
+- Null guard in `handleJobEventImp` prevents crashes if job info is missing
+- Memory leak fix: `jobInfoMap` entries are cleaned up after job completion via `removeJobInfo`
+- `handleError` accepts `Event` parameter with error logging
+- Optional chaining on `jobEvent?._id` for safety
+
+#### Early WebSocket Init (`src/store/index.ts`)
+
+WebSocket connection is initialized on login to ensure notifications are ready before any jobs are submitted.
+
+#### Model Update (`src/store/model.ts`)
+
+`_id` field made required on `IJobEventData` to match Girder 5 notification format.
+
+#### Vite Dev Server Proxy (`vite.config.js`)
+
+Added proxy configuration for `/notifications` endpoint with WebSocket support, so the dev server (port 5173) correctly forwards WebSocket connections to Girder (port 8080):
+
+```js
+server: {
+  proxy: {
+    "/notifications": {
+      target: "http://localhost:8080",
+      ws: true,
+    },
+  },
+},
+```
+
+### AnnotationCSVDialog v-data-table Selection Fix
+
+In Vuetify 3, `v-data-table` uses `item-value` (not `item-key`) to identify rows for selection. The `v-model` with `show-select` stores an array of the `item-value` values (strings), not full objects. The "Select properties to export" mode was broken (clicking any checkbox selected all) because:
+
+1. `item-key="pathString"` → changed to `item-value="pathString"`
+2. `selectedPropertyPaths` typed as `PropertyPathItem[]` → changed to `string[]`
+3. `shouldIncludePropertyPath` comparison updated from `.some(p => p.pathString === ...)` to `.includes(pathString)`
+
+### Rebuilding After Switching Branches
+
+When switching to or from the `girder5-harmonized` branch, you must rebuild the Docker containers since the Girder version changes:
+
+```bash
+docker compose build
+docker compose up -d
+```
