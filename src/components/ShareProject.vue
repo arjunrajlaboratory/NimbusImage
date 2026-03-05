@@ -350,7 +350,7 @@ function shareErrorMessage(error: unknown): string {
 
 // --- Public toggle ---
 
-function confirmTogglePublic(newValue: boolean) {
+function confirmTogglePublic(newValue: boolean | null) {
   if (newValue) {
     showConfirm(
       "Make Project Public",

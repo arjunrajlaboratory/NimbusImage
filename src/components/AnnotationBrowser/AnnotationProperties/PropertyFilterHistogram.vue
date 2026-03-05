@@ -328,10 +328,10 @@ function updateViewMode(mode: PropertyFilterMode) {
   }
 }
 
-function toggleFilterEnabled(enabled: boolean) {
+function toggleFilterEnabled(enabled: boolean | null) {
   filterStore.updatePropertyFilter({
     ...propertyFilter.value,
-    enabled,
+    enabled: !!enabled,
   });
 }
 
