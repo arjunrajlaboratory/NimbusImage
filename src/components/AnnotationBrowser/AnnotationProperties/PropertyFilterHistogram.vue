@@ -6,7 +6,7 @@
         class="ml-4"
         density="compact"
         hide-details
-        @change="toggleFilterEnabled"
+        @update:model-value="toggleFilterEnabled"
       ></v-checkbox>
       <span>{{ propertyFullName }}</span>
       <v-btn-toggle
@@ -14,7 +14,7 @@
         mandatory
         class="ml-4"
         density="compact"
-        @change="updateViewMode"
+        @update:model-value="updateViewMode"
       >
         <v-btn value="range" size="small">Histogram</v-btn>
         <v-btn value="values" size="small">Values</v-btn>
@@ -328,10 +328,10 @@ function updateViewMode(mode: PropertyFilterMode) {
   }
 }
 
-function toggleFilterEnabled(enabled: boolean) {
+function toggleFilterEnabled(enabled: boolean | null) {
   filterStore.updatePropertyFilter({
     ...propertyFilter.value,
-    enabled,
+    enabled: !!enabled,
   });
 }
 

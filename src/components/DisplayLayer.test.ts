@@ -196,4 +196,37 @@ describe("DisplayLayer", () => {
     const wrapper = mountComponent();
     expect((wrapper.vm as any).zMaxMergeBinding).toBe("shift+1");
   });
+
+  // The name text-field uses native @change with $event.target.value
+  // to avoid [object Event] issues with Vuetify 3
+  it("name text-field calls changeLayer on native change event", async () => {
+    (store.changeLayer as any).mockClear();
+    const wrapper = shallowMount(DisplayLayer, {
+      props: {
+        modelValue: { ...sampleLayer } as any,
+      },
+      global: {
+        stubs: {
+          "v-expansion-panels": { template: "<div><slot /></div>" },
+          "v-expansion-panel": { template: "<div><slot /></div>" },
+          "v-expansion-panel-title": { template: "<div><slot /></div>" },
+          "v-expansion-panel-text": { template: "<div><slot /></div>" },
+        },
+      },
+    });
+    const textFields = wrapper.findAllComponents({ name: "v-text-field" });
+    const nameField = textFields.find(
+      (c) => c.props("label") === "Name" || c.attributes("label") === "Name",
+    );
+    expect(nameField).toBeTruthy();
+    // Simulate native change event with target.value
+    nameField!.vm.$emit("change", {
+      target: { value: "NewLayerName" },
+    });
+    await wrapper.vm.$nextTick();
+    expect(store.changeLayer).toHaveBeenCalledWith({
+      layerId: "l1",
+      delta: { name: "NewLayerName" },
+    });
+  });
 });

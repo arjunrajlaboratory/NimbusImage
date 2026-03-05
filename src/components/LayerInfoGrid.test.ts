@@ -134,4 +134,33 @@ describe("LayerInfoGrid", () => {
     const wrapper = mountComponent({ layers: [] });
     expect(wrapper.html()).toContain("No layers available");
   });
+
+  // Vuetify 3 @change migration: v-switch should use @update:model-value
+  it("v-switch emits update:modelValue to trigger toggleVisibility", async () => {
+    (store.toggleLayerVisibility as any).mockClear();
+    // Use stubs that render slots so v-switch inside v-card is accessible
+    const wrapper = shallowMount(LayerInfoGrid, {
+      props: { layers: sampleLayers as any },
+      global: {
+        stubs: {
+          ContrastHistogram: true,
+          ColorPickerMenu: true,
+          VContainer: { template: "<div><slot /></div>" },
+          VRow: { template: "<div><slot /></div>" },
+          VCol: { template: "<div><slot /></div>" },
+          VCard: { template: "<div><slot /></div>" },
+          VCardTitle: { template: "<div><slot /></div>" },
+          VCardText: { template: "<div><slot /></div>" },
+          VAlert: { template: "<div><slot /></div>", props: ["type"] },
+        },
+      },
+    });
+    const vSwitch = wrapper.findAllComponents({ name: "v-switch" });
+    expect(vSwitch.length).toBeGreaterThan(0);
+    // Emit update:modelValue as Vuetify 3 does on switch toggle
+    vSwitch[0].vm.$emit("update:modelValue", false);
+    await wrapper.vm.$nextTick();
+    // If @update:model-value is wired, toggleVisibility should be called
+    expect(store.toggleLayerVisibility).toHaveBeenCalledWith("l1");
+  });
 });

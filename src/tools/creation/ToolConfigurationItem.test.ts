@@ -86,4 +86,22 @@ describe("ToolConfigurationItem", () => {
     });
     expect(wrapper.text()).toContain("My Field");
   });
+
+  // Vuetify 3 @change migration: dynamic Vuetify component should use @update:model-value
+  it("dynamic component triggers changed() via update:modelValue, not @change", () => {
+    const wrapper = mountComponent({
+      item: { type: "text", name: "Test" },
+      modelValue: "hello",
+    });
+
+    // Find the VTextField rendered via <component :is="...">
+    const textField = wrapper.findComponent({ name: "v-text-field" });
+    expect(textField.exists()).toBe(true);
+
+    // Emit update:modelValue as Vuetify 3 does on input
+    textField.vm.$emit("update:modelValue", "world");
+
+    // If @update:model-value is wired, changed() should emit "change"
+    expect(wrapper.emitted("change")).toBeTruthy();
+  });
 });

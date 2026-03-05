@@ -219,4 +219,43 @@ describe("AnnotationConfiguration", () => {
     vm.layer = "new-layer-id";
     expect(vm.coordinateAssignments.layer).toBe("new-layer-id");
   });
+
+  // Vuetify 3 @change migration: v-select should use @update:model-value
+  describe("Vuetify 3 @change migration", () => {
+    it("v-select shape change triggers changed() via update:modelValue", () => {
+      const wrapper = mountComponent();
+      const vSelect = wrapper.findComponent({ name: "v-select" });
+      expect(vSelect.exists()).toBe(true);
+
+      // Clear previous emits
+      const changeEmitsBefore = (wrapper.emitted("change") || []).length;
+
+      // Emit update:modelValue as Vuetify 3 does when selection changes
+      vSelect.vm.$emit("update:modelValue", "line");
+
+      // If @update:model-value is wired, changed() should have emitted a new "change"
+      const changeEmitsAfter = (wrapper.emitted("change") || []).length;
+      expect(changeEmitsAfter).toBeGreaterThan(changeEmitsBefore);
+    });
+
+    it("v-radio-group coordinate change triggers changed() via update:modelValue", () => {
+      // Ensure getLayerFromId returns a full layer object for rendering
+      (store.getLayerFromId as any).mockReturnValue({
+        name: "TestLayer",
+        z: { type: "current", value: 0 },
+        time: { type: "current", value: 0 },
+      });
+      const wrapper = mountComponent({ advanced: true });
+      const radioGroups = wrapper.findAllComponents({ name: "v-radio-group" });
+      expect(radioGroups.length).toBeGreaterThan(0);
+
+      const changeEmitsBefore = (wrapper.emitted("change") || []).length;
+
+      // Emit update:modelValue as Vuetify 3 does when radio selection changes
+      radioGroups[0].vm.$emit("update:modelValue", "assign");
+
+      const changeEmitsAfter = (wrapper.emitted("change") || []).length;
+      expect(changeEmitsAfter).toBeGreaterThan(changeEmitsBefore);
+    });
+  });
 });

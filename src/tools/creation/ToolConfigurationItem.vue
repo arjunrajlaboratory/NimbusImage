@@ -15,7 +15,7 @@
               v-model="componentValue"
               ref="innerComponent"
               return-object
-              @change="changed"
+              @update:model-value="changed"
               density="compact"
             >
               <v-radio

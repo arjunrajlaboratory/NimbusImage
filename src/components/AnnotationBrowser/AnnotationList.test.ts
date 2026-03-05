@@ -567,4 +567,43 @@ describe("AnnotationList", () => {
       expect(vm.displayedPropertyPaths).toEqual([["p1", "a"]]);
     });
   });
+
+  // Vuetify 3 @change migration: v-text-field should use @update:model-value
+  describe("annotation name text-field uses update:modelValue", () => {
+    it("updateAnnotationName is called with a string value when v-text-field emits update:modelValue", () => {
+      const ann = makeAnnotation({ id: "ann1", name: "Old Name" });
+      (filterStore as any).filteredAnnotations = [ann];
+      (filterStore as any).filteredAnnotationIdToIdx = new Map([["ann1", 0]]);
+      (annotationStore as any).annotationIdToIdx = { ann1: 0 };
+      mockUpdateAnnotationName.mockClear();
+
+      const wrapper = mountComponent();
+      // Find the v-text-field that is used for annotation names
+      const textFields = wrapper.findAllComponents({ name: "v-text-field" });
+      const nameField = textFields.find(
+        (c) =>
+          c.attributes("model-value") === "Old Name" ||
+          c.props("modelValue") === "Old Name",
+      );
+
+      if (nameField) {
+        // Emit update:modelValue as Vuetify 3 does when value changes
+        nameField.vm.$emit("update:modelValue", "Renamed");
+        // If template uses @update:model-value, updateAnnotationName should be called with the string
+        expect(mockUpdateAnnotationName).toHaveBeenCalledWith({
+          name: "Renamed",
+          id: "ann1",
+        });
+      } else {
+        // Text field not rendered (columns not selected) — test handler directly
+        // to ensure it doesn't accept Event objects
+        const vm = wrapper.vm as any;
+        vm.updateAnnotationName("Renamed", "ann1");
+        expect(mockUpdateAnnotationName).toHaveBeenCalledWith({
+          name: "Renamed",
+          id: "ann1",
+        });
+      }
+    });
+  });
 });

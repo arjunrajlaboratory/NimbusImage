@@ -54,7 +54,7 @@
                 :disabled="publicLoading"
                 hide-details
                 density="compact"
-                @change="togglePublic"
+                @update:model-value="togglePublic"
               />
             </v-col>
           </v-row>
@@ -361,20 +361,21 @@ function getSelectedViews(): IDatasetView[] {
   );
 }
 
-async function togglePublic(newValue: boolean) {
+async function togglePublic(newValue: boolean | null) {
   if (!props.dataset) return;
+  const value = !!newValue;
 
   publicLoading.value = true;
   showError.value = false;
   try {
-    await store.api.setDatasetPublic(props.dataset._id, newValue);
-    isPublic.value = newValue;
+    await store.api.setDatasetPublic(props.dataset._id, value);
+    isPublic.value = value;
   } catch (error) {
     logError("Failed to toggle public access", error);
     errorString.value = "Failed to update public access";
     showError.value = true;
     // Revert the checkbox
-    isPublic.value = !newValue;
+    isPublic.value = !value;
   } finally {
     publicLoading.value = false;
   }

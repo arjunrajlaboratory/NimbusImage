@@ -21,7 +21,7 @@
             >
               <v-checkbox
                 :model-value="isPropertyPathFiltered(propertyPath)"
-                @change="togglePropertyPathFiltering(propertyPath)"
+                @update:model-value="togglePropertyPathFiltering(propertyPath)"
                 density="compact"
                 hide-details
               />

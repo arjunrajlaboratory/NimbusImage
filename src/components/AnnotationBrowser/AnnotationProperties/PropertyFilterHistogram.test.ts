@@ -444,4 +444,55 @@ describe("PropertyFilterHistogram", () => {
     const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
     expect(call.enabled).toBe(false);
   });
+
+  // Vuetify 3 @change migration: v-checkbox and v-btn-toggle should use @update:model-value
+  describe("Vuetify 3 @change migration", () => {
+    function mountWithSlotStubs(propsOverrides: any = {}) {
+      return shallowMount(PropertyFilterHistogram, {
+        props: {
+          propertyPath: ["propA", "sub1"],
+          ...propsOverrides,
+        },
+        global: {
+          stubs: {
+            TagFilterEditor: true,
+            VContainer: { template: "<div><slot /></div>" },
+            VRow: { template: "<div><slot /></div>" },
+            VCol: { template: "<div><slot /></div>" },
+            VSpacer: true,
+          },
+        },
+      });
+    }
+
+    it("toggleFilterEnabled fires when v-checkbox emits update:modelValue", () => {
+      const wrapper = mountWithSlotStubs();
+      (filterStore.updatePropertyFilter as any).mockClear();
+
+      const checkboxes = wrapper.findAllComponents({ name: "v-checkbox" });
+      expect(checkboxes.length).toBeGreaterThan(0);
+      // Emit update:modelValue as Vuetify 3 does on checkbox toggle
+      checkboxes[0].vm.$emit("update:modelValue", false);
+
+      // If @update:model-value is wired, toggleFilterEnabled(false) should be called
+      expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
+      const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
+      expect(call.enabled).toBe(false);
+    });
+
+    it("updateViewMode fires when v-btn-toggle emits update:modelValue", () => {
+      const wrapper = mountWithSlotStubs();
+      (filterStore.updatePropertyFilter as any).mockClear();
+
+      const btnToggles = wrapper.findAllComponents({ name: "v-btn-toggle" });
+      expect(btnToggles.length).toBeGreaterThan(0);
+      // Emit update:modelValue as Vuetify 3 does when selection changes
+      btnToggles[0].vm.$emit("update:modelValue", "values");
+
+      // If @update:model-value is wired, updateViewMode("values") should be called
+      expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
+      const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
+      expect(call.valuesOrRange).toBe("values");
+    });
+  });
 });

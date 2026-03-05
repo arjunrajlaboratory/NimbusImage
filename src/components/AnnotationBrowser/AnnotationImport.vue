@@ -52,12 +52,16 @@
             <v-checkbox
               v-model="overwriteAnnotations"
               :label="`Overwrite ${annotationStore.annotations.length} annotations (delete current annotations)`"
-              @change="overwriteAnnotationsDialog = overwriteAnnotations"
+              @update:model-value="
+                overwriteAnnotationsDialog = overwriteAnnotations
+              "
             />
             <v-checkbox
               v-model="overwriteProperties"
               :label="`Overwrite ${propertyStore.properties.length} properties (delete current properties)`"
-              @change="overwritePropertiesDialog = overwriteProperties"
+              @update:model-value="
+                overwritePropertiesDialog = overwriteProperties
+              "
             />
             <v-dialog v-model="overwriteAnnotationsDialog" persistent>
               <v-card class="pa-2">

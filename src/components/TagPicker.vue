@@ -11,7 +11,7 @@
     density="compact"
     label="Tags"
     :disabled="disabled"
-    @change="onTagChange"
+    @update:model-value="onTagChange"
     ref="combobox"
   >
     <template v-slot:chip="{ item, props: chipProps }">
