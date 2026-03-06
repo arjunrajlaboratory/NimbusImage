@@ -11,27 +11,27 @@
       style="width: auto; padding: 4px 0"
       hide-details
     >
-      <template v-slot:item="{ item: listItem }">
-        <div style="flex: 1 1 auto; min-width: 0">
-          <v-list-item-title>{{ listItem.raw.displayName }}</v-list-item-title>
-          <v-list-item-subtitle
-            v-if="listItem.raw.meta"
-            class="text-medium-emphasis"
-            style="font-size: 0.875rem; opacity: 0.7"
-            >{{ formatMeta(listItem.raw.meta) }}</v-list-item-subtitle
-          >
-        </div>
-        <v-btn
-          v-if="listItem.raw.name !== DEFAULT_LARGE_IMAGE_SOURCE"
-          icon
-          size="small"
-          color="error"
-          class="ml-2"
-          :loading="deletingImageId === listItem.raw._id"
-          @click.stop="deleteImage(listItem.raw)"
-        >
-          <v-icon size="small">mdi-delete</v-icon>
-        </v-btn>
+      <template v-slot:item="{ item: listItem, props: itemProps }">
+        <v-list-item v-bind="itemProps">
+          <template #title>{{ listItem.raw.displayName }}</template>
+          <template #subtitle v-if="listItem.raw.meta">
+            <span style="font-size: 0.875rem; opacity: 0.7">{{
+              formatMeta(listItem.raw.meta)
+            }}</span>
+          </template>
+          <template #append v-if="listItem.raw.name !== DEFAULT_LARGE_IMAGE_SOURCE">
+            <v-btn
+              icon
+              size="small"
+              color="error"
+              class="ml-2"
+              :loading="deletingImageId === listItem.raw._id"
+              @click.stop="deleteImage(listItem.raw)"
+            >
+              <v-icon size="small">mdi-delete</v-icon>
+            </v-btn>
+          </template>
+        </v-list-item>
       </template>
       <template v-slot:selection="{ item: listItem }">
         <div style="flex: 1 1 auto; min-width: 0; white-space: normal">
