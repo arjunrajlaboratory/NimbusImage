@@ -343,9 +343,16 @@ export class Jobs extends VuexModule {
   @Action
   async initializeNotificationSubscription() {
     await this.closeNotificationSubscription();
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${wsProtocol}//${window.location.host}/notifications/me?token=${main.girderRest.token}`;
-    const notificationSource = new WebSocket(wsUrl);
+    const apiRoot = import.meta.env.VITE_GIRDER_URL || main.girderRest.apiRoot;
+    let notificationURL = apiRoot.endsWith("/api/v1")
+      ? apiRoot.slice(0, -6)
+      : apiRoot;
+    notificationURL = notificationURL.endsWith("/")
+      ? notificationURL.slice(0, -1)
+      : notificationURL;
+    const notificationSource = new WebSocket(
+      `${notificationURL}/notifications/me?token=${main.girderRest.token}`,
+    );
     notificationSource.onmessage = this.handleJobEvent;
     notificationSource.onerror = this.handleError;
     notificationSource.onopen = this.handleOpen;

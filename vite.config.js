@@ -112,15 +112,6 @@ export default defineConfig({
       },
     },
   },
-  server: {
-    proxy: {
-      // Proxy WebSocket notifications to Girder backend
-      "/notifications": {
-        target: "http://localhost:8080",
-        ws: true,
-      },
-    },
-  },
   build: {
     sourcemap: true,
   },
