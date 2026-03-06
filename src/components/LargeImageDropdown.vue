@@ -19,7 +19,10 @@
               formatMeta(listItem.raw.meta)
             }}</span>
           </template>
-          <template #append v-if="listItem.raw.name !== DEFAULT_LARGE_IMAGE_SOURCE">
+          <template
+            #append
+            v-if="listItem.raw.name !== DEFAULT_LARGE_IMAGE_SOURCE"
+          >
             <v-btn
               icon
               size="small"
