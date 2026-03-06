@@ -148,6 +148,7 @@ const props = withDefaults(
     clickableChips?: boolean;
     location?: IGirderLocation | null;
     useDefaultLocation?: boolean;
+    preventDatasetNavigation?: boolean;
   }>(),
   {
     menuEnabled: true,
@@ -156,6 +157,7 @@ const props = withDefaults(
     clickableChips: true,
     location: null,
     useDefaultLocation: true,
+    preventDatasetNavigation: false,
   },
 );
 
@@ -201,6 +203,22 @@ const currentLocation = computed({
     return props.location;
   },
   set(value: IGirderLocation | null) {
+    if (
+      props.preventDatasetNavigation &&
+      value &&
+      "_modelType" in value &&
+      isDatasetFolder(value as IGirderSelectAble)
+    ) {
+      const selectable = value as IGirderSelectAble;
+      const idx = selected.value.findIndex((s) => s._id === selectable._id);
+      if (idx >= 0) {
+        selected.value.splice(idx, 1);
+      } else {
+        selected.value.push(selectable);
+      }
+      emitSelected();
+      return;
+    }
     emit("update:location", value);
   },
 });
@@ -538,7 +556,7 @@ defineExpose({
 
 // Watchers
 watch(isLoggedIn, fetchLocation);
-watch([selected, () => props.selectable], emitSelected);
+watch([selected, () => props.selectable], emitSelected, { deep: true });
 
 // Lifecycle
 onMounted(fetchLocation);
