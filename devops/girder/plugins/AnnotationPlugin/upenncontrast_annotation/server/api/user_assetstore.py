@@ -4,8 +4,7 @@ from girder.api.rest import Resource
 from girder.models.assetstore import Assetstore
 from girder.models.folder import Folder
 from girder.constants import AccessType
-
-from girder_import_tracker import moveFolder
+from import_tracker.utils import moveFolder
 
 
 class UserAssetstore(Resource):

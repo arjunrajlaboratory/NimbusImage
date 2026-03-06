@@ -1,16 +1,12 @@
-import docker
-import logging
-
-from docker.errors import DockerException
-
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
-from girder.exceptions import RestException
-
 from ..models.workerInterfaces import WorkerInterfaceModel as InterfaceModel
+from girder.exceptions import RestException
+from girder import logger
 
-logger = logging.getLogger(__name__)
+import docker
+from docker.errors import DockerException
 
 
 class WorkerInterfaces(Resource):
