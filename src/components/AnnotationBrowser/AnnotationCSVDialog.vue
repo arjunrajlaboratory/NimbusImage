@@ -27,6 +27,12 @@
           applications like Excel or Google Sheets.
         </v-alert>
 
+        <v-list-subheader>File Format</v-list-subheader>
+        <v-radio-group v-model="fileFormat" class="mb-4">
+          <v-radio label="CSV (comma-separated)" value="csv"></v-radio>
+          <v-radio label="TSV (tab-separated)" value="tsv"></v-radio>
+        </v-radio-group>
+
         <v-list-subheader>Property Export Options</v-list-subheader>
         <v-radio-group v-model="propertyExportMode" class="mb-4">
           <v-radio label="Export all properties" value="all"></v-radio>
@@ -185,6 +191,12 @@ const propertyExportMode = ref<"all" | "selected" | "listed">("all");
 const propertyFilter = ref("");
 const selectedPropertyPaths = ref<string[]>([]);
 
+const fileFormat = ref<"csv" | "tsv">("csv");
+const fileDelimiter = computed(() => (fileFormat.value === "tsv" ? "\t" : ","));
+const fileExtension = computed(() =>
+  fileFormat.value === "tsv" ? ".tsv" : ".csv",
+);
+
 const undefinedHandling = ref<"empty" | "na" | "nan">("empty");
 
 const processingProgress = ref(0);
@@ -223,7 +235,7 @@ const filteredPropertyItems = computed(() => {
 });
 
 function resetFilename() {
-  filename.value = (dataset.value?.name ?? "unknown") + ".csv";
+  filename.value = (dataset.value?.name ?? "unknown") + fileExtension.value;
 }
 
 function copyCSVText() {
@@ -312,8 +324,11 @@ async function generateCSVStringForAnnotations() {
       processingProgress.value = (i + CHUNK_SIZE) / nAnnotations;
     }
 
-    // Generate csv
-    return Papa.unparse({ fields, data }, { quotes });
+    // Generate csv/tsv
+    return Papa.unparse(
+      { fields, data },
+      { quotes, delimiter: fileDelimiter.value },
+    );
   } finally {
     isProcessing.value = false;
     processingProgress.value = 1;
@@ -367,7 +382,9 @@ async function download() {
       propertyPaths: getIncludedPropertyPaths(),
       annotationIds: props.annotations.map((a) => a.id),
       undefinedValue: getUndefinedValueString(),
-      filename: filename.value || "upenn_annotation_export.csv",
+      delimiter: fileDelimiter.value,
+      filename:
+        filename.value || `upenn_annotation_export${fileExtension.value}`,
     });
   } finally {
     isDownloading.value = false;
@@ -389,11 +406,17 @@ function shouldIncludePropertyPath(path: string[]) {
 
 // Collapse 4 stacked @Watch into single watch
 watch(
-  [propertyExportMode, selectedPropertyPaths, undefinedHandling, dialog],
+  [
+    propertyExportMode,
+    selectedPropertyPaths,
+    undefinedHandling,
+    fileFormat,
+    dialog,
+  ],
   () => updateText(),
 );
 
-watch(dataset, () => resetFilename());
+watch([fileFormat, dataset], () => resetFilename());
 
 onMounted(() => resetFilename());
 
@@ -402,6 +425,7 @@ defineExpose({
   text,
   filename,
   propertyExportMode,
+  fileFormat,
   undefinedHandling,
   processingProgress,
   isProcessing,
