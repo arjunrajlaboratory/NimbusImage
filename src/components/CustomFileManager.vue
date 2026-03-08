@@ -702,11 +702,11 @@ onBeforeUnmount(() => {
 // so we target it via the file manager wrapper, not .itemRow.
 .custom-file-manager-wrapper .v-icon.mdi-package {
   // datasets - teal to match primary theme color
-  color: #26A69A;
+  color: #26a69a;
 }
 .custom-file-manager-wrapper .v-icon.mdi-file-tree {
   // configurations - teal to match primary theme color
-  color: #26A69A;
+  color: #26a69a;
 }
 </style>
 

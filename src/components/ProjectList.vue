@@ -69,7 +69,12 @@
               >
                 {{ project.meta.status }}
               </v-chip>
-              <v-chip size="x-small" variant="outlined" color="grey" class="mr-1">
+              <v-chip
+                size="x-small"
+                variant="outlined"
+                color="grey"
+                class="mr-1"
+              >
                 {{ project.meta.datasets.length }} dataset{{
                   project.meta.datasets.length !== 1 ? "s" : ""
                 }}
@@ -104,7 +109,9 @@
                   <template #prepend>
                     <v-icon size="small" color="error">mdi-delete</v-icon>
                   </template>
-                  <v-list-item-title class="text-error">Delete</v-list-item-title>
+                  <v-list-item-title class="text-error"
+                    >Delete</v-list-item-title
+                  >
                 </v-list-item>
               </v-list>
             </v-menu>
