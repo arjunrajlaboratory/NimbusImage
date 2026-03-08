@@ -47,10 +47,11 @@
           v-for="project in filteredProjects"
           :key="project.id"
           class="project-item"
-          :class="{ 'project-item-hover': !loading }"
           @click="navigateToProject(project)"
         >
-          <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
+          <template #prepend>
+            <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
+          </template>
 
           <v-list-item-title class="project-title">
             {{ project.name }}
@@ -58,49 +59,56 @@
           <v-list-item-subtitle v-if="project.description">
             {{ project.description }}
           </v-list-item-subtitle>
+          <v-list-item-subtitle>
+            <div class="d-flex align-center mt-1">
+              <v-chip
+                size="x-small"
+                variant="outlined"
+                class="mr-1"
+                :color="getProjectStatusColor(project.meta.status)"
+              >
+                {{ project.meta.status }}
+              </v-chip>
+              <v-chip size="x-small" variant="outlined" color="grey" class="mr-1">
+                {{ project.meta.datasets.length }} dataset{{
+                  project.meta.datasets.length !== 1 ? "s" : ""
+                }}
+              </v-chip>
+              <v-chip size="x-small" variant="outlined" color="grey">
+                {{ project.meta.collections.length }} collection{{
+                  project.meta.collections.length !== 1 ? "s" : ""
+                }}
+              </v-chip>
+              <v-spacer />
+              <span class="text-caption text-grey">
+                Updated {{ formatDateString(project.updated) }}
+              </span>
+            </div>
+          </v-list-item-subtitle>
 
-          <div class="d-flex align-center mt-1">
-            <v-chip
-              size="x-small"
-              variant="outlined"
-              class="mr-1"
-              :color="getProjectStatusColor(project.meta.status)"
-            >
-              {{ project.meta.status }}
-            </v-chip>
-            <v-chip size="x-small" variant="outlined" color="grey" class="mr-1">
-              {{ project.meta.datasets.length }} dataset{{
-                project.meta.datasets.length !== 1 ? "s" : ""
-              }}
-            </v-chip>
-            <v-chip size="x-small" variant="outlined" color="grey">
-              {{ project.meta.collections.length }} collection{{
-                project.meta.collections.length !== 1 ? "s" : ""
-              }}
-            </v-chip>
-            <v-spacer />
-            <span class="text-caption text-grey">
-              Updated {{ formatDateString(project.updated) }}
-            </span>
-          </div>
-
-          <v-menu>
-            <template #activator="{ props: activatorProps }">
-              <v-btn icon size="small" v-bind="activatorProps">
-                <v-icon size="small">mdi-dots-vertical</v-icon>
-              </v-btn>
-            </template>
-            <v-list density="compact">
-              <v-list-item @click="editProject(project)">
-                <v-icon size="small">mdi-pencil</v-icon>
-                <v-list-item-title>Edit</v-list-item-title>
-              </v-list-item>
-              <v-list-item @click="confirmDeleteProject(project)">
-                <v-icon size="small" color="error">mdi-delete</v-icon>
-                <v-list-item-title class="text-error">Delete</v-list-item-title>
-              </v-list-item>
-            </v-list>
-          </v-menu>
+          <template #append>
+            <v-menu>
+              <template #activator="{ props: activatorProps }">
+                <v-btn icon size="small" variant="text" v-bind="activatorProps">
+                  <v-icon size="small">mdi-dots-vertical</v-icon>
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item @click="editProject(project)">
+                  <template #prepend>
+                    <v-icon size="small">mdi-pencil</v-icon>
+                  </template>
+                  <v-list-item-title>Edit</v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="confirmDeleteProject(project)">
+                  <template #prepend>
+                    <v-icon size="small" color="error">mdi-delete</v-icon>
+                  </template>
+                  <v-list-item-title class="text-error">Delete</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+          </template>
         </v-list-item>
       </v-list>
     </div>
@@ -361,21 +369,12 @@ defineExpose({
 }
 
 .project-item {
-  border-bottom: 1px solid #e0e0e0;
-  transition: background-color 0.2s;
+  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
   cursor: pointer;
-
-  &:hover.project-item-hover {
-    background-color: #f5f5f5;
-  }
 }
 
 .project-title {
   font-weight: 500;
   color: #8e24aa;
-}
-
-.project-item-hover:hover .project-title {
-  color: #7b1fa2;
 }
 </style>
