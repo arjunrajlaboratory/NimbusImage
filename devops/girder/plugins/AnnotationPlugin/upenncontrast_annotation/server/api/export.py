@@ -36,7 +36,7 @@ class CsvColumn:
 
 
 # Fixed columns for CSV export, defined at module level for visibility.
-# Property columns are added dynamically and are never quoted.
+# Property columns are added dynamically and quoted if they contain commas.
 CSV_FIXED_COLUMNS = [
     CsvColumn("Id", is_quoted=True),
     CsvColumn("Channel", is_quoted=False),
@@ -355,7 +355,10 @@ class Export(Resource):
                 propertyName = self._getPropertyColumnName(
                     path, propertyNameMap)
                 if propertyName:
-                    columns.append(CsvColumn(propertyName, is_quoted=False))
+                    columns.append(CsvColumn(
+                        propertyName,
+                        is_quoted=',' in propertyName
+                    ))
 
             # Build header row
             headerRow = []

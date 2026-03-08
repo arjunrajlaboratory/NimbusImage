@@ -452,6 +452,30 @@ describe("AnnotationCSVDialog", () => {
     expect(arg.delimiter).toBe(",");
   });
 
+  it("hasCommasInPropertyNames detects commas in property names", () => {
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
+      const map: Record<string, string> = {
+        "propA.sub1": "cell, fibroblast Blob Metrics",
+        "propB.sub2": "Property B > Sub2",
+        "propC.sub3": "Property C > Sub3",
+      };
+      return map[path.join(".")] || null;
+    });
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.hasCommasInPropertyNames).toBe(true);
+    expect(vm.propertyNamesWithCommas).toEqual([
+      "cell, fibroblast Blob Metrics",
+    ]);
+  });
+
+  it("hasCommasInPropertyNames is false when no property names have commas", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.hasCommasInPropertyNames).toBe(false);
+    expect(vm.propertyNamesWithCommas).toEqual([]);
+  });
+
   it("watcher on fileFormat triggers text regeneration when dialog open", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;

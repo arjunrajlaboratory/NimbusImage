@@ -33,6 +33,22 @@
           <v-radio label="TSV (tab-separated)" value="tsv"></v-radio>
         </v-radio-group>
 
+        <v-alert
+          v-if="hasCommasInPropertyNames"
+          :type="fileFormat === 'csv' ? 'warning' : 'info'"
+          variant="tonal"
+          class="mb-4"
+        >
+          <template v-if="fileFormat === 'csv'">
+            Some property names contain commas, which may cause issues with CSV
+            formatting. TSV format is recommended instead.
+          </template>
+          <template v-else>
+            TSV format selected. This avoids issues with property names that
+            contain commas.
+          </template>
+        </v-alert>
+
         <v-list-subheader>Property Export Options</v-list-subheader>
         <v-radio-group v-model="propertyExportMode" class="mb-4">
           <v-radio label="Export all properties" value="all"></v-radio>
@@ -197,6 +213,16 @@ const fileExtension = computed(() =>
   fileFormat.value === "tsv" ? ".tsv" : ".csv",
 );
 
+const propertyNamesWithCommas = computed(() => {
+  return props.propertyPaths
+    .map((path) => propertyStore.getFullNameFromPath(path))
+    .filter((name): name is string => !!name && name.includes(","));
+});
+
+const hasCommasInPropertyNames = computed(
+  () => propertyNamesWithCommas.value.length > 0,
+);
+
 const undefinedHandling = ref<"empty" | "na" | "nan">("empty");
 
 const processingProgress = ref(0);
@@ -278,8 +304,9 @@ async function generateCSVStringForAnnotations() {
     });
 
     includedPaths.forEach((path) => {
-      fields.push(propertyStore.getFullNameFromPath(path)!);
-      quotes.push(false);
+      const name = propertyStore.getFullNameFromPath(path)!;
+      fields.push(name);
+      quotes.push(name.includes(","));
       usedPaths.push(path);
     });
 
@@ -432,6 +459,8 @@ defineExpose({
   isTooLargeForPreview,
   displayedPropertyPaths,
   filteredPropertyItems,
+  propertyNamesWithCommas,
+  hasCommasInPropertyNames,
   resetFilename,
   generateCSVStringForAnnotations,
   updateText,

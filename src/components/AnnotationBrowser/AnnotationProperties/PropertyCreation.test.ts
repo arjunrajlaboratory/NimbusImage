@@ -79,7 +79,7 @@ describe("PropertyCreation", () => {
     const vm = wrapper.vm as any;
     vm.filteringTags = ["tagA", "tagB"];
     vm.dockerImage = "test-image";
-    expect(vm.generatedName).toBe("tagA, tagB Test Worker");
+    expect(vm.generatedName).toBe("tagA tagB Test Worker");
   });
 
   it("generatedName shows 'No tag' when areTagsExclusive is true and no tags", () => {

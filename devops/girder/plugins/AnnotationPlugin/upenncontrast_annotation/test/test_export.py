@@ -657,3 +657,61 @@ class TestCSVExport:
 
         # Test empty path
         assert export._getPropertyColumnName([], propertyNameMap) is None
+
+    def testPropertyColumnQuotedWhenNameContainsComma(self, admin):
+        """Property columns with commas in name are quoted in CSV."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        # Create a property whose name contains a comma
+        prop = AnnotationProperty().save({
+            "name": "cell, fibroblast Blob Metrics",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        PropertyValuesModel = AnnotationPropertyValues()
+        PropertyValuesModel.appendValues(
+            {propId: {"Area": 100}},
+            annotations[0]["_id"],
+            dataset["_id"]
+        )
+
+        export = Export()
+        propertyPaths = [[propId, "Area"]]
+        propertyNameMap = export._buildPropertyNameMap(propertyPaths)
+
+        colName = export._getPropertyColumnName(
+            [propId, "Area"], propertyNameMap
+        )
+        assert colName == "cell, fibroblast Blob Metrics / Area"
+
+        # Verify the CsvColumn is_quoted flag
+        from upenncontrast_annotation.server.api.export import CsvColumn
+        col = CsvColumn(colName, is_quoted=',' in colName)
+        assert col.is_quoted is True
+
+        # Verify a column without comma is not quoted
+        col_no_comma = CsvColumn("Area", is_quoted=',' in "Area")
+        assert col_no_comma.is_quoted is False
+
+    def testPropertyColumnNotQuotedWhenNoComma(self, admin):
+        """Property columns without commas are not quoted."""
+        prop = AnnotationProperty().save({
+            "name": "cell fibroblast Blob Metrics",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        export = Export()
+        propertyNameMap = {propId: "cell fibroblast Blob Metrics"}
+        colName = export._getPropertyColumnName(
+            [propId, "Area"], propertyNameMap
+        )
+        assert colName == "cell fibroblast Blob Metrics / Area"
+        assert ',' not in colName
