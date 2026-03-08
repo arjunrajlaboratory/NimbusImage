@@ -56,8 +56,8 @@ const filteredPropertyPaths = computed(() => {
   });
 });
 
-function getPropertyFullName(path: string[]) {
-  return propertyStore.getFullNameFromPath(path);
+function getPropertyFullName(path: string[]): string | undefined {
+  return propertyStore.getFullNameFromPath(path) ?? undefined;
 }
 
 function isPropertyPathFiltered(path: string[]) {
