@@ -1,7 +1,7 @@
 <template>
   <div>
     <v-btn class="filter-element" size="small" @click="dialog = true">
-      Add property value filter
+      Property value filter
     </v-btn>
     <v-dialog v-model="dialog" max-width="500px">
       <v-card>
@@ -22,12 +22,10 @@
               <v-checkbox
                 :model-value="isPropertyPathFiltered(propertyPath)"
                 @update:model-value="togglePropertyPathFiltering(propertyPath)"
+                :label="getPropertyFullName(propertyPath)"
                 density="compact"
                 hide-details
               />
-              <v-list-item-title>
-                {{ getPropertyFullName(propertyPath) }}
-              </v-list-item-title>
             </v-list-item>
           </v-list>
         </v-card-text>
