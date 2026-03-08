@@ -21,6 +21,7 @@
           class="smart-overflow"
           :breadcrumb="true"
           :selectable="true"
+          :prevent-dataset-navigation="true"
           @selected="selectAddDatasetFolder"
           v-model:location="option.datasetSelectLocation"
           :initial-items-per-page="-1"

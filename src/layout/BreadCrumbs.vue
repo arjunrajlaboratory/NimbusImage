@@ -117,6 +117,7 @@
     <!-- Dialog to add a dataset to the current collection -->
     <v-dialog
       content-class="smart-overflow"
+      class="add-dataset-dialog"
       v-model="addDatasetFlag"
       width="60%"
     >
@@ -262,7 +263,7 @@ function addedDatasets(_datasetIds: string[], datasetViews: IDatasetView[]) {
   refreshItems(true);
   addDatasetFlag.value = false;
   if (datasetViews[0]) {
-    goToView(datasetViews[0].id);
+    store.setDatasetViewId({ id: datasetViews[0].id });
   }
 }
 
@@ -560,5 +561,9 @@ defineExpose({
 
 .v-alert__content {
   min-width: 0;
+}
+
+.add-dataset-dialog.v-dialog {
+  width: auto;
 }
 </style>
