@@ -7,9 +7,13 @@
     />
     <v-text-field
       v-model="tagSearchFilter"
-      style="max-width: 150px"
-      placeholder="Filter tags by..."
+      style="min-width: 75px; max-width: 150px"
+      placeholder="Filter"
       class="ma-1"
+      density="compact"
+      variant="underlined"
+      hide-details
+      single-line
     />
     <v-chip-group
       @update:model-value="setTagsFromUserInput($event)"
