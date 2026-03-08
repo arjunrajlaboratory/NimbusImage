@@ -38,19 +38,7 @@ vi.mock("@/girder/components", () => ({
   },
 }));
 
-vi.mock("@/girder", () => ({
-  vuetifyConfig: {
-    icons: {
-      values: {
-        box_com: "mdi-package",
-        collection: "mdi-file-tree",
-        file: "mdi-file",
-        folder: "mdi-folder",
-        user: "mdi-account",
-      },
-    },
-  },
-}));
+vi.mock("@/girder", () => ({}));
 
 vi.mock("@/utils/girderSelectable", () => ({
   isDatasetFolder: vi.fn(() => false),
@@ -273,55 +261,55 @@ describe("CustomFileManager", () => {
       vi.mocked(isDatasetFolder).mockReturnValue(true);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.iconFromItem({ _modelType: "folder" })).toBe("box_com");
+      expect(vm.iconFromItem({ _modelType: "folder" })).toBe("$box_com");
     });
 
-    it("returns collection for configuration items", () => {
+    it("returns $collection for configuration items", () => {
       vi.mocked(isDatasetFolder).mockReturnValue(false);
       vi.mocked(isConfigurationItem).mockReturnValue(true);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.iconFromItem({ _modelType: "item" })).toBe("collection");
+      expect(vm.iconFromItem({ _modelType: "item" })).toBe("$collection");
     });
 
-    it("returns folder for folder model type", () => {
+    it("returns $folder for folder model type", () => {
       vi.mocked(isDatasetFolder).mockReturnValue(false);
       vi.mocked(isConfigurationItem).mockReturnValue(false);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.iconFromItem({ _modelType: "folder" })).toBe("folder");
+      expect(vm.iconFromItem({ _modelType: "folder" })).toBe("$folder");
     });
 
-    it("returns user for user model type", () => {
+    it("returns $user for user model type", () => {
       vi.mocked(isDatasetFolder).mockReturnValue(false);
       vi.mocked(isConfigurationItem).mockReturnValue(false);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.iconFromItem({ _modelType: "user" })).toBe("user");
+      expect(vm.iconFromItem({ _modelType: "user" })).toBe("$user");
     });
 
-    it("returns file for file/item/upenn_collection model types", () => {
+    it("returns $file for file/item/upenn_collection model types", () => {
       vi.mocked(isDatasetFolder).mockReturnValue(false);
       vi.mocked(isConfigurationItem).mockReturnValue(false);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.iconFromItem({ _modelType: "file" })).toBe("file");
-      expect(vm.iconFromItem({ _modelType: "item" })).toBe("file");
-      expect(vm.iconFromItem({ _modelType: "upenn_collection" })).toBe("file");
+      expect(vm.iconFromItem({ _modelType: "file" })).toBe("$file");
+      expect(vm.iconFromItem({ _modelType: "item" })).toBe("$file");
+      expect(vm.iconFromItem({ _modelType: "upenn_collection" })).toBe("$file");
     });
   });
 
   describe("iconToMdi", () => {
-    it("returns mapped value from vuetifyConfig", () => {
+    it("passes through icon aliases directly", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.iconToMdi("box_com")).toBe("mdi-package");
+      expect(vm.iconToMdi("$box_com")).toBe("$box_com");
     });
 
-    it("falls back to mdi- prefix for unknown icons", () => {
+    it("passes through any icon string directly", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.iconToMdi("unknown")).toBe("mdi-unknown");
+      expect(vm.iconToMdi("mdi-folder")).toBe("mdi-folder");
     });
   });
 
@@ -335,7 +323,7 @@ describe("CustomFileManager", () => {
       const vm = wrapper.vm as any;
       const item = { _id: "item1", _modelType: "folder" } as any;
       vm.renderItem(item);
-      expect(item.icon).toBe("folder");
+      expect(item.icon).toBe("$folder");
     });
 
     it("triggers addChipPromise for dataset items", () => {

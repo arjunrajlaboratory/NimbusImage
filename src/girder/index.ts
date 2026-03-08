@@ -2,13 +2,6 @@ export { RestClient } from "@girder/components";
 import type { RestClient as RCType } from "@girder/components";
 export type RestClientInstance = InstanceType<typeof RCType>;
 
-// Stub for vuetifyConfig icon mapping (was from @girder/components v2)
-export const vuetifyConfig = {
-  icons: {
-    values: {} as Record<string, string>,
-  },
-};
-
 export interface IGirderAssetstore {
   _id: string;
   name: string;
