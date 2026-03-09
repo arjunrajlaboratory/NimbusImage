@@ -16,6 +16,7 @@ export interface ICsvExportOptions {
   propertyPaths?: string[][];
   annotationIds?: string[];
   undefinedValue?: "" | "NA" | "NaN";
+  delimiter?: "," | "\t";
   filename?: string;
 }
 
@@ -99,6 +100,7 @@ export default class ExportAPI {
       propertyPaths: options.propertyPaths || [],
       annotationIds: options.annotationIds || [],
       undefinedValue: options.undefinedValue ?? "",
+      delimiter: options.delimiter || ",",
       filename: options.filename || "export.csv",
     };
 
