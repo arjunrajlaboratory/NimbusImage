@@ -1,5 +1,5 @@
 import { RestClientInstance } from "@/girder";
-import { IProject, IProjectAccessList } from "./model";
+import { IProject, IProjectAccessList, IProjectZenodo } from "./model";
 
 /**
  * Extract string ID from MongoDB ObjectId (handles both {$oid: string} format and plain strings)
@@ -40,6 +40,18 @@ function toProject(data: any): IProject {
         keywords: [],
       },
       status: data.meta?.status || "draft",
+      zenodo: data.meta?.zenodo
+        ? {
+            depositionId: data.meta.zenodo.depositionId,
+            depositionUrl: data.meta.zenodo.depositionUrl,
+            doi: data.meta.zenodo.doi,
+            status: data.meta.zenodo.status || "none",
+            sandbox: data.meta.zenodo.sandbox ?? false,
+            progress: data.meta.zenodo.progress || null,
+            error: data.meta.zenodo.error || null,
+            lastPublished: data.meta.zenodo.lastPublished,
+          }
+        : undefined,
     },
   };
 }

@@ -299,6 +299,12 @@
       </v-card-actions>
     </v-card>
 
+    <!-- Zenodo Publication Card -->
+    <zenodo-publish
+      :project="project"
+      @updated="refreshProject"
+    />
+
     <!-- Publication Metadata Card -->
     <v-card class="mb-4">
       <v-card-title>Publication Metadata</v-card-title>
@@ -460,6 +466,7 @@ import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vue";
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
 import ShareProject from "@/components/ShareProject.vue";
+import ZenodoPublish from "@/components/ZenodoPublish.vue";
 import { formatSize } from "@/utils/conversion";
 
 // Suppress unused import warnings — auto-registered in <script setup>
@@ -467,6 +474,7 @@ void AlertDialog;
 void AddDatasetToProjectDialog;
 void AddCollectionToProjectFilterDialog;
 void ShareProject;
+void ZenodoPublish;
 
 const router = useRouter();
 
@@ -988,6 +996,12 @@ function onDatasetAdded() {
 function onCollectionAdded() {
   addCollectionDialog.value = false;
   fetchCollectionInfo();
+}
+
+async function refreshProject() {
+  if (project.value) {
+    await projects.fetchProject(project.value.id);
+  }
 }
 
 async function saveMetadata() {

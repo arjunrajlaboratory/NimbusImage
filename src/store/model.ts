@@ -510,6 +510,30 @@ export function getProjectStatusColor(
   }
 }
 
+export type TZenodoStatus =
+  | "none"
+  | "uploading"
+  | "draft"
+  | "published"
+  | "error";
+
+export interface IZenodoProgress {
+  current: number;
+  total: number;
+  message: string;
+}
+
+export interface IProjectZenodo {
+  depositionId?: number;
+  depositionUrl?: string;
+  doi?: string;
+  status: TZenodoStatus;
+  sandbox: boolean;
+  progress?: IZenodoProgress | null;
+  error?: string | null;
+  lastPublished?: string;
+}
+
 export interface IProject {
   id: string;
   name: string;
@@ -524,6 +548,7 @@ export interface IProject {
     collections: IProjectCollectionReference[];
     metadata: IProjectMetadata;
     status: TProjectStatus;
+    zenodo?: IProjectZenodo;
   };
 }
 

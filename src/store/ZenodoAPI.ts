@@ -2,6 +2,41 @@ import { RestClientInstance, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
 import store from "@/store";
 
+// --- Zenodo Publish/Credential types ---
+
+export interface IZenodoCredentialStatus {
+  hasToken: boolean;
+  sandbox: boolean;
+}
+
+export interface IZenodoUploadResponse {
+  message: string;
+  projectId: string;
+  totalFiles: number;
+  totalSize: number;
+}
+
+export interface IZenodoStatusResponse {
+  status: string;
+  depositionId?: number;
+  depositionUrl?: string;
+  doi?: string;
+  sandbox: boolean;
+  progress?: {
+    current: number;
+    total: number;
+    message: string;
+  } | null;
+  error?: string | null;
+  lastPublished?: string;
+}
+
+export interface IZenodoPublishResponse {
+  message: string;
+  doi: string;
+  url: string;
+}
+
 /**
  * Interface for Zenodo file metadata
  */
@@ -411,5 +446,72 @@ export default class ZenodoAPI {
       );
       throw error;
     }
+  }
+
+  // --- Zenodo Publish / Credential Methods ---
+  // These use the Girder backend as a proxy to Zenodo.
+
+  /**
+   * Check if the current user has Zenodo credentials configured
+   */
+  async getCredentials(): Promise<IZenodoCredentialStatus> {
+    const response = await this.client.get("zenodo_credentials");
+    return response.data;
+  }
+
+  /**
+   * Store Zenodo API credentials (encrypted server-side)
+   */
+  async setCredentials(
+    token: string,
+    sandbox: boolean,
+  ): Promise<{ success: boolean }> {
+    const response = await this.client.put("zenodo_credentials", {
+      token,
+      sandbox,
+    });
+    return response.data;
+  }
+
+  /**
+   * Remove stored Zenodo credentials
+   */
+  async deleteCredentials(): Promise<{ success: boolean }> {
+    const response = await this.client.delete("zenodo_credentials");
+    return response.data;
+  }
+
+  /**
+   * Start uploading a project to Zenodo as a draft
+   */
+  async uploadProject(projectId: string): Promise<IZenodoUploadResponse> {
+    const response = await this.client.post("zenodo/upload", {
+      projectId,
+    });
+    return response.data;
+  }
+
+  /**
+   * Get the current Zenodo upload/publish status for a project
+   */
+  async getUploadStatus(projectId: string): Promise<IZenodoStatusResponse> {
+    const response = await this.client.get(`zenodo/status/${projectId}`);
+    return response.data;
+  }
+
+  /**
+   * Publish a Zenodo draft deposition (mints DOI, irreversible)
+   */
+  async publishProject(projectId: string): Promise<IZenodoPublishResponse> {
+    const response = await this.client.post(`zenodo/publish/${projectId}`);
+    return response.data;
+  }
+
+  /**
+   * Discard an unpublished Zenodo draft
+   */
+  async discardDraft(projectId: string): Promise<{ message: string }> {
+    const response = await this.client.post(`zenodo/discard/${projectId}`);
+    return response.data;
   }
 }
