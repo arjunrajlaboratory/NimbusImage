@@ -407,7 +407,7 @@
     </v-dialog>
 
     <!-- Add Dataset Dialog -->
-    <v-dialog v-model="addDatasetDialog" width="90%">
+    <v-dialog v-model="addDatasetDialog" width="70%" class="wide-dialog">
       <add-dataset-to-project-dialog
         v-if="project"
         :project="project"
@@ -419,7 +419,7 @@
     </v-dialog>
 
     <!-- Add Collection Dialog -->
-    <v-dialog v-model="addCollectionDialog" width="90%">
+    <v-dialog v-model="addCollectionDialog" width="70%" class="wide-dialog">
       <add-collection-to-project-filter-dialog
         v-if="project"
         :project="project"
@@ -1125,5 +1125,14 @@ defineExpose({
 // Fix alignment in list groups
 :deep(.v-list-group__header) {
   align-items: center;
+}
+</style>
+
+<style lang="scss">
+// Override Vuetify 3's default .v-dialog { width: 50% } on outer overlay element.
+// Without this, width="70%" on v-dialog only applies to the inner .v-overlay__content,
+// making the actual dialog 90% of 50% = 45% of viewport. (See VUE3_STEPS.md P14)
+.wide-dialog.v-dialog {
+  width: auto;
 }
 </style>
