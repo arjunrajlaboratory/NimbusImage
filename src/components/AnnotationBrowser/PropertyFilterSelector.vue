@@ -22,7 +22,7 @@
               <v-checkbox
                 :model-value="isPropertyPathFiltered(propertyPath)"
                 @update:model-value="togglePropertyPathFiltering(propertyPath)"
-                :label="getPropertyFullName(propertyPath)"
+                :label="getPropertyFullName(propertyPath) ?? undefined"
                 density="compact"
                 hide-details
               />
@@ -44,12 +44,12 @@ import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 
 const dialog = ref(false);
-const searchQuery = ref("");
+const searchQuery = ref<string | null>("");
 
 const allPropertyPaths = computed(() => propertyStore.computedPropertyPaths);
 
 const filteredPropertyPaths = computed(() => {
-  const query = searchQuery.value.toLowerCase();
+  const query = (searchQuery.value ?? "").toLowerCase();
   return allPropertyPaths.value.filter((path: string[]) => {
     const fullName = getPropertyFullName(path)?.toLowerCase();
     return !query || (fullName && fullName.includes(query));
