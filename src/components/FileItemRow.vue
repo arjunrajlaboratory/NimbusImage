@@ -48,15 +48,23 @@
     </v-tooltip>
     <v-spacer />
     <span
-      v-if="debouncedChipsPerItemId[item._id]?.type === 'configuration'"
+      v-if="
+        debouncedChipsPerItemId[item._id]?.type === 'configuration' &&
+        debouncedChipsPerItemId[item._id]?.chips?.length > 1
+      "
       class="chip-label"
       >Datasets in collection:</span
     >
     <span
       v-else-if="debouncedChipsPerItemId[item._id]?.type === 'dataset'"
       class="chip-label"
-      >In collections:</span
     >
+      {{
+        debouncedChipsPerItemId[item._id]?.chips?.length > 1
+          ? "In collections:"
+          : "Not in a collection"
+      }}
+    </span>
     <div class="d-flex flex-wrap">
       <!-- Rest of the chips -->
       <v-chip
