@@ -14,6 +14,7 @@ vi.mock("@/store", () => ({
       getDatasetView: (...args: any[]) => mockGetDatasetView(...args),
       findDatasetViews: (...args: any[]) => mockFindDatasetViews(...args),
     },
+    setDatasetViewId: vi.fn(),
   },
   girderUrlFromApiRoot: (apiRoot: string) => {
     const suffix = "/api/v1";
@@ -355,21 +356,17 @@ describe("BreadCrumbs", () => {
 
   // --- addedDatasets ---
 
-  it("addedDatasets navigates to first dataset view", async () => {
+  it("addedDatasets sets dataset view in store", async () => {
     mockWatchFolder.mockReturnValue(null);
     mockGetFolder.mockResolvedValue(null);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
+    const { default: store } = await import("@/store");
     vm.addedDatasets(
       ["ds1"],
       [{ id: "view1", datasetId: "ds1", configurationId: "cfg1" }],
     );
-    expect(mockRouter.push).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "datasetview",
-        params: { datasetViewId: "view1" },
-      }),
-    );
+    expect(store.setDatasetViewId).toHaveBeenCalledWith({ id: "view1" });
   });
 
   // --- datasetId computed ---

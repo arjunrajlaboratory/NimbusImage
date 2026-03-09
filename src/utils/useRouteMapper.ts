@@ -127,10 +127,11 @@ export function useRouteMapper(
     });
   }
 
-  // Replace beforeRouteUpdate
+  // Replace beforeRouteUpdate — watch fullPath so param changes within the
+  // same route name are detected (reactive proxy identity never changes).
   watch(
-    () => route,
-    (newRoute) => syncFromRoute(newRoute),
+    () => route.fullPath,
+    () => syncFromRoute(route),
   );
 
   // Sync from route during setup (not onMounted) so that store setters

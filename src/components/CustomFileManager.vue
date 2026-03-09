@@ -125,7 +125,6 @@ import FileManagerOptions from "./FileManagerOptions.vue";
 import FileItemRow from "./FileItemRow.vue";
 import { Search as GirderSearch } from "@/girder/components";
 import { FileManager as GirderFileManager } from "@/girder/components";
-import { vuetifyConfig } from "@/girder";
 import { logError } from "@/utils/log";
 import AlertDialog from "@/components/AlertDialog.vue";
 
@@ -148,6 +147,7 @@ const props = withDefaults(
     clickableChips?: boolean;
     location?: IGirderLocation | null;
     useDefaultLocation?: boolean;
+    preventDatasetNavigation?: boolean;
   }>(),
   {
     menuEnabled: true,
@@ -156,6 +156,7 @@ const props = withDefaults(
     clickableChips: true,
     location: null,
     useDefaultLocation: true,
+    preventDatasetNavigation: false,
   },
 );
 
@@ -201,6 +202,22 @@ const currentLocation = computed({
     return props.location;
   },
   set(value: IGirderLocation | null) {
+    if (
+      props.preventDatasetNavigation &&
+      value &&
+      "_modelType" in value &&
+      isDatasetFolder(value as IGirderSelectAble)
+    ) {
+      const selectable = value as IGirderSelectAble;
+      const idx = selected.value.findIndex((s) => s._id === selectable._id);
+      if (idx >= 0) {
+        selected.value.splice(idx, 1);
+      } else {
+        selected.value.push(selectable);
+      }
+      emitSelected();
+      return;
+    }
     emit("update:location", value);
   },
 });
@@ -249,27 +266,28 @@ function searchInput(value: IGirderSelectAble) {
 }
 
 function iconToMdi(icon: string) {
-  return vuetifyConfig.icons.values[icon] || `mdi-${icon}`;
+  // Icons are already $-prefixed aliases or mdi- icons; pass through directly
+  return icon;
 }
 
 function iconFromItem(selectable: IGirderSelectAble) {
   if (isDatasetFolder(selectable)) {
-    return "box_com";
+    return "$box_com";
   }
   if (isConfigurationItem(selectable)) {
-    return "collection";
+    return "$collection";
   }
   switch (selectable._modelType) {
     case "file":
     case "item":
     case "upenn_collection":
-      return "file";
+      return "$file";
     case "folder":
-      return "folder";
+      return "$folder";
     case "user":
-      return "user";
+      return "$user";
     default:
-      return "file";
+      return "$file";
   }
 }
 
@@ -538,7 +556,7 @@ defineExpose({
 
 // Watchers
 watch(isLoggedIn, fetchLocation);
-watch([selected, () => props.selectable], emitSelected);
+watch([selected, () => props.selectable], emitSelected, { deep: true });
 
 // Lifecycle
 onMounted(fetchLocation);
@@ -698,21 +716,15 @@ onBeforeUnmount(() => {
 }
 
 // Icon color styles (unscoped to penetrate child components)
-.itemRow .v-icon.mdi-package {
-  // targets box_com icon (datasets)
-  color: #e57373;
+// The icon is rendered by DataTable outside the #row slot,
+// so we target it via the file manager wrapper, not .itemRow.
+.custom-file-manager-wrapper .v-icon.mdi-package {
+  // datasets - teal to match primary theme color
+  color: #26a69a;
 }
-.itemRow .v-icon.mdi-file-tree {
-  // targets collection icon (configurations)
-  color: #4baeff;
-}
-.itemRow .v-icon.mdi-file {
-  // targets regular files
-  color: #ee8bff;
-}
-.itemRow .v-icon.mdi-folder {
-  // targets folders
-  color: #b0a69a;
+.custom-file-manager-wrapper .v-icon.mdi-file-tree {
+  // configurations - teal to match primary theme color
+  color: #26a69a;
 }
 </style>
 
