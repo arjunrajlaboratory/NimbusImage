@@ -1,12 +1,19 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="500px" @update:model-value="$emit('update:modelValue', $event)">
+  <v-dialog
+    :model-value="modelValue"
+    max-width="500px"
+    @update:model-value="$emit('update:modelValue', $event)"
+  >
     <v-card>
       <v-card-title>Zenodo API Token</v-card-title>
       <v-card-text>
         <p class="text-body-2 mb-4">
           Enter your Zenodo personal access token. You can create one at
-          <strong>Zenodo &gt; Account Settings &gt; Applications &gt; New Token</strong>.
-          Required scopes: <code>deposit:write</code> and <code>deposit:actions</code>.
+          <strong
+            >Zenodo &gt; Account Settings &gt; Applications &gt; New
+            Token</strong
+          >. Required scopes: <code>deposit:write</code> and
+          <code>deposit:actions</code>.
         </p>
         <v-text-field
           v-model="token"

@@ -1,5 +1,5 @@
 import { RestClientInstance } from "@/girder";
-import { IProject, IProjectAccessList, IProjectZenodo } from "./model";
+import { IProject, IProjectAccessList } from "./model";
 
 /**
  * Extract string ID from MongoDB ObjectId (handles both {$oid: string} format and plain strings)

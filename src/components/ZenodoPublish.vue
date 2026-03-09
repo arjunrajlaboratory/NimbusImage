@@ -65,9 +65,7 @@
 
       <!-- Published info -->
       <div v-if="zenodoDoi" class="mb-3">
-        <div class="text-body-2">
-          <strong>DOI:</strong> {{ zenodoDoi }}
-        </div>
+        <div class="text-body-2"><strong>DOI:</strong> {{ zenodoDoi }}</div>
         <div v-if="lastPublished" class="text-caption text-grey">
           Published: {{ new Date(lastPublished).toLocaleDateString() }}
         </div>
@@ -125,15 +123,16 @@
         @click="startUpload"
       >
         <v-icon start>mdi-cloud-upload</v-icon>
-        {{ zenodoStatus === 'published' ? "Upload New Version" : "Upload to Zenodo" }}
+        {{
+          zenodoStatus === "published"
+            ? "Upload New Version"
+            : "Upload to Zenodo"
+        }}
       </v-btn>
     </v-card-actions>
 
     <!-- Token dialog -->
-    <zenodo-token-dialog
-      v-model="tokenDialog"
-      @saved="onTokenSaved"
-    />
+    <zenodo-token-dialog v-model="tokenDialog" @saved="onTokenSaved" />
 
     <!-- Publish confirmation dialog -->
     <v-dialog v-model="confirmPublish" max-width="33vw">
@@ -144,18 +143,14 @@
             This action is <strong>irreversible</strong>.
           </v-alert>
           <p>
-            Publishing will mint a permanent DOI for this deposition. The
-            record cannot be deleted after publishing. You can only create new
+            Publishing will mint a permanent DOI for this deposition. The record
+            cannot be deleted after publishing. You can only create new
             versions.
           </p>
         </v-card-text>
         <v-card-actions class="d-flex justify-end gap-2">
           <v-btn @click="confirmPublish = false">Cancel</v-btn>
-          <v-btn
-            color="success"
-            :loading="publishing"
-            @click="doPublish"
-          >
+          <v-btn color="success" :loading="publishing" @click="doPublish">
             Publish
           </v-btn>
         </v-card-actions>
@@ -209,7 +204,9 @@ const lastPublished = computed(() => zenodoMeta.value?.lastPublished);
 
 const progressPercent = computed(() => {
   if (!localProgress.value || !localProgress.value.total) return 0;
-  return Math.round((localProgress.value.current / localProgress.value.total) * 100);
+  return Math.round(
+    (localProgress.value.current / localProgress.value.total) * 100,
+  );
 });
 
 const canUpload = computed(
@@ -293,7 +290,9 @@ function trackJob(jobId: string) {
       const status = jobData.status;
       if (
         status !== undefined &&
-        [jobStates.success, jobStates.error, jobStates.cancelled].includes(status)
+        [jobStates.success, jobStates.error, jobStates.cancelled].includes(
+          status,
+        )
       ) {
         localProgress.value = null;
         emit("updated");
@@ -354,7 +353,7 @@ async function recoverActiveJob() {
     const response = await store.girderRest.get("job", {
       params: {
         types: JSON.stringify(["zenodo_upload"]),
-        statuses: JSON.stringify([0, 1, 2]),  // inactive, queued, running
+        statuses: JSON.stringify([0, 1, 2]), // inactive, queued, running
         limit: 1,
         sort: "created",
         sortdir: -1,

@@ -300,10 +300,7 @@
     </v-card>
 
     <!-- Zenodo Publication Card -->
-    <zenodo-publish
-      :project="project"
-      @updated="refreshProject"
-    />
+    <zenodo-publish :project="project" @updated="refreshProject" />
 
     <!-- Publication Metadata Card -->
     <v-card class="mb-4">
