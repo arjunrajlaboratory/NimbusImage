@@ -88,7 +88,7 @@ defineExpose({
   flex-wrap: wrap;
   align-items: center;
   align-content: center;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .filter-main-container .v-text-field {
@@ -99,15 +99,16 @@ defineExpose({
   display: flex;
   align-items: center;
   align-content: center;
-  flex: 1;
+  flex: 0 0 auto;
   max-width: fit-content;
-  margin-top: 12px;
-  margin-bottom: 12px;
-  margin-left: 10px;
-  margin-right: 10px;
+  margin: 4px 4px;
 }
 
 #shape-filter .v-select__slot {
   max-width: 70px;
+}
+
+.filter-main-container .v-switch {
+  flex: 0 0 auto;
 }
 </style>
