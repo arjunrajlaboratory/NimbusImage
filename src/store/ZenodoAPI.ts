@@ -12,6 +12,7 @@ export interface IZenodoCredentialStatus {
 export interface IZenodoUploadResponse {
   message: string;
   projectId: string;
+  jobId: string;
   totalFiles: number;
   totalSize: number;
 }

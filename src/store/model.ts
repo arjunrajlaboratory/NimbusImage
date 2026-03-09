@@ -228,6 +228,7 @@ export enum ProgressType {
   HISTOGRAM_CACHE = "HISTOGRAM_CACHE",
   MOVIE_GENERATION = "MOVIE_GENERATION",
   SNAPSHOT_BATCH_DOWNLOAD = "SNAPSHOT_BATCH_DOWNLOAD",
+  ZENODO_UPLOAD = "ZENODO_UPLOAD",
   GENERIC = "GENERIC",
 }
 
@@ -268,7 +269,8 @@ export const PROGRESS_TYPE_ORDER = new Map<ProgressType, number>([
   [ProgressType.HISTOGRAM_CACHE, 17],
   [ProgressType.MOVIE_GENERATION, 18],
   [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 19],
-  [ProgressType.GENERIC, 20],
+  [ProgressType.ZENODO_UPLOAD, 20],
+  [ProgressType.GENERIC, 21],
 ]);
 
 export interface IProgress {

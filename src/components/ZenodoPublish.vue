@@ -40,8 +40,8 @@
       </div>
 
       <!-- Upload progress -->
-      <div v-if="zenodoStatus === 'uploading' && progress" class="mb-3">
-        <div class="text-body-2 mb-1">{{ progress.message }}</div>
+      <div v-if="zenodoStatus === 'uploading' && localProgress" class="mb-3">
+        <div class="text-body-2 mb-1">{{ localProgress.message }}</div>
         <v-progress-linear
           :model-value="progressPercent"
           color="primary"
@@ -49,7 +49,7 @@
           rounded
         />
         <div class="text-caption text-grey mt-1">
-          {{ progress.current }} / {{ progress.total }} files
+          {{ localProgress.current }} / {{ localProgress.total }} files
         </div>
       </div>
 
@@ -165,10 +165,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import store from "@/store";
+import jobs from "@/store/jobs";
 import { logError } from "@/utils/log";
-import { IProject } from "@/store/model";
+import { IProject, IJobEventData } from "@/store/model";
+import { jobStates } from "@/store/jobConstants";
 import ZenodoTokenDialog from "./ZenodoTokenDialog.vue";
 
 void ZenodoTokenDialog;
@@ -189,7 +191,13 @@ const isSandbox = ref(false);
 const uploading = ref(false);
 const publishing = ref(false);
 const discarding = ref(false);
-let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+// Local progress state, updated from job SSE events
+const localProgress = ref<{
+  current: number;
+  total: number;
+  message: string;
+} | null>(null);
 
 // Computed from project zenodo meta
 const zenodoMeta = computed(() => props.project.meta.zenodo);
@@ -197,12 +205,11 @@ const zenodoStatus = computed(() => zenodoMeta.value?.status ?? "none");
 const zenodoDoi = computed(() => zenodoMeta.value?.doi);
 const depositionUrl = computed(() => zenodoMeta.value?.depositionUrl);
 const zenodoError = computed(() => zenodoMeta.value?.error);
-const progress = computed(() => zenodoMeta.value?.progress);
 const lastPublished = computed(() => zenodoMeta.value?.lastPublished);
 
 const progressPercent = computed(() => {
-  if (!progress.value || !progress.value.total) return 0;
-  return Math.round((progress.value.current / progress.value.total) * 100);
+  if (!localProgress.value || !localProgress.value.total) return 0;
+  return Math.round((localProgress.value.current / localProgress.value.total) * 100);
 });
 
 const canUpload = computed(
@@ -257,11 +264,56 @@ function onTokenSaved() {
   checkToken();
 }
 
+function trackJob(jobId: string) {
+  jobs.addJob({
+    jobId,
+    datasetId: null,
+    eventCallback: (jobData: IJobEventData) => {
+      // Parse progress from job log text (JSON lines)
+      const text = jobData.text;
+      if (text && typeof text === "string") {
+        for (const line of text.split("\n")) {
+          if (!line) continue;
+          try {
+            const parsed = JSON.parse(line);
+            if (typeof parsed.progress === "number" && parsed.message) {
+              localProgress.value = {
+                current: parsed.current ?? 0,
+                total: parsed.total ?? 0,
+                message: parsed.message,
+              };
+            }
+          } catch {
+            // not JSON, skip
+          }
+        }
+      }
+
+      // Handle terminal states
+      const status = jobData.status;
+      if (
+        status !== undefined &&
+        [jobStates.success, jobStates.error, jobStates.cancelled].includes(status)
+      ) {
+        localProgress.value = null;
+        emit("updated");
+      }
+    },
+  });
+}
+
 async function startUpload() {
   uploading.value = true;
   try {
-    await store.zenodoAPI.uploadProject(props.project.id);
-    startPolling();
+    const response = await store.zenodoAPI.uploadProject(props.project.id);
+    // Initialize local progress
+    localProgress.value = {
+      current: 0,
+      total: response.totalFiles,
+      message: "Starting upload...",
+    };
+    // Track job via SSE
+    trackJob(response.jobId);
     emit("updated");
   } catch (error: any) {
     logError("Failed to start Zenodo upload", error);
@@ -295,48 +347,41 @@ async function discardDraft() {
   }
 }
 
-async function pollStatus() {
+async function recoverActiveJob() {
+  // If we load the page while an upload is in progress,
+  // try to find the active job and re-subscribe to it
   try {
-    const status = await store.zenodoAPI.getUploadStatus(props.project.id);
-    if (status.status !== "uploading") {
-      stopPolling();
-      emit("updated");
+    const response = await store.girderRest.get("job", {
+      params: {
+        types: JSON.stringify(["zenodo_upload"]),
+        statuses: JSON.stringify([0, 1, 2]),  // inactive, queued, running
+        limit: 1,
+        sort: "created",
+        sortdir: -1,
+      },
+    });
+    const activeJobs = response.data;
+    if (activeJobs.length > 0) {
+      trackJob(activeJobs[0]._id);
+      // Initialize progress from project meta
+      const progress = zenodoMeta.value?.progress;
+      if (progress) {
+        localProgress.value = {
+          current: progress.current,
+          total: progress.total,
+          message: progress.message,
+        };
+      }
     }
   } catch {
-    // Polling failure is not critical
+    // Not critical — status will still show from project meta
   }
 }
 
-function startPolling() {
-  stopPolling();
-  pollInterval = setInterval(pollStatus, 3000);
-}
-
-function stopPolling() {
-  if (pollInterval) {
-    clearInterval(pollInterval);
-    pollInterval = null;
-  }
-}
-
-// Start polling if upload is already in progress
-watch(
-  () => zenodoStatus.value,
-  (status) => {
-    if (status === "uploading") {
-      startPolling();
-    } else {
-      stopPolling();
-    }
-  },
-  { immediate: true },
-);
-
-onMounted(() => {
+onMounted(async () => {
   checkToken();
-});
-
-onUnmounted(() => {
-  stopPolling();
+  if (zenodoStatus.value === "uploading") {
+    await recoverActiveJob();
+  }
 });
 </script>

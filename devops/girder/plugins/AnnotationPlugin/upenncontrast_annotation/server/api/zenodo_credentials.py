@@ -7,6 +7,7 @@ key is read from the ZENODO_ENCRYPTION_KEY environment
 variable (or a default for development).
 """
 
+import logging
 import os
 import base64
 import hashlib
@@ -18,14 +19,19 @@ from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
 from girder.models.user import User
 
+log = logging.getLogger(__name__)
+
+_DEV_KEY_WARNING_LOGGED = False
+
 
 def _get_fernet():
     """Get a Fernet instance using the server encryption
     key.
 
-    Uses ZENODO_ENCRYPTION_KEY env var. If not set, derives
-    a key from a default passphrase (development only).
+    Uses ZENODO_ENCRYPTION_KEY env var. If not set, falls
+    back to a dev-only default and logs a warning.
     """
+    global _DEV_KEY_WARNING_LOGGED
     env_key = os.environ.get("ZENODO_ENCRYPTION_KEY")
     if env_key:
         # If it's already a valid Fernet key (44 chars
@@ -35,10 +41,26 @@ def _get_fernet():
             return Fernet(env_key.encode())
         except Exception:
             pass
-    # Derive a key from a passphrase
-    passphrase = (
-        env_key or "nimbus-zenodo-dev-key-change-in-prod"
-    )
+        # env_key is set but not a valid Fernet key;
+        # derive one from it as a passphrase.
+        key = base64.urlsafe_b64encode(
+            hashlib.sha256(
+                env_key.encode()
+            ).digest()
+        )
+        return Fernet(key)
+
+    # No env var set — use dev-only default.
+    if not _DEV_KEY_WARNING_LOGGED:
+        log.warning(
+            "ZENODO_ENCRYPTION_KEY is not set. Using "
+            "a hardcoded development key. Stored tokens "
+            "are NOT securely encrypted. Set "
+            "ZENODO_ENCRYPTION_KEY in production."
+        )
+        _DEV_KEY_WARNING_LOGGED = True
+
+    passphrase = "nimbus-zenodo-dev-key-change-in-prod"
     key = base64.urlsafe_b64encode(
         hashlib.sha256(passphrase.encode()).digest()
     )

@@ -8,13 +8,8 @@ Provides endpoints to:
 """
 
 import datetime
-import io
 import logging
-import threading
 
-import orjson
-
-from bson import ObjectId
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
@@ -24,33 +19,14 @@ from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
 from girder.models.user import User
+from girder_jobs.models.job import Job as JobModel
 
-from ..helpers.serialization import orJsonDefaults
 from ..helpers.zenodo_client import ZenodoClient, ZenodoError
-from ..models.annotation import Annotation as AnnotationModel
 from ..models.collection import Collection as CollectionModel
-from ..models.connections import (
-    AnnotationConnection as ConnectionModel,
-)
-from ..models.datasetView import DatasetView as DatasetViewModel
 from ..models.project import Project as ProjectModel
-from ..models.property import AnnotationProperty as PropertyModel
-from ..models.propertyValues import (
-    AnnotationPropertyValues as PropertyValuesModel,
-)
 from .zenodo_credentials import decrypt_token
 
 log = logging.getLogger(__name__)
-
-# License ID mapping from project metadata to Zenodo
-LICENSE_MAP = {
-    "CC-BY-4.0": "cc-by-4.0",
-    "CC-BY-SA-4.0": "cc-by-sa-4.0",
-    "CC-BY-NC-4.0": "cc-by-nc-4.0",
-    "CC0-1.0": "cc-zero",
-    "MIT": "mit-license",
-    "Apache-2.0": "apache-2.0",
-}
 
 # 50 GB in bytes
 MAX_ZENODO_SIZE = 50 * 1024 * 1024 * 1024
@@ -64,12 +40,7 @@ class Zenodo(Resource):
         self.resourceName = "zenodo"
 
         self._projectModel = ProjectModel()
-        self._annotationModel = AnnotationModel()
-        self._connectionModel = ConnectionModel()
-        self._propertyModel = PropertyModel()
-        self._propertyValuesModel = PropertyValuesModel()
         self._collectionModel = CollectionModel()
-        self._datasetViewModel = DatasetViewModel()
 
         self.route("POST", ("upload",), self.upload)
         self.route("GET", ("status", ":projectId"),
@@ -112,22 +83,16 @@ class Zenodo(Resource):
     def _gatherProjectFiles(self, project, user):
         """Gather all files that would be uploaded.
 
-        Returns a list of dicts:
-        [{"name": str, "size": int, "type": str,
-          "datasetId"?: str, "collectionId"?: str}]
-
-        Used for pre-flight size/count validation.
+        Returns a list of dicts for pre-flight validation.
         """
         files = []
 
-        # Dataset source files
         for d in project['meta']['datasets']:
             dataset_id = d['datasetId']
             folder = Folder().load(
                 dataset_id, user=user,
                 level=AccessType.READ, exc=True,
             )
-            # Find items with large_image in this folder
             items = list(Item().find(
                 {'folderId': folder['_id']}
             ))
@@ -140,22 +105,16 @@ class Zenodo(Resource):
                         'name': f['name'],
                         'size': f.get('size', 0),
                         'type': 'image',
-                        'datasetId': str(dataset_id),
-                        'fileId': f['_id'],
-                        'itemId': item['_id'],
                     })
 
-            # Annotation JSON (estimate ~1MB per dataset)
             files.append({
                 'name': (
                     f"{folder['name']}_annotations.json"
                 ),
-                'size': 0,  # computed at upload time
+                'size': 0,
                 'type': 'annotations',
-                'datasetId': str(dataset_id),
             })
 
-        # Collection config JSONs
         for c in project['meta']['collections']:
             coll_id = c['collectionId']
             coll = self._collectionModel.load(
@@ -168,10 +127,8 @@ class Zenodo(Resource):
                     ),
                     'size': 0,
                     'type': 'config',
-                    'collectionId': str(coll_id),
                 })
 
-        # Manifest file
         files.append({
             'name': 'manifest.json',
             'size': 0,
@@ -179,435 +136,6 @@ class Zenodo(Resource):
         })
 
         return files
-
-    def _buildAnnotationJson(self, dataset_id):
-        """Build annotation export JSON for a dataset.
-
-        Reuses the same logic as the export endpoint.
-        Returns bytes.
-        """
-        ds_oid = (
-            ObjectId(dataset_id)
-            if isinstance(dataset_id, str)
-            else dataset_id
-        )
-
-        annotations = list(
-            self._annotationModel.find(
-                {'datasetId': ds_oid}
-            )
-        )
-        connections = list(
-            self._connectionModel.find(
-                {'datasetId': ds_oid}
-            )
-        )
-
-        # Get properties from all configs for this dataset
-        dataset_views = list(
-            self._datasetViewModel.collection.find(
-                {'datasetId': ds_oid}
-            )
-        )
-        config_ids = {
-            dv['configurationId'] for dv in dataset_views
-        }
-        property_ids = set()
-        for config_id in config_ids:
-            config = self._collectionModel.load(
-                config_id, force=True
-            )
-            if (config and 'meta' in config
-                    and 'propertyIds' in config['meta']):
-                for pid in config['meta']['propertyIds']:
-                    property_ids.add(ObjectId(pid))
-
-        properties = []
-        if property_ids:
-            properties = list(self._propertyModel.find(
-                {'_id': {'$in': list(property_ids)}}
-            ))
-
-        # Property values
-        prop_values = {}
-        cursor = self._propertyValuesModel.find(
-            {'datasetId': ds_oid}
-        )
-        for doc in cursor:
-            ann_id = str(doc['annotationId'])
-            prop_values[ann_id] = doc.get('values', {})
-
-        data = {
-            'annotations': annotations,
-            'annotationConnections': connections,
-            'annotationProperties': properties,
-            'annotationPropertyValues': prop_values,
-        }
-        return orjson.dumps(data, default=orJsonDefaults)
-
-    def _buildCollectionConfig(self, collection_id):
-        """Build a JSON config export for a collection.
-
-        Returns bytes.
-        """
-        coll = self._collectionModel.load(
-            collection_id, force=True
-        )
-        if not coll:
-            return orjson.dumps({})
-        # Export the full collection metadata
-        data = {
-            'name': coll.get('name', ''),
-            'description': coll.get('description', ''),
-            'meta': coll.get('meta', {}),
-        }
-        return orjson.dumps(data, default=orJsonDefaults)
-
-    def _buildManifest(self, project, uploaded_files):
-        """Build a manifest JSON describing the project.
-
-        :param project: The project document.
-        :param uploaded_files: List of dicts with upload
-            info (name, type, datasetId, etc).
-        :returns: bytes
-        """
-        manifest = {
-            'projectName': project['name'],
-            'projectDescription': project['description'],
-            'exportDate': (
-                datetime.datetime.utcnow().isoformat()
-            ),
-            'metadata': project['meta'].get(
-                'metadata', {}
-            ),
-            'datasets': [],
-            'collections': [],
-            'files': uploaded_files,
-        }
-
-        for d in project['meta']['datasets']:
-            folder = Folder().load(
-                d['datasetId'], force=True
-            )
-            manifest['datasets'].append({
-                'datasetId': str(d['datasetId']),
-                'name': (
-                    folder['name'] if folder else 'unknown'
-                ),
-                'addedDate': str(d['addedDate']),
-            })
-
-        for c in project['meta']['collections']:
-            coll = self._collectionModel.load(
-                c['collectionId'], force=True
-            )
-            manifest['collections'].append({
-                'collectionId': str(c['collectionId']),
-                'name': (
-                    coll['name'] if coll else 'unknown'
-                ),
-                'addedDate': str(c['addedDate']),
-            })
-
-        return orjson.dumps(
-            manifest, default=orJsonDefaults
-        )
-
-    def _buildZenodoMetadata(self, project):
-        """Map project metadata to Zenodo metadata schema.
-
-        :returns: Dict suitable for Zenodo's metadata API.
-        """
-        meta = project['meta'].get('metadata', {})
-
-        # Parse authors into Zenodo creators format
-        creators = []
-        authors_str = meta.get('authors', '')
-        if authors_str:
-            for author in authors_str.split(','):
-                name = author.strip()
-                if name:
-                    creators.append({'name': name})
-        if not creators:
-            creators = [{'name': 'Unknown'}]
-
-        # Map license
-        project_license = meta.get(
-            'license', 'CC-BY-4.0'
-        )
-        zenodo_license = LICENSE_MAP.get(
-            project_license, 'cc-by-4.0'
-        )
-
-        pub_date = meta.get('publicationDate', '')
-        if not pub_date:
-            pub_date = datetime.date.today().isoformat()
-
-        description = meta.get('description', '')
-        if not description:
-            description = (
-                project.get('description', '')
-                or project['name']
-            )
-
-        result = {
-            'upload_type': 'dataset',
-            'title': meta.get('title', project['name']),
-            'description': description,
-            'creators': creators,
-            'publication_date': pub_date,
-            'access_right': 'open',
-            'license': zenodo_license,
-        }
-
-        keywords = meta.get('keywords', [])
-        if keywords:
-            result['keywords'] = keywords
-
-        doi = meta.get('doi', '')
-        if doi:
-            result['doi'] = doi
-
-        funding = meta.get('funding', '')
-        if funding:
-            result['notes'] = f"Funding: {funding}"
-
-        return result
-
-    def _doUpload(self, project, user, project_id):
-        """Perform the Zenodo upload in a background thread.
-
-        Updates project.meta.zenodo with progress.
-        """
-        try:
-            client = self._getZenodoClient(user)
-            zenodo_meta = project['meta'].get('zenodo', {})
-
-            # Create deposition or new version
-            existing_id = zenodo_meta.get('depositionId')
-            if (existing_id
-                    and zenodo_meta.get('status')
-                    == 'published'):
-                log.info(
-                    "Creating new version of deposition "
-                    "%s", existing_id
-                )
-                deposition = client.create_new_version(
-                    existing_id
-                )
-                # Clear old files from the new version
-                client.delete_all_files(deposition['id'])
-            else:
-                deposition = client.create_deposition()
-
-            dep_id = deposition['id']
-            bucket_url = deposition['links']['bucket']
-
-            # Update project with deposition info
-            self._updateZenodoMeta(project_id, {
-                'depositionId': dep_id,
-                'depositionUrl': (
-                    deposition['links']['html']
-                ),
-                'status': 'uploading',
-                'sandbox': client.base_url != (
-                    "https://zenodo.org"
-                ),
-                'progress': {
-                    'current': 0,
-                    'total': 0,
-                    'message': 'Starting upload...',
-                },
-            })
-
-            uploaded_files = []
-            file_count = 0
-
-            # Count total files for progress
-            total_files = 0
-            for d in project['meta']['datasets']:
-                folder = Folder().load(
-                    d['datasetId'], force=True
-                )
-                if folder:
-                    items = list(Item().find(
-                        {'folderId': folder['_id']}
-                    ))
-                    total_files += len(items)
-                total_files += 1  # annotation JSON
-            total_files += len(
-                project['meta']['collections']
-            )
-            total_files += 1  # manifest
-
-            # Upload dataset files
-            for d in project['meta']['datasets']:
-                dataset_id = d['datasetId']
-                folder = Folder().load(
-                    dataset_id, user=user,
-                    level=AccessType.READ,
-                )
-                if not folder:
-                    continue
-
-                folder_name = folder['name']
-
-                # Upload source image files
-                items = list(Item().find(
-                    {'folderId': folder['_id']}
-                ))
-                for item in items:
-                    item_files = list(File().find(
-                        {'itemId': item['_id']}
-                    ))
-                    for f in item_files:
-                        file_count += 1
-                        self._updateZenodoProgress(
-                            project_id, file_count,
-                            total_files,
-                            f"Uploading {f['name']}...",
-                        )
-
-                        # Stream file from Girder
-                        stream = File().download(
-                            f, headers=False
-                        )
-                        # Use -- separator instead of /
-                        # because Zenodo bucket API does
-                        # not support slashes in filenames
-                        filename = (
-                            f"{folder_name}--{f['name']}"
-                        )
-                        result = client.upload_file(
-                            bucket_url, filename,
-                            stream(),
-                        )
-                        uploaded_files.append({
-                            'name': filename,
-                            'type': 'image',
-                            'datasetId': str(dataset_id),
-                            'checksum': result.get(
-                                'checksum', ''
-                            ),
-                        })
-
-                # Upload annotation JSON
-                file_count += 1
-                self._updateZenodoProgress(
-                    project_id, file_count, total_files,
-                    (
-                        f"Exporting annotations for "
-                        f"{folder_name}..."
-                    ),
-                )
-                ann_json = self._buildAnnotationJson(
-                    dataset_id
-                )
-                ann_filename = (
-                    f"{folder_name}_annotations.json"
-                )
-                client.upload_file(
-                    bucket_url, ann_filename,
-                    io.BytesIO(ann_json),
-                    # Zenodo bucket API only accepts
-                    # application/octet-stream
-                )
-                uploaded_files.append({
-                    'name': ann_filename,
-                    'type': 'annotations',
-                    'datasetId': str(dataset_id),
-                })
-
-            # Upload collection configs
-            for c in project['meta']['collections']:
-                coll_id = c['collectionId']
-                coll = self._collectionModel.load(
-                    coll_id, force=True
-                )
-                if not coll:
-                    continue
-
-                file_count += 1
-                coll_name = coll['name']
-                self._updateZenodoProgress(
-                    project_id, file_count, total_files,
-                    (
-                        f"Uploading config for "
-                        f"{coll_name}..."
-                    ),
-                )
-
-                config_json = self._buildCollectionConfig(
-                    coll_id
-                )
-                config_filename = (
-                    f"{coll_name}_config.json"
-                )
-                client.upload_file(
-                    bucket_url, config_filename,
-                    io.BytesIO(config_json),
-                    # Zenodo bucket API only accepts
-                    # application/octet-stream
-                )
-                uploaded_files.append({
-                    'name': config_filename,
-                    'type': 'config',
-                    'collectionId': str(coll_id),
-                })
-
-            # Upload manifest
-            file_count += 1
-            self._updateZenodoProgress(
-                project_id, file_count, total_files,
-                "Uploading manifest...",
-            )
-            manifest_json = self._buildManifest(
-                project, uploaded_files
-            )
-            client.upload_file(
-                bucket_url, 'manifest.json',
-                io.BytesIO(manifest_json),
-            )
-
-            # Set metadata
-            self._updateZenodoProgress(
-                project_id, file_count, total_files,
-                "Setting metadata...",
-            )
-            zenodo_metadata = self._buildZenodoMetadata(
-                project
-            )
-            client.set_metadata(dep_id, zenodo_metadata)
-
-            # Done - mark as draft (ready to publish)
-            self._updateZenodoMeta(project_id, {
-                'depositionId': dep_id,
-                'depositionUrl': (
-                    deposition['links']['html']
-                ),
-                'status': 'draft',
-                'sandbox': client.base_url != (
-                    "https://zenodo.org"
-                ),
-                'progress': None,
-            })
-
-            log.info(
-                "Zenodo upload complete for project %s, "
-                "deposition %s",
-                project_id, dep_id,
-            )
-
-        except Exception as e:
-            log.exception(
-                "Zenodo upload failed for project %s",
-                project_id,
-            )
-            self._updateZenodoMeta(project_id, {
-                'status': 'error',
-                'error': str(e),
-                'progress': None,
-            })
 
     def _updateZenodoMeta(self, project_id, zenodo_data):
         """Update the project's meta.zenodo field."""
@@ -623,31 +151,13 @@ class Zenodo(Resource):
         project['updated'] = datetime.datetime.utcnow()
         self._projectModel.save(project)
 
-    def _updateZenodoProgress(
-        self, project_id, current, total, message
-    ):
-        """Update upload progress on the project."""
-        project = self._projectModel.load(
-            project_id, force=True
-        )
-        if not project:
-            return
-        zenodo = project['meta'].get('zenodo', {})
-        zenodo['progress'] = {
-            'current': current,
-            'total': total,
-            'message': message,
-        }
-        project['meta']['zenodo'] = zenodo
-        self._projectModel.save(project)
-
     @access.user
     @autoDescribeRoute(
         Description("Upload a project to Zenodo as a draft")
         .notes("""
             Validates project size and file count, then
-            starts uploading all project data to Zenodo.
-            The upload runs in a background thread.
+            starts uploading all project data to Zenodo
+            as a background job.
 
             If the project was previously published, this
             creates a new version of the existing
@@ -727,24 +237,50 @@ class Zenodo(Resource):
                 code=400,
             )
 
-        # Start upload in background thread
-        thread = threading.Thread(
-            target=self._doUpload,
-            args=(project, user, project['_id']),
-            daemon=True,
+        # Mark as uploading synchronously to prevent
+        # duplicate uploads from concurrent requests
+        self._updateZenodoMeta(project['_id'], {
+            'status': 'uploading',
+            'progress': {
+                'current': 0,
+                'total': 0,
+                'message': 'Starting upload...',
+            },
+            'error': None,
+        })
+
+        # Create and schedule a local Girder job
+        job = JobModel().createLocalJob(
+            module=(
+                'upenncontrast_annotation'
+                '.server.helpers.zenodo_job'
+            ),
+            title=(
+                'Zenodo Upload: %s' % project['name']
+            ),
+            type='zenodo_upload',
+            user=user,
+            kwargs={
+                'projectId': str(project['_id']),
+                'userId': str(user['_id']),
+            },
+            asynchronous=True,
         )
-        thread.start()
+        JobModel().scheduleJob(job)
 
         return {
             'message': 'Upload started',
             'projectId': str(project['_id']),
+            'jobId': str(job['_id']),
             'totalFiles': total_count,
             'totalSize': total_size,
         }
 
     @access.user
     @autoDescribeRoute(
-        Description("Get Zenodo upload status for a project")
+        Description(
+            "Get Zenodo upload status for a project"
+        )
         .param(
             'projectId', 'The project ID',
             paramType='path',
@@ -772,7 +308,8 @@ class Zenodo(Resource):
     @access.user
     @autoDescribeRoute(
         Description(
-            "Publish a Zenodo draft deposition (mints DOI)"
+            "Publish a Zenodo draft deposition "
+            "(mints DOI)"
         )
         .notes("""
             WARNING: Publishing is irreversible. The
@@ -881,14 +418,13 @@ class Zenodo(Resource):
             try:
                 client.discard(dep_id)
             except ZenodoError:
-                # May fail if already discarded; that's OK
+                # May fail if already discarded
                 pass
 
         # Clear zenodo metadata but keep history
         previous_doi = zenodo.get('doi')
         new_meta = {'status': 'none'}
         if previous_doi:
-            # Preserve DOI from prior publications
             new_meta['doi'] = previous_doi
             new_meta['status'] = 'published'
 
