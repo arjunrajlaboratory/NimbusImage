@@ -226,13 +226,21 @@ defineExpose({
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 
 // Ensure the girder file manager takes up available space
 :deep(.custom-file-manager-wrapper) {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+// Override GirderFileManager's internal v-card overflow: hidden
+:deep(.file-manager) {
+  overflow: auto !important;
   flex: 1;
   min-height: 0;
 }

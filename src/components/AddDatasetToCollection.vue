@@ -396,3 +396,12 @@ defineExpose({
   flex: 1;
 }
 </style>
+
+<style lang="scss" scoped>
+// Override GirderFileManager's internal v-card overflow: hidden
+:deep(.file-manager) {
+  overflow: auto !important;
+  flex: 1;
+  min-height: 0;
+}
+</style>
