@@ -18,7 +18,17 @@ All Zenodo communication happens **server-side** (Girder plugin), not in the bro
 - Image files live in Girder's assetstore — streaming server-to-Zenodo avoids downloading to the browser
 - Files can be multi-GB
 - The Zenodo API token is kept encrypted server-side
-- Long-running uploads run in a background thread with progress tracking
+- Long-running uploads run as Girder local jobs with progress tracking via SSE
+
+### Job System
+
+The upload runs as a **Girder local job** (same pattern as `cacheMaxMerge` in `system.py`). This provides:
+- **SSE-based progress** — notifications flow through `/notification/stream` automatically
+- **Job tracking** — visible in the Girder job list and frontend job logs
+- **Race condition safety** — status is set to `uploading` synchronously before the job starts
+- **Consistency** — matches the existing job patterns for histogram caching and max-merge
+
+The job is created with `createLocalJob(module=..., asynchronous=True)`, which runs the upload in a daemon thread via `events.daemon.trigger`. Progress is reported as JSON log lines via `Job().updateJob(log=...)`, which triggers SSE notifications that the frontend parses.
 
 ### What Gets Uploaded
 
@@ -43,27 +53,37 @@ Filenames use `--` as a folder separator because Zenodo's bucket API does not su
 | `PUT` | `/api/v1/zenodo_credentials` | Store token (encrypted with Fernet) |
 | `DELETE` | `/api/v1/zenodo_credentials` | Remove stored token |
 
-Tokens are encrypted at rest using Fernet symmetric encryption. The encryption key is read from the `ZENODO_ENCRYPTION_KEY` environment variable. If not set, a default development key is used.
+Tokens are encrypted at rest using Fernet symmetric encryption. The encryption key is read from the `ZENODO_ENCRYPTION_KEY` environment variable. If not set, a development default key is used and a **warning is logged** on first use.
 
 ### Upload/Publish Workflow
 
 | Method | Endpoint | Description | Access |
 |--------|----------|-------------|--------|
 | `POST` | `/api/v1/zenodo/upload` | Start uploading a project to Zenodo | ADMIN |
-| `GET` | `/api/v1/zenodo/status/:projectId` | Poll upload progress | READ |
+| `GET` | `/api/v1/zenodo/status/:projectId` | Get upload progress (fallback for diagnostics) | READ |
 | `POST` | `/api/v1/zenodo/publish/:projectId` | Publish draft, mint DOI | ADMIN |
 | `POST` | `/api/v1/zenodo/discard/:projectId` | Discard unpublished draft | ADMIN |
+
+The upload endpoint returns a `jobId` that the frontend uses for SSE-based progress tracking.
 
 ### Upload Flow Detail
 
 1. **Pre-flight validation**: Checks total size < 50GB and file count < 100 (Zenodo limits)
-2. **Deposition creation**: Creates a new deposition (or new version if previously published)
-3. **File upload**: Streams each file from Girder's assetstore to Zenodo's bucket API
-4. **Annotation export**: Generates JSON export per dataset (reuses export.py logic)
-5. **Metadata**: Maps project metadata to Zenodo's schema (title, creators, license, keywords, etc.)
-6. **Status**: Deposition saved as draft — user must explicitly publish
+2. **Status lock**: Sets `project.meta.zenodo.status` to `uploading` synchronously (prevents concurrent uploads)
+3. **Job creation**: Creates a Girder local job via `createLocalJob(module='...zenodo_job', asynchronous=True)`
+4. **Deposition creation**: Creates a new deposition (or new version if previously published)
+5. **File upload**: Streams each file from Girder's assetstore to Zenodo's bucket API
+6. **Annotation export**: Generates JSON export per dataset
+7. **Metadata**: Maps project metadata to Zenodo's schema (title, creators, license, keywords, etc.)
+8. **Completion**: Sets job status to `SUCCESS`, updates `project.meta.zenodo.status` to `draft`
 
-Progress is stored in `project.meta.zenodo.progress` and polled by the frontend every 3 seconds.
+### Progress Tracking
+
+Progress flows through two channels:
+- **SSE (primary)**: Job log lines contain JSON like `{"progress": 0.5, "current": 3, "total": 7, "message": "Uploading file.tiff..."}`. The frontend parses these in the `eventCallback` passed to `jobs.addJob()`.
+- **Project metadata (persistent)**: `project.meta.zenodo.progress` is updated alongside job logs, serving as the source of truth if the user navigates away and returns.
+
+On page mount, if `zenodoStatus === 'uploading'`, the component queries for active `zenodo_upload` jobs and re-subscribes via `jobs.addJob()`.
 
 ## Data Model
 
@@ -105,10 +125,13 @@ interface IProjectZenodo {
 
 ### Backend
 
+All paths relative to `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/`.
+
 | File | Purpose |
 |------|---------|
 | `server/helpers/zenodo_client.py` | Zenodo REST API wrapper (create, upload, publish, new version) |
-| `server/api/zenodo.py` | REST endpoints for upload/publish workflow |
+| `server/helpers/zenodo_job.py` | Local job `run(job)` entry point — contains all upload logic |
+| `server/api/zenodo.py` | REST endpoints for upload/publish/status/discard |
 | `server/api/zenodo_credentials.py` | Token CRUD with Fernet encryption |
 
 ### Frontend
@@ -116,8 +139,8 @@ interface IProjectZenodo {
 | File | Purpose |
 |------|---------|
 | `src/store/ZenodoAPI.ts` | API client (extends existing import API with publish methods) |
-| `src/store/model.ts` | `IProjectZenodo`, `TZenodoStatus` types |
-| `src/components/ZenodoPublish.vue` | Main card component in ProjectInfo |
+| `src/store/model.ts` | `IProjectZenodo`, `TZenodoStatus`, `ProgressType.ZENODO_UPLOAD` |
+| `src/components/ZenodoPublish.vue` | Main card component in ProjectInfo (SSE-based progress) |
 | `src/components/ZenodoTokenDialog.vue` | Token entry/management dialog |
 
 ## Zenodo API Notes
@@ -153,7 +176,7 @@ File uploads use `PUT {bucket_url}/{filename}` with:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ZENODO_ENCRYPTION_KEY` | Fernet key or passphrase for encrypting stored tokens | Development default (change in production!) |
+| `ZENODO_ENCRYPTION_KEY` | Fernet key or passphrase for encrypting stored tokens | Development default (logs warning — set in production!) |
 
 ### Dependencies
 
@@ -181,12 +204,16 @@ curl -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"token": "YOUR_ZENODO_PAT", "sandbox": true}' \
   http://localhost:8080/api/v1/zenodo_credentials
 
-# Start upload
+# Start upload (returns jobId for tracking)
 curl -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"projectId": "PROJECT_ID"}' \
   http://localhost:8080/api/v1/zenodo/upload
 
-# Poll status
+# Check job status (via Girder jobs API)
+curl -H "Girder-Token: $TOKEN" \
+  http://localhost:8080/api/v1/job/JOB_ID
+
+# Check project zenodo status (fallback)
 curl -H "Girder-Token: $TOKEN" \
   http://localhost:8080/api/v1/zenodo/status/PROJECT_ID
 
