@@ -413,7 +413,7 @@
     </v-dialog>
 
     <!-- Add Dataset Dialog -->
-    <v-dialog v-model="addDatasetDialog" width="60%">
+    <v-dialog v-model="addDatasetDialog" width="90%">
       <add-dataset-to-project-dialog
         v-if="project"
         :project="project"
@@ -425,7 +425,7 @@
     </v-dialog>
 
     <!-- Add Collection Dialog -->
-    <v-dialog v-model="addCollectionDialog" width="60%">
+    <v-dialog v-model="addCollectionDialog" width="90%">
       <add-collection-to-project-filter-dialog
         v-if="project"
         :project="project"
