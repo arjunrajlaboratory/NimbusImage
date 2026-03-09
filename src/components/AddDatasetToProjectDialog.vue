@@ -10,6 +10,7 @@
         class="file-manager-container"
         :breadcrumb="true"
         :selectable="true"
+        :prevent-dataset-navigation="true"
         @selected="onSelectDataset"
         v-model:location="selectLocation"
         :initial-items-per-page="-1"

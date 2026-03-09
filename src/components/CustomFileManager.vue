@@ -211,9 +211,9 @@ const currentLocation = computed({
       const selectable = value as IGirderSelectAble;
       const idx = selected.value.findIndex((s) => s._id === selectable._id);
       if (idx >= 0) {
-        selected.value.splice(idx, 1);
+        selected.value = selected.value.filter((s) => s._id !== selectable._id);
       } else {
-        selected.value.push(selectable);
+        selected.value = [...selected.value, selectable];
       }
       emitSelected();
       return;
