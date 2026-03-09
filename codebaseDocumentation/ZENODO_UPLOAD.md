@@ -186,14 +186,122 @@ Added to `setup.py`:
 
 ## Testing
 
-### Sandbox Testing
+### Sandbox Setup
 
 1. Create an account on `https://sandbox.zenodo.org`
 2. Create a personal access token with scopes: `deposit:write`, `deposit:actions`
 3. Store the token via the UI or API with `sandbox: true`
 4. Upload and publish — DOIs are test-only (`10.5072`)
 
-### curl Examples
+**Current sandbox account:** `arjunraj` on `https://sandbox.zenodo.org`
+
+### Test Projects
+
+| Project ID | Name | Datasets | Notes |
+|-----------|------|----------|-------|
+| `69ae998ca50fdb5e668f0fc5` | NewProject | 2 | Primary test project. Published v1 (20 files, ~20MB), then uploaded new version (7 files, ~118MB) after adding data. Deposition 468740 (v1 published), 468742 (v2 draft). |
+| `69af3552a50fdb5e668f0ff9` | NewProject2 | 1 | Clean project, no Zenodo uploads yet. Good for fresh upload testing. |
+| `696432f5b1d3a82bb70f5719` | Test Project | 1 | Previously used for testing. Has zenodo draft status. |
+| `6964325fb1d3a82bb70f5718` | Test Project 2 | 0 | Empty project (0 datasets). Good for testing edge cases. |
+| `69641417b1d3a82bb70f5717` | Test Project | 2 | Has a deleted dataset folder — upload will fail with "No such folder". Useful for error handling testing. |
+
+### E2E Test Scenarios
+
+#### 1. Fresh Upload (First Time)
+
+```bash
+# Authenticate
+TOKEN=$(curl -s -u admin:password http://localhost:8080/api/v1/user/authentication | python3 -c "import json,sys; print(json.load(sys.stdin)['authToken']['token'])")
+
+# Verify credentials are configured
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo_credentials
+# Expected: {"hasToken": true, "sandbox": true}
+
+# Start upload
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"projectId": "PROJECT_ID"}' \
+  http://localhost:8080/api/v1/zenodo/upload
+# Expected: {"message": "Upload started", "projectId": "...", "jobId": "...", "totalFiles": N, "totalSize": N}
+
+# Monitor job progress (poll until status changes from 2)
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/job/JOB_ID
+# Job status codes: 0=inactive, 1=queued, 2=running, 3=success, 4=error, 5=cancelled
+# Log lines contain JSON: {"progress": 0.5, "current": 3, "total": 7, "message": "Uploading file.tiff..."}
+
+# Verify project status after completion
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo/status/PROJECT_ID
+# Expected: {"status": "draft", "depositionId": N, "depositionUrl": "https://sandbox.zenodo.org/deposit/N", ...}
+```
+
+**Expected behavior:**
+- Upload endpoint returns immediately with `jobId`
+- Job runs asynchronously, progress visible via job log lines
+- Project status transitions: `none` → `uploading` → `draft`
+- Draft visible on Zenodo at the `depositionUrl`
+
+#### 2. Publish (Mint DOI)
+
+```bash
+# Publish the draft (irreversible on production!)
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
+  http://localhost:8080/api/v1/zenodo/publish/PROJECT_ID
+# Expected: {"message": "Published successfully", "doi": "10.5072/zenodo.NNNNNN", "url": "https://sandbox.zenodo.org/record/NNNNNN"}
+
+# Verify status
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo/status/PROJECT_ID
+# Expected: {"status": "published", "doi": "10.5072/zenodo.NNNNNN", ...}
+```
+
+**Expected behavior:**
+- Status transitions: `draft` → `published`
+- DOI is minted (test DOI `10.5072/...` on sandbox)
+- Project status also set to `exported` via `updateStatus()`
+
+#### 3. New Version (Re-upload After Publish)
+
+```bash
+# Upload again — creates a new version of the published deposition
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"projectId": "PROJECT_ID"}' \
+  http://localhost:8080/api/v1/zenodo/upload
+# Expected: new jobId, upload starts
+
+# After completion, check status
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo/status/PROJECT_ID
+# Expected: {"status": "draft", "depositionId": NEW_ID, "doi": "ORIGINAL_DOI", ...}
+# Note: depositionId changes (new version), but doi is preserved from the first publish
+```
+
+**Expected behavior:**
+- Zenodo `newversion` API creates a new draft linked to the original
+- New deposition ID, but concept DOI is preserved
+- Old files are cleared and replaced with current project files
+- Status transitions: `published` → `uploading` → `draft`
+
+#### 4. Discard Draft
+
+```bash
+# Discard an unpublished draft
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
+  http://localhost:8080/api/v1/zenodo/discard/PROJECT_ID
+# Expected: {"message": "Draft discarded"}
+
+# Verify status
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo/status/PROJECT_ID
+# If was first upload: status → "none"
+# If was new version of published: status → "published" (preserves original DOI)
+```
+
+#### 5. Error Cases
+
+- **No token configured**: Upload returns 400 "No Zenodo token configured"
+- **Invalid token**: Upload returns 400 "Zenodo token validation failed"
+- **Concurrent upload**: Upload returns 409 "An upload is already in progress"
+- **Missing dataset folder**: Job fails, status → `error` with message in `zenodo.error`
+- **Over 50GB / 100 files**: Upload returns 400 with size/count limit message
+- **Publish without draft**: Returns 400 "No draft deposition to publish"
+
+### curl Quick Reference
 
 ```bash
 # Authenticate
@@ -204,24 +312,44 @@ curl -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"token": "YOUR_ZENODO_PAT", "sandbox": true}' \
   http://localhost:8080/api/v1/zenodo_credentials
 
-# Start upload (returns jobId for tracking)
+# Check credentials
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo_credentials
+
+# List projects
+curl -s -H "Girder-Token: $TOKEN" "http://localhost:8080/api/v1/project?limit=10"
+
+# Start upload
 curl -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"projectId": "PROJECT_ID"}' \
   http://localhost:8080/api/v1/zenodo/upload
 
-# Check job status (via Girder jobs API)
-curl -H "Girder-Token: $TOKEN" \
-  http://localhost:8080/api/v1/job/JOB_ID
+# Check job status
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/job/JOB_ID
 
-# Check project zenodo status (fallback)
-curl -H "Girder-Token: $TOKEN" \
-  http://localhost:8080/api/v1/zenodo/status/PROJECT_ID
+# Check project zenodo status
+curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo/status/PROJECT_ID
 
-# Publish (irreversible!)
+# Publish (irreversible on production!)
 curl -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
   http://localhost:8080/api/v1/zenodo/publish/PROJECT_ID
 
 # Discard draft
 curl -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
   http://localhost:8080/api/v1/zenodo/discard/PROJECT_ID
+
+# Delete credentials
+curl -X DELETE -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo_credentials
 ```
+
+### Verified Test Results
+
+The following scenarios have been verified end-to-end against `sandbox.zenodo.org`:
+
+| Scenario | Project | Result |
+|----------|---------|--------|
+| Fresh upload (20 files, ~20MB) | `69ae998ca50fdb5e668f0fc5` | Deposition 468740 created as draft |
+| Publish draft | `69ae998ca50fdb5e668f0fc5` | DOI `10.5072/zenodo.468740` minted |
+| New version after publish (7 files, ~118MB) | `69ae998ca50fdb5e668f0fc5` | Deposition 468742 created as draft, original DOI preserved |
+| Job progress tracking | all | JSON log lines parsed correctly (0% → 25% → 50% → 100%) |
+| SSE-based frontend tracking | all | `jobs.addJob()` receives progress events in real time |
+| Recovery on page reload | all | `recoverActiveJob()` re-subscribes to active job on mount |
