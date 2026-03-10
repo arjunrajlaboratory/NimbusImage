@@ -165,22 +165,22 @@ describe("AddCollectionToProjectFilterDialog", () => {
     expect(vm.isInProject("nonexistent")).toBe(false);
   });
 
-  it("selectedCollections maps from selectedIndices, filtering out already-in-project", async () => {
+  it("selectedCollections maps from selectedIds, filtering out already-in-project", async () => {
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
     vm.searchQuery = "";
-    // Select index 0 (existing-col-1, already in project) and index 1 (col-3, not in project)
-    vm.selectedIndices = [0, 1];
+    // Select existing-col-1 (already in project) and col-3 (not in project)
+    vm.selectedIds = new Set(["existing-col-1", "col-3"]);
     expect(vm.selectedCollections).toHaveLength(1);
     expect(vm.selectedCollections[0].id).toBe("col-3");
   });
 
-  it("selectedCollections returns empty when no indices selected", async () => {
+  it("selectedCollections returns empty when no ids selected", async () => {
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
-    vm.selectedIndices = [];
+    vm.selectedIds = new Set();
     expect(vm.selectedCollections).toHaveLength(0);
   });
 
@@ -190,8 +190,8 @@ describe("AddCollectionToProjectFilterDialog", () => {
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
     vm.searchQuery = "";
-    // Select col-3 (index 1) and col-4 (index 2) - both not in project
-    vm.selectedIndices = [1, 2];
+    // Select col-3 and col-4 - both not in project
+    vm.selectedIds = new Set(["col-3", "col-4"]);
 
     await vm.addCollections();
 
@@ -212,7 +212,7 @@ describe("AddCollectionToProjectFilterDialog", () => {
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
-    vm.selectedIndices = [];
+    vm.selectedIds = new Set();
 
     await vm.addCollections();
 
@@ -220,23 +220,23 @@ describe("AddCollectionToProjectFilterDialog", () => {
     expect(wrapper.emitted("added")).toBeFalsy();
   });
 
-  it("addCollections resets selectedIndices after adding", async () => {
+  it("addCollections resets selectedIds after adding", async () => {
     mockAddCollectionToProject.mockResolvedValue({});
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
     vm.searchQuery = "";
-    vm.selectedIndices = [1];
+    vm.selectedIds = new Set(["col-3"]);
 
     await vm.addCollections();
 
-    expect(vm.selectedIndices).toEqual([]);
+    expect(vm.selectedIds).toEqual(new Set());
   });
 
-  it("watch on project resets selectedIndices", async () => {
+  it("watch on project resets selectedIds", async () => {
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
-    vm.selectedIndices = [0, 1, 2];
+    vm.selectedIds = new Set(["existing-col-1", "col-3", "col-4"]);
 
     const newProject = {
       ...sampleProject,
@@ -245,6 +245,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     };
     await wrapper.setProps({ project: newProject });
 
-    expect(vm.selectedIndices).toEqual([]);
+    expect(vm.selectedIds).toEqual(new Set());
   });
 });
