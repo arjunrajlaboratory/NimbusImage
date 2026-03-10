@@ -36,12 +36,19 @@
           v-for="(collection, index) in filteredCollections"
           :key="collection.id"
           :disabled="isInProject(collection.id)"
+          @click="toggleSelection(index, collection.id)"
         >
-          <v-checkbox
-            :model-value="selectedIndices.includes(index)"
-            :disabled="isInProject(collection.id)"
-            color="primary"
-          />
+          <template #prepend>
+            <v-checkbox
+              :model-value="selectedIndices.includes(index)"
+              :disabled="isInProject(collection.id)"
+              color="primary"
+              density="compact"
+              hide-details
+              @update:model-value="toggleSelection(index, collection.id)"
+              @click.stop
+            />
+          </template>
           <v-list-item-title>
             {{ collection.name }}
             <v-chip
@@ -146,6 +153,16 @@ function isInProject(collectionId: string): boolean {
   return existingCollectionIds.value.has(collectionId);
 }
 
+function toggleSelection(index: number, collectionId: string) {
+  if (isInProject(collectionId)) return;
+  const pos = selectedIndices.value.indexOf(index);
+  if (pos >= 0) {
+    selectedIndices.value = selectedIndices.value.filter((i) => i !== index);
+  } else {
+    selectedIndices.value = [...selectedIndices.value, index];
+  }
+}
+
 async function fetchCollections() {
   loading.value = true;
   try {
@@ -208,6 +225,7 @@ defineExpose({
   filteredCollections,
   selectedCollections,
   isInProject,
+  toggleSelection,
   fetchCollections,
   confirmAdd,
   addCollections,
