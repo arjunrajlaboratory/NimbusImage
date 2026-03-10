@@ -36,7 +36,7 @@ class CsvColumn:
 
 
 # Fixed columns for CSV export, defined at module level for visibility.
-# Property columns are added dynamically and are never quoted.
+# Property columns are added dynamically and quoted if they contain commas.
 CSV_FIXED_COLUMNS = [
     CsvColumn("Id", is_quoted=True),
     CsvColumn("Channel", is_quoted=False),
@@ -275,6 +275,11 @@ class Export(Resource):
                         "description": "Value for undefined: '', 'NA', 'NaN'",
                         "default": ""
                     },
+                    "delimiter": {
+                        "type": "string",
+                        "description": "Delimiter: , or \\t",
+                        "default": ","
+                    },
                     "filename": {
                         "type": "string",
                         "description": "Filename for download",
@@ -301,6 +306,7 @@ class Export(Resource):
         propertyPaths = body.get("propertyPaths", [])
         annotationIds = body.get("annotationIds")
         undefinedValue = body.get("undefinedValue", "")
+        delimiter = body.get("delimiter", ",")
         filename = body.get("filename", "export.csv")
 
         # Permission check
@@ -319,12 +325,23 @@ class Export(Resource):
         if annotationIds:
             parsedAnnotationIds = set(annotationIds)
 
-        # Ensure filename ends with .csv
-        safe_filename = (
-            filename if filename.endswith('.csv') else filename + '.csv'
+        # Validate delimiter
+        if delimiter not in (",", "\t"):
+            delimiter = ","
+
+        is_tsv = delimiter == "\t"
+        expected_ext = ".tsv" if is_tsv else ".csv"
+        content_type = (
+            "text/tab-separated-values" if is_tsv else "text/csv"
         )
 
-        setResponseHeader("Content-Type", "text/csv")
+        # Ensure filename ends with correct extension
+        safe_filename = (
+            filename if filename.endswith(expected_ext)
+            else filename + expected_ext
+        )
+
+        setResponseHeader("Content-Type", content_type)
         setContentDisposition(safe_filename, disposition='attachment')
 
         # Build property name mapping
@@ -338,7 +355,10 @@ class Export(Resource):
                 propertyName = self._getPropertyColumnName(
                     path, propertyNameMap)
                 if propertyName:
-                    columns.append(CsvColumn(propertyName, is_quoted=False))
+                    columns.append(CsvColumn(
+                        propertyName,
+                        is_quoted=',' in propertyName
+                    ))
 
             # Build header row
             headerRow = []
@@ -347,7 +367,7 @@ class Export(Resource):
                     headerRow.append(f'"{col.name}"')
                 else:
                     headerRow.append(col.name)
-            yield ','.join(headerRow) + '\n'
+            yield delimiter.join(headerRow) + '\n'
 
             # Load property values for all annotations in dataset
             propertyValues = self._getPropertyValues(datasetObjectId)
@@ -398,7 +418,7 @@ class Export(Resource):
                     else:
                         formattedRow.append(value)
 
-                yield ','.join(formattedRow) + '\n'
+                yield delimiter.join(formattedRow) + '\n'
 
         return generate
 

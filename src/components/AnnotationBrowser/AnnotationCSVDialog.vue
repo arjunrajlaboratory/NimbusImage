@@ -27,6 +27,28 @@
           applications like Excel or Google Sheets.
         </v-alert>
 
+        <v-list-subheader>File Format</v-list-subheader>
+        <v-radio-group v-model="fileFormat" class="mb-4">
+          <v-radio label="CSV (comma-separated)" value="csv"></v-radio>
+          <v-radio label="TSV (tab-separated)" value="tsv"></v-radio>
+        </v-radio-group>
+
+        <v-alert
+          v-if="hasCommasInPropertyNames"
+          :type="fileFormat === 'csv' ? 'warning' : 'info'"
+          variant="tonal"
+          class="mb-4"
+        >
+          <template v-if="fileFormat === 'csv'">
+            Some property names contain commas, which may cause issues with CSV
+            formatting. TSV format is recommended instead.
+          </template>
+          <template v-else>
+            TSV format selected. This avoids issues with property names that
+            contain commas.
+          </template>
+        </v-alert>
+
         <v-list-subheader>Property Export Options</v-list-subheader>
         <v-radio-group v-model="propertyExportMode" class="mb-4">
           <v-radio label="Export all properties" value="all"></v-radio>
@@ -185,6 +207,22 @@ const propertyExportMode = ref<"all" | "selected" | "listed">("all");
 const propertyFilter = ref("");
 const selectedPropertyPaths = ref<string[]>([]);
 
+const fileFormat = ref<"csv" | "tsv">("csv");
+const fileDelimiter = computed(() => (fileFormat.value === "tsv" ? "\t" : ","));
+const fileExtension = computed(() =>
+  fileFormat.value === "tsv" ? ".tsv" : ".csv",
+);
+
+const propertyNamesWithCommas = computed(() => {
+  return props.propertyPaths
+    .map((path) => propertyStore.getFullNameFromPath(path))
+    .filter((name): name is string => !!name && name.includes(","));
+});
+
+const hasCommasInPropertyNames = computed(
+  () => propertyNamesWithCommas.value.length > 0,
+);
+
 const undefinedHandling = ref<"empty" | "na" | "nan">("empty");
 
 const processingProgress = ref(0);
@@ -223,7 +261,7 @@ const filteredPropertyItems = computed(() => {
 });
 
 function resetFilename() {
-  filename.value = (dataset.value?.name ?? "unknown") + ".csv";
+  filename.value = (dataset.value?.name ?? "unknown") + fileExtension.value;
 }
 
 function copyCSVText() {
@@ -266,8 +304,9 @@ async function generateCSVStringForAnnotations() {
     });
 
     includedPaths.forEach((path) => {
-      fields.push(propertyStore.getFullNameFromPath(path)!);
-      quotes.push(false);
+      const name = propertyStore.getFullNameFromPath(path)!;
+      fields.push(name);
+      quotes.push(name.includes(","));
       usedPaths.push(path);
     });
 
@@ -312,8 +351,11 @@ async function generateCSVStringForAnnotations() {
       processingProgress.value = (i + CHUNK_SIZE) / nAnnotations;
     }
 
-    // Generate csv
-    return Papa.unparse({ fields, data }, { quotes });
+    // Generate csv/tsv
+    return Papa.unparse(
+      { fields, data },
+      { quotes, delimiter: fileDelimiter.value },
+    );
   } finally {
     isProcessing.value = false;
     processingProgress.value = 1;
@@ -367,7 +409,9 @@ async function download() {
       propertyPaths: getIncludedPropertyPaths(),
       annotationIds: props.annotations.map((a) => a.id),
       undefinedValue: getUndefinedValueString(),
-      filename: filename.value || "upenn_annotation_export.csv",
+      delimiter: fileDelimiter.value,
+      filename:
+        filename.value || `upenn_annotation_export${fileExtension.value}`,
     });
   } finally {
     isDownloading.value = false;
@@ -389,11 +433,17 @@ function shouldIncludePropertyPath(path: string[]) {
 
 // Collapse 4 stacked @Watch into single watch
 watch(
-  [propertyExportMode, selectedPropertyPaths, undefinedHandling, dialog],
+  [
+    propertyExportMode,
+    selectedPropertyPaths,
+    undefinedHandling,
+    fileFormat,
+    dialog,
+  ],
   () => updateText(),
 );
 
-watch(dataset, () => resetFilename());
+watch([fileFormat, dataset], () => resetFilename());
 
 onMounted(() => resetFilename());
 
@@ -402,12 +452,15 @@ defineExpose({
   text,
   filename,
   propertyExportMode,
+  fileFormat,
   undefinedHandling,
   processingProgress,
   isProcessing,
   isTooLargeForPreview,
   displayedPropertyPaths,
   filteredPropertyItems,
+  propertyNamesWithCommas,
+  hasCommasInPropertyNames,
   resetFilename,
   generateCSVStringForAnnotations,
   updateText,

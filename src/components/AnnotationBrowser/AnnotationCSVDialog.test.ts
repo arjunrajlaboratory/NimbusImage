@@ -37,9 +37,10 @@ vi.mock("@/store/filters", () => ({
 // Mock papaparse
 vi.mock("papaparse", () => ({
   default: {
-    unparse: vi.fn(({ fields, data }: any) => {
-      const header = fields.join(",");
-      const rows = data.map((row: any[]) => row.join(","));
+    unparse: vi.fn(({ fields, data }: any, config?: any) => {
+      const delim = config?.delimiter || ",";
+      const header = fields.join(delim);
+      const rows = data.map((row: any[]) => row.join(delim));
       return [header, ...rows].join("\n");
     }),
   },
@@ -375,5 +376,120 @@ describe("AnnotationCSVDialog", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.displayedPropertyPaths).toEqual([["propA", "sub1"]]);
+  });
+
+  // TSV format tests
+  it("fileFormat defaults to csv", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.fileFormat).toBe("csv");
+  });
+
+  it("resetFilename uses .tsv extension when fileFormat is tsv", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.fileFormat = "tsv";
+    vm.resetFilename();
+    expect(vm.filename).toBe("TestDataset.tsv");
+  });
+
+  it("resetFilename uses .csv extension when fileFormat is csv", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.fileFormat = "csv";
+    vm.resetFilename();
+    expect(vm.filename).toBe("TestDataset.csv");
+  });
+
+  it("generateCSVStringForAnnotations uses tab delimiter for tsv format", async () => {
+    (propertyStore as any).propertyValues = {
+      ann1: { propA: { sub1: 42 } },
+    };
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.fileFormat = "tsv";
+    vm.propertyExportMode = "all";
+    const tsv = await vm.generateCSVStringForAnnotations();
+    // The mock papaparse joins with the delimiter, so tabs should appear
+    expect(tsv).toContain("\t");
+    expect(tsv).toContain("Id\t");
+  });
+
+  it("generateCSVStringForAnnotations uses comma delimiter for csv format", async () => {
+    (propertyStore as any).propertyValues = {
+      ann1: { propA: { sub1: 42 } },
+    };
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.fileFormat = "csv";
+    vm.propertyExportMode = "all";
+    const csv = await vm.generateCSVStringForAnnotations();
+    expect(csv).toContain("Id,");
+    expect(csv).not.toContain("Id\t");
+  });
+
+  it("download passes tab delimiter when fileFormat is tsv", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.fileFormat = "tsv";
+    vm.filename = "export.tsv";
+    vm.propertyExportMode = "all";
+    await vm.download();
+    expect(store.exportAPI.exportCsv).toHaveBeenCalledTimes(1);
+    const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+    expect(arg.delimiter).toBe("\t");
+    expect(arg.filename).toBe("export.tsv");
+  });
+
+  it("download passes comma delimiter when fileFormat is csv", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.fileFormat = "csv";
+    vm.filename = "export.csv";
+    vm.propertyExportMode = "all";
+    await vm.download();
+    const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+    expect(arg.delimiter).toBe(",");
+  });
+
+  it("hasCommasInPropertyNames detects commas in property names", () => {
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
+      const map: Record<string, string> = {
+        "propA.sub1": "cell, fibroblast Blob Metrics",
+        "propB.sub2": "Property B > Sub2",
+        "propC.sub3": "Property C > Sub3",
+      };
+      return map[path.join(".")] || null;
+    });
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.hasCommasInPropertyNames).toBe(true);
+    expect(vm.propertyNamesWithCommas).toEqual([
+      "cell, fibroblast Blob Metrics",
+    ]);
+  });
+
+  it("hasCommasInPropertyNames is false when no property names have commas", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.hasCommasInPropertyNames).toBe(false);
+    expect(vm.propertyNamesWithCommas).toEqual([]);
+  });
+
+  it("watcher on fileFormat triggers text regeneration when dialog open", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.dialog = true;
+    vm.fileFormat = "csv";
+    await nextTick();
+    await nextTick();
+    await nextTick();
+    vm.fileFormat = "tsv";
+    await nextTick();
+    await nextTick();
+    await nextTick();
+    // Text should have been regenerated (content changes due to delimiter)
+    expect(typeof vm.text).toBe("string");
+    expect(vm.text).toBeTruthy();
   });
 });
