@@ -244,17 +244,13 @@
                     <span class="button-bar">
                       <v-btn
                         color="warning"
-                        @click.stop="
-                          confirmRemoveCollection(item.collectionId)
-                        "
+                        @click.stop="confirmRemoveCollection(item.collectionId)"
                       >
                         <v-icon start>mdi-close</v-icon>remove
                       </v-btn>
                       <v-btn
                         color="primary"
-                        @click.stop="
-                          navigateToCollection(item.collectionId)
-                        "
+                        @click.stop="navigateToCollection(item.collectionId)"
                       >
                         <v-icon start>mdi-eye</v-icon>view
                       </v-btn>
