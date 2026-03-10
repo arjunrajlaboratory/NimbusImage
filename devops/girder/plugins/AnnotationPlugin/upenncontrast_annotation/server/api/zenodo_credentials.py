@@ -17,11 +17,13 @@ from cryptography.fernet import Fernet, InvalidToken
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
+from girder.exceptions import RestException
 from girder.models.user import User
 
 log = logging.getLogger(__name__)
 
 _DEV_KEY_WARNING_LOGGED = False
+_CACHED_FERNET = None
 
 
 def _get_fernet():
@@ -30,15 +32,19 @@ def _get_fernet():
 
     Uses ZENODO_ENCRYPTION_KEY env var. If not set, falls
     back to a dev-only default and logs a warning.
+    The result is cached after first call.
     """
-    global _DEV_KEY_WARNING_LOGGED
+    global _DEV_KEY_WARNING_LOGGED, _CACHED_FERNET
+    if _CACHED_FERNET is not None:
+        return _CACHED_FERNET
+
     env_key = os.environ.get("ZENODO_ENCRYPTION_KEY")
     if env_key:
         # If it's already a valid Fernet key (44 chars
         # base64), use directly; otherwise derive one.
         try:
-            Fernet(env_key.encode())
-            return Fernet(env_key.encode())
+            _CACHED_FERNET = Fernet(env_key.encode())
+            return _CACHED_FERNET
         except Exception:
             pass
         # env_key is set but not a valid Fernet key;
@@ -48,7 +54,8 @@ def _get_fernet():
                 env_key.encode()
             ).digest()
         )
-        return Fernet(key)
+        _CACHED_FERNET = Fernet(key)
+        return _CACHED_FERNET
 
     # No env var set — use dev-only default.
     if not _DEV_KEY_WARNING_LOGGED:
@@ -64,7 +71,8 @@ def _get_fernet():
     key = base64.urlsafe_b64encode(
         hashlib.sha256(passphrase.encode()).digest()
     )
-    return Fernet(key)
+    _CACHED_FERNET = Fernet(key)
+    return _CACHED_FERNET
 
 
 def encrypt_token(token):
@@ -138,7 +146,9 @@ class ZenodoCredentials(Resource):
         sandbox = body.get('sandbox', False)
 
         if not token:
-            return {'error': 'Token is required'}
+            raise RestException(
+                "Token is required", code=400
+            )
 
         if 'meta' not in user:
             user['meta'] = {}

@@ -81,9 +81,11 @@ The upload endpoint returns a `jobId` that the frontend uses for SSE-based progr
 
 Progress flows through two channels:
 - **SSE (primary)**: Job log lines contain JSON like `{"progress": 0.5, "current": 3, "total": 7, "message": "Uploading file.tiff..."}`. The frontend parses these in the `eventCallback` passed to `jobs.addJob()`.
-- **Project metadata (persistent)**: `project.meta.zenodo.progress` is updated alongside job logs, serving as the source of truth if the user navigates away and returns.
+- **Project metadata (persistent)**: `project.meta.zenodo.progress` is updated every 5 files (and always on the first/last file) to reduce MongoDB write load, serving as a recovery source if the user navigates away and returns.
 
-On page mount, if `zenodoStatus === 'uploading'`, the component queries for active `zenodo_upload` jobs and re-subscribes via `jobs.addJob()`.
+On page mount, if `zenodoStatus === 'uploading'`, the component queries for active `zenodo_upload` jobs matching this project's ID and re-subscribes via `jobs.addJob()`.
+
+**Note on app-wide progress UI:** The `ZenodoPublish` component manages its own progress display locally rather than using the shared `ProgressType.ZENODO_UPLOAD` / progress store used by other long-running jobs (histogram caching, max-merge, etc.). This was an intentional design choice because the Zenodo progress UI is self-contained within the ProjectInfo page. A future update should integrate Zenodo upload progress into the app-wide progress manager so uploads remain visible when navigating away from ProjectInfo. See GitHub issue for tracking.
 
 ## Data Model
 

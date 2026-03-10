@@ -18,13 +18,15 @@ from girder.exceptions import RestException
 from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
-from girder.models.user import User
 from girder_jobs.models.job import Job as JobModel
 
-from ..helpers.zenodo_client import ZenodoClient, ZenodoError
+from ..helpers.zenodo_client import (
+    ZenodoError,
+    get_zenodo_client_for_user,
+    update_zenodo_meta,
+)
 from ..models.collection import Collection as CollectionModel
 from ..models.project import Project as ProjectModel
-from .zenodo_credentials import decrypt_token
 
 log = logging.getLogger(__name__)
 
@@ -56,29 +58,10 @@ class Zenodo(Resource):
         Loads and decrypts the user's stored Zenodo token.
         Raises RestException if no token is configured.
         """
-        fullUser = User().load(user['_id'], force=True)
-        zenodo_meta = fullUser.get(
-            'meta', {}
-        ).get('zenodo', {})
-        encrypted = zenodo_meta.get('encryptedToken')
-
-        if not encrypted:
-            raise RestException(
-                "No Zenodo token configured. Please add "
-                "your Zenodo API token in settings.",
-                code=400,
-            )
-
-        token = decrypt_token(encrypted)
-        if not token:
-            raise RestException(
-                "Failed to decrypt Zenodo token. The "
-                "server encryption key may have changed.",
-                code=500,
-            )
-
-        sandbox = zenodo_meta.get('sandbox', False)
-        return ZenodoClient(token, sandbox=sandbox)
+        try:
+            return get_zenodo_client_for_user(user)
+        except ValueError as e:
+            raise RestException(str(e), code=400)
 
     def _gatherProjectFiles(self, project, user):
         """Gather all files that would be uploaded.
@@ -139,17 +122,10 @@ class Zenodo(Resource):
 
     def _updateZenodoMeta(self, project_id, zenodo_data):
         """Update the project's meta.zenodo field."""
-        project = self._projectModel.load(
-            project_id, force=True
+        update_zenodo_meta(
+            project_id, zenodo_data,
+            project_model=self._projectModel,
         )
-        if not project:
-            return
-
-        existing = project['meta'].get('zenodo', {})
-        existing.update(zenodo_data)
-        project['meta']['zenodo'] = existing
-        project['updated'] = datetime.datetime.utcnow()
-        self._projectModel.save(project)
 
     @access.user
     @autoDescribeRoute(
@@ -249,24 +225,35 @@ class Zenodo(Resource):
             'error': None,
         })
 
-        # Create and schedule a local Girder job
-        job = JobModel().createLocalJob(
-            module=(
-                'upenncontrast_annotation'
-                '.server.helpers.zenodo_job'
-            ),
-            title=(
-                'Zenodo Upload: %s' % project['name']
-            ),
-            type='zenodo_upload',
-            user=user,
-            kwargs={
-                'projectId': str(project['_id']),
-                'userId': str(user['_id']),
-            },
-            asynchronous=True,
-        )
-        JobModel().scheduleJob(job)
+        # Create and schedule a local Girder job.
+        # If job creation fails, roll back the status
+        # so the project is not stuck in 'uploading'.
+        try:
+            job = JobModel().createLocalJob(
+                module=(
+                    'upenncontrast_annotation'
+                    '.server.helpers.zenodo_job'
+                ),
+                title=(
+                    'Zenodo Upload: %s'
+                    % project['name']
+                ),
+                type='zenodo_upload',
+                user=user,
+                kwargs={
+                    'projectId': str(project['_id']),
+                    'userId': str(user['_id']),
+                },
+                asynchronous=True,
+            )
+            JobModel().scheduleJob(job)
+        except Exception:
+            self._updateZenodoMeta(project['_id'], {
+                'status': 'error',
+                'error': 'Failed to create upload job',
+                'progress': None,
+            })
+            raise
 
         return {
             'message': 'Upload started',
@@ -405,7 +392,7 @@ class Zenodo(Resource):
 
         zenodo = project['meta'].get('zenodo', {})
         if zenodo.get('status') not in (
-            'draft', 'error'
+            'draft', 'error', 'uploading'
         ):
             raise RestException(
                 "No draft deposition to discard.",

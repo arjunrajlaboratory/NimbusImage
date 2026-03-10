@@ -348,20 +348,24 @@ async function discardDraft() {
 
 async function recoverActiveJob() {
   // If we load the page while an upload is in progress,
-  // try to find the active job and re-subscribe to it
+  // try to find the active job and re-subscribe to it.
+  // We fetch recent zenodo_upload jobs and filter to the
+  // one matching this project (by kwargs.projectId).
   try {
     const response = await store.girderRest.get("job", {
       params: {
         types: JSON.stringify(["zenodo_upload"]),
-        statuses: JSON.stringify([0, 1, 2]), // inactive, queued, running
-        limit: 1,
+        statuses: JSON.stringify([1, 2]), // queued, running
+        limit: 5,
         sort: "created",
         sortdir: -1,
       },
     });
-    const activeJobs = response.data;
-    if (activeJobs.length > 0) {
-      trackJob(activeJobs[0]._id);
+    const matchingJob = response.data.find(
+      (j: any) => j.kwargs?.projectId === props.project.id,
+    );
+    if (matchingJob) {
+      trackJob(matchingJob._id);
       // Initialize progress from project meta
       const progress = zenodoMeta.value?.progress;
       if (progress) {

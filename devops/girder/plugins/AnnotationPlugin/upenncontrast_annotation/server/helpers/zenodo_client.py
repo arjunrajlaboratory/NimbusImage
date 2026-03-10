@@ -9,11 +9,20 @@ Handles the full Zenodo deposit workflow:
 
 Supports both production (zenodo.org) and sandbox
 (sandbox.zenodo.org) environments.
+
+Also provides shared helpers used by both the REST
+endpoints and the background job module.
 """
 
+import datetime
 import logging
 import requests
 from urllib.parse import quote
+
+from girder.models.user import User
+
+from ..api.zenodo_credentials import decrypt_token
+from ..models.project import Project as ProjectModel
 
 log = logging.getLogger(__name__)
 
@@ -114,12 +123,13 @@ class ZenodoClient:
         )
         files = self._check(resp).json()
         for f in files:
-            self.session.delete(
+            del_resp = self.session.delete(
                 self._url(
                     f"deposit/depositions/{deposition_id}"
                     f"/files/{f['id']}"
                 ),
             )
+            self._check(del_resp, (204,))
 
     def upload_file(self, bucket_url, filename, stream,
                     content_type="application/octet-stream"):
@@ -203,3 +213,56 @@ class ZenodoClient:
             ),
         )
         return self._check(resp).json()
+
+
+# --- Shared helpers for REST endpoints and job module ---
+
+def get_zenodo_client_for_user(user):
+    """Build a ZenodoClient from a user's stored token.
+
+    :param user: Girder user document (or dict with _id).
+    :returns: ZenodoClient instance.
+    :raises ValueError: If no token or decryption fails.
+    """
+    full_user = User().load(user['_id'], force=True)
+    zenodo_meta = full_user.get(
+        'meta', {}
+    ).get('zenodo', {})
+    encrypted = zenodo_meta.get('encryptedToken')
+
+    if not encrypted:
+        raise ValueError(
+            "No Zenodo token configured."
+        )
+
+    token = decrypt_token(encrypted)
+    if not token:
+        raise ValueError(
+            "Failed to decrypt Zenodo token."
+        )
+
+    sandbox = zenodo_meta.get('sandbox', False)
+    return ZenodoClient(token, sandbox=sandbox)
+
+
+def update_zenodo_meta(project_id, zenodo_data,
+                       project_model=None):
+    """Update the project's meta.zenodo field.
+
+    :param project_id: The project ID.
+    :param zenodo_data: Dict of zenodo fields to update.
+    :param project_model: Optional ProjectModel instance
+        (avoids re-instantiation in loops).
+    """
+    if project_model is None:
+        project_model = ProjectModel()
+    project = project_model.load(
+        project_id, force=True
+    )
+    if not project:
+        return
+    existing = project['meta'].get('zenodo', {})
+    existing.update(zenodo_data)
+    project['meta']['zenodo'] = existing
+    project['updated'] = datetime.datetime.utcnow()
+    project_model.save(project)

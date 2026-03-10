@@ -24,8 +24,10 @@ from girder_jobs.constants import JobStatus
 from girder_jobs.models.job import Job
 
 from .serialization import orJsonDefaults
-from .zenodo_client import ZenodoClient
-from ..api.zenodo_credentials import decrypt_token
+from .zenodo_client import (
+    get_zenodo_client_for_user,
+    update_zenodo_meta,
+)
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.collection import (
     Collection as CollectionModel,
@@ -90,7 +92,7 @@ def run(job):
         return
 
     try:
-        client = _get_zenodo_client(user)
+        client = get_zenodo_client_for_user(user)
     except Exception as e:
         _fail(
             job, job_model, project_id, project_model,
@@ -133,48 +135,30 @@ def _fail(job, job_model, project_id, project_model,
     })
 
 
-def _get_zenodo_client(user):
-    """Build a ZenodoClient from the user's stored token."""
-    full_user = User().load(user['_id'], force=True)
-    zenodo_meta = full_user.get(
-        'meta', {}
-    ).get('zenodo', {})
-    encrypted = zenodo_meta.get('encryptedToken')
-
-    if not encrypted:
-        raise ValueError(
-            "No Zenodo token configured."
-        )
-
-    token = decrypt_token(encrypted)
-    if not token:
-        raise ValueError(
-            "Failed to decrypt Zenodo token."
-        )
-
-    sandbox = zenodo_meta.get('sandbox', False)
-    return ZenodoClient(token, sandbox=sandbox)
-
-
 def _update_zenodo_meta(project_id, project_model,
                         zenodo_data):
     """Update the project's meta.zenodo field."""
-    project = project_model.load(
-        project_id, force=True
+    update_zenodo_meta(
+        project_id, zenodo_data,
+        project_model=project_model,
     )
-    if not project:
-        return
-    existing = project['meta'].get('zenodo', {})
-    existing.update(zenodo_data)
-    project['meta']['zenodo'] = existing
-    project['updated'] = datetime.datetime.utcnow()
-    project_model.save(project)
+
+
+# How often to persist progress to MongoDB (every N files)
+_META_PROGRESS_INTERVAL = 5
 
 
 def _report_progress(job, job_model, current, total,
-                     message):
-    """Report progress via job log (SSE) and update
-    project metadata."""
+                     message, project_id=None,
+                     project_model=None):
+    """Report progress via job log (SSE) and optionally
+    persist to project metadata.
+
+    SSE progress is always sent. MongoDB project metadata
+    is updated every _META_PROGRESS_INTERVAL files to
+    reduce write load, plus always on the first and last
+    file.
+    """
     job_model.updateJob(
         job,
         log=json.dumps({
@@ -184,6 +168,23 @@ def _report_progress(job, job_model, current, total,
             'message': message,
         }) + '\n',
     )
+
+    if project_id and project_model:
+        should_persist = (
+            current <= 1
+            or current >= total
+            or current % _META_PROGRESS_INTERVAL == 0
+        )
+        if should_persist:
+            _update_zenodo_meta(
+                project_id, project_model, {
+                    'progress': {
+                        'current': current,
+                        'total': total,
+                        'message': message,
+                    },
+                },
+            )
 
 
 def _do_upload(job, job_model, project, user, project_id,
@@ -227,8 +228,18 @@ def _do_upload(job, job_model, project, user, project_id,
 
     uploaded_files = []
     file_count = 0
+    # Track used filenames to detect collisions.
+    # In practice Girder enforces unique item names
+    # within a folder, so collisions within a single
+    # dataset cannot occur.  Cross-dataset collisions
+    # (two datasets with the same folder name) are
+    # possible in theory, so we guard against them by
+    # appending the dataset ID on conflict.
+    seen_filenames = set()
 
-    # Count total files for progress
+    # Count total files for progress — count actual
+    # File documents, not Items, because one Item can
+    # contain multiple Files (e.g. sidecar files).
     total_files = 0
     for d in project['meta']['datasets']:
         folder = Folder().load(
@@ -238,7 +249,10 @@ def _do_upload(job, job_model, project, user, project_id,
             items = list(Item().find(
                 {'folderId': folder['_id']}
             ))
-            total_files += len(items)
+            for item in items:
+                total_files += len(list(File().find(
+                    {'itemId': item['_id']}
+                )))
         total_files += 1  # annotation JSON
     total_files += len(
         project['meta']['collections']
@@ -279,15 +293,8 @@ def _do_upload(job, job_model, project, user, project_id,
                 _report_progress(
                     job, job_model,
                     file_count, total_files, msg,
-                )
-                _update_zenodo_meta(
-                    project_id, project_model, {
-                        'progress': {
-                            'current': file_count,
-                            'total': total_files,
-                            'message': msg,
-                        },
-                    },
+                    project_id=project_id,
+                    project_model=project_model,
                 )
 
                 stream = File().download(
@@ -296,6 +303,13 @@ def _do_upload(job, job_model, project, user, project_id,
                 filename = (
                     f"{folder_name}--{f['name']}"
                 )
+                if filename in seen_filenames:
+                    filename = (
+                        f"{folder_name}"
+                        f"__{dataset_id}"
+                        f"--{f['name']}"
+                    )
+                seen_filenames.add(filename)
                 result = client.upload_file(
                     bucket_url, filename, stream(),
                 )
@@ -317,15 +331,8 @@ def _do_upload(job, job_model, project, user, project_id,
         _report_progress(
             job, job_model,
             file_count, total_files, msg,
-        )
-        _update_zenodo_meta(
-            project_id, project_model, {
-                'progress': {
-                    'current': file_count,
-                    'total': total_files,
-                    'message': msg,
-                },
-            },
+            project_id=project_id,
+            project_model=project_model,
         )
 
         ann_json = _build_annotation_json(
@@ -337,6 +344,13 @@ def _do_upload(job, job_model, project, user, project_id,
         ann_filename = (
             f"{folder_name}_annotations.json"
         )
+        if ann_filename in seen_filenames:
+            ann_filename = (
+                f"{folder_name}"
+                f"__{dataset_id}"
+                f"_annotations.json"
+            )
+        seen_filenames.add(ann_filename)
         client.upload_file(
             bucket_url, ann_filename,
             io.BytesIO(ann_json),
@@ -364,15 +378,8 @@ def _do_upload(job, job_model, project, user, project_id,
         _report_progress(
             job, job_model,
             file_count, total_files, msg,
-        )
-        _update_zenodo_meta(
-            project_id, project_model, {
-                'progress': {
-                    'current': file_count,
-                    'total': total_files,
-                    'message': msg,
-                },
-            },
+            project_id=project_id,
+            project_model=project_model,
         )
 
         config_json = _build_collection_config(
@@ -381,6 +388,13 @@ def _do_upload(job, job_model, project, user, project_id,
         config_filename = (
             f"{coll_name}_config.json"
         )
+        if config_filename in seen_filenames:
+            config_filename = (
+                f"{coll_name}"
+                f"__{coll_id}"
+                f"_config.json"
+            )
+        seen_filenames.add(config_filename)
         client.upload_file(
             bucket_url, config_filename,
             io.BytesIO(config_json),
@@ -397,6 +411,8 @@ def _do_upload(job, job_model, project, user, project_id,
     _report_progress(
         job, job_model,
         file_count, total_files, msg,
+        project_id=project_id,
+        project_model=project_model,
     )
     manifest_json = _build_manifest(
         project, uploaded_files, collection_model,
