@@ -33,19 +33,19 @@
 
       <v-list v-else density="compact" class="collection-list">
         <v-list-item
-          v-for="(collection, index) in filteredCollections"
+          v-for="collection in filteredCollections"
           :key="collection.id"
           :disabled="isInProject(collection.id)"
-          @click="toggleSelection(index, collection.id)"
+          @click="toggleSelection(collection.id)"
         >
           <template #prepend>
             <v-checkbox
-              :model-value="selectedIndices.includes(index)"
+              :model-value="selectedIds.has(collection.id)"
               :disabled="isInProject(collection.id)"
               color="primary"
               density="compact"
               hide-details
-              @update:model-value="toggleSelection(index, collection.id)"
+              @update:model-value="toggleSelection(collection.id)"
               @click.stop
             />
           </template>
@@ -124,7 +124,7 @@ const searchQuery = ref("");
 const loading = ref(false);
 const adding = ref(false);
 const allCollections = ref<IDatasetConfiguration[]>([]);
-const selectedIndices = ref<number[]>([]);
+const selectedIds = ref<Set<string>>(new Set());
 const showPermissionConfirm = ref(false);
 
 const existingCollectionIds = computed<Set<string>>(() => {
@@ -144,23 +144,24 @@ const filteredCollections = computed<IDatasetConfiguration[]>(() => {
 });
 
 const selectedCollections = computed<IDatasetConfiguration[]>(() => {
-  return selectedIndices.value
-    .map((index) => filteredCollections.value[index])
-    .filter((c) => c && !isInProject(c.id));
+  return allCollections.value.filter(
+    (c) => selectedIds.value.has(c.id) && !isInProject(c.id),
+  );
 });
 
 function isInProject(collectionId: string): boolean {
   return existingCollectionIds.value.has(collectionId);
 }
 
-function toggleSelection(index: number, collectionId: string) {
+function toggleSelection(collectionId: string) {
   if (isInProject(collectionId)) return;
-  const pos = selectedIndices.value.indexOf(index);
-  if (pos >= 0) {
-    selectedIndices.value = selectedIndices.value.filter((i) => i !== index);
+  const next = new Set(selectedIds.value);
+  if (next.has(collectionId)) {
+    next.delete(collectionId);
   } else {
-    selectedIndices.value = [...selectedIndices.value, index];
+    next.add(collectionId);
   }
+  selectedIds.value = next;
 }
 
 async function fetchCollections() {
@@ -197,7 +198,7 @@ async function addCollections() {
       "added",
       selectedCollections.value.map((c) => c.id),
     );
-    selectedIndices.value = [];
+    selectedIds.value = new Set();
   } finally {
     adding.value = false;
   }
@@ -206,7 +207,7 @@ async function addCollections() {
 watch(
   () => props.project,
   () => {
-    selectedIndices.value = [];
+    selectedIds.value = new Set();
   },
 );
 
@@ -219,7 +220,7 @@ defineExpose({
   loading,
   adding,
   allCollections,
-  selectedIndices,
+  selectedIds,
   showPermissionConfirm,
   existingCollectionIds,
   filteredCollections,
