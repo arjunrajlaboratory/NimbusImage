@@ -327,6 +327,24 @@ const displayableAnnotations = computed(() => {
     : annotationStore.annotations;
 });
 
+const displayableAnnotationsByChannel = computed(() => {
+  const annotationsByChannel: Map<number, IAnnotation[]> = new Map();
+  const annotations = displayableAnnotations.value;
+  const len = annotations.length;
+
+  for (let i = 0; i < len; i++) {
+    const annotation = annotations[i];
+    const channelAnnotations = annotationsByChannel.get(annotation.channel);
+    if (channelAnnotations) {
+      channelAnnotations.push(annotation);
+    } else {
+      annotationsByChannel.set(annotation.channel, [annotation]);
+    }
+  }
+
+  return annotationsByChannel;
+});
+
 const validLayers = computed(() =>
   layers.value.slice(props.lowestLayer, props.lowestLayer + props.layerCount),
 );
@@ -341,14 +359,6 @@ const isLayerIdValid = computed(() => {
 
 // A map: map<layer id, map<annotation id, annotation>>
 const layerAnnotations = computed(() => {
-  const channelToAnnotationIds: Map<number, IAnnotation[]> = new Map();
-  for (const annotation of displayableAnnotations.value) {
-    if (!channelToAnnotationIds.has(annotation.channel)) {
-      channelToAnnotationIds.set(annotation.channel, []);
-    }
-    channelToAnnotationIds.get(annotation.channel)!.push(annotation);
-  }
-
   const layerIdToAnnotationIds: Map<
     string,
     Map<string, IAnnotation>
@@ -359,7 +369,7 @@ const layerAnnotations = computed(() => {
 
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
       const layerChannelAnnotations =
-        channelToAnnotationIds.get(layer.channel) || [];
+        displayableAnnotationsByChannel.value.get(layer.channel) || [];
       const sliceIndexes = store.layerSliceIndexes(layer);
       const allXY = store.unrollXY || layer.xy.type === "max-merge";
       const allZ = store.unrollZ || layer.z.type === "max-merge";
@@ -527,22 +537,31 @@ function drawAnnotationsNoThrottle() {
     return;
   }
 
-  clearOldAnnotations(true, false);
+  clearOldAnnotations(false, false);
 
   const drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]> = new Map();
-  for (const geoJSAnnotation of props.annotationLayer.annotations()) {
+  const drawnConnectionIds: Set<string> = new Set();
+  const existingAnnotations = props.annotationLayer.annotations();
+  const len = existingAnnotations.length;
+  for (let i = 0; i < len; i++) {
+    const geoJSAnnotation = existingAnnotations[i];
     const id = geoJSAnnotation.options("girderId");
-    if (id) {
-      if (!drawnGeoJSAnnotations.has(id)) {
-        drawnGeoJSAnnotations.set(id, []);
-      }
-      drawnGeoJSAnnotations.get(id)!.push(geoJSAnnotation);
+    if (!id || geoJSAnnotation.options("specialAnnotation")) {
+      continue;
     }
+    if (geoJSAnnotation.options("isConnection")) {
+      drawnConnectionIds.add(id);
+      continue;
+    }
+    if (!drawnGeoJSAnnotations.has(id)) {
+      drawnGeoJSAnnotations.set(id, []);
+    }
+    drawnGeoJSAnnotations.get(id)!.push(geoJSAnnotation);
   }
 
   drawNewAnnotations(drawnGeoJSAnnotations);
   if (shouldDrawConnections.value) {
-    drawNewConnections(drawnGeoJSAnnotations);
+    drawNewConnections(drawnConnectionIds);
   }
   props.annotationLayer.draw();
 }
@@ -558,6 +577,8 @@ function drawTooltipsNoThrottle() {
       return;
     }
     const unrolledCoords = unrolledCentroidCoordinates.value;
+    const annotations = displayedAnnotations.value;
+    const propValues = propertyValues.value;
     const textBaseStyle = {
       fontSize: "12px",
       fontFamily: "sans-serif",
@@ -570,7 +591,7 @@ function drawTooltipsNoThrottle() {
     let yOffset = 0;
     props.textLayer
       .createFeature("text")
-      .data(displayedAnnotations.value)
+      .data(annotations)
       .position((annotation: IAnnotation) => {
         return unrolledCoords[annotation.id];
       })
@@ -586,10 +607,11 @@ function drawTooltipsNoThrottle() {
     for (const propertyPath of displayedPropertyPaths.value) {
       const fullName = propertiesStore.getSubIdsNameFromPath(propertyPath);
       if (fullName) {
-        const propValues = propertyValues.value;
         const propertyData: Map<string, string> = new Map();
         const filteredIds: string[] = [];
-        for (const annotation of displayedAnnotations.value) {
+        const len = annotations.length;
+        for (let i = 0; i < len; i++) {
+          const annotation = annotations[i];
           const stringValue = getStringFromPropertiesAndPath(
             propValues[annotation.id],
             propertyPath,
@@ -624,67 +646,72 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
     props.annotationLayer.removeAllAnnotations(undefined, undefined, false);
     props.annotationLayer.modified();
   } else {
-    props.annotationLayer
-      .annotations()
-      .forEach((geoJsAnnotation: IGeoJSAnnotation) => {
-        const {
-          girderId,
-          layerId,
-          isConnection,
-          childId,
-          parentId,
-          specialAnnotation,
-          color,
-        } = geoJsAnnotation.options();
+    const existingAnnotations = props.annotationLayer.annotations();
+    const len = existingAnnotations.length;
+    let modified = false;
 
+    for (let i = 0; i < len; i++) {
+      const geoJsAnnotation = existingAnnotations[i];
+      const {
+        girderId,
+        layerId,
+        isConnection,
+        childId,
+        parentId,
+        specialAnnotation,
+        annotationRef,
+        parentAnnotationRef,
+        childAnnotationRef,
+      } = geoJsAnnotation.options();
+
+      if (
+        geoJsAnnotation === props.annotationLayer.currentAnnotation ||
+        specialAnnotation
+      ) {
+        continue;
+      }
+
+      if (!girderId) {
+        continue;
+      }
+
+      if (isConnection) {
+        const parent = getAnnotationFromId.value(parentId);
+        const child = getAnnotationFromId.value(childId);
         if (
-          geoJsAnnotation === props.annotationLayer.currentAnnotation ||
-          specialAnnotation
+          !connectionIdsSet.value.has(girderId) ||
+          !shouldDrawConnections.value ||
+          !parent ||
+          !child ||
+          !displayedAnnotationIds.value.has(parent.id) ||
+          !displayedAnnotationIds.value.has(child.id) ||
+          parentAnnotationRef !== parent ||
+          childAnnotationRef !== child
         ) {
-          return;
-        }
-
-        if (clearAll) {
           props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-          props.annotationLayer.modified();
-          return;
+          modified = true;
         }
+        continue;
+      }
 
-        if (!girderId) {
-          return;
-        }
+      const annotation = getAnnotationFromId.value(girderId);
+      const layer = store.getLayerFromId(layerId);
+      if (
+        layer &&
+        annotation &&
+        layerDisplaysAnnotation.value(layer.id, annotation.id) &&
+        annotationRef === annotation
+      ) {
+        continue;
+      }
 
-        if (isConnection) {
-          const parent = getAnnotationFromId.value(parentId);
-          const child = getAnnotationFromId.value(childId);
-          if (
-            !connectionIdsSet.value.has(girderId) ||
-            !shouldDrawConnections.value ||
-            !parent ||
-            !child ||
-            !displayedAnnotationIds.value.has(parent.id) ||
-            !displayedAnnotationIds.value.has(child.id)
-          ) {
-            props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-            props.annotationLayer.modified();
-          }
-          return;
-        }
+      props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
+      modified = true;
+    }
 
-        const annotation = getAnnotationFromId.value(girderId);
-        const layer = store.getLayerFromId(layerId);
-        if (
-          layer &&
-          annotation &&
-          layerDisplaysAnnotation.value(layer.id, annotation.id) &&
-          annotation.color === color
-        ) {
-          return;
-        }
-
-        props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-        props.annotationLayer.modified();
-      });
+    if (modified) {
+      props.annotationLayer.modified();
+    }
   }
   if (redraw) {
     props.annotationLayer.draw();
@@ -742,9 +769,7 @@ function drawNewAnnotations(
   }
 }
 
-function drawNewConnections(
-  drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]>,
-) {
+function drawNewConnections(drawnConnectionIds: Set<string>) {
   const dispAnnotationIds = displayedAnnotationIds.value;
   const getAnnotation = getAnnotationFromId.value;
   const connections = annotationConnections.value;
@@ -752,7 +777,7 @@ function drawNewConnections(
   for (let i = 0; i < len; i++) {
     const connection = connections[i];
     if (
-      drawnGeoJSAnnotations.has(connection.id) ||
+      drawnConnectionIds.has(connection.id) ||
       !dispAnnotationIds.has(connection.parentId) ||
       !dispAnnotationIds.has(connection.childId)
     ) {
@@ -779,8 +804,17 @@ function findConnectedComponents(
   function find(x: string): string {
     if (!parent.has(x)) {
       parent.set(x, x);
+      return x;
     }
-    return parent.get(x) === x ? x : find(parent.get(x));
+    const currentParent = parent.get(x);
+    if (currentParent === x) {
+      return x;
+    }
+    const root = find(currentParent);
+    if (root !== currentParent) {
+      parent.set(x, root);
+    }
+    return root;
   }
 
   function union(x: string, y: string): void {
@@ -822,7 +856,9 @@ function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
   const totalAnnotationIdsSet: Set<string> = new Set();
   for (const layer of validLayers.value) {
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
-      for (const annotation of displayableAnnotations.value) {
+      const channelAnnotations =
+        displayableAnnotationsByChannel.value.get(layer.channel) || [];
+      for (const annotation of channelAnnotations) {
         if (annotation.channel === layer.channel) {
           const sliceIndexes = store.layerSliceIndexes(layer);
           if (
@@ -984,17 +1020,32 @@ function drawTimelapseTrack(
 
   const currentTime = time.value;
   const drawnLines = new Set<string>();
+  const unrolledCentroids = unrolledCentroidCoordinates.value;
+  const annotationsById = new Map<string, ITimelapseAnnotation>();
+  const connectionsByAnnotationId = new Map<string, IAnnotationConnection[]>();
+
+  for (const annotation of annotations) {
+    annotationsById.set(annotation.id, annotation);
+  }
+
+  const connectionsLen = connections.length;
+  for (let i = 0; i < connectionsLen; i++) {
+    const connection = connections[i];
+    const parentConnections =
+      connectionsByAnnotationId.get(connection.parentId) || [];
+    parentConnections.push(connection);
+    connectionsByAnnotationId.set(connection.parentId, parentConnections);
+
+    const childConnections =
+      connectionsByAnnotationId.get(connection.childId) || [];
+    childConnections.push(connection);
+    connectionsByAnnotationId.set(connection.childId, childConnections);
+  }
 
   let lines: IGeoJSAnnotation[] = [];
   for (const annotation of annotations) {
-    const len = connections.length;
-    const relevantConnections: IAnnotationConnection[] = [];
-    for (let i = 0; i < len; i++) {
-      const conn = connections[i];
-      if (conn.parentId === annotation.id || conn.childId === annotation.id) {
-        relevantConnections.push(conn);
-      }
-    }
+    const relevantConnections =
+      connectionsByAnnotationId.get(annotation.id) || [];
 
     for (const connection of relevantConnections) {
       const otherId =
@@ -1002,7 +1053,7 @@ function drawTimelapseTrack(
           ? connection.childId
           : connection.parentId;
 
-      const otherAnnotation = annotations.find((a) => a.id === otherId);
+      const otherAnnotation = annotationsById.get(otherId);
       if (
         !otherAnnotation ||
         otherAnnotation.location.Time >= annotation.location.Time
@@ -1015,8 +1066,8 @@ function drawTimelapseTrack(
       drawnLines.add(lineId);
 
       const points = [
-        unrolledCentroidCoordinates.value[annotation.id],
-        unrolledCentroidCoordinates.value[otherId],
+        unrolledCentroids[annotation.id],
+        unrolledCentroids[otherId],
       ];
 
       const timeDiff = annotation.location.Time - otherAnnotation.location.Time;
@@ -1201,6 +1252,7 @@ function createGeoJSAnnotation(annotation: IAnnotation, layerId?: string) {
     girderId: annotation.id,
     isHovered: annotation.id === hoveredAnnotationId.value,
     isSelected: isAnnotationSelected.value(annotation.id),
+    annotationRef: annotation,
     location: annotation.location,
     channel: annotation.channel,
     color: annotation.color,
@@ -1232,6 +1284,8 @@ function drawGeoJSAnnotationFromConnection(
   line.options("isConnection", true);
   line.options("childId", connection.childId);
   line.options("parentId", connection.parentId);
+  line.options("parentAnnotationRef", parent);
+  line.options("childAnnotationRef", child);
   line.options("girderId", connection.id);
   props.annotationLayer.addAnnotation(line, undefined, false);
 }
@@ -1253,9 +1307,13 @@ async function createAnnotationFromTool(
 }
 
 function restyleAnnotations() {
-  for (const geoJSAnnotation of props.annotationLayer.annotations()) {
-    const { girderId, layerId, style, customColor } = geoJSAnnotation.options();
-    if (girderId) {
+  const annotations = props.annotationLayer.annotations();
+  const len = annotations.length;
+  for (let i = 0; i < len; i++) {
+    const geoJSAnnotation = annotations[i];
+    const { girderId, layerId, style, customColor, isConnection } =
+      geoJSAnnotation.options();
+    if (girderId && !isConnection) {
       const layer = store.getLayerFromId(layerId);
       const newStyle = getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
@@ -1353,35 +1411,36 @@ function getSelectedAnnotationsFromAnnotation(
   const type = selectAnnotation.type();
 
   const unitsPerPixel = getMapUnitsPerPixel();
+  const selectedAnns: IAnnotation[] = [];
+  const selectedIds = new Set<string>();
+  const geoAnnotations = props.annotationLayer.annotations();
+  const len = geoAnnotations.length;
 
-  const selectedAnns: IAnnotation[] = props.annotationLayer
-    .annotations()
-    .reduce((selected: IAnnotation[], geoJSannotation: IGeoJSAnnotation) => {
-      const { girderId, isConnection } = geoJSannotation.options();
-      if (
-        !girderId ||
-        isConnection ||
-        selected.some(
-          (selectedAnnotation) => selectedAnnotation.id === girderId,
-        )
-      ) {
-        return selected;
-      }
-      const annotation = getAnnotationFromId.value(girderId);
-      if (
-        !annotation ||
-        !shouldSelectAnnotation(
-          type,
-          coordinates,
-          annotation,
-          geoJSannotation.style(),
-          unitsPerPixel,
-        )
-      ) {
-        return selected;
-      }
-      return [...selected, annotation];
-    }, []);
+  for (let i = 0; i < len; i++) {
+    const geoJSannotation = geoAnnotations[i];
+    const { girderId, isConnection } = geoJSannotation.options();
+    if (!girderId || isConnection || selectedIds.has(girderId)) {
+      continue;
+    }
+
+    const annotation = getAnnotationFromId.value(girderId);
+    if (
+      !annotation ||
+      !shouldSelectAnnotation(
+        type,
+        coordinates,
+        annotation,
+        geoJSannotation.style(),
+        unitsPerPixel,
+      )
+    ) {
+      continue;
+    }
+
+    selectedIds.add(girderId);
+    selectedAnns.push(annotation);
+  }
+
   return selectedAnns;
 }
 
@@ -1437,32 +1496,32 @@ function getTimelapseAnnotationsFromAnnotation(
   const type = selectAnnotation.type();
 
   const unitsPerPixel = getMapUnitsPerPixel();
+  const selectedAnns: IGeoJSAnnotation[] = [];
+  const annotations = props.timelapseLayer.annotations();
+  const len = annotations.length;
 
-  const selectedAnns: IGeoJSAnnotation[] = props.timelapseLayer
-    .annotations()
-    .reduce(
-      (selected: IGeoJSAnnotation[], geoJSAnnotation: IGeoJSAnnotation) => {
-        const { isTimelapsePoint } = geoJSAnnotation.options();
-        if (!isTimelapsePoint) {
-          return selected;
-        }
+  for (let i = 0; i < len; i++) {
+    const geoJSAnnotation = annotations[i];
+    const { isTimelapsePoint } = geoJSAnnotation.options();
+    if (!isTimelapsePoint) {
+      continue;
+    }
 
-        if (
-          !shouldSelectGeoJSAnnotation(
-            type,
-            coordinates,
-            geoJSAnnotation,
-            unitsPerPixel,
-            5,
-          )
-        ) {
-          return selected;
-        }
+    if (
+      !shouldSelectGeoJSAnnotation(
+        type,
+        coordinates,
+        geoJSAnnotation,
+        unitsPerPixel,
+        5,
+      )
+    ) {
+      continue;
+    }
 
-        return [...selected, geoJSAnnotation];
-      },
-      [],
-    );
+    selectedAnns.push(geoJSAnnotation);
+  }
+
   return selectedAnns;
 }
 
@@ -2195,6 +2254,10 @@ function onPrimaryChange() {
   });
 }
 
+function onAnnotationStateChanged() {
+  restyleAnnotations();
+}
+
 function onTimelapseModeChanged() {
   drawTimelapseConnectionsAndCentroids();
 }
@@ -2810,15 +2873,13 @@ async function handleDragEnd(evt: IGeoJSMouseState) {
 
 // ---- Watchers ----
 
-// Primary change: 8 sources
+// Primary change: 6 sources
 watch(
   [
     annotationConnections,
     xy,
     z,
     time,
-    hoveredAnnotationId,
-    selectedAnnotations,
     shouldDrawAnnotations,
     shouldDrawConnections,
   ],
@@ -2826,6 +2887,10 @@ watch(
     onPrimaryChange();
   },
 );
+
+watch([hoveredAnnotationId, selectedAnnotations], () => {
+  onAnnotationStateChanged();
+});
 
 // Timelapse mode: 4 sources (fixes timelapseTags bug by watching store directly)
 watch(
