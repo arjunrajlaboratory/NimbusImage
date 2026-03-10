@@ -276,7 +276,10 @@ export class Annotations extends VuexModule {
       (annotation) => !selectedAnnotationIds.has(annotation.id),
     );
     if (annotationsToAdd.length > 0) {
-      this.selectedAnnotations.push(...annotationsToAdd);
+      this.selectedAnnotations = [
+        ...this.selectedAnnotations,
+        ...annotationsToAdd,
+      ];
     }
   }
 
@@ -787,7 +790,7 @@ export class Annotations extends VuexModule {
   @Mutation
   public addMultipleConnections(value: IAnnotationConnection[]) {
     if (value.length > 0) {
-      this.annotationConnections.push(...value);
+      this.annotationConnections = [...this.annotationConnections, ...value];
     }
   }
 
@@ -801,7 +804,7 @@ export class Annotations extends VuexModule {
 
   @Mutation
   private addConnectionImpl(value: IAnnotationConnection) {
-    this.annotationConnections.push(value);
+    this.annotationConnections = [...this.annotationConnections, value];
   }
 
   @Mutation
