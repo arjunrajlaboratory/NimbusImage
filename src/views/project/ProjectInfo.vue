@@ -152,24 +152,26 @@
               <v-list-item-subtitle v-if="item.info?.description">
                 {{ item.info.description }}
               </v-list-item-subtitle>
-              <span class="button-bar">
-                <v-btn
-                  v-if="item.source === 'direct'"
-                  color="warning"
-                  @click="confirmRemoveDataset(item.datasetId)"
-                >
-                  <v-icon start>mdi-close</v-icon>remove
-                </v-btn>
-                <v-btn
-                  color="primary"
-                  :to="{
-                    name: 'dataset',
-                    params: { datasetId: item.datasetId },
-                  }"
-                >
-                  <v-icon start>mdi-eye</v-icon>view
-                </v-btn>
-              </span>
+              <template #append>
+                <span class="button-bar">
+                  <v-btn
+                    v-if="item.source === 'direct'"
+                    color="warning"
+                    @click="confirmRemoveDataset(item.datasetId)"
+                  >
+                    <v-icon start>mdi-close</v-icon>remove
+                  </v-btn>
+                  <v-btn
+                    color="primary"
+                    :to="{
+                      name: 'dataset',
+                      params: { datasetId: item.datasetId },
+                    }"
+                  >
+                    <v-icon start>mdi-eye</v-icon>view
+                  </v-btn>
+                </span>
+              </template>
             </v-list-item>
             <v-divider
               v-if="index < filteredDatasetItems.length - 1"
@@ -227,30 +229,34 @@
             :key="item.collectionId"
           >
             <v-list-group no-action>
-              <template #activator>
-                <v-list-item-title class="font-weight-medium">
-                  {{ item.info?.name || "Loading..." }}
-                </v-list-item-title>
-                <v-list-item-subtitle>
-                  {{ item.datasetViews.length }} dataset(s)
-                  <span v-if="collectionSizes[item.collectionId]">
-                    · {{ formatSize(collectionSizes[item.collectionId]) }}
-                  </span>
-                </v-list-item-subtitle>
-                <span class="button-bar">
-                  <v-btn
-                    color="warning"
-                    @click.stop="confirmRemoveCollection(item.collectionId)"
-                  >
-                    <v-icon start>mdi-close</v-icon>remove
-                  </v-btn>
-                  <v-btn
-                    color="primary"
-                    @click.stop="navigateToCollection(item.collectionId)"
-                  >
-                    <v-icon start>mdi-eye</v-icon>view
-                  </v-btn>
-                </span>
+              <template #activator="{ props: activatorProps }">
+                <v-list-item v-bind="activatorProps">
+                  <v-list-item-title class="font-weight-medium">
+                    {{ item.info?.name || "Loading..." }}
+                  </v-list-item-title>
+                  <v-list-item-subtitle>
+                    {{ item.datasetViews.length }} dataset(s)
+                    <span v-if="collectionSizes[item.collectionId]">
+                      · {{ formatSize(collectionSizes[item.collectionId]) }}
+                    </span>
+                  </v-list-item-subtitle>
+                  <template #append>
+                    <span class="button-bar">
+                      <v-btn
+                        color="warning"
+                        @click.stop="confirmRemoveCollection(item.collectionId)"
+                      >
+                        <v-icon start>mdi-close</v-icon>remove
+                      </v-btn>
+                      <v-btn
+                        color="primary"
+                        @click.stop="navigateToCollection(item.collectionId)"
+                      >
+                        <v-icon start>mdi-eye</v-icon>view
+                      </v-btn>
+                    </span>
+                  </template>
+                </v-list-item>
               </template>
               <!-- Expanded: datasets in this collection -->
               <v-list-item
