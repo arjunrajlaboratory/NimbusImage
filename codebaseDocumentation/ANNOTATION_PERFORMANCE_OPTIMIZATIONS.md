@@ -35,7 +35,7 @@ Performance optimizations targeting the annotation rendering pipeline and store 
 - `toggleSelected` action
 - `deleteAnnotations` action
 
-**Why:** `Array.includes()` is O(n) per call. When called inside a filter over another array, the total becomes O(n*m). Set lookup is O(1).
+**Why:** `Array.includes()` is O(n) per call. When called inside a filter over another array, the total becomes O(n\*m). Set lookup is O(1).
 
 **Implication:** Straightforward improvement with no behavioral change.
 
@@ -51,7 +51,7 @@ Performance optimizations targeting the annotation rendering pipeline and store 
 
 **What:** `drawTimelapseTrack` now builds `annotationsById` (Map) and `connectionsByAnnotationId` (Map) indexes before the main loop, and uses `Map.get()` for lookups instead of `Array.find()` and inner loops.
 
-**Why:** The old code iterated all connections for every annotation (O(annotations * connections)) and used `Array.find()` to look up connected annotations (O(annotations) per lookup). Now both are O(1) lookups after an O(n) indexing pass.
+**Why:** The old code iterated all connections for every annotation (O(annotations \* connections)) and used `Array.find()` to look up connected annotations (O(annotations) per lookup). Now both are O(1) lookups after an O(n) indexing pass.
 
 **Staleness concern:** The index maps are local variables rebuilt from scratch on every call — they are not cached between invocations. When connections change, the `annotationConnections` watcher fires the primary change handler, which calls `drawAnnotationsAndTooltips` → `drawTimelapseConnectionsAndCentroids` → `drawTimelapseTrack`, rebuilding the maps with current data.
 
@@ -128,11 +128,12 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 
 **Why:** After the R-tree spatial index optimization, the drag-select bottleneck shifted from `pointInPolygon` to Vue/Vuetify reactivity overhead (~56% of time). Two sources of `deepEqual` were identified and eliminated:
 
-1. **Vuetify `v-data-table` selection model:** The data table in `AnnotationList.vue` was bound via `v-model="selectedItems"` (full `IAnnotationListItem` objects). Vuetify's `select.ts` composable calls `deepEqual(v, item.value)` for every non-primitive selected value against every row item — O(n*m) deep comparisons of large annotation objects. Fixed by binding `v-model="selectedIds"` (primitive `string[]`), which hits the `isPrimitive` fast path using `===` instead of `deepEqual`.
+1. **Vuetify `v-data-table` selection model:** The data table in `AnnotationList.vue` was bound via `v-model="selectedItems"` (full `IAnnotationListItem` objects). Vuetify's `select.ts` composable calls `deepEqual(v, item.value)` for every non-primitive selected value against every row item — O(n\*m) deep comparisons of large annotation objects. Fixed by binding `v-model="selectedIds"` (primitive `string[]`), which hits the `isPrimitive` fast path using `===` instead of `deepEqual`.
 
 2. **Store-level reactivity:** Storing full `IAnnotation` objects in `selectedAnnotations` meant Vue's reactivity system tracked and compared large objects on every selection change. The `Set<string>` stores only IDs, and `markRaw()` prevents Vue from deep-proxying the Set contents, consistent with other large store data structures (`annotationCentroids`, `annotationIdToIdx`).
 
 **What changed:**
+
 - `annotation.ts`: `selectedAnnotations` state → `selectedAnnotationIds: Set<string>`. The old `selectedAnnotationIds` getter removed (now primary state). `isAnnotationSelected` getter simplified to read directly from Set. All selection mutations (`setSelected`, `selectAnnotation`, `selectAnnotations`, `unselectAnnotation`, `unselectAnnotations`, `toggleSelected`) accept string IDs and construct new `markRaw(new Set(...))` on each mutation for Vue 3 reactivity. `copySelectedAnnotations` looks up full objects via `getAnnotationFromId`. Actions that pass IDs downstream (`tagSelectedAnnotations`, `colorSelectedAnnotations`, `deleteSelectedAnnotations`) spread the Set to `string[]`.
 - `AnnotationViewer.vue`: `selectedAnnotations` computed → `selectedAnnotationIds`. Template uses `.size` instead of `.length`. `selectAnnotations()` maps annotations to IDs before dispatching to store.
 - `AnnotationList.vue`: `v-model="selectedItems"` → `v-model="selectedIds"` on `v-data-table`. `selected` computed → `selectedIds` (primitive string array). `selectedItems` simplified to read-only computed. `selectAllCallback` and `toggleAnnotationSelection` pass IDs.
@@ -142,4 +143,3 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 - Tests updated to use `new Set<string>()` mocks.
 
 **Implication:** Also fixed a pre-existing bug where `unselectAnnotation` used `.splice()` (in-place mutation), which wouldn't trigger Vue 3 watchers. Now all mutations replace the Set reference.
-

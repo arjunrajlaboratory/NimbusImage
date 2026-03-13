@@ -257,7 +257,9 @@ const showAnnotationsFromHiddenLayers = computed(
   (): boolean => store.showAnnotationsFromHiddenLayers,
 );
 const hoveredAnnotationId = computed(() => annotationStore.hoveredAnnotationId);
-const selectedAnnotationIds = computed(() => annotationStore.selectedAnnotationIds);
+const selectedAnnotationIds = computed(
+  () => annotationStore.selectedAnnotationIds,
+);
 const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
 const shouldDrawConnections = computed(
   (): boolean => store.drawAnnotationConnections,
@@ -1428,6 +1430,9 @@ function shouldSelectAnnotation(
 function getSelectedAnnotationsFromAnnotation(
   selectAnnotation: IGeoJSAnnotation,
 ) {
+  if (!shouldDrawAnnotations.value) {
+    return [];
+  }
   const coordinates = selectAnnotation.coordinates();
   const type = selectAnnotation.type();
 
