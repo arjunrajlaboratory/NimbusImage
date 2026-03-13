@@ -18,6 +18,15 @@ if (typeof globalThis.visualViewport === "undefined") {
   };
 }
 
+// Polyfill requestIdleCallback for jsdom (used by async spatial index build)
+// Returns an ID but never fires the callback — spatial index stays null in tests
+// and the fallback linear scan is used instead.
+let nextIdleId = 1;
+if (typeof globalThis.requestIdleCallback === "undefined") {
+  (globalThis as any).requestIdleCallback = () => nextIdleId++;
+  (globalThis as any).cancelIdleCallback = () => {};
+}
+
 // Polyfill ResizeObserver for jsdom (required by Vuetify 3 components)
 if (typeof globalThis.ResizeObserver === "undefined") {
   (globalThis as any).ResizeObserver = class ResizeObserver {

@@ -33,6 +33,7 @@
 <script setup lang="ts">
 import {
   ref,
+  shallowRef,
   computed,
   watch,
   onMounted,
@@ -440,16 +441,30 @@ const displayedAnnotations = computed(() => {
   return annotationList;
 });
 
-const displayedAnnotationsSpatialIndex = computed(() => {
-  const tree = new RBush<AnnotationBBoxItem>();
-  const annotations = displayedAnnotations.value;
-  const items: AnnotationBBoxItem[] = new Array(annotations.length);
-  for (let i = 0; i < annotations.length; i++) {
-    items[i] = buildAnnotationBBox(annotations[i]);
+const displayedAnnotationsSpatialIndex = shallowRef<RBush<AnnotationBBoxItem> | null>(
+  null,
+);
+let spatialIndexRequestId: number | null = null;
+
+function buildSpatialIndex(annotations: IAnnotation[]) {
+  // Cancel any pending build
+  if (spatialIndexRequestId !== null) {
+    cancelIdleCallback(spatialIndexRequestId);
   }
-  tree.load(items);
-  return tree;
-});
+  // Invalidate immediately so stale tree isn't used during rebuild
+  displayedAnnotationsSpatialIndex.value = null;
+
+  spatialIndexRequestId = requestIdleCallback(() => {
+    spatialIndexRequestId = null;
+    const tree = new RBush<AnnotationBBoxItem>();
+    const items: AnnotationBBoxItem[] = new Array(annotations.length);
+    for (let i = 0; i < annotations.length; i++) {
+      items[i] = buildAnnotationBBox(annotations[i]);
+    }
+    tree.load(items);
+    displayedAnnotationsSpatialIndex.value = tree;
+  });
+}
 
 const connectionIdsSet = computed(() => {
   const result: Set<string> = new Set();
@@ -1440,36 +1455,55 @@ function getSelectedAnnotationsFromAnnotation(
   const selectedAnns: IAnnotation[] = [];
   const selectedIds = new Set<string>();
 
-  // For drag-select (non-point selection), use spatial index to narrow candidates
+  // For drag-select (non-point selection), use spatial index if available
   if (type !== AnnotationShape.Point) {
-    // Compute bounding box of the selection polygon
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (let i = 0; i < coordinates.length; i++) {
-      const c = coordinates[i];
-      if (c.x < minX) minX = c.x;
-      if (c.y < minY) minY = c.y;
-      if (c.x > maxX) maxX = c.x;
-      if (c.y > maxY) maxY = c.y;
+    const spatialIndex = displayedAnnotationsSpatialIndex.value;
+
+    if (spatialIndex) {
+      // Fast path: query R-tree for candidate annotations whose bboxes overlap
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (let i = 0; i < coordinates.length; i++) {
+        const c = coordinates[i];
+        if (c.x < minX) minX = c.x;
+        if (c.y < minY) minY = c.y;
+        if (c.x > maxX) maxX = c.x;
+        if (c.y > maxY) maxY = c.y;
+      }
+
+      const candidates = spatialIndex.search({ minX, minY, maxX, maxY });
+      const getAnnotation = getAnnotationFromId.value;
+      for (let i = 0; i < candidates.length; i++) {
+        const { annotationId } = candidates[i];
+        if (selectedIds.has(annotationId)) {
+          continue;
+        }
+        const annotation = getAnnotation(annotationId);
+        if (
+          !annotation ||
+          !annotation.coordinates.some((point: IGeoJSPosition) =>
+            geojs.util.pointInPolygon(point, coordinates),
+          )
+        ) {
+          continue;
+        }
+        selectedIds.add(annotationId);
+        selectedAnns.push(annotation);
+      }
+      return selectedAnns;
     }
 
-    // Query R-tree for candidate annotations whose bboxes overlap
-    const candidates = displayedAnnotationsSpatialIndex.value.search({
-      minX,
-      minY,
-      maxX,
-      maxY,
-    });
-
-    const getAnnotation = getAnnotationFromId.value;
-    for (let i = 0; i < candidates.length; i++) {
-      const { annotationId } = candidates[i];
-      if (selectedIds.has(annotationId)) {
+    // Fallback: linear scan over GeoJS annotations (tree not yet built)
+    const geoAnnotations = props.annotationLayer.annotations();
+    for (let i = 0; i < geoAnnotations.length; i++) {
+      const geoJSannotation = geoAnnotations[i];
+      const { girderId, isConnection } = geoJSannotation.options();
+      if (!girderId || isConnection || selectedIds.has(girderId)) {
         continue;
       }
-      const annotation = getAnnotation(annotationId);
+      const annotation = getAnnotationFromId.value(girderId);
       if (
         !annotation ||
         !annotation.coordinates.some((point: IGeoJSPosition) =>
@@ -1478,7 +1512,7 @@ function getSelectedAnnotationsFromAnnotation(
       ) {
         continue;
       }
-      selectedIds.add(annotationId);
+      selectedIds.add(girderId);
       selectedAnns.push(annotation);
     }
     return selectedAnns;
@@ -2965,6 +2999,11 @@ watch([hoveredAnnotationId, selectedAnnotationIds], () => {
   onAnnotationStateChanged();
 });
 
+// Rebuild spatial index asynchronously when displayed annotations change
+watch(displayedAnnotations, (annotations) => {
+  buildSpatialIndex(annotations);
+});
+
 // Timelapse mode: 4 sources (fixes timelapseTags bug by watching store directly)
 watch(
   [
@@ -3107,6 +3146,9 @@ onBeforeUnmount(() => {
     props.annotationLayer.geoOff(geojs.event.mousedown, handleDragStart);
     props.annotationLayer.geoOff(geojs.event.mousemove, handleDragMove);
     props.annotationLayer.geoOff(geojs.event.mouseup, handleDragEnd);
+  }
+  if (spatialIndexRequestId !== null) {
+    cancelIdleCallback(spatialIndexRequestId);
   }
 });
 

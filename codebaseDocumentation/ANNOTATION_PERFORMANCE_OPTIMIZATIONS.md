@@ -93,7 +93,17 @@ Performance optimizations targeting the annotation rendering pipeline and store 
 
 **Why:** Avoids repeated reactive proxy access overhead in hot loops. Small but consistent improvement.
 
-### 12. Store Selection by ID Instead of Annotation Objects (annotation.ts, AnnotationViewer.vue, AnnotationList.vue)
+### 12. R-tree Spatial Index for Drag-Select (AnnotationViewer.vue)
+
+**What:** Added an RBush-based R-tree spatial index (`displayedAnnotationsSpatialIndex`) over `displayedAnnotations`. During drag-select, the selection polygon's bounding box is queried against the R-tree to narrow candidates before running `pointInPolygon` checks.
+
+**Why:** The previous drag-select iterated all GeoJS annotations on the layer and called `shouldSelectAnnotation` for each — O(n) per selection with expensive geometry checks. The R-tree narrows candidates to only those whose bounding boxes overlap the selection region, typically a small fraction of total annotations.
+
+**Async build:** The R-tree is built asynchronously via `requestIdleCallback` to avoid blocking the main thread during slice changes. A `watch` on `displayedAnnotations` triggers `buildSpatialIndex`, which invalidates the current tree immediately (sets it to `null`) and schedules the rebuild. If a lasso-select occurs before the tree is ready (e.g., immediately after a slice change), the code falls back to a linear scan over `annotationLayer.annotations()` — functionally correct, just slower.
+
+**Implication:** Added `rbush` as a dependency. The fallback ensures selection always works regardless of tree readiness.
+
+### 13. Store Selection by ID Instead of Annotation Objects (annotation.ts, AnnotationViewer.vue, AnnotationList.vue)
 
 **What:** Changed `selectedAnnotations: IAnnotation[]` to `selectedAnnotationIds: Set<string>` in the annotation store. All selection mutations now accept `string[]` (IDs) instead of `IAnnotation[]`. The Set is wrapped with `markRaw()` to prevent Vue from creating a deep reactive proxy. Consumers that need full annotation objects do their own lookups via `getAnnotationFromId`.
 
@@ -115,7 +125,7 @@ Performance optimizations targeting the annotation rendering pipeline and store 
 
 **Implication:** Also fixed a pre-existing bug where `unselectAnnotation` used `.splice()` (in-place mutation), which wouldn't trigger Vue 3 watchers. Now all mutations replace the Set reference.
 
-### 13. Guard Lasso-Select When Annotations Hidden (AnnotationViewer.vue)
+### 14. Guard Lasso-Select When Annotations Hidden (AnnotationViewer.vue)
 
 **What:** Added early return in `getSelectedAnnotationsFromAnnotation` when `shouldDrawAnnotations` is false.
 
@@ -137,14 +147,15 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 
 1. **Pan/zoom with many annotations** — Load a dataset with 500+ annotations, pan and zoom.
 2. **Hover over annotations** — With many annotations visible, hovering should be snappier with no flicker (change #2). Verify hover highlight appears/disappears correctly.
-3. **Select/deselect annotations** — Shift-click multiple annotations rapidly. Verify selection highlight updates correctly (changes #2, #3, #12).
-4. **Drag-select many annotations** — Draw a selection rectangle over 200+ annotations. Should be significantly faster after change #12 (eliminated deepEqual overhead).
+3. **Select/deselect annotations** — Shift-click multiple annotations rapidly. Verify selection highlight updates correctly (changes #2, #3, #13).
+4. **Drag-select many annotations** — Draw a selection rectangle over 200+ annotations. Should be significantly faster after changes #12 and #13 (R-tree + eliminated deepEqual overhead).
 5. **Add new connections** — Create connections between annotations. Verify they appear on the canvas immediately (verifies the spread-revert fix for `addConnectionImpl`/`addMultipleConnections`).
-6. **Change Z/Time slices** — Navigate through Z-stack or time series with many annotations. Benefits from channel-indexed lookup (change #4).
+6. **Change Z/Time slices** — Navigate through Z-stack or time series with many annotations. Benefits from channel-indexed lookup (change #4). R-tree rebuilds asynchronously after slice change (change #12).
 7. **Timelapse mode** — Enable timelapse tracking with connected objects. Verify tracks render correctly and performance is improved with many connections (change #5).
 8. **Tooltips with property values** — Enable annotation tooltips showing computed properties. Verify values display correctly with many annotations (change #11).
-9. **Annotation list selection** — Select annotations from the annotation browser list. Verify table checkboxes, select-all, and deselect-all work correctly (change #12).
-10. **Lasso-select with hidden annotations** — Disable "Draw annotations", then try lasso-select. Should select nothing (change #13).
+9. **Annotation list selection** — Select annotations from the annotation browser list. Verify table checkboxes, select-all, and deselect-all work correctly (change #13).
+10. **Lasso-select with hidden annotations** — Disable "Draw annotations", then try lasso-select. Should select nothing (change #14).
+11. **Lasso-select immediately after slice change** — Change Z/Time, then immediately lasso-select before R-tree finishes building. Should still work via linear fallback (change #12).
 
 ### Edge Cases
 
