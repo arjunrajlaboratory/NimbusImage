@@ -53,6 +53,8 @@ Performance optimizations targeting the annotation rendering pipeline and store 
 
 **Why:** The old code iterated all connections for every annotation (O(annotations * connections)) and used `Array.find()` to look up connected annotations (O(annotations) per lookup). Now both are O(1) lookups after an O(n) indexing pass.
 
+**Staleness concern:** The index maps are local variables rebuilt from scratch on every call — they are not cached between invocations. When connections change, the `annotationConnections` watcher fires the primary change handler, which calls `drawAnnotationsAndTooltips` → `drawTimelapseConnectionsAndCentroids` → `drawTimelapseTrack`, rebuilding the maps with current data.
+
 ### 6. Union-Find Path Compression (AnnotationViewer.vue)
 
 **What:** The `find()` function in `findConnectedComponents` now uses path compression — after finding the root, intermediate nodes are updated to point directly to the root.
