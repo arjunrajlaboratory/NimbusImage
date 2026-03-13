@@ -176,6 +176,63 @@ logprint.warning("Warning message")
 logprint.error(f"Error: {details}")
 ```
 
+## Girder Jobs
+
+### Job Status Constants
+
+```python
+from girder_jobs.constants import JobStatus
+
+# JobStatus values:
+# INACTIVE = 0  (not yet scheduled)
+# QUEUED   = 1  (waiting to run)
+# RUNNING  = 2  (currently executing)
+# SUCCESS  = 3  (completed successfully)
+# ERROR    = 4  (failed)
+# CANCELED = 5  (cancelled)
+```
+
+**Warning:** Status 3 means **SUCCESS**, not "running". This is a common source of confusion.
+
+Frontend equivalent: `src/store/jobConstants.ts` (`jobStates.success === 3`).
+
+### Local Jobs (In-Process)
+
+For tasks that run inside the Girder process (not via Girder Worker/Celery), use `createLocalJob`. The target module must define a `run(job)` function.
+
+```python
+from girder_jobs.models.job import Job as JobModel
+
+job = JobModel().createLocalJob(
+    module='upenncontrast_annotation.server.helpers.zenodo_job',
+    title='My Job',
+    type='my_job_type',
+    user=user,
+    kwargs={'projectId': str(project['_id'])},
+    asynchronous=True,
+)
+JobModel().scheduleJob(job)
+```
+
+### Progress Reporting via SSE
+
+Jobs report progress through `Job().updateJob()` which emits SSE events:
+
+```python
+from girder_jobs.models.job import Job
+
+job_model = Job()
+job_model.updateJob(
+    job,
+    status=JobStatus.RUNNING,
+    log='Progress message\n',  # Sent via SSE
+)
+# Terminal state:
+job_model.updateJob(job, status=JobStatus.SUCCESS)
+```
+
+The frontend subscribes to job SSE events via `src/store/jobs.ts`. Log entries can be JSON strings for structured progress data.
+
 ## Testing
 
 For detailed testing patterns beyond basics: read `references/testing-patterns.md`
