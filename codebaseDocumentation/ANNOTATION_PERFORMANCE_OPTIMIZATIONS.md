@@ -4,19 +4,15 @@ Branch: `codex/perf-audit-annotation-viewer`
 
 ## Summary
 
-Performance optimizations targeting the annotation rendering pipeline and store operations, focused on reducing unnecessary work when annotations are drawn, styled, selected, or filtered. The biggest gains come from reusing existing GeoJS annotations instead of clearing and redrawing everything, and from replacing O(n) linear scans with O(1) Set/Map lookups.
+Performance optimizations targeting the annotation rendering pipeline and store operations, focused on reducing unnecessary work when annotations are styled, selected, or filtered. The biggest gains come from separating hover/select into a restyle-only path (avoiding full redraws) and replacing O(n) linear scans with O(1) Set/Map lookups.
 
 ## Changes
 
-### 1. GeoJS Annotation Reuse (AnnotationViewer.vue)
+### 1. GeoJS Annotation Reuse — REVERTED
 
-**What:** `drawAnnotationsNoThrottle()` no longer calls `clearOldAnnotations(true)` (which removed all annotations). Instead it calls `clearOldAnnotations(false)` which selectively removes only stale annotations, then draws only new ones.
+**What was proposed:** Reuse existing GeoJS annotations instead of clearing and redrawing all, using reference identity checks (`annotationRef === annotation`).
 
-**How:** Each GeoJS annotation now stores an `annotationRef` (the IAnnotation object reference) and connections store `parentAnnotationRef`/`childAnnotationRef`. During cleanup, identity comparison (`annotationRef === annotation`) determines if the annotation is still current — if the reference matches, the annotation is kept. If the underlying data changed (new object from backend), the old GeoJS annotation is removed and a new one drawn.
-
-**Why:** Previously, every call to `drawAnnotationsNoThrottle` destroyed all GeoJS annotations and recreated them from scratch. With hundreds of annotations on screen, this caused significant DOM/canvas churn during panning, zooming, and slice changes.
-
-**Implication:** The `color` check in `clearOldAnnotations` was replaced by reference identity. This works because annotation objects are replaced (not mutated) when their data changes. If annotation mutation patterns change in the future, this assumption would need revisiting.
+**Why reverted:** The dominant trigger for `drawAnnotationsNoThrottle` is slice changes (Z, Time, XY), and annotations are slice-specific — when you change slices, the entire set of displayed annotations changes. The reuse logic would build index maps and run identity checks only to conclude "remove everything, draw everything" nearly every time. The added complexity wasn't justified for the rare cases where it would help (e.g., connection changes on the same slice). The code was reverted to keep `clearOldAnnotations(true)` (clear all) as the default path.
 
 ### 2. Hover/Select Restyle Separation (AnnotationViewer.vue)
 
@@ -29,6 +25,7 @@ Performance optimizations targeting the annotation rendering pipeline and store 
 ### 3. Set/Map Lookups in Store Mutations (annotation.ts)
 
 **What:** Replaced `Array.includes()` and `Array.find()` with `Set.has()` in:
+
 - `inactiveAnnotationIds` getter
 - `activateAnnotations` mutation
 - `deactivateAnnotations` mutation
@@ -107,19 +104,12 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 ### UI Scenarios (ordered by expected impact)
 
 1. **Pan/zoom with many annotations** — Load a dataset with 500+ annotations, pan and zoom. Should feel smoother due to annotation reuse (change #1).
-
 2. **Hover over annotations** — With many annotations visible, hovering should be snappier with no flicker (change #2). Verify hover highlight appears/disappears correctly.
-
 3. **Select/deselect annotations** — Shift-click multiple annotations rapidly. Verify selection highlight updates correctly (changes #2, #3).
-
 4. **Add new connections** — Create connections between annotations. Verify they appear on the canvas immediately (verifies the spread-revert fix for `addConnectionImpl`/`addMultipleConnections`).
-
 5. **Change Z/Time slices** — Navigate through Z-stack or time series with many annotations. Benefits from channel-indexed lookup (change #4).
-
 6. **Timelapse mode** — Enable timelapse tracking with connected objects. Verify tracks render correctly and performance is improved with many connections (change #5).
-
 7. **Tooltips with property values** — Enable annotation tooltips showing computed properties. Verify values display correctly with many annotations (change #11).
-
 8. **Annotation color changes** — Change an annotation's color or layer color. Verify the annotation updates on canvas (tests that reference identity check works when annotation objects are replaced).
 
 ### Edge Cases
@@ -128,3 +118,4 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 - Connections where parent or child is off-screen or on a hidden layer
 - Rapid toggling of layer visibility with many annotations
 - Mixed annotation types (points, lines, polygons) on the same layer
+

@@ -1008,7 +1008,7 @@ describe("AnnotationViewer", () => {
         expect(aLayer.removeAllAnnotations).toHaveBeenCalled();
       });
 
-      it("reuses existing annotations instead of clearing the whole layer", () => {
+      it("calls clearOldAnnotations and drawNewAnnotations", () => {
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });
         mockedStore.layers = [layer];
         (mockedStore.layerSliceIndexes as any).mockReturnValue({
@@ -1022,9 +1022,8 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
 
         const aLayer = (wrapper.vm as any).annotationLayer;
-        vi.clearAllMocks();
         (wrapper.vm as any).drawAnnotationsNoThrottle();
-        expect(aLayer.removeAllAnnotations).not.toHaveBeenCalled();
+        expect(aLayer.removeAllAnnotations).toHaveBeenCalled();
         expect(aLayer.draw).toHaveBeenCalled();
       });
 
