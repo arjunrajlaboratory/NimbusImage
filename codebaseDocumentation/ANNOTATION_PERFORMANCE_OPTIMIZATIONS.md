@@ -4,7 +4,7 @@ Branch: `codex/perf-audit-annotation-viewer`
 
 ## Summary
 
-Performance optimizations targeting the annotation rendering pipeline and store operations, focused on reducing unnecessary work when annotations are styled, selected, or filtered. The biggest gains come from separating hover/select into a restyle-only path (avoiding full redraws) and replacing O(n) linear scans with O(1) Set/Map lookups.
+Performance optimizations targeting the annotation rendering pipeline and store operations, focused on reducing unnecessary work when annotations are styled, selected, or filtered. The biggest gains come from separating hover/select into a restyle-only path (avoiding full redraws), replacing O(n) linear scans with O(1) Set/Map lookups, and eliminating Vuetify `deepEqual` overhead in drag-select by storing selection as primitive string IDs instead of full annotation objects.
 
 ## Changes
 
@@ -16,7 +16,7 @@ Performance optimizations targeting the annotation rendering pipeline and store 
 
 ### 2. Hover/Select Restyle Separation (AnnotationViewer.vue)
 
-**What:** `hoveredAnnotationId` and `selectedAnnotations` were removed from the primary watcher (which triggers full redraw) and placed in a separate watcher that calls `restyleAnnotations()` instead.
+**What:** `hoveredAnnotationId` and `selectedAnnotationIds` were removed from the primary watcher (which triggers full redraw) and placed in a separate watcher that calls `restyleAnnotations()` instead.
 
 **Why:** Hovering or selecting an annotation only changes visual style (stroke width, color, opacity), not geometry or position. A full redraw was unnecessary and caused perceptible lag with many annotations.
 
@@ -93,35 +93,6 @@ Performance optimizations targeting the annotation rendering pipeline and store 
 
 **Why:** Avoids repeated reactive proxy access overhead in hot loops. Small but consistent improvement.
 
-## Vue 3 Reactivity Consideration
-
-Several mutations were initially changed from array spread (`this.arr = [...this.arr, ...items]`) to `.push()` for performance. However, Vue 3's `watch()` uses `Object.is()` for change detection — `.push()` keeps the same array reference, so watchers won't fire.
-
-**Reverted to spread:** `selectAnnotations`, `addMultipleConnections`, `addConnectionImpl` (all have active watchers in AnnotationViewer.vue).
-
-**Kept as .push():** `activateAnnotations` (no watchers on this array).
-
-## What Remains to Test
-
-### UI Scenarios (ordered by expected impact)
-
-1. **Pan/zoom with many annotations** — Load a dataset with 500+ annotations, pan and zoom.
-2. **Hover over annotations** — With many annotations visible, hovering should be snappier with no flicker (change #2). Verify hover highlight appears/disappears correctly.
-3. **Select/deselect annotations** — Shift-click multiple annotations rapidly. Verify selection highlight updates correctly (changes #2, #3, #12).
-4. **Drag-select many annotations** — Draw a selection rectangle over 200+ annotations. Should be significantly faster after change #12 (eliminated deepEqual overhead).
-5. **Add new connections** — Create connections between annotations. Verify they appear on the canvas immediately (verifies the spread-revert fix for `addConnectionImpl`/`addMultipleConnections`).
-6. **Change Z/Time slices** — Navigate through Z-stack or time series with many annotations. Benefits from channel-indexed lookup (change #4).
-7. **Timelapse mode** — Enable timelapse tracking with connected objects. Verify tracks render correctly and performance is improved with many connections (change #5).
-8. **Tooltips with property values** — Enable annotation tooltips showing computed properties. Verify values display correctly with many annotations (change #11).
-9. **Annotation list selection** — Select annotations from the annotation browser list. Verify table checkboxes, select-all, and deselect-all work correctly (change #12).
-
-### Edge Cases
-
-- Annotations that span multiple layers (same channel, different layers)
-- Connections where parent or child is off-screen or on a hidden layer
-- Rapid toggling of layer visibility with many annotations
-- Mixed annotation types (points, lines, polygons) on the same layer
-
 ### 12. Store Selection by ID Instead of Annotation Objects (annotation.ts, AnnotationViewer.vue, AnnotationList.vue)
 
 **What:** Changed `selectedAnnotations: IAnnotation[]` to `selectedAnnotationIds: Set<string>` in the annotation store. All selection mutations now accept `string[]` (IDs) instead of `IAnnotation[]`. The Set is wrapped with `markRaw()` to prevent Vue from creating a deep reactive proxy. Consumers that need full annotation objects do their own lookups via `getAnnotationFromId`.
@@ -143,3 +114,41 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 - Tests updated to use `new Set<string>()` mocks.
 
 **Implication:** Also fixed a pre-existing bug where `unselectAnnotation` used `.splice()` (in-place mutation), which wouldn't trigger Vue 3 watchers. Now all mutations replace the Set reference.
+
+### 13. Guard Lasso-Select When Annotations Hidden (AnnotationViewer.vue)
+
+**What:** Added early return in `getSelectedAnnotationsFromAnnotation` when `shouldDrawAnnotations` is false.
+
+**Why:** The R-tree spatial index queries `displayedAnnotations` regardless of whether annotations are drawn on the canvas. Without this guard, lasso-select could select (and then edit/delete) annotations that are not visible to the user. The previous implementation (before the R-tree) iterated `annotationLayer.annotations()` which naturally returned none when drawing was disabled.
+
+## Vue 3 Reactivity Consideration
+
+Several mutations were initially changed from array spread (`this.arr = [...this.arr, ...items]`) to `.push()` for performance. However, Vue 3's `watch()` uses `Object.is()` for change detection — `.push()` keeps the same array reference, so watchers won't fire.
+
+**Reverted to spread:** `addMultipleConnections`, `addConnectionImpl` (both have active watchers in AnnotationViewer.vue).
+
+**Kept as .push():** `activateAnnotations` (no watchers on this array).
+
+**Selection mutations (change #12):** Now operate on `Set<string>` instead of arrays. Every mutation constructs a new `markRaw(new Set(...))` to ensure reference change triggers watchers.
+
+## What Remains to Test
+
+### UI Scenarios (ordered by expected impact)
+
+1. **Pan/zoom with many annotations** — Load a dataset with 500+ annotations, pan and zoom.
+2. **Hover over annotations** — With many annotations visible, hovering should be snappier with no flicker (change #2). Verify hover highlight appears/disappears correctly.
+3. **Select/deselect annotations** — Shift-click multiple annotations rapidly. Verify selection highlight updates correctly (changes #2, #3, #12).
+4. **Drag-select many annotations** — Draw a selection rectangle over 200+ annotations. Should be significantly faster after change #12 (eliminated deepEqual overhead).
+5. **Add new connections** — Create connections between annotations. Verify they appear on the canvas immediately (verifies the spread-revert fix for `addConnectionImpl`/`addMultipleConnections`).
+6. **Change Z/Time slices** — Navigate through Z-stack or time series with many annotations. Benefits from channel-indexed lookup (change #4).
+7. **Timelapse mode** — Enable timelapse tracking with connected objects. Verify tracks render correctly and performance is improved with many connections (change #5).
+8. **Tooltips with property values** — Enable annotation tooltips showing computed properties. Verify values display correctly with many annotations (change #11).
+9. **Annotation list selection** — Select annotations from the annotation browser list. Verify table checkboxes, select-all, and deselect-all work correctly (change #12).
+10. **Lasso-select with hidden annotations** — Disable "Draw annotations", then try lasso-select. Should select nothing (change #13).
+
+### Edge Cases
+
+- Annotations that span multiple layers (same channel, different layers)
+- Connections where parent or child is off-screen or on a hidden layer
+- Rapid toggling of layer visibility with many annotations
+- Mixed annotation types (points, lines, polygons) on the same layer
