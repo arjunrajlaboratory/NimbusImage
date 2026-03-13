@@ -252,8 +252,7 @@ vi.mock("@/store/annotation", () => {
       annotations: [] as any[],
       annotationConnections: [] as any[],
       annotationCentroids: {} as Record<string, any>,
-      selectedAnnotations: [] as any[],
-      selectedAnnotationIds: [] as string[],
+      selectedAnnotationIds: new Set<string>(),
       hoveredAnnotationId: null as string | null,
       pendingAnnotation: null as any,
       getAnnotationFromId: vi.fn().mockReturnValue(undefined),
@@ -499,8 +498,7 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.annotations = [];
     mockedAnnotationStore.annotationConnections = [];
     mockedAnnotationStore.annotationCentroids = {};
-    mockedAnnotationStore.selectedAnnotations = [];
-    mockedAnnotationStore.selectedAnnotationIds = [];
+    mockedAnnotationStore.selectedAnnotationIds = new Set<string>();
     mockedAnnotationStore.hoveredAnnotationId = null;
     mockedAnnotationStore.pendingAnnotation = null;
     mockedAnnotationStore.annotationIdToIdx = {};
@@ -620,10 +618,10 @@ describe("AnnotationViewer", () => {
       expect((wrapper.vm as any).hoveredAnnotationId).toBe("ann42");
     });
 
-    it("selectedAnnotations returns annotationStore value", () => {
-      const selected = [makeAnnotation({ id: "s1" })];
-      mockedAnnotationStore.selectedAnnotations = selected;
-      expect((wrapper.vm as any).selectedAnnotations).toStrictEqual(selected);
+    it("selectedAnnotationIds returns annotationStore value", () => {
+      const selected = new Set(["s1"]);
+      mockedAnnotationStore.selectedAnnotationIds = selected;
+      expect((wrapper.vm as any).selectedAnnotationIds).toStrictEqual(selected);
     });
 
     it("shouldDrawAnnotations returns store.drawAnnotations", () => {
@@ -2478,12 +2476,25 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
 
-        const ann1 = makeAnnotation({ id: "a1", shape: "polygon" });
+        const ann1 = makeAnnotation({
+          id: "a1",
+          shape: "polygon",
+          coordinates: [
+            { x: 10, y: 10 },
+            { x: 50, y: 10 },
+            { x: 50, y: 50 },
+          ],
+        });
         (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
           ann1,
         );
 
-        wrapper = mountComponent();
+        // Set up layer + annotations so the R-tree spatial index is populated
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        mockedAnnotationStore.annotations = [ann1];
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const geoAnn = mockGeoJSAnnotation("polygon");
         geoAnn.options("girderId", "a1");
         geoAnn.options("isConnection", false);
