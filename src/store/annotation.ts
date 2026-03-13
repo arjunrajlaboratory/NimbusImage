@@ -288,6 +288,7 @@ export class Annotations extends VuexModule {
 
   @Mutation
   public unselectAnnotations(ids: string[]) {
+    if (ids.length === 0) return;
     const toRemove = new Set(ids);
     this.selectedAnnotationIds = markRaw(
       new Set(
