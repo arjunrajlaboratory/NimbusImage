@@ -107,8 +107,33 @@ import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
 import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/polygonSlice";
+import RBush from "rbush";
 
 // Module-level helpers
+
+interface AnnotationBBoxItem {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  annotationId: string;
+}
+
+function buildAnnotationBBox(annotation: IAnnotation): AnnotationBBoxItem {
+  const coords = annotation.coordinates;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const c = coords[i];
+    if (c.x < minX) minX = c.x;
+    if (c.y < minY) minY = c.y;
+    if (c.x > maxX) maxX = c.x;
+    if (c.y > maxY) maxY = c.y;
+  }
+  return { minX, minY, maxX, maxY, annotationId: annotation.id };
+}
 
 function filterAnnotations(
   annotations: IAnnotation[],
@@ -411,6 +436,17 @@ const displayedAnnotations = computed(() => {
     }
   }
   return annotationList;
+});
+
+const displayedAnnotationsSpatialIndex = computed(() => {
+  const tree = new RBush<AnnotationBBoxItem>();
+  const annotations = displayedAnnotations.value;
+  const items: AnnotationBBoxItem[] = new Array(annotations.length);
+  for (let i = 0; i < annotations.length; i++) {
+    items[i] = buildAnnotationBBox(annotations[i]);
+  }
+  tree.load(items);
+  return tree;
 });
 
 const connectionIdsSet = computed(() => {
@@ -1398,6 +1434,52 @@ function getSelectedAnnotationsFromAnnotation(
   const unitsPerPixel = getMapUnitsPerPixel();
   const selectedAnns: IAnnotation[] = [];
   const selectedIds = new Set<string>();
+
+  // For drag-select (non-point selection), use spatial index to narrow candidates
+  if (type !== AnnotationShape.Point) {
+    // Compute bounding box of the selection polygon
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < coordinates.length; i++) {
+      const c = coordinates[i];
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
+
+    // Query R-tree for candidate annotations whose bboxes overlap
+    const candidates = displayedAnnotationsSpatialIndex.value.search({
+      minX,
+      minY,
+      maxX,
+      maxY,
+    });
+
+    const getAnnotation = getAnnotationFromId.value;
+    for (let i = 0; i < candidates.length; i++) {
+      const { annotationId } = candidates[i];
+      if (selectedIds.has(annotationId)) {
+        continue;
+      }
+      const annotation = getAnnotation(annotationId);
+      if (
+        !annotation ||
+        !annotation.coordinates.some((point: IGeoJSPosition) =>
+          geojs.util.pointInPolygon(point, coordinates),
+        )
+      ) {
+        continue;
+      }
+      selectedIds.add(annotationId);
+      selectedAnns.push(annotation);
+    }
+    return selectedAnns;
+  }
+
+  // Point selection (click): iterate GeoJS annotations for style-aware hit testing
   const geoAnnotations = props.annotationLayer.annotations();
   const len = geoAnnotations.length;
 

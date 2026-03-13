@@ -121,3 +121,18 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 - Rapid toggling of layer visibility with many annotations
 - Mixed annotation types (points, lines, polygons) on the same layer
 
+## TODO: Store selection by ID instead of annotation objects
+
+**Problem:** After adding the R-tree spatial index, the drag-select bottleneck shifted from `pointInPolygon` (now ~6% of time) to Vue reactivity overhead (~56% of time). `deepEqual` runs on the full `selectedAnnotations: IAnnotation[]` array after every selection change. `IAnnotation` objects are large (coordinate arrays, tags, metadata), making deep comparison expensive with hundreds of selections.
+
+**Proposed fix:** Change `selectedAnnotations: IAnnotation[]` to `selectedAnnotationIds: Set<string>` in `src/store/annotation.ts`. String/Set comparison is near-instant vs. deep-comparing complex objects.
+
+**What changes:**
+- `annotation.ts`: `selectedAnnotations` state becomes `selectedAnnotationIds: Set<string>`. Mutations (`selectAnnotations`, `unselectAnnotations`, `toggleSelected`, `setSelected`, `selectAnnotation`, `unselectAnnotation`) switch to operating on string IDs. The existing `selectedAnnotationIds` getter and `isAnnotationSelected` getter become trivial. A new `selectedAnnotations` getter derives the annotation objects via `getAnnotationFromId` for consumers that need them.
+- `AnnotationViewer.vue:260`: Update computed. The watcher (line 2958) and `.length` check (line 12-13) work with IDs.
+- `AnnotationList.vue:322`: Update filter to use IDs + lookup.
+- `filters.ts:81`: Already maps to IDs — simplifies.
+- Tests: Update mocks to use ID sets.
+
+**Tracked in:** GitHub issue (see link in MEMORY.md or issue tracker)
+

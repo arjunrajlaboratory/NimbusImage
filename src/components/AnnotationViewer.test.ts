@@ -2478,12 +2478,25 @@ describe("AnnotationViewer", () => {
           state: {},
         } as any;
 
-        const ann1 = makeAnnotation({ id: "a1", shape: "polygon" });
+        const ann1 = makeAnnotation({
+          id: "a1",
+          shape: "polygon",
+          coordinates: [
+            { x: 10, y: 10 },
+            { x: 50, y: 10 },
+            { x: 50, y: 50 },
+          ],
+        });
         (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
           ann1,
         );
 
-        wrapper = mountComponent();
+        // Set up layer + annotations so the R-tree spatial index is populated
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        mockedAnnotationStore.annotations = [ann1];
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const geoAnn = mockGeoJSAnnotation("polygon");
         geoAnn.options("girderId", "a1");
         geoAnn.options("isConnection", false);
