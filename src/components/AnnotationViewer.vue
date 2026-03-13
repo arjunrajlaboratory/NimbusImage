@@ -441,9 +441,8 @@ const displayedAnnotations = computed(() => {
   return annotationList;
 });
 
-const displayedAnnotationsSpatialIndex = shallowRef<RBush<AnnotationBBoxItem> | null>(
-  null,
-);
+const displayedAnnotationsSpatialIndex =
+  shallowRef<RBush<AnnotationBBoxItem> | null>(null);
 let spatialIndexRequestId: number | null = null;
 
 function buildSpatialIndex(annotations: IAnnotation[]) {
