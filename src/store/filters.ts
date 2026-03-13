@@ -78,9 +78,7 @@ export class Filters extends VuexModule {
 
   @Mutation
   addSelectionAsFilter() {
-    const selection = annotation.selectedAnnotations.map(
-      (value: IAnnotation) => value.id,
-    );
+    const selection = [...annotation.selectedAnnotationIds];
     this.selectionFilter = {
       enabled: true,
       exclusive: true,

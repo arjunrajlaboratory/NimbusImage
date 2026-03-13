@@ -9,8 +9,8 @@
       @cancel="handleContextMenuCancel"
     />
     <annotation-action-panel
-      v-if="selectedAnnotations.length > 0"
-      :selected-count="selectedAnnotations.length"
+      v-if="selectedAnnotationIds.size > 0"
+      :selected-count="selectedAnnotationIds.size"
       @delete-selected="annotationStore.deleteSelectedAnnotations"
       @delete-unselected="annotationStore.deleteUnselectedAnnotations"
       @tag-selected="showTagDialog = true"
@@ -257,7 +257,7 @@ const showAnnotationsFromHiddenLayers = computed(
   (): boolean => store.showAnnotationsFromHiddenLayers,
 );
 const hoveredAnnotationId = computed(() => annotationStore.hoveredAnnotationId);
-const selectedAnnotations = computed(() => annotationStore.selectedAnnotations);
+const selectedAnnotationIds = computed(() => annotationStore.selectedAnnotationIds);
 const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
 const shouldDrawConnections = computed(
   (): boolean => store.drawAnnotationConnections,
@@ -1597,16 +1597,17 @@ function selectAnnotations(selectAnnotation: IGeoJSAnnotation) {
     return;
   }
   const selected = getSelectedAnnotationsFromAnnotation(selectAnnotation);
+  const selectedIds = selected.map((a) => a.id);
 
   switch (annotationSelectionType.value) {
     case AnnotationSelectionTypes.ADD:
-      annotationStore.selectAnnotations(selected);
+      annotationStore.selectAnnotations(selectedIds);
       break;
     case AnnotationSelectionTypes.REMOVE:
-      annotationStore.unselectAnnotations(selected);
+      annotationStore.unselectAnnotations(selectedIds);
       break;
     case AnnotationSelectionTypes.TOGGLE:
-      annotationStore.toggleSelected(selected);
+      annotationStore.toggleSelected(selectedIds);
   }
 
   props.interactionLayer.removeAnnotation(selectAnnotation);
@@ -2955,7 +2956,7 @@ watch(
   },
 );
 
-watch([hoveredAnnotationId, selectedAnnotations], () => {
+watch([hoveredAnnotationId, selectedAnnotationIds], () => {
   onAnnotationStateChanged();
 });
 
@@ -3160,7 +3161,7 @@ defineExpose({
   samMainOutput,
   samLivePreviewOutput,
   hoveredAnnotationId,
-  selectedAnnotations,
+  selectedAnnotationIds,
   shouldDrawAnnotations,
   shouldDrawConnections,
   showTooltips,

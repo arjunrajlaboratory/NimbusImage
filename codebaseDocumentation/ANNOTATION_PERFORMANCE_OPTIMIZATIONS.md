@@ -105,14 +105,15 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 
 ### UI Scenarios (ordered by expected impact)
 
-1. **Pan/zoom with many annotations** — Load a dataset with 500+ annotations, pan and zoom. Should feel smoother due to annotation reuse (change #1).
+1. **Pan/zoom with many annotations** — Load a dataset with 500+ annotations, pan and zoom.
 2. **Hover over annotations** — With many annotations visible, hovering should be snappier with no flicker (change #2). Verify hover highlight appears/disappears correctly.
-3. **Select/deselect annotations** — Shift-click multiple annotations rapidly. Verify selection highlight updates correctly (changes #2, #3).
-4. **Add new connections** — Create connections between annotations. Verify they appear on the canvas immediately (verifies the spread-revert fix for `addConnectionImpl`/`addMultipleConnections`).
-5. **Change Z/Time slices** — Navigate through Z-stack or time series with many annotations. Benefits from channel-indexed lookup (change #4).
-6. **Timelapse mode** — Enable timelapse tracking with connected objects. Verify tracks render correctly and performance is improved with many connections (change #5).
-7. **Tooltips with property values** — Enable annotation tooltips showing computed properties. Verify values display correctly with many annotations (change #11).
-8. **Annotation color changes** — Change an annotation's color or layer color. Verify the annotation updates on canvas (tests that reference identity check works when annotation objects are replaced).
+3. **Select/deselect annotations** — Shift-click multiple annotations rapidly. Verify selection highlight updates correctly (changes #2, #3, #12).
+4. **Drag-select many annotations** — Draw a selection rectangle over 200+ annotations. Should be significantly faster after change #12 (eliminated deepEqual overhead).
+5. **Add new connections** — Create connections between annotations. Verify they appear on the canvas immediately (verifies the spread-revert fix for `addConnectionImpl`/`addMultipleConnections`).
+6. **Change Z/Time slices** — Navigate through Z-stack or time series with many annotations. Benefits from channel-indexed lookup (change #4).
+7. **Timelapse mode** — Enable timelapse tracking with connected objects. Verify tracks render correctly and performance is improved with many connections (change #5).
+8. **Tooltips with property values** — Enable annotation tooltips showing computed properties. Verify values display correctly with many annotations (change #11).
+9. **Annotation list selection** — Select annotations from the annotation browser list. Verify table checkboxes, select-all, and deselect-all work correctly (change #12).
 
 ### Edge Cases
 
@@ -121,18 +122,24 @@ Several mutations were initially changed from array spread (`this.arr = [...this
 - Rapid toggling of layer visibility with many annotations
 - Mixed annotation types (points, lines, polygons) on the same layer
 
-## TODO: Store selection by ID instead of annotation objects
+### 12. Store Selection by ID Instead of Annotation Objects (annotation.ts, AnnotationViewer.vue, AnnotationList.vue)
 
-**Problem:** After adding the R-tree spatial index, the drag-select bottleneck shifted from `pointInPolygon` (now ~6% of time) to Vue reactivity overhead (~56% of time). `deepEqual` runs on the full `selectedAnnotations: IAnnotation[]` array after every selection change. `IAnnotation` objects are large (coordinate arrays, tags, metadata), making deep comparison expensive with hundreds of selections.
+**What:** Changed `selectedAnnotations: IAnnotation[]` to `selectedAnnotationIds: Set<string>` in the annotation store. All selection mutations now accept `string[]` (IDs) instead of `IAnnotation[]`. The Set is wrapped with `markRaw()` to prevent Vue from creating a deep reactive proxy. Consumers that need full annotation objects do their own lookups via `getAnnotationFromId`.
 
-**Proposed fix:** Change `selectedAnnotations: IAnnotation[]` to `selectedAnnotationIds: Set<string>` in `src/store/annotation.ts`. String/Set comparison is near-instant vs. deep-comparing complex objects.
+**Why:** After the R-tree spatial index optimization, the drag-select bottleneck shifted from `pointInPolygon` to Vue/Vuetify reactivity overhead (~56% of time). Two sources of `deepEqual` were identified and eliminated:
 
-**What changes:**
-- `annotation.ts`: `selectedAnnotations` state becomes `selectedAnnotationIds: Set<string>`. Mutations (`selectAnnotations`, `unselectAnnotations`, `toggleSelected`, `setSelected`, `selectAnnotation`, `unselectAnnotation`) switch to operating on string IDs. The existing `selectedAnnotationIds` getter and `isAnnotationSelected` getter become trivial. A new `selectedAnnotations` getter derives the annotation objects via `getAnnotationFromId` for consumers that need them.
-- `AnnotationViewer.vue:260`: Update computed. The watcher (line 2958) and `.length` check (line 12-13) work with IDs.
-- `AnnotationList.vue:322`: Update filter to use IDs + lookup.
-- `filters.ts:81`: Already maps to IDs — simplifies.
-- Tests: Update mocks to use ID sets.
+1. **Vuetify `v-data-table` selection model:** The data table in `AnnotationList.vue` was bound via `v-model="selectedItems"` (full `IAnnotationListItem` objects). Vuetify's `select.ts` composable calls `deepEqual(v, item.value)` for every non-primitive selected value against every row item — O(n*m) deep comparisons of large annotation objects. Fixed by binding `v-model="selectedIds"` (primitive `string[]`), which hits the `isPrimitive` fast path using `===` instead of `deepEqual`.
 
-**Tracked in:** GitHub issue (see link in MEMORY.md or issue tracker)
+2. **Store-level reactivity:** Storing full `IAnnotation` objects in `selectedAnnotations` meant Vue's reactivity system tracked and compared large objects on every selection change. The `Set<string>` stores only IDs, and `markRaw()` prevents Vue from deep-proxying the Set contents, consistent with other large store data structures (`annotationCentroids`, `annotationIdToIdx`).
+
+**What changed:**
+- `annotation.ts`: `selectedAnnotations` state → `selectedAnnotationIds: Set<string>`. The old `selectedAnnotationIds` getter removed (now primary state). `isAnnotationSelected` getter simplified to read directly from Set. All selection mutations (`setSelected`, `selectAnnotation`, `selectAnnotations`, `unselectAnnotation`, `unselectAnnotations`, `toggleSelected`) accept string IDs and construct new `markRaw(new Set(...))` on each mutation for Vue 3 reactivity. `copySelectedAnnotations` looks up full objects via `getAnnotationFromId`. Actions that pass IDs downstream (`tagSelectedAnnotations`, `colorSelectedAnnotations`, `deleteSelectedAnnotations`) spread the Set to `string[]`.
+- `AnnotationViewer.vue`: `selectedAnnotations` computed → `selectedAnnotationIds`. Template uses `.size` instead of `.length`. `selectAnnotations()` maps annotations to IDs before dispatching to store.
+- `AnnotationList.vue`: `v-model="selectedItems"` → `v-model="selectedIds"` on `v-data-table`. `selected` computed → `selectedIds` (primitive string array). `selectedItems` simplified to read-only computed. `selectAllCallback` and `toggleAnnotationSelection` pass IDs.
+- `filters.ts`: `addSelectionAsFilter` reads `selectedAnnotationIds` directly (already a Set of strings).
+- `AnnotationActionPanel.vue`: Spreads Set for `.join()`.
+- `DeleteConnections.vue`: Removed redundant `new Set()` wrapping.
+- Tests updated to use `new Set<string>()` mocks.
+
+**Implication:** Also fixed a pre-existing bug where `unselectAnnotation` used `.splice()` (in-place mutation), which wouldn't trigger Vue 3 watchers. Now all mutations replace the Set reference.
 

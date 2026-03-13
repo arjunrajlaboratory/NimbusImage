@@ -20,7 +20,7 @@ vi.mock("@/store/annotation", () => ({
       { id: "a3", location: { XY: 1, Z: 0, Time: 0 } },
       { id: "a4", location: { XY: 1, Z: 0, Time: 0 } },
     ],
-    selectedAnnotationIds: ["a1"],
+    selectedAnnotationIds: new Set(["a1"]),
     deleteConnections: vi.fn().mockResolvedValue(undefined),
   },
 }));
