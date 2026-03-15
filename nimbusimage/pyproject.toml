@@ -11,6 +11,7 @@ dependencies = [
     "girder-client",
     "numpy",
     "shapely",
+    "scikit-image",
 ]
 
 [project.optional-dependencies]
