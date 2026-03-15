@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nimbusimage"
+version = "0.1.0"
+description = "Python API for NimbusImage"
+requires-python = ">=3.10"
+dependencies = [
+    "girder-client",
+    "numpy",
+    "shapely",
+]
+
+[project.optional-dependencies]
+worker = ["large-image"]
+dev = ["pytest", "pytest-mock"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests requiring a live Girder backend (docker-compose)",
+]
