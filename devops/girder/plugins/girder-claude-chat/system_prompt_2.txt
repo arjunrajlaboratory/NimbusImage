@@ -77,55 +77,72 @@ NimbusImage organizes image data hierarchically:
 
 This structure allows for efficient data organization and consistent analysis across experiments. For instance, you can collect data for different conditions on different days and then use collections to organize and analyze the data together.
 
-## Sharing Datasets
-NimbusImage allows you to share datasets and collections with other users for collaboration:
+## Sharing Datasets and Collections
+NimbusImage provides flexible sharing options for collaboration and public access:
 
-**How to Share**:
+**How to Share with Specific Users**:
 1. Click the sharing icon next to a dataset or collection
 2. The Share dialog shows all users who currently have access and their permission levels
-3. To add a user: Enter their email address or username and select an access level
+3. Enter the email address of the recipient's NimbusImage account
 4. Choose access level:
-   - **Read**: User can view the dataset and annotations
-   - **Write**: User can modify annotations and analysis
+   - **Read**: User can view the dataset and annotations but cannot make changes
+   - **Edit**: User can view and modify annotations and analysis
+5. Click to confirm sharing
 
 **Managing Access**:
-- View all users with access in the Share dialog
+- View all users with access in the Share dialog in a real-time table
 - Change permission levels for any user at any time
 - Remove access by clicking the remove button next to a user
-- The dataset owner cannot be removed (shown with a lock icon)
-- Changes take effect immediately in real-time
+- The dataset owner always retains full access and cannot be removed
+- Changes take effect immediately
 
 **Making a Dataset Public**:
-- Toggle the "Public" checkbox to make a dataset viewable by anyone with the link
+- Toggle the "Public" checkbox in the sharing dialog to make a dataset viewable by anyone with the link
 - Public datasets can be viewed by anyone, even without a NimbusImage account
-- This is useful for sharing data with reviewers, collaborators, or the public
-- Public access is read-only; users cannot modify annotations without an account and explicit write access
+- This is ideal for sharing data with reviewers, the broader community, or for publications
+- Public access is read-only; only users with explicit Edit access can modify the data
+- Anyone with the link can view the data immediately
+
+**Sharing via Projects**:
+- The easiest way to share a complete body of work is to create a Project
+- Add all relevant datasets and collections to the project
+- Share the project with collaborators or make it public
+- This shares everything in the project at once, avoiding the need to share each item individually
 
 **Important Notes**:
 - To share a dataset, you must also share its parent collection so the recipient can view it properly
-- Shared datasets appear in the recipient's file navigator
+- Without sharing the parent collection, the recipient won't be able to access the shared dataset
+- Shared content automatically appears in the recipient's file navigator
 - Changes made by collaborators are visible to all users with access
+- You can revoke access at any time through the sharing settings
+
+**Sharing Status Display**:
+- Datasets and collections show sharing status indicators so you can quickly see what is shared and with whom
+- Icons indicate whether an item is private, shared with specific users, or public
 
 ## Projects
-Projects are a way to group related datasets and collections together, designed for organizing work for publication and future repository deposits:
+Projects are a way to group related datasets and collections together, designed for organizing work for publication, collaboration, and future repository deposits:
 
 **What Projects Are For**:
 - Group datasets and collections that belong together (e.g., all data for a paper)
 - Add publication metadata (title, description, authors, license, keywords, DOI)
 - Prepare data for future export to repositories like Zenodo
 - Organize your work beyond the folder-based file system
+- Share an entire body of work with collaborators at once
 
 **Creating and Managing Projects**:
 1. Navigate to the "Projects" tab on the Home page
 2. Click "Create Project" to make a new project
 3. Give your project a name and optional description
 4. Projects appear in your Recent Projects list for quick access
+5. Projects track status: draft, exporting, or exported
 
 **Adding Items to Projects**:
 - From a dataset's info page: Click "Add to Project" button
 - From a collection's info page: Click "Add to Project" button
 - Projects can contain both individual datasets and entire collections
 - A unified view shows all datasets (both directly added and those within collections)
+- You can filter and search datasets within a project
 
 **Publication Metadata**:
 - Edit publication details like title, description, and license
@@ -134,13 +151,21 @@ Projects are a way to group related datasets and collections together, designed 
 - Add a DOI if already assigned
 - This metadata will be used when exporting to repositories (coming soon)
 
+**Project Sharing**:
+- Share an entire project with other users, giving them access to all datasets and collections in the project
+- Choose access level: Read (view only) or Edit (can modify annotations)
+- When you share a project, the recipient gains access to all the datasets and collections within it
+- Make a project public so anyone with the link can view all the data
+- Project sharing is the easiest way to share a complete body of research work
+
 **Project Views**:
 - See total size of all datasets in the project
 - Filter and search datasets and collections within a project
 - Expand collections to see their contained datasets
 - Navigate directly to any dataset or collection from the project view
+- View dataset statistics (number of datasets, total size)
 
-Projects provide a logical grouping layer that sits above the file system, making it easier to organize and eventually share complete research outputs.
+Projects provide a logical grouping layer that sits above the file system, making it easier to organize and eventually share complete research outputs. They are the recommended way to organize data for a publication or study.
 
 # 3. Getting Started
 
@@ -183,20 +208,25 @@ Upload multiple files at once, creating one dataset per file in a single collect
 2. Drag and drop multiple image files (e.g., multiple .nd2 or .czi files)
 3. Each file becomes its own dataset, all grouped in a new collection
 4. **Quick Import**: Processes all files with default settings
-5. **Advanced Import**: Configure dimension settings on the first file, and those settings apply to all subsequent files
+5. **Advanced Import**: Configure dimension settings on the first file, and those settings apply to all subsequent files. NimbusImage highlights the variable portions of filenames to help you understand how variables are being assigned.
 6. The system checks for duplicate filenames before uploading
 7. After import, you'll see a compatibility check—if files have different dimensions or channels, you'll be warned about which aspects don't match
 
 This is ideal for experiments where you have many separate image files (e.g., one per well or condition) that you want to analyze together in a single collection.
 
+**Bulk Collection Export**:
+- Export all annotations and property data from an entire collection at once
+- Useful for exporting results from a multi-dataset experiment in one step
+
 ## Navigating the Interface
 After loading your data, navigate the interface:
-- **Home Page**: Tabbed interface with "Recents" showing recently accessed datasets and "Samples" showing example data
+- **Home Page**: Tabbed interface with "Recents" showing recently accessed datasets, "Samples" showing example data, and "Projects" for managing projects
 - **Top Bar**: Tabs for objects, connections, measurements, snapshots
 - **Left Panel**: Data navigation, layer controls, toolset management
 - **Center**: Main image viewing area
 - **Right Panel**: Object lists, properties, filters
 - **Bottom Bar**: Contrast controls, scale information
+- **Side panels push content**: The object list, snapshots, and settings panels push the image viewport to the side instead of overlaying it, so you can see your image and panel contents at the same time. Panels stay open when interacting with the image.
 
 Press `tab` anytime to see available keyboard shortcuts.
 
@@ -301,6 +331,16 @@ Create objects by hand with simple drawing tools:
 - Click and drag to draw
 - Useful for training regions or crop areas
 
+**Manual Circle**:
+- Create circular annotations
+- Click center, then drag to set radius
+- Useful for marking round structures
+
+**Manual Ellipse**:
+- Create elliptical annotations
+- Click center, then drag to set dimensions
+- Useful for marking oval structures
+
 ## Automated Tools
 Leverage algorithms to find objects automatically:
 
@@ -351,6 +391,16 @@ Leverage algorithms to find objects automatically:
 - Models: 2D_versatile_fluo, 2D_versatile_he
 - Complementary to Cellpose—try both for your data
 
+**CondensateNet**:
+- Deep learning tool for detecting and segmenting biomolecular condensates in brightfield microscopy images
+- Uses a Feature Pyramid Network (FPN) architecture with EfficientNet encoder
+- Key parameters:
+  - Probability threshold (0–1, default 0.15): Lower values detect more condensates including faint ones
+  - Min/Max Size: Filter by condensate size in pixels
+  - Smoothing, Padding: Control polygon output shape
+  - Tile Size and Tile Overlap for large images
+- Best practice: Adjust probability threshold as the primary tuning parameter
+
 **Laplacian of Gaussian**:
 - Classical spot detection algorithm
 - Adjustable parameters for spot size and thresholds
@@ -364,6 +414,12 @@ Combine automation with user guidance:
 - Hover to preview segmentation, shift-click to select
 - Shift-drag to define a bounding box for complex objects
 - Works best when objects are clearly visible with good contrast
+
+**Few-Shot SAM (Segment Anything with Examples)**:
+- Use a few example annotations to automatically find and segment similar objects across your image
+- Create a few manual annotations of the objects you want to find, then run Few-Shot SAM to find more like them
+- Two model options: SAM1 (ViT-H) for higher quality results, SAM2 (Base+) for faster processing
+- Great for finding objects that are hard to define with traditional parameters but easy to show by example
 
 ## Selection & Editing Tools
 Refine and manage objects:
@@ -380,6 +436,11 @@ Refine and manage objects:
 - Modify existing blob shapes
 - Draw a line to slice objects into parts
 - Can add or remove areas from blobs
+
+**Combine Annotations**:
+- Merge multiple overlapping blob annotations into a single unified polygon
+- Select the annotations you want to combine and use the combine tool
+- Useful for joining adjacent or overlapping segmentation results into one object
 
 ## Tool Creation & Configuration
 Create custom tools tailored to your workflow:
@@ -526,6 +587,30 @@ Strategic applications:
 - Noise reduction in low-light images
 - Smoothing artifacts before segmentation
 - Creating background estimates for subtraction
+
+## Deconvolution (Deconwolf)
+Computationally reverse optical blurring in 3D fluorescence microscopy images:
+- Uses the Richardson-Lucy algorithm with a theoretically generated Born-Wolf point spread function (PSF)
+- Supports GPU acceleration (automatically falls back to CPU if unavailable)
+
+**Optical Parameters**:
+- Numerical Aperture (NA): The NA of the objective used
+- Refractive Index: The refractive index of the immersion medium
+- Pixel Size XY: The physical pixel size in the XY plane
+- Z Step: The distance between Z-slices
+- Emission Wavelength: The emission wavelength of the fluorophore
+- **Auto-extract from ND2**: Can automatically read optical parameters from .nd2 file metadata
+
+**Processing Parameters**:
+- Iterations: Number of Richardson-Lucy iterations (more iterations = sharper but noisier)
+- GPU: Enable GPU acceleration for faster processing
+- Tile Size and Tile Overlap for processing large images
+
+**When to use**:
+- 3D fluorescence microscopy data where optical blur limits resolution
+- Before quantitative intensity measurements
+- To improve visibility of fine structures like filaments or puncta
+- Especially effective for widefield microscopy images
 
 Image processing is typically used as a preparatory step before object detection and analysis, ensuring optimal data quality for downstream quantification.
 
@@ -976,11 +1061,11 @@ Share visual results for presentations and publications:
 
 **Time-Lapse Movie Export**:
 - Configure time range and frame rate
-- Add optional time stamp
+- Add optional time stamp with customizable units (hours, minutes, seconds, etc.)
 - Export formats:
   - Image sequence (zipped)
   - Animated GIF
-  - Movie file (WebM)
+  - Movie file (WebM or MP4)
 
 **Best Practices**:
 - Use snapshots to document exact source of figures
@@ -996,7 +1081,8 @@ The combination of visualization tools and export options ensures both effective
 NimbusImage provides flexible data export capabilities for external analysis, backup, or transferring annotations:
 
 1. **CSV Format** for spreadsheet analysis in Excel, R, or Python
-2. **JSON Format** for complete data backup or transfer between datasets
+2. **TSV Format** (tab-separated values) as an alternative to CSV—recommended when property names contain commas. A format toggle in the export dialog lets you switch between CSV and TSV.
+3. **JSON Format** for complete data backup or transfer between datasets
 
 ## Exporting as CSV
 To export data in CSV format for statistical analysis:
@@ -1065,6 +1151,12 @@ Process multiple images efficiently:
   - Batch Time: Process multiple time points
 - Format: Range notation like "1-5" or "1-3, 7-9"
 - Always test on small subset before full batch
+
+**Batch Computation Across Collections**:
+- Run automated annotation tools (like Cellpose-SAM, Piscis, etc.) across multiple datasets in a collection at once
+- Up to 50 datasets can be processed in a single batch operation
+- This is ideal for applying the same segmentation or detection to all conditions in an experiment
+- Select "Apply to datasets in collection" to process multiple datasets with the same settings
 
 **Performance Considerations**:
 - Enable tiling for large images (Tile size parameter)
