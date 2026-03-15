@@ -17,7 +17,7 @@
             :content="uncomputed[property.id].length"
           >
             <template v-if="status.running">
-              <v-progress-circular indeterminate />
+              <WhimsicalLoader size="md" />
             </template>
             <template v-else>
               <v-icon color="primary"> mdi-play </v-icon>
@@ -60,6 +60,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 import propertyStore, { IPropertyStatus } from "@/store/properties";
 import {
   IAnnotationProperty,

@@ -84,7 +84,7 @@
         </button>
       </div>
       <div v-if="samLoadingMessages.length > 0" class="sam-loading-overlay">
-        <v-progress-circular indeterminate size="18" width="2" color="white" />
+        <WhimsicalLoader size="sm" color="light" />
         <div class="sam-loading-messages">
           <span v-for="(msg, i) in samLoadingMessages" :key="i">{{ msg }}</span>
         </div>
@@ -215,6 +215,7 @@ import { convertLength } from "@/utils/conversion";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
+import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 
 function generateFilterURL(
   index: number,
