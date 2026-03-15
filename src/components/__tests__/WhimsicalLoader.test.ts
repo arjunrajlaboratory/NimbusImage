@@ -4,10 +4,18 @@ import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 
 describe("WhimsicalLoader", () => {
   describe("sm size", () => {
-    it("renders the tiny-atom animation", () => {
+    it("renders an animation from the full set", () => {
       const wrapper = mount(WhimsicalLoader, { props: { size: "sm" } });
       expect(wrapper.find(".whimsical-loader--sm").exists()).toBe(true);
-      expect(wrapper.find(".animation-tiny-atom").exists()).toBe(true);
+      const animDiv = wrapper.find(".whimsical-loader__animation");
+      const validAnimations = [
+        "animation-bouncing-molecules",
+        "animation-newtons-cradle",
+      ];
+      const hasValidAnimation = validAnimations.some((cls) =>
+        animDiv.classes().includes(cls),
+      );
+      expect(hasValidAnimation).toBe(true);
     });
 
     it("does not render text", () => {
@@ -59,10 +67,8 @@ describe("WhimsicalLoader", () => {
       expect(wrapper.find(".whimsical-loader--md").exists()).toBe(true);
       const animDiv = wrapper.find(".whimsical-loader__animation");
       const validAnimations = [
-        "animation-dna-helix",
-        "animation-bubbling-beaker",
+        "animation-bouncing-molecules",
         "animation-newtons-cradle",
-        "animation-orbiting-atom",
       ];
       const hasValidAnimation = validAnimations.some((cls) =>
         animDiv.classes().includes(cls),
