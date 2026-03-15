@@ -121,6 +121,62 @@ Image.fromarray(rgb).save(os.path.expanduser("~/Desktop/test_composite.png"))
 # Note: save to ~/Desktop (not /tmp) — macOS Preview may not display /tmp files
 ```
 
+### End-to-End: Composite Image with Annotations Overlay
+
+This test exercises the full pipeline: connect, load dataset metadata, fetch images, fetch layer config, build composite, fetch annotations, filter by location, and render.
+
+```python
+import os
+import nimbusimage as ni
+import numpy as np
+from PIL import Image, ImageDraw
+
+client = ni.connect("http://localhost:8080/api/v1", username="YOUR_USER", password="YOUR_PASS")
+ds = client.dataset("YOUR_DATASET_ID")
+
+# Pick a z-slice (check where annotations live)
+anns = ds.annotations.list()
+print(f"Total annotations: {len(anns)}")
+
+# Find a z-slice with annotations
+from collections import Counter
+z_counts = Counter(a.location.z for a in anns)
+z_slice = z_counts.most_common(1)[0][0] if z_counts else 0
+print(f"Most populated z-slice: z={z_slice} ({z_counts[z_slice]} annotations)")
+
+# Get composite at that z-slice using server layer settings
+rgb = ds.images.get_composite(xy=0, z=z_slice, time=0, dtype="uint8")
+
+# Filter annotations to this z-slice
+local_anns = ni.filter_by_location(anns, z=z_slice)
+
+# Draw annotations on the image
+img = Image.fromarray(rgb)
+draw = ImageDraw.Draw(img)
+
+for ann in local_anns:
+    if ann.shape == "polygon" and len(ann.coordinates) >= 3:
+        pts = [(c["x"], c["y"]) for c in ann.coordinates]
+        draw.polygon(pts, outline=(255, 255, 255), width=2)
+    elif ann.shape == "point" and len(ann.coordinates) == 1:
+        x, y = ann.coordinates[0]["x"], ann.coordinates[0]["y"]
+        r = 3
+        draw.ellipse([x - r, y - r, x + r, y + r], outline=(255, 255, 0), width=2)
+
+out = os.path.expanduser("~/Desktop/nimbusimage_annotated.png")
+img.save(out)
+print(f"Saved annotated image to {out}")
+```
+
+This verifies:
+- Authentication and dataset access
+- Layer configuration fetched via `/upenn_collection` (not `/item`)
+- Percentile-based contrast applied correctly
+- Hex color parsing for pseudocolor
+- Channel compositing with lighten blend mode
+- Annotation listing and client-side location filtering
+- Annotation coordinate format (x=horizontal, y=vertical) renders correctly on the image
+
 ### Note on macOS Preview
 
 When saving images for viewing with Preview, use `~/Desktop/` or another user-visible path. macOS sandboxing can prevent Preview from displaying files in `/tmp`.
