@@ -113,8 +113,14 @@ print(f"Image: {img.shape} {img.dtype}")
 anns = ds.annotations.list(limit=10)
 print(f"Annotations: {len(anns)}")
 
-# Get composite
+# Get composite RGB using layer settings from the server
 rgb = ds.images.get_composite(dtype="uint8")
 from PIL import Image
-Image.fromarray(rgb).save("/tmp/test_composite.png")
+Image.fromarray(rgb).save(os.path.expanduser("~/Desktop/test_composite.png"))
+
+# Note: save to ~/Desktop (not /tmp) — macOS Preview may not display /tmp files
 ```
+
+### Note on macOS Preview
+
+When saving images for viewing with Preview, use `~/Desktop/` or another user-visible path. macOS sandboxing can prevent Preview from displaying files in `/tmp`.
