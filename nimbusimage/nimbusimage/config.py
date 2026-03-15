@@ -28,7 +28,7 @@ class ConfigAccessor:
             config_id = views[0].get("configurationId")
             if not config_id:
                 return {}
-        return self._gc.get(f"/item/{config_id}")
+        return self._gc.get(f"/upenn_collection/{config_id}")
 
     def _ensure_config(self):
         if self._config_cache is None:

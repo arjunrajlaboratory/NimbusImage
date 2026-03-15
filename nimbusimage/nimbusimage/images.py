@@ -169,9 +169,17 @@ class ImageAccessor:
                 np.float64
             )
 
-            # Apply contrast
-            cmin = layer.get("contrastMin", 0)
-            cmax = layer.get("contrastMax", img.max() or 1)
+            # Apply contrast — layer uses percentile-based blackPoint/whitePoint
+            contrast = layer.get("contrast", {})
+            bp = contrast.get("blackPoint", 0)
+            wp = contrast.get("whitePoint", 100)
+            if contrast.get("mode") == "percentile":
+                cmin = float(np.percentile(img, bp))
+                cmax = float(np.percentile(img, wp))
+            else:
+                # Absolute values or fallback
+                cmin = float(bp)
+                cmax = float(wp) if wp > 1 else float(img.max() or 1)
             if cmax > cmin:
                 img = (img - cmin) / (cmax - cmin)
             img = np.clip(img, 0.0, 1.0)

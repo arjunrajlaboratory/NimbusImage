@@ -84,6 +84,86 @@ class TestImageGet:
         assert result.shape == (2, 768, 1024)
 
 
+class TestGetComposite:
+    def test_composite_with_percentile_contrast(self, mock_gc, sample_tiles_metadata):
+        """Test that get_composite handles the real layer format with
+        percentile-based contrast (blackPoint/whitePoint)."""
+        from nimbusimage.config import ConfigAccessor
+
+        # Create a gradient image so percentile contrast produces a visible result
+        img = np.linspace(0, 1000, 768 * 1024, dtype=np.uint16).reshape(768, 1024)
+        mock_response = MagicMock()
+        mock_response.content = pickle.dumps(img)
+        mock_gc.get.return_value = mock_response
+
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+
+        # Mock config with real layer format (hex color, percentile contrast)
+        ds.config = ConfigAccessor.__new__(ConfigAccessor)
+        ds.config._gc = mock_gc
+        ds.config._dataset_id = "folder_001"
+        ds.config._config_cache = {
+            "meta": {
+                "layers": [
+                    {
+                        "channel": 0,
+                        "color": "#FF0000",
+                        "visible": True,
+                        "contrast": {"blackPoint": 1, "whitePoint": 99, "mode": "percentile"},
+                    },
+                    {
+                        "channel": 1,
+                        "color": "#00FF00",
+                        "visible": True,
+                        "contrast": {"blackPoint": 0, "whitePoint": 100, "mode": "percentile"},
+                    },
+                ],
+                "propertyIds": [],
+            }
+        }
+
+        result = ds.images.get_composite(xy=0, z=0, time=0, dtype="uint8")
+        assert result.shape == (768, 1024, 3)
+        assert result.dtype == np.uint8
+        # Should have red and green channels with non-zero values
+        assert result[:, :, 0].max() > 0  # red from channel 0
+        assert result[:, :, 1].max() > 0  # green from channel 1
+
+    def test_composite_hidden_layer_excluded(self, mock_gc, sample_tiles_metadata):
+        img = np.ones((768, 1024), dtype=np.uint16) * 500
+        mock_response = MagicMock()
+        mock_response.content = pickle.dumps(img)
+        mock_gc.get.return_value = mock_response
+
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+
+        from nimbusimage.config import ConfigAccessor
+        ds.config = ConfigAccessor.__new__(ConfigAccessor)
+        ds.config._gc = mock_gc
+        ds.config._dataset_id = "folder_001"
+        ds.config._config_cache = {
+            "meta": {
+                "layers": [
+                    {
+                        "channel": 0, "color": "#FF0000", "visible": True,
+                        "contrast": {"blackPoint": 0, "whitePoint": 100, "mode": "percentile"},
+                    },
+                    {
+                        "channel": 1, "color": "#00FF00", "visible": False,
+                        "contrast": {"blackPoint": 0, "whitePoint": 100, "mode": "percentile"},
+                    },
+                ],
+                "propertyIds": [],
+            }
+        }
+
+        result = ds.images.get_composite(xy=0, z=0, time=0, dtype="float64")
+        # Green channel should be zero (layer hidden)
+        assert result[:, :, 1].max() == 0.0
+        # Red should be non-zero
+        assert result[:, :, 0].max() > 0.0
+
+
 class TestIterFrames:
     def test_iter_frames(self, mock_gc, sample_tiles_metadata):
         img = np.zeros((768, 1024), dtype=np.uint16)
