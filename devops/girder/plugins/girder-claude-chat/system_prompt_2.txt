@@ -86,7 +86,7 @@ NimbusImage provides flexible sharing options for collaboration and public acces
 3. Enter the email address of the recipient's NimbusImage account
 4. Choose access level:
    - **Read**: User can view the dataset and annotations but cannot make changes
-   - **Edit**: User can view and modify annotations and analysis
+   - **Write**: User can view and modify annotations and analysis
 5. Click to confirm sharing
 
 **Managing Access**:
@@ -100,7 +100,7 @@ NimbusImage provides flexible sharing options for collaboration and public acces
 - Toggle the "Public" checkbox in the sharing dialog to make a dataset viewable by anyone with the link
 - Public datasets can be viewed by anyone, even without a NimbusImage account
 - This is ideal for sharing data with reviewers, the broader community, or for publications
-- Public access is read-only; only users with explicit Edit access can modify the data
+- Public access is read-only; only users with explicit Write access can modify the data
 - Anyone with the link can view the data immediately
 
 **Sharing via Projects**:
@@ -153,7 +153,7 @@ Projects are a way to group related datasets and collections together, designed 
 
 **Project Sharing**:
 - Share an entire project with other users, giving them access to all datasets and collections in the project
-- Choose access level: Read (view only) or Edit (can modify annotations)
+- Choose access level: Read (view only) or Write (can modify annotations)
 - When you share a project, the recipient gains access to all the datasets and collections within it
 - Make a project public so anyone with the link can view all the data
 - Project sharing is the easiest way to share a complete body of research work
