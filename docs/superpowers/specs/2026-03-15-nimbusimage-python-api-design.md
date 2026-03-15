@@ -159,19 +159,25 @@ ds.images.new_writer(copy_metadata=True)                         # → ImageWrit
 
 **Frame index resolution:** Builds `map[channel][time][z][xy] → frame_index` lazily from tiles metadata.
 
-**ImageWriter** (context manager, requires `large-image`):
+**ImageWriter** (requires `large-image`):
 ```python
+# As context manager (auto-writes + uploads on exit):
 with ds.images.new_writer(copy_metadata=True) as w:
     for frame_info, img in ds.images.iter_frames():
         w.add_frame(process(img), **frame_info.to_dict())
     w.set_metadata(tool='Registration')
-# Writes TIFF, uploads to dataset folder on exit
+
+# Or explicit control:
+writer = ds.images.new_writer(copy_metadata=True)
+writer.add_frame(processed_img, xy=0, z=0, time=0, channel=0)
+writer.set_metadata(tool='MyTool')
+writer.write(filename='output.tiff')    # writes TIFF + uploads to dataset folder
 ```
 
 ### AnnotationAccessor — `ds.annotations`
 
 ```python
-ds.annotations.list(shape='polygon', tags=['nucleus'], limit=10_000_000)  # → list[Annotation]
+ds.annotations.list(shape='polygon', tags=['nucleus'], limit=0)           # → list[Annotation]
 ds.annotations.get(annotation_id)                                         # → Annotation
 ds.annotations.count(shape='polygon', tags=['nucleus'])                   # → int
 ds.annotations.create(annotation)                                         # → Annotation (with id)
@@ -179,26 +185,31 @@ ds.annotations.create_many(annotation_list)                               # → 
 ds.annotations.create_many(annotation_list,
                            connect_to={'tags': ['cell'], 'channel': 0})   # create + auto-connect
 ds.annotations.update(annotation_id, updates)                             # → Annotation
+ds.annotations.update_many([(id1, updates1), (id2, updates2), ...])        # → list[Annotation]
 ds.annotations.delete(annotation_id)
 ds.annotations.delete_many([id1, id2, ...])
 ```
 
-- `list()` defaults to `limit=10_000_000`
-- `create_many()` with `connect_to` does bulk create then `connect_to_nearest` (two HTTP calls)
+- `list()` defaults to `limit=0` (unlimited — the server interprets 0 as no limit)
+- `create_many()` with `connect_to` does bulk create then `connect_to_nearest` (two HTTP calls); returns only the created annotations (connections are a side effect)
 - All methods accept/return `Annotation` dataclass instances
 
 ### ConnectionAccessor — `ds.connections`
 
 ```python
-ds.connections.list(parent_id=None, child_id=None, node_id=None, limit=10_000_000)
+ds.connections.list(parent_id=None, child_id=None, node_id=None, limit=0)
 ds.connections.get(connection_id)                                          # → Connection
 ds.connections.count()                                                     # → int
 ds.connections.create(parent_id, child_id, tags=[])                        # → Connection
 ds.connections.create_many(connection_list)                                 # → list[Connection]
 ds.connections.connect_to_nearest(annotation_ids, tags=['nucleus'], channel=0)
+ds.connections.update(connection_id, updates)                              # → Connection
 ds.connections.delete(connection_id)
 ds.connections.delete_many([id1, id2, ...])
 ```
+
+**`connect_to_nearest` wire format:** Translates `channel` to `channelId` and automatically
+includes the dataset ID in the request body. The backend parameter is `annotationsIds` (note plural).
 
 ### PropertyAccessor — `ds.properties`
 
@@ -221,6 +232,15 @@ ds.properties.delete_values(property_id)
 ds.properties.histogram(property_path='propId.Area', buckets=255)          # → dict
 ```
 
+**`submit_values` wire format transformation:**
+The user-facing `{ann_id: {key: val}}` dict is transformed internally to the backend format:
+`[{"datasetId": ds_id, "annotationId": ann_id, "values": {property_id: {key: val}}}]`.
+The accessor provides `dataset_id` (from its parent Dataset) and wraps values under `property_id`
+automatically. Entries are chunked into batches of 10,000 to stay under MongoDB's 16MB document limit.
+
+```python
+```
+
 ### ConfigAccessor — `ds.config`
 
 ```python
@@ -235,7 +255,8 @@ ds.config.property_ids                              # → list[str]
 ```python
 ds.export.to_json(include_annotations=True, include_connections=True,
                   include_properties=True, include_property_values=True)    # → dict
-ds.export.to_csv(property_paths, delimiter=',', undefined_value='')        # → bytes
+ds.export.to_csv(property_paths, delimiter=',', undefined_value='',
+                 path=None)                                                # → bytes, or writes to path
 ```
 
 ### HistoryAccessor — `ds.history`
@@ -353,6 +374,7 @@ class Annotation:
     location: Location
     coordinates: list[dict]           # raw {'x': ..., 'y': ...}
     dataset_id: str
+    color: str | None = None          # optional override color
 
     # Geometry (handles x/y swap internally)
     def polygon(self) -> Polygon | None
@@ -412,8 +434,8 @@ class Property:
 @dataclass
 class PixelSize:
     value: float
-    unit: str                         # 'm', 'mm', 'um', 'nm'
-    def to(self, unit: str) -> 'PixelSize'
+    unit: str                         # canonical: 'm', 'mm', 'um', 'nm'
+    def to(self, unit: str) -> 'PixelSize'   # accepts aliases: 'µm', 'micron', etc.
     def __float__(self) -> float
     def __mul__(self, other) -> float
 
@@ -505,6 +527,7 @@ ni_annotations_get             → ds.annotations.get(...)
 ni_annotations_count           → ds.annotations.count(...)
 ni_annotations_create          → ds.annotations.create_many(...)
 ni_annotations_update          → ds.annotations.update(...)
+ni_annotations_update_many     → ds.annotations.update_many(...)
 ni_annotations_delete          → ds.annotations.delete_many(...)
 ni_connections_list            → ds.connections.list(...)
 ni_connections_create          → ds.connections.create_many(...)
