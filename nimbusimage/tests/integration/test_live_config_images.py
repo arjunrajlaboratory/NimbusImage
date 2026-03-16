@@ -1,7 +1,7 @@
-"""Integration tests for config accessor and image compositing.
+"""Integration tests for collection accessor and image compositing.
 
 These tests verify that:
-1. ConfigAccessor correctly fetches configurations via /upenn_collection (not /item)
+1. CollectionAccessor correctly fetches collections via /upenn_collection (not /item)
 2. Layer settings have the expected structure (hex colors, percentile contrast)
 3. get_composite works end-to-end with real layer settings
 """
@@ -25,11 +25,11 @@ def client():
 
 
 @pytest.fixture(scope="module")
-def dataset_with_config(client):
-    """Find a dataset that has a configuration with layers.
+def dataset_with_collection(client):
+    """Find a dataset that has a collection with layers.
 
     Searches user's folders for a dataset with at least one
-    configuration that has layer settings.
+    collection that has layer settings.
     """
     gc = client.girder
     me = gc.get("user/me")
@@ -47,23 +47,23 @@ def dataset_with_config(client):
                 if f.get("meta", {}).get("subtype") == "contrastDataset":
                     ds = client.dataset(f["_id"])
                     try:
-                        views = ds.config.list_views()
+                        views = ds.collections.list_views()
                         if views and views[0].get("configurationId"):
-                            config = ds.config.get_configuration()
-                            layers = config.get("meta", {}).get("layers", [])
+                            raw = ds.collections.get_raw()
+                            layers = raw.get("meta", {}).get("layers", [])
                             if layers:
                                 return ds
                     except Exception:
                         continue
 
-    pytest.skip("No dataset with configuration found")
+    pytest.skip("No dataset with collection found")
 
 
-class TestLiveConfig:
-    def test_config_layers_structure(self, dataset_with_config):
+class TestLiveCollections:
+    def test_collection_layers_structure(self, dataset_with_collection):
         """Verify layers have the expected real-world structure."""
-        ds = dataset_with_config
-        layers = ds.config.layers
+        ds = dataset_with_collection
+        layers = ds.collections.layers
 
         assert len(layers) > 0
         for layer in layers:
@@ -77,25 +77,25 @@ class TestLiveConfig:
             assert "blackPoint" in contrast
             assert "whitePoint" in contrast
 
-    def test_config_property_ids(self, dataset_with_config):
+    def test_collection_property_ids(self, dataset_with_collection):
         """Verify property_ids is a list."""
-        ds = dataset_with_config
-        prop_ids = ds.config.property_ids
+        ds = dataset_with_collection
+        prop_ids = ds.collections.property_ids
         assert isinstance(prop_ids, list)
 
-    def test_get_configuration_uses_collection_endpoint(self, dataset_with_config):
-        """Verify configuration is fetched (no HTTP 400 error)."""
-        ds = dataset_with_config
-        config = ds.config.get_configuration()
-        assert "_id" in config
-        assert "meta" in config
-        assert "layers" in config["meta"]
+    def test_get_raw_uses_collection_endpoint(self, dataset_with_collection):
+        """Verify collection is fetched (no HTTP 400 error)."""
+        ds = dataset_with_collection
+        raw = ds.collections.get_raw()
+        assert "_id" in raw
+        assert "meta" in raw
+        assert "layers" in raw["meta"]
 
 
 class TestLiveComposite:
-    def test_get_composite_uint8(self, dataset_with_config):
+    def test_get_composite_uint8(self, dataset_with_collection):
         """Verify get_composite produces a valid RGB image."""
-        ds = dataset_with_config
+        ds = dataset_with_collection
         rgb = ds.images.get_composite(xy=0, z=0, time=0, dtype="uint8")
 
         assert rgb.ndim == 3
@@ -103,9 +103,9 @@ class TestLiveComposite:
         assert rgb.dtype == np.uint8
         assert rgb.max() > 0  # not all black
 
-    def test_get_composite_float64(self, dataset_with_config):
+    def test_get_composite_float64(self, dataset_with_collection):
         """Verify float64 composite is in [0, 1] range."""
-        ds = dataset_with_config
+        ds = dataset_with_collection
         rgb = ds.images.get_composite(xy=0, z=0, time=0, dtype="float64")
 
         assert rgb.dtype == np.float64

@@ -1,11 +1,10 @@
-"""Tests for Collection class and collection-related methods."""
+"""Tests for Collection class and CollectionAccessor."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nimbusimage.collections import Collection
-from nimbusimage.config import ConfigAccessor
+from nimbusimage.collections import Collection, CollectionAccessor
 
 
 @pytest.fixture
@@ -130,26 +129,26 @@ class TestClientCollections:
         mock_gc.get.assert_called_with("/upenn_collection/coll_001")
 
 
-class TestConfigAccessorCollections:
-    def test_get_collection(self, mock_gc, sample_collection_data):
+class TestCollectionAccessorCollections:
+    def test_get(self, mock_gc, sample_collection_data):
         mock_gc.get.side_effect = [
             [{"_id": "view_001", "configurationId": "coll_001"}],
             sample_collection_data,
         ]
-        accessor = ConfigAccessor(mock_gc, "ds_001")
+        accessor = CollectionAccessor(mock_gc, "ds_001")
 
-        coll = accessor.get_collection()
+        coll = accessor.get()
         assert isinstance(coll, Collection)
         assert coll.id == "coll_001"
         assert len(coll.layers) == 2
 
-    def test_get_collection_none_when_no_views(self, mock_gc):
+    def test_get_none_when_no_views(self, mock_gc):
         mock_gc.get.return_value = []
-        accessor = ConfigAccessor(mock_gc, "ds_001")
+        accessor = CollectionAccessor(mock_gc, "ds_001")
 
-        assert accessor.get_collection() is None
+        assert accessor.get() is None
 
-    def test_list_collections(self, mock_gc, sample_collection_data):
+    def test_list(self, mock_gc, sample_collection_data):
         mock_gc.get.side_effect = [
             [
                 {"_id": "v1", "configurationId": "coll_001"},
@@ -158,14 +157,14 @@ class TestConfigAccessorCollections:
             sample_collection_data,
             {**sample_collection_data, "_id": "coll_002", "name": "Second"},
         ]
-        accessor = ConfigAccessor(mock_gc, "ds_001")
+        accessor = CollectionAccessor(mock_gc, "ds_001")
 
-        colls = accessor.list_collections()
+        colls = accessor.list()
         assert len(colls) == 2
         assert colls[0].id == "coll_001"
         assert colls[1].id == "coll_002"
 
-    def test_list_collections_deduplicates(self, mock_gc, sample_collection_data):
+    def test_list_deduplicates(self, mock_gc, sample_collection_data):
         """Two views pointing to the same collection should not duplicate."""
         mock_gc.get.side_effect = [
             [
@@ -174,18 +173,18 @@ class TestConfigAccessorCollections:
             ],
             sample_collection_data,
         ]
-        accessor = ConfigAccessor(mock_gc, "ds_001")
+        accessor = CollectionAccessor(mock_gc, "ds_001")
 
-        colls = accessor.list_collections()
+        colls = accessor.list()
         assert len(colls) == 1
 
     def test_layers_still_works_for_composite(self, mock_gc, sample_collection_data):
-        """Verify ds.config.layers still returns layer dicts (used by get_composite)."""
+        """Verify ds.collections.layers returns layer dicts (used by get_composite)."""
         mock_gc.get.side_effect = [
             [{"_id": "v1", "configurationId": "coll_001"}],
             sample_collection_data,
         ]
-        accessor = ConfigAccessor(mock_gc, "ds_001")
+        accessor = CollectionAccessor(mock_gc, "ds_001")
 
         layers = accessor.layers
         assert len(layers) == 2

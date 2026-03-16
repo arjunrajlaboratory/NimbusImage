@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from nimbusimage.annotations import AnnotationAccessor
-from nimbusimage.config import ConfigAccessor
+from nimbusimage.collections import CollectionAccessor
 from nimbusimage.connections import ConnectionAccessor
 from nimbusimage.export import ExportAccessor
 from nimbusimage.history import HistoryAccessor
@@ -50,7 +50,7 @@ class Dataset:
         self.annotations = AnnotationAccessor(gc, dataset_id)
         self.connections = ConnectionAccessor(gc, dataset_id)
         self.properties = PropertyAccessor(gc, dataset_id)
-        self.config = ConfigAccessor(gc, dataset_id)
+        self.collections = CollectionAccessor(gc, dataset_id)
         self.export = ExportAccessor(gc, dataset_id)
         self.history = HistoryAccessor(gc, dataset_id)
         self.sharing = SharingAccessor(gc, dataset_id)
@@ -179,14 +179,14 @@ class Dataset:
 
     def _get_view_id(self) -> str | None:
         """Get the first dataset view ID for this dataset."""
-        views = self.config.list_views()
+        views = self.collections.list_views()
         if views:
             return views[0].get("_id")
         return None
 
     def _get_config_id(self) -> str | None:
         """Get the first configuration ID for this dataset."""
-        views = self.config.list_views()
+        views = self.collections.list_views()
         if views:
             return views[0].get("configurationId")
         return None

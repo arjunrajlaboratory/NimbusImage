@@ -88,7 +88,7 @@ class TestGetComposite:
     def test_composite_with_percentile_contrast(self, mock_gc, sample_tiles_metadata):
         """Test that get_composite handles the real layer format with
         percentile-based contrast (blackPoint/whitePoint)."""
-        from nimbusimage.config import ConfigAccessor
+        from nimbusimage.collections import CollectionAccessor
 
         # Create a gradient image so percentile contrast produces a visible result
         img = np.linspace(0, 1000, 768 * 1024, dtype=np.uint16).reshape(768, 1024)
@@ -99,10 +99,10 @@ class TestGetComposite:
         ds = _make_dataset(mock_gc, sample_tiles_metadata)
 
         # Mock config with real layer format (hex color, percentile contrast)
-        ds.config = ConfigAccessor.__new__(ConfigAccessor)
-        ds.config._gc = mock_gc
-        ds.config._dataset_id = "folder_001"
-        ds.config._config_cache = {
+        ds.collections = CollectionAccessor.__new__(CollectionAccessor)
+        ds.collections._gc = mock_gc
+        ds.collections._dataset_id = "folder_001"
+        ds.collections._cache = {
             "meta": {
                 "layers": [
                     {
@@ -137,11 +137,11 @@ class TestGetComposite:
 
         ds = _make_dataset(mock_gc, sample_tiles_metadata)
 
-        from nimbusimage.config import ConfigAccessor
-        ds.config = ConfigAccessor.__new__(ConfigAccessor)
-        ds.config._gc = mock_gc
-        ds.config._dataset_id = "folder_001"
-        ds.config._config_cache = {
+        from nimbusimage.collections import CollectionAccessor
+        ds.collections = CollectionAccessor.__new__(CollectionAccessor)
+        ds.collections._gc = mock_gc
+        ds.collections._dataset_id = "folder_001"
+        ds.collections._cache = {
             "meta": {
                 "layers": [
                     {

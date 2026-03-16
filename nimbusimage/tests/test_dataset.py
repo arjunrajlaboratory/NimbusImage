@@ -79,7 +79,7 @@ class TestDatasetAccessors:
         assert hasattr(ds, "annotations")
         assert hasattr(ds, "connections")
         assert hasattr(ds, "properties")
-        assert hasattr(ds, "config")
+        assert hasattr(ds, "collections")
         assert hasattr(ds, "export")
         assert hasattr(ds, "history")
         assert hasattr(ds, "sharing")

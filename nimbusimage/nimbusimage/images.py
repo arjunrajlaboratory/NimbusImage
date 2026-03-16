@@ -142,7 +142,7 @@ class ImageAccessor:
     ) -> np.ndarray:
         """Get a composite RGB image merging visible channels.
 
-        Uses layer settings from ds.config.layers for contrast and color.
+        Uses layer settings from ds.collections.layers for contrast and color.
 
         Args:
             mode: Blend mode ('lighten' default).
@@ -156,7 +156,7 @@ class ImageAccessor:
         source_dtype = self._dataset.dtype
         target_dtype = dtype or source_dtype
 
-        layers = self._dataset.config.layers
+        layers = self._dataset.collections.layers
         h, w = self._dataset.shape
         composite = np.zeros((h, w, 3), dtype=np.float64)
 

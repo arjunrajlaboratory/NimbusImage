@@ -50,7 +50,6 @@ nav:
     - Annotations: api/annotations.md
     - Connections: api/connections.md
     - Properties: api/properties.md
-    - Config: api/config.md
     - Collections: api/collections.md
     - Projects: api/projects.md
     - Export: api/export.md
