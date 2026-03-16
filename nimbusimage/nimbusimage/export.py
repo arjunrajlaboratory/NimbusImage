@@ -59,10 +59,15 @@ class ExportAccessor:
             "delimiter": delimiter,
             "undefinedValue": undefined_value,
         }
-        data = self._gc.post("/export/csv", json=body)
+        import json as json_mod
 
-        if isinstance(data, str):
-            data = data.encode("utf-8")
+        response = self._gc.sendRestRequest(
+            "POST", "/export/csv",
+            data=json_mod.dumps(body),
+            headers={"Content-Type": "application/json"},
+            jsonResp=False,
+        )
+        data = response.content
 
         if path is not None:
             with open(path, "wb") as f:
