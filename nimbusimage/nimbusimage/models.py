@@ -1,8 +1,6 @@
 """Data models for the nimbusimage package."""
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Unit conversion factors to meters
 _TO_METERS = {
@@ -24,30 +22,26 @@ def _canonical_unit(unit: str) -> str:
     return _UNIT_ALIASES.get(unit, unit)
 
 
-@dataclass
-class Location:
+class Location(BaseModel):
     """A position in the dataset coordinate space."""
 
-    xy: int = 0
-    z: int = 0
-    time: int = 0
+    model_config = ConfigDict(populate_by_name=True)
+
+    xy: int = Field(0, alias="XY")
+    z: int = Field(0, alias="Z")
+    time: int = Field(0, alias="Time")
 
     def to_dict(self) -> dict:
         """Serialize to the server's location format."""
-        return {"XY": self.xy, "Z": self.z, "Time": self.time}
+        return self.model_dump(by_alias=True)
 
     @classmethod
-    def from_dict(cls, data: dict) -> Location:
+    def from_dict(cls, data: dict) -> "Location":
         """Deserialize from the server's location format."""
-        return cls(
-            xy=data.get("XY", 0),
-            z=data.get("Z", 0),
-            time=data.get("Time", 0),
-        )
+        return cls.model_validate(data)
 
 
-@dataclass
-class Annotation:
+class Annotation(BaseModel):
     """A NimbusImage annotation.
 
     Stores raw coordinates as the server provides them.
@@ -55,44 +49,26 @@ class Annotation:
     are in the coordinates module and called via convenience methods here.
     """
 
-    id: str | None
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str | None = Field(None, alias="_id")
     shape: str
-    tags: list[str]
-    channel: int
-    location: Location
-    coordinates: list[dict]
-    dataset_id: str
+    tags: list[str] = []
+    channel: int = 0
+    location: Location = Field(default_factory=Location)
+    coordinates: list[dict] = []
+    dataset_id: str = Field("", alias="datasetId")
     color: str | None = None
 
     def to_dict(self) -> dict:
         """Serialize to the server's annotation format."""
-        d: dict = {
-            "shape": self.shape,
-            "tags": self.tags,
-            "channel": self.channel,
-            "location": self.location.to_dict(),
-            "coordinates": self.coordinates,
-            "datasetId": self.dataset_id,
-        }
-        if self.id is not None:
-            d["_id"] = self.id
-        if self.color is not None:
-            d["color"] = self.color
+        d = self.model_dump(by_alias=True, exclude_none=True)
         return d
 
     @classmethod
-    def from_dict(cls, data: dict) -> Annotation:
+    def from_dict(cls, data: dict) -> "Annotation":
         """Deserialize from the server's annotation format."""
-        return cls(
-            id=data.get("_id"),
-            shape=data["shape"],
-            tags=data.get("tags", []),
-            channel=data.get("channel", 0),
-            location=Location.from_dict(data.get("location", {})),
-            coordinates=data.get("coordinates", []),
-            dataset_id=data.get("datasetId", ""),
-            color=data.get("color"),
-        )
+        return cls.model_validate(data)
 
     @classmethod
     def from_point(
@@ -102,9 +78,9 @@ class Annotation:
         channel: int,
         tags: list[str],
         dataset_id: str,
-        location: Location | None = None,
+        location: "Location | None" = None,
         color: str | None = None,
-    ) -> Annotation:
+    ) -> "Annotation":
         """Create a point annotation from image-space coordinates."""
         return cls(
             id=None,
@@ -122,88 +98,61 @@ class Annotation:
     # to avoid circular imports. They are attached in __init__.py.
 
 
-@dataclass
-class Connection:
+class Connection(BaseModel):
     """A connection between two annotations."""
 
-    id: str | None
-    parent_id: str
-    child_id: str
-    dataset_id: str
-    tags: list[str] = field(default_factory=list)
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str | None = Field(None, alias="_id")
+    parent_id: str = Field(..., alias="parentId")
+    child_id: str = Field(..., alias="childId")
+    dataset_id: str = Field("", alias="datasetId")
+    tags: list[str] = []
 
     def to_dict(self) -> dict:
         """Serialize to the server's connection format."""
-        d: dict = {
-            "parentId": self.parent_id,
-            "childId": self.child_id,
-            "datasetId": self.dataset_id,
-            "tags": self.tags,
-        }
-        if self.id is not None:
-            d["_id"] = self.id
-        return d
+        return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_dict(cls, data: dict) -> Connection:
+    def from_dict(cls, data: dict) -> "Connection":
         """Deserialize from the server's connection format."""
-        return cls(
-            id=data.get("_id"),
-            parent_id=data["parentId"],
-            child_id=data["childId"],
-            dataset_id=data.get("datasetId", ""),
-            tags=data.get("tags", []),
-        )
+        return cls.model_validate(data)
 
 
-@dataclass
-class Property:
+class Property(BaseModel):
     """A property definition (schema, not values)."""
 
-    id: str | None
-    name: str
-    shape: str
-    image: str
-    tags: dict
-    worker_interface: dict
+    model_config = ConfigDict(populate_by_name=True)
 
-    @classmethod
-    def from_dict(cls, data: dict) -> Property:
-        """Deserialize from the server's property format."""
-        return cls(
-            id=data.get("_id"),
-            name=data.get("name", ""),
-            shape=data.get("shape", ""),
-            image=data.get("image", ""),
-            tags=data.get("tags", {}),
-            worker_interface=data.get("workerInterface", {}),
-        )
+    id: str | None = Field(None, alias="_id")
+    name: str = ""
+    shape: str = ""
+    image: str = ""
+    tags: dict = {}
+    worker_interface: dict = Field(default_factory=dict, alias="workerInterface")
 
     def to_dict(self) -> dict:
         """Serialize to the server's property format."""
-        d: dict = {
-            "name": self.name,
-            "shape": self.shape,
-            "image": self.image,
-            "tags": self.tags,
-            "workerInterface": self.worker_interface,
-        }
-        if self.id is not None:
-            d["_id"] = self.id
-        return d
+        return self.model_dump(by_alias=True, exclude_none=True)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Property":
+        """Deserialize from the server's property format."""
+        return cls.model_validate(data)
 
 
-@dataclass
-class PixelSize:
+class PixelSize(BaseModel):
     """Physical pixel size with unit conversion."""
 
     value: float
     unit: str
 
-    def __post_init__(self):
-        self.unit = _canonical_unit(self.unit)
+    @field_validator("unit")
+    @classmethod
+    def _canonicalize_unit(cls, v: str) -> str:
+        return _canonical_unit(v)
 
-    def to(self, unit: str) -> PixelSize:
+    def to(self, unit: str) -> "PixelSize":
         """Convert to a different unit."""
         target = _canonical_unit(unit)
         if self.unit == target:
@@ -221,8 +170,7 @@ class PixelSize:
         return other * self.value
 
 
-@dataclass
-class FrameInfo:
+class FrameInfo(BaseModel):
     """Metadata for a single image frame."""
 
     index: int
