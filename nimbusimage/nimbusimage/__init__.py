@@ -10,6 +10,7 @@ Usage:
 """
 
 from nimbusimage.client import NimbusClient
+from nimbusimage.collections import Collection
 from nimbusimage.coordinates import attach_geometry_methods
 from nimbusimage.dataset import Dataset
 from nimbusimage.filters import (
@@ -83,6 +84,7 @@ __all__ = [
     "worker_context",
     # Classes
     "NimbusClient",
+    "Collection",
     "Dataset",
     "WorkerContext",
     # Data models

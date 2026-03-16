@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from nimbusimage._girder import create_client
+from nimbusimage.collections import Collection
 from nimbusimage.dataset import Dataset
 from nimbusimage.projects import Project
 from nimbusimage.urls import DEFAULT_FRONTEND_URL
@@ -130,3 +131,47 @@ class NimbusClient:
         """Get a Project by ID."""
         data = self._gc.get(f"project/{project_id}")
         return Project(self._gc, data, frontend_url=self._frontend_url)
+
+    # --- Collections (aka Configurations) ---
+
+    def list_collections(self, folder_id: str | None = None) -> list[Collection]:
+        """List collections (configurations).
+
+        In NimbusImage, "collections" and "configurations" are the same
+        thing. The backend uses /upenn_collection endpoints. The UI
+        calls them "collections".
+
+        Args:
+            folder_id: Filter by parent folder. If None, lists collections
+                in the current user's Private folder.
+
+        Returns:
+            List of Collection objects.
+        """
+        if folder_id is None:
+            me = self._gc.get("user/me")
+            folders = self._gc.get(
+                "folder",
+                parameters={
+                    "parentType": "user",
+                    "parentId": me["_id"],
+                    "name": "Private",
+                },
+            )
+            if folders:
+                folder_id = folders[0]["_id"]
+            else:
+                return []
+
+        data = self._gc.get(
+            f"/upenn_collection?folderId={folder_id}"
+        )
+        return [
+            Collection(self._gc, d, frontend_url=self._frontend_url)
+            for d in data
+        ]
+
+    def collection(self, collection_id: str) -> Collection:
+        """Get a Collection (configuration) by ID."""
+        data = self._gc.get(f"/upenn_collection/{collection_id}")
+        return Collection(self._gc, data, frontend_url=self._frontend_url)
