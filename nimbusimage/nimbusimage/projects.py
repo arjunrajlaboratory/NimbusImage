@@ -36,6 +36,32 @@ class Project:
     def status(self) -> str:
         return self._data.get("meta", {}).get("status", "draft")
 
+    @property
+    def description(self) -> str:
+        return self._data.get("description", "")
+
+    @property
+    def dataset_ids(self) -> list[str]:
+        """List of dataset IDs in this project."""
+        entries = self._data.get("meta", {}).get("datasets", [])
+        return [e["datasetId"] for e in entries]
+
+    @property
+    def configuration_ids(self) -> list[str]:
+        """List of configuration (collection) IDs in this project."""
+        entries = self._data.get("meta", {}).get("collections", [])
+        return [e["collectionId"] for e in entries]
+
+    @property
+    def publication_metadata(self) -> dict:
+        """Publication metadata (title, keywords, license, etc.)."""
+        return self._data.get("meta", {}).get("metadata", {})
+
+    @property
+    def zenodo(self) -> dict | None:
+        """Zenodo publication info, if any."""
+        return self._data.get("meta", {}).get("zenodo")
+
     def add_dataset(self, dataset_id: str) -> None:
         self._gc.post(
             f"project/{self.id}/dataset",
