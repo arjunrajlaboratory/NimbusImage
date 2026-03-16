@@ -10,13 +10,7 @@
       class="d-flex align-center justify-center"
     >
       <div class="loading-container">
-        <v-progress-circular
-          indeterminate
-          size="128"
-          color="primary"
-          class="mb-4"
-        ></v-progress-circular>
-        <div class="loading-text">Loading dataset information...</div>
+        <WhimsicalLoader size="lg" text="Loading dataset information..." class="mb-4" />
       </div>
     </v-overlay>
     <router-view v-if="datasetReady"></router-view>
@@ -35,6 +29,7 @@ import { useRoute } from "vue-router";
 import store from "@/store";
 import sync from "@/store/sync";
 import { logError } from "@/utils/log";
+import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 
 const route = useRoute();
 

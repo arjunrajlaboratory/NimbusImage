@@ -407,7 +407,7 @@
           </v-card>
         </v-dialog>
 
-        <v-progress-circular v-if="downloading" indeterminate />
+        <WhimsicalLoader v-if="downloading" size="md" />
 
         <div class="mb-2">
           <v-btn
@@ -565,6 +565,7 @@ import {
   getBaseURLFromDownloadParameters,
 } from "@/utils/screenshot";
 import { logError } from "@/utils/log";
+import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 
 interface ISnapshotItem {
   name: string;

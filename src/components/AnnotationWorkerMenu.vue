@@ -36,7 +36,7 @@
     </v-card-subtitle>
     <v-card-text>
       <v-container v-if="fetchingWorkerInterface">
-        <v-progress-circular indeterminate />
+        <WhimsicalLoader size="md" />
       </v-container>
       <v-container v-else>
         <v-row v-if="running">
@@ -103,7 +103,7 @@
             color="orange"
             :disabled="!currentJob && !batchCancelFunction"
           >
-            <v-progress-circular size="16" indeterminate />
+            <WhimsicalLoader size="sm" />
             <span>Cancel{{ batchCancelFunction ? " All" : "" }}</span>
           </v-btn>
         </v-row>
@@ -225,6 +225,7 @@ import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
 import { getDefault } from "@/utils/workerInterface";
 import { debounce } from "lodash";
 import { logError } from "@/utils/log";
+import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 
 const props = defineProps<{
   tool: IToolConfiguration;

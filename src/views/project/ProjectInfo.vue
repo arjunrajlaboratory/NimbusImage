@@ -441,8 +441,7 @@
   </v-container>
 
   <v-container v-else class="text-center">
-    <v-progress-circular indeterminate size="64" />
-    <div class="mt-4 text-body-1">Loading project...</div>
+    <WhimsicalLoader size="lg" text="Loading project..." />
   </v-container>
 </template>
 
@@ -467,6 +466,7 @@ import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vu
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
 import ShareProject from "@/components/ShareProject.vue";
 import { formatSize } from "@/utils/conversion";
+import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 
 // Suppress unused import warnings — auto-registered in <script setup>
 void AlertDialog;
