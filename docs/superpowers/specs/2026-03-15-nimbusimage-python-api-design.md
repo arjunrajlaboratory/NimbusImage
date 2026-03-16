@@ -16,6 +16,16 @@ A unified Python API package for programmatic access to NimbusImage. Replaces th
 | Implementation | Fresh (not wrapping `annotation_client`) | Existing code is small; clean slate avoids compat layers |
 | Testing | Unit (mocked) + integration (docker-compose) | `@pytest.mark.integration` for live backend tests |
 
+## Naming: Collections vs Configurations
+
+**"Collections" and "configurations" are the same thing.** The original codebase used "configurations" but this was confusing to users, so the UI was renamed to "collections". The backend endpoint remains `/upenn_collection`. In this API:
+
+- The `Collection` class represents a collection/configuration
+- `client.list_collections()` and `client.collection(id)` access them at the top level
+- `ds.config.get_collection()` and `ds.config.list_collections()` access them via a dataset
+- `ds.config.layers` is a shortcut to the first collection's layer settings (used by `get_composite`)
+- Datasets and collections have a **many-to-many relationship** — one dataset can have multiple collections, and one collection can be shared across datasets. They are linked by `dataset_view` documents.
+
 ## Package Structure
 
 ```
@@ -34,7 +44,8 @@ nimbusimage/                          # At repo root
 │   ├── export.py                     # ExportAccessor
 │   ├── history.py                    # HistoryAccessor
 │   ├── sharing.py                    # SharingAccessor
-│   ├── config.py                     # ConfigAccessor
+│   ├── collections.py                # Collection class
+│   ├── config.py                     # ConfigAccessor (links datasets to collections)
 │   ├── worker.py                     # WorkerContext
 │   ├── models.py                     # Dataclasses
 │   ├── coordinates.py                # x/y swap, 0.5 offset logic
