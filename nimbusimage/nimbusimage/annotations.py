@@ -96,7 +96,7 @@ class AnnotationAccessor:
             annotation_ids = [a.id for a in created if a.id]
             if annotation_ids:
                 self._gc.post(
-                    "/annotation_connection/connectToNearest",
+                    "/annotation_connection/connectTo",
                     json={
                         "annotationsIds": annotation_ids,
                         "tags": connect_to["tags"],

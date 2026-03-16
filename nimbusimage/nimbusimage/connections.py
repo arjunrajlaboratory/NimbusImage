@@ -84,7 +84,7 @@ class ConnectionAccessor:
         in the wire format.
         """
         self._gc.post(
-            "/annotation_connection/connectToNearest",
+            "/annotation_connection/connectTo",
             json={
                 "annotationsIds": annotation_ids,
                 "tags": tags,
