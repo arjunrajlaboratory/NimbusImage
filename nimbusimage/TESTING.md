@@ -325,6 +325,57 @@ This verifies:
 - Single annotation update via `PUT /upenn_annotation/{id}`
 - Color changes render correctly in the viewer
 
+### End-to-End: Create Property and Submit Values
+
+This test exercises property definition creation, bulk value submission, value retrieval, and property registration in a collection.
+
+```python
+import nimbusimage as ni
+import numpy as np
+
+client = ni.connect("http://localhost:8080/api/v1", username="YOUR_USER", password="YOUR_PASS")
+ds = client.dataset("YOUR_DATASET_ID")
+
+# Create (or get existing) property definition
+prop = ds.properties.get_or_create(name="random", shape="polygon")
+print(f"Property: {prop.name} (id: {prop.id})")
+
+# Get annotations to attach values to
+anns = ds.annotations.list(tags=["YOUR_TAG"])
+print(f"Found {len(anns)} annotations")
+
+# Generate random values for each annotation
+np.random.seed(123)
+values = {}
+for ann in anns:
+    values[ann.id] = {"value": float(np.random.uniform(0, 100))}
+
+# Bulk submit
+ds.properties.submit_values(prop.id, values)
+print(f"Submitted {len(values)} property values")
+
+# Verify round-trip by fetching back
+fetched = ds.properties.get_values(annotation_id=anns[0].id)
+print(f"First annotation values: {fetched}")
+
+# Register property in the collection so it shows in the UI
+ds.properties.register(prop.id)
+
+# Open to verify in the UI
+ds.open(z=3)
+
+# To clean up afterwards:
+# ds.properties.delete_values(prop.id)
+# ds.properties.delete(prop.id)
+```
+
+This verifies:
+- `get_or_create` finds existing or creates new property definitions
+- `submit_values` transforms user-friendly dict format to backend wire format and auto-batches
+- `get_values` retrieves submitted values with correct structure
+- `register` adds the property to the collection via `/upenn_collection/{id}/metadata`
+- Property values are visible in the NimbusImage viewer's object browser
+
 ### Note on macOS Preview
 
 When saving images for viewing with Preview, use `~/Desktop/` or another user-visible path. macOS sandboxing can prevent Preview from displaying files in `/tmp`.
