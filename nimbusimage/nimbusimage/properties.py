@@ -192,6 +192,15 @@ class PropertyAccessor:
             raise ValueError("Property must have a Docker image set")
 
         body = property.to_dict()
+        # The worker reads params.get("id") to identify which property
+        # it's computing for (used as the key when storing values).
+        # Property.to_dict() serializes as "_id" (the MongoDB convention),
+        # but the frontend sends "id" and WorkerClient expects "id".
+        # TODO: harmonize id vs _id across the backend/worker/frontend
+        if "_id" in body:
+            body["id"] = body.pop("_id")
+        elif property.id and "id" not in body:
+            body["id"] = property.id
         if worker_interface is not None:
             body["workerInterface"] = worker_interface
         if scales is not None:
