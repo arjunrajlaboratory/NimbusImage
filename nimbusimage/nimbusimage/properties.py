@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from nimbusimage.jobs import Job
 from nimbusimage.models import Property
 
 if TYPE_CHECKING:
@@ -151,3 +152,34 @@ class PropertyAccessor:
             f"&datasetId={self._dataset_id}"
             f"&buckets={buckets}"
         )
+
+    def compute(
+        self,
+        property: Property,
+        worker_interface: dict | None = None,
+        scales: dict | None = None,
+    ) -> Job:
+        """Run a property worker to compute values.
+
+        Args:
+            property: The Property definition (must have an ``image``).
+            worker_interface: Parameter values for the worker interface.
+                Overrides the property's own workerInterface if provided.
+            scales: Scale metadata (pixel size, etc.).
+
+        Returns:
+            A Job object for tracking progress and waiting for completion.
+        """
+        body = property.to_dict()
+        if worker_interface is not None:
+            body["workerInterface"] = worker_interface
+        if scales is not None:
+            body["scales"] = scales
+
+        resp = self._gc.post(
+            f"/annotation_property/{property.id}/compute"
+            f"?datasetId={self._dataset_id}",
+            json=body,
+        )
+        job_data = resp[0] if isinstance(resp, (list, tuple)) else resp
+        return Job(self._gc, job_data)

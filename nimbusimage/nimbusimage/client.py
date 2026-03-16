@@ -8,6 +8,7 @@ from typing import Any
 from nimbusimage._girder import create_client
 from nimbusimage.collections import Collection
 from nimbusimage.dataset import Dataset
+from nimbusimage.jobs import Job
 from nimbusimage.projects import Project
 from nimbusimage.urls import DEFAULT_FRONTEND_URL
 
@@ -175,3 +176,64 @@ class NimbusClient:
         """Get a Collection (configuration) by ID."""
         data = self._gc.get(f"/upenn_collection/{collection_id}")
         return Collection(self._gc, data, frontend_url=self._frontend_url)
+
+    # --- Workers ---
+
+    def list_workers(self) -> dict[str, dict]:
+        """List available worker Docker images on the server.
+
+        Returns:
+            Dict mapping image name (e.g., ``'myworker:latest'``)
+            to a dict of Docker labels:
+
+            - ``isAnnotationWorker``: ``'true'`` if it creates annotations
+            - ``isPropertyWorker``: ``'true'`` if it computes properties
+            - ``interfaceName``: display name
+            - ``description``: worker description
+            - ``annotationShape``: shape it produces (point/polygon/...)
+        """
+        return self._gc.get("/worker_interface/available")
+
+    def get_worker_interface(
+        self, image: str, request_if_missing: bool = True
+    ) -> dict | None:
+        """Get the parameter interface for a worker image.
+
+        Args:
+            image: Docker image name (e.g., ``'myworker:latest'``).
+            request_if_missing: If True and no cached interface exists,
+                request the worker to register its interface and wait.
+
+        Returns:
+            Dict mapping parameter IDs to their definitions, or None
+            if no interface is available.
+        """
+        result = self._gc.get(
+            "/worker_interface",
+            parameters={"image": image},
+        )
+        if result:
+            iface = result.get("interface")
+            if iface:
+                return iface
+
+        if not request_if_missing:
+            return None
+
+        # Request the worker to register its interface
+        resp = self._gc.post(
+            "/worker_interface/request",
+            parameters={"image": image},
+        )
+        if isinstance(resp, (list, tuple)) and resp:
+            job = Job(self._gc, resp[0])
+            job.wait(verbose=False)
+
+        # Fetch the newly registered interface
+        result = self._gc.get(
+            "/worker_interface",
+            parameters={"image": image},
+        )
+        if result:
+            return result.get("interface")
+        return None

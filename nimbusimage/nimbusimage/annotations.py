@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any, TYPE_CHECKING
 
-from nimbusimage.models import Annotation
+from nimbusimage.jobs import Job
+from nimbusimage.models import Annotation, Location
 
 if TYPE_CHECKING:
     import girder_client
@@ -152,3 +153,63 @@ class AnnotationAccessor:
         self._gc.sendRestRequest(
             "DELETE", "/upenn_annotation/multiple", json=annotation_ids
         )
+
+    def compute(
+        self,
+        image: str,
+        channel: int = 0,
+        tags: list[str] | None = None,
+        location: Location | None = None,
+        assignment: dict | str | None = None,
+        worker_interface: dict | None = None,
+        scales: dict | None = None,
+        connect_to: dict | None = None,
+        name: str = "worker",
+    ) -> Job:
+        """Run an annotation worker on this dataset.
+
+        Args:
+            image: Docker image name (e.g., ``'myworker:latest'``).
+            channel: Channel index for the worker to process.
+            tags: Tags to assign to created annotations.
+            location: Location (XY/Z/Time) for single-tile processing.
+                Defaults to ``Location()``.
+            assignment: Assignment range for batch processing. Can be
+                a dict like ``{'XY': '0-2', 'Z': 0, 'Time': 0}`` or
+                uses the location if not provided.
+            worker_interface: Parameter values for the worker interface.
+            scales: Scale metadata (pixel size, etc.).
+            connect_to: If provided, auto-connect created annotations.
+                Dict with ``tags``, ``channel`` keys.
+            name: Job name shown in the Girder UI.
+
+        Returns:
+            A Job object for tracking progress and waiting for completion.
+        """
+        loc = location or Location()
+        loc_dict = loc.to_dict()
+        if assignment is None:
+            assignment = loc_dict
+
+        body = {
+            "datasetId": self._dataset_id,
+            "image": image,
+            "channel": channel,
+            "tags": tags or [],
+            "assignment": assignment,
+            "tile": loc_dict,
+            "workerInterface": worker_interface or {},
+            "scales": scales or {},
+            "name": name,
+            "type": "worker",
+            "id": "",
+        }
+        if connect_to is not None:
+            body["connectTo"] = connect_to
+
+        resp = self._gc.post(
+            f"/upenn_annotation/compute?datasetId={self._dataset_id}",
+            json=body,
+        )
+        job_data = resp[0] if isinstance(resp, (list, tuple)) else resp
+        return Job(self._gc, job_data)

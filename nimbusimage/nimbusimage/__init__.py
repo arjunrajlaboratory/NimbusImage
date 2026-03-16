@@ -13,6 +13,7 @@ from nimbusimage.client import NimbusClient
 from nimbusimage.collections import Collection
 from nimbusimage.coordinates import attach_geometry_methods
 from nimbusimage.dataset import Dataset
+from nimbusimage.jobs import Job
 from nimbusimage.filters import (
     filter_by_tags,
     filter_by_location,
@@ -86,6 +87,7 @@ __all__ = [
     "NimbusClient",
     "Collection",
     "Dataset",
+    "Job",
     "WorkerContext",
     # Data models
     "Annotation",

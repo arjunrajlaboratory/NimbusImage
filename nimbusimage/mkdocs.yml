@@ -55,6 +55,7 @@ nav:
     - Export: api/export.md
     - History: api/history.md
     - Sharing: api/sharing.md
+    - Jobs: api/jobs.md
     - Worker Context: api/worker.md
     - Models: api/models.md
     - Coordinates: api/coordinates.md
