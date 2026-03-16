@@ -3,6 +3,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from nimbusimage.urls import DEFAULT_FRONTEND_URL, project_url, open_url
+
 if TYPE_CHECKING:
     import girder_client
 
@@ -12,9 +14,15 @@ _ACCESS_MAP = {"read": 0, "write": 1, "remove": -1}
 class Project:
     """A NimbusImage project."""
 
-    def __init__(self, gc: girder_client.GirderClient, data: dict):
+    def __init__(
+        self,
+        gc: girder_client.GirderClient,
+        data: dict,
+        frontend_url: str = DEFAULT_FRONTEND_URL,
+    ):
         self._gc = gc
         self._data = data
+        self._frontend_url = frontend_url
 
     @property
     def id(self) -> str:
@@ -91,3 +99,19 @@ class Project:
 
     def delete(self) -> None:
         self._gc.delete(f"project/{self.id}")
+
+    # --- URLs ---
+
+    def url(self) -> str:
+        """URL for the project info page."""
+        return project_url(self.id, self._frontend_url)
+
+    def open(self) -> str:
+        """Open the project page in the default browser.
+
+        Returns:
+            The URL that was opened.
+        """
+        url = self.url()
+        open_url(url)
+        return url

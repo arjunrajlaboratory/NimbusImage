@@ -61,12 +61,14 @@ class TestNimbusClientProperties:
         client = NimbusClient.__new__(NimbusClient)
         client._gc = mock_gc
         client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
         assert client.girder is mock_gc
 
     def test_token_property(self, mock_gc):
         client = NimbusClient.__new__(NimbusClient)
         client._gc = mock_gc
         client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
         assert client.token == "test-token-abc123"
 
 
@@ -75,6 +77,7 @@ class TestNimbusClientDataset:
         client = NimbusClient.__new__(NimbusClient)
         client._gc = mock_gc
         client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
 
         ds = client.dataset("folder_123")
         assert ds.id == "folder_123"
@@ -86,6 +89,7 @@ class TestNimbusClientDataset:
         client = NimbusClient.__new__(NimbusClient)
         client._gc = mock_gc
         client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
 
         ds = client.dataset(name="My Dataset")
         assert ds.id == "folder_123"
@@ -95,6 +99,7 @@ class TestNimbusClientDataset:
         client = NimbusClient.__new__(NimbusClient)
         client._gc = mock_gc
         client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
 
         with pytest.raises(ValueError, match="not found"):
             client.dataset(name="Nonexistent")
@@ -109,6 +114,7 @@ class TestNimbusClientListDatasets:
         client = NimbusClient.__new__(NimbusClient)
         client._gc = mock_gc
         client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
 
         datasets = client.list_datasets()
         assert len(datasets) == 2

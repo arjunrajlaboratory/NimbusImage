@@ -13,6 +13,13 @@ from nimbusimage.images import ImageAccessor
 from nimbusimage.models import FrameInfo, PixelSize
 from nimbusimage.properties import PropertyAccessor
 from nimbusimage.sharing import SharingAccessor
+from nimbusimage.urls import (
+    DEFAULT_FRONTEND_URL,
+    dataset_info_url,
+    dataset_view_url,
+    configuration_url,
+    open_url,
+)
 
 if TYPE_CHECKING:
     import girder_client
@@ -24,9 +31,15 @@ class Dataset:
     Metadata is fetched lazily on first access to any property.
     """
 
-    def __init__(self, gc: girder_client.GirderClient, dataset_id: str):
+    def __init__(
+        self,
+        gc: girder_client.GirderClient,
+        dataset_id: str,
+        frontend_url: str = DEFAULT_FRONTEND_URL,
+    ):
         self._gc = gc
         self._id = dataset_id
+        self._frontend_url = frontend_url
         self._metadata: dict | None = None
         self._tiles: dict | None = None
         self._item_id: str | None = None
@@ -161,3 +174,90 @@ class Dataset:
                 ),
             ))
         return result
+
+    # --- URLs ---
+
+    def _get_view_id(self) -> str | None:
+        """Get the first dataset view ID for this dataset."""
+        views = self.config.list_views()
+        if views:
+            return views[0].get("_id")
+        return None
+
+    def _get_config_id(self) -> str | None:
+        """Get the first configuration ID for this dataset."""
+        views = self.config.list_views()
+        if views:
+            return views[0].get("configurationId")
+        return None
+
+    def info_url(self) -> str:
+        """URL for the dataset info page."""
+        return dataset_info_url(self._id, self._frontend_url)
+
+    def view_url(
+        self,
+        xy: int | None = None,
+        z: int | None = None,
+        time: int | None = None,
+        layer: str | None = None,
+        unroll_xy: bool | None = None,
+        unroll_z: bool | None = None,
+        unroll_t: bool | None = None,
+    ) -> str:
+        """URL for the dataset image viewer.
+
+        Args:
+            xy: XY position to navigate to.
+            z: Z-slice to navigate to.
+            time: Time point to navigate to.
+            layer: Layer mode ('single', 'multiple', 'unroll').
+            unroll_xy: Unroll XY dimension.
+            unroll_z: Unroll Z dimension.
+            unroll_t: Unroll time dimension.
+
+        Returns:
+            URL string for the image viewer.
+
+        Raises:
+            ValueError: If no dataset view exists for this dataset.
+        """
+        view_id = self._get_view_id()
+        if view_id is None:
+            raise ValueError(
+                f"No dataset view found for dataset {self._id}"
+            )
+        return dataset_view_url(
+            view_id, self._frontend_url,
+            xy=xy, z=z, time=time, layer=layer,
+            unroll_xy=unroll_xy, unroll_z=unroll_z, unroll_t=unroll_t,
+        )
+
+    def configuration_url(self) -> str:
+        """URL for this dataset's configuration page."""
+        config_id = self._get_config_id()
+        if config_id is None:
+            raise ValueError(
+                f"No configuration found for dataset {self._id}"
+            )
+        return configuration_url(config_id, self._frontend_url)
+
+    def open(
+        self,
+        xy: int | None = None,
+        z: int | None = None,
+        time: int | None = None,
+        **kwargs,
+    ) -> str:
+        """Open the dataset viewer in the default browser.
+
+        Args:
+            xy, z, time: Navigate to this position.
+            **kwargs: Additional args passed to view_url().
+
+        Returns:
+            The URL that was opened.
+        """
+        url = self.view_url(xy=xy, z=z, time=time, **kwargs)
+        open_url(url)
+        return url

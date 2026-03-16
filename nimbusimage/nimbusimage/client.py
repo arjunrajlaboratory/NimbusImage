@@ -8,6 +8,7 @@ from typing import Any
 from nimbusimage._girder import create_client
 from nimbusimage.dataset import Dataset
 from nimbusimage.projects import Project
+from nimbusimage.urls import DEFAULT_FRONTEND_URL
 
 
 class NimbusClient:
@@ -25,6 +26,7 @@ class NimbusClient:
         token: str | None = None,
         username: str | None = None,
         password: str | None = None,
+        frontend_url: str = DEFAULT_FRONTEND_URL,
     ):
         # Resolve api_url from env if not provided (mirrors _girder.create_client)
         resolved_url = api_url or os.environ.get("NI_API_URL")
@@ -35,6 +37,7 @@ class NimbusClient:
             password=password,
         )
         self._api_url = resolved_url or self._gc.getServerApiUrl()
+        self._frontend_url = os.environ.get("NI_FRONTEND_URL", frontend_url)
 
     @property
     def api_url(self) -> str:
@@ -48,6 +51,10 @@ class NimbusClient:
     def user_id(self) -> str:
         me = self._gc.get("user/me")
         return me["_id"]
+
+    @property
+    def frontend_url(self) -> str:
+        return self._frontend_url
 
     @property
     def girder(self):
@@ -69,7 +76,7 @@ class NimbusClient:
             Dataset object (lazy — no HTTP call until data is accessed).
         """
         if dataset_id is not None:
-            return Dataset(self._gc, dataset_id)
+            return Dataset(self._gc, dataset_id, frontend_url=self._frontend_url)
         if name is not None:
             folders = self._gc.get(
                 "resource/search",
@@ -80,7 +87,7 @@ class NimbusClient:
                 folders = folders.get("folder", [])
             for f in folders:
                 if f.get("name") == name:
-                    return Dataset(self._gc, f["_id"])
+                    return Dataset(self._gc, f["_id"], frontend_url=self._frontend_url)
             raise ValueError(f"Dataset with name '{name}' not found")
         raise ValueError("Provide either dataset_id or name=")
 
@@ -117,9 +124,9 @@ class NimbusClient:
             "project",
             parameters={"name": name, "description": description},
         )
-        return Project(self._gc, data)
+        return Project(self._gc, data, frontend_url=self._frontend_url)
 
     def project(self, project_id: str) -> Project:
         """Get a Project by ID."""
         data = self._gc.get(f"project/{project_id}")
-        return Project(self._gc, data)
+        return Project(self._gc, data, frontend_url=self._frontend_url)
