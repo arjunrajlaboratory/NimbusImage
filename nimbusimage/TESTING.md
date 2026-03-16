@@ -220,6 +220,75 @@ This verifies:
 - `webbrowser.open()` integration
 - Custom frontend URL via constructor or `NI_FRONTEND_URL` env var
 
+### End-to-End: Create Annotations and View in Browser
+
+This test exercises bulk annotation creation and verifies they appear in the NimbusImage viewer. It creates 100 randomly placed colored triangles at a specific z-slice, then opens the viewer to confirm they render correctly.
+
+```python
+import math
+import nimbusimage as ni
+import numpy as np
+
+client = ni.connect("http://localhost:8080/api/v1", username="YOUR_USER", password="YOUR_PASS")
+ds = client.dataset("YOUR_DATASET_ID")
+
+# Generate 100 random triangles spread across the image
+np.random.seed(42)
+z_slice = 3
+h, w = ds.shape
+triangles = []
+
+for i in range(100):
+    # Random center (with margin from edges)
+    cx = np.random.uniform(50, w - 50)
+    cy = np.random.uniform(50, h - 50)
+
+    # Random size and rotation
+    r = np.random.uniform(8, 25)
+    angle = np.random.uniform(0, 2 * math.pi)
+
+    # 3 vertices of equilateral triangle + closing point
+    coords = []
+    for k in range(3):
+        a = angle + k * (2 * math.pi / 3)
+        coords.append({
+            "x": float(cx + r * math.cos(a)),
+            "y": float(cy + r * math.sin(a)),
+            "z": float(z_slice),
+        })
+    coords.append(coords[0].copy())  # close the polygon
+
+    triangles.append(ni.Annotation(
+        id=None,
+        shape="polygon",
+        tags=["triangle-test"],
+        channel=0,
+        location=ni.Location(xy=0, z=z_slice, time=0),
+        coordinates=coords,
+        dataset_id=ds.id,
+        color="rgb(255,0,0)",
+    ))
+
+# Bulk create
+created = ds.annotations.create_many(triangles)
+print(f"Created {len(created)} triangle annotations")
+
+# Open the viewer at the z-slice to see them
+ds.open(z=z_slice)
+
+# To clean up afterwards:
+# ds.annotations.delete_many([a.id for a in created])
+```
+
+Note on coordinate format: each coordinate dict must include `x` (horizontal), `y` (vertical), and `z` (matching the z-slice). The polygon should include a closing point (first point repeated at the end). The `color` field accepts `rgb(r,g,b)` format.
+
+This verifies:
+- Bulk annotation creation via `create_many`
+- Annotation coordinate structure (x, y, z per point, closing point)
+- Color specification via `rgb()` string
+- Annotations render correctly in the NimbusImage viewer at the correct z-slice
+- URL generation and browser open via `ds.open(z=...)`
+
 ### Note on macOS Preview
 
 When saving images for viewing with Preview, use `~/Desktop/` or another user-visible path. macOS sandboxing can prevent Preview from displaying files in `/tmp`.
