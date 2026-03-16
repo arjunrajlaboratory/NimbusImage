@@ -106,10 +106,16 @@ class AnnotationAccessor:
         return created
 
     def update(self, annotation_id: str, updates: dict) -> Annotation:
-        """Update a single annotation."""
+        """Update a single annotation.
+
+        Returns the updated annotation. If the server returns no body,
+        fetches the annotation by ID to return the current state.
+        """
         data = self._gc.put(
             f"/upenn_annotation/{annotation_id}", json=updates
         )
+        if data is None:
+            data = self._gc.get(f"/upenn_annotation/{annotation_id}")
         return Annotation.from_dict(data)
 
     def update_many(
