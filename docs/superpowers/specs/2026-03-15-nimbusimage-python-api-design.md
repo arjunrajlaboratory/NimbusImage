@@ -96,12 +96,17 @@ import nimbusimage as ni
 client = ni.connect("http://localhost:8080/api/v1", token="abc123")
 client = ni.connect("http://localhost:8080/api/v1", username="admin", password="password")
 client = ni.connect()  # reads NI_API_URL + NI_TOKEN env vars
+
+# Custom frontend URL (default: http://localhost:5173)
+client = ni.connect(..., frontend_url="https://app.nimbusimage.com")
+# Or via env var: NI_FRONTEND_URL
 ```
 
 `NimbusClient` wraps `girder_client.GirderClient` internally. Exposes:
 - `.user_id` — str
 - `.token` — str (read-only)
 - `.api_url` — str (read-only)
+- `.frontend_url` — str (read-only, default `http://localhost:5173`)
 - `.girder` — raw GirderClient (escape hatch)
 - `.list_datasets()` → `list[DatasetInfo]`
 - `.dataset(id)` or `.dataset(name="...")` → `Dataset`
@@ -275,6 +280,21 @@ ds.sharing.set_public(True)
 ds.sharing.get_access()                                 # → dict
 ```
 
+### URLs — `ds` methods
+
+```python
+ds.info_url()                                            # → frontend URL for dataset info page
+ds.view_url()                                            # → frontend URL for image viewer
+ds.view_url(z=4, time=0, layer='multiple')               # → viewer at specific location
+ds.configuration_url()                                   # → frontend URL for configuration page
+ds.open()                                                # → opens viewer in default browser
+ds.open(z=4, xy=0, time=2)                               # → opens at specific location
+```
+
+**View URL query parameters:** `xy`, `z`, `time`, `layer` ('single'/'multiple'/'unroll'), `unroll_xy`, `unroll_z`, `unroll_t`.
+
+Frontend URL defaults to `http://localhost:5173`. Override via `NimbusClient(frontend_url=...)` or `NI_FRONTEND_URL` env var (e.g., `app.nimbusimage.com`).
+
 ### Project
 
 Accessed from client, not dataset:
@@ -295,6 +315,10 @@ project.share(user_email_or_name, access='write')
 project.set_public(True)
 project.get_access()
 project.delete()
+
+# URLs
+project.url()                   # → frontend URL for project page
+project.open()                  # → opens in default browser
 ```
 
 ### WorkerContext

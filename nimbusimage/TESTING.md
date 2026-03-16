@@ -48,11 +48,11 @@ pytest tests/integration/ -v -m integration
 # Run with custom credentials
 NI_API_URL=http://localhost:8080/api/v1 \
 NI_TEST_USER=arjunraj \
-NI_TEST_PASS=sysbio \
+NI_TEST_PASS=abc123 \
 pytest tests/integration/ -v -m integration
 
 # Run a specific integration test
-NI_TEST_USER=arjunraj NI_TEST_PASS=sysbio \
+NI_TEST_USER=arjunraj NI_TEST_PASS=abc123 \
 pytest tests/integration/test_live_config_images.py -v -m integration
 ```
 
@@ -96,9 +96,10 @@ pytest tests/integration/ -v -m integration
 To verify the package works against your backend interactively:
 
 ```python
+import os
 import nimbusimage as ni
 
-client = ni.connect("http://localhost:8080/api/v1", username="arjunraj", password="sysbio")
+client = ni.connect("http://localhost:8080/api/v1", username="YOUR_USER", password="YOUR_PASS")
 print(f"Connected as: {client.user_id}")
 
 # Pick a dataset
@@ -118,7 +119,8 @@ rgb = ds.images.get_composite(dtype="uint8")
 from PIL import Image
 Image.fromarray(rgb).save(os.path.expanduser("~/Desktop/test_composite.png"))
 
-# Note: save to ~/Desktop (not /tmp) — macOS Preview may not display /tmp files
+# Open the dataset in the browser
+ds.open(z=3)  # opens image viewer at z=3
 ```
 
 ### End-to-End: Composite Image with Annotations Overlay
@@ -176,6 +178,47 @@ This verifies:
 - Channel compositing with lighten blend mode
 - Annotation listing and client-side location filtering
 - Annotation coordinate format (x=horizontal, y=vertical) renders correctly on the image
+
+### End-to-End: URL Generation and Browser Open
+
+Verify that URL generation works and opens the correct pages:
+
+```python
+import nimbusimage as ni
+
+client = ni.connect("http://localhost:8080/api/v1", username="YOUR_USER", password="YOUR_PASS")
+ds = client.dataset("YOUR_DATASET_ID")
+
+# Generate URLs without opening
+print(ds.info_url())               # http://localhost:5173/#/dataset/{id}
+print(ds.view_url())               # http://localhost:5173/#/datasetView/{viewId}/view
+print(ds.view_url(z=4))            # ...?z=4
+print(ds.view_url(z=4, time=0, layer="multiple"))  # ...?z=4&time=0&layer=multiple
+print(ds.configuration_url())      # http://localhost:5173/#/configuration/{configId}
+
+# Open in browser
+ds.open()           # opens image viewer at default location
+ds.open(z=4)        # opens at z=4
+ds.open(z=4, xy=0, time=0, layer="multiple")  # full location control
+
+# Custom frontend URL (e.g., production server)
+client = ni.connect(
+    "http://localhost:8080/api/v1", username="admin", password="password",
+    frontend_url="https://app.nimbusimage.com"
+)
+ds = client.dataset("YOUR_DATASET_ID")
+print(ds.view_url(z=3))  # https://app.nimbusimage.com/#/datasetView/{viewId}/view?z=3
+
+# Or via environment variable
+# NI_FRONTEND_URL=https://app.nimbusimage.com python my_script.py
+```
+
+This verifies:
+- Dataset view ID lookup from `/dataset_view` endpoint
+- Configuration ID lookup
+- Hash-based URL construction with query parameters
+- `webbrowser.open()` integration
+- Custom frontend URL via constructor or `NI_FRONTEND_URL` env var
 
 ### Note on macOS Preview
 
