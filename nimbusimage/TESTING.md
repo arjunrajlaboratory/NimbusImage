@@ -289,6 +289,42 @@ This verifies:
 - Annotations render correctly in the NimbusImage viewer at the correct z-slice
 - URL generation and browser open via `ds.open(z=...)`
 
+### End-to-End: Update Annotation Colors
+
+This test exercises updating existing annotations. It fetches annotations by tag, then changes the color of half of them.
+
+```python
+import nimbusimage as ni
+
+client = ni.connect("http://localhost:8080/api/v1", username="YOUR_USER", password="YOUR_PASS")
+ds = client.dataset("YOUR_DATASET_ID")
+
+# Fetch annotations by tag
+anns = ds.annotations.list(tags=["triangle-test"])
+print(f"Found {len(anns)} annotations")
+
+# Change half to blue
+half = len(anns) // 2
+for ann in anns[:half]:
+    ds.annotations.update(ann.id, {"color": "rgb(0,100,255)"})
+
+print(f"Changed {half} annotations to blue")
+
+# Open the viewer to verify
+ds.open(z=3)
+```
+
+**Important notes on updating annotations:**
+
+- **Use the single-update endpoint** (`ds.annotations.update(id, updates)`) for reliability. The bulk update endpoint (`PUT /upenn_annotation/multiple`) has a known bug ([#780](https://github.com/arjunrajlaboratory/NimbusImage/issues/780)) where it expects an `"id"` field (not `"_id"`) and can return internal server errors.
+- **The single PUT endpoint returns no body.** The `update()` method handles this by fetching the annotation after the update to return the current state.
+- **Updating is per-annotation** (one HTTP call each), so updating many annotations is slower than bulk create/delete. For large batches, consider whether you can delete and recreate instead.
+
+This verifies:
+- Fetching annotations by tag
+- Single annotation update via `PUT /upenn_annotation/{id}`
+- Color changes render correctly in the viewer
+
 ### Note on macOS Preview
 
 When saving images for viewing with Preview, use `~/Desktop/` or another user-visible path. macOS sandboxing can prevent Preview from displaying files in `/tmp`.

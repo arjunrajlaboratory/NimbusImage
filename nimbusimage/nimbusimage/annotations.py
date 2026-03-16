@@ -125,6 +125,16 @@ class AnnotationAccessor:
 
         Args:
             updates: List of (annotation_id, updates_dict) tuples.
+                Each updates_dict must include 'datasetId'.
+
+        Note:
+            The bulk PUT endpoint has a known bug (#780) — it expects
+            'id' (not '_id') and may return internal server errors.
+            Prefer using update() in a loop until this is fixed.
+
+        TODO: Once #780 is fixed, verify this works correctly and
+        remove the warning. The payload format may need to change
+        from '_id' to 'id' depending on the fix.
         """
         payload = [
             {"_id": aid, **upd} for aid, upd in updates
