@@ -547,6 +547,36 @@ pytest -m integration               # integration only
 pytest -m "not integration"         # unit only
 ```
 
+## Future Work
+
+### Dataset Upload
+
+Currently there is no API for uploading image files as new datasets. The upload workflow involves significant frontend logic (folder creation with dataset metadata, large image detection, multi-source configuration) that would need to be replicated or refactored into backend endpoints. This is a prerequisite for fully programmatic dataset management.
+
+Proposed API:
+```python
+ds = client.upload_dataset(
+    file_path="/path/to/image.tiff",
+    name="My Dataset",
+    folder_id=None,  # default: user's Private folder
+)
+```
+
+### Snapshots
+
+Snapshots (saved view states within a collection) are currently managed entirely by the frontend. The snapshot data lives in `collection.meta.snapshots` but creating, restoring, and managing snapshots requires replicating the frontend's view state serialization logic. This needs backend refactoring to expose snapshot operations as REST endpoints.
+
+Proposed API:
+```python
+snapshots = ds.config.get_collection().snapshots    # read-only works today
+ds.config.create_snapshot(name="Before analysis")   # needs backend work
+ds.config.restore_snapshot(snapshot_id)              # needs backend work
+```
+
+### Batch Frame Fetch
+
+`get_stack()`, `get_all_channels()`, and `iter_frames()` currently make one HTTP call per frame. A backend endpoint for fetching multiple frames in a single request would significantly improve performance for large datasets.
+
 ## MCP Tool Mapping
 
 Each method maps to one MCP tool with `ni_{noun}_{verb}` naming:
