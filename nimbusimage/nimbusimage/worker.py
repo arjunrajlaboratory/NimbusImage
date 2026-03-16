@@ -8,6 +8,8 @@ import sys
 import urllib.parse
 from typing import Iterator, TYPE_CHECKING
 
+import numpy as np
+
 from nimbusimage._girder import create_client
 from nimbusimage.dataset import Dataset
 from nimbusimage.models import Annotation, Location
@@ -212,7 +214,6 @@ class WorkerContext:
                         imgs.append(self.dataset.images.get(
                             xy=loc.xy, z=loc.z, time=loc.time, channel=ch
                         ))
-                import numpy as np
                 image = np.stack(imgs, axis=0) if len(imgs) > 1 else imgs[0]
 
             # Run model

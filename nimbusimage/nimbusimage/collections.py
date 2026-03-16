@@ -127,7 +127,12 @@ class CollectionAccessor:
         return Collection(self._gc, data)
 
     def list(self) -> list[Collection]:
-        """List all collections linked to this dataset via views."""
+        """List all collections linked to this dataset via views.
+
+        Note:
+            Makes one HTTP call per unique collection. No batch-by-IDs
+            endpoint exists yet on the server.
+        """
         views = self.list_views()
         seen = set()
         collections = []

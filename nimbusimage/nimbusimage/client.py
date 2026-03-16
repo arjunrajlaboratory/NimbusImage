@@ -29,15 +29,15 @@ class NimbusClient:
         password: str | None = None,
         frontend_url: str = DEFAULT_FRONTEND_URL,
     ):
-        # Resolve api_url from env if not provided (mirrors _girder.create_client)
-        resolved_url = api_url or os.environ.get("NI_API_URL")
         self._gc = create_client(
             api_url=api_url,
             token=token,
             username=username,
             password=password,
         )
-        self._api_url = resolved_url or self._gc.getServerApiUrl()
+        self._api_url = api_url or os.environ.get(
+            "NI_API_URL", self._gc.getServerApiUrl()
+        )
         self._frontend_url = os.environ.get("NI_FRONTEND_URL", frontend_url)
 
     @property

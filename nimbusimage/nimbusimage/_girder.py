@@ -48,7 +48,9 @@ def create_client(
 
     if token is not None:
         gc.setToken(token)
-    elif username is not None and password is not None:
+    elif username is not None or password is not None:
+        if username is None or password is None:
+            raise ValueError("Both username and password must be provided")
         gc.authenticate(username=username, password=password)
     else:
         env_token = os.environ.get("NI_TOKEN")

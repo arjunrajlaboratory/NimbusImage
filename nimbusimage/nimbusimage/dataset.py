@@ -40,7 +40,6 @@ class Dataset:
         self._gc = gc
         self._id = dataset_id
         self._frontend_url = frontend_url
-        self._metadata: dict | None = None
         self._tiles: dict | None = None
         self._item_id: str | None = None
         self._folder_data: dict | None = None

@@ -64,24 +64,28 @@ class PropertyAccessor:
         return self.create(name=name, shape=shape, **kwargs)
 
     def register(self, property_id: str) -> None:
-        """Add property to all configurations for this dataset.
+        """Add property to all collections for this dataset.
 
-        Fetches current config, appends property_id if not present,
-        and saves.
+        Fetches each unique collection, appends property_id if not
+        present, and saves. Deduplicates by collection ID so shared
+        collections are only updated once.
         """
         views = self._gc.get(
             f"/dataset_view?datasetId={self._dataset_id}"
         )
+        seen: dict[str, dict] = {}
         for view in views:
-            config_id = view.get("configurationId")
-            if not config_id:
+            cid = view.get("configurationId")
+            if not cid or cid in seen:
                 continue
-            config = self._gc.get(f"/upenn_collection/{config_id}")
+            seen[cid] = self._gc.get(f"/upenn_collection/{cid}")
+
+        for cid, config in seen.items():
             prop_ids = config.get("meta", {}).get("propertyIds", [])
             if property_id not in prop_ids:
                 prop_ids.append(property_id)
                 self._gc.put(
-                    f"/upenn_collection/{config_id}/metadata",
+                    f"/upenn_collection/{cid}/metadata",
                     json={"propertyIds": prop_ids},
                 )
 

@@ -128,7 +128,7 @@ class Property(BaseModel):
     name: str = ""
     shape: str = ""
     image: str = ""
-    tags: dict = {}
+    tags: dict = Field(default_factory=dict)
     worker_interface: dict = Field(default_factory=dict, alias="workerInterface")
 
     def to_dict(self) -> dict:
