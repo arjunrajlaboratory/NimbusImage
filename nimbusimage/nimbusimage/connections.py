@@ -89,6 +89,7 @@ class ConnectionAccessor:
                 "annotationsIds": annotation_ids,
                 "tags": tags,
                 "channelId": channel,
+                "datasetId": self._dataset_id,
             },
         )
 

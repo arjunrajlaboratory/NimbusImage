@@ -6,7 +6,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import girder_client
 
-_ACCESS_MAP = {"read": 0, "write": 1, "remove": -1}
+_ACCESS_MAP = {"read": 0, "write": 1, "admin": 2, "remove": -1}
+
+
+def _resolve_access(access: str) -> int:
+    if access not in _ACCESS_MAP:
+        raise ValueError(
+            f"Invalid access level '{access}'. "
+            f"Must be one of: {', '.join(_ACCESS_MAP.keys())}"
+        )
+    return _ACCESS_MAP[access]
 
 
 class SharingAccessor:
@@ -21,14 +30,14 @@ class SharingAccessor:
 
         Args:
             user_email_or_name: User's email or username.
-            access: 'read', 'write', or 'remove'.
+            access: 'read', 'write', 'admin', or 'remove'.
         """
         self._gc.post(
             "/dataset_view/share",
             json={
                 "datasetId": self._dataset_id,
                 "userMailOrUsername": user_email_or_name,
-                "accessType": _ACCESS_MAP[access],
+                "accessType": _resolve_access(access),
             },
         )
 

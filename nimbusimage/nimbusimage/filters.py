@@ -67,10 +67,11 @@ def filter_by_location(
 def group_by_location(
     annotations: list[Annotation],
 ) -> dict[tuple[int, int, int], list[Annotation]]:
-    """Group annotations by (time, z, xy) location.
+    """Group annotations by location.
 
     Returns:
-        Dict mapping (time, z, xy) tuples to lists of annotations.
+        Dict mapping ``(time, z, xy)`` tuples to lists of annotations.
+        Key order is time (outermost), z, xy (innermost).
     """
     groups: dict[tuple[int, int, int], list[Annotation]] = {}
     for a in annotations:

@@ -100,6 +100,7 @@ class AnnotationAccessor:
                         "annotationsIds": annotation_ids,
                         "tags": connect_to["tags"],
                         "channelId": connect_to["channel"],
+                        "datasetId": self._dataset_id,
                     },
                 )
 
@@ -137,7 +138,7 @@ class AnnotationAccessor:
         from '_id' to 'id' depending on the fix.
         """
         payload = [
-            {"_id": aid, **upd} for aid, upd in updates
+            {"id": aid, **upd} for aid, upd in updates
         ]
         data = self._gc.put("/upenn_annotation/multiple", json=payload)
         return [Annotation.from_dict(d) for d in (data or [])]

@@ -8,7 +8,16 @@ from nimbusimage.urls import DEFAULT_FRONTEND_URL, project_url, open_url
 if TYPE_CHECKING:
     import girder_client
 
-_ACCESS_MAP = {"read": 0, "write": 1, "remove": -1}
+_ACCESS_MAP = {"read": 0, "write": 1, "admin": 2, "remove": -1}
+
+
+def _resolve_access(access: str) -> int:
+    if access not in _ACCESS_MAP:
+        raise ValueError(
+            f"Invalid access level '{access}'. "
+            f"Must be one of: {', '.join(_ACCESS_MAP.keys())}"
+        )
+    return _ACCESS_MAP[access]
 
 
 class Project:
@@ -110,7 +119,7 @@ class Project:
             f"project/{self.id}/share",
             json={
                 "userMailOrUsername": user_email_or_name,
-                "accessType": _ACCESS_MAP[access],
+                "accessType": _resolve_access(access),
             },
         )
 

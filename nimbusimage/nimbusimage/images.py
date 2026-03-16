@@ -236,15 +236,21 @@ class ImageAccessor:
 
 
 def _parse_color(color: str) -> tuple[float, float, float]:
-    """Parse a color string to (r, g, b) floats in [0, 1]."""
+    """Parse a color string to (r, g, b) floats in [0, 1].
+
+    Supports 'white', 'rgb(r,g,b)', and '#RRGGBB' formats.
+    Warns and returns white for unrecognized formats.
+    """
+    import warnings
+
     if color == "white":
         return (1.0, 1.0, 1.0)
     if color.startswith("rgb("):
         parts = color[4:-1].split(",")
         return (
-            int(parts[0]) / 255.0,
-            int(parts[1]) / 255.0,
-            int(parts[2]) / 255.0,
+            int(parts[0].strip()) / 255.0,
+            int(parts[1].strip()) / 255.0,
+            int(parts[2].strip()) / 255.0,
         )
     if color.startswith("#") and len(color) == 7:
         return (
@@ -252,6 +258,11 @@ def _parse_color(color: str) -> tuple[float, float, float]:
             int(color[3:5], 16) / 255.0,
             int(color[5:7], 16) / 255.0,
         )
+    warnings.warn(
+        f"Unrecognized color format '{color}', defaulting to white. "
+        f"Supported formats: 'white', 'rgb(r,g,b)', '#RRGGBB'.",
+        stacklevel=2,
+    )
     return (1.0, 1.0, 1.0)
 
 
@@ -269,6 +280,7 @@ class ImageWriter:
         self._sink = large_image.new()
         self._metadata: dict = {}
         self._filename = "output.tiff"
+        self._written = False
 
         if copy_metadata:
             dataset._ensure_metadata()
@@ -295,6 +307,8 @@ class ImageWriter:
 
     def write(self, filename: str = "output.tiff") -> None:
         """Write the TIFF and upload to the dataset folder."""
+        if self._written:
+            return
         import os
         import tempfile
 
@@ -310,6 +324,7 @@ class ImageWriter:
                 gc.addMetadataToItem(item_id, self._metadata)
 
         os.remove(path)
+        self._written = True
 
     def __enter__(self):
         return self

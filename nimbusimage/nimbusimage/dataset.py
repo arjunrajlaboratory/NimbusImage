@@ -64,17 +64,17 @@ class Dataset:
         self._folder_data = self._gc.get(f"folder/{self._id}")
 
         # Find the large image item in this folder
-        items = self._gc.get(
-            f"item", parameters={"folderId": self._id, "limit": 0}
-        )
         selected_id = self._folder_data.get("meta", {}).get(
             "selectedLargeImageId"
         )
         if selected_id:
-            item = next(
-                (i for i in items if i["_id"] == selected_id), None
-            )
+            # Fast path: fetch the specific item directly
+            item = self._gc.get(f"item/{selected_id}")
         else:
+            # Fallback: scan items for one with largeImage metadata
+            items = self._gc.get(
+                "item", parameters={"folderId": self._id, "limit": 0}
+            )
             item = next(
                 (i for i in items if "largeImage" in i), None
             )

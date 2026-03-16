@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import numpy as np
 import pytest
 
-from nimbusimage.images import ImageAccessor
+from nimbusimage.images import ImageAccessor, _parse_color
 from nimbusimage.models import FrameInfo
 
 
@@ -177,3 +177,86 @@ class TestIterFrames:
         assert len(frames) == 4  # 2 channels x 2 z-slices
         assert isinstance(frames[0][0], FrameInfo)
         assert frames[0][1].shape == (768, 1024)
+
+
+class TestParseColor:
+    def test_white(self):
+        assert _parse_color("white") == (1.0, 1.0, 1.0)
+
+    def test_rgb(self):
+        assert _parse_color("rgb(255,0,0)") == (1.0, 0.0, 0.0)
+
+    def test_rgb_with_spaces(self):
+        assert _parse_color("rgb(0, 255, 0)") == (0.0, 1.0, 0.0)
+
+    def test_hex(self):
+        assert _parse_color("#FF0000") == (1.0, 0.0, 0.0)
+
+    def test_hex_lowercase(self):
+        r, g, b = _parse_color("#00ff00")
+        assert r == 0.0
+        assert g == 1.0
+        assert b == 0.0
+
+    def test_unknown_warns(self):
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = _parse_color("red")
+            assert result == (1.0, 1.0, 1.0)
+            assert len(w) == 1
+            assert "Unrecognized color format" in str(w[0].message)
+
+    def test_short_hex_warns(self):
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _parse_color("#F00")
+            assert len(w) == 1
+
+
+class TestImageWriterGuard:
+    """Test that ImageWriter prevents double-write."""
+
+    def test_write_sets_written_flag(self):
+        """Verify that write() sets _written to prevent double-write."""
+        from nimbusimage.images import ImageWriter
+
+        writer = ImageWriter.__new__(ImageWriter)
+        writer._written = False
+        writer._filename = "test.tiff"
+        writer._metadata = {}
+
+        # Mock the internals
+        writer._sink = MagicMock()
+        writer._dataset = MagicMock()
+        writer._dataset._gc = MagicMock()
+        writer._dataset._id = "ds_001"
+
+        import tempfile, os
+        path = os.path.join(tempfile.gettempdir(), "test.tiff")
+        # Create a dummy file so os.remove doesn't fail
+        with open(path, "w") as f:
+            f.write("dummy")
+
+        writer.write("test.tiff")
+        assert writer._written is True
+
+        # Second call should be a no-op
+        writer._sink.write.reset_mock()
+        writer.write("test.tiff")
+        writer._sink.write.assert_not_called()
+
+    def test_context_manager_no_double_write(self):
+        """Verify __exit__ doesn't write again after explicit write()."""
+        from nimbusimage.images import ImageWriter
+
+        writer = ImageWriter.__new__(ImageWriter)
+        writer._written = True  # simulate already written
+        writer._filename = "test.tiff"
+        writer._sink = MagicMock()
+        writer._dataset = MagicMock()
+
+        writer.__exit__(None, None, None)
+        # write() should not be called on the sink since _written is True
+        writer._sink.write.assert_not_called()

@@ -92,6 +92,10 @@ class ConfigAccessor:
         if self._config_cache is None:
             self._config_cache = self.get_configuration()
 
+    def refresh(self) -> None:
+        """Clear cached configuration. Next access will re-fetch from server."""
+        self._config_cache = None
+
     @property
     def layers(self) -> list[dict]:
         """Layer settings from the first collection.

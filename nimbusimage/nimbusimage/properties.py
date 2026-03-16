@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, TYPE_CHECKING
 
 from nimbusimage.models import Property
@@ -77,15 +76,13 @@ class PropertyAccessor:
             config_id = view.get("configurationId")
             if not config_id:
                 continue
-            config = self._gc.get(f"/item/{config_id}")
+            config = self._gc.get(f"/upenn_collection/{config_id}")
             prop_ids = config.get("meta", {}).get("propertyIds", [])
             if property_id not in prop_ids:
                 prop_ids.append(property_id)
                 self._gc.put(
-                    f"/item/{config_id}",
-                    parameters={"metadata": json.dumps(
-                        {"propertyIds": prop_ids}
-                    )},
+                    f"/upenn_collection/{config_id}/metadata",
+                    json={"propertyIds": prop_ids},
                 )
 
     def delete(self, property_id: str) -> None:
