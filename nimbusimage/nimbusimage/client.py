@@ -96,21 +96,25 @@ class NimbusClient:
     def list_datasets(self) -> list[dict]:
         """List all accessible datasets.
 
+        Discovers datasets via dataset_views, which link datasets
+        to collections. Each unique dataset folder is returned once.
+
         Returns:
-            List of dataset info dicts with _id, name, meta.
+            List of dataset folder dicts with _id, name, meta.
         """
-        result = self._gc.get(
-            "resource/search",
-            parameters={
-                "q": "contrastDataset",
-                "mode": "prefix",
-                "types": '["folder"]',
-            },
-        )
-        # Handle both list response and dict-with-folder-key response
-        if isinstance(result, dict):
-            return result.get("folder", [])
-        return result
+        views = self._gc.get("/dataset_view", parameters={"limit": 0})
+        seen: set[str] = set()
+        datasets: list[dict] = []
+        for v in views:
+            did = v.get("datasetId")
+            if did and did not in seen:
+                seen.add(did)
+                try:
+                    folder = self._gc.get(f"folder/{did}")
+                    datasets.append(folder)
+                except Exception:
+                    pass
+        return datasets
 
     # --- Projects ---
 
@@ -212,10 +216,15 @@ class NimbusClient:
             "/worker_interface",
             parameters={"image": image},
         )
-        if result:
-            iface = result.get("interface")
-            if iface:
-                return iface
+        if result and isinstance(result, dict):
+            # Response may be the interface directly, or wrapped
+            # in an 'interface' key — handle both.
+            if "interface" in result:
+                return result["interface"]
+            # If it has parameter-like keys (not just metadata),
+            # it IS the interface
+            if result:
+                return result
 
         if not request_if_missing:
             return None
@@ -234,6 +243,9 @@ class NimbusClient:
             "/worker_interface",
             parameters={"image": image},
         )
-        if result:
-            return result.get("interface")
+        if result and isinstance(result, dict):
+            if "interface" in result:
+                return result["interface"]
+            if result:
+                return result
         return None

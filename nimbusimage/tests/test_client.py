@@ -107,8 +107,16 @@ class TestNimbusClientDataset:
 
 class TestNimbusClientListDatasets:
     def test_list_datasets(self, mock_gc):
-        mock_gc.get.return_value = [
+        # list_datasets now uses dataset_view to discover datasets
+        mock_gc.get.side_effect = [
+            # GET /dataset_view
+            [
+                {"_id": "v1", "datasetId": "f1", "configurationId": "c1"},
+                {"_id": "v2", "datasetId": "f2", "configurationId": "c2"},
+            ],
+            # GET folder/f1
             {"_id": "f1", "name": "Dataset A", "meta": {"subtype": "contrastDataset"}},
+            # GET folder/f2
             {"_id": "f2", "name": "Dataset B", "meta": {"subtype": "contrastDataset"}},
         ]
         client = NimbusClient.__new__(NimbusClient)

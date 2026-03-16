@@ -199,13 +199,12 @@ class AnnotationAccessor:
             "assignment": assignment,
             "tile": loc_dict,
             "workerInterface": worker_interface or {},
+            "connectTo": connect_to or {"tags": []},
             "scales": scales or {},
             "name": name,
             "type": "worker",
             "id": "",
         }
-        if connect_to is not None:
-            body["connectTo"] = connect_to
 
         resp = self._gc.post(
             f"/upenn_annotation/compute?datasetId={self._dataset_id}",
