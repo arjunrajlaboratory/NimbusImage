@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 worker = ["large-image"]
 dev = ["pytest", "pytest-mock"]
+docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,63 @@
+site_name: NimbusImage Python API
+site_description: Python API for programmatic access to NimbusImage
+repo_url: https://github.com/arjunrajlaboratory/NimbusImage
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [nimbusimage]
+          options:
+            show_source: false
+            show_root_heading: true
+            members_order: source
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - API Reference:
+    - Client: api/client.md
+    - Dataset: api/dataset.md
+    - Images: api/images.md
+    - Annotations: api/annotations.md
+    - Connections: api/connections.md
+    - Properties: api/properties.md
+    - Config: api/config.md
+    - Collections: api/collections.md
+    - Projects: api/projects.md
+    - Export: api/export.md
+    - History: api/history.md
+    - Sharing: api/sharing.md
+    - Worker Context: api/worker.md
+    - Models: api/models.md
+    - Coordinates: api/coordinates.md
+    - Filters: api/filters.md
+    - URLs: api/urls.md
