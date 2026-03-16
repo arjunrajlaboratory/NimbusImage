@@ -161,15 +161,36 @@ class PropertyAccessor:
     ) -> Job:
         """Run a property worker to compute values.
 
+        Submits a Docker worker job via
+        ``POST /annotation_property/{id}/compute``. The worker container
+        receives the property definition and scales as JSON parameters.
+
         Args:
-            property: The Property definition (must have an ``image``).
-            worker_interface: Parameter values for the worker interface.
-                Overrides the property's own workerInterface if provided.
-            scales: Scale metadata (pixel size, etc.).
+            property: The Property definition. Must have a non-empty
+                ``image`` field (the Docker image to run) and an ``id``
+                (must be saved to the server first via ``create()`` or
+                ``get_or_create()``).
+            worker_interface: Parameter values matching the worker's
+                interface schema (from ``client.get_worker_interface()``).
+                If not provided, uses the property's own
+                ``workerInterface``.
+            scales: Scale metadata (pixel size, etc.). Passed through
+                to the worker for unit-aware computations.
 
         Returns:
-            A Job object for tracking progress and waiting for completion.
+            A Job object. Call ``job.wait()`` to block until completion.
+
+        Raises:
+            ValueError: If the property has no ``id`` or ``image``.
         """
+        if not property.id:
+            raise ValueError(
+                "Property must be saved to the server first "
+                "(use create() or get_or_create())"
+            )
+        if not property.image:
+            raise ValueError("Property must have a Docker image set")
+
         body = property.to_dict()
         if worker_interface is not None:
             body["workerInterface"] = worker_interface

@@ -168,28 +168,56 @@ class AnnotationAccessor:
     ) -> Job:
         """Run an annotation worker on this dataset.
 
+        Submits a Docker worker job via ``POST /upenn_annotation/compute``.
+        The worker container receives the parameters as a JSON string via
+        ``--parameters`` and parses them with ``WorkerClient``.
+
         Args:
-            image: Docker image name (e.g., ``'myworker:latest'``).
+            image: Docker image name (e.g., ``'annotations/random_squares:latest'``).
             channel: Channel index for the worker to process.
             tags: Tags to assign to created annotations.
             location: Location (XY/Z/Time) for single-tile processing.
                 Defaults to ``Location()``.
             assignment: Assignment range for batch processing. Can be
                 a dict like ``{'XY': '0-2', 'Z': 0, 'Time': 0}`` or
-                uses the location if not provided.
-            worker_interface: Parameter values for the worker interface.
-            scales: Scale metadata (pixel size, etc.).
-            connect_to: If provided, auto-connect created annotations.
-                Dict with ``tags``, ``channel`` keys.
+                range strings like ``{'XY': '0-2', 'Z': 0, 'Time': '0-4'}``.
+                Defaults to the location if not provided.
+            worker_interface: Parameter values matching the worker's
+                interface schema (from ``client.get_worker_interface()``).
+                Keys must match exactly (e.g., ``'Square size'``, not
+                ``'square_size'``).
+            scales: Scale metadata (pixel size, etc.). Passed through
+                to the worker for unit-aware computations.
+            connect_to: Auto-connect created annotations to nearest
+                neighbors. Dict with ``tags`` (list[str]) and
+                ``channel`` (int) keys. If not provided, no connections
+                are created.
             name: Job name shown in the Girder UI.
 
         Returns:
-            A Job object for tracking progress and waiting for completion.
+            A Job object. Call ``job.wait()`` to block until completion.
+
+        Note:
+            The worker container uses ``WorkerClient`` from the
+            ``worker_client`` package, which requires all of these keys
+            in the parameters: ``assignment``, ``channel``, ``connectTo``,
+            ``tags``, ``tile``, ``workerInterface``. Missing keys cause
+            the worker to skip initialization silently. The ``connectTo``
+            dict must always contain a ``tags`` key (use ``[]`` for no
+            connections) — omitting it causes a ``KeyError`` after
+            annotations are uploaded.
         """
         loc = location or Location()
         loc_dict = loc.to_dict()
         if assignment is None:
             assignment = loc_dict
+
+        # Validate connect_to has required 'tags' key if provided
+        if connect_to is not None and "tags" not in connect_to:
+            raise ValueError(
+                "connect_to must contain a 'tags' key "
+                "(e.g., {'tags': ['nucleus'], 'channel': 0})"
+            )
 
         body = {
             "datasetId": self._dataset_id,

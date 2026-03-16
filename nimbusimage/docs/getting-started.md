@@ -145,6 +145,90 @@ ds.connections.connect_to_nearest(
 )
 ```
 
+## Running workers
+
+Workers are Docker containers that perform computations (segmentation,
+measurements, image processing) on datasets.
+
+### Discover available workers
+
+```python
+# List all worker images on the server
+workers = client.list_workers()
+for image, labels in workers.items():
+    print(f"{image}: {labels.get('interfaceName', '')}")
+
+# Get the parameter interface for a worker
+interface = client.get_worker_interface("annotations/random_squares:latest")
+for param, spec in interface.items():
+    print(f"  {param}: type={spec['type']}, default={spec.get('default', '')}")
+```
+
+### Run an annotation worker
+
+```python
+# Submit a worker job
+job = ds.annotations.compute(
+    image="annotations/random_squares:latest",
+    channel=0,
+    tags=["detected"],
+    worker_interface={
+        "Number of squares": 100,
+        "Square size": 15,
+    },
+)
+
+# Wait for completion (prints progress to stderr)
+success = job.wait()
+print(f"Job {'succeeded' if success else 'failed'}")
+
+# With auto-connection to nearest neighbors
+job = ds.annotations.compute(
+    image="annotations/laplacian_of_gaussian:latest",
+    channel=0,
+    tags=["spots"],
+    worker_interface={"Sigma": 2.0},
+    connect_to={"tags": ["nucleus"], "channel": 0},
+)
+job.wait()
+```
+
+### Run a property worker
+
+```python
+# Create and register a property
+prop = ds.properties.get_or_create("Blob Intensity", shape="polygon")
+ds.properties.register(prop.id)
+
+# Run the property worker
+job = ds.properties.compute(
+    prop,
+    worker_interface={"Channel": 0},
+    scales=ds.collections.get_raw().get("meta", {}).get("scales", {}),
+)
+job.wait()
+
+# Fetch the computed values
+values = ds.properties.get_values()
+```
+
+### Job tracking
+
+```python
+# Non-blocking: check status manually
+job = ds.annotations.compute(...)
+while not job.finished:
+    job.refresh()
+    print(f"Status: {job.status_name}")
+    time.sleep(5)
+
+# Blocking with timeout
+try:
+    job.wait(timeout=300)  # 5 minute timeout
+except TimeoutError:
+    print("Job timed out")
+```
+
 ## Export
 
 ```python

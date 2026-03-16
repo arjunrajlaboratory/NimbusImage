@@ -162,6 +162,42 @@ class TestAnnotationCompute:
         body = mock_gc.post.call_args[1]["json"]
         assert body["connectTo"] == {"tags": ["cell"], "channel": 0}
 
+    def test_compute_default_connect_to_has_tags(self, mock_gc):
+        """WorkerClient requires connectTo.tags to exist."""
+        mock_gc.post.return_value = [{"_id": "j1", "status": 1}]
+
+        from nimbusimage.annotations import AnnotationAccessor
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+
+        accessor.compute(image="myworker:latest")
+        body = mock_gc.post.call_args[1]["json"]
+        assert body["connectTo"] == {"tags": []}
+
+    def test_compute_connect_to_missing_tags_raises(self, mock_gc):
+        from nimbusimage.annotations import AnnotationAccessor
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+
+        with pytest.raises(ValueError, match="tags"):
+            accessor.compute(
+                image="myworker:latest",
+                connect_to={"channel": 0},  # missing 'tags'
+            )
+
+    def test_compute_all_required_keys_present(self, mock_gc):
+        """WorkerClient requires: assignment, channel, connectTo,
+        tags, tile, workerInterface."""
+        mock_gc.post.return_value = [{"_id": "j1", "status": 1}]
+
+        from nimbusimage.annotations import AnnotationAccessor
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+
+        accessor.compute(image="myworker:latest")
+        body = mock_gc.post.call_args[1]["json"]
+        required = ["assignment", "channel", "connectTo",
+                     "tags", "tile", "workerInterface"]
+        for key in required:
+            assert key in body, f"Missing required key: {key}"
+
 
 class TestPropertyCompute:
     def test_compute_returns_job(self, mock_gc):
@@ -214,6 +250,31 @@ class TestPropertyCompute:
         body = mock_gc.post.call_args[1]["json"]
         assert body["workerInterface"] == {"Channel": 1}
         assert body["scales"]["pixelSize"]["value"] == 0.000219
+
+
+    def test_compute_no_id_raises(self, mock_gc):
+        from nimbusimage.properties import PropertyAccessor
+        from nimbusimage.models import Property
+        accessor = PropertyAccessor(mock_gc, "ds_001")
+
+        prop = Property(
+            id=None, name="Area", shape="polygon",
+            image="properties/area:latest",
+        )
+        with pytest.raises(ValueError, match="saved to the server"):
+            accessor.compute(prop)
+
+    def test_compute_no_image_raises(self, mock_gc):
+        from nimbusimage.properties import PropertyAccessor
+        from nimbusimage.models import Property
+        accessor = PropertyAccessor(mock_gc, "ds_001")
+
+        prop = Property(
+            id="prop_001", name="Area", shape="polygon",
+            image="",
+        )
+        with pytest.raises(ValueError, match="Docker image"):
+            accessor.compute(prop)
 
 
 class TestClientWorkers:
