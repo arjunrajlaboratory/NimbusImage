@@ -91,9 +91,15 @@ class CollectionAccessor:
     datasets to collections.
     """
 
-    def __init__(self, gc: girder_client.GirderClient, dataset_id: str):
+    def __init__(
+        self,
+        gc: girder_client.GirderClient,
+        dataset_id: str,
+        frontend_url: str = DEFAULT_FRONTEND_URL,
+    ):
         self._gc = gc
         self._dataset_id = dataset_id
+        self._frontend_url = frontend_url
         self._cache: dict | None = None
 
     def list_views(self) -> list[dict]:
@@ -124,7 +130,7 @@ class CollectionAccessor:
             if not collection_id:
                 return None
         data = self._gc.get(f"/upenn_collection/{collection_id}")
-        return Collection(self._gc, data)
+        return Collection(self._gc, data, frontend_url=self._frontend_url)
 
     def list(self) -> list[Collection]:
         """List all collections linked to this dataset via views.
@@ -141,7 +147,9 @@ class CollectionAccessor:
             if cid and cid not in seen:
                 seen.add(cid)
                 data = self._gc.get(f"/upenn_collection/{cid}")
-                collections.append(Collection(self._gc, data))
+                collections.append(
+                    Collection(self._gc, data, frontend_url=self._frontend_url)
+                )
         return collections
 
     def get_raw(self, collection_id: str | None = None) -> dict:

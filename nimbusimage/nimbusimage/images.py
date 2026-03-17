@@ -198,15 +198,18 @@ class ImageAccessor:
         composite = np.clip(composite, 0.0, 1.0)
 
         # Convert to target dtype
-        if target_dtype == "float64":
-            return composite
+        if target_dtype in ("float32", "float64"):
+            return composite.astype(target_dtype)
         elif target_dtype == "uint8":
             return (composite * 255).astype(np.uint8)
         elif target_dtype == "uint16":
             return (composite * 65535).astype(np.uint16)
         else:
-            max_val = np.iinfo(np.dtype(target_dtype)).max
-            return (composite * max_val).astype(target_dtype)
+            dt = np.dtype(target_dtype)
+            if np.issubdtype(dt, np.floating):
+                return composite.astype(dt)
+            max_val = np.iinfo(dt).max
+            return (composite * max_val).astype(dt)
 
     def iter_frames(self) -> Iterator[tuple[FrameInfo, np.ndarray]]:
         """Iterate over all frames in the dataset.

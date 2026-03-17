@@ -49,7 +49,7 @@ class Dataset:
         self.annotations = AnnotationAccessor(gc, dataset_id)
         self.connections = ConnectionAccessor(gc, dataset_id)
         self.properties = PropertyAccessor(gc, dataset_id)
-        self.collections = CollectionAccessor(gc, dataset_id)
+        self.collections = CollectionAccessor(gc, dataset_id, frontend_url=frontend_url)
         self.export = ExportAccessor(gc, dataset_id)
         self.history = HistoryAccessor(gc, dataset_id)
         self.sharing = SharingAccessor(gc, dataset_id)

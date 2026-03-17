@@ -92,7 +92,11 @@ class AnnotationAccessor:
         data = self._gc.post("/upenn_annotation/multiple", json=dicts)
         created = [Annotation.from_dict(d) for d in data]
 
-        if connect_to is not None:
+        if (
+            connect_to is not None
+            and connect_to.get("tags")
+            and "channel" in connect_to
+        ):
             annotation_ids = [a.id for a in created if a.id]
             if annotation_ids:
                 self._gc.post(
