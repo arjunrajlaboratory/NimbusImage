@@ -22,8 +22,8 @@ A unified Python API package for programmatic access to NimbusImage. Replaces th
 
 - The `Collection` class represents a collection/configuration
 - `client.list_collections()` and `client.collection(id)` access them at the top level
-- `ds.config.get_collection()` and `ds.config.list_collections()` access them via a dataset
-- `ds.config.layers` is a shortcut to the first collection's layer settings (used by `get_composite`)
+- `ds.collections.get()` and `ds.collections.list()` access them via a dataset
+- `ds.collections.layers` is a shortcut to the first collection's layer settings (used by `get_composite`)
 - Datasets and collections have a **many-to-many relationship** — one dataset can have multiple collections, and one collection can be shared across datasets. They are linked by `dataset_view` documents.
 
 ## Package Structure
