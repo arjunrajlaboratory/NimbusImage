@@ -27,6 +27,46 @@
           applications like Excel or Google Sheets.
         </v-alert>
 
+        <v-radio-group v-model="exportScope" class="mt-0 mb-2" hide-details>
+          <v-radio label="Current dataset only" value="current" />
+          <v-radio
+            :label="allDatasetsLabel"
+            value="all"
+            :disabled="!configuration"
+          />
+        </v-radio-group>
+
+        <template v-if="exportScope === 'all'">
+          <template v-if="loadingDatasets">
+            <v-progress-linear indeterminate class="my-4" />
+            <div class="text-center mb-4">
+              Loading datasets in collection...
+            </div>
+          </template>
+          <v-alert
+            v-else-if="collectionDatasets.length === 0"
+            type="warning"
+            variant="tonal"
+            class="my-4"
+          >
+            No datasets found in this collection.
+          </v-alert>
+          <v-alert
+            v-else
+            type="success"
+            variant="tonal"
+            density="compact"
+            class="my-4"
+          >
+            Found {{ collectionDatasets.length }} dataset{{
+              collectionDatasets.length === 1 ? "" : "s"
+            }}
+            in this collection.
+          </v-alert>
+        </template>
+
+        <v-divider class="mb-4" />
+
         <v-list-subheader>File Format</v-list-subheader>
         <v-radio-group v-model="fileFormat" class="mb-4">
           <v-radio label="CSV (comma-separated)" value="csv"></v-radio>
@@ -91,67 +131,87 @@
           </v-data-table>
         </template>
 
-        <template v-if="isTooLargeForPreview">
-          <v-alert type="info" variant="tonal" class="mb-4">
-            Preview is not available for more than
-            {{ PREVIEW_ANNOTATION_LIMIT }} annotations ({{ annotations.length }}
-            annotations selected). Download will export all annotations using
-            the server.
-          </v-alert>
-          <v-textarea
-            v-model="filename"
-            class="my-2"
-            label="File name"
-            rows="1"
-            no-resize
-            hide-details
-          />
-        </template>
-        <template v-else-if="text && text.length">
-          <v-textarea ref="fieldToCopy" v-model="displayText" readonly>
-            {{ displayText }}
-            <template v-slot:append>
-              <v-btn
-                icon
-                title="Copy to clipboard"
-                @click="copyCSVText"
-                :disabled="!canUseClipboard"
-                ><v-icon>{{ "mdi-content-copy" }}</v-icon></v-btn
-              >
-            </template>
-          </v-textarea>
-          <v-textarea
-            v-model="filename"
-            class="my-2"
-            label="File name"
-            rows="1"
-            no-resize
-            hide-details
-          />
-        </template>
-        <template v-else>
-          <div class="d-flex flex-column align-center">
-            <p>Generating CSV...</p>
-            <v-progress-circular
-              :model-value="processingProgress * 100"
-              :indeterminate="processingProgress === 0"
-              class="mb-2"
+        <template v-if="exportScope === 'current'">
+          <template v-if="isTooLargeForPreview">
+            <v-alert type="info" variant="tonal" class="mb-4">
+              Preview is not available for more than
+              {{ PREVIEW_ANNOTATION_LIMIT }} annotations ({{
+                annotations.length
+              }}
+              annotations selected). Download will export all annotations using
+              the server.
+            </v-alert>
+            <v-textarea
+              v-model="filename"
+              class="my-2"
+              label="File name"
+              rows="1"
+              no-resize
+              hide-details
             />
-            <span v-if="processingProgress > 0">
-              {{ Math.round(processingProgress * 100) }}%
-            </span>
+          </template>
+          <template v-else-if="text && text.length">
+            <v-textarea ref="fieldToCopy" v-model="displayText" readonly>
+              {{ displayText }}
+              <template v-slot:append>
+                <v-btn
+                  icon
+                  title="Copy to clipboard"
+                  @click="copyCSVText"
+                  :disabled="!canUseClipboard"
+                  ><v-icon>{{ "mdi-content-copy" }}</v-icon></v-btn
+                >
+              </template>
+            </v-textarea>
+            <v-textarea
+              v-model="filename"
+              class="my-2"
+              label="File name"
+              rows="1"
+              no-resize
+              hide-details
+            />
+          </template>
+          <template v-else>
+            <div class="d-flex flex-column align-center">
+              <p>Generating CSV...</p>
+              <v-progress-circular
+                :model-value="processingProgress * 100"
+                :indeterminate="processingProgress === 0"
+                class="mb-2"
+              />
+              <span v-if="processingProgress > 0">
+                {{ Math.round(processingProgress * 100) }}%
+              </span>
+            </div>
+          </template>
+        </template>
+
+        <template v-if="bulkExporting">
+          <v-divider class="my-4" />
+          <div class="text-subtitle-2 mb-2">
+            Exporting {{ bulkExportProgress }} of
+            {{ collectionDatasets.length }}...
           </div>
+          <v-progress-linear
+            :model-value="
+              (bulkExportProgress / collectionDatasets.length) * 100
+            "
+            class="mb-2"
+          />
         </template>
       </v-card-text>
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn @click="dialog = false" variant="text">Close</v-btn>
+        <v-btn @click="dialog = false" variant="text" :disabled="bulkExporting">
+          Close
+        </v-btn>
         <v-btn
           @click="download"
-          :disabled="!store.dataset || isDownloading"
-          :loading="isDownloading"
+          :disabled="!canDownload"
+          :loading="isDownloading || bulkExporting"
           color="success"
-          :min-width="isDownloading ? 260 : undefined"
+          :min-width="isDownloading || bulkExporting ? 260 : undefined"
         >
           <template v-slot:loader>
             <v-progress-circular
@@ -160,10 +220,12 @@
               width="2"
               class="mr-2"
             ></v-progress-circular>
-            Preparing download...
+            {{
+              bulkExporting ? "Exporting datasets..." : "Preparing download..."
+            }}
           </template>
           <v-icon> mdi-save </v-icon>
-          Download
+          {{ downloadButtonText }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -175,6 +237,8 @@ import { ref, computed, watch, onMounted } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import { IBulkCsvExportDataset } from "@/store/ExportAPI";
+import { IDatasetView } from "@/store/model";
 
 import Papa from "papaparse";
 
@@ -229,6 +293,12 @@ const processingProgress = ref(0);
 const isProcessing = ref(false);
 const isDownloading = ref(false);
 
+const exportScope = ref<"current" | "all">("current");
+const loadingDatasets = ref(false);
+const bulkExporting = ref(false);
+const bulkExportProgress = ref(0);
+const collectionDatasets = ref<IBulkCsvExportDataset[]>([]);
+
 const isTooLargeForPreview = computed(() => {
   return props.annotations.length > PREVIEW_ANNOTATION_LIMIT;
 });
@@ -238,6 +308,29 @@ const canUseClipboard = computed(() => {
 });
 
 const dataset = computed(() => store.dataset);
+const configuration = computed(() => store.configuration);
+
+const allDatasetsLabel = computed(() => {
+  if (loadingDatasets.value) {
+    return "All datasets in collection (loading...)";
+  }
+  if (collectionDatasets.value.length > 0) {
+    return `All datasets in collection (${collectionDatasets.value.length})`;
+  }
+  return "All datasets in collection";
+});
+
+const canDownload = computed(() => {
+  if (isDownloading.value || bulkExporting.value) return false;
+  if (exportScope.value === "current") return !!store.dataset;
+  return collectionDatasets.value.length > 0 && !loadingDatasets.value;
+});
+
+const downloadButtonText = computed(() => {
+  if (exportScope.value === "current") return "Download";
+  const count = collectionDatasets.value.length;
+  return `Download ${count} dataset${count === 1 ? "" : "s"}`;
+});
 
 const displayedPropertyPaths = computed(
   () => propertyStore.displayedPropertyPaths,
@@ -397,13 +490,18 @@ function getUndefinedValueString(): "" | "NA" | "NaN" {
 }
 
 async function download() {
-  if (!store.dataset) {
-    return;
+  if (exportScope.value === "current") {
+    await downloadSingleDataset();
+  } else {
+    await downloadAllDatasets();
   }
+}
+
+async function downloadSingleDataset() {
+  if (!store.dataset) return;
 
   isDownloading.value = true;
   try {
-    // Always use backend endpoint for downloads (handles large datasets)
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,
       propertyPaths: getIncludedPropertyPaths(),
@@ -415,6 +513,60 @@ async function download() {
     });
   } finally {
     isDownloading.value = false;
+  }
+}
+
+async function downloadAllDatasets() {
+  if (collectionDatasets.value.length === 0) return;
+
+  bulkExporting.value = true;
+  bulkExportProgress.value = 0;
+
+  try {
+    await store.exportAPI.exportBulkCsv({
+      datasets: collectionDatasets.value,
+      propertyPaths: getIncludedPropertyPaths(),
+      undefinedValue: getUndefinedValueString(),
+      delimiter: fileDelimiter.value,
+      onProgress: (completed) => {
+        bulkExportProgress.value = completed;
+      },
+    });
+
+    dialog.value = false;
+  } finally {
+    bulkExporting.value = false;
+  }
+}
+
+async function loadCollectionDatasets() {
+  if (!configuration.value) return;
+
+  loadingDatasets.value = true;
+  collectionDatasets.value = [];
+
+  try {
+    const datasetViews = await store.api.findDatasetViews({
+      configurationId: configuration.value.id,
+    });
+
+    const datasetIds = datasetViews.map((dv: IDatasetView) => dv.datasetId);
+
+    if (datasetIds.length > 0) {
+      await store.girderResources.batchFetchResources({
+        folderIds: datasetIds,
+      });
+
+      collectionDatasets.value = datasetViews.map((dv: IDatasetView) => {
+        const folder = store.girderResources.watchFolder(dv.datasetId);
+        return {
+          datasetId: dv.datasetId,
+          datasetName: folder?.name || dv.datasetId,
+        };
+      });
+    }
+  } finally {
+    loadingDatasets.value = false;
   }
 }
 
@@ -445,6 +597,22 @@ watch(
 
 watch([fileFormat, dataset], () => resetFilename());
 
+watch(dialog, (open) => {
+  if (open && exportScope.value === "all") {
+    loadCollectionDatasets();
+  }
+});
+
+watch(exportScope, (scope) => {
+  if (
+    scope === "all" &&
+    dialog.value &&
+    collectionDatasets.value.length === 0
+  ) {
+    loadCollectionDatasets();
+  }
+});
+
 onMounted(() => resetFilename());
 
 defineExpose({
@@ -468,5 +636,11 @@ defineExpose({
   getUndefinedValueString,
   shouldIncludePropertyPath,
   download,
+  exportScope,
+  bulkExporting,
+  collectionDatasets,
+  downloadAllDatasets,
+  canDownload,
+  downloadButtonText,
 });
 </script>
