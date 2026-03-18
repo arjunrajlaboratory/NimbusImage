@@ -20,13 +20,13 @@ export interface ICsvExportOptions {
   filename?: string;
 }
 
-export interface IBulkJsonExportDataset {
+export interface IBulkExportDataset {
   datasetId: string;
   datasetName: string;
 }
 
 export interface IBulkJsonExportOptions {
-  datasets: IBulkJsonExportDataset[];
+  datasets: IBulkExportDataset[];
   configurationId?: string;
   includeAnnotations?: boolean;
   includeConnections?: boolean;
@@ -35,13 +35,8 @@ export interface IBulkJsonExportOptions {
   onProgress?: (completed: number, total: number) => void;
 }
 
-export interface IBulkCsvExportDataset {
-  datasetId: string;
-  datasetName: string;
-}
-
 export interface IBulkCsvExportOptions {
-  datasets: IBulkCsvExportDataset[];
+  datasets: IBulkExportDataset[];
   propertyPaths?: string[][];
   undefinedValue?: "" | "NA" | "NaN";
   delimiter?: "," | "\t";

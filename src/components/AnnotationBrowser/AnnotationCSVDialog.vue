@@ -190,8 +190,8 @@
         <template v-if="bulkExporting">
           <v-divider class="my-4" />
           <div class="text-subtitle-2 mb-2">
-            Exporting {{ bulkExportProgress }} of
-            {{ collectionDatasets.length }}...
+            Exported {{ bulkExportProgress }} of
+            {{ collectionDatasets.length }} datasets
           </div>
           <v-progress-linear
             :model-value="
@@ -200,6 +200,15 @@
             class="mb-2"
           />
         </template>
+
+        <v-alert
+          v-if="bulkExportError"
+          type="error"
+          variant="tonal"
+          class="mt-4"
+        >
+          {{ bulkExportError }}
+        </v-alert>
       </v-card-text>
       <v-card-actions>
         <v-spacer></v-spacer>
@@ -237,8 +246,7 @@ import { ref, computed, watch, onMounted } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
-import { IBulkCsvExportDataset } from "@/store/ExportAPI";
-import { IDatasetView } from "@/store/model";
+import { useCollectionDatasets } from "@/utils/useCollectionDatasets";
 
 import Papa from "papaparse";
 
@@ -294,10 +302,12 @@ const isProcessing = ref(false);
 const isDownloading = ref(false);
 
 const exportScope = ref<"current" | "all">("current");
-const loadingDatasets = ref(false);
 const bulkExporting = ref(false);
 const bulkExportProgress = ref(0);
-const collectionDatasets = ref<IBulkCsvExportDataset[]>([]);
+const bulkExportError = ref("");
+
+const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
+  useCollectionDatasets(dialog, exportScope);
 
 const isTooLargeForPreview = computed(() => {
   return props.annotations.length > PREVIEW_ANNOTATION_LIMIT;
@@ -308,18 +318,6 @@ const canUseClipboard = computed(() => {
 });
 
 const dataset = computed(() => store.dataset);
-const configuration = computed(() => store.configuration);
-
-const allDatasetsLabel = computed(() => {
-  if (loadingDatasets.value) {
-    return "All datasets in collection (loading...)";
-  }
-  if (collectionDatasets.value.length > 0) {
-    return `All datasets in collection (${collectionDatasets.value.length})`;
-  }
-  return "All datasets in collection";
-});
-
 const canDownload = computed(() => {
   if (isDownloading.value || bulkExporting.value) return false;
   if (exportScope.value === "current") return !!store.dataset;
@@ -521,6 +519,7 @@ async function downloadAllDatasets() {
 
   bulkExporting.value = true;
   bulkExportProgress.value = 0;
+  bulkExportError.value = "";
 
   try {
     await store.exportAPI.exportBulkCsv({
@@ -534,39 +533,13 @@ async function downloadAllDatasets() {
     });
 
     dialog.value = false;
+  } catch (error) {
+    bulkExportError.value =
+      `Export failed after ${bulkExportProgress.value} of ` +
+      `${collectionDatasets.value.length} datasets. ` +
+      (error instanceof Error ? error.message : "Unknown error.");
   } finally {
     bulkExporting.value = false;
-  }
-}
-
-async function loadCollectionDatasets() {
-  if (!configuration.value) return;
-
-  loadingDatasets.value = true;
-  collectionDatasets.value = [];
-
-  try {
-    const datasetViews = await store.api.findDatasetViews({
-      configurationId: configuration.value.id,
-    });
-
-    const datasetIds = datasetViews.map((dv: IDatasetView) => dv.datasetId);
-
-    if (datasetIds.length > 0) {
-      await store.girderResources.batchFetchResources({
-        folderIds: datasetIds,
-      });
-
-      collectionDatasets.value = datasetViews.map((dv: IDatasetView) => {
-        const folder = store.girderResources.watchFolder(dv.datasetId);
-        return {
-          datasetId: dv.datasetId,
-          datasetName: folder?.name || dv.datasetId,
-        };
-      });
-    }
-  } finally {
-    loadingDatasets.value = false;
   }
 }
 
@@ -597,22 +570,6 @@ watch(
 
 watch([fileFormat, dataset], () => resetFilename());
 
-watch(dialog, (open) => {
-  if (open && exportScope.value === "all") {
-    loadCollectionDatasets();
-  }
-});
-
-watch(exportScope, (scope) => {
-  if (
-    scope === "all" &&
-    dialog.value &&
-    collectionDatasets.value.length === 0
-  ) {
-    loadCollectionDatasets();
-  }
-});
-
 onMounted(() => resetFilename());
 
 defineExpose({
@@ -638,6 +595,7 @@ defineExpose({
   download,
   exportScope,
   bulkExporting,
+  bulkExportError,
   collectionDatasets,
   downloadAllDatasets,
   canDownload,
