@@ -5,8 +5,17 @@ import { shallowMount } from "@vue/test-utils";
 vi.mock("@/store", () => ({
   default: {
     dataset: { id: "ds1", name: "TestDataset" },
+    configuration: { id: "cfg1" },
     exportAPI: {
       exportCsv: vi.fn(),
+      exportBulkCsv: vi.fn().mockResolvedValue(undefined),
+    },
+    api: {
+      findDatasetViews: vi.fn().mockResolvedValue([]),
+    },
+    girderResources: {
+      batchFetchResources: vi.fn().mockResolvedValue(undefined),
+      watchFolder: vi.fn().mockReturnValue({ name: "Folder" }),
     },
   },
 }));
@@ -110,7 +119,18 @@ describe("AnnotationCSVDialog", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     (store as any).dataset = { id: "ds1", name: "TestDataset" };
-    (store as any).exportAPI = { exportCsv: vi.fn() };
+    (store as any).configuration = { id: "cfg1" };
+    (store as any).exportAPI = {
+      exportCsv: vi.fn(),
+      exportBulkCsv: vi.fn().mockResolvedValue(undefined),
+    };
+    (store as any).api = {
+      findDatasetViews: vi.fn().mockResolvedValue([]),
+    };
+    (store as any).girderResources = {
+      batchFetchResources: vi.fn().mockResolvedValue(undefined),
+      watchFolder: vi.fn().mockReturnValue({ name: "Folder" }),
+    };
     (propertyStore as any).displayedPropertyPaths = [["propA", "sub1"]];
     (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
       const map: Record<string, string> = {
@@ -121,7 +141,6 @@ describe("AnnotationCSVDialog", () => {
       return map[path.join(".")] || null;
     });
     (propertyStore as any).propertyValues = {};
-    (store.exportAPI.exportCsv as any).mockReset();
   });
 
   it("isTooLargeForPreview is false for small annotation sets", () => {
@@ -491,5 +510,192 @@ describe("AnnotationCSVDialog", () => {
     // Text should have been regenerated (content changes due to delimiter)
     expect(typeof vm.text).toBe("string");
     expect(vm.text).toBeTruthy();
+  });
+
+  // Bulk CSV export tests
+  it("exportScope defaults to current", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.exportScope).toBe("current");
+  });
+
+  it("canDownload is true for current scope with dataset", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "current";
+    expect(vm.canDownload).toBe(true);
+  });
+
+  it("canDownload is false for current scope without dataset", () => {
+    (store as any).dataset = null;
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "current";
+    expect(vm.canDownload).toBe(false);
+  });
+
+  it("canDownload is false for all scope with no datasets loaded", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [];
+    expect(vm.canDownload).toBe(false);
+  });
+
+  it("canDownload is true for all scope with datasets loaded", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [{ datasetId: "ds1", datasetName: "DS1" }];
+    expect(vm.canDownload).toBe(true);
+  });
+
+  it("canDownload is false while bulk exporting", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [{ datasetId: "ds1", datasetName: "DS1" }];
+    vm.bulkExporting = true;
+    expect(vm.canDownload).toBe(false);
+  });
+
+  it("downloadButtonText shows Download for current scope", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "current";
+    expect(vm.downloadButtonText).toBe("Download");
+  });
+
+  it("downloadButtonText shows dataset count for all scope", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [
+      { datasetId: "ds1", datasetName: "DS1" },
+      { datasetId: "ds2", datasetName: "DS2" },
+    ];
+    expect(vm.downloadButtonText).toBe("Download 2 datasets");
+  });
+
+  it("downloadButtonText handles singular dataset", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [{ datasetId: "ds1", datasetName: "DS1" }];
+    expect(vm.downloadButtonText).toBe("Download 1 dataset");
+  });
+
+  it("download calls exportCsv for current scope", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "current";
+    vm.filename = "test.csv";
+    vm.propertyExportMode = "all";
+    await vm.download();
+    expect(store.exportAPI.exportCsv).toHaveBeenCalledTimes(1);
+    expect(store.exportAPI.exportBulkCsv).not.toHaveBeenCalled();
+  });
+
+  it("download calls exportBulkCsv for all scope", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [
+      { datasetId: "ds1", datasetName: "DS1" },
+      { datasetId: "ds2", datasetName: "DS2" },
+    ];
+    vm.propertyExportMode = "all";
+    vm.undefinedHandling = "na";
+    vm.fileFormat = "csv";
+    await vm.downloadAllDatasets();
+    expect(store.exportAPI.exportBulkCsv).toHaveBeenCalledTimes(1);
+    expect(store.exportAPI.exportBulkCsv).toHaveBeenCalledWith(
+      expect.objectContaining({
+        datasets: [
+          { datasetId: "ds1", datasetName: "DS1" },
+          { datasetId: "ds2", datasetName: "DS2" },
+        ],
+        undefinedValue: "NA",
+        delimiter: ",",
+      }),
+    );
+  });
+
+  it("downloadAllDatasets does nothing with empty datasets", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [];
+    await vm.downloadAllDatasets();
+    expect(store.exportAPI.exportBulkCsv).not.toHaveBeenCalled();
+  });
+
+  it("downloadAllDatasets passes tab delimiter for tsv format", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [{ datasetId: "ds1", datasetName: "DS1" }];
+    vm.fileFormat = "tsv";
+    vm.propertyExportMode = "all";
+    await vm.downloadAllDatasets();
+    expect(store.exportAPI.exportBulkCsv).toHaveBeenCalledWith(
+      expect.objectContaining({ delimiter: "\t" }),
+    );
+  });
+
+  it("downloadAllDatasets sets bulkExporting during export", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [{ datasetId: "ds1", datasetName: "DS1" }];
+    vm.propertyExportMode = "all";
+
+    expect(vm.bulkExporting).toBe(false);
+
+    // Make exportBulkCsv resolve after we check state
+    let resolveExport: () => void;
+    (store.exportAPI.exportBulkCsv as any).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveExport = resolve;
+        }),
+    );
+
+    const downloadPromise = vm.downloadAllDatasets();
+    await nextTick();
+    expect(vm.bulkExporting).toBe(true);
+
+    resolveExport!();
+    await downloadPromise;
+    expect(vm.bulkExporting).toBe(false);
+  });
+
+  it("watcher on exportScope loads collection datasets when switching to all", async () => {
+    (store.api.findDatasetViews as any).mockResolvedValue([
+      { datasetId: "ds1" },
+      { datasetId: "ds2" },
+    ]);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.dialog = true;
+    vm.exportScope = "all";
+    await nextTick();
+    await nextTick();
+    await nextTick();
+    expect(store.api.findDatasetViews).toHaveBeenCalledWith({
+      configurationId: "cfg1",
+    });
+  });
+
+  it("downloadAllDatasets passes included property paths", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [{ datasetId: "ds1", datasetName: "DS1" }];
+    vm.propertyExportMode = "listed";
+    await vm.downloadAllDatasets();
+    const callArgs = (store.exportAPI.exportBulkCsv as any).mock.calls[0][0];
+    // In "listed" mode, only propA.sub1 is in displayedPropertyPaths
+    expect(callArgs.propertyPaths).toEqual([["propA", "sub1"]]);
   });
 });
