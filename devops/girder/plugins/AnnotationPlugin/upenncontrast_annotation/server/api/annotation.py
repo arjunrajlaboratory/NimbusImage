@@ -28,7 +28,10 @@ def getDatasetIdFromAnnotationListInBody(self: "Annotation", *args, **kwargs):
     if (not isinstance(annotations, list)
             or len(annotations) <= 0):
         return None
-    return annotations[0].get("datasetId")
+    first = annotations[0]
+    if not isinstance(first, dict):
+        return None
+    return first.get("datasetId")
 
 
 def getDatasetIdFromLoadedAnnotation(self: "Annotation", *args, **kwargs):
