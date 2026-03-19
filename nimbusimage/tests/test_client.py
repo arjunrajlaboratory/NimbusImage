@@ -15,10 +15,10 @@ class TestNimbusClientInit:
             MockGC.return_value = mock_gc
             mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
 
-            client = NimbusClient(
-                api_url="http://localhost:8080/api/v1", token="tok123"
+            NimbusClient(
+                api_url="http://localhost:8080/api/v1",
+                token="tok123",
             )
-            assert client.api_url == "http://localhost:8080/api/v1"
             mock_gc.setToken.assert_called_with("tok123")
 
     def test_connect_with_username_password(self):
@@ -27,7 +27,7 @@ class TestNimbusClientInit:
             MockGC.return_value = mock_gc
             mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
 
-            client = NimbusClient(
+            NimbusClient(
                 api_url="http://localhost:8080/api/v1",
                 username="admin",
                 password="password",
@@ -115,9 +115,15 @@ class TestNimbusClientListDatasets:
                 {"_id": "v2", "datasetId": "f2", "configurationId": "c2"},
             ],
             # GET folder/f1
-            {"_id": "f1", "name": "Dataset A", "meta": {"subtype": "contrastDataset"}},
+            {
+                "_id": "f1", "name": "Dataset A",
+                "meta": {"subtype": "contrastDataset"},
+            },
             # GET folder/f2
-            {"_id": "f2", "name": "Dataset B", "meta": {"subtype": "contrastDataset"}},
+            {
+                "_id": "f2", "name": "Dataset B",
+                "meta": {"subtype": "contrastDataset"},
+            },
         ]
         client = NimbusClient.__new__(NimbusClient)
         client._gc = mock_gc

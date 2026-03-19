@@ -1,6 +1,5 @@
 """Tests for Project class."""
 
-import pytest
 from nimbusimage.projects import Project
 
 

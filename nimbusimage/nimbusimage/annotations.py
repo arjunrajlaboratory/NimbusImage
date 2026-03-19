@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from nimbusimage.jobs import Job
 from nimbusimage.models import Annotation, Location
@@ -177,7 +177,8 @@ class AnnotationAccessor:
         ``--parameters`` and parses them with ``WorkerClient``.
 
         Args:
-            image: Docker image name (e.g., ``'annotations/random_squares:latest'``).
+            image: Docker image name
+                (e.g., ``'annotations/random_squares:latest'``).
             channel: Channel index for the worker to process.
             tags: Tags to assign to created annotations.
             location: Location (XY/Z/Time) for single-tile processing.

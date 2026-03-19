@@ -1,7 +1,7 @@
 """Integration tests for collection accessor and image compositing.
 
 These tests verify that:
-1. CollectionAccessor correctly fetches collections via /upenn_collection (not /item)
+1. CollectionAccessor fetches collections via /upenn_collection
 2. Layer settings have the expected structure (hex colors, percentile contrast)
 3. get_composite works end-to-end with real layer settings
 """

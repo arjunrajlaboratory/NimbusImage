@@ -1,9 +1,5 @@
 """Tests for AnnotationAccessor."""
 
-import json
-
-import pytest
-
 from nimbusimage.annotations import AnnotationAccessor
 from nimbusimage.models import Annotation, Location
 
@@ -81,7 +77,9 @@ class TestAnnotationCreate:
         call_url = mock_gc.post.call_args[0][0]
         assert "multiple" in call_url
 
-    def test_create_many_with_connect_to(self, mock_gc, sample_annotation_dict):
+    def test_create_many_with_connect_to(
+        self, mock_gc, sample_annotation_dict,
+    ):
         # First call: create annotations
         mock_gc.post.side_effect = [
             [sample_annotation_dict],  # create multiple
@@ -114,7 +112,10 @@ class TestAnnotationUpdate:
         mock_gc.put.return_value = []
         accessor = AnnotationAccessor(mock_gc, "ds_001")
 
-        accessor.update_many([("id1", {"tags": ["a"]}), ("id2", {"tags": ["b"]})])
+        accessor.update_many([
+            ("id1", {"tags": ["a"]}),
+            ("id2", {"tags": ["b"]}),
+        ])
         call_url = mock_gc.put.call_args[0][0]
         assert "multiple" in call_url
 

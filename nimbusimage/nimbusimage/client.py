@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from nimbusimage._girder import create_client
 from nimbusimage.collections import Collection
@@ -80,18 +79,27 @@ class NimbusClient:
             Dataset object (lazy — no HTTP call until data is accessed).
         """
         if dataset_id is not None:
-            return Dataset(self._gc, dataset_id, frontend_url=self._frontend_url)
+            return Dataset(
+                self._gc, dataset_id,
+                frontend_url=self._frontend_url,
+            )
         if name is not None:
             folders = self._gc.get(
                 "resource/search",
-                parameters={"q": name, "mode": "prefix", "types": '["folder"]'},
+                parameters={
+                    "q": name, "mode": "prefix",
+                    "types": '["folder"]',
+                },
             )
             # Handle both list response and dict-with-folder-key response
             if isinstance(folders, dict):
                 folders = folders.get("folder", [])
             for f in folders:
                 if f.get("name") == name:
-                    return Dataset(self._gc, f["_id"], frontend_url=self._frontend_url)
+                    return Dataset(
+                        self._gc, f["_id"],
+                        frontend_url=self._frontend_url,
+                    )
             raise ValueError(f"Dataset with name '{name}' not found")
         raise ValueError("Provide either dataset_id or name=")
 
@@ -141,7 +149,9 @@ class NimbusClient:
 
     # --- Collections (aka Configurations) ---
 
-    def list_collections(self, folder_id: str | None = None) -> list[Collection]:
+    def list_collections(
+        self, folder_id: str | None = None,
+    ) -> list[Collection]:
         """List collections (configurations).
 
         In NimbusImage, "collections" and "configurations" are the same
