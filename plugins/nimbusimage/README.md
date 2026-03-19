@@ -4,20 +4,20 @@ Teach Claude Code how to work with NimbusImage scientific imaging datasets via t
 
 ## Installation
 
-**Option A — From this repo (recommended during development):**
+**Option A — Marketplace install (recommended):**
 
 ```bash
-claude --plugin-dir /path/to/UPennContrast/skills/nimbusimage
-```
-
-**Option B — Marketplace install (once published):**
-
-```bash
-# Add the marketplace (one-time)
+# Add the NimbusImage marketplace (one-time)
 claude plugin marketplace add arjunrajlaboratory/NimbusImage
 
-# Install the plugin
+# Install the nimbusimage plugin
 claude plugin install nimbusimage@arjunrajlaboratory/NimbusImage
+```
+
+**Option B — For this session only (development):**
+
+```bash
+claude --plugin-dir /path/to/NimbusImage/plugins/nimbusimage
 ```
 
 ## Skills

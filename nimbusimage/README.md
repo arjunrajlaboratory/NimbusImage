@@ -118,19 +118,29 @@ NimbusImage includes skills for [Claude Code](https://docs.anthropic.com/en/docs
 
 ### Install the skills
 
-**Option A — For this session only:**
+**Option A — Marketplace install (recommended):**
 
 ```bash
-claude --plugin-dir /path/to/UPennContrast/skills/nimbusimage
+# Add the NimbusImage marketplace (one-time)
+claude plugin marketplace add arjunrajlaboratory/NimbusImage
+
+# Install the nimbusimage plugin
+claude plugin install nimbusimage@arjunrajlaboratory/NimbusImage
 ```
 
-**Option B — Permanent (project-scoped):**
+**Option B — For this session only:**
+
+```bash
+claude --plugin-dir /path/to/NimbusImage/plugins/nimbusimage
+```
+
+**Option C — Permanent (project-scoped):**
 
 Add to your project's `.claude/settings.local.json`:
 
 ```json
 {
-  "plugins": ["/path/to/UPennContrast/skills/nimbusimage"]
+  "plugins": ["/path/to/NimbusImage/plugins/nimbusimage"]
 }
 ```
 
