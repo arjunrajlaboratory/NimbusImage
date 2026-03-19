@@ -78,7 +78,9 @@ class DatasetView(Resource):
         old_document = next(cursor, None)
         # If it exists, just update the document instead of creating a new one
         if old_document:
-            return self._datasetViewModel.update(old_document, new_document)
+            return self._datasetViewModel.updateDatasetView(
+                old_document, new_document
+            )
         return self._datasetViewModel.create(currentUser, new_document)
 
     @describeRoute(

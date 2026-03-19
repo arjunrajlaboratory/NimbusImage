@@ -4,6 +4,7 @@
     <v-data-table
       v-else-if="compatibleConfigurations.length > 0"
       show-select
+      return-object
       v-model="selectedConfigurations"
       :items="compatibleConfigurations"
       :headers="headers"
