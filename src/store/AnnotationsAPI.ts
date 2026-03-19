@@ -104,9 +104,10 @@ export default class AnnotationsAPI {
     return this.client.delete(`upenn_annotation/${id}`);
   }
 
-  async deleteMultipleAnnotations(annotationIds: string[]) {
+  async deleteMultipleAnnotations(annotationIds: string[], datasetId: string) {
     return this.client.delete("upenn_annotation/multiple", {
       data: annotationIds,
+      params: { datasetId },
     });
   }
 
@@ -178,9 +179,10 @@ export default class AnnotationsAPI {
       });
   }
 
-  deleteMultipleConnections(connectionIds: string[]) {
+  deleteMultipleConnections(connectionIds: string[], datasetId: string) {
     return this.client.delete("annotation_connection/multiple", {
       data: connectionIds,
+      params: { datasetId },
     });
   }
 

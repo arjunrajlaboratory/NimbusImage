@@ -48,6 +48,12 @@ class PropertyValues(Resource):
     def add(self, params):
         params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
             params)
+        Folder().load(
+            params["datasetId"],
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         return self._annotationPropertyValuesModel.appendValues(
             self.getBodyJson(),
             params["annotationId"],
@@ -69,6 +75,19 @@ class PropertyValues(Resource):
     def addMultiple(self, params):
         propertyValuesList = self._annotationPropertyValuesModel.\
             convertIdsToObjectIds(self.getBodyJson())
+        datasetIds = {
+            entry["datasetId"]
+            for entry in propertyValuesList
+            if "datasetId" in entry
+        }
+        user = self.getCurrentUser()
+        for datasetId in datasetIds:
+            Folder().load(
+                datasetId,
+                user=user,
+                level=AccessType.WRITE,
+                exc=True,
+            )
         return self._annotationPropertyValuesModel.appendMultipleValues(
             propertyValuesList
         )
@@ -89,11 +108,21 @@ class PropertyValues(Resource):
     @access.user
     def delete(self, params):
         if "propertyId" not in params:
-            raise RestException(code=400, message="Property ID was invalid")
+            raise RestException(
+                code=400, message="Property ID was invalid"
+            )
         if "datasetId" not in params:
-            raise RestException(code=400, message="Dataset ID was invalid")
+            raise RestException(
+                code=400, message="Dataset ID was invalid"
+            )
         params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
             params)
+        Folder().load(
+            params["datasetId"],
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         self._annotationPropertyValuesModel.delete(
             params["propertyId"], params["datasetId"]
         )
@@ -190,6 +219,12 @@ class PropertyValues(Resource):
     def histogram(self, params):
         params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
             params)
+        Folder().load(
+            params["datasetId"],
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
         if "buckets" in params:
             return self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"],

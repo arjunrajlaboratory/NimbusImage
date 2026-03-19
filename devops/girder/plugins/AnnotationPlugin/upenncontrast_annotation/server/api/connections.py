@@ -102,6 +102,12 @@ class AnnotationConnection(Resource):
     def create(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         connection = self._connectionModel.convertIdsToObjectIds(bodyJson)
+        Folder().load(
+            connection["datasetId"],
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         return self._connectionModel.create(connection)
 
     @access.user
@@ -117,6 +123,13 @@ class AnnotationConnection(Resource):
     def multipleCreate(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         connections = self._connectionModel.convertIdsToObjectIds(bodyJson)
+        if connections:
+            Folder().load(
+                connections[0]["datasetId"],
+                user=self.getCurrentUser(),
+                level=AccessType.WRITE,
+                exc=True,
+            )
         return self._connectionModel.createMultiple(connections)
 
     @describeRoute(
@@ -137,17 +150,27 @@ class AnnotationConnection(Resource):
 
     @access.user
     @describeRoute(
-        Description("Delete all annotation connections in the id list").param(
+        Description("Delete all annotation connections in the id list")
+        .param(
             "body",
             "A list of all annotation connection ids to delete.",
             paramType="body",
         )
+        .param("datasetId", "The dataset ID", required=True)
     )
     @memoizeBodyJson
     @recordable(
-        "Delete multiple connections", getDatasetIdFromConnectionIdListInBody
+        "Delete multiple connections",
+        getDatasetIdFromConnectionIdListInBody,
     )
     def deleteMultiple(self, params, *args, **kwargs):
+        datasetId = ObjectId(params["datasetId"])
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         bodyJson = kwargs["memoizedBodyJson"]
         stringIds = [stringId for stringId in bodyJson]
         return self._connectionModel.deleteMultiple(stringIds)
@@ -182,7 +205,7 @@ class AnnotationConnection(Resource):
         Description("Search for connections")
         .responseClass("annotation_connection")
         .param(
-            "datasetId", "Get all connections in this dataset", required=False
+            "datasetId", "Get all connections in this dataset", required=True
         )
         .param(
             "parentId",

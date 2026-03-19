@@ -87,6 +87,12 @@ class Annotation(Resource):
     def create(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         annotation = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        Folder().load(
+            annotation["datasetId"],
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         return self._annotationModel.create(annotation)
 
     @access.user
@@ -102,6 +108,13 @@ class Annotation(Resource):
     def createMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         annotations = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        if annotations:
+            Folder().load(
+                annotations[0]["datasetId"],
+                user=self.getCurrentUser(),
+                level=AccessType.WRITE,
+                exc=True,
+            )
         return self._annotationModel.createMultiple(annotations)
 
     @describeRoute(
@@ -122,15 +135,27 @@ class Annotation(Resource):
 
     @access.user
     @describeRoute(
-        Description("Delete all annotations in the id list").param(
-            "body", "A list of all annotation ids to delete.", paramType="body"
+        Description("Delete all annotations in the id list")
+        .param(
+            "body",
+            "A list of all annotation ids to delete.",
+            paramType="body",
         )
+        .param("datasetId", "The dataset ID", required=True)
     )
     @memoizeBodyJson
     @recordable(
-        "Delete multiple annotations", getDatasetIdFromAnnotationIdListInBody
+        "Delete multiple annotations",
+        getDatasetIdFromAnnotationIdListInBody,
     )
     def deleteMultiple(self, params, *args, **kwargs):
+        datasetId = ObjectId(params["datasetId"])
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         bodyJson = kwargs["memoizedBodyJson"]
         stringIds = [stringId for stringId in bodyJson]
         self._annotationModel.deleteMultiple(stringIds)
