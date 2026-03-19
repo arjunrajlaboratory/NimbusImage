@@ -169,7 +169,7 @@ class ImageAccessor:
                 np.float64
             )
 
-            # Apply contrast — layer uses percentile-based blackPoint/whitePoint
+            # Apply contrast — percentile-based blackPoint/whitePoint
             contrast = layer.get("contrast", {})
             bp = contrast.get("blackPoint", 0)
             wp = contrast.get("whitePoint", 100)

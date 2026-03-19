@@ -1,7 +1,5 @@
 """Tests for nimbusimage data models."""
 
-import pytest
-
 from nimbusimage.models import (
     Annotation,
     Connection,

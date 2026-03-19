@@ -129,7 +129,9 @@ class Property(BaseModel):
     shape: str = ""
     image: str = ""
     tags: dict = Field(default_factory=dict)
-    worker_interface: dict = Field(default_factory=dict, alias="workerInterface")
+    worker_interface: dict = Field(
+        default_factory=dict, alias="workerInterface",
+    )
 
     def to_dict(self) -> dict:
         """Serialize to the server's property format."""

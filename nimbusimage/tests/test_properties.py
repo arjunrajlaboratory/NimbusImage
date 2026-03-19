@@ -1,7 +1,5 @@
 """Tests for PropertyAccessor."""
 
-import pytest
-
 from nimbusimage.properties import PropertyAccessor
 from nimbusimage.models import Property
 
@@ -113,7 +111,7 @@ class TestPropertyValues:
         mock_gc.get.return_value = [{"min": 0, "max": 100, "count": 50}]
         accessor = PropertyAccessor(mock_gc, "ds_001")
 
-        result = accessor.histogram("prop_001.Area", buckets=128)
+        accessor.histogram("prop_001.Area", buckets=128)
         call_url = mock_gc.get.call_args[0][0]
         assert "propertyPath=prop_001.Area" in call_url
         assert "buckets=128" in call_url

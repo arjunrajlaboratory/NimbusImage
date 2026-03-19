@@ -18,7 +18,9 @@ class TestDatasetInfoUrl:
         assert url == "http://localhost:5173/#/dataset/ds_001"
 
     def test_custom_base(self):
-        url = dataset_info_url("ds_001", frontend_url="https://nimbus.example.com")
+        url = dataset_info_url(
+            "ds_001", frontend_url="https://nimbus.example.com",
+        )
         assert url == "https://nimbus.example.com/#/dataset/ds_001"
 
     def test_trailing_slash_stripped(self):
@@ -164,7 +166,9 @@ class TestClientFrontendUrl:
         with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
-            with patch.dict(os.environ, {"NI_FRONTEND_URL": "https://env.nimbus.io"}):
+            with patch.dict(
+                os.environ, {"NI_FRONTEND_URL": "https://env.nimbus.io"},
+            ):
                 from nimbusimage.client import NimbusClient
                 client = NimbusClient(
                     api_url="http://localhost:8080/api/v1", token="tok"

@@ -12,7 +12,9 @@ class TestDatasetMetadata:
         assert ds.id == "folder_123"
         mock_gc.get.assert_not_called()
 
-    def test_metadata_fetched_on_first_access(self, mock_gc, sample_tiles_metadata):
+    def test_metadata_fetched_on_first_access(
+        self, mock_gc, sample_tiles_metadata,
+    ):
         # Mock the folder endpoint (to find the large image item)
         mock_gc.get.side_effect = [
             # GET /folder/{id}
@@ -58,7 +60,9 @@ class TestDatasetMetadata:
         assert frames[0].channel == 0
         assert frames[0].channel_name == "DAPI"
 
-    def test_metadata_cached_after_first_access(self, mock_gc, sample_tiles_metadata):
+    def test_metadata_cached_after_first_access(
+        self, mock_gc, sample_tiles_metadata,
+    ):
         mock_gc.get.side_effect = [
             {"_id": "folder_123", "name": "Test", "meta": {}},
             [{"_id": "item_456", "largeImage": {"fileId": "f1"}}],

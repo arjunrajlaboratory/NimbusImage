@@ -1,11 +1,7 @@
 """Tests for WorkerContext."""
 
 import json
-import sys
-from io import StringIO
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from nimbusimage.worker import WorkerContext
 
@@ -175,7 +171,7 @@ class TestWorkerContextBatchLocations:
             )
             locs = list(ctx.batch_locations())
             assert len(locs) == 3
-            assert [l.xy for l in locs] == [0, 1, 2]
+            assert [loc.xy for loc in locs] == [0, 1, 2]
 
 
 class TestWorkerContextSetInterface:

@@ -1,6 +1,5 @@
 """Tests for HistoryAccessor."""
 
-import pytest
 from nimbusimage.history import HistoryAccessor
 
 

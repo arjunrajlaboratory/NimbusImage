@@ -1,6 +1,6 @@
 """Tests for Collection class and CollectionAccessor."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -15,10 +15,22 @@ def sample_collection_data():
         "folderId": "folder_001",
         "meta": {
             "layers": [
-                {"channel": 0, "color": "#FF0000", "visible": True,
-                 "contrast": {"blackPoint": 0, "whitePoint": 100, "mode": "percentile"}},
-                {"channel": 1, "color": "#00FF00", "visible": False,
-                 "contrast": {"blackPoint": 5, "whitePoint": 95, "mode": "percentile"}},
+                {
+                    "channel": 0, "color": "#FF0000",
+                    "visible": True, "contrast": {
+                        "blackPoint": 0,
+                        "whitePoint": 100,
+                        "mode": "percentile",
+                    },
+                },
+                {
+                    "channel": 1, "color": "#00FF00",
+                    "visible": False, "contrast": {
+                        "blackPoint": 5,
+                        "whitePoint": 95,
+                        "mode": "percentile",
+                    },
+                },
             ],
             "tools": [
                 {"name": "Spot tool", "type": "annotation"},
@@ -101,7 +113,9 @@ class TestClientCollections:
         assert isinstance(colls[0], Collection)
         assert colls[0].name == "My Dataset collection"
 
-    def test_list_collections_with_folder_id(self, mock_gc, sample_collection_data):
+    def test_list_collections_with_folder_id(
+        self, mock_gc, sample_collection_data,
+    ):
         mock_gc.get.return_value = [sample_collection_data]
 
         from nimbusimage.client import NimbusClient
@@ -178,8 +192,10 @@ class TestCollectionAccessorCollections:
         colls = accessor.list()
         assert len(colls) == 1
 
-    def test_layers_still_works_for_composite(self, mock_gc, sample_collection_data):
-        """Verify ds.collections.layers returns layer dicts (used by get_composite)."""
+    def test_layers_still_works_for_composite(
+        self, mock_gc, sample_collection_data,
+    ):
+        """Verify layers returns layer dicts."""
         mock_gc.get.side_effect = [
             [{"_id": "v1", "configurationId": "coll_001"}],
             sample_collection_data,
