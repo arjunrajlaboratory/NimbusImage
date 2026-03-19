@@ -26,6 +26,7 @@ class NimbusClient:
         self,
         api_url: str | None = None,
         token: str | None = None,
+        api_key: str | None = None,
         username: str | None = None,
         password: str | None = None,
         frontend_url: str = DEFAULT_FRONTEND_URL,
@@ -33,11 +34,12 @@ class NimbusClient:
         self._gc = create_client(
             api_url=api_url,
             token=token,
+            api_key=api_key,
             username=username,
             password=password,
         )
         self._api_url = api_url or os.environ.get(
-            "NI_API_URL", self._gc.getServerApiUrl()
+            "NI_API_URL", self._gc.urlBase
         )
         self._frontend_url = os.environ.get("NI_FRONTEND_URL", frontend_url)
 

@@ -20,6 +20,9 @@ worker = ["large-image"]
 dev = ["pytest", "pytest-mock"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
+[tool.setuptools.packages.find]
+include = ["nimbusimage*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

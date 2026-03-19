@@ -36,6 +36,7 @@ attach_geometry_methods()
 def connect(
     api_url: str | None = None,
     token: str | None = None,
+    api_key: str | None = None,
     username: str | None = None,
     password: str | None = None,
 ) -> NimbusClient:
@@ -44,6 +45,9 @@ def connect(
     Args:
         api_url: Girder API URL. Or set NI_API_URL env var.
         token: Auth token. Or set NI_TOKEN env var.
+        api_key: Girder API key. Or set NI_API_KEY env var.
+            API keys are persistent and don't expire (unlike
+            session tokens). Recommended for automation.
         username: Username for interactive auth.
         password: Password for interactive auth.
 
@@ -51,7 +55,7 @@ def connect(
         Authenticated NimbusClient.
     """
     return NimbusClient(
-        api_url=api_url, token=token,
+        api_url=api_url, token=token, api_key=api_key,
         username=username, password=password,
     )
 
