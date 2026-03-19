@@ -1,7 +1,5 @@
 """Tests for client-side filter helpers."""
 
-import pytest
-
 from nimbusimage.filters import (
     filter_by_tags,
     filter_by_location,

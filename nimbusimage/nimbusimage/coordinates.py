@@ -16,13 +16,8 @@ Convention in this package:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 from shapely.geometry import Point, Polygon
-
-if TYPE_CHECKING:
-    from nimbusimage.models import Annotation, Location
 
 
 def annotation_to_polygon(coordinates: list[dict]) -> Polygon | None:

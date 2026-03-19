@@ -76,10 +76,22 @@ def sample_tiles_metadata():
         "dtype": "uint16",
         "bandCount": 1,
         "frames": [
-            {"Frame": 0, "IndexC": 0, "IndexT": 0, "IndexZ": 0, "IndexXY": 0, "Channel": "DAPI"},
-            {"Frame": 1, "IndexC": 1, "IndexT": 0, "IndexZ": 0, "IndexXY": 0, "Channel": "GFP"},
-            {"Frame": 2, "IndexC": 0, "IndexT": 0, "IndexZ": 1, "IndexXY": 0, "Channel": "DAPI"},
-            {"Frame": 3, "IndexC": 1, "IndexT": 0, "IndexZ": 1, "IndexXY": 0, "Channel": "GFP"},
+            {
+                "Frame": 0, "IndexC": 0, "IndexT": 0,
+                "IndexZ": 0, "IndexXY": 0, "Channel": "DAPI",
+            },
+            {
+                "Frame": 1, "IndexC": 1, "IndexT": 0,
+                "IndexZ": 0, "IndexXY": 0, "Channel": "GFP",
+            },
+            {
+                "Frame": 2, "IndexC": 0, "IndexT": 0,
+                "IndexZ": 1, "IndexXY": 0, "Channel": "DAPI",
+            },
+            {
+                "Frame": 3, "IndexC": 1, "IndexT": 0,
+                "IndexZ": 1, "IndexXY": 0, "Channel": "GFP",
+            },
         ],
         "IndexRange": {"IndexC": 2, "IndexT": 1, "IndexZ": 2, "IndexXY": 1},
         "IndexStride": {"IndexC": 1, "IndexT": 4, "IndexZ": 2, "IndexXY": 1},

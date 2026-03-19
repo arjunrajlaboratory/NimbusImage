@@ -1,7 +1,5 @@
 """Tests for ConnectionAccessor."""
 
-import pytest
-
 from nimbusimage.connections import ConnectionAccessor
 from nimbusimage.models import Connection
 

@@ -6,8 +6,6 @@ import pytest
 
 from nimbusimage.jobs import (
     Job,
-    STATUS_INACTIVE,
-    STATUS_QUEUED,
     STATUS_RUNNING,
     STATUS_SUCCESS,
     STATUS_ERROR,
@@ -130,13 +128,13 @@ class TestAnnotationCompute:
         from nimbusimage.annotations import AnnotationAccessor
         accessor = AnnotationAccessor(mock_gc, "ds_001")
 
-        job = accessor.compute(
+        result = accessor.compute(
             image="myworker:latest",
             channel=0,
             tags=["nucleus"],
         )
-        assert isinstance(job, Job)
-        assert job.id == "job_123"
+        assert isinstance(result, Job)
+        assert result.id == "job_123"
 
         # Verify the POST body
         call_args = mock_gc.post.call_args
@@ -155,7 +153,7 @@ class TestAnnotationCompute:
         from nimbusimage.annotations import AnnotationAccessor
         accessor = AnnotationAccessor(mock_gc, "ds_001")
 
-        job = accessor.compute(
+        accessor.compute(
             image="myworker:latest",
             connect_to={"tags": ["cell"], "channel": 0},
         )
@@ -193,8 +191,10 @@ class TestAnnotationCompute:
 
         accessor.compute(image="myworker:latest")
         body = mock_gc.post.call_args[1]["json"]
-        required = ["assignment", "channel", "connectTo",
-                     "tags", "tile", "workerInterface"]
+        required = [
+            "assignment", "channel", "connectTo",
+            "tags", "tile", "workerInterface",
+        ]
         for key in required:
             assert key in body, f"Missing required key: {key}"
 
@@ -242,15 +242,18 @@ class TestPropertyCompute:
             worker_interface={"Channel": 0},
         )
 
-        job = accessor.compute(
+        accessor.compute(
             prop,
             worker_interface={"Channel": 1},
-            scales={"pixelSize": {"unit": "mm", "value": 0.000219}},
+            scales={
+                "pixelSize": {
+                    "unit": "mm", "value": 0.000219,
+                },
+            },
         )
         body = mock_gc.post.call_args[1]["json"]
         assert body["workerInterface"] == {"Channel": 1}
         assert body["scales"]["pixelSize"]["value"] == 0.000219
-
 
     def test_compute_no_id_raises(self, mock_gc):
         from nimbusimage.properties import PropertyAccessor

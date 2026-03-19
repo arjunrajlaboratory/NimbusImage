@@ -1,6 +1,5 @@
 """Tests for SharingAccessor."""
 
-import pytest
 from nimbusimage.sharing import SharingAccessor
 
 
