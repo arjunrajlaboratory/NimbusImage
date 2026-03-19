@@ -25,7 +25,13 @@ def getDatasetIdFromAnnotationInBody(self: "Annotation", *args, **kwargs):
 
 def getDatasetIdFromAnnotationListInBody(self: "Annotation", *args, **kwargs):
     annotations = kwargs["memoizedBodyJson"]
-    return None if len(annotations) <= 0 else annotations[0]["datasetId"]
+    if (not isinstance(annotations, list)
+            or len(annotations) <= 0):
+        return None
+    first = annotations[0]
+    if not isinstance(first, dict):
+        return None
+    return first.get("datasetId")
 
 
 def getDatasetIdFromLoadedAnnotation(self: "Annotation", *args, **kwargs):

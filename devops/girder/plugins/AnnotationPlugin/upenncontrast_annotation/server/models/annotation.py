@@ -220,11 +220,34 @@ class Annotation(ProxiedModel, AccessControlMixin):
         return self.load(id, user=user, level=AccessType.READ)
 
     def updateMultiple(self, annotationUpdates, user):
+        if not isinstance(annotationUpdates, list):
+            raise RestException(
+                "Request body must be a JSON array."
+            )
+        if len(annotationUpdates) == 0:
+            return []
 
-        annotationIdToUpdate = {
-            ObjectId(update["id"]): update | {
-                "datasetId": ObjectId(update["datasetId"])}
-            for update in annotationUpdates}
+        # Normalize: accept both "id" and "_id", validate each entry
+        annotationIdToUpdate = {}
+        for update in annotationUpdates:
+            if not isinstance(update, dict):
+                raise RestException(
+                    "Each annotation update must be a JSON object."
+                )
+            annId = update.get("id") or update.get("_id")
+            if not annId:
+                raise RestException(
+                    "Each annotation must have an 'id' or '_id'"
+                    " field."
+                )
+            try:
+                objId = ObjectId(annId)
+            except Exception:
+                raise RestException(
+                    "Invalid annotation id: %s" % annId
+                )
+            annotationIdToUpdate[objId] = update
+
         query = {
             "_id": {
                 "$in": list(annotationIdToUpdate.keys())
@@ -236,8 +259,14 @@ class Annotation(ProxiedModel, AccessControlMixin):
         updatedAnnotations = []
         for annotation in cursor:
             annotationId = annotation["_id"]
-            updateDoc = annotationIdToUpdate[annotationId]
-            updateDoc.pop("id")
+            updateDoc = dict(annotationIdToUpdate[annotationId])
+            updateDoc.pop("id", None)
+            updateDoc.pop("_id", None)
+            # Convert datasetId to ObjectId if provided
+            if "datasetId" in updateDoc:
+                updateDoc["datasetId"] = ObjectId(
+                    updateDoc["datasetId"]
+                )
             annotation.update(updateDoc)
             updatedAnnotations.append(annotation)
         return self.saveMany(updatedAnnotations)

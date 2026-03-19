@@ -1,4 +1,8 @@
+import json
+
 import pytest
+
+from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models import annotation
@@ -97,3 +101,139 @@ class TestAnnotation:
             match="Annotation dataset ID is invalid",
         ):
             Annotation().validate(sample)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestUpdateMultiple:
+    """Tests for PUT /upenn_annotation/multiple endpoint."""
+
+    def _createAnnotation(self, folder, admin):
+        sample = upenn_utilities.getSampleAnnotation(folder["_id"])
+        return Annotation().create(sample)
+
+    def testUpdateMultipleValid(self, admin, server):
+        """Happy path: update annotations via the API."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        a1 = self._createAnnotation(folder, admin)
+        a2 = self._createAnnotation(folder, admin)
+
+        updates = [
+            {
+                "id": str(a1["_id"]),
+                "datasetId": str(folder["_id"]),
+                "tags": ["updated"],
+            },
+            {
+                "id": str(a2["_id"]),
+                "datasetId": str(folder["_id"]),
+                "tags": ["updated2"],
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        loaded1 = Annotation().load(a1["_id"], user=admin)
+        assert "updated" in loaded1["tags"]
+        loaded2 = Annotation().load(a2["_id"], user=admin)
+        assert "updated2" in loaded2["tags"]
+
+    def testUpdateMultipleAcceptsUnderscoreId(self, admin, server):
+        """_id field should be accepted as an alias for id."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        a1 = self._createAnnotation(folder, admin)
+
+        updates = [
+            {
+                "_id": str(a1["_id"]),
+                "datasetId": str(folder["_id"]),
+                "tags": ["via_underscore"],
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        loaded = Annotation().load(a1["_id"], user=admin)
+        assert "via_underscore" in loaded["tags"]
+
+    def testUpdateMultipleEmptyList(self, admin, server):
+        """Empty list should succeed with no changes."""
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps([]),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+    def testUpdateMultipleNotAList(self, admin, server):
+        """Sending an object instead of an array should return 400."""
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps({"id": "abc"}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testUpdateMultipleStringBody(self, admin, server):
+        """Sending a bare string should return 400."""
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps("not a list"),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testUpdateMultipleNonDictEntry(self, admin, server):
+        """Array containing a non-object entry should return 400."""
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps(["not an object"]),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testUpdateMultipleMissingId(self, admin, server):
+        """Entry without id or _id should return 400."""
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps([{"tags": ["oops"]}]),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testUpdateMultipleInvalidId(self, admin, server):
+        """Entry with a non-ObjectId string should return 400."""
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps([{"id": "not-an-objectid"}]),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
