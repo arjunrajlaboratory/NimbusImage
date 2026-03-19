@@ -159,6 +159,7 @@
           class="accent-1"
           @click:row="loadSnapshot"
           show-select
+          return-object
           v-model="selectedSnapshotItems"
         >
           <!-- Search bar -->
