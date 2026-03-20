@@ -598,10 +598,7 @@ export class Annotations extends VuexModule {
       return;
     }
     sync.setSaving(true);
-    await this.annotationsAPI.deleteMultipleConnections(
-      connectionIds,
-      main.dataset!.id,
-    );
+    await this.annotationsAPI.deleteMultipleConnections(connectionIds);
     this.deleteMultipleConnections(connectionIds);
     sync.setSaving(false);
     return connectionIds;
@@ -824,10 +821,7 @@ export class Annotations extends VuexModule {
     });
 
     try {
-      await this.annotationsAPI.deleteMultipleAnnotations(
-        ids,
-        main.dataset!.id,
-      );
+      await this.annotationsAPI.deleteMultipleAnnotations(ids);
 
       const idsSet = new Set(ids);
       this.setAnnotations(
@@ -1151,7 +1145,6 @@ export class Annotations extends VuexModule {
         if (connectionIdsToDelete.length > 0) {
           await this.annotationsAPI.deleteMultipleConnections(
             connectionIdsToDelete,
-            main.dataset!.id,
           );
           this.deleteMultipleConnections(connectionIdsToDelete);
         }

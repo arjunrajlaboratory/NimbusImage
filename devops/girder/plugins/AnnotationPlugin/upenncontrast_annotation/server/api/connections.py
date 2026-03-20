@@ -123,12 +123,14 @@ class AnnotationConnection(Resource):
     def multipleCreate(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         connections = self._connectionModel.convertIdsToObjectIds(bodyJson)
-        if connections:
+        datasetIds = {
+            conn["datasetId"] for conn in connections
+            if "datasetId" in conn
+        }
+        user = self.getCurrentUser()
+        for dsId in datasetIds:
             Folder().load(
-                connections[0]["datasetId"],
-                user=self.getCurrentUser(),
-                level=AccessType.WRITE,
-                exc=True,
+                dsId, user=user, level=AccessType.WRITE, exc=True,
             )
         return self._connectionModel.createMultiple(connections)
 
@@ -156,7 +158,6 @@ class AnnotationConnection(Resource):
             "A list of all annotation connection ids to delete.",
             paramType="body",
         )
-        .param("datasetId", "The dataset ID", required=True)
     )
     @memoizeBodyJson
     @recordable(
@@ -164,15 +165,22 @@ class AnnotationConnection(Resource):
         getDatasetIdFromConnectionIdListInBody,
     )
     def deleteMultiple(self, params, *args, **kwargs):
-        datasetId = ObjectId(params["datasetId"])
-        Folder().load(
-            datasetId,
-            user=self.getCurrentUser(),
-            level=AccessType.WRITE,
-            exc=True,
-        )
         bodyJson = kwargs["memoizedBodyJson"]
         stringIds = [stringId for stringId in bodyJson]
+        objectIds = [ObjectId(sid) for sid in stringIds]
+        # Find all distinct datasets these connections belong to
+        datasetIds = [
+            doc["_id"] for doc in
+            self._connectionModel.collection.aggregate([
+                {"$match": {"_id": {"$in": objectIds}}},
+                {"$group": {"_id": "$datasetId"}},
+            ], hint="_id_")
+        ]
+        user = self.getCurrentUser()
+        for dsId in datasetIds:
+            Folder().load(
+                dsId, user=user, level=AccessType.WRITE, exc=True,
+            )
         return self._connectionModel.deleteMultiple(stringIds)
 
     @describeRoute(

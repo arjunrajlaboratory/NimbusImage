@@ -108,12 +108,14 @@ class Annotation(Resource):
     def createMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         annotations = self._annotationModel.convertIdsToObjectIds(bodyJson)
-        if annotations:
+        datasetIds = {
+            ann["datasetId"] for ann in annotations
+            if "datasetId" in ann
+        }
+        user = self.getCurrentUser()
+        for dsId in datasetIds:
             Folder().load(
-                annotations[0]["datasetId"],
-                user=self.getCurrentUser(),
-                level=AccessType.WRITE,
-                exc=True,
+                dsId, user=user, level=AccessType.WRITE, exc=True,
             )
         return self._annotationModel.createMultiple(annotations)
 
@@ -141,7 +143,6 @@ class Annotation(Resource):
             "A list of all annotation ids to delete.",
             paramType="body",
         )
-        .param("datasetId", "The dataset ID", required=True)
     )
     @memoizeBodyJson
     @recordable(
@@ -149,15 +150,22 @@ class Annotation(Resource):
         getDatasetIdFromAnnotationIdListInBody,
     )
     def deleteMultiple(self, params, *args, **kwargs):
-        datasetId = ObjectId(params["datasetId"])
-        Folder().load(
-            datasetId,
-            user=self.getCurrentUser(),
-            level=AccessType.WRITE,
-            exc=True,
-        )
         bodyJson = kwargs["memoizedBodyJson"]
         stringIds = [stringId for stringId in bodyJson]
+        objectIds = [ObjectId(sid) for sid in stringIds]
+        # Find all distinct datasets these annotations belong to
+        datasetIds = [
+            doc["_id"] for doc in
+            self._annotationModel.collection.aggregate([
+                {"$match": {"_id": {"$in": objectIds}}},
+                {"$group": {"_id": "$datasetId"}},
+            ], hint="_id_")
+        ]
+        user = self.getCurrentUser()
+        for dsId in datasetIds:
+            Folder().load(
+                dsId, user=user, level=AccessType.WRITE, exc=True,
+            )
         self._annotationModel.deleteMultiple(stringIds)
 
     @describeRoute(

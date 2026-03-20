@@ -93,7 +93,6 @@ class TestAnnotationAccessControl:
             user=user,
             body=json.dumps([str(ann["_id"])]),
             type="application/json",
-            params={"datasetId": str(folder["_id"])},
         )
         assertStatus(resp, 403)
 
@@ -113,7 +112,6 @@ class TestAnnotationAccessControl:
             user=admin,
             body=json.dumps([str(ann["_id"])]),
             type="application/json",
-            params={"datasetId": str(folder["_id"])},
         )
         assertStatusOk(resp)
 
@@ -200,7 +198,6 @@ class TestConnectionAccessControl:
             user=user,
             body=json.dumps([str(conn["_id"])]),
             type="application/json",
-            params={"datasetId": str(folder["_id"])},
         )
         assertStatus(resp, 403)
 

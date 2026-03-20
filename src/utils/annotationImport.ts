@@ -249,10 +249,7 @@ export async function importAnnotationsFromData(
     const finalCleanupPromises: Promise<any>[] = [];
     if (annotationIdsToRemove.length > 0) {
       finalCleanupPromises.push(
-        store.annotationsAPI.deleteMultipleAnnotations(
-          annotationIdsToRemove,
-          store.dataset!.id,
-        ),
+        store.annotationsAPI.deleteMultipleAnnotations(annotationIdsToRemove),
       );
     }
     if (propertyIdsToRemove.length > 0) {
