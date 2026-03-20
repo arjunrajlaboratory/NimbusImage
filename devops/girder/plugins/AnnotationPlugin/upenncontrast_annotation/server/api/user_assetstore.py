@@ -18,7 +18,7 @@ class UserAssetstore(Resource):
         self.route("GET", (), self.find)
         self.route("PUT", (":id", "move"), self.moveFolder)
 
-    @access.user
+    @access.admin
     @autoDescribeRoute(
         Description(("Get a list of available assetstores")).pagingParams(
             defaultSort="name"

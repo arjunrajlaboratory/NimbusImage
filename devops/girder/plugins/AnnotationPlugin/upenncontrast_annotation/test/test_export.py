@@ -83,7 +83,8 @@ def createConfiguration(user, dataset, propertyIds=None):
 
 def buildExportData(export, datasetId, configurationId=None,
                     includeAnnotations=True, includeConnections=True,
-                    includeProperties=True, includePropertyValues=True):
+                    includeProperties=True, includePropertyValues=True,
+                    user=None):
     """Helper to build export data dict like the endpoint does."""
     data = {}
 
@@ -99,7 +100,7 @@ def buildExportData(export, datasetId, configurationId=None,
 
     if includeProperties:
         data["annotationProperties"] = export._getProperties(
-            datasetId, configurationId
+            datasetId, configurationId, user
         )
 
     if includePropertyValues:
@@ -118,7 +119,7 @@ class TestExport:
         dataset, annotations, connections = createDatasetWithData(admin)
 
         export = Export()
-        result = buildExportData(export, dataset["_id"])
+        result = buildExportData(export, dataset["_id"], user=admin)
 
         # Verify structure
         assert "annotations" in result
@@ -164,7 +165,8 @@ class TestExport:
         # Export with configurationId
         export = Export()
         result = buildExportData(
-            export, dataset["_id"], configurationId=config["_id"]
+            export, dataset["_id"], configurationId=config["_id"],
+            user=admin
         )
 
         # Should have the property from configuration
@@ -178,7 +180,8 @@ class TestExport:
 
         export = Export()
         result = buildExportData(
-            export, dataset["_id"], includeAnnotations=False
+            export, dataset["_id"], includeAnnotations=False,
+            user=admin
         )
 
         # Should not have annotations key
@@ -192,7 +195,8 @@ class TestExport:
 
         export = Export()
         result = buildExportData(
-            export, dataset["_id"], includeConnections=False
+            export, dataset["_id"], includeConnections=False,
+            user=admin
         )
 
         # Should have annotations but not connections
@@ -205,7 +209,8 @@ class TestExport:
 
         export = Export()
         result = buildExportData(
-            export, dataset["_id"], includePropertyValues=False
+            export, dataset["_id"], includePropertyValues=False,
+            user=admin
         )
 
         # Should have annotations but not property values
@@ -219,7 +224,7 @@ class TestExport:
         )
 
         export = Export()
-        result = buildExportData(export, dataset["_id"])
+        result = buildExportData(export, dataset["_id"], user=admin)
 
         # Should have empty arrays/objects
         assert result["annotations"] == []
@@ -280,7 +285,7 @@ class TestExport:
         # Export WITHOUT configurationId - should find properties via
         # DatasetView
         export = Export()
-        result = buildExportData(export, dataset["_id"])
+        result = buildExportData(export, dataset["_id"], user=admin)
 
         # Should have found both properties via the DatasetView
         assert len(result["annotationProperties"]) == 2
@@ -347,7 +352,7 @@ class TestExport:
 
         # Export without configurationId
         export = Export()
-        result = buildExportData(export, dataset["_id"])
+        result = buildExportData(export, dataset["_id"], user=admin)
 
         # Should have all 3 unique properties (prop2 is in both configs,
         # but deduplicated)

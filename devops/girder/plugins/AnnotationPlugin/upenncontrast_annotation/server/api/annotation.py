@@ -87,6 +87,12 @@ class Annotation(Resource):
     def create(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         annotation = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        Folder().load(
+            annotation["datasetId"],
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         return self._annotationModel.create(annotation)
 
     @access.user
@@ -102,6 +108,15 @@ class Annotation(Resource):
     def createMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         annotations = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        datasetIds = {
+            ann["datasetId"] for ann in annotations
+            if "datasetId" in ann
+        }
+        user = self.getCurrentUser()
+        for dsId in datasetIds:
+            Folder().load(
+                dsId, user=user, level=AccessType.WRITE, exc=True,
+            )
         return self._annotationModel.createMultiple(annotations)
 
     @describeRoute(
@@ -122,17 +137,35 @@ class Annotation(Resource):
 
     @access.user
     @describeRoute(
-        Description("Delete all annotations in the id list").param(
-            "body", "A list of all annotation ids to delete.", paramType="body"
+        Description("Delete all annotations in the id list")
+        .param(
+            "body",
+            "A list of all annotation ids to delete.",
+            paramType="body",
         )
     )
     @memoizeBodyJson
     @recordable(
-        "Delete multiple annotations", getDatasetIdFromAnnotationIdListInBody
+        "Delete multiple annotations",
+        getDatasetIdFromAnnotationIdListInBody,
     )
     def deleteMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         stringIds = [stringId for stringId in bodyJson]
+        objectIds = [ObjectId(sid) for sid in stringIds]
+        # Find all distinct datasets these annotations belong to
+        datasetIds = [
+            doc["_id"] for doc in
+            self._annotationModel.collection.aggregate([
+                {"$match": {"_id": {"$in": objectIds}}},
+                {"$group": {"_id": "$datasetId"}},
+            ], hint="_id_")
+        ]
+        user = self.getCurrentUser()
+        for dsId in datasetIds:
+            Folder().load(
+                dsId, user=user, level=AccessType.WRITE, exc=True,
+            )
         self._annotationModel.deleteMultiple(stringIds)
 
     @describeRoute(
