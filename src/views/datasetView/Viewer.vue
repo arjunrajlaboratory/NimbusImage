@@ -30,9 +30,6 @@ const dataset = computed(() => store.dataset);
 const configuration = computed(() => store.configuration);
 
 function datasetChanged() {
-  annotationStore.fetchAnnotations();
-  propertiesStore.fetchPropertyValues();
-
   if (dataset.value && dataset.value.time.length <= 1) {
     store.setShowTimelapseMode(false);
   }
@@ -40,6 +37,17 @@ function datasetChanged() {
 
 function configurationChanged() {
   propertiesStore.fetchProperties();
+}
+
+// Fetch annotations whenever dataset or configuration changes, but only when
+// both are loaded. This avoids a race condition where the dataset watcher fires
+// before the configuration has finished loading, causing fetchAnnotations to
+// bail out early due to the missing configuration guard check.
+function fetchAnnotationData() {
+  if (dataset.value && configuration.value) {
+    annotationStore.fetchAnnotations();
+    propertiesStore.fetchPropertyValues();
+  }
 }
 
 function handleImageChanged() {
@@ -52,10 +60,12 @@ function handleResetComplete() {
 
 watch(dataset, datasetChanged);
 watch(configuration, configurationChanged);
+watch([dataset, configuration], fetchAnnotationData);
 
 onMounted(() => {
   datasetChanged();
   configurationChanged();
+  fetchAnnotationData();
 });
 
 defineExpose({
