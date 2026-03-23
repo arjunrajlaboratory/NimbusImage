@@ -10,6 +10,7 @@ from girder.constants import AccessType
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
+from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..models.annotation import Annotation as AnnotationModel
 from ..helpers.serialization import orJsonDefaults
@@ -112,11 +113,7 @@ class Annotation(Resource):
             ann["datasetId"] for ann in annotations
             if "datasetId" in ann
         }
-        user = self.getCurrentUser()
-        for dsId in datasetIds:
-            Folder().load(
-                dsId, user=user, level=AccessType.WRITE, exc=True,
-            )
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         return self._annotationModel.createMultiple(annotations)
 
     @describeRoute(
@@ -161,11 +158,7 @@ class Annotation(Resource):
                 {"$group": {"_id": "$datasetId"}},
             ], hint="_id_")
         ]
-        user = self.getCurrentUser()
-        for dsId in datasetIds:
-            Folder().load(
-                dsId, user=user, level=AccessType.WRITE, exc=True,
-            )
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         self._annotationModel.deleteMultiple(stringIds)
 
     @describeRoute(

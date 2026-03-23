@@ -7,6 +7,7 @@ from girder.constants import AccessType
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
+from ..helpers.access_helpers import requireDatasetsAccess
 from ..models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
 )
@@ -80,14 +81,7 @@ class PropertyValues(Resource):
             for entry in propertyValuesList
             if "datasetId" in entry
         }
-        user = self.getCurrentUser()
-        for datasetId in datasetIds:
-            Folder().load(
-                datasetId,
-                user=user,
-                level=AccessType.WRITE,
-                exc=True,
-            )
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         return self._annotationPropertyValuesModel.appendMultipleValues(
             propertyValuesList
         )

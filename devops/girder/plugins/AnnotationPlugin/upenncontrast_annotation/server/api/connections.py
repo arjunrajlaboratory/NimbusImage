@@ -5,6 +5,7 @@ from girder.constants import AccessType
 from girder.exceptions import AccessException, RestException
 from girder.models.folder import Folder
 
+from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
@@ -127,11 +128,7 @@ class AnnotationConnection(Resource):
             conn["datasetId"] for conn in connections
             if "datasetId" in conn
         }
-        user = self.getCurrentUser()
-        for dsId in datasetIds:
-            Folder().load(
-                dsId, user=user, level=AccessType.WRITE, exc=True,
-            )
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         return self._connectionModel.createMultiple(connections)
 
     @describeRoute(
@@ -176,11 +173,7 @@ class AnnotationConnection(Resource):
                 {"$group": {"_id": "$datasetId"}},
             ], hint="_id_")
         ]
-        user = self.getCurrentUser()
-        for dsId in datasetIds:
-            Folder().load(
-                dsId, user=user, level=AccessType.WRITE, exc=True,
-            )
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         return self._connectionModel.deleteMultiple(stringIds)
 
     @describeRoute(
