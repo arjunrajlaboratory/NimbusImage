@@ -5,6 +5,7 @@ from girder.constants import AccessType
 from girder.exceptions import AccessException, RestException
 from girder.models.folder import Folder
 
+from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
@@ -102,6 +103,12 @@ class AnnotationConnection(Resource):
     def create(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         connection = self._connectionModel.convertIdsToObjectIds(bodyJson)
+        Folder().load(
+            connection["datasetId"],
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         return self._connectionModel.create(connection)
 
     @access.user
@@ -117,6 +124,11 @@ class AnnotationConnection(Resource):
     def multipleCreate(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         connections = self._connectionModel.convertIdsToObjectIds(bodyJson)
+        datasetIds = {
+            conn["datasetId"] for conn in connections
+            if "datasetId" in conn
+        }
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         return self._connectionModel.createMultiple(connections)
 
     @describeRoute(
@@ -137,7 +149,8 @@ class AnnotationConnection(Resource):
 
     @access.user
     @describeRoute(
-        Description("Delete all annotation connections in the id list").param(
+        Description("Delete all annotation connections in the id list")
+        .param(
             "body",
             "A list of all annotation connection ids to delete.",
             paramType="body",
@@ -145,11 +158,22 @@ class AnnotationConnection(Resource):
     )
     @memoizeBodyJson
     @recordable(
-        "Delete multiple connections", getDatasetIdFromConnectionIdListInBody
+        "Delete multiple connections",
+        getDatasetIdFromConnectionIdListInBody,
     )
     def deleteMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         stringIds = [stringId for stringId in bodyJson]
+        objectIds = [ObjectId(sid) for sid in stringIds]
+        # Find all distinct datasets these connections belong to
+        datasetIds = [
+            doc["_id"] for doc in
+            self._connectionModel.collection.aggregate([
+                {"$match": {"_id": {"$in": objectIds}}},
+                {"$group": {"_id": "$datasetId"}},
+            ], hint="_id_")
+        ]
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         return self._connectionModel.deleteMultiple(stringIds)
 
     @describeRoute(
@@ -182,7 +206,7 @@ class AnnotationConnection(Resource):
         Description("Search for connections")
         .responseClass("annotation_connection")
         .param(
-            "datasetId", "Get all connections in this dataset", required=False
+            "datasetId", "Get all connections in this dataset", required=True
         )
         .param(
             "parentId",
