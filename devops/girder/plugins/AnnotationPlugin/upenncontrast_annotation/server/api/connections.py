@@ -196,10 +196,10 @@ class AnnotationConnection(Resource):
     )
     @memoizeBodyJson
     @recordable("Update a connection", getDatasetIdFromLoadedConnection)
-    def update(self, connection, params, *args, **kwargs):
+    def update(self, annotation_connection, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        connection.update(bodyJson)
-        self._connectionModel.save(connection)
+        annotation_connection.update(bodyJson)
+        self._connectionModel.save(annotation_connection)
 
     @access.public
     @autoDescribeRoute(
