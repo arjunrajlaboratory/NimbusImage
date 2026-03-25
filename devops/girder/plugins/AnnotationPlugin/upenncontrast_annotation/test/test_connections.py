@@ -1,5 +1,8 @@
+import json
 import pytest
 import math
+
+from pytest_girder.assertions import assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.connections import (
@@ -486,3 +489,117 @@ class TestConnectToNearest:
             minDistanceToPoint, minDistanceToLine, minDistanceToBlob
         )
         assert closest == closestPoint
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestConnectionEndpoints:
+    """REST API endpoint tests for annotation connections."""
+
+    def testCreateEndpoint(self, admin, server):
+        """Test POST /annotation_connection creates a connection."""
+        (parent, child, dataset) = createTwoAnnotations(admin)
+        connection = upenn_utilities.getSampleConnection(
+            str(parent["_id"]),
+            str(child["_id"]),
+            str(dataset["_id"]),
+        )
+        resp = server.request(
+            path="/annotation_connection",
+            method="POST",
+            user=admin,
+            body=json.dumps(connection),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        assert "_id" in resp.json
+        assert resp.json["label"] == connection["label"]
+
+    def testGetEndpoint(self, admin, server):
+        """Test GET /annotation_connection/:id returns a connection."""
+        (parent, child, dataset) = createTwoAnnotations(admin)
+        connection = upenn_utilities.getSampleConnection(
+            parent["_id"], child["_id"], dataset["_id"]
+        )
+        created = AnnotationConnection().create(connection)
+
+        resp = server.request(
+            path=f"/annotation_connection/{created['_id']}",
+            method="GET",
+            user=admin,
+        )
+        assertStatusOk(resp)
+        assert resp.json["_id"] == str(created["_id"])
+        assert resp.json["label"] == connection["label"]
+
+    def testUpdateEndpoint(self, admin, server):
+        """Test PUT /annotation_connection/:id updates a connection.
+
+        Regression test for issue #1087: the update endpoint returned
+        500 due to a parameter naming mismatch with @loadmodel.
+        """
+        (parent, child, dataset) = createTwoAnnotations(admin)
+        connection = upenn_utilities.getSampleConnection(
+            parent["_id"], child["_id"], dataset["_id"]
+        )
+        created = AnnotationConnection().create(connection)
+        original_label = created["label"]
+
+        updated_data = {
+            "label": "Updated Label",
+            "tags": ["updated"],
+        }
+        resp = server.request(
+            path=f"/annotation_connection/{created['_id']}",
+            method="PUT",
+            user=admin,
+            body=json.dumps(updated_data),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        # Verify the update was persisted
+        loaded = AnnotationConnection().load(
+            created["_id"], user=admin
+        )
+        assert loaded["label"] == "Updated Label"
+        assert loaded["tags"] == ["updated"]
+        assert loaded["label"] != original_label
+
+    def testDeleteEndpoint(self, admin, server):
+        """Test DELETE /annotation_connection/:id removes a connection."""
+        (parent, child, dataset) = createTwoAnnotations(admin)
+        connection = upenn_utilities.getSampleConnection(
+            parent["_id"], child["_id"], dataset["_id"]
+        )
+        created = AnnotationConnection().create(connection)
+
+        resp = server.request(
+            path=f"/annotation_connection/{created['_id']}",
+            method="DELETE",
+            user=admin,
+        )
+        assertStatusOk(resp)
+
+        loaded = AnnotationConnection().load(
+            created["_id"], user=admin
+        )
+        assert loaded is None
+
+    def testFindEndpoint(self, admin, server):
+        """Test GET /annotation_connection returns connections."""
+        (parent, child, dataset) = createTwoAnnotations(admin)
+        for _ in range(3):
+            connection = upenn_utilities.getSampleConnection(
+                parent["_id"], child["_id"], dataset["_id"]
+            )
+            AnnotationConnection().create(connection)
+
+        resp = server.request(
+            path="/annotation_connection",
+            method="GET",
+            user=admin,
+            params={"datasetId": str(dataset["_id"])},
+        )
+        assertStatusOk(resp)
+        assert len(resp.json) == 3

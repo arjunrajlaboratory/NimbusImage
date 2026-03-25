@@ -1,7 +1,9 @@
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
+from girder.constants import AccessType
 from girder.exceptions import AccessException, RestException
+from girder.models.folder import Folder
 from ..models.history import History as HistoryModel
 from bson.objectid import ObjectId
 
@@ -38,6 +40,9 @@ class History(Resource):
         if "datasetId" not in params:
             raise RestException(code=400, message="Dataset ID is missing")
         datasetId = ObjectId(params["datasetId"])
+        Folder().load(
+            datasetId, user=user, level=AccessType.READ, exc=True
+        )
         return self._historyModel.getLastEntries(user, datasetId)
 
     @access.user
@@ -57,6 +62,9 @@ class History(Resource):
         if "datasetId" not in params:
             raise RestException(code=400, message="Dataset ID is missing")
         datasetId = ObjectId(params["datasetId"])
+        Folder().load(
+            datasetId, user=user, level=AccessType.WRITE, exc=True
+        )
         return self._historyModel.undo(user, datasetId)
 
     @access.user
@@ -74,4 +82,7 @@ class History(Resource):
         if "datasetId" not in params:
             raise RestException(code=400, message="Dataset ID is missing")
         datasetId = ObjectId(params["datasetId"])
+        Folder().load(
+            datasetId, user=user, level=AccessType.WRITE, exc=True
+        )
         self._historyModel.redo(user, datasetId)

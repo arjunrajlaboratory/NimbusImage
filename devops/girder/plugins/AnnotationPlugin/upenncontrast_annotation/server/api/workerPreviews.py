@@ -22,7 +22,7 @@ class WorkerPreviews(Resource):
             "image", "The docker image name for the worker."
         )
     )
-    @access.user
+    @access.admin
     def clearImagePreview(self, params):
         if "image" not in params:
             raise RestException(code=400, message="Missing 'image' parameter")
@@ -39,7 +39,7 @@ class WorkerPreviews(Resource):
         .errorResponse("Invalid JSON passed in request body.")
         .errorResponse("Validation Error: JSON doesn't follow schema.")
     )
-    @access.user
+    @access.admin
     def update(self, params):
         if "image" not in params:
             raise RestException(code=400, message="Missing 'image' parameter")

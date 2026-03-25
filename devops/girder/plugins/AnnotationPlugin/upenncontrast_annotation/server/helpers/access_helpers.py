@@ -1,6 +1,34 @@
 """Shared helpers for access control endpoints."""
 
+from girder.constants import AccessType
+from girder.exceptions import AccessException
+from girder.models.folder import Folder
 from girder.models.user import User
+
+
+def requireDatasetsAccess(datasetIds, user, level=AccessType.WRITE):
+    """Load all datasets in one query and check access on each.
+
+    :param datasetIds: Iterable of dataset ObjectIds.
+    :param user: The current user document.
+    :param level: The required AccessType level.
+    :raises AccessException: If user lacks access to any dataset.
+    """
+    datasetIds = list(set(datasetIds))
+    if not datasetIds:
+        return
+    folderModel = Folder()
+    datasets = list(folderModel.find(
+        {'_id': {'$in': datasetIds}}
+    ))
+    if len(datasets) != len(datasetIds):
+        found = {d['_id'] for d in datasets}
+        missing = [d for d in datasetIds if d not in found]
+        raise AccessException(
+            'Dataset(s) not found: %s' % missing
+        )
+    for dataset in datasets:
+        folderModel.requireAccess(dataset, user, level)
 
 
 def fetchUserEmails(userIds):

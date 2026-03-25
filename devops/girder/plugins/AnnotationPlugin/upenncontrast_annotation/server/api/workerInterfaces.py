@@ -40,7 +40,7 @@ class WorkerInterfaces(Resource):
             "body", "A JSON object describing the interface.", paramType="body"
         )
     )
-    @access.user
+    @access.admin
     def update(self, params):
         if "image" not in params:
             raise RestException(code=400, message="Missing 'image' parameter")

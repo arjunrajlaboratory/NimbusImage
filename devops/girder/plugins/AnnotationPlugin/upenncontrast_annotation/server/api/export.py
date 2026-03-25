@@ -168,7 +168,8 @@ class Export(Resource):
 
         if includeProperties:
             data["annotationProperties"] = self._getProperties(
-                datasetObjectId, configObjectId
+                datasetObjectId, configObjectId,
+                self.getCurrentUser()
             )
 
         if includePropertyValues:
@@ -181,34 +182,43 @@ class Export(Resource):
             yield orjson.dumps(data, default=orJsonDefaults)
         return generate
 
-    def _getProperties(self, datasetId, configurationId):
+    def _getProperties(self, datasetId, configurationId, user):
         """
         Get property definitions as a list.
 
         If configurationId is provided, gets properties from that
-        configuration. Otherwise, finds all configurations associated with
-        the dataset via DatasetViews and aggregates their properties.
+        configuration. Otherwise, finds all configurations associated
+        with the dataset via DatasetViews and aggregates their
+        properties.
         """
         propertyIds = set()
 
         if configurationId:
-            # Get specific configuration
-            config = self._collectionModel.load(configurationId, force=True)
-            if config and 'meta' in config and 'propertyIds' in config['meta']:
+            config = self._collectionModel.load(
+                configurationId,
+                user=user,
+                level=AccessType.READ,
+                exc=True,
+            )
+            if 'meta' in config and 'propertyIds' in config['meta']:
                 for pid in config['meta']['propertyIds']:
                     propertyIds.add(ObjectId(pid))
         else:
-            # Find all configurations via DatasetViews
-            # Dataset -> DatasetViews -> Configurations
-            datasetViews = list(self._datasetViewModel.collection.find({
-                'datasetId': datasetId
-            }))
-            configIds = {dv['configurationId'] for dv in datasetViews}
+            datasetViews = list(
+                self._datasetViewModel.collection.find({
+                    'datasetId': datasetId
+                })
+            )
+            configIds = {
+                dv['configurationId'] for dv in datasetViews
+            }
 
             for configId in configIds:
-                config = self._collectionModel.load(configId, force=True)
-                if (config and 'meta' in config and
-                        'propertyIds' in config['meta']):
+                config = self._collectionModel.load(
+                    configId, user=user, level=AccessType.READ
+                )
+                if (config and 'meta' in config
+                        and 'propertyIds' in config['meta']):
                     for pid in config['meta']['propertyIds']:
                         propertyIds.add(ObjectId(pid))
 

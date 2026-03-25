@@ -227,7 +227,7 @@ describe("AnnotationProperties", () => {
   });
 
   it("canApplyToAllDatasets is false when count exceeds limit", async () => {
-    mockGetCollectionDatasetCount.mockResolvedValue(11);
+    mockGetCollectionDatasetCount.mockResolvedValue(51);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     await flushPromises();
@@ -244,11 +244,11 @@ describe("AnnotationProperties", () => {
   });
 
   it("batchDisabledReason returns message when count exceeds limit", async () => {
-    mockGetCollectionDatasetCount.mockResolvedValue(11);
+    mockGetCollectionDatasetCount.mockResolvedValue(51);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     await flushPromises();
-    expect(vm.batchDisabledReason).toBe("Collection has more than 10 datasets");
+    expect(vm.batchDisabledReason).toBe("Collection has more than 50 datasets");
   });
 
   it("batchDisabledReason returns null when conditions met", async () => {

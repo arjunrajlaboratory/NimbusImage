@@ -132,11 +132,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
-import { IBulkJsonExportDataset } from "@/store/ExportAPI";
-import { IDatasetView } from "@/store/model";
+import { useCollectionDatasets } from "@/utils/useCollectionDatasets";
 
 const dialog = ref(false);
-const loadingDatasets = ref(false);
 const exporting = ref(false);
 const exportProgress = ref(0);
 
@@ -148,10 +146,11 @@ const exportValues = ref(true);
 const propertyScope = ref<"all" | "current">("all");
 
 const filename = ref("");
-const collectionDatasets = ref<IBulkJsonExportDataset[]>([]);
+
+const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
+  useCollectionDatasets(dialog, exportScope);
 
 const dataset = computed(() => store.dataset);
-const configuration = computed(() => store.configuration);
 const canExport = computed(() => !!store.dataset);
 
 const canSubmit = computed(() => {
@@ -160,16 +159,6 @@ const canSubmit = computed(() => {
     return !!dataset.value;
   }
   return collectionDatasets.value.length > 0 && !loadingDatasets.value;
-});
-
-const allDatasetsLabel = computed(() => {
-  if (loadingDatasets.value) {
-    return "All datasets in collection (loading...)";
-  }
-  if (collectionDatasets.value.length > 0) {
-    return `All datasets in collection (${collectionDatasets.value.length})`;
-  }
-  return "All datasets in collection";
 });
 
 const submitButtonText = computed(() => {
@@ -187,53 +176,6 @@ function resetFilename() {
 onMounted(resetFilename);
 
 watch(dataset, resetFilename);
-
-watch(dialog, (open) => {
-  if (open && exportScope.value === "all") {
-    loadCollectionDatasets();
-  }
-});
-
-watch(exportScope, (scope) => {
-  if (
-    scope === "all" &&
-    dialog.value &&
-    collectionDatasets.value.length === 0
-  ) {
-    loadCollectionDatasets();
-  }
-});
-
-async function loadCollectionDatasets() {
-  if (!configuration.value) return;
-
-  loadingDatasets.value = true;
-  collectionDatasets.value = [];
-
-  try {
-    const datasetViews = await store.api.findDatasetViews({
-      configurationId: configuration.value.id,
-    });
-
-    const datasetIds = datasetViews.map((dv: IDatasetView) => dv.datasetId);
-
-    if (datasetIds.length > 0) {
-      await store.girderResources.batchFetchResources({
-        folderIds: datasetIds,
-      });
-
-      collectionDatasets.value = datasetViews.map((dv: IDatasetView) => {
-        const folder = store.girderResources.watchFolder(dv.datasetId);
-        return {
-          datasetId: dv.datasetId,
-          datasetName: folder?.name || dv.datasetId,
-        };
-      });
-    }
-  } finally {
-    loadingDatasets.value = false;
-  }
-}
 
 async function submit() {
   if (exportScope.value === "current") {
