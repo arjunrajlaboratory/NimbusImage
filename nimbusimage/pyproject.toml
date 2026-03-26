@@ -6,7 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "nimbusimage"
 version = "0.1.0"
 description = "Python API for NimbusImage"
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Arjun Raj", email = "arjunrajlab@gmail.com"},
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
 dependencies = [
     "girder-client",
     "numpy",
@@ -19,6 +30,11 @@ dependencies = [
 worker = ["large-image"]
 dev = ["pytest", "pytest-mock"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
+
+[project.urls]
+Homepage = "https://nimbusimage.com"
+Repository = "https://github.com/arjunrajlaboratory/NimbusImage"
+Documentation = "https://docs.nimbusimage.com"
 
 [tool.setuptools.packages.find]
 include = ["nimbusimage*"]
