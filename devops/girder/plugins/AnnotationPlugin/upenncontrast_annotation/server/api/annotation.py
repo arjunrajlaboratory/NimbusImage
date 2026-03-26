@@ -211,6 +211,21 @@ class Annotation(Resource):
     @recordable("Update an annotation", getDatasetIdFromAnnotationListInBody)
     def updateMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
+        # Check access on any destination datasets being set
+        if isinstance(bodyJson, list):
+            newDatasetIds = set()
+            for update in bodyJson:
+                if isinstance(update, dict) and "datasetId" in update:
+                    try:
+                        newDatasetIds.add(
+                            ObjectId(update["datasetId"])
+                        )
+                    except Exception:
+                        pass
+            if newDatasetIds:
+                requireDatasetsAccess(
+                    newDatasetIds, self.getCurrentUser()
+                )
         self._annotationModel.updateMultiple(bodyJson, self.getCurrentUser())
 
     @access.public

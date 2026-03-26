@@ -237,3 +237,38 @@ class TestUpdateMultiple:
             type="application/json",
         )
         assertStatus(resp, 400)
+
+    def testUpdateMultipleRejectsMoveToDeniedDataset(
+        self, admin, user, server
+    ):
+        """User cannot move annotations to a dataset they lack access to.
+
+        Even if the user owns the source annotation, changing datasetId
+        to point at another user's private dataset should be denied.
+        """
+        # User creates an annotation in their own dataset
+        user_folder = utilities.createFolder(
+            user, "user_ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(user_folder, user)
+
+        # Admin creates a private dataset the user cannot access
+        admin_folder = utilities.createPrivateFolder(
+            admin, "admin_ds", upenn_utilities.datasetMetadata
+        )
+
+        # User tries to move their annotation into admin's dataset
+        updates = [
+            {
+                "id": str(ann["_id"]),
+                "datasetId": str(admin_folder["_id"]),
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=user,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatus(resp, 403)
