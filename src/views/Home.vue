@@ -865,15 +865,6 @@ async function fetchRecentProjects() {
   }
 }
 
-async function refreshRecentDatasetDetails() {
-  const dIds = datasetViews.value.map((d) => d.datasetId);
-  const cIds = datasetViews.value.map((d) => d.configurationId);
-
-  await girderResources.batchFetchResources({
-    folderIds: dIds,
-    collectionIds: cIds,
-  });
-}
 
 function onLocationUpdate(
   selectable: IGirderSelectAble | IGirderLocation | null,
@@ -1179,9 +1170,8 @@ watch(datasetName, async (newName) => {
 });
 
 // Lifecycle
-onMounted(() => {
-  initializeRecentViews();
-  refreshRecentDatasetDetails();
+onMounted(async () => {
+  await initializeRecentViews();
   initializeWelcomeTour();
   fetchRecentProjects();
   isNavigating.value = false;
