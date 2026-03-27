@@ -30,6 +30,8 @@ setup(
         "girder-user-quota<5",
         "fastjsonschema",
         "orjson",
+        "cryptography",
+        "requests",
         "import_tracker "
         "@ git+https://github.com/DigitalSlideArchive/import-tracker.git"
     ],
