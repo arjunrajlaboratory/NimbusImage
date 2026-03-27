@@ -113,7 +113,10 @@ class AnnotationProperty(Resource):
         level=AccessType.WRITE,
     )
     def update(self, property, params):
-        property.update(self.getBodyJson())
+        filtered = self._propertyModel.filterUpdateFields(
+            self.getBodyJson()
+        )
+        property.update(filtered)
         self._propertyModel.save(property)
 
     @access.public

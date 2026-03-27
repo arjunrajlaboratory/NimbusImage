@@ -198,7 +198,10 @@ class AnnotationConnection(Resource):
     @recordable("Update a connection", getDatasetIdFromLoadedConnection)
     def update(self, annotation_connection, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        annotation_connection.update(bodyJson)
+        filtered = self._connectionModel.filterUpdateFields(
+            bodyJson
+        )
+        annotation_connection.update(filtered)
         self._connectionModel.save(annotation_connection)
 
     @access.public

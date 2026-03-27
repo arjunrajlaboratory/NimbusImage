@@ -200,7 +200,10 @@ class Annotation(Resource):
     @recordable("Update an annotation", getDatasetIdFromLoadedAnnotation)
     def update(self, upenn_annotation, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        upenn_annotation.update(bodyJson)
+        filtered = self._annotationModel.filterUpdateFields(
+            bodyJson
+        )
+        upenn_annotation.update(filtered)
         self._annotationModel.save(upenn_annotation)
 
     @describeRoute(
@@ -251,10 +254,15 @@ class Annotation(Resource):
                 raise RestException(
                     "Invalid annotation id: %s" % annId
                 )
-            # Build clean update dict (no id keys)
+            # Build clean update dict (no id keys, whitelist)
             updateDoc = dict(update)
             updateDoc.pop("id", None)
             updateDoc.pop("_id", None)
+            updateDoc = (
+                self._annotationModel.filterUpdateFields(
+                    updateDoc
+                )
+            )
             if "datasetId" in updateDoc:
                 try:
                     dsId = ObjectId(

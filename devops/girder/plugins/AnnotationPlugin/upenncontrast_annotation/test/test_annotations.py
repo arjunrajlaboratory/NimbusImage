@@ -340,3 +340,35 @@ class TestUpdateMultiple:
             type="application/json",
         )
         assertStatus(resp, 403)
+
+    def testUpdateMultipleIgnoresUnknownFields(
+        self, admin, server
+    ):
+        """Unknown fields in the update payload are silently dropped."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, admin)
+        updates = [
+            {
+                "id": str(ann["_id"]),
+                "tags": ["field-test"],
+                "_malicious": "should be dropped",
+                "accessLevel": 99,
+                "unknownField": True,
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        loaded = Annotation().load(ann["_id"], user=admin)
+        assert "field-test" in loaded["tags"]
+        assert "_malicious" not in loaded
+        assert "accessLevel" not in loaded
+        assert "unknownField" not in loaded
