@@ -112,12 +112,12 @@ class AnnotationProperty(Resource):
         plugin="upenncontrast_annotation",
         level=AccessType.WRITE,
     )
-    def update(self, property, params):
+    def update(self, annotation_property, params):
         filtered = self._propertyModel.filterUpdateFields(
             self.getBodyJson()
         )
-        property.update(filtered)
-        self._propertyModel.save(property)
+        annotation_property.update(filtered)
+        self._propertyModel.save(annotation_property)
 
     @access.public
     @describeRoute(

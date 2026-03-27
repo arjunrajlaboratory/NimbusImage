@@ -372,3 +372,30 @@ class TestUpdateMultiple:
         assert "_malicious" not in loaded
         assert "accessLevel" not in loaded
         assert "unknownField" not in loaded
+
+    def testSingleUpdateIgnoresUnknownFields(
+        self, admin, server
+    ):
+        """PUT /upenn_annotation/:id drops unknown fields."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, admin)
+        update_body = {
+            "tags": ["single-update"],
+            "_internalField": "drop me",
+            "accessLevel": 42,
+        }
+        resp = server.request(
+            path="/upenn_annotation/%s" % ann["_id"],
+            method="PUT",
+            user=admin,
+            body=json.dumps(update_body),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        loaded = Annotation().load(ann["_id"], user=admin)
+        assert "single-update" in loaded["tags"]
+        assert "_internalField" not in loaded
+        assert "accessLevel" not in loaded
