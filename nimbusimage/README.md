@@ -1,6 +1,6 @@
 # nimbusimage
 
-Python API for [NimbusImage](https://nimbusimage.com) — programmatic access to scientific imaging datasets, annotations, workers, and analysis.
+Python API for [NimbusImage](https://nimbusimage.com) ([app](https://app.nimbusimage.com)) — programmatic access to scientific imaging datasets, annotations, workers, and analysis.
 
 ## Installation
 
@@ -29,7 +29,7 @@ Set environment variables for persistent access:
 # Add to ~/.zshrc or ~/.bashrc
 
 # For nimbusimage.com:
-export NI_API_URL="https://nimbusimage.com/girder"
+export NI_API_URL="https://app.nimbusimage.com/girder/api/v1"
 export NI_API_KEY="your-api-key-here"
 
 # For a local server:
@@ -110,7 +110,7 @@ ni.connect() -> NimbusClient
     client.list_projects()
 ```
 
-See the [full documentation](docs/) for detailed API reference and examples.
+See [docs.nimbusimage.com](https://docs.nimbusimage.com) for general documentation and the [API reference](https://arjunrajlaboratory.github.io/NimbusImage/) for detailed API docs.
 
 ## Claude Code integration
 
