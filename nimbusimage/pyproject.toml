@@ -35,6 +35,7 @@ docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 Homepage = "https://nimbusimage.com"
 Repository = "https://github.com/arjunrajlaboratory/NimbusImage"
 Documentation = "https://docs.nimbusimage.com"
+"API Reference" = "https://arjunrajlaboratory.github.io/NimbusImage/"
 
 [tool.setuptools.packages.find]
 include = ["nimbusimage*"]

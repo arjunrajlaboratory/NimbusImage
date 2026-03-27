@@ -71,7 +71,7 @@ The recommended setup uses an **API key**, which is persistent and doesn't expir
 # Add to ~/.zshrc or ~/.bashrc for persistence
 
 # For nimbusimage.com:
-export NI_API_URL="https://nimbusimage.com/api/v1"
+export NI_API_URL="https://app.nimbusimage.com/girder/api/v1"
 export NI_API_KEY="your-api-key-here"
 
 # For a local server:
