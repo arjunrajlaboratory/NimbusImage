@@ -4,7 +4,7 @@ from bson.objectid import ObjectId
 
 from girder import events
 from girder.constants import AccessType, SortDir
-from girder.exceptions import ValidationException, RestException
+from girder.exceptions import ValidationException
 from girder.models.folder import Folder
 
 from girder.utility.acl_mixin import AccessControlMixin
@@ -219,12 +219,18 @@ class Annotation(ProxiedModel, AccessControlMixin):
     def getAnnotationById(self, id, user=None):
         return self.load(id, user=user, level=AccessType.READ)
 
-    def updateMultiple(self, annotationUpdates, user):
+    def updateMultiple(self, annotationIdToUpdate, user):
+        """Update multiple annotations.
 
-        annotationIdToUpdate = {
-            ObjectId(update["id"]): update | {
-                "datasetId": ObjectId(update["datasetId"])}
-            for update in annotationUpdates}
+        :param annotationIdToUpdate: dict mapping ObjectId -> update dict.
+            Each update dict should already have 'id'/'_id' removed and
+            datasetId converted to ObjectId if present.
+        :param user: The current user (for permission checks).
+        :returns: List of saved annotation documents.
+        """
+        if not annotationIdToUpdate:
+            return []
+
         query = {
             "_id": {
                 "$in": list(annotationIdToUpdate.keys())
@@ -237,20 +243,21 @@ class Annotation(ProxiedModel, AccessControlMixin):
         for annotation in cursor:
             annotationId = annotation["_id"]
             updateDoc = annotationIdToUpdate[annotationId]
-            updateDoc.pop("id")
             annotation.update(updateDoc)
             updatedAnnotations.append(annotation)
         return self.saveMany(updatedAnnotations)
 
     def compute(self, datasetId, tool, user=None):
-        dataset = Folder().load(datasetId, user=user, level=AccessType.WRITE)
+        dataset = Folder().load(
+            datasetId, user=user, level=AccessType.WRITE
+        )
         if not dataset:
-            raise RestException(
-                code=500, message="Invalid dataset id in annotation"
+            raise ValidationException(
+                "Invalid dataset id in annotation"
             )
         image = tool.get("image", None)
         if not image:
-            raise RestException(
-                code=500, message="Invalid segmentation tool: no image"
+            raise ValidationException(
+                "Invalid segmentation tool: no image"
             )
         return runJobRequest(image, datasetId, tool, "compute")
