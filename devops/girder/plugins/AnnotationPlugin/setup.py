@@ -23,12 +23,11 @@ setup(
         "Programming Language :: Python",
     ],
     install_requires=[
-        "girder[mount] @ git+https://github.com/girder/girder.git",
-        "girder_worker @ git+https://github.com/girder/girder_worker.git",
-        "girder_worker_utils "
-        "@ git+https://github.com/girder/girder_worker_utils",
+        "girder[mount]<5,>=3.1.18",
+        "girder_worker<1",
+        "girder_worker_utils<1",
         "girder-jobs <5,>=3.2.8",
-        "girder-user-quota",
+        "girder-user-quota<5",
         "fastjsonschema",
         "orjson",
         "import_tracker "
