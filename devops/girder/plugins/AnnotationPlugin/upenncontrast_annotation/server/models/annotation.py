@@ -4,7 +4,7 @@ from bson.objectid import ObjectId
 
 from girder import events
 from girder.constants import AccessType, SortDir
-from girder.exceptions import ValidationException, RestException
+from girder.exceptions import ValidationException
 from girder.models.folder import Folder
 
 from girder.utility.acl_mixin import AccessControlMixin
@@ -219,34 +219,17 @@ class Annotation(ProxiedModel, AccessControlMixin):
     def getAnnotationById(self, id, user=None):
         return self.load(id, user=user, level=AccessType.READ)
 
-    def updateMultiple(self, annotationUpdates, user):
-        if not isinstance(annotationUpdates, list):
-            raise RestException(
-                "Request body must be a JSON array."
-            )
-        if len(annotationUpdates) == 0:
-            return []
+    def updateMultiple(self, annotationIdToUpdate, user):
+        """Update multiple annotations.
 
-        # Normalize: accept both "id" and "_id", validate each entry
-        annotationIdToUpdate = {}
-        for update in annotationUpdates:
-            if not isinstance(update, dict):
-                raise RestException(
-                    "Each annotation update must be a JSON object."
-                )
-            annId = update.get("id") or update.get("_id")
-            if not annId:
-                raise RestException(
-                    "Each annotation must have an 'id' or '_id'"
-                    " field."
-                )
-            try:
-                objId = ObjectId(annId)
-            except Exception:
-                raise RestException(
-                    "Invalid annotation id: %s" % annId
-                )
-            annotationIdToUpdate[objId] = update
+        :param annotationIdToUpdate: dict mapping ObjectId -> update dict.
+            Each update dict should already have 'id'/'_id' removed and
+            datasetId converted to ObjectId if present.
+        :param user: The current user (for permission checks).
+        :returns: List of saved annotation documents.
+        """
+        if not annotationIdToUpdate:
+            return []
 
         query = {
             "_id": {
@@ -259,27 +242,22 @@ class Annotation(ProxiedModel, AccessControlMixin):
         updatedAnnotations = []
         for annotation in cursor:
             annotationId = annotation["_id"]
-            updateDoc = dict(annotationIdToUpdate[annotationId])
-            updateDoc.pop("id", None)
-            updateDoc.pop("_id", None)
-            # Convert datasetId to ObjectId if provided
-            if "datasetId" in updateDoc:
-                updateDoc["datasetId"] = ObjectId(
-                    updateDoc["datasetId"]
-                )
+            updateDoc = annotationIdToUpdate[annotationId]
             annotation.update(updateDoc)
             updatedAnnotations.append(annotation)
         return self.saveMany(updatedAnnotations)
 
     def compute(self, datasetId, tool, user=None):
-        dataset = Folder().load(datasetId, user=user, level=AccessType.WRITE)
+        dataset = Folder().load(
+            datasetId, user=user, level=AccessType.WRITE
+        )
         if not dataset:
-            raise RestException(
-                code=500, message="Invalid dataset id in annotation"
+            raise ValidationException(
+                "Invalid dataset id in annotation"
             )
         image = tool.get("image", None)
         if not image:
-            raise RestException(
-                code=500, message="Invalid segmentation tool: no image"
+            raise ValidationException(
+                "Invalid segmentation tool: no image"
             )
         return runJobRequest(image, datasetId, tool, "compute")

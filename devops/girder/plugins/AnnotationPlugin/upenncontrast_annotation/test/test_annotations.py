@@ -238,6 +238,74 @@ class TestUpdateMultiple:
         )
         assertStatus(resp, 400)
 
+    def testUpdateMultipleInvalidDatasetId(self, admin, server):
+        """Invalid datasetId string should return 400."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, admin)
+        updates = [
+            {
+                "id": str(ann["_id"]),
+                "datasetId": "not-a-valid-objectid",
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testUpdateMultiplePartialWithoutDatasetId(
+        self, admin, server
+    ):
+        """Partial update (no datasetId) should succeed."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, admin)
+        updates = [
+            {
+                "id": str(ann["_id"]),
+                "tags": ["partial-update"],
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        loaded = Annotation().load(ann["_id"], user=admin)
+        assert "partial-update" in loaded["tags"]
+
+    def testUpdateMultipleMixedValidAndInvalidEntries(
+        self, admin, server
+    ):
+        """If any entry is invalid, the whole request fails."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, admin)
+        updates = [
+            {"id": str(ann["_id"]), "tags": ["ok"]},
+            "not-a-dict",
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=admin,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
     def testUpdateMultipleRejectsMoveToDeniedDataset(
         self, admin, user, server
     ):

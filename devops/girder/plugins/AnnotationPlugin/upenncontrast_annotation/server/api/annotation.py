@@ -1,6 +1,7 @@
 import orjson
 import cherrypy
 
+from bson.errors import InvalidId
 from bson.objectid import ObjectId
 
 from girder.api import access
@@ -32,7 +33,17 @@ def getDatasetIdFromAnnotationListInBody(self: "Annotation", *args, **kwargs):
     first = annotations[0]
     if not isinstance(first, dict):
         return None
-    return first.get("datasetId")
+    # If datasetId is present in the payload, use it directly
+    datasetId = first.get("datasetId")
+    if datasetId:
+        return datasetId
+    # For partial updates (e.g. updateMultiple), look up from DB
+    annId = first.get("id") or first.get("_id")
+    if annId:
+        ann = AnnotationModel().load(annId, force=True)
+        if ann:
+            return ann.get("datasetId")
+    return None
 
 
 def getDatasetIdFromLoadedAnnotation(self: "Annotation", *args, **kwargs):
@@ -211,22 +222,62 @@ class Annotation(Resource):
     @recordable("Update an annotation", getDatasetIdFromAnnotationListInBody)
     def updateMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        # Check access on any destination datasets being set
-        if isinstance(bodyJson, list):
-            newDatasetIds = set()
-            for update in bodyJson:
-                if isinstance(update, dict) and "datasetId" in update:
-                    try:
-                        newDatasetIds.add(
-                            ObjectId(update["datasetId"])
-                        )
-                    except Exception:
-                        pass
-            if newDatasetIds:
-                requireDatasetsAccess(
-                    newDatasetIds, self.getCurrentUser()
+
+        # --- Input validation (API layer responsibility) ---
+        if not isinstance(bodyJson, list):
+            raise RestException(
+                "Request body must be a JSON array."
+            )
+        if len(bodyJson) == 0:
+            return []
+
+        # Normalize: accept both "id" and "_id", validate entries
+        annotationIdToUpdate = {}
+        newDatasetIds = set()
+        for update in bodyJson:
+            if not isinstance(update, dict):
+                raise RestException(
+                    "Each annotation update must be a JSON object."
                 )
-        self._annotationModel.updateMultiple(bodyJson, self.getCurrentUser())
+            annId = update.get("id") or update.get("_id")
+            if not annId:
+                raise RestException(
+                    "Each annotation must have an 'id' or '_id'"
+                    " field."
+                )
+            try:
+                objId = ObjectId(annId)
+            except InvalidId:
+                raise RestException(
+                    "Invalid annotation id: %s" % annId
+                )
+            # Build clean update dict (no id keys)
+            updateDoc = dict(update)
+            updateDoc.pop("id", None)
+            updateDoc.pop("_id", None)
+            if "datasetId" in updateDoc:
+                try:
+                    dsId = ObjectId(
+                        updateDoc["datasetId"]
+                    )
+                except InvalidId:
+                    raise RestException(
+                        "Invalid datasetId: %s"
+                        % updateDoc["datasetId"]
+                    )
+                updateDoc["datasetId"] = dsId
+                newDatasetIds.add(dsId)
+            annotationIdToUpdate[objId] = updateDoc
+
+        # Check WRITE access on any destination datasets
+        if newDatasetIds:
+            requireDatasetsAccess(
+                newDatasetIds, self.getCurrentUser()
+            )
+
+        self._annotationModel.updateMultiple(
+            annotationIdToUpdate, self.getCurrentUser()
+        )
 
     @access.public
     @autoDescribeRoute(
