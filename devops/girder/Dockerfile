@@ -15,7 +15,8 @@ WORKDIR /src/large_image
 RUN git checkout 8f0eb29aaac4f0c9a17907c3f28537b1b84e9714
 RUN pip install -e .[all] -r requirements-test.txt --find-links https://girder.github.io/large_image_wheels
 
-# Pin girder to last 3.x commit (3.2.13.dev13) before 5.x migration
+# Pin girder to last 3.x commit (3.2.13.dev13) — last commit before
+# the 5.x migration that broke compatibility
 RUN pip install "girder[mount] @ git+https://github.com/girder/girder.git@f045c05e8"
 
 COPY ./provision.py /src/provision.py

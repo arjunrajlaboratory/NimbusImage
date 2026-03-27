@@ -1,0 +1,42 @@
+name: Publish nimbusimage to PyPI
+
+on:
+  push:
+    tags:
+      - "nimbusimage-v*"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      - name: Install and test
+        run: |
+          cd nimbusimage
+          pip install -e ".[dev]"
+          pytest -m "not integration"
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      - name: Build package
+        run: |
+          pip install build
+          cd nimbusimage
+          python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: nimbusimage/dist/
