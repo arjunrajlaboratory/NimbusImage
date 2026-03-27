@@ -15,7 +15,6 @@ import logging
 import orjson
 
 from bson import ObjectId
-from girder.constants import AccessType
 from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
@@ -47,16 +46,6 @@ from ..models.propertyValues import (
 )
 
 log = logging.getLogger(__name__)
-
-# License ID mapping from project metadata to Zenodo
-LICENSE_MAP = {
-    "CC-BY-4.0": "cc-by-4.0",
-    "CC-BY-SA-4.0": "cc-by-sa-4.0",
-    "CC-BY-NC-4.0": "cc-by-nc-4.0",
-    "CC0-1.0": "cc-zero",
-    "MIT": "mit-license",
-    "Apache-2.0": "apache-2.0",
-}
 
 
 def run(job):
@@ -128,20 +117,11 @@ def _fail(job, job_model, project_id, project_model,
             'title': 'Zenodo Upload Error',
         }) + '\n',
     )
-    _update_zenodo_meta(project_id, project_model, {
+    update_zenodo_meta(project_id, {
         'status': 'error',
         'error': error_msg,
         'progress': None,
-    })
-
-
-def _update_zenodo_meta(project_id, project_model,
-                        zenodo_data):
-    """Update the project's meta.zenodo field."""
-    update_zenodo_meta(
-        project_id, zenodo_data,
-        project_model=project_model,
-    )
+    }, project_model=project_model)
 
 
 # How often to persist progress to MongoDB (every N files)
@@ -176,15 +156,87 @@ def _report_progress(job, job_model, current, total,
             or current % _META_PROGRESS_INTERVAL == 0
         )
         if should_persist:
-            _update_zenodo_meta(
-                project_id, project_model, {
+            update_zenodo_meta(
+                project_id, {
                     'progress': {
                         'current': current,
                         'total': total,
                         'message': message,
                     },
                 },
+                project_model=project_model,
             )
+
+
+def _batch_load_project_data(project):
+    """Batch load all folders, items, and files for a
+    project's datasets in minimal DB round-trips.
+
+    Returns (folders_by_id, items_by_folder,
+    files_by_item, total_file_count).
+    """
+    datasets = project['meta'].get('datasets', [])
+    dataset_ids = [
+        ObjectId(d['datasetId']) for d in datasets
+    ]
+
+    # Batch load folders
+    folders_by_id = {}
+    if dataset_ids:
+        for f in Folder().find(
+            {'_id': {'$in': dataset_ids}}
+        ):
+            folders_by_id[f['_id']] = f
+
+    # Batch load items
+    items_by_folder = {}
+    if dataset_ids:
+        for item in Item().find(
+            {'folderId': {'$in': dataset_ids}}
+        ):
+            items_by_folder.setdefault(
+                item['folderId'], []
+            ).append(item)
+
+    # Batch load files
+    all_item_ids = [
+        item['_id']
+        for items in items_by_folder.values()
+        for item in items
+    ]
+    files_by_item = {}
+    total_file_count = 0
+    if all_item_ids:
+        for f in File().find(
+            {'itemId': {'$in': all_item_ids}}
+        ):
+            files_by_item.setdefault(
+                f['itemId'], []
+            ).append(f)
+            total_file_count += 1
+
+    return (
+        folders_by_id, items_by_folder,
+        files_by_item, total_file_count,
+    )
+
+
+def _batch_load_collections(project, collection_model):
+    """Batch load all collections for a project.
+
+    Returns a dict of collection_id -> collection doc.
+    """
+    collections = project['meta'].get('collections', [])
+    coll_ids = [
+        ObjectId(c['collectionId']) for c in collections
+    ]
+    colls_by_id = {}
+    if coll_ids:
+        for coll in collection_model.find(
+            {'_id': {'$in': coll_ids}}
+        ):
+            colls_by_id[coll['_id']] = coll
+    return colls_by_id
 
 
 def _do_upload(job, job_model, project, user, project_id,
@@ -212,7 +264,7 @@ def _do_upload(job, job_model, project, user, project_id,
     bucket_url = deposition['links']['bucket']
 
     # Update project with deposition info
-    _update_zenodo_meta(project_id, project_model, {
+    update_zenodo_meta(project_id, {
         'depositionId': dep_id,
         'depositionUrl': deposition['links']['html'],
         'status': 'uploading',
@@ -224,70 +276,56 @@ def _do_upload(job, job_model, project, user, project_id,
             'total': 0,
             'message': 'Starting upload...',
         },
-    })
+    }, project_model=project_model)
 
-    uploaded_files = []
-    file_count = 0
-    # Track used filenames to detect collisions.
-    # In practice Girder enforces unique item names
-    # within a folder, so collisions within a single
-    # dataset cannot occur.  Cross-dataset collisions
-    # (two datasets with the same folder name) are
-    # possible in theory, so we guard against them by
-    # appending the dataset ID on conflict.
-    seen_filenames = set()
-
-    # Count total files for progress — count actual
-    # File documents, not Items, because one Item can
-    # contain multiple Files (e.g. sidecar files).
-    total_files = 0
-    for d in project['meta']['datasets']:
-        folder = Folder().load(
-            d['datasetId'], force=True
-        )
-        if folder:
-            items = list(Item().find(
-                {'folderId': folder['_id']}
-            ))
-            for item in items:
-                total_files += len(list(File().find(
-                    {'itemId': item['_id']}
-                )))
-        total_files += 1  # annotation JSON
-    total_files += len(
-        project['meta']['collections']
+    # Batch load all project data upfront
+    (folders_by_id, items_by_folder,
+     files_by_item, image_file_count) = (
+        _batch_load_project_data(project)
     )
-    total_files += 1  # manifest
+
+    collection_model = CollectionModel()
+    colls_by_id = _batch_load_collections(
+        project, collection_model
+    )
 
     # Models for annotation export
     annotation_model = AnnotationModel()
     connection_model = ConnectionModel()
-    collection_model = CollectionModel()
     dataset_view_model = DatasetViewModel()
     property_model = PropertyModel()
     property_values_model = PropertyValuesModel()
 
+    # Count total files for progress
+    datasets = project['meta'].get('datasets', [])
+    collections_meta = project['meta'].get(
+        'collections', []
+    )
+    total_files = (
+        image_file_count
+        + len(datasets)  # annotation JSONs
+        + len(collections_meta)  # config JSONs
+        + 1  # manifest
+    )
+
+    uploaded_files = []
+    file_count = 0
+    seen_filenames = set()
+
     # Upload dataset files
-    for d in project['meta']['datasets']:
-        dataset_id = d['datasetId']
-        folder = Folder().load(
-            dataset_id, user=user,
-            level=AccessType.READ,
-        )
+    for d in datasets:
+        ds_id = ObjectId(d['datasetId'])
+        folder = folders_by_id.get(ds_id)
         if not folder:
             continue
 
         folder_name = folder['name']
 
         # Upload source image files
-        items = list(Item().find(
-            {'folderId': folder['_id']}
-        ))
-        for item in items:
-            item_files = list(File().find(
-                {'itemId': item['_id']}
-            ))
-            for f in item_files:
+        for item in items_by_folder.get(ds_id, []):
+            for f in files_by_item.get(
+                item['_id'], []
+            ):
                 file_count += 1
                 msg = f"Uploading {f['name']}..."
                 _report_progress(
@@ -297,26 +335,25 @@ def _do_upload(job, job_model, project, user, project_id,
                     project_model=project_model,
                 )
 
-                stream = File().download(
-                    f, headers=False
-                )
                 filename = (
                     f"{folder_name}--{f['name']}"
                 )
                 if filename in seen_filenames:
                     filename = (
                         f"{folder_name}"
-                        f"__{dataset_id}"
+                        f"__{ds_id}"
                         f"--{f['name']}"
                     )
                 seen_filenames.add(filename)
-                result = client.upload_file(
-                    bucket_url, filename, stream(),
-                )
+                with File().open(f) as fh:
+                    result = client.upload_file(
+                        bucket_url, filename, fh,
+                        size=f.get('size', 0),
+                    )
                 uploaded_files.append({
                     'name': filename,
                     'type': 'image',
-                    'datasetId': str(dataset_id),
+                    'datasetId': str(ds_id),
                     'checksum': result.get(
                         'checksum', ''
                     ),
@@ -336,7 +373,7 @@ def _do_upload(job, job_model, project, user, project_id,
         )
 
         ann_json = _build_annotation_json(
-            dataset_id, annotation_model,
+            ds_id, annotation_model,
             connection_model, collection_model,
             dataset_view_model, property_model,
             property_values_model,
@@ -347,7 +384,7 @@ def _do_upload(job, job_model, project, user, project_id,
         if ann_filename in seen_filenames:
             ann_filename = (
                 f"{folder_name}"
-                f"__{dataset_id}"
+                f"__{ds_id}"
                 f"_annotations.json"
             )
         seen_filenames.add(ann_filename)
@@ -358,15 +395,13 @@ def _do_upload(job, job_model, project, user, project_id,
         uploaded_files.append({
             'name': ann_filename,
             'type': 'annotations',
-            'datasetId': str(dataset_id),
+            'datasetId': str(ds_id),
         })
 
     # Upload collection configs
-    for c in project['meta']['collections']:
-        coll_id = c['collectionId']
-        coll = collection_model.load(
-            coll_id, force=True
-        )
+    for c in collections_meta:
+        coll_id = ObjectId(c['collectionId'])
+        coll = colls_by_id.get(coll_id)
         if not coll:
             continue
 
@@ -382,9 +417,7 @@ def _do_upload(job, job_model, project, user, project_id,
             project_model=project_model,
         )
 
-        config_json = _build_collection_config(
-            coll_id, collection_model,
-        )
+        config_json = _build_collection_config(coll)
         config_filename = (
             f"{coll_name}_config.json"
         )
@@ -415,7 +448,8 @@ def _do_upload(job, job_model, project, user, project_id,
         project_model=project_model,
     )
     manifest_json = _build_manifest(
-        project, uploaded_files, collection_model,
+        project, uploaded_files,
+        folders_by_id, colls_by_id,
     )
     client.upload_file(
         bucket_url, 'manifest.json',
@@ -432,7 +466,7 @@ def _do_upload(job, job_model, project, user, project_id,
     client.set_metadata(dep_id, zenodo_metadata)
 
     # Done - mark as draft (ready to publish)
-    _update_zenodo_meta(project_id, project_model, {
+    update_zenodo_meta(project_id, {
         'depositionId': dep_id,
         'depositionUrl': deposition['links']['html'],
         'status': 'draft',
@@ -440,7 +474,7 @@ def _do_upload(job, job_model, project, user, project_id,
             "https://zenodo.org"
         ),
         'progress': None,
-    })
+    }, project_model=project_model)
 
     job_model.updateJob(
         job,
@@ -467,12 +501,13 @@ def _build_annotation_json(
     collection_model, dataset_view_model,
     property_model, property_values_model,
 ):
-    """Build annotation export JSON for a dataset."""
-    ds_oid = (
-        ObjectId(dataset_id)
-        if isinstance(dataset_id, str)
-        else dataset_id
-    )
+    """Build annotation export JSON for a dataset.
+
+    Follows the same format as the Export endpoint's
+    JSON export (annotations, connections, properties,
+    property values).
+    """
+    ds_oid = ObjectId(dataset_id)
 
     annotations = list(
         annotation_model.find({'datasetId': ds_oid})
@@ -481,23 +516,25 @@ def _build_annotation_json(
         connection_model.find({'datasetId': ds_oid})
     )
 
+    # Get properties via DatasetViews -> Configurations
+    # (same pattern as export.py _getProperties)
     dataset_views = list(
         dataset_view_model.collection.find(
             {'datasetId': ds_oid}
         )
     )
-    config_ids = {
+    config_ids = list({
         dv['configurationId'] for dv in dataset_views
-    }
+    })
     property_ids = set()
-    for config_id in config_ids:
-        config = collection_model.load(
-            config_id, force=True
-        )
-        if (config and 'meta' in config
-                and 'propertyIds' in config['meta']):
-            for pid in config['meta']['propertyIds']:
-                property_ids.add(ObjectId(pid))
+    if config_ids:
+        for config in collection_model.find(
+            {'_id': {'$in': config_ids}}
+        ):
+            if ('meta' in config
+                    and 'propertyIds' in config['meta']):
+                for pid in config['meta']['propertyIds']:
+                    property_ids.add(ObjectId(pid))
 
     properties = []
     if property_ids:
@@ -505,11 +542,12 @@ def _build_annotation_json(
             {'_id': {'$in': list(property_ids)}}
         ))
 
+    # Get property values
+    # (same pattern as export.py _getPropertyValues)
     prop_values = {}
-    cursor = property_values_model.find(
+    for doc in property_values_model.find(
         {'datasetId': ds_oid}
-    )
-    for doc in cursor:
+    ):
         ann_id = str(doc['annotationId'])
         prop_values[ann_id] = doc.get('values', {})
 
@@ -522,14 +560,11 @@ def _build_annotation_json(
     return orjson.dumps(data, default=orJsonDefaults)
 
 
-def _build_collection_config(collection_id,
-                             collection_model):
-    """Build a JSON config export for a collection."""
-    coll = collection_model.load(
-        collection_id, force=True
-    )
-    if not coll:
-        return orjson.dumps({})
+def _build_collection_config(coll):
+    """Build a JSON config export for a collection.
+
+    Takes an already-loaded collection document.
+    """
     data = {
         'name': coll.get('name', ''),
         'description': coll.get('description', ''),
@@ -539,8 +574,12 @@ def _build_collection_config(collection_id,
 
 
 def _build_manifest(project, uploaded_files,
-                    collection_model):
-    """Build a manifest JSON describing the project."""
+                    folders_by_id, colls_by_id):
+    """Build a manifest JSON describing the project.
+
+    Uses pre-loaded folders and collections dicts to
+    avoid additional DB queries.
+    """
     manifest = {
         'projectName': project['name'],
         'projectDescription': project['description'],
@@ -555,24 +594,22 @@ def _build_manifest(project, uploaded_files,
         'files': uploaded_files,
     }
 
-    for d in project['meta']['datasets']:
-        folder = Folder().load(
-            d['datasetId'], force=True
-        )
+    for d in project['meta'].get('datasets', []):
+        ds_id = ObjectId(d['datasetId'])
+        folder = folders_by_id.get(ds_id)
         manifest['datasets'].append({
-            'datasetId': str(d['datasetId']),
+            'datasetId': str(ds_id),
             'name': (
                 folder['name'] if folder else 'unknown'
             ),
             'addedDate': str(d['addedDate']),
         })
 
-    for c in project['meta']['collections']:
-        coll = collection_model.load(
-            c['collectionId'], force=True
-        )
+    for c in project['meta'].get('collections', []):
+        coll_id = ObjectId(c['collectionId'])
+        coll = colls_by_id.get(coll_id)
         manifest['collections'].append({
-            'collectionId': str(c['collectionId']),
+            'collectionId': str(coll_id),
             'name': (
                 coll['name'] if coll else 'unknown'
             ),
@@ -598,10 +635,20 @@ def _build_zenodo_metadata(project):
     if not creators:
         creators = [{'name': 'Unknown'}]
 
+    # Map license to Zenodo format.  Fall back to
+    # cc-by-4.0 for unrecognised values.
+    license_map = {
+        "CC-BY-4.0": "cc-by-4.0",
+        "CC-BY-SA-4.0": "cc-by-sa-4.0",
+        "CC-BY-NC-4.0": "cc-by-nc-4.0",
+        "CC0-1.0": "cc-zero",
+        "MIT": "mit-license",
+        "Apache-2.0": "apache-2.0",
+    }
     project_license = meta.get(
         'license', 'CC-BY-4.0'
     )
-    zenodo_license = LICENSE_MAP.get(
+    zenodo_license = license_map.get(
         project_license, 'cc-by-4.0'
     )
 

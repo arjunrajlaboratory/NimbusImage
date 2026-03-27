@@ -131,28 +131,35 @@ class ZenodoClient:
             )
             self._check(del_resp, (204,))
 
-    def upload_file(self, bucket_url, filename, stream,
-                    content_type="application/octet-stream"):
+    def upload_file(self, bucket_url, filename, data,
+                    content_type="application/octet-stream",
+                    size=None):
         """Upload a file to the deposition bucket.
 
         Uses the new bucket API (PUT) which supports files
-        up to 50GB. Streams data directly.
+        up to 50GB.
 
         :param bucket_url: The bucket URL from deposition
             links.
         :param filename: Target filename in the deposition.
-        :param stream: File-like object or generator
+        :param data: Bytes, file-like object, or generator
             yielding bytes.
         :param content_type: MIME type for the upload.
+        :param size: File size in bytes. When provided,
+            sets Content-Length so Zenodo records the
+            correct file size.
         :returns: Upload response dict with checksum etc.
         """
         # URL-encode the filename to handle special chars
         # safe='' ensures / is also encoded
         url = f"{bucket_url}/{quote(filename, safe='')}"
+        headers = {"Content-Type": content_type}
+        if size is not None:
+            headers["Content-Length"] = str(size)
         resp = self.session.put(
             url,
-            data=stream,
-            headers={"Content-Type": content_type},
+            data=data,
+            headers=headers,
         )
         return self._check(resp, (200, 201)).json()
 

@@ -10,6 +10,8 @@ Provides endpoints to:
 import datetime
 import logging
 
+from bson import ObjectId
+
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
@@ -66,24 +68,62 @@ class Zenodo(Resource):
     def _gatherProjectFiles(self, project, user):
         """Gather all files that would be uploaded.
 
-        Returns a list of dicts for pre-flight validation.
+        Uses batch queries to load folders and files
+        efficiently. Returns a list of dicts for
+        pre-flight validation.
         """
         files = []
+        datasets = project['meta'].get('datasets', [])
+        collections = project['meta'].get(
+            'collections', []
+        )
 
-        for d in project['meta']['datasets']:
-            dataset_id = d['datasetId']
-            folder = Folder().load(
-                dataset_id, user=user,
-                level=AccessType.READ, exc=True,
-            )
-            items = list(Item().find(
-                {'folderId': folder['_id']}
-            ))
-            for item in items:
-                item_files = list(File().find(
-                    {'itemId': item['_id']}
-                ))
-                for f in item_files:
+        # Batch load all dataset folders
+        dataset_ids = [
+            ObjectId(d['datasetId']) for d in datasets
+        ]
+        folders_by_id = {}
+        if dataset_ids:
+            for f in Folder().find(
+                {'_id': {'$in': dataset_ids}}
+            ):
+                folders_by_id[f['_id']] = f
+
+        # Batch load all items across all folders
+        items_by_folder = {}
+        if dataset_ids:
+            for item in Item().find(
+                {'folderId': {'$in': dataset_ids}}
+            ):
+                items_by_folder.setdefault(
+                    item['folderId'], []
+                ).append(item)
+
+        # Batch load all files across all items
+        all_item_ids = [
+            item['_id']
+            for items in items_by_folder.values()
+            for item in items
+        ]
+        files_by_item = {}
+        if all_item_ids:
+            for f in File().find(
+                {'itemId': {'$in': all_item_ids}}
+            ):
+                files_by_item.setdefault(
+                    f['itemId'], []
+                ).append(f)
+
+        for d in datasets:
+            ds_id = ObjectId(d['datasetId'])
+            folder = folders_by_id.get(ds_id)
+            if not folder:
+                continue
+
+            for item in items_by_folder.get(ds_id, []):
+                for f in files_by_item.get(
+                    item['_id'], []
+                ):
                     files.append({
                         'name': f['name'],
                         'size': f.get('size', 0),
@@ -98,12 +138,15 @@ class Zenodo(Resource):
                 'type': 'annotations',
             })
 
-        for c in project['meta']['collections']:
-            coll_id = c['collectionId']
-            coll = self._collectionModel.load(
-                coll_id, force=True
-            )
-            if coll:
+        # Batch load all collections
+        coll_ids = [
+            ObjectId(c['collectionId'])
+            for c in collections
+        ]
+        if coll_ids:
+            for coll in self._collectionModel.find(
+                {'_id': {'$in': coll_ids}}
+            ):
                 files.append({
                     'name': (
                         f"{coll['name']}_config.json"
@@ -119,13 +162,6 @@ class Zenodo(Resource):
         })
 
         return files
-
-    def _updateZenodoMeta(self, project_id, zenodo_data):
-        """Update the project's meta.zenodo field."""
-        update_zenodo_meta(
-            project_id, zenodo_data,
-            project_model=self._projectModel,
-        )
 
     @access.user
     @autoDescribeRoute(
@@ -166,7 +202,17 @@ class Zenodo(Resource):
             level=AccessType.ADMIN, exc=True,
         )
 
-        # Check for token
+        # Check if upload is already in progress
+        # (cheap check before hitting Zenodo API)
+        zenodo = project['meta'].get('zenodo', {})
+        if zenodo.get('status') == 'uploading':
+            raise RestException(
+                "An upload is already in progress for "
+                "this project.",
+                code=409,
+            )
+
+        # Check for token and validate
         client = self._getZenodoClient(user)
         try:
             client.validate_token()
@@ -174,15 +220,6 @@ class Zenodo(Resource):
             raise RestException(
                 f"Zenodo token validation failed: {e}",
                 code=400,
-            )
-
-        # Check if upload is already in progress
-        zenodo = project['meta'].get('zenodo', {})
-        if zenodo.get('status') == 'uploading':
-            raise RestException(
-                "An upload is already in progress for "
-                "this project.",
-                code=409,
             )
 
         # Pre-flight: validate size and file count
@@ -215,7 +252,7 @@ class Zenodo(Resource):
 
         # Mark as uploading synchronously to prevent
         # duplicate uploads from concurrent requests
-        self._updateZenodoMeta(project['_id'], {
+        update_zenodo_meta(project['_id'], {
             'status': 'uploading',
             'progress': {
                 'current': 0,
@@ -223,7 +260,7 @@ class Zenodo(Resource):
                 'message': 'Starting upload...',
             },
             'error': None,
-        })
+        }, project_model=self._projectModel)
 
         # Create and schedule a local Girder job.
         # If job creation fails, roll back the status
@@ -248,11 +285,11 @@ class Zenodo(Resource):
             )
             JobModel().scheduleJob(job)
         except Exception:
-            self._updateZenodoMeta(project['_id'], {
+            update_zenodo_meta(project['_id'], {
                 'status': 'error',
                 'error': 'Failed to create upload job',
                 'progress': None,
-            })
+            }, project_model=self._projectModel)
             raise
 
         return {
@@ -345,7 +382,7 @@ class Zenodo(Resource):
             'record_html', ''
         )
 
-        self._updateZenodoMeta(project['_id'], {
+        update_zenodo_meta(project['_id'], {
             'status': 'published',
             'doi': doi,
             'depositionUrl': record_url or zenodo.get(
@@ -356,7 +393,7 @@ class Zenodo(Resource):
             ),
             'progress': None,
             'error': None,
-        })
+        }, project_model=self._projectModel)
 
         # Reload project to get updated zenodo meta,
         # then update project status to 'exported'
@@ -415,13 +452,13 @@ class Zenodo(Resource):
             new_meta['doi'] = previous_doi
             new_meta['status'] = 'published'
 
-        self._updateZenodoMeta(project['_id'], {
+        update_zenodo_meta(project['_id'], {
             'depositionId': None,
             'depositionUrl': None,
             'status': new_meta['status'],
             'doi': new_meta.get('doi'),
             'progress': None,
             'error': None,
-        })
+        }, project_model=self._projectModel)
 
         return {'message': 'Draft discarded'}
