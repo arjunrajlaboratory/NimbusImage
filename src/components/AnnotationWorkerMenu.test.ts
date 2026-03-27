@@ -225,12 +225,12 @@ describe("AnnotationWorkerMenu", () => {
     expect(vm.batchDisabledReason).toBeNull();
   });
 
-  it("batchDisabledReason returns limit message when count > 10", async () => {
-    (store as any).getCollectionDatasetCount = vi.fn().mockResolvedValue(15);
+  it("batchDisabledReason returns limit message when count > 50", async () => {
+    (store as any).getCollectionDatasetCount = vi.fn().mockResolvedValue(55);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     await flushPromises();
-    expect(vm.batchDisabledReason).toContain("more than 10 datasets");
+    expect(vm.batchDisabledReason).toContain("more than 50 datasets");
   });
 
   it("batchDisabledReason returns null when count <= 1", async () => {

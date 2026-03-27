@@ -4,7 +4,7 @@ import AnnotationActionPanel from "./AnnotationActionPanel.vue";
 
 vi.mock("@/store/annotation", () => ({
   default: {
-    selectedAnnotationIds: ["id1", "id2", "id3"],
+    selectedAnnotationIds: new Set(["id1", "id2", "id3"]),
   },
 }));
 

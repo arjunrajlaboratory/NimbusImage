@@ -29,7 +29,7 @@ const mockGetAnnotationFromId = vi.fn();
 
 vi.mock("@/store/annotation", () => ({
   default: {
-    selectedAnnotations: [],
+    selectedAnnotationIds: new Set<string>(),
     setSelected: (...args: any[]) => mockSetSelected(...args),
     toggleSelected: (...args: any[]) => mockToggleSelected(...args),
     isDeleting: false,
@@ -121,7 +121,7 @@ describe("AnnotationList", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     // Re-set mock functions after restoreAllMocks
-    (annotationStore as any).selectedAnnotations = [];
+    (annotationStore as any).selectedAnnotationIds = new Set<string>();
     (annotationStore as any).setSelected = (...args: any[]) =>
       mockSetSelected(...args);
     (annotationStore as any).toggleSelected = (...args: any[]) =>
@@ -291,7 +291,7 @@ describe("AnnotationList", () => {
       const ann = makeAnnotation({ id: "ann1" });
       (filterStore as any).filteredAnnotations = [ann];
       (filterStore as any).filteredAnnotationIdToIdx = new Map([["ann1", 0]]);
-      (annotationStore as any).selectedAnnotations = [ann];
+      (annotationStore as any).selectedAnnotationIds = new Set(["ann1"]);
       (annotationStore as any).isAnnotationSelected = vi.fn(() => true);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
@@ -312,7 +312,7 @@ describe("AnnotationList", () => {
       const ann2 = makeAnnotation({ id: "ann2" });
       (filterStore as any).filteredAnnotations = [ann1, ann2];
       (filterStore as any).filteredAnnotationIdToIdx = new Map([["ann1", 0]]);
-      (annotationStore as any).selectedAnnotations = [ann1];
+      (annotationStore as any).selectedAnnotationIds = new Set(["ann1"]);
       (annotationStore as any).isAnnotationSelected = vi.fn(
         (id: string) => id === "ann1",
       );
@@ -325,7 +325,7 @@ describe("AnnotationList", () => {
       const ann = makeAnnotation({ id: "ann1" });
       (filterStore as any).filteredAnnotations = [ann];
       (filterStore as any).filteredAnnotationIdToIdx = new Map([["ann1", 0]]);
-      (annotationStore as any).selectedAnnotations = [ann];
+      (annotationStore as any).selectedAnnotationIds = new Set(["ann1"]);
       (annotationStore as any).isAnnotationSelected = vi.fn(() => true);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
@@ -341,8 +341,8 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.selectAllCallback();
-      // Should set all filteredItems' annotations
-      expect(mockSetSelected).toHaveBeenCalledWith([ann]);
+      // Should set all filteredItems' annotation IDs
+      expect(mockSetSelected).toHaveBeenCalledWith(["ann1"]);
     });
   });
 
@@ -352,7 +352,7 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       const ann = makeAnnotation();
       vm.toggleAnnotationSelection(ann);
-      expect(mockToggleSelected).toHaveBeenCalledWith([ann]);
+      expect(mockToggleSelected).toHaveBeenCalledWith([ann.id]);
     });
   });
 

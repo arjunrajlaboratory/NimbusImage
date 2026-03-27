@@ -24,6 +24,8 @@ jobs:
           python-version: "3.11"
       - name: flake8 Lint
         uses: py-actions/flake8@v2
+        with:
+          path: devops/girder/
       - name: Test AnnotationPlugin
         run: pip install tox && cd devops/girder/plugins/AnnotationPlugin && tox
       - name: Test Claude plugins

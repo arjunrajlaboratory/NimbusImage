@@ -36,10 +36,7 @@ import jobs, {
 } from "./jobs";
 import { logError } from "@/utils/log";
 import { findIndexOfPath } from "@/utils/paths";
-import { arePathEquals } from "@/utils/paths";
 import progress from "./progress";
-
-type TNestedObject = { [pathName: string]: TNestedObject };
 
 export interface IPropertyStatus {
   running: boolean;
@@ -54,6 +51,10 @@ const defaultStatus: () => IPropertyStatus = () => ({
   progressInfo: {},
   errorInfo: { errors: [] },
 });
+
+function serializePropertyPath(path: string[]) {
+  return path.join("\u0000");
+}
 
 @Module({ dynamic: true, store, name: "properties" })
 export class Properties extends VuexModule {
@@ -255,49 +256,42 @@ export class Properties extends VuexModule {
   }
 
   get computedPropertyPaths() {
-    // Combine all the property objects per annotation (e.g. {myPropertyId: { mySubId: 42 }} and {anotherPropertyId: 24} )
-    // Into a single object (e.g. {myPropertyId: {mySubId: {}}, anotherPropertyId: {} })
-    const valuesObjectPerAnnotationId = this.propertyValues;
-    const nestedAggregationObject: TNestedObject = {};
-    const aggregationStack: [TNestedObject, TPropertyValue][] = [];
-    for (const annotationId in valuesObjectPerAnnotationId) {
-      const valuesObject = valuesObjectPerAnnotationId[annotationId];
-      aggregationStack.push([nestedAggregationObject, valuesObject]);
+    const collectedPaths = new Map<string, string[]>();
+    const stack: [string[], TPropertyValue][] = [];
+
+    for (const annotationId in this.propertyValues) {
+      stack.push([[], this.propertyValues[annotationId]]);
     }
-    while (aggregationStack.length > 0) {
-      const [currentLocation, valuesObject] = aggregationStack.pop()!;
-      if (typeof valuesObject !== "object") {
+
+    while (stack.length > 0) {
+      const [currentPath, currentValue] = stack.pop()!;
+      const isTraversableObject =
+        currentValue !== null &&
+        typeof currentValue === "object" &&
+        !Array.isArray(currentValue);
+
+      if (!isTraversableObject) {
+        if (currentPath.length > 0) {
+          collectedPaths.set(serializePropertyPath(currentPath), currentPath);
+        }
         continue;
       }
-      for (const key in valuesObject) {
-        const newLocation = {};
-        const newValues = valuesObject[key];
-        currentLocation[key] = newLocation;
-        aggregationStack.push([newLocation, newValues]);
+
+      const keys = Object.keys(currentValue);
+      if (keys.length === 0) {
+        if (currentPath.length > 0) {
+          collectedPaths.set(serializePropertyPath(currentPath), currentPath);
+        }
+        continue;
+      }
+
+      const nestedValue = currentValue as Record<string, TPropertyValue>;
+      for (const key of keys) {
+        stack.push([[...currentPath, key], nestedValue[key]]);
       }
     }
-    // Now compute each valid path to an empty object
-    // For example with {myPropertyId: {mySubId: {}}, anotherPropertyId: {} }:
-    // ["myPropertyId", "mySubId"] and ["anotherPropertyId"]
-    const collectedPaths: string[][] = [];
-    const collectionStack: [string[], TNestedObject][] = [
-      [[], nestedAggregationObject],
-    ];
-    while (collectionStack.length > 0) {
-      const [currentPath, nestedObject] = collectionStack.pop()!;
-      let isNestedObjectEmpty = true;
-      for (const pathName in nestedObject) {
-        isNestedObjectEmpty = false;
-        collectionStack.push([
-          [...currentPath, pathName],
-          nestedObject[pathName],
-        ]);
-      }
-      if (isNestedObjectEmpty) {
-        collectedPaths.push(currentPath);
-      }
-    }
-    return collectedPaths.filter((path) => {
+
+    return Array.from(collectedPaths.values()).filter((path) => {
       // Check that the values have a corresponding path
       if (path.length < 1) {
         return false;
@@ -316,11 +310,11 @@ export class Properties extends VuexModule {
   updateDisplayedFromComputedProperties() {
     // This action is called in a global watcher (see "setupWatchers" in main store)
     // When propertyValues changes, some paths may be removed
-    const availablePaths = this.computedPropertyPaths;
+    const availablePaths = new Set(
+      this.computedPropertyPaths.map((path) => serializePropertyPath(path)),
+    );
     const newPaths = this.displayedPropertyPaths.filter((displayedPath) =>
-      availablePaths.some((availablePath) =>
-        arePathEquals(displayedPath, availablePath),
-      ),
+      availablePaths.has(serializePropertyPath(displayedPath)),
     );
     this.setDisplayedPropertyPaths(newPaths);
   }

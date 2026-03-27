@@ -9,8 +9,8 @@
       @cancel="handleContextMenuCancel"
     />
     <annotation-action-panel
-      v-if="selectedAnnotations.length > 0"
-      :selected-count="selectedAnnotations.length"
+      v-if="selectedAnnotationIds.size > 0"
+      :selected-count="selectedAnnotationIds.size"
       @delete-selected="annotationStore.deleteSelectedAnnotations"
       @delete-unselected="annotationStore.deleteUnselectedAnnotations"
       @tag-selected="showTagDialog = true"
@@ -33,6 +33,7 @@
 <script setup lang="ts">
 import {
   ref,
+  shallowRef,
   computed,
   watch,
   onMounted,
@@ -107,8 +108,33 @@ import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
 import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/polygonSlice";
+import RBush from "rbush";
 
 // Module-level helpers
+
+interface AnnotationBBoxItem {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  annotationId: string;
+}
+
+function buildAnnotationBBox(annotation: IAnnotation): AnnotationBBoxItem {
+  const coords = annotation.coordinates;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const c = coords[i];
+    if (c.x < minX) minX = c.x;
+    if (c.y < minY) minY = c.y;
+    if (c.x > maxX) maxX = c.x;
+    if (c.y > maxY) maxY = c.y;
+  }
+  return { minX, minY, maxX, maxY, annotationId: annotation.id };
+}
 
 function filterAnnotations(
   annotations: IAnnotation[],
@@ -232,7 +258,9 @@ const showAnnotationsFromHiddenLayers = computed(
   (): boolean => store.showAnnotationsFromHiddenLayers,
 );
 const hoveredAnnotationId = computed(() => annotationStore.hoveredAnnotationId);
-const selectedAnnotations = computed(() => annotationStore.selectedAnnotations);
+const selectedAnnotationIds = computed(
+  () => annotationStore.selectedAnnotationIds,
+);
 const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
 const shouldDrawConnections = computed(
   (): boolean => store.drawAnnotationConnections,
@@ -327,6 +355,24 @@ const displayableAnnotations = computed(() => {
     : annotationStore.annotations;
 });
 
+const displayableAnnotationsByChannel = computed(() => {
+  const annotationsByChannel: Map<number, IAnnotation[]> = new Map();
+  const annotations = displayableAnnotations.value;
+  const len = annotations.length;
+
+  for (let i = 0; i < len; i++) {
+    const annotation = annotations[i];
+    const channelAnnotations = annotationsByChannel.get(annotation.channel);
+    if (channelAnnotations) {
+      channelAnnotations.push(annotation);
+    } else {
+      annotationsByChannel.set(annotation.channel, [annotation]);
+    }
+  }
+
+  return annotationsByChannel;
+});
+
 const validLayers = computed(() =>
   layers.value.slice(props.lowestLayer, props.lowestLayer + props.layerCount),
 );
@@ -341,14 +387,6 @@ const isLayerIdValid = computed(() => {
 
 // A map: map<layer id, map<annotation id, annotation>>
 const layerAnnotations = computed(() => {
-  const channelToAnnotationIds: Map<number, IAnnotation[]> = new Map();
-  for (const annotation of displayableAnnotations.value) {
-    if (!channelToAnnotationIds.has(annotation.channel)) {
-      channelToAnnotationIds.set(annotation.channel, []);
-    }
-    channelToAnnotationIds.get(annotation.channel)!.push(annotation);
-  }
-
   const layerIdToAnnotationIds: Map<
     string,
     Map<string, IAnnotation>
@@ -359,7 +397,7 @@ const layerAnnotations = computed(() => {
 
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
       const layerChannelAnnotations =
-        channelToAnnotationIds.get(layer.channel) || [];
+        displayableAnnotationsByChannel.value.get(layer.channel) || [];
       const sliceIndexes = store.layerSliceIndexes(layer);
       const allXY = store.unrollXY || layer.xy.type === "max-merge";
       const allZ = store.unrollZ || layer.z.type === "max-merge";
@@ -402,6 +440,30 @@ const displayedAnnotations = computed(() => {
   }
   return annotationList;
 });
+
+const displayedAnnotationsSpatialIndex =
+  shallowRef<RBush<AnnotationBBoxItem> | null>(null);
+let spatialIndexRequestId: number | null = null;
+
+function buildSpatialIndex(annotations: IAnnotation[]) {
+  // Cancel any pending build
+  if (spatialIndexRequestId !== null) {
+    cancelIdleCallback(spatialIndexRequestId);
+  }
+  // Invalidate immediately so stale tree isn't used during rebuild
+  displayedAnnotationsSpatialIndex.value = null;
+
+  spatialIndexRequestId = requestIdleCallback(() => {
+    spatialIndexRequestId = null;
+    const tree = new RBush<AnnotationBBoxItem>();
+    const items: AnnotationBBoxItem[] = new Array(annotations.length);
+    for (let i = 0; i < annotations.length; i++) {
+      items[i] = buildAnnotationBBox(annotations[i]);
+    }
+    tree.load(items);
+    displayedAnnotationsSpatialIndex.value = tree;
+  });
+}
 
 const connectionIdsSet = computed(() => {
   const result: Set<string> = new Set();
@@ -558,6 +620,8 @@ function drawTooltipsNoThrottle() {
       return;
     }
     const unrolledCoords = unrolledCentroidCoordinates.value;
+    const annotations = displayedAnnotations.value;
+    const propValues = propertyValues.value;
     const textBaseStyle = {
       fontSize: "12px",
       fontFamily: "sans-serif",
@@ -570,7 +634,7 @@ function drawTooltipsNoThrottle() {
     let yOffset = 0;
     props.textLayer
       .createFeature("text")
-      .data(displayedAnnotations.value)
+      .data(annotations)
       .position((annotation: IAnnotation) => {
         return unrolledCoords[annotation.id];
       })
@@ -586,10 +650,11 @@ function drawTooltipsNoThrottle() {
     for (const propertyPath of displayedPropertyPaths.value) {
       const fullName = propertiesStore.getSubIdsNameFromPath(propertyPath);
       if (fullName) {
-        const propValues = propertyValues.value;
         const propertyData: Map<string, string> = new Map();
         const filteredIds: string[] = [];
-        for (const annotation of displayedAnnotations.value) {
+        const len = annotations.length;
+        for (let i = 0; i < len; i++) {
+          const annotation = annotations[i];
           const stringValue = getStringFromPropertiesAndPath(
             propValues[annotation.id],
             propertyPath,
@@ -779,8 +844,17 @@ function findConnectedComponents(
   function find(x: string): string {
     if (!parent.has(x)) {
       parent.set(x, x);
+      return x;
     }
-    return parent.get(x) === x ? x : find(parent.get(x));
+    const currentParent = parent.get(x);
+    if (currentParent === x) {
+      return x;
+    }
+    const root = find(currentParent);
+    if (root !== currentParent) {
+      parent.set(x, root);
+    }
+    return root;
   }
 
   function union(x: string, y: string): void {
@@ -822,7 +896,9 @@ function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
   const totalAnnotationIdsSet: Set<string> = new Set();
   for (const layer of validLayers.value) {
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
-      for (const annotation of displayableAnnotations.value) {
+      const channelAnnotations =
+        displayableAnnotationsByChannel.value.get(layer.channel) || [];
+      for (const annotation of channelAnnotations) {
         if (annotation.channel === layer.channel) {
           const sliceIndexes = store.layerSliceIndexes(layer);
           if (
@@ -984,17 +1060,32 @@ function drawTimelapseTrack(
 
   const currentTime = time.value;
   const drawnLines = new Set<string>();
+  const unrolledCentroids = unrolledCentroidCoordinates.value;
+  const annotationsById = new Map<string, ITimelapseAnnotation>();
+  const connectionsByAnnotationId = new Map<string, IAnnotationConnection[]>();
+
+  for (const annotation of annotations) {
+    annotationsById.set(annotation.id, annotation);
+  }
+
+  const connectionsLen = connections.length;
+  for (let i = 0; i < connectionsLen; i++) {
+    const connection = connections[i];
+    const parentConnections =
+      connectionsByAnnotationId.get(connection.parentId) || [];
+    parentConnections.push(connection);
+    connectionsByAnnotationId.set(connection.parentId, parentConnections);
+
+    const childConnections =
+      connectionsByAnnotationId.get(connection.childId) || [];
+    childConnections.push(connection);
+    connectionsByAnnotationId.set(connection.childId, childConnections);
+  }
 
   let lines: IGeoJSAnnotation[] = [];
   for (const annotation of annotations) {
-    const len = connections.length;
-    const relevantConnections: IAnnotationConnection[] = [];
-    for (let i = 0; i < len; i++) {
-      const conn = connections[i];
-      if (conn.parentId === annotation.id || conn.childId === annotation.id) {
-        relevantConnections.push(conn);
-      }
-    }
+    const relevantConnections =
+      connectionsByAnnotationId.get(annotation.id) || [];
 
     for (const connection of relevantConnections) {
       const otherId =
@@ -1002,7 +1093,7 @@ function drawTimelapseTrack(
           ? connection.childId
           : connection.parentId;
 
-      const otherAnnotation = annotations.find((a) => a.id === otherId);
+      const otherAnnotation = annotationsById.get(otherId);
       if (
         !otherAnnotation ||
         otherAnnotation.location.Time >= annotation.location.Time
@@ -1015,8 +1106,8 @@ function drawTimelapseTrack(
       drawnLines.add(lineId);
 
       const points = [
-        unrolledCentroidCoordinates.value[annotation.id],
-        unrolledCentroidCoordinates.value[otherId],
+        unrolledCentroids[annotation.id],
+        unrolledCentroids[otherId],
       ];
 
       const timeDiff = annotation.location.Time - otherAnnotation.location.Time;
@@ -1253,9 +1344,13 @@ async function createAnnotationFromTool(
 }
 
 function restyleAnnotations() {
-  for (const geoJSAnnotation of props.annotationLayer.annotations()) {
-    const { girderId, layerId, style, customColor } = geoJSAnnotation.options();
-    if (girderId) {
+  const annotations = props.annotationLayer.annotations();
+  const len = annotations.length;
+  for (let i = 0; i < len; i++) {
+    const geoJSAnnotation = annotations[i];
+    const { girderId, layerId, style, customColor, isConnection } =
+      geoJSAnnotation.options();
+    if (girderId && !isConnection) {
       const layer = store.getLayerFromId(layerId);
       const newStyle = getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
@@ -1349,39 +1444,108 @@ function shouldSelectAnnotation(
 function getSelectedAnnotationsFromAnnotation(
   selectAnnotation: IGeoJSAnnotation,
 ) {
+  if (!shouldDrawAnnotations.value) {
+    return [];
+  }
   const coordinates = selectAnnotation.coordinates();
   const type = selectAnnotation.type();
 
   const unitsPerPixel = getMapUnitsPerPixel();
+  const selectedAnns: IAnnotation[] = [];
+  const selectedIds = new Set<string>();
 
-  const selectedAnns: IAnnotation[] = props.annotationLayer
-    .annotations()
-    .reduce((selected: IAnnotation[], geoJSannotation: IGeoJSAnnotation) => {
+  // For drag-select (non-point selection), use spatial index if available
+  if (type !== AnnotationShape.Point) {
+    const spatialIndex = displayedAnnotationsSpatialIndex.value;
+
+    if (spatialIndex) {
+      // Fast path: query R-tree for candidate annotations whose bboxes overlap
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (let i = 0; i < coordinates.length; i++) {
+        const c = coordinates[i];
+        if (c.x < minX) minX = c.x;
+        if (c.y < minY) minY = c.y;
+        if (c.x > maxX) maxX = c.x;
+        if (c.y > maxY) maxY = c.y;
+      }
+
+      const candidates = spatialIndex.search({ minX, minY, maxX, maxY });
+      const getAnnotation = getAnnotationFromId.value;
+      for (let i = 0; i < candidates.length; i++) {
+        const { annotationId } = candidates[i];
+        if (selectedIds.has(annotationId)) {
+          continue;
+        }
+        const annotation = getAnnotation(annotationId);
+        if (
+          !annotation ||
+          !annotation.coordinates.some((point: IGeoJSPosition) =>
+            geojs.util.pointInPolygon(point, coordinates),
+          )
+        ) {
+          continue;
+        }
+        selectedIds.add(annotationId);
+        selectedAnns.push(annotation);
+      }
+      return selectedAnns;
+    }
+
+    // Fallback: linear scan over GeoJS annotations (tree not yet built)
+    const geoAnnotations = props.annotationLayer.annotations();
+    for (let i = 0; i < geoAnnotations.length; i++) {
+      const geoJSannotation = geoAnnotations[i];
       const { girderId, isConnection } = geoJSannotation.options();
-      if (
-        !girderId ||
-        isConnection ||
-        selected.some(
-          (selectedAnnotation) => selectedAnnotation.id === girderId,
-        )
-      ) {
-        return selected;
+      if (!girderId || isConnection || selectedIds.has(girderId)) {
+        continue;
       }
       const annotation = getAnnotationFromId.value(girderId);
       if (
         !annotation ||
-        !shouldSelectAnnotation(
-          type,
-          coordinates,
-          annotation,
-          geoJSannotation.style(),
-          unitsPerPixel,
+        !annotation.coordinates.some((point: IGeoJSPosition) =>
+          geojs.util.pointInPolygon(point, coordinates),
         )
       ) {
-        return selected;
+        continue;
       }
-      return [...selected, annotation];
-    }, []);
+      selectedIds.add(girderId);
+      selectedAnns.push(annotation);
+    }
+    return selectedAnns;
+  }
+
+  // Point selection (click): iterate GeoJS annotations for style-aware hit testing
+  const geoAnnotations = props.annotationLayer.annotations();
+  const len = geoAnnotations.length;
+
+  for (let i = 0; i < len; i++) {
+    const geoJSannotation = geoAnnotations[i];
+    const { girderId, isConnection } = geoJSannotation.options();
+    if (!girderId || isConnection || selectedIds.has(girderId)) {
+      continue;
+    }
+
+    const annotation = getAnnotationFromId.value(girderId);
+    if (
+      !annotation ||
+      !shouldSelectAnnotation(
+        type,
+        coordinates,
+        annotation,
+        geoJSannotation.style(),
+        unitsPerPixel,
+      )
+    ) {
+      continue;
+    }
+
+    selectedIds.add(girderId);
+    selectedAnns.push(annotation);
+  }
+
   return selectedAnns;
 }
 
@@ -1437,32 +1601,32 @@ function getTimelapseAnnotationsFromAnnotation(
   const type = selectAnnotation.type();
 
   const unitsPerPixel = getMapUnitsPerPixel();
+  const selectedAnns: IGeoJSAnnotation[] = [];
+  const annotations = props.timelapseLayer.annotations();
+  const len = annotations.length;
 
-  const selectedAnns: IGeoJSAnnotation[] = props.timelapseLayer
-    .annotations()
-    .reduce(
-      (selected: IGeoJSAnnotation[], geoJSAnnotation: IGeoJSAnnotation) => {
-        const { isTimelapsePoint } = geoJSAnnotation.options();
-        if (!isTimelapsePoint) {
-          return selected;
-        }
+  for (let i = 0; i < len; i++) {
+    const geoJSAnnotation = annotations[i];
+    const { isTimelapsePoint } = geoJSAnnotation.options();
+    if (!isTimelapsePoint) {
+      continue;
+    }
 
-        if (
-          !shouldSelectGeoJSAnnotation(
-            type,
-            coordinates,
-            geoJSAnnotation,
-            unitsPerPixel,
-            5,
-          )
-        ) {
-          return selected;
-        }
+    if (
+      !shouldSelectGeoJSAnnotation(
+        type,
+        coordinates,
+        geoJSAnnotation,
+        unitsPerPixel,
+        5,
+      )
+    ) {
+      continue;
+    }
 
-        return [...selected, geoJSAnnotation];
-      },
-      [],
-    );
+    selectedAnns.push(geoJSAnnotation);
+  }
+
   return selectedAnns;
 }
 
@@ -1471,16 +1635,17 @@ function selectAnnotations(selectAnnotation: IGeoJSAnnotation) {
     return;
   }
   const selected = getSelectedAnnotationsFromAnnotation(selectAnnotation);
+  const selectedIds = selected.map((a) => a.id);
 
   switch (annotationSelectionType.value) {
     case AnnotationSelectionTypes.ADD:
-      annotationStore.selectAnnotations(selected);
+      annotationStore.selectAnnotations(selectedIds);
       break;
     case AnnotationSelectionTypes.REMOVE:
-      annotationStore.unselectAnnotations(selected);
+      annotationStore.unselectAnnotations(selectedIds);
       break;
     case AnnotationSelectionTypes.TOGGLE:
-      annotationStore.toggleSelected(selected);
+      annotationStore.toggleSelected(selectedIds);
   }
 
   props.interactionLayer.removeAnnotation(selectAnnotation);
@@ -2195,6 +2360,10 @@ function onPrimaryChange() {
   });
 }
 
+function onAnnotationStateChanged() {
+  restyleAnnotations();
+}
+
 function onTimelapseModeChanged() {
   drawTimelapseConnectionsAndCentroids();
 }
@@ -2810,15 +2979,13 @@ async function handleDragEnd(evt: IGeoJSMouseState) {
 
 // ---- Watchers ----
 
-// Primary change: 8 sources
+// Primary change: 6 sources
 watch(
   [
     annotationConnections,
     xy,
     z,
     time,
-    hoveredAnnotationId,
-    selectedAnnotations,
     shouldDrawAnnotations,
     shouldDrawConnections,
   ],
@@ -2826,6 +2993,15 @@ watch(
     onPrimaryChange();
   },
 );
+
+watch([hoveredAnnotationId, selectedAnnotationIds], () => {
+  onAnnotationStateChanged();
+});
+
+// Rebuild spatial index asynchronously when displayed annotations change
+watch(displayedAnnotations, (annotations) => {
+  buildSpatialIndex(annotations);
+});
 
 // Timelapse mode: 4 sources (fixes timelapseTags bug by watching store directly)
 watch(
@@ -2970,6 +3146,9 @@ onBeforeUnmount(() => {
     props.annotationLayer.geoOff(geojs.event.mousemove, handleDragMove);
     props.annotationLayer.geoOff(geojs.event.mouseup, handleDragEnd);
   }
+  if (spatialIndexRequestId !== null) {
+    cancelIdleCallback(spatialIndexRequestId);
+  }
 });
 
 // ---- Expose ----
@@ -3028,7 +3207,7 @@ defineExpose({
   samMainOutput,
   samLivePreviewOutput,
   hoveredAnnotationId,
-  selectedAnnotations,
+  selectedAnnotationIds,
   shouldDrawAnnotations,
   shouldDrawConnections,
   showTooltips,

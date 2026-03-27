@@ -13,11 +13,75 @@
       <v-tooltip text="NimbusImage home" :open-delay="500">
         <template v-slot:activator="{ props: activatorProps }">
           <v-toolbar-title v-bind="activatorProps" @click="goHome" class="logo">
-            <img
-              src="/img/icons/NimbusImageIcon.png"
-              alt="Icon"
+            <svg
               class="logo-icon"
-            />
+              viewBox="0 0 652 397"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <!-- Cloud body -->
+              <path d="M145 253H529V393H145V253Z" fill="#E68A82" />
+              <path
+                d="M517.5 132C589.573 132 648 190.427 648 262.5C648 334.573 589.573 393 517.5 393C445.427 393 387 334.573 387 262.5C387 190.427 445.427 132 517.5 132Z"
+                fill="#E68A82"
+                stroke="#E47F78"
+                stroke-width="8"
+              />
+              <path
+                d="M316 4C408.232 4 483 78.7684 483 171C483 263.232 408.232 338 316 338C223.768 338 149 263.232 149 171C149 78.7684 223.768 4 316 4Z"
+                fill="#E68A82"
+                stroke="#E2756D"
+                stroke-width="8"
+              />
+              <path
+                d="M144.5 112C222.096 112 285 174.904 285 252.5C285 281.272 276.356 308.013 261.523 330.282C236.337 368.097 193.326 393 144.5 393C66.904 393 4 330.096 4 252.5C4 174.904 66.904 112 144.5 112Z"
+                fill="#E68A82"
+                stroke="#DE5F58"
+                stroke-width="8"
+              />
+              <!-- Bird 1 (upper) -->
+              <path
+                class="bird bird-1"
+                style="--ox: 275px; --oy: 112.5px"
+                d="M296.5 65C278.487 80.4216 275.786 105.031 275 112.5C261.06 101.512 237.881 100.75 228 100.5"
+                stroke="black"
+                stroke-width="2"
+                stroke-linecap="round"
+                vector-effect="non-scaling-stroke"
+              />
+              <!-- Bird 2 (lower) -->
+              <path
+                class="bird bird-2"
+                style="--ox: 492.5px; --oy: 341.5px"
+                d="M445.5 319C454.5 320.667 476.5 327.5 492.5 341.5C505.7 323.5 528 315.333 537.5 313.5"
+                stroke="black"
+                stroke-width="2"
+                stroke-linecap="round"
+                vector-effect="non-scaling-stroke"
+              />
+              <!-- Cloud outline strokes -->
+              <path
+                d="M316 4C408.232 4 483 78.7684 483 171C483 263.232 408.232 338 316 338C223.768 338 149 263.232 149 171C149 78.7684 223.768 4 316 4Z"
+                stroke="#E37C74"
+                stroke-width="8"
+              />
+              <path
+                d="M517.5 132C589.573 132 648 190.427 648 262.5C648 334.573 589.573 393 517.5 393C445.427 393 387 334.573 387 262.5C387 190.427 445.427 132 517.5 132Z"
+                stroke="#E4827A"
+                stroke-width="8"
+              />
+              <path
+                d="M144.5 112C222.096 112 285 174.904 285 252.5C285 281.272 276.356 308.013 261.523 330.282C236.337 368.097 193.326 393 144.5 393C66.904 393 4 330.096 4 252.5C4 174.904 66.904 112 144.5 112Z"
+                stroke="#DE5F58"
+                stroke-width="8"
+              />
+              <path
+                d="M146.727 393C67.9011 393 4 329.609 4 251.412C4 173.215 67.9011 109.824 146.727 109.824C150.811 109.824 154.855 109.994 158.853 110.327C183.5 48.073 244.623 4 316.123 4C396.348 4 463.51 59.4864 480.739 133.885C491.714 130.973 503.25 129.421 515.15 129.421C588.521 129.421 648 188.425 648 261.21C648 333.996 588.521 393 515.15 393"
+                stroke="#DE5F58"
+                stroke-width="8"
+              />
+              <path d="M144 393H518" stroke="#DE5F58" stroke-width="8" />
+            </svg>
           </v-toolbar-title>
         </template>
       </v-tooltip>
@@ -478,8 +542,51 @@ body > div {
 
 .logo-icon {
   height: 50px;
-
   margin-top: 10px;
+}
+
+.logo-icon .bird {
+  transform-origin: var(--ox) var(--oy);
+}
+
+.logo:hover .bird-1 {
+  animation: flap-top 1.8s ease-in-out infinite;
+}
+
+.logo:hover .bird-2 {
+  animation: flap-bottom 1.8s ease-in-out infinite 0.4s;
+}
+
+@keyframes flap-top {
+  0%,
+  100% {
+    transform: rotate(-25deg) scaleY(1) rotate(25deg);
+  }
+  25% {
+    transform: rotate(-25deg) scaleY(0.35) rotate(25deg);
+  }
+  50% {
+    transform: rotate(-25deg) scaleY(1.1) rotate(25deg);
+  }
+  75% {
+    transform: rotate(-25deg) scaleY(0.65) rotate(25deg);
+  }
+}
+
+@keyframes flap-bottom {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  25% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1.1);
+  }
+  75% {
+    transform: scaleY(0.65);
+  }
 }
 
 .v-menu__content {

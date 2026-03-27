@@ -265,7 +265,7 @@ const batchCancelFunction = ref<(() => void) | null>(null);
 const collectionDatasetCount = ref(0);
 const loadingDatasetCount = ref(false);
 
-const BATCH_DATASET_LIMIT = 10;
+const BATCH_DATASET_LIMIT = 50;
 
 onBeforeUnmount(() => {
   debouncedEditTool.flush();

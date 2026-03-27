@@ -52,7 +52,7 @@ const copySuccess = ref(false);
 async function copyAnnotationIds() {
   try {
     await navigator.clipboard.writeText(
-      annotationStore.selectedAnnotationIds.join("\n"),
+      [...annotationStore.selectedAnnotationIds].join("\n"),
     );
     copySuccess.value = true;
     setTimeout(() => {

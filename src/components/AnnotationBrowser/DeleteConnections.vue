@@ -97,13 +97,10 @@ async function submit() {
       );
       break;
     case "selected":
-      const selectedAnnotationIds = new Set(
-        annotationStore.selectedAnnotationIds,
-      );
       connectionsToDelete = allConnections.filter(
         ({ childId, parentId }) =>
-          selectedAnnotationIds.has(childId) ||
-          selectedAnnotationIds.has(parentId),
+          annotationStore.selectedAnnotationIds.has(childId) ||
+          annotationStore.selectedAnnotationIds.has(parentId),
       );
       break;
   }

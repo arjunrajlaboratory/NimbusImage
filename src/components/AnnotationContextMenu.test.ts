@@ -4,7 +4,6 @@ import { shallowMount } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
   default: {
-    selectedAnnotationIds: [],
     toolTags: [],
   },
 }));

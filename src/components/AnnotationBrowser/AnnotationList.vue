@@ -113,7 +113,7 @@
         :headers="headers"
         show-select
         item-value="annotation.id"
-        v-model="selectedItems"
+        v-model="selectedIds"
         :page="page"
         :items-per-page-options="[10, 50, 200]"
         :sort-by="sortBy"
@@ -317,28 +317,23 @@ const isDeletingAnnotations = computed(() => {
   return annotationStore.isDeleting;
 });
 
-const selected = computed({
+const selectedIds = computed({
   get: () => {
-    return annotationStore.selectedAnnotations.filter((annotation) =>
-      filteredAnnotationIdToIdx.value.has(annotation.id),
+    return [...annotationStore.selectedAnnotationIds].filter((id) =>
+      filteredAnnotationIdToIdx.value.has(id),
     );
   },
-  set: (selected: IAnnotation[]) => {
-    annotationStore.setSelected(selected);
+  set: (ids: string[]) => {
+    annotationStore.setSelected(ids);
   },
 });
 
-const selectedItems = computed({
-  get: () => {
-    return filteredItems.value.filter((item) => item.isSelected);
-  },
-  set: (items: IAnnotationListItem[]) => {
-    selected.value = items.map((item) => item.annotation);
-  },
+const selectedItems = computed(() => {
+  return filteredItems.value.filter((item) => item.isSelected);
 });
 
 function toggleAnnotationSelection(annotation: IAnnotation) {
-  annotationStore.toggleSelected([annotation]);
+  annotationStore.toggleSelected([annotation.id]);
 }
 
 const filteredAnnotationIdToIdx = computed(() => {
@@ -393,9 +388,9 @@ const selectAllValue = computed(() => {
 
 function selectAllCallback() {
   if (selectAllValue.value) {
-    selectedItems.value = [];
+    selectedIds.value = [];
   } else {
-    selectedItems.value = filteredItems.value;
+    selectedIds.value = filteredItems.value.map((item) => item.annotation.id);
   }
 }
 
@@ -575,7 +570,7 @@ defineExpose({
   page,
   itemsPerPage,
   groupBy,
-  selected,
+  selectedIds,
   selectedItems,
   toggleAnnotationSelection,
   filteredAnnotationIdToIdx,

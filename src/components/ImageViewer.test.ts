@@ -123,7 +123,7 @@ vi.mock("@/store/annotation", () => {
   const { reactive } = require("vue");
   return {
     default: reactive({
-      selectedAnnotationIds: [],
+      selectedAnnotationIds: new Set<string>(),
       submitPendingAnnotation: null as Function | null,
       deleteSelectedAnnotations: vi.fn(),
       undoOrRedo: vi.fn(),

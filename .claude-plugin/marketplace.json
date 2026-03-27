@@ -1,0 +1,18 @@
+{
+  "name": "NimbusImage",
+  "owner": {
+    "name": "Arjun Raj Laboratory",
+    "url": "https://github.com/arjunrajlaboratory"
+  },
+  "metadata": {
+    "description": "Python API and Claude Code skills for NimbusImage scientific imaging datasets",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "nimbusimage",
+      "description": "Skills for working with NimbusImage datasets — connect, fetch images, manage annotations, run workers, and export data",
+      "source": "./plugins/nimbusimage"
+    }
+  ]
+}

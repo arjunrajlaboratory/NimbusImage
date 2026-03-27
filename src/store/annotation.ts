@@ -48,7 +48,7 @@ export class Annotations extends VuexModule {
   annotationCentroids: { [annotationId: string]: IGeoJSPosition } = {};
   annotationIdToIdx: { [annotationId: string]: number } = {};
 
-  selectedAnnotations: IAnnotation[] = [];
+  selectedAnnotationIds: Set<string> = markRaw(new Set());
   activeAnnotationIds: string[] = [];
 
   // Store copied annotations for paste operation
@@ -60,19 +60,13 @@ export class Annotations extends VuexModule {
 
   isDeletingAnnotations: boolean = false;
 
-  get selectedAnnotationIds() {
-    return this.selectedAnnotations.map(
-      (annotation: IAnnotation) => annotation.id,
-    );
-  }
-
   get allAnnotationIds() {
     return this.annotations.map((annotation: IAnnotation) => annotation.id);
   }
 
   get isAnnotationSelected() {
-    const annotationIdsSet = new Set(this.selectedAnnotationIds);
-    return (annotationId: string) => annotationIdsSet.has(annotationId);
+    const ids = this.selectedAnnotationIds;
+    return (annotationId: string) => ids.has(annotationId);
   }
 
   get isDeleting() {
@@ -80,9 +74,10 @@ export class Annotations extends VuexModule {
   }
 
   get inactiveAnnotationIds() {
+    const activeIds = new Set(this.activeAnnotationIds);
     return this.annotations
       .map((annotation: IAnnotation) => annotation.id)
-      .filter((id: string) => !this.activeAnnotationIds.includes(id));
+      .filter((id: string) => !activeIds.has(id));
   }
 
   get getAnnotationFromId() {
@@ -111,7 +106,11 @@ export class Annotations extends VuexModule {
 
   @Action
   copySelectedAnnotations() {
-    this.setCopiedAnnotations([...this.selectedAnnotations]);
+    this.setCopiedAnnotations(
+      [...this.selectedAnnotationIds]
+        .map((id) => this.getAnnotationFromId(id))
+        .filter((a): a is IAnnotation => a !== undefined),
+    );
   }
 
   @Action
@@ -224,27 +223,26 @@ export class Annotations extends VuexModule {
 
   @Mutation
   public activateAnnotations(ids: string[]) {
-    this.activeAnnotationIds = [
-      ...this.activeAnnotationIds,
-      ...ids.filter((id: string) => !this.activeAnnotationIds.includes(id)),
-    ];
+    const activeIds = new Set(this.activeAnnotationIds);
+    const idsToAdd = ids.filter((id: string) => !activeIds.has(id));
+    if (idsToAdd.length > 0) {
+      this.activeAnnotationIds.push(...idsToAdd);
+    }
   }
 
   @Mutation
   public deactivateAnnotations(ids: string[]) {
+    const idsToRemove = new Set(ids);
     this.activeAnnotationIds = this.activeAnnotationIds.filter(
-      (id: string) => !ids.includes(id),
+      (id: string) => !idsToRemove.has(id),
     );
   }
 
   @Action
   public toggleActiveAnnotations(ids: string[]) {
-    const toRemove = ids.filter((id: string) =>
-      this.activeAnnotationIds.includes(id),
-    );
-    const toAdd = ids.filter(
-      (id: string) => !this.activeAnnotationIds.includes(id),
-    );
+    const activeIds = new Set(this.activeAnnotationIds);
+    const toRemove = ids.filter((id: string) => activeIds.has(id));
+    const toAdd = ids.filter((id: string) => !activeIds.has(id));
     this.activateAnnotations(toAdd);
     this.deactivateAnnotations(toRemove);
   }
@@ -255,63 +253,68 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
-  public setSelected(selected: IAnnotation[]) {
-    this.selectedAnnotations = selected;
+  public setSelected(ids: string[]) {
+    this.selectedAnnotationIds = markRaw(new Set(ids));
   }
 
   @Mutation
-  public selectAnnotation(annotation: IAnnotation) {
-    if (this.selectedAnnotations.find((a) => a.id === annotation.id)) {
+  public selectAnnotation(id: string) {
+    if (this.selectedAnnotationIds.has(id)) {
       return;
     }
-    this.selectedAnnotations = [...this.selectedAnnotations, annotation];
+    this.selectedAnnotationIds = markRaw(
+      new Set([...this.selectedAnnotationIds, id]),
+    );
   }
 
   @Mutation
-  public selectAnnotations(selected: IAnnotation[]) {
-    const selectedAnnotationIds = this.selectedAnnotations.map(
-      (annotation: IAnnotation) => annotation.id,
-    );
-    const annotationsToAdd = selected.filter(
-      (annotation) => !selectedAnnotationIds.includes(annotation.id),
-    );
-    this.selectedAnnotations = [
-      ...this.selectedAnnotations,
-      ...annotationsToAdd,
-    ];
-  }
-
-  @Mutation
-  public unselectAnnotation(annotation: IAnnotation) {
-    const index = this.selectedAnnotations.findIndex(
-      (a: IAnnotation) => a.id === annotation.id,
-    );
-    if (index >= 0) {
-      this.selectedAnnotations.splice(index, 1);
+  public selectAnnotations(ids: string[]) {
+    const current = this.selectedAnnotationIds;
+    const toAdd = ids.filter((id) => !current.has(id));
+    if (toAdd.length > 0) {
+      this.selectedAnnotationIds = markRaw(new Set([...current, ...toAdd]));
     }
   }
 
   @Mutation
-  public unselectAnnotations(selected: IAnnotation[]) {
-    const selectedAnnotationsIds = selected.map(
-      (annotation: IAnnotation) => annotation.id,
+  public unselectAnnotation(id: string) {
+    if (!this.selectedAnnotationIds.has(id)) {
+      return;
+    }
+    const next = new Set(this.selectedAnnotationIds);
+    next.delete(id);
+    this.selectedAnnotationIds = markRaw(next);
+  }
+
+  @Mutation
+  public unselectAnnotations(ids: string[]) {
+    if (ids.length === 0) return;
+    const toRemove = new Set(ids);
+    this.selectedAnnotationIds = markRaw(
+      new Set(
+        [...this.selectedAnnotationIds].filter((id) => !toRemove.has(id)),
+      ),
     );
-    const annotationsToSelect = this.selectedAnnotations.filter(
-      (annotation: IAnnotation) =>
-        !selectedAnnotationsIds.includes(annotation.id),
-    );
-    this.selectedAnnotations = [...annotationsToSelect];
   }
 
   @Action
-  public toggleSelected(selected: IAnnotation[]) {
-    selected.forEach((annotation) => {
-      if (this.selectedAnnotations.find((a) => a.id === annotation.id)) {
-        this.unselectAnnotation(annotation);
-      } else {
-        this.selectAnnotation(annotation);
+  public toggleSelected(ids: string[]) {
+    const toggledIds = new Set(ids);
+    const current = this.selectedAnnotationIds;
+
+    const next: string[] = [];
+    for (const id of current) {
+      if (!toggledIds.has(id)) {
+        next.push(id);
       }
-    });
+    }
+    for (const id of ids) {
+      if (!current.has(id)) {
+        next.push(id);
+      }
+    }
+
+    this.setSelected(next);
   }
 
   @Mutation
@@ -780,7 +783,9 @@ export class Annotations extends VuexModule {
 
   @Mutation
   public addMultipleConnections(value: IAnnotationConnection[]) {
-    this.annotationConnections = [...this.annotationConnections, ...value];
+    if (value.length > 0) {
+      this.annotationConnections = [...this.annotationConnections, ...value];
+    }
   }
 
   @Mutation
@@ -818,9 +823,10 @@ export class Annotations extends VuexModule {
     try {
       await this.annotationsAPI.deleteMultipleAnnotations(ids);
 
+      const idsSet = new Set(ids);
       this.setAnnotations(
         this.annotations.filter(
-          (annotation: IAnnotation) => !ids.includes(annotation.id),
+          (annotation: IAnnotation) => !idsSet.has(annotation.id),
         ),
       );
     } finally {
@@ -833,13 +839,13 @@ export class Annotations extends VuexModule {
 
   @Action
   public deleteSelectedAnnotations() {
-    this.deleteAnnotations(this.selectedAnnotationIds);
+    this.deleteAnnotations([...this.selectedAnnotationIds]);
     this.setSelected([]);
   }
 
   @Action
   public async deleteUnselectedAnnotations() {
-    const selectedIds = new Set(this.selectedAnnotationIds);
+    const selectedIds = this.selectedAnnotationIds;
     const unselectedIds = this.annotations
       .filter((annotation) => !selectedIds.has(annotation.id))
       .map((annotation) => annotation.id);
@@ -861,10 +867,8 @@ export class Annotations extends VuexModule {
     sync.setSaving(true);
     const newAnnotations = [];
     for (const annotationId of annotationIds) {
-      const annotationIndex = this.annotations.findIndex(
-        (annotation: IAnnotation) => annotation.id === annotationId,
-      );
-      if (annotationIndex === -1) {
+      const annotationIndex = this.annotationIdToIdx[annotationId];
+      if (annotationIndex === undefined) {
         continue;
       }
       const oldAnnotation = this.annotations[annotationIndex];
@@ -940,12 +944,12 @@ export class Annotations extends VuexModule {
   }) {
     if (replace) {
       this.replaceTagsByAnnotationIds({
-        annotationIds: this.selectedAnnotationIds,
+        annotationIds: [...this.selectedAnnotationIds],
         tags,
       });
     } else {
       this.addTagsByAnnotationIds({
-        annotationIds: this.selectedAnnotationIds,
+        annotationIds: [...this.selectedAnnotationIds],
         tags,
       });
     }
@@ -954,7 +958,7 @@ export class Annotations extends VuexModule {
   @Action
   public removeTagsFromSelectedAnnotations(tags: string[]) {
     this.removeTagsByAnnotationIds({
-      annotationIds: this.selectedAnnotationIds,
+      annotationIds: [...this.selectedAnnotationIds],
       tags,
     });
   }
@@ -1007,7 +1011,7 @@ export class Annotations extends VuexModule {
     randomize?: boolean;
   }) {
     this.colorAnnotationIds({
-      annotationIds: this.selectedAnnotationIds,
+      annotationIds: [...this.selectedAnnotationIds],
       color,
       randomize,
     });

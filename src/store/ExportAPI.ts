@@ -20,18 +20,26 @@ export interface ICsvExportOptions {
   filename?: string;
 }
 
-export interface IBulkJsonExportDataset {
+export interface IBulkExportDataset {
   datasetId: string;
   datasetName: string;
 }
 
 export interface IBulkJsonExportOptions {
-  datasets: IBulkJsonExportDataset[];
+  datasets: IBulkExportDataset[];
   configurationId?: string;
   includeAnnotations?: boolean;
   includeConnections?: boolean;
   includeProperties?: boolean;
   includePropertyValues?: boolean;
+  onProgress?: (completed: number, total: number) => void;
+}
+
+export interface IBulkCsvExportOptions {
+  datasets: IBulkExportDataset[];
+  propertyPaths?: string[][];
+  undefinedValue?: "" | "NA" | "NaN";
+  delimiter?: "," | "\t";
   onProgress?: (completed: number, total: number) => void;
 }
 
@@ -154,6 +162,39 @@ export default class ExportAPI {
         includeConnections: options.includeConnections,
         includeProperties: options.includeProperties,
         includePropertyValues: options.includePropertyValues,
+        filename,
+      });
+
+      if (onProgress) {
+        onProgress(i + 1, datasets.length);
+      }
+
+      // Add a small delay between downloads to allow browser to process
+      if (i < datasets.length - 1) {
+        await delay(500);
+      }
+    }
+  }
+
+  /**
+   * Export multiple datasets as CSV files (one file per dataset).
+   * Downloads are triggered sequentially with a delay to avoid browser issues.
+   */
+  async exportBulkCsv(options: IBulkCsvExportOptions): Promise<void> {
+    const { datasets, onProgress } = options;
+    const delay = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+    const extension = options.delimiter === "\t" ? ".tsv" : ".csv";
+
+    for (let i = 0; i < datasets.length; i++) {
+      const dataset = datasets[i];
+      const filename = `${dataset.datasetName}${extension}`;
+
+      await this.exportCsv({
+        datasetId: dataset.datasetId,
+        propertyPaths: options.propertyPaths,
+        undefinedValue: options.undefinedValue,
+        delimiter: options.delimiter,
         filename,
       });
 

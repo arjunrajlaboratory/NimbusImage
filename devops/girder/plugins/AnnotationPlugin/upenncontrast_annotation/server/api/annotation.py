@@ -10,6 +10,7 @@ from girder.constants import AccessType
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
+from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..models.annotation import Annotation as AnnotationModel
 from ..helpers.serialization import orJsonDefaults
@@ -87,6 +88,12 @@ class Annotation(Resource):
     def create(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         annotation = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        Folder().load(
+            annotation["datasetId"],
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
         return self._annotationModel.create(annotation)
 
     @access.user
@@ -102,6 +109,11 @@ class Annotation(Resource):
     def createMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         annotations = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        datasetIds = {
+            ann["datasetId"] for ann in annotations
+            if "datasetId" in ann
+        }
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         return self._annotationModel.createMultiple(annotations)
 
     @describeRoute(
@@ -122,17 +134,31 @@ class Annotation(Resource):
 
     @access.user
     @describeRoute(
-        Description("Delete all annotations in the id list").param(
-            "body", "A list of all annotation ids to delete.", paramType="body"
+        Description("Delete all annotations in the id list")
+        .param(
+            "body",
+            "A list of all annotation ids to delete.",
+            paramType="body",
         )
     )
     @memoizeBodyJson
     @recordable(
-        "Delete multiple annotations", getDatasetIdFromAnnotationIdListInBody
+        "Delete multiple annotations",
+        getDatasetIdFromAnnotationIdListInBody,
     )
     def deleteMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
         stringIds = [stringId for stringId in bodyJson]
+        objectIds = [ObjectId(sid) for sid in stringIds]
+        # Find all distinct datasets these annotations belong to
+        datasetIds = [
+            doc["_id"] for doc in
+            self._annotationModel.collection.aggregate([
+                {"$match": {"_id": {"$in": objectIds}}},
+                {"$group": {"_id": "$datasetId"}},
+            ], hint="_id_")
+        ]
+        requireDatasetsAccess(datasetIds, self.getCurrentUser())
         self._annotationModel.deleteMultiple(stringIds)
 
     @describeRoute(
