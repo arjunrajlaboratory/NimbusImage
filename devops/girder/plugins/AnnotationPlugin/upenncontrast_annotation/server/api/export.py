@@ -237,15 +237,40 @@ class Export(Resource):
 
         This method transforms them into the frontend format:
         {"abc": {"propId1": {"Area": 100}}}
+
+        WARNING: This loads all property values into memory. Only use
+        for JSON export or small datasets. For CSV export of large
+        datasets, use _getPropertyValuesForAnnotations() instead.
         """
         result = {}
-        cursor = self._propertyValuesModel.find({"datasetId": datasetId})
+        cursor = self._propertyValuesModel.find(
+            {"datasetId": datasetId}
+        )
 
         for doc in cursor:
             annotationId = str(doc["annotationId"])
             values = doc.get("values", {})
             result[annotationId] = values
 
+        return result
+
+    def _getPropertyValuesForAnnotations(self, annotationIds):
+        """
+        Get property values for a specific batch of annotation IDs.
+
+        Returns a dict keyed by string annotationId. This is used
+        during CSV streaming to avoid loading all property values
+        into memory at once.
+        """
+        if not annotationIds:
+            return {}
+        cursor = self._propertyValuesModel.find(
+            {"annotationId": {"$in": annotationIds}}
+        )
+        result = {}
+        for doc in cursor:
+            annotationId = str(doc["annotationId"])
+            result[annotationId] = doc.get("values", {})
         return result
 
     @access.public
@@ -357,12 +382,16 @@ class Export(Resource):
         # Build property name mapping
         propertyNameMap = self._buildPropertyNameMap(parsedPropertyPaths)
 
+        # Process annotations in batches to bound memory usage
+        BATCH_SIZE = 5000
+        exportSelf = self
+
         # Generator for streaming CSV output
         def generate():
             # Build column definitions: fixed columns + property columns
             columns = CSV_FIXED_COLUMNS.copy()
             for path in parsedPropertyPaths:
-                propertyName = self._getPropertyColumnName(
+                propertyName = exportSelf._getPropertyColumnName(
                     path, propertyNameMap)
                 if propertyName:
                     columns.append(CsvColumn(
@@ -379,23 +408,57 @@ class Export(Resource):
                     headerRow.append(col.name)
             yield delimiter.join(headerRow) + '\n'
 
-            # Load property values for all annotations in dataset
-            propertyValues = self._getPropertyValues(datasetObjectId)
-
             # Build annotation query
             query = {"datasetId": datasetObjectId}
             if parsedAnnotationIds:
                 query["_id"] = {
-                    "$in": [ObjectId(aid) for aid in parsedAnnotationIds]
+                    "$in": [
+                        ObjectId(aid)
+                        for aid in parsedAnnotationIds
+                    ]
                 }
 
-            # Stream annotations
-            cursor = self._annotationModel.find(query)
+            # Stream annotations in batches to avoid loading
+            # all property values into memory at once
+            cursor = exportSelf._annotationModel.find(query)
+            batch = []
 
             for annotation in cursor:
-                annId = str(annotation["_id"])
+                batch.append(annotation)
+                if len(batch) < BATCH_SIZE:
+                    continue
 
-                # Build row values (order must match CSV_FIXED_COLUMNS)
+                # Process full batch
+                yield from _processBatch(
+                    batch, columns, exportSelf,
+                    parsedPropertyPaths, undefinedValue,
+                    delimiter,
+                )
+                batch = []
+
+            # Process remaining annotations
+            if batch:
+                yield from _processBatch(
+                    batch, columns, exportSelf,
+                    parsedPropertyPaths, undefinedValue,
+                    delimiter,
+                )
+
+        def _processBatch(
+            batch, columns, exportSelf,
+            parsedPropertyPaths, undefinedValue, delimiter,
+        ):
+            """Process a batch of annotations into CSV rows."""
+            # Load property values only for this batch
+            batchIds = [ann["_id"] for ann in batch]
+            propertyValues = (
+                exportSelf._getPropertyValuesForAnnotations(
+                    batchIds
+                )
+            )
+
+            for annotation in batch:
+                annId = str(annotation["_id"])
                 location = annotation.get("location", {})
                 tags = annotation.get("tags", [])
 
@@ -411,20 +474,32 @@ class Export(Resource):
                 ]
 
                 # Add property values
-                annPropertyValues = propertyValues.get(annId, {})
+                annPropValues = propertyValues.get(
+                    annId, {}
+                )
                 for path in parsedPropertyPaths:
-                    value = self._getValueFromPath(annPropertyValues, path)
-                    if value is None or isinstance(value, dict):
+                    value = exportSelf._getValueFromPath(
+                        annPropValues, path
+                    )
+                    if value is None or isinstance(
+                        value, dict
+                    ):
                         row.append(undefinedValue)
                     else:
-                        row.append(self._formatValue(value))
+                        row.append(
+                            exportSelf._formatValue(value)
+                        )
 
-                # Format row with quoting based on column definitions
+                # Format row with quoting
                 formattedRow = []
                 for col, value in zip(columns, row):
                     if col.is_quoted:
-                        escapedValue = value.replace('"', '""')
-                        formattedRow.append(f'"{escapedValue}"')
+                        escapedValue = value.replace(
+                            '"', '""'
+                        )
+                        formattedRow.append(
+                            f'"{escapedValue}"'
+                        )
                     else:
                         formattedRow.append(value)
 

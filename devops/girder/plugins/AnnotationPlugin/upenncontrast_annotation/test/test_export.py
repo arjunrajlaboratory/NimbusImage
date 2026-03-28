@@ -720,3 +720,28 @@ class TestCSVExport:
         )
         assert colName == "cell fibroblast Blob Metrics / Area"
         assert ',' not in colName
+
+    def testGetPropertyValuesForAnnotations(self, admin):
+        """Test batched property value lookup by annotation IDs."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        export = Export()
+
+        # Lookup for first annotation only
+        result = export._getPropertyValuesForAnnotations(
+            [annotations[0]["_id"]]
+        )
+        ann1_id = str(annotations[0]["_id"])
+        assert ann1_id in result
+        assert "test_property" in result[ann1_id]
+        assert result[ann1_id]["test_property"]["Area"] == 100
+
+        # Second annotation has no property values from
+        # createDatasetWithData's appendValues call
+        ann2_id = str(annotations[1]["_id"])
+        assert ann2_id not in result
+
+    def testGetPropertyValuesForAnnotationsEmpty(self, admin):
+        """Test batched lookup with empty list returns empty dict."""
+        export = Export()
+        assert export._getPropertyValuesForAnnotations([]) == {}
