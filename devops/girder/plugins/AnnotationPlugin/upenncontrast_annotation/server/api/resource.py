@@ -85,7 +85,7 @@ class CustomResource(Resource):
                             model.move(doc, parent, parentType)
                     ctx.update(increment=1)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description('Batch resolve multiple resource documents by id')
         .notes(

@@ -6,7 +6,7 @@ from bson.objectid import ObjectId
 from girder.api import access
 from girder.api.describe import Description, describeRoute, autoDescribeRoute
 from girder.api.rest import Resource, loadmodel, setResponseHeader
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
@@ -77,7 +77,7 @@ class Annotation(Resource):
     # TODO(performance): use objectId whenever possible
     # TODO: error handling and documentation
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create a new annotation").param(
             "body", "Annotation Object", paramType="body"
@@ -96,7 +96,7 @@ class Annotation(Resource):
         )
         return self._annotationModel.create(annotation)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create multiple new annotations").param(
             "body", "Annotation Object List", paramType="body"
@@ -122,7 +122,7 @@ class Annotation(Resource):
         .errorResponse("ID was invalid.")
         .errorResponse("Write access was denied for the annotation.", 403)
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="upenn_annotation",
         plugin="upenncontrast_annotation",
@@ -132,7 +132,7 @@ class Annotation(Resource):
     def delete(self, upenn_annotation, params):
         self._annotationModel.delete(upenn_annotation)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Delete all annotations in the id list")
         .param(
@@ -173,7 +173,7 @@ class Annotation(Resource):
         .errorResponse("Invalid JSON passed in request body.")
         .errorResponse("Validation Error: JSON doesn't follow schema.")
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="upenn_annotation",
         plugin="upenncontrast_annotation",
@@ -200,7 +200,7 @@ class Annotation(Resource):
         .errorResponse("Invalid JSON passed in request body.")
         .errorResponse("Validation Error: JSON doesn't follow schema.")
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @memoizeBodyJson
     @recordable("Update an annotation", getDatasetIdFromAnnotationListInBody)
     def updateMultiple(self, params, *args, **kwargs):
@@ -335,7 +335,7 @@ class Annotation(Resource):
     def get(self, upenn_annotation, params):
         return upenn_annotation
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Compute annotations from a worker tool")
         .param("datasetId", "The dataset Id", required=False)

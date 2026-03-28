@@ -1,7 +1,7 @@
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute, describeRoute
 from girder.api.rest import Resource, loadmodel
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.exceptions import AccessException, RestException
 from girder.models.folder import Folder
 
@@ -92,7 +92,7 @@ class AnnotationConnection(Resource):
     # TODO: creation date, update date, creatorId
     # TODO: error handling and documentation
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create a new connection").param(
             "body", "Connection Object", paramType="body"
@@ -111,7 +111,7 @@ class AnnotationConnection(Resource):
         )
         return self._connectionModel.create(connection)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create multiple new connections").param(
             "body", "Connection Object List", paramType="body"
@@ -137,7 +137,7 @@ class AnnotationConnection(Resource):
         .errorResponse("ID was invalid.")
         .errorResponse("Write access was denied for the connection.", 403)
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="annotation_connection",
         plugin="upenncontrast_annotation",
@@ -147,7 +147,7 @@ class AnnotationConnection(Resource):
     def delete(self, annotation_connection, params):
         self._connectionModel.remove(annotation_connection)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Delete all annotation connections in the id list")
         .param(
@@ -188,7 +188,7 @@ class AnnotationConnection(Resource):
         .errorResponse("Invalid JSON passed in request body.")
         .errorResponse("Validation Error: JSON doesn't follow schema.")
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="annotation_connection",
         plugin="upenncontrast_annotation",
@@ -297,7 +297,7 @@ class AnnotationConnection(Resource):
     def get(self, annotation_connection):
         return annotation_connection
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create connections between annotations").param(
             "body", "Connection Object", paramType="body"

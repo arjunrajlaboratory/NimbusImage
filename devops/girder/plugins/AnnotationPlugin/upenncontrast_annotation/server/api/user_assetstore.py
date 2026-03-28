@@ -3,7 +3,7 @@ from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
 from girder.models.assetstore import Assetstore
 from girder.models.folder import Folder
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from import_tracker.utils import moveFolder
 
 
@@ -29,7 +29,7 @@ class UserAssetstore(Resource):
             offset=offset, limit=limit, sort=sort
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description("Move folder contents to an assetstore.")
         .modelParam(

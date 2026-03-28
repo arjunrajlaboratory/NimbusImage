@@ -1,7 +1,7 @@
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.exceptions import AccessException, RestException
 from girder.models.folder import Folder
 from ..models.history import History as HistoryModel
@@ -20,7 +20,7 @@ class History(Resource):
         self.route("PUT", ("undo",), self.undo)
         self.route("PUT", ("redo",), self.redo)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description(
             (
@@ -45,7 +45,7 @@ class History(Resource):
         )
         return self._historyModel.getLastEntries(user, datasetId)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description(
             "Undo the last history entry which hasn't been undone"
@@ -67,7 +67,7 @@ class History(Resource):
         )
         return self._historyModel.undo(user, datasetId)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Redo the last history entry which has been undone").param(
             "datasetId",
