@@ -237,9 +237,12 @@ class Export(Resource):
 
         This method transforms them into the frontend format:
         {"abc": {"propId1": {"Area": 100}}}
+
         """
         result = {}
-        cursor = self._propertyValuesModel.find({"datasetId": datasetId})
+        cursor = self._propertyValuesModel.find(
+            {"datasetId": datasetId}
+        )
 
         for doc in cursor:
             annotationId = str(doc["annotationId"])
@@ -357,18 +360,24 @@ class Export(Resource):
         # Build property name mapping
         propertyNameMap = self._buildPropertyNameMap(parsedPropertyPaths)
 
+        exportSelf = self
+
         # Generator for streaming CSV output
         def generate():
             # Build column definitions: fixed columns + property columns
+            # Filter to only paths that resolve to a name, so the
+            # column count matches the row value count.
             columns = CSV_FIXED_COLUMNS.copy()
+            includedPaths = []
             for path in parsedPropertyPaths:
-                propertyName = self._getPropertyColumnName(
+                propertyName = exportSelf._getPropertyColumnName(
                     path, propertyNameMap)
                 if propertyName:
                     columns.append(CsvColumn(
                         propertyName,
                         is_quoted=',' in propertyName
                     ))
+                    includedPaths.append(path)
 
             # Build header row
             headerRow = []
@@ -379,25 +388,20 @@ class Export(Resource):
                     headerRow.append(col.name)
             yield delimiter.join(headerRow) + '\n'
 
-            # Load property values for all annotations in dataset
-            propertyValues = self._getPropertyValues(datasetObjectId)
+            # Load all property values for the dataset
+            propertyValues = exportSelf._getPropertyValues(
+                datasetObjectId
+            )
 
-            # Build annotation query
-            query = {"datasetId": datasetObjectId}
-            if parsedAnnotationIds:
-                query["_id"] = {
-                    "$in": [ObjectId(aid) for aid in parsedAnnotationIds]
-                }
-
-            # Stream annotations
-            cursor = self._annotationModel.find(query)
-
-            for annotation in cursor:
+            # Query annotations. When filtering by IDs, chunk
+            # the $in to stay under MongoDB's 16MB BSON limit.
+            for annotation in _iterAnnotations(
+                exportSelf, datasetObjectId,
+                parsedAnnotationIds,
+            ):
                 annId = str(annotation["_id"])
-
-                # Build row values (order must match CSV_FIXED_COLUMNS)
                 location = annotation.get("location", {})
-                tags = annotation.get("tags", [])
+                tags = annotation.get("tags") or []
 
                 row = [
                     annId,
@@ -405,30 +409,66 @@ class Export(Resource):
                     str(location.get("XY", 0) + 1),
                     str(location.get("Z", 0) + 1),
                     str(location.get("Time", 0) + 1),
-                    ", ".join(tags),
-                    annotation.get("shape", ""),
-                    annotation.get("name", "") or "",
+                    ", ".join(str(t) for t in tags),
+                    str(annotation.get("shape", "")),
+                    str(annotation.get("name", "") or ""),
                 ]
 
                 # Add property values
-                annPropertyValues = propertyValues.get(annId, {})
-                for path in parsedPropertyPaths:
-                    value = self._getValueFromPath(annPropertyValues, path)
-                    if value is None or isinstance(value, dict):
+                annPropValues = propertyValues.get(
+                    annId, {}
+                )
+                for path in includedPaths:
+                    value = exportSelf._getValueFromPath(
+                        annPropValues, path
+                    )
+                    if value is None or isinstance(
+                        value, dict
+                    ):
                         row.append(undefinedValue)
                     else:
-                        row.append(self._formatValue(value))
+                        row.append(
+                            exportSelf._formatValue(value)
+                        )
 
-                # Format row with quoting based on column definitions
+                # Format row with quoting
                 formattedRow = []
                 for col, value in zip(columns, row):
                     if col.is_quoted:
-                        escapedValue = value.replace('"', '""')
-                        formattedRow.append(f'"{escapedValue}"')
+                        escapedValue = str(value).replace(
+                            '"', '""'
+                        )
+                        formattedRow.append(
+                            f'"{escapedValue}"'
+                        )
                     else:
-                        formattedRow.append(value)
+                        formattedRow.append(str(value))
 
                 yield delimiter.join(formattedRow) + '\n'
+
+        def _iterAnnotations(
+            exportSelf, datasetId, annotationIds,
+        ):
+            """Iterate annotations, chunking $in queries to
+            stay under MongoDB's 16MB BSON document limit."""
+            if not annotationIds:
+                for ann in exportSelf._annotationModel.find(
+                    {"datasetId": datasetId}
+                ):
+                    yield ann
+                return
+
+            IN_CHUNK_SIZE = 500000
+            idList = [
+                ObjectId(aid) for aid in annotationIds
+            ]
+            for i in range(0, len(idList), IN_CHUNK_SIZE):
+                chunk = idList[i:i + IN_CHUNK_SIZE]
+                for ann in exportSelf._annotationModel.find({
+                    "datasetId": datasetId,
+                    "_id": {"$in": chunk},
+                }):
+                    yield ann
 
         return generate
 
