@@ -178,7 +178,7 @@ watch(
       updateInternalValue();
     }
   },
-  { immediate: true, flush: "sync" },
+  { immediate: true },
 );
 
 function onDragEnd() {
