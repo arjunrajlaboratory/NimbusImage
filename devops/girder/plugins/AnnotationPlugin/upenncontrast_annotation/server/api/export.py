@@ -238,9 +238,6 @@ class Export(Resource):
         This method transforms them into the frontend format:
         {"abc": {"propId1": {"Area": 100}}}
 
-        WARNING: This loads all property values into memory. Only use
-        for JSON export or small datasets. For CSV export of large
-        datasets, use _getPropertyValuesForAnnotations() instead.
         """
         result = {}
         cursor = self._propertyValuesModel.find(
@@ -252,25 +249,6 @@ class Export(Resource):
             values = doc.get("values", {})
             result[annotationId] = values
 
-        return result
-
-    def _getPropertyValuesForAnnotations(self, annotationIds):
-        """
-        Get property values for a specific batch of annotation IDs.
-
-        Returns a dict keyed by string annotationId. This is used
-        during CSV streaming to avoid loading all property values
-        into memory at once.
-        """
-        if not annotationIds:
-            return {}
-        cursor = self._propertyValuesModel.find(
-            {"annotationId": {"$in": annotationIds}}
-        )
-        result = {}
-        for doc in cursor:
-            annotationId = str(doc["annotationId"])
-            result[annotationId] = doc.get("values", {})
         return result
 
     @access.public
@@ -391,8 +369,6 @@ class Export(Resource):
         # Build property name mapping
         propertyNameMap = self._buildPropertyNameMap(parsedPropertyPaths)
 
-        # Process annotations in batches to bound memory usage
-        BATCH_SIZE = 5000
         exportSelf = self
 
         # Generator for streaming CSV output
@@ -421,47 +397,25 @@ class Export(Resource):
                     headerRow.append(col.name)
             yield delimiter.join(headerRow) + '\n'
 
-            # Stream annotations, processing property values
-            # in batches to keep memory bounded.
-            # When filtering by annotation IDs, chunk the $in
-            # query to stay under MongoDB's 16MB BSON limit.
-            batch = []
-            for annotation in _iterAnnotations(
-                exportSelf, datasetObjectId,
-                parsedAnnotationIds, BATCH_SIZE,
-            ):
-                batch.append(annotation)
-                if len(batch) < BATCH_SIZE:
-                    continue
-
-                yield from _processBatch(
-                    batch, columns, exportSelf,
-                    includedPaths, undefinedValue,
-                    delimiter,
-                )
-                batch = []
-
-            if batch:
-                yield from _processBatch(
-                    batch, columns, exportSelf,
-                    includedPaths, undefinedValue,
-                    delimiter,
-                )
-
-        def _processBatch(
-            batch, columns, exportSelf,
-            includedPaths, undefinedValue, delimiter,
-        ):
-            """Process a batch of annotations into CSV rows."""
-            # Load property values only for this batch
-            batchIds = [ann["_id"] for ann in batch]
-            propertyValues = (
-                exportSelf._getPropertyValuesForAnnotations(
-                    batchIds
-                )
+            # Load all property values for the dataset
+            propertyValues = exportSelf._getPropertyValues(
+                datasetObjectId
             )
 
-            for annotation in batch:
+            # Build annotation query
+            query = {"datasetId": datasetObjectId}
+            if parsedAnnotationIds:
+                query["_id"] = {
+                    "$in": [
+                        ObjectId(aid)
+                        for aid in parsedAnnotationIds
+                    ]
+                }
+
+            # Stream annotations
+            cursor = exportSelf._annotationModel.find(query)
+
+            for annotation in cursor:
                 annId = str(annotation["_id"])
                 location = annotation.get("location", {})
                 tags = annotation.get("tags") or []
@@ -508,32 +462,6 @@ class Export(Resource):
                         formattedRow.append(str(value))
 
                 yield delimiter.join(formattedRow) + '\n'
-
-        def _iterAnnotations(
-            exportSelf, datasetId, annotationIds, chunkSize,
-        ):
-            """Iterate annotations, chunking $in queries."""
-            if not annotationIds:
-                cursor = exportSelf._annotationModel.find(
-                    {"datasetId": datasetId}
-                )
-                for annotation in cursor:
-                    yield annotation
-                return
-
-            # Chunk the $in to stay under MongoDB's 16MB
-            # BSON document size limit.
-            idList = [
-                ObjectId(aid) for aid in annotationIds
-            ]
-            for i in range(0, len(idList), chunkSize):
-                chunk = idList[i:i + chunkSize]
-                cursor = exportSelf._annotationModel.find({
-                    "datasetId": datasetId,
-                    "_id": {"$in": chunk},
-                })
-                for annotation in cursor:
-                    yield annotation
 
         return generate
 
