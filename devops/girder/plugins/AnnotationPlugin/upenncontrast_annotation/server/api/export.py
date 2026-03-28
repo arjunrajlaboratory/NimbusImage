@@ -393,20 +393,12 @@ class Export(Resource):
                 datasetObjectId
             )
 
-            # Build annotation query
-            query = {"datasetId": datasetObjectId}
-            if parsedAnnotationIds:
-                query["_id"] = {
-                    "$in": [
-                        ObjectId(aid)
-                        for aid in parsedAnnotationIds
-                    ]
-                }
-
-            # Stream annotations
-            cursor = exportSelf._annotationModel.find(query)
-
-            for annotation in cursor:
+            # Query annotations. When filtering by IDs, chunk
+            # the $in to stay under MongoDB's 16MB BSON limit.
+            for annotation in _iterAnnotations(
+                exportSelf, datasetObjectId,
+                parsedAnnotationIds,
+            ):
                 annId = str(annotation["_id"])
                 location = annotation.get("location", {})
                 tags = annotation.get("tags") or []
@@ -453,6 +445,30 @@ class Export(Resource):
                         formattedRow.append(str(value))
 
                 yield delimiter.join(formattedRow) + '\n'
+
+        def _iterAnnotations(
+            exportSelf, datasetId, annotationIds,
+        ):
+            """Iterate annotations, chunking $in queries to
+            stay under MongoDB's 16MB BSON document limit."""
+            if not annotationIds:
+                for ann in exportSelf._annotationModel.find(
+                    {"datasetId": datasetId}
+                ):
+                    yield ann
+                return
+
+            IN_CHUNK_SIZE = 50000
+            idList = [
+                ObjectId(aid) for aid in annotationIds
+            ]
+            for i in range(0, len(idList), IN_CHUNK_SIZE):
+                chunk = idList[i:i + IN_CHUNK_SIZE]
+                for ann in exportSelf._annotationModel.find({
+                    "datasetId": datasetId,
+                    "_id": {"$in": chunk},
+                }):
+                    yield ann
 
         return generate
 

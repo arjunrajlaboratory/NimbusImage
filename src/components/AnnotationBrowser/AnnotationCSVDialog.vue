@@ -65,6 +65,30 @@
           </v-alert>
         </template>
 
+        <template v-if="exportScope === 'current'">
+          <v-list-subheader>Annotations to Export</v-list-subheader>
+          <v-radio-group
+            v-model="annotationScope"
+            class="mt-0 mb-2"
+            hide-details
+          >
+            <v-radio
+              value="all"
+              :label="`All annotations (${allAnnotationCount})`"
+            />
+            <v-radio
+              value="filtered"
+              :label="`Filtered annotations (${filteredAnnotationCount})`"
+              :disabled="!hasActiveFilter"
+            />
+            <v-radio
+              value="selected"
+              :label="`Selected annotations (${selectedAnnotationCount})`"
+              :disabled="selectedAnnotationCount === 0"
+            />
+          </v-radio-group>
+        </template>
+
         <v-divider class="mb-4" />
 
         <v-list-subheader>File Format</v-list-subheader>
@@ -136,10 +160,9 @@
             <v-alert type="info" variant="tonal" class="mb-4">
               Preview is not available for more than
               {{ PREVIEW_ANNOTATION_LIMIT }} annotations ({{
-                annotations.length
+                annotationsToExport.length
               }}
-              annotations selected). Download will export all annotations using
-              the server.
+              annotations to export). Download will export using the server.
             </v-alert>
             <v-textarea
               v-model="filename"
@@ -302,16 +325,38 @@ const processingProgress = ref(0);
 const isProcessing = ref(false);
 const isDownloading = ref(false);
 
+const annotationScope = ref<"all" | "filtered" | "selected">("all");
+
+const allAnnotationCount = computed(() => annotationStore.annotations.length);
+const filteredAnnotationCount = computed(() => props.annotations.length);
+const selectedAnnotationCount = computed(
+  () => annotationStore.selectedAnnotationIds.size,
+);
+const hasActiveFilter = computed(
+  () => props.annotations.length < annotationStore.annotations.length,
+);
+
 const exportScope = ref<"current" | "all">("current");
 const bulkExporting = ref(false);
 const bulkExportProgress = ref(0);
 const bulkExportError = ref("");
 
+const annotationsToExport = computed(() => {
+  if (annotationScope.value === "selected") {
+    const ids = annotationStore.selectedAnnotationIds;
+    return annotationStore.annotations.filter((a) => ids.has(a.id));
+  }
+  if (annotationScope.value === "filtered") {
+    return props.annotations;
+  }
+  return annotationStore.annotations;
+});
+
 const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
   useCollectionDatasets(dialog, exportScope);
 
 const isTooLargeForPreview = computed(() => {
-  return props.annotations.length > PREVIEW_ANNOTATION_LIMIT;
+  return annotationsToExport.value.length > PREVIEW_ANNOTATION_LIMIT;
 });
 
 const canUseClipboard = computed(() => {
@@ -406,7 +451,7 @@ async function generateCSVStringForAnnotations() {
     const CHUNK_SIZE = 100;
     const data: (string | number)[][] = [];
     const propValues = propertyStore.propertyValues;
-    const annotations = props.annotations;
+    const annotations = annotationsToExport.value;
     const nAnnotations = annotations.length;
 
     for (let i = 0; i < nAnnotations; i += CHUNK_SIZE) {
@@ -501,16 +546,17 @@ async function downloadSingleDataset() {
 
   isDownloading.value = true;
   try {
-    // Only send annotationIds when the user has an active filter,
-    // to avoid exceeding MongoDB's 16MB BSON query size limit.
-    const isFiltered =
-      props.annotations.length < annotationStore.annotations.length;
+    // Only send annotationIds when exporting a subset, to avoid
+    // exceeding MongoDB's 16MB BSON query size limit.
+    const exportAnnotations = annotationsToExport.value;
+    const isSubset =
+      exportAnnotations.length < annotationStore.annotations.length;
 
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,
       propertyPaths: getIncludedPropertyPaths(),
-      ...(isFiltered
-        ? { annotationIds: props.annotations.map((a) => a.id) }
+      ...(isSubset
+        ? { annotationIds: exportAnnotations.map((a) => a.id) }
         : {}),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
@@ -572,6 +618,7 @@ watch(
     undefinedHandling,
     fileFormat,
     dialog,
+    annotationScope,
   ],
   () => updateText(),
 );
@@ -584,6 +631,7 @@ defineExpose({
   dialog,
   text,
   filename,
+  annotationScope,
   propertyExportMode,
   fileFormat,
   undefinedHandling,
