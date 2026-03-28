@@ -245,6 +245,7 @@
 import { ref, computed, watch, onMounted } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import store from "@/store";
+import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
 import { useCollectionDatasets } from "@/utils/useCollectionDatasets";
 
@@ -500,10 +501,17 @@ async function downloadSingleDataset() {
 
   isDownloading.value = true;
   try {
+    // Only send annotationIds when the user has an active filter,
+    // to avoid exceeding MongoDB's 16MB BSON query size limit.
+    const isFiltered =
+      props.annotations.length < annotationStore.annotations.length;
+
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,
       propertyPaths: getIncludedPropertyPaths(),
-      annotationIds: props.annotations.map((a) => a.id),
+      ...(isFiltered
+        ? { annotationIds: props.annotations.map((a) => a.id) }
+        : {}),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
       filename:

@@ -334,18 +334,9 @@ class Export(Resource):
         # Property paths are already parsed from JSON body
         parsedPropertyPaths = propertyPaths or []
 
-        # Determine whether to filter by annotation IDs.
-        # When the list is very large, the $in query can exceed
-        # MongoDB's 16MB BSON document size limit, so we compare
-        # against the total annotation count for the dataset and
-        # skip the filter when all annotations are included.
         parsedAnnotationIds = None
         if annotationIds:
-            totalCount = self._annotationModel.find(
-                {"datasetId": datasetObjectId}
-            ).count()
-            if len(annotationIds) < totalCount:
-                parsedAnnotationIds = set(annotationIds)
+            parsedAnnotationIds = set(annotationIds)
 
         # Validate delimiter
         if delimiter not in (",", "\t"):
