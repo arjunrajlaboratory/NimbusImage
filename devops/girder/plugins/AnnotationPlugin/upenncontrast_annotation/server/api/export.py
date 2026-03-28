@@ -458,7 +458,7 @@ class Export(Resource):
                     yield ann
                 return
 
-            IN_CHUNK_SIZE = 50000
+            IN_CHUNK_SIZE = 500000
             idList = [
                 ObjectId(aid) for aid in annotationIds
             ]
