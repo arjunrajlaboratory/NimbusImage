@@ -51,6 +51,8 @@
             :min="min + offset"
             :step="1"
             hide-details
+            @start="isDragging = true"
+            @end="onDragEnd"
           />
         </div>
         <span class="caption font-weight-light counter-label ml-2">
@@ -118,7 +120,7 @@
 </style>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -142,6 +144,7 @@ const emit = defineEmits<{
 }>();
 
 const internalValue = ref(0);
+const isDragging = ref(false);
 
 const slider = computed({
   get: () => internalValue.value,
@@ -165,7 +168,29 @@ function updateInternalValue() {
   internalValue.value = props.modelValue + props.offset;
 }
 
-watch(() => props.modelValue, updateInternalValue, { immediate: true });
+// Don't sync from props while user is actively dragging — Vuetify 3's v-slider
+// re-emits stale values when its v-model changes externally during drag,
+// creating a feedback loop that causes the slider to jump backwards.
+watch(
+  () => props.modelValue,
+  () => {
+    if (!isDragging.value) {
+      updateInternalValue();
+    }
+  },
+  { immediate: true },
+);
+
+function onDragEnd() {
+  isDragging.value = false;
+  updateInternalValue();
+}
+
+// If the slider unmounts mid-drag (dataset transition, min===max change),
+// @end never fires. Reset so prop sync isn't permanently blocked.
+onBeforeUnmount(() => {
+  isDragging.value = false;
+});
 
 function handleInput(value: string) {
   const numValue = parseInt(value);
