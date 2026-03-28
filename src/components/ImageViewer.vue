@@ -1363,13 +1363,19 @@ watch(
   },
 );
 
+// Debounce draw during rapid scrubbing (time/z/xy slider changes) so the
+// expensive GeoJS tile-reset + re-render only fires for the latest frame,
+// skipping intermediate values that the user scrubbed past.
+let debouncedDrawTimer: ReturnType<typeof setTimeout> | null = null;
 watch(mapLayerList, () => {
-  nextTick(() => {
+  if (debouncedDrawTimer) clearTimeout(debouncedDrawTimer);
+  debouncedDrawTimer = setTimeout(() => {
+    debouncedDrawTimer = null;
     if (!refsMounted.value) {
       return;
     }
     draw();
-  });
+  }, 10);
 });
 
 watch([showScalebar, pixelSize], updateScaleWidget);
