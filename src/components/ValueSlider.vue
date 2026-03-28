@@ -120,7 +120,7 @@
 </style>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -185,6 +185,12 @@ function onDragEnd() {
   isDragging.value = false;
   updateInternalValue();
 }
+
+// If the slider unmounts mid-drag (dataset transition, min===max change),
+// @end never fires. Reset so prop sync isn't permanently blocked.
+onBeforeUnmount(() => {
+  isDragging.value = false;
+});
 
 function handleInput(value: string) {
   const numValue = parseInt(value);
