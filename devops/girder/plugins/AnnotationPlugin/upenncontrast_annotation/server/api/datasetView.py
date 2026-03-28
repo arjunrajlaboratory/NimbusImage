@@ -53,6 +53,10 @@ class DatasetView(Resource):
         level=AccessType.READ,
     )
     def get(self, dataset_view, params):
+        user = self.getCurrentUser()
+        dataset_view['_accessLevel'] = \
+            self._datasetViewModel.getAccessLevel(
+                dataset_view, user)
         return dataset_view
 
     @access.user
