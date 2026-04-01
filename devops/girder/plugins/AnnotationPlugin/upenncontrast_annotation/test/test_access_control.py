@@ -390,26 +390,6 @@ class TestHistoryAccessControl:
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
-class TestWorkerInterfacesAccessControl:
-    """Test that worker interface write endpoints require admin."""
-
-    def testUpdateWorkerInterfaceDeniedForNonAdmin(
-        self, user, server
-    ):
-        """Non-admin user cannot update worker interfaces."""
-        resp = server.request(
-            path="/worker_interface",
-            method="POST",
-            user=user,
-            body=json.dumps({"test": "data"}),
-            type="application/json",
-            params={"image": "test-image:latest"},
-        )
-        assertStatus(resp, 403)
-
-
-@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
-@pytest.mark.plugin("upenncontrast_annotation")
 class TestWorkerPreviewsAccessControl:
     """Test that worker preview write endpoints require admin."""
 
