@@ -36,7 +36,7 @@ describe("AnnotationSpatialIndex", () => {
 
     it("removes a single item", () => {
       index.insert("a", 10, 10);
-      index.remove("a", 10, 10);
+      index.remove("a");
       expect(index.queryBox(0, 0, 20, 20).has("a")).toBe(false);
     });
   });

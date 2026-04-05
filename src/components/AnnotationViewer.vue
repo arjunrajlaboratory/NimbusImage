@@ -420,15 +420,12 @@ const layerAnnotations = computed(() => {
         ) {
           // Visibility filtering and stub-aware rendering
           const stubsSize = annotationStore.annotationStubs?.size ?? 0;
-          if (
-            stubsSize > 0 &&
-            !annotationStore.isVisible(annotation.id)
-          ) {
+          if (stubsSize > 0 && !annotationStore.isVisible(annotation.id)) {
             continue;
           }
           const renderData: TAnnotationOrStub =
             stubsSize > 0
-              ? (annotationStore.getForRendering(annotation.id) ?? annotation)
+              ? annotationStore.getForRendering(annotation.id) ?? annotation
               : annotation;
           annotationIdsSet.set(annotation.id, renderData);
         }
@@ -3107,9 +3104,8 @@ watch(selectedToolConfiguration, () => {
 
 // Visibility and hydration updates
 const updateVisibilityDebounced = debounce(() => {
-  const ids = (store.filteredDraw
-    ? filteredAnnotations.value
-    : annotationStore.annotations
+  const ids = (
+    store.filteredDraw ? filteredAnnotations.value : annotationStore.annotations
   ).map((a: IAnnotation) => a.id);
   annotationStore.updateVisibilityAndHydration({
     filteredIds: ids,

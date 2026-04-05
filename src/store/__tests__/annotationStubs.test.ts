@@ -105,8 +105,7 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
           return state.hydratedAnnotations.has(id);
         }
         return (
-          state.hydrationMode === "shapes" &&
-          state.hydratedAnnotations.has(id)
+          state.hydrationMode === "shapes" && state.hydratedAnnotations.has(id)
         );
       },
       getForRendering: (state, getters) => (id: string) => {
@@ -225,11 +224,14 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
       },
     },
     actions: {
-      updateVisibilityAndHydration({ state, commit }, params: {
-        filteredIds: string[];
-        gcsBounds?: { x: number; y: number }[];
-        currentFrameLocation: IAnnotationLocation;
-      }) {
+      updateVisibilityAndHydration(
+        { state, commit },
+        params: {
+          filteredIds: string[];
+          gcsBounds?: { x: number; y: number }[];
+          currentFrameLocation: IAnnotationLocation;
+        },
+      ) {
         const { filteredIds, gcsBounds, currentFrameLocation } = params;
         const { maxVisible, maxHydrated } = state.visibilityConfig;
 
@@ -260,14 +262,13 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
             maxX = Math.max(maxX, pt.x);
             maxY = Math.max(maxY, pt.y);
           }
-          ({ inViewportIds, outOfViewportIds } =
-            spatialIndex.splitByViewport(
-              currentFrameIds,
-              minX,
-              minY,
-              maxX,
-              maxY,
-            ));
+          ({ inViewportIds, outOfViewportIds } = spatialIndex.splitByViewport(
+            currentFrameIds,
+            minX,
+            minY,
+            maxX,
+            maxY,
+          ));
         }
 
         let visibleIds: string[];
@@ -306,10 +307,7 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
         }
 
         commit("setVisibleAnnotationIds", visibleIds);
-        commit(
-          "setHydrationMode",
-          idsToHydrate.length > 0 ? "shapes" : "dots",
-        );
+        commit("setHydrationMode", idsToHydrate.length > 0 ? "shapes" : "dots");
         commit("clearNonSelectedHydration", idsToHydrate);
         commit("hydrateAnnotations", idsToHydrate);
       },
@@ -374,8 +372,13 @@ describe("annotation stub/hydration store logic", () => {
 
       store.commit("setAnnotations", annotations);
 
-      const { inViewportIds, outOfViewportIds } =
-        spatialIndex.splitByViewport(["in-1", "out-1"], 0, 0, 100, 100);
+      const { inViewportIds, outOfViewportIds } = spatialIndex.splitByViewport(
+        ["in-1", "out-1"],
+        0,
+        0,
+        100,
+        100,
+      );
       expect(inViewportIds).toContain("in-1");
       expect(outOfViewportIds).toContain("out-1");
     });
@@ -483,7 +486,10 @@ describe("annotation stub/hydration store logic", () => {
       const initial = [makeSquareAnnotation("old-1", 10, 10, 5)];
       store.commit("setAnnotations", initial);
 
-      store.commit("addAnnotationImpl", makeSquareAnnotation("new-1", 50, 50, 10));
+      store.commit(
+        "addAnnotationImpl",
+        makeSquareAnnotation("new-1", 50, 50, 10),
+      );
 
       expect(store.state.annotationStubs.has("old-1")).toBe(true);
       expect(store.state.annotationStubs.has("new-1")).toBe(true);

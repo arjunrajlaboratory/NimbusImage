@@ -31,7 +31,7 @@ export class AnnotationSpatialIndex {
     this.itemById.set(id, item);
   }
 
-  remove(id: string, _x?: number, _y?: number): void {
+  remove(id: string): void {
     const item = this.itemById.get(id);
     if (item) {
       this.tree.remove(item);

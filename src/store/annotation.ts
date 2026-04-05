@@ -29,7 +29,6 @@ import {
   IJobEventData,
   IDatasetView,
   IAnnotationLocation,
-  isHydratedAnnotation,
 } from "./model";
 import type {
   IAnnotationStub,
@@ -116,7 +115,10 @@ export class Annotations extends VuexModule {
   hydratedAnnotations: Map<string, IAnnotation> = markRaw(new Map());
   visibleAnnotationIds: Set<string> = markRaw(new Set());
   hydrationMode: THydrationMode = "dots";
-  visibilityConfig: IVisibilityConfig = { maxVisible: 20000, maxHydrated: 10000 };
+  visibilityConfig: IVisibilityConfig = {
+    maxVisible: 20000,
+    maxHydrated: 10000,
+  };
 
   get isHydrated() {
     return (id: string): boolean => this.hydratedAnnotations.has(id);
@@ -141,7 +143,9 @@ export class Annotations extends VuexModule {
       if (this.selectedAnnotationIds.has(id)) {
         return this.hydratedAnnotations.has(id);
       }
-      return this.hydrationMode === "shapes" && this.hydratedAnnotations.has(id);
+      return (
+        this.hydrationMode === "shapes" && this.hydratedAnnotations.has(id)
+      );
     };
   }
 
@@ -555,7 +559,7 @@ export class Annotations extends VuexModule {
     // Remove old position from spatial index
     const oldStub = this.annotationStubs.get(annotation.id);
     if (oldStub) {
-      annotationSpatialIndex.remove(annotation.id, oldStub.centroid.x, oldStub.centroid.y);
+      annotationSpatialIndex.remove(annotation.id);
     }
 
     this.annotations.splice(index, 1, annotation);
