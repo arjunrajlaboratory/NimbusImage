@@ -84,6 +84,8 @@ import {
   IGeoJSMouseState,
   TrackPositionType,
 } from "../store/model";
+import type { TAnnotationOrStub } from "@/store/model";
+import { isHydratedAnnotation } from "@/store/model";
 
 import { logError, logWarning } from "@/utils/log";
 
@@ -94,6 +96,7 @@ import {
   geojsAnnotationFactory,
   tagFilterFunction,
   ellipseToPolygonCoordinates,
+  getStubStyleFromBaseStyle,
 } from "@/utils/annotation";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
@@ -120,20 +123,27 @@ interface AnnotationBBoxItem {
   annotationId: string;
 }
 
-function buildAnnotationBBox(annotation: IAnnotation): AnnotationBBoxItem {
-  const coords = annotation.coordinates;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (let i = 0; i < coords.length; i++) {
-    const c = coords[i];
-    if (c.x < minX) minX = c.x;
-    if (c.y < minY) minY = c.y;
-    if (c.x > maxX) maxX = c.x;
-    if (c.y > maxY) maxY = c.y;
+function buildAnnotationBBox(
+  annotation: TAnnotationOrStub,
+): AnnotationBBoxItem {
+  if (isHydratedAnnotation(annotation)) {
+    const coords = annotation.coordinates;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const c = coords[i];
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
+    return { minX, minY, maxX, maxY, annotationId: annotation.id };
   }
-  return { minX, minY, maxX, maxY, annotationId: annotation.id };
+  // Stub: use centroid as degenerate bbox
+  const { x, y } = annotation.centroid;
+  return { minX: x, minY: y, maxX: x, maxY: y, annotationId: annotation.id };
 }
 
 function filterAnnotations(
@@ -385,14 +395,14 @@ const isLayerIdValid = computed(() => {
   return (id: string) => validLayerIds.has(id);
 });
 
-// A map: map<layer id, map<annotation id, annotation>>
+// A map: map<layer id, map<annotation id, annotation or stub>>
 const layerAnnotations = computed(() => {
   const layerIdToAnnotationIds: Map<
     string,
-    Map<string, IAnnotation>
+    Map<string, TAnnotationOrStub>
   > = new Map();
   for (const layer of validLayers.value) {
-    const annotationIdsSet: Map<string, IAnnotation> = new Map();
+    const annotationIdsSet: Map<string, TAnnotationOrStub> = new Map();
     layerIdToAnnotationIds.set(layer.id, annotationIdsSet);
 
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
@@ -408,7 +418,19 @@ const layerAnnotations = computed(() => {
           (allZ || annotation.location.Z === sliceIndexes?.zIndex) &&
           (allT || annotation.location.Time === sliceIndexes?.tIndex)
         ) {
-          annotationIdsSet.set(annotation.id, annotation);
+          // Visibility filtering and stub-aware rendering
+          const stubsSize = annotationStore.annotationStubs?.size ?? 0;
+          if (
+            stubsSize > 0 &&
+            !annotationStore.isVisible(annotation.id)
+          ) {
+            continue;
+          }
+          const renderData: TAnnotationOrStub =
+            stubsSize > 0
+              ? (annotationStore.getForRendering(annotation.id) ?? annotation)
+              : annotation;
+          annotationIdsSet.set(annotation.id, renderData);
         }
       }
     }
@@ -432,7 +454,7 @@ const displayedAnnotationIds = computed(() => {
 });
 
 const displayedAnnotations = computed(() => {
-  const annotationList: IAnnotation[] = [];
+  const annotationList: TAnnotationOrStub[] = [];
   for (const layerAnnotationIdsSet of layerAnnotations.value.values()) {
     for (const annotation of layerAnnotationIdsSet.values()) {
       annotationList.push(annotation);
@@ -445,7 +467,7 @@ const displayedAnnotationsSpatialIndex =
   shallowRef<RBush<AnnotationBBoxItem> | null>(null);
 let spatialIndexRequestId: number | null = null;
 
-function buildSpatialIndex(annotations: IAnnotation[]) {
+function buildSpatialIndex(annotations: TAnnotationOrStub[]) {
   // Cancel any pending build
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
@@ -790,15 +812,17 @@ function drawNewAnnotations(
     const isHoveredGT = annotationId === hoveredAnnotationId.value;
     const isSelectedGT = isAnnotationSelected.value(annotationId);
     for (const geoJSAnnotation of geoJSAnnotationList) {
-      const { layerId, isHovered, isSelected, style, customColor } =
+      const { layerId, isHovered, isSelected, style, customColor, isStub } =
         geoJSAnnotation.options();
       if (isHovered != isHoveredGT || isSelected != isSelectedGT) {
         const layer = store.getLayerFromId(layerId);
-        const newStyle = getAnnotationStyle(
-          annotationId,
-          customColor,
-          layer?.color,
-        );
+        const newStyle = isStub
+          ? getStubStyleFromBaseStyle(
+              customColor || layer?.color,
+              isHoveredGT,
+              isSelectedGT,
+            )
+          : getAnnotationStyle(annotationId, customColor, layer?.color);
         geoJSAnnotation.options("style", { ...style, ...newStyle });
         geoJSAnnotation.options("isHovered", isHoveredGT);
         geoJSAnnotation.options("isSelected", isSelectedGT);
@@ -1269,7 +1293,10 @@ function drawTimelapseAnnotationCentroidsAndLabels(
   }
 }
 
-function createGeoJSAnnotation(annotation: IAnnotation, layerId?: string) {
+function createGeoJSAnnotation(
+  annotation: TAnnotationOrStub,
+  layerId?: string,
+) {
   if (!store.dataset || !store.dataset.anyImage()) {
     return null;
   }
@@ -1278,15 +1305,36 @@ function createGeoJSAnnotation(annotation: IAnnotation, layerId?: string) {
   if (!anyImage) {
     return null;
   }
-  const coordinates = unrolledCoordinates(
-    annotation.coordinates,
-    annotation.location,
-    anyImage,
-  );
+
+  const isStub = !isHydratedAnnotation(annotation);
+  let coordinates: IGeoJSPosition[];
+  let renderShape: AnnotationShape;
+
+  if (isHydratedAnnotation(annotation)) {
+    coordinates = unrolledCoordinates(
+      annotation.coordinates,
+      annotation.location,
+      anyImage,
+    );
+    renderShape = annotation.shape;
+  } else {
+    coordinates = unrolledCoordinates(
+      [annotation.centroid],
+      annotation.location,
+      anyImage,
+    );
+    renderShape = AnnotationShape.Point;
+  }
 
   const layer = store.getLayerFromId(layerId);
   const customColor = annotation.color;
-  const style = getAnnotationStyle(annotation.id, customColor, layer?.color);
+  const style = isStub
+    ? getStubStyleFromBaseStyle(
+        customColor || layer?.color,
+        annotation.id === hoveredAnnotationId.value,
+        isAnnotationSelected.value(annotation.id),
+      )
+    : getAnnotationStyle(annotation.id, customColor, layer?.color);
 
   const options = {
     girderId: annotation.id,
@@ -1298,15 +1346,10 @@ function createGeoJSAnnotation(annotation: IAnnotation, layerId?: string) {
     layerId,
     customColor,
     style,
+    isStub,
   };
 
-  const newGeoJSAnnotation = geojsAnnotationFactory(
-    annotation.shape,
-    coordinates,
-    options,
-  );
-
-  return newGeoJSAnnotation;
+  return geojsAnnotationFactory(renderShape, coordinates, options);
 }
 
 function drawGeoJSAnnotationFromConnection(
@@ -1348,11 +1391,17 @@ function restyleAnnotations() {
   const len = annotations.length;
   for (let i = 0; i < len; i++) {
     const geoJSAnnotation = annotations[i];
-    const { girderId, layerId, style, customColor, isConnection } =
+    const { girderId, layerId, style, customColor, isConnection, isStub } =
       geoJSAnnotation.options();
     if (girderId && !isConnection) {
       const layer = store.getLayerFromId(layerId);
-      const newStyle = getAnnotationStyle(girderId, customColor, layer?.color);
+      const newStyle = isStub
+        ? getStubStyleFromBaseStyle(
+            customColor || layer?.color,
+            girderId === hoveredAnnotationId.value,
+            isAnnotationSelected.value(girderId),
+          )
+        : getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
     }
   }
@@ -3056,6 +3105,24 @@ watch(selectedToolConfiguration, () => {
   watchTool();
 });
 
+// Visibility and hydration updates
+const updateVisibilityDebounced = debounce(() => {
+  const ids = (store.filteredDraw
+    ? filteredAnnotations.value
+    : annotationStore.annotations
+  ).map((a: IAnnotation) => a.id);
+  annotationStore.updateVisibilityAndHydration({
+    filteredIds: ids,
+    gcsBounds: store.cameraInfo.gcsBounds,
+    currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
+  });
+}, 250);
+
+watch(
+  [filteredAnnotations, () => store.cameraInfo, xy, z, time],
+  updateVisibilityDebounced,
+);
+
 // ROI filter
 watch(roiFilter, () => {
   watchFilter();
@@ -3138,6 +3205,7 @@ onMounted(() => {
   updateValueOnHover();
   filterStore.updateHistograms();
   addHoverCallback();
+  updateVisibilityDebounced();
 });
 
 onBeforeUnmount(() => {
