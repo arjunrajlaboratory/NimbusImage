@@ -1351,6 +1351,34 @@ export interface IAnnotation extends IAnnotationBase {
   name: string | null;
 }
 
+// --- Stub/Hydrated Annotation Architecture ---
+
+export interface IAnnotationStub {
+  id: string;
+  centroid: IGeoJSPosition;
+  location: IAnnotationLocation;
+  shape: AnnotationShape;
+  channel: number;
+  tags: string[];
+  color: string | null;
+  estimatedRadius?: number;
+}
+
+export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
+
+export type THydrationMode = "shapes" | "dots";
+
+export interface IVisibilityConfig {
+  maxVisible: number;
+  maxHydrated: number;
+}
+
+export function isHydratedAnnotation(
+  annotation: TAnnotationOrStub,
+): annotation is IAnnotation {
+  return "coordinates" in annotation;
+}
+
 export enum TrackPositionType {
   INTERIOR = "interior",
   START = "start",
