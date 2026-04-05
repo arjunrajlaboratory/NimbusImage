@@ -28,10 +28,23 @@ import {
   ProgressType,
   IJobEventData,
   IDatasetView,
+  IAnnotationLocation,
+  isHydratedAnnotation,
+} from "./model";
+import type {
+  IAnnotationStub,
+  TAnnotationOrStub,
+  THydrationMode,
+  IVisibilityConfig,
 } from "./model";
 
 import { markRaw } from "vue";
-import { simpleCentroid } from "@/utils/annotation";
+import {
+  simpleCentroid,
+  selectRandomSubset,
+  estimateAnnotationRadius,
+} from "@/utils/annotation";
+import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { logError } from "@/utils/log";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
@@ -98,6 +111,48 @@ export class Annotations extends VuexModule {
   }
 
   hoveredAnnotationId: string | null = null;
+
+  annotationStubs: Map<string, IAnnotationStub> = markRaw(new Map());
+  hydratedAnnotations: Map<string, IAnnotation> = markRaw(new Map());
+  visibleAnnotationIds: Set<string> = markRaw(new Set());
+  hydrationMode: THydrationMode = "dots";
+  visibilityConfig: IVisibilityConfig = { maxVisible: 20000, maxHydrated: 10000 };
+
+  get isHydrated() {
+    return (id: string): boolean => this.hydratedAnnotations.has(id);
+  }
+
+  get getStub() {
+    return (id: string): IAnnotationStub | undefined =>
+      this.annotationStubs.get(id);
+  }
+
+  get getHydratedAnnotation() {
+    return (id: string): IAnnotation | undefined =>
+      this.hydratedAnnotations.get(id);
+  }
+
+  get isVisible() {
+    return (id: string): boolean => this.visibleAnnotationIds.has(id);
+  }
+
+  get shouldRenderAsShape() {
+    return (id: string): boolean => {
+      if (this.selectedAnnotationIds.has(id)) {
+        return this.hydratedAnnotations.has(id);
+      }
+      return this.hydrationMode === "shapes" && this.hydratedAnnotations.has(id);
+    };
+  }
+
+  get getForRendering() {
+    return (id: string): TAnnotationOrStub | undefined => {
+      if (this.shouldRenderAsShape(id)) {
+        return this.hydratedAnnotations.get(id);
+      }
+      return this.annotationStubs.get(id);
+    };
+  }
 
   @Mutation
   setCopiedAnnotations(annotations: IAnnotation[]) {
@@ -465,6 +520,28 @@ export class Annotations extends VuexModule {
       simpleCentroid(value.coordinates),
     );
     this.annotationIdToIdx[value.id] = this.annotations.length - 1;
+
+    const centroid = this.annotationCentroids[value.id];
+    this.annotationStubs = markRaw(
+      new Map(this.annotationStubs).set(value.id, {
+        id: value.id,
+        centroid,
+        location: value.location,
+        shape: value.shape,
+        channel: value.channel,
+        tags: value.tags,
+        color: value.color,
+        estimatedRadius: estimateAnnotationRadius(value.coordinates),
+      }),
+    );
+
+    // New annotations are always hydrated
+    this.hydratedAnnotations = markRaw(
+      new Map(this.hydratedAnnotations).set(value.id, value),
+    );
+
+    // Spatial index
+    annotationSpatialIndex.insert(value.id, centroid.x, centroid.y);
   }
 
   @Mutation
@@ -475,11 +552,41 @@ export class Annotations extends VuexModule {
     annotation: IAnnotation;
     index: number;
   }) {
+    // Remove old position from spatial index
+    const oldStub = this.annotationStubs.get(annotation.id);
+    if (oldStub) {
+      annotationSpatialIndex.remove(annotation.id, oldStub.centroid.x, oldStub.centroid.y);
+    }
+
     this.annotations.splice(index, 1, annotation);
     this.annotationCentroids[annotation.id] = markRaw(
       simpleCentroid(annotation.coordinates),
     );
     this.annotationIdToIdx[annotation.id] = index;
+
+    const centroid = this.annotationCentroids[annotation.id];
+    const newStubs = new Map(this.annotationStubs);
+    newStubs.set(annotation.id, {
+      id: annotation.id,
+      centroid,
+      location: annotation.location,
+      shape: annotation.shape,
+      channel: annotation.channel,
+      tags: annotation.tags,
+      color: annotation.color,
+      estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
+    });
+    this.annotationStubs = markRaw(newStubs);
+
+    // Update hydrated if present
+    if (this.hydratedAnnotations.has(annotation.id)) {
+      this.hydratedAnnotations = markRaw(
+        new Map(this.hydratedAnnotations).set(annotation.id, annotation),
+      );
+    }
+
+    // Insert new position into spatial index
+    annotationSpatialIndex.insert(annotation.id, centroid.x, centroid.y);
   }
 
   @Mutation
@@ -508,6 +615,47 @@ export class Annotations extends VuexModule {
       );
       this.annotationIdToIdx[annotation.id] = idx;
     }
+
+    // Build stub map
+    const newStubs = new Map<string, IAnnotationStub>();
+    const spatialItems: { id: string; x: number; y: number }[] = new Array(
+      this.annotations.length,
+    );
+
+    for (let idx = 0; idx < this.annotations.length; ++idx) {
+      const annotation = this.annotations[idx];
+      const centroid = this.annotationCentroids[annotation.id];
+      newStubs.set(annotation.id, {
+        id: annotation.id,
+        centroid,
+        location: annotation.location,
+        shape: annotation.shape,
+        channel: annotation.channel,
+        tags: annotation.tags,
+        color: annotation.color,
+        estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
+      });
+      spatialItems[idx] = { id: annotation.id, x: centroid.x, y: centroid.y };
+    }
+    this.annotationStubs = markRaw(newStubs);
+
+    // Spatial index
+    annotationSpatialIndex.bulkLoad(spatialItems);
+
+    // Mock data strategy: hydrate first 20%
+    const newHydrated = new Map<string, IAnnotation>();
+    const hydrateCount = Math.ceil(this.annotations.length * 0.2);
+    for (let i = 0; i < hydrateCount && i < this.annotations.length; i++) {
+      newHydrated.set(this.annotations[i].id, this.annotations[i]);
+    }
+    // Also preserve previously selected annotations that are still present
+    for (const id of this.selectedAnnotationIds) {
+      const idx2 = this.annotationIdToIdx[id];
+      if (idx2 !== undefined && !newHydrated.has(id)) {
+        newHydrated.set(id, this.annotations[idx2]);
+      }
+    }
+    this.hydratedAnnotations = markRaw(newHydrated);
   }
 
   @Action
@@ -1616,6 +1764,136 @@ export class Annotations extends VuexModule {
   @Mutation
   private setDeletingState(isDeleting: boolean) {
     this.isDeletingAnnotations = isDeleting;
+  }
+
+  @Mutation
+  setVisibleAnnotationIds(ids: string[]) {
+    this.visibleAnnotationIds = markRaw(new Set(ids));
+  }
+
+  @Mutation
+  setHydrationMode(mode: THydrationMode) {
+    this.hydrationMode = mode;
+  }
+
+  @Mutation
+  hydrateAnnotations(ids: string[]) {
+    const newMap = new Map(this.hydratedAnnotations);
+    for (const id of ids) {
+      const idx = this.annotationIdToIdx[id];
+      if (idx !== undefined) {
+        newMap.set(id, this.annotations[idx]);
+      }
+    }
+    this.hydratedAnnotations = markRaw(newMap);
+  }
+
+  @Mutation
+  clearNonSelectedHydration(preserveIds?: string[]) {
+    const newMap = new Map<string, IAnnotation>();
+    const preserveSet = preserveIds ? new Set(preserveIds) : new Set<string>();
+    for (const [id, annotation] of this.hydratedAnnotations) {
+      if (this.selectedAnnotationIds.has(id) || preserveSet.has(id)) {
+        newMap.set(id, annotation);
+      }
+    }
+    this.hydratedAnnotations = markRaw(newMap);
+  }
+
+  @Action
+  updateVisibilityAndHydration(params: {
+    filteredIds: string[];
+    gcsBounds?: IGeoJSPosition[];
+    currentFrameLocation: IAnnotationLocation;
+  }) {
+    const { filteredIds, gcsBounds, currentFrameLocation } = params;
+    const { maxVisible, maxHydrated } = this.visibilityConfig;
+
+    // Step 1: Split filteredIds by frame
+    const currentFrameIds: string[] = [];
+    for (const id of filteredIds) {
+      const stub = this.annotationStubs.get(id);
+      if (
+        stub &&
+        stub.location.XY === currentFrameLocation.XY &&
+        stub.location.Z === currentFrameLocation.Z &&
+        stub.location.Time === currentFrameLocation.Time
+      ) {
+        currentFrameIds.push(id);
+      }
+    }
+
+    // Step 2: Split current-frame IDs by viewport
+    let inViewportIds = currentFrameIds;
+    let outOfViewportIds: string[] = [];
+
+    if (gcsBounds && gcsBounds.length === 4) {
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+      for (const pt of gcsBounds) {
+        minX = Math.min(minX, pt.x);
+        minY = Math.min(minY, pt.y);
+        maxX = Math.max(maxX, pt.x);
+        maxY = Math.max(maxY, pt.y);
+      }
+      ({ inViewportIds, outOfViewportIds } =
+        annotationSpatialIndex.splitByViewport(
+          currentFrameIds,
+          minX,
+          minY,
+          maxX,
+          maxY,
+        ));
+    }
+
+    // Step 3: Fill visibility budget (two-tier)
+    let visibleIds: string[];
+    if (inViewportIds.length >= maxVisible) {
+      visibleIds = selectRandomSubset(inViewportIds, maxVisible);
+    } else {
+      const remaining = maxVisible - inViewportIds.length;
+      const offViewport = selectRandomSubset(outOfViewportIds, remaining);
+      visibleIds = [...inViewportIds, ...offViewport];
+    }
+
+    // Step 4: Fill hydration budget (two-tier, largest first)
+    const inViewportWithSize = inViewportIds.map((id) => ({
+      id,
+      size: this.annotationStubs.get(id)?.estimatedRadius ?? 0,
+    }));
+    inViewportWithSize.sort((a, b) => b.size - a.size);
+
+    let idsToHydrate: string[];
+    if (inViewportWithSize.length >= maxHydrated) {
+      idsToHydrate = inViewportWithSize
+        .slice(0, maxHydrated)
+        .map((item) => item.id);
+    } else {
+      const remainingBudget = maxHydrated - inViewportWithSize.length;
+      const offViewportWithSize = outOfViewportIds.map((id) => ({
+        id,
+        size: this.annotationStubs.get(id)?.estimatedRadius ?? 0,
+      }));
+      offViewportWithSize.sort((a, b) => b.size - a.size);
+      idsToHydrate = [
+        ...inViewportWithSize.map((item) => item.id),
+        ...offViewportWithSize.slice(0, remainingBudget).map((item) => item.id),
+      ];
+    }
+
+    // Step 5: Apply visibility
+    this.setVisibleAnnotationIds(visibleIds);
+
+    // Step 6: Determine hydration mode
+    this.setHydrationMode(idsToHydrate.length > 0 ? "shapes" : "dots");
+
+    // Step 7: Clear non-selected hydration from previous frame, preserving new targets
+    this.clearNonSelectedHydration(idsToHydrate);
+
+    // Step 8: Hydrate new targets
+    this.hydrateAnnotations(idsToHydrate);
   }
 }
 
