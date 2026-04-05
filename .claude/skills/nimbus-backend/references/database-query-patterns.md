@@ -95,7 +95,7 @@ for doc in docs:
     MyModel().setUserAccess(doc, user, AccessType.WRITE, save=True)
 ```
 
-When Girder doesn't provide a built-in batch method (e.g., batch `setUserAccess`), **implement one** rather than looping. Use `update_many` or `bulk_write` on the collection for bulk permission updates.
+When Girder doesn't provide a built-in batch method (e.g., batch `setUserAccess`), **implement one** rather than looping. Use `update_many` or `bulk_write` on the collection for bulk updates — this is one of the accepted exceptions to the "no direct collection access" rule (see [Aggregation Queries](#aggregation-queries) note).
 
 ### Avoiding Redundant Fetches
 
@@ -130,4 +130,4 @@ pipeline = [
 results = list(MyModel().collection.aggregate(pipeline))
 ```
 
-**Note:** Aggregation is the one case where `collection` access is acceptable, since Girder's `find()` doesn't support aggregation pipelines.
+**Note:** Direct `collection` access is acceptable for operations that Girder's Model API doesn't support: aggregation pipelines (above) and bulk writes like `update_many`/`bulk_write` for batch permission updates (see [Batch Query Patterns](#batch-query-patterns)). For all other read/write operations, use Model methods.
