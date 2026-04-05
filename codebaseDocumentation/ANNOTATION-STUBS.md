@@ -10,6 +10,16 @@
 
 **Prior art:** This was implemented on a Vue 2 branch. The design document is at `/Users/arjunraj/code/UPennContrast-stub-annotations/codebaseDocumentation/ANNOTATION-STUBS.md`. The Vue 2 implementation completed Phases 1–4 (types, store, rendering, visibility/hydration/R-tree).
 
+**Status: ALL 7 TASKS COMPLETE** (2026-04-05, branch `feature/stub-annotations`)
+- Task 1: Stub types in model.ts ✅
+- Task 2: Utility functions (hash, subset, radius, stub style) + 13 tests ✅
+- Task 3: Spatial index module (AnnotationSpatialIndex) + 9 tests ✅
+- Task 4: Store refactoring (stubs, hydration, visibility action) ✅
+- Task 5: ImageViewer zoom event fix ✅
+- Task 6: AnnotationViewer visibility/stub rendering integration ✅
+- Task 7: Store stub/hydration tests (44 tests) ✅
+- Final: 0 tsc errors, 0 lint warnings, 2184/2184 tests pass, production build succeeds
+
 ---
 
 ## File Map
