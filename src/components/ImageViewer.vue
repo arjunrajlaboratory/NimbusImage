@@ -798,6 +798,7 @@ function _setupMap(
       }
     };
     map.geoOn(geojs.event.pan, synchronizationCallback);
+    map.geoOn(geojs.event.zoom, synchronizationCallback);
 
     const interactorOpts = map.interactor().options();
     const keyboardOpts = interactorOpts.keyboard;
