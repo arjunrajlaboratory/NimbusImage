@@ -336,7 +336,9 @@ class Export(Resource):
 
         parsedAnnotationIds = None
         if annotationIds:
-            parsedAnnotationIds = set(annotationIds)
+            parsedAnnotationIds = [
+                ObjectId(aid) for aid in annotationIds
+            ]
 
         # Validate delimiter
         if delimiter not in (",", "\t"):
@@ -360,6 +362,12 @@ class Export(Resource):
         # Build property name mapping
         propertyNameMap = self._buildPropertyNameMap(parsedPropertyPaths)
 
+        # Capture self for use inside the generate() closure.
+        # In Python, nested functions (including generators) capture
+        # variables from the enclosing scope, but `self` can be
+        # rebound before the generator runs. Storing it in a local
+        # variable ensures the generator references the correct
+        # instance.
         exportSelf = self
 
         # Generator for streaming CSV output
@@ -422,10 +430,10 @@ class Export(Resource):
                     value = exportSelf._getValueFromPath(
                         annPropValues, path
                     )
-                    if value is None or isinstance(
-                        value, dict
-                    ):
+                    if value is None:
                         row.append(undefinedValue)
+                    elif isinstance(value, dict):
+                        row.append(str(value))
                     else:
                         row.append(
                             exportSelf._formatValue(value)
@@ -459,11 +467,8 @@ class Export(Resource):
                 return
 
             IN_CHUNK_SIZE = 500000
-            idList = [
-                ObjectId(aid) for aid in annotationIds
-            ]
-            for i in range(0, len(idList), IN_CHUNK_SIZE):
-                chunk = idList[i:i + IN_CHUNK_SIZE]
+            for i in range(0, len(annotationIds), IN_CHUNK_SIZE):
+                chunk = annotationIds[i:i + IN_CHUNK_SIZE]
                 for ann in exportSelf._annotationModel.find({
                     "datasetId": datasetId,
                     "_id": {"$in": chunk},
