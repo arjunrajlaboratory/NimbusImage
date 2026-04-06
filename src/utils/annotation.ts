@@ -307,6 +307,7 @@ export function getStubStyleFromBaseStyle(
   annotationColor?: string,
   isHovered: boolean = false,
   isSelected: boolean = false,
+  estimatedRadius: number = 5,
 ): TAnnotationStyle {
   const style: TAnnotationStyle = {
     stroke: true,
@@ -316,7 +317,7 @@ export function getStubStyleFromBaseStyle(
     fillColor: "white",
     fillOpacity: 0.4,
     fill: true,
-    radius: 5,
+    radius: Math.max(estimatedRadius, 3),
     scaled: 1,
   };
 

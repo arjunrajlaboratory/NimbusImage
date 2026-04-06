@@ -82,9 +82,19 @@ describe("getStubStyleFromBaseStyle", () => {
     expect(style.fillOpacity).toBe(0.4);
   });
 
-  it("uses fixed small radius", () => {
+  it("uses default radius of 5 when no estimatedRadius provided", () => {
     const style = getStubStyleFromBaseStyle();
     expect(style.radius).toBe(5);
+  });
+
+  it("uses estimatedRadius when provided", () => {
+    const style = getStubStyleFromBaseStyle(undefined, false, false, 20);
+    expect(style.radius).toBe(20);
+  });
+
+  it("enforces minimum radius of 3", () => {
+    const style = getStubStyleFromBaseStyle(undefined, false, false, 1);
+    expect(style.radius).toBe(3);
   });
 
   it("applies annotation color when provided", () => {

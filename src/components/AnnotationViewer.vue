@@ -809,8 +809,15 @@ function drawNewAnnotations(
     const isHoveredGT = annotationId === hoveredAnnotationId.value;
     const isSelectedGT = isAnnotationSelected.value(annotationId);
     for (const geoJSAnnotation of geoJSAnnotationList) {
-      const { layerId, isHovered, isSelected, style, customColor, isStub } =
-        geoJSAnnotation.options();
+      const {
+        layerId,
+        isHovered,
+        isSelected,
+        style,
+        customColor,
+        isStub,
+        stubRadius,
+      } = geoJSAnnotation.options();
       if (isHovered != isHoveredGT || isSelected != isSelectedGT) {
         const layer = store.getLayerFromId(layerId);
         const newStyle = isStub
@@ -818,6 +825,7 @@ function drawNewAnnotations(
               customColor || layer?.color,
               isHoveredGT,
               isSelectedGT,
+              stubRadius,
             )
           : getAnnotationStyle(annotationId, customColor, layer?.color);
         geoJSAnnotation.options("style", { ...style, ...newStyle });
@@ -1325,11 +1333,16 @@ function createGeoJSAnnotation(
 
   const layer = store.getLayerFromId(layerId);
   const customColor = annotation.color;
+  const stubRadius =
+    isStub && !isHydratedAnnotation(annotation)
+      ? annotation.estimatedRadius ?? 5
+      : 5;
   const style = isStub
     ? getStubStyleFromBaseStyle(
         customColor || layer?.color,
         annotation.id === hoveredAnnotationId.value,
         isAnnotationSelected.value(annotation.id),
+        stubRadius,
       )
     : getAnnotationStyle(annotation.id, customColor, layer?.color);
 
@@ -1344,6 +1357,7 @@ function createGeoJSAnnotation(
     customColor,
     style,
     isStub,
+    stubRadius,
   };
 
   return geojsAnnotationFactory(renderShape, coordinates, options);
@@ -1388,8 +1402,15 @@ function restyleAnnotations() {
   const len = annotations.length;
   for (let i = 0; i < len; i++) {
     const geoJSAnnotation = annotations[i];
-    const { girderId, layerId, style, customColor, isConnection, isStub } =
-      geoJSAnnotation.options();
+    const {
+      girderId,
+      layerId,
+      style,
+      customColor,
+      isConnection,
+      isStub,
+      stubRadius,
+    } = geoJSAnnotation.options();
     if (girderId && !isConnection) {
       const layer = store.getLayerFromId(layerId);
       const newStyle = isStub
@@ -1397,6 +1418,7 @@ function restyleAnnotations() {
             customColor || layer?.color,
             girderId === hoveredAnnotationId.value,
             isAnnotationSelected.value(girderId),
+            stubRadius,
           )
         : getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
