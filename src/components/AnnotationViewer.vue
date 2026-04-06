@@ -98,6 +98,7 @@ import {
   ellipseToPolygonCoordinates,
   getStubStyleFromBaseStyle,
 } from "@/utils/annotation";
+import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
   mouseStateToSamPrompt,
@@ -1526,20 +1527,21 @@ function getSelectedAnnotationsFromAnnotation(
   if (type !== AnnotationShape.Point) {
     const spatialIndex = displayedAnnotationsSpatialIndex.value;
 
-    if (spatialIndex) {
-      // Fast path: query R-tree for candidate annotations whose bboxes overlap
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      for (let i = 0; i < coordinates.length; i++) {
-        const c = coordinates[i];
-        if (c.x < minX) minX = c.x;
-        if (c.y < minY) minY = c.y;
-        if (c.x > maxX) maxX = c.x;
-        if (c.y > maxY) maxY = c.y;
-      }
+    // Compute bounding box of selection region
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < coordinates.length; i++) {
+      const c = coordinates[i];
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
 
+    if (spatialIndex) {
+      // Query displayed annotations spatial index (bbox-based, precise)
       const candidates = spatialIndex.search({ minX, minY, maxX, maxY });
       const getAnnotation = getAnnotationFromId.value;
       for (let i = 0; i < candidates.length; i++) {
@@ -1559,29 +1561,67 @@ function getSelectedAnnotationsFromAnnotation(
         selectedIds.add(annotationId);
         selectedAnns.push(annotation);
       }
-      return selectedAnns;
+    } else {
+      // Fallback: linear scan over GeoJS annotations (tree not yet built)
+      const geoAnnotations = props.annotationLayer.annotations();
+      for (let i = 0; i < geoAnnotations.length; i++) {
+        const geoJSannotation = geoAnnotations[i];
+        const { girderId, isConnection } = geoJSannotation.options();
+        if (!girderId || isConnection || selectedIds.has(girderId)) {
+          continue;
+        }
+        const annotation = getAnnotationFromId.value(girderId);
+        if (
+          !annotation ||
+          !annotation.coordinates.some((point: IGeoJSPosition) =>
+            geojs.util.pointInPolygon(point, coordinates),
+          )
+        ) {
+          continue;
+        }
+        selectedIds.add(girderId);
+        selectedAnns.push(annotation);
+      }
     }
 
-    // Fallback: linear scan over GeoJS annotations (tree not yet built)
-    const geoAnnotations = props.annotationLayer.annotations();
-    for (let i = 0; i < geoAnnotations.length; i++) {
-      const geoJSannotation = geoAnnotations[i];
-      const { girderId, isConnection } = geoJSannotation.options();
-      if (!girderId || isConnection || selectedIds.has(girderId)) {
+    // Also select non-visible annotations via global centroid spatial index.
+    // This catches annotations outside the visibility budget but in the
+    // selection region on the current frame.
+    const globalCandidateIds = annotationSpatialIndex.queryBox(
+      minX,
+      minY,
+      maxX,
+      maxY,
+    );
+    const getAnnotation = getAnnotationFromId.value;
+    for (const annotationId of globalCandidateIds) {
+      if (selectedIds.has(annotationId)) {
         continue;
       }
-      const annotation = getAnnotationFromId.value(girderId);
+      const annotation = getAnnotation(annotationId);
+      if (!annotation) {
+        continue;
+      }
+      // Check if annotation is on the current frame
       if (
-        !annotation ||
+        annotation.location.XY !== xy.value ||
+        annotation.location.Z !== z.value ||
+        annotation.location.Time !== time.value
+      ) {
+        continue;
+      }
+      // Full geometric test using actual coordinates
+      if (
         !annotation.coordinates.some((point: IGeoJSPosition) =>
           geojs.util.pointInPolygon(point, coordinates),
         )
       ) {
         continue;
       }
-      selectedIds.add(girderId);
+      selectedIds.add(annotationId);
       selectedAnns.push(annotation);
     }
+
     return selectedAnns;
   }
 
