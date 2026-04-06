@@ -220,8 +220,31 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - [ ] Hydrate all before export operations
 - [ ] Handle hydration failures gracefully
 
-### Connection Stubs (Phase 7 — Optional)
-- [ ] Evaluate if connections need stub treatment (typically fewer than annotations)
+### Connection Stubs (Low Priority — Future Optimization)
+- [ ] Connections are lightweight (two annotation IDs + label/tags), so stub treatment is not anticipated to be needed soon. Revisit if connection counts become a bottleneck.
+
+### Property Values Lazy Loading (Important — Major Memory Source)
+
+Property values (`IAnnotationPropertyValues`) are a separate and potentially larger memory burden than annotation coordinates. The current system loads all property values for all annotations upfront. At scale (1M annotations × multiple properties), this is unsustainable.
+
+**Key differences from annotation stubs:** The problem is less about rendering and more about what the AnnotationList/AnnotationBrowser components display. Users interact with property values through sorting, filtering, and browsing — not just viewport visibility.
+
+**Potential strategies:**
+
+- [ ] **Visible-only loading**: Only fetch property values for annotations currently visible in the viewport (similar to annotation hydration). Cheapest approach, but limits sorting/filtering to visible subset.
+- [ ] **On-demand column loading**: When user adds a property column to the AnnotationList, fetch values for that property only. Backend endpoint: `GET /annotation_property_values?propertyId=X&datasetId=Y`
+- [ ] **Server-side sorting/pagination**: Instead of loading all values to sort client-side, add backend endpoints for sorted/paginated annotation lists by property value. The AnnotationList would request "page N of annotations sorted by property X" and only hydrate those.
+- [ ] **Hybrid approach**: Load property values for visible annotations automatically, plus allow explicit "load all values for property X" for sorting/export use cases. Show "load values" button in column header.
+- [ ] **Property value stubs**: Lightweight summary stats (min/max/mean) per property per layer, loaded upfront. Full per-annotation values loaded on demand.
+- [ ] **Cache eviction**: When switching properties or frames, evict old property values to keep memory bounded. LRU or frame-based eviction.
+- [ ] **Backend aggregation endpoints**: For common operations (histogram, statistics, filtering), compute server-side without transferring all values. The AnnotationBrowser's property filter could query the backend directly.
+
+**Current property values structure** (`src/store/properties.ts`):
+```typescript
+// IAnnotationPropertyValues = { [annotationId]: { [propertyId]: value } }
+// Loaded via PropertiesAPI.getPropertyValues()
+// Used by: AnnotationList (display/sort), AnnotationBrowser (filter), property plots
+```
 
 ---
 
@@ -234,3 +257,4 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 5. **Two spatial indexes coexist**: Displayed annotations RBush (bbox-based, for click/lasso hit-testing) and global centroid RBush (for visibility viewport queries). Independent, different purposes.
 6. **`annotations[]` retained**: Full array stays for backward compatibility. Stub architecture is additive.
 7. **Shape as string enum**: Not worth compressing to numeric index (~13 bytes savings vs added complexity)
+8. **Connections don't need stubs**: Connections are lightweight (just two annotation IDs + label/tags), so stub treatment is unnecessary
