@@ -273,11 +273,17 @@ export function ellipseToPolygonCoordinates(
 // --- Stub annotation utilities ---
 
 export function hashString(str: string): number {
-  let hash = 5381;
+  // Accumulate with djb2, then apply a finalizer mix
+  // to break sequential correlation in MongoDB ObjectIDs.
+  let h = 5381;
   for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) + hash + str.charCodeAt(i);
+    h = (h << 5) + h + str.charCodeAt(i);
   }
-  return hash >>> 0;
+  // murmurhash3 32-bit finalizer — avalanche mix
+  h = h >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
 }
 
 export function selectRandomSubset(ids: string[], maxCount: number): string[] {
@@ -300,7 +306,7 @@ export function estimateAnnotationRadius(
     minY = Math.min(minY, coord.y);
     maxY = Math.max(maxY, coord.y);
   }
-  return Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2) / 2;
+  return Math.max(maxX - minX, maxY - minY) / 2;
 }
 
 export function getStubStyleFromBaseStyle(

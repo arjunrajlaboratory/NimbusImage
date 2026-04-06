@@ -59,15 +59,26 @@ describe("estimateAnnotationRadius", () => {
     expect(estimateAnnotationRadius([{ x: 10, y: 20 }])).toBe(5);
   });
 
-  it("computes bounding box diagonal / 2 for polygon", () => {
+  it("computes max bbox half-extent for polygon", () => {
     const coords = [
       { x: 0, y: 0 },
       { x: 10, y: 0 },
       { x: 10, y: 10 },
       { x: 0, y: 10 },
     ];
-    const expected = Math.sqrt(200) / 2;
-    expect(estimateAnnotationRadius(coords)).toBeCloseTo(expected);
+    // max(width, height) / 2 = max(10, 10) / 2 = 5
+    expect(estimateAnnotationRadius(coords)).toBe(5);
+  });
+
+  it("uses the larger dimension for non-square bbox", () => {
+    const coords = [
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 10 },
+      { x: 0, y: 10 },
+    ];
+    // max(20, 10) / 2 = 10
+    expect(estimateAnnotationRadius(coords)).toBe(10);
   });
 });
 

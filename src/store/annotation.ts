@@ -646,11 +646,16 @@ export class Annotations extends VuexModule {
     // Spatial index
     annotationSpatialIndex.bulkLoad(spatialItems);
 
-    // Mock data strategy: hydrate first 20%
+    // Mock data strategy: hydrate a hash-random subset up to maxHydrated
     const newHydrated = new Map<string, IAnnotation>();
-    const hydrateCount = Math.ceil(this.annotations.length * 0.2);
-    for (let i = 0; i < hydrateCount && i < this.annotations.length; i++) {
-      newHydrated.set(this.annotations[i].id, this.annotations[i]);
+    const allIds = this.annotations.map((a) => a.id);
+    const hydrateIds = selectRandomSubset(
+      allIds,
+      this.visibilityConfig.maxHydrated,
+    );
+    for (const id of hydrateIds) {
+      const idx2 = this.annotationIdToIdx[id];
+      newHydrated.set(id, this.annotations[idx2]);
     }
     // Also preserve previously selected annotations that are still present
     for (const id of this.selectedAnnotationIds) {
