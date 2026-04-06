@@ -184,6 +184,12 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - Mock hydration strategy uses `selectRandomSubset()` capped at `maxHydrated` instead of first 20% by array order
 - Avoids wasted allocation (previously built 100K-entry Map at 500K scale, immediately discarded)
 
+### Expanded hydration viewport (2x)
+- `updateVisibilityAndHydration` expands the viewport bounds by 50% on each side before the spatial index query
+- This means the "inViewport" region is 2x the actual viewport in each dimension
+- Annotations in this expanded region are prioritized for both visibility and hydration budgets
+- Result: panning reveals pre-hydrated annotations instead of stubs popping in
+
 ### Known issue: stub circles too large for small annotations
 - Stub circles appear ~2× too large for annotations with very small radii (~2 world units)
 - Works correctly for larger annotations (tested on square annotations dataset)

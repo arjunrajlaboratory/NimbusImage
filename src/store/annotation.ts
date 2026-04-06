@@ -1847,6 +1847,13 @@ export class Annotations extends VuexModule {
         maxX = Math.max(maxX, pt.x);
         maxY = Math.max(maxY, pt.y);
       }
+      // Expand bounds by 50% on each side so panning has pre-hydrated annotations
+      const width = maxX - minX;
+      const height = maxY - minY;
+      minX -= width * 0.5;
+      maxX += width * 0.5;
+      minY -= height * 0.5;
+      maxY += height * 0.5;
       ({ inViewportIds, outOfViewportIds } =
         annotationSpatialIndex.splitByViewport(
           currentFrameIds,

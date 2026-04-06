@@ -1,36 +1,45 @@
-"""Generate 500K polygon annotations for stub testing.
+"""Generate polygon annotations for stub testing.
 
-25K annotations × 2 channels × 10 timepoints = 500,000 total.
+Configurable annotation count, size, channels, and timepoints.
 Each polygon has ~10 vertices circling a centroid with noise.
 Centroids placed on a grid with jitter to avoid overlap.
+
+Credentials are read from .env in the project root.
 """
 
 import math
+import os
 import random
 import time
+from pathlib import Path
+
+from dotenv import load_dotenv
 from nimbusimage._girder import create_client
 
-DATASET_ID = "69d356abeb50fee97057429d"
+# Load .env from project root
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 API_URL = os.environ["GIRDER_API_URL"]
 USERNAME = os.environ["GIRDER_USERNAME"]
 PASSWORD = os.environ["GIRDER_PASSWORD"]
 
-IMAGE_W, IMAGE_H = 1024, 1024
-N_PER_CHANNEL = 25000
-N_CHANNELS = 2
-N_FRAMES = 10
-N_VERTICES = 10
-RADIUS = 2.0        # base radius of each polygon
-RADIUS_NOISE = 0.5  # per-vertex radius jitter
-BATCH_SIZE = 5000   # annotations per API call
+DATASET_ID = "69d3831beb50fee970668b83"
 
-# Grid: sqrt(25000) ≈ 158, so 158×158 = 24964, close enough.
-# We'll use 158×159 = 25122 and take first 25000.
-GRID_COLS = 158
-GRID_ROWS = 159  # 158*159 = 25122 >= 25000
-SPACING_X = IMAGE_W / GRID_COLS  # ~6.48
-SPACING_Y = IMAGE_H / GRID_ROWS  # ~6.44
-JITTER = 1.0  # centroid jitter (pixels)
+IMAGE_W, IMAGE_H = 1024, 1024
+N_PER_CHANNEL = 2778       # ~9x fewer than 25K
+N_CHANNELS = 2
+N_FRAMES = 20              # doubled from 10
+N_VERTICES = 10
+RADIUS = 6.0               # 3x larger than original 2.0
+RADIUS_NOISE = 1.5          # scaled proportionally
+BATCH_SIZE = 5000           # annotations per API call
+
+# Grid: sqrt(2778) ≈ 53, so 53×53 = 2809 >= 2778
+GRID_COLS = 53
+GRID_ROWS = 53
+SPACING_X = IMAGE_W / GRID_COLS  # ~19.3
+SPACING_Y = IMAGE_H / GRID_ROWS  # ~19.3
+JITTER = 3.0  # centroid jitter (pixels), scaled with spacing
 
 
 def make_polygon_coords(cx: float, cy: float) -> list[dict]:
@@ -76,19 +85,24 @@ def make_batch(centroids, channel: int, time_idx: int) -> list[dict]:
 
 
 def main():
-    gc = create_client(api_url=API_URL, username=USERNAME, password=PASSWORD)
-    print(f"Authenticated. Generating {N_PER_CHANNEL * N_CHANNELS * N_FRAMES:,} annotations...")
+    gc = create_client(
+        api_url=API_URL, username=USERNAME, password=PASSWORD
+    )
+    total = N_PER_CHANNEL * N_CHANNELS * N_FRAMES
+    print(f"Authenticated. Generating {total:,} annotations...")
+    print(
+        f"  {N_PER_CHANNEL:,}/channel, {N_CHANNELS} channels, "
+        f"{N_FRAMES} frames, radius={RADIUS}"
+    )
 
     total_created = 0
     t0 = time.time()
 
     for time_idx in range(N_FRAMES):
         for channel in range(N_CHANNELS):
-            # Generate fresh centroids with different jitter each time
             centroids = generate_centroids()
             annotations = make_batch(centroids, channel, time_idx)
 
-            # Send in batches
             for i in range(0, len(annotations), BATCH_SIZE):
                 batch = annotations[i:i + BATCH_SIZE]
                 gc.post("/upenn_annotation/multiple", json=batch)
@@ -97,13 +111,15 @@ def main():
                 rate = total_created / elapsed if elapsed > 0 else 0
                 print(
                     f"  T={time_idx} Ch={channel}: "
-                    f"{total_created:,}/{N_PER_CHANNEL * N_CHANNELS * N_FRAMES:,} "
+                    f"{total_created:,}/{total:,} "
                     f"({rate:.0f}/s)"
                 )
 
     elapsed = time.time() - t0
-    print(f"\nDone! Created {total_created:,} annotations in {elapsed:.1f}s "
-          f"({total_created/elapsed:.0f}/s)")
+    print(
+        f"\nDone! Created {total_created:,} annotations "
+        f"in {elapsed:.1f}s ({total_created/elapsed:.0f}/s)"
+    )
 
 
 if __name__ == "__main__":
