@@ -190,6 +190,18 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - Annotations in this expanded region are prioritized for both visibility and hydration budgets
 - Result: panning reveals pre-hydrated annotations instead of stubs popping in
 
+### Stub system bypass for below-budget frames
+- `layerAnnotations` computed now counts annotations on the current frame per layer
+- If the count is ≤ `maxVisible` (20,000), the entire stub system is bypassed: no visibility filtering, no stub-vs-hydrated rendering — the original full annotation objects are used directly
+- **Why this matters:** Without this bypass, changing frames (XY, Z, Time) caused a visible flash. The sequence was: (1) frame changes, (2) `layerAnnotations` re-evaluates with stale `visibleAnnotationIds`/`hydratedAnnotations` from the previous frame, (3) new frame's annotations either get filtered out (invisible) or rendered as stubs, (4) `updateVisibilityAndHydration` runs and fixes the state, (5) re-render shows correct shapes. Steps 2–4 created a 1–2 frame flash of empty or stub-rendered annotations.
+- **Strategic choice:** Rather than trying to keep `visibleAnnotationIds` and `hydratedAnnotations` perfectly in sync with frame changes (which is fragile due to Vue watcher ordering and Vuex action timing), we avoid the problem entirely — the stub system only activates when it's genuinely needed (more annotations than the render budget allows). This means datasets with ≤20K annotations per frame behave identically to master branch, with zero overhead from the stub architecture.
+- The gate variable `needsStubSystem` (`stubsSize > 0 && frameCount > maxVisible`) controls both visibility filtering and `getForRendering` in a single check
+
+### Debounce strategy for visibility updates
+- Frame changes (`xy`, `z`, `time`) and annotation list changes (`filteredAnnotations`) trigger `updateVisibilityAndHydration` **immediately** (no debounce)
+- Camera changes (`cameraInfo` — pan/zoom) trigger it with a **250ms debounce** since they fire rapidly during interaction
+- **Why:** The debounce was originally applied to all sources. But frame changes are discrete events (user clicks a button), not continuous streams, and the 250ms delay was the primary cause of stale visibility state on frame transitions. Camera pan/zoom genuinely benefits from debouncing to avoid thrashing the spatial index query during drag.
+
 ### Known issue: stub circles too large for small annotations
 - Stub circles appear ~2× too large for annotations with very small radii (~2 world units)
 - Works correctly for larger annotations (tested on square annotations dataset)
