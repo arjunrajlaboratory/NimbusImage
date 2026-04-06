@@ -103,9 +103,9 @@ describe("getStubStyleFromBaseStyle", () => {
     expect(style.radius).toBe(20);
   });
 
-  it("enforces minimum radius of 3", () => {
+  it("uses estimatedRadius as-is without minimum", () => {
     const style = getStubStyleFromBaseStyle(undefined, false, false, 1);
-    expect(style.radius).toBe(3);
+    expect(style.radius).toBe(1);
   });
 
   it("applies annotation color when provided", () => {

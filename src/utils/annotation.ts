@@ -306,6 +306,11 @@ export function estimateAnnotationRadius(
     minY = Math.min(minY, coord.y);
     maxY = Math.max(maxY, coord.y);
   }
+  // TODO: stub circles appear ~2× too large for small annotations (~2px radius).
+  // Works correctly for larger annotations. Suspect GeoJS has an internal minimum
+  // radius or a scaling behavior for very small point features that inflates them.
+  // Needs investigation — possibly related to baseStyle.radius (global setting)
+  // or a GeoJS point feature minimum size.
   return Math.max(maxX - minX, maxY - minY) / 2;
 }
 
@@ -323,7 +328,7 @@ export function getStubStyleFromBaseStyle(
     fillColor: "white",
     fillOpacity: 0.4,
     fill: true,
-    radius: Math.max(estimatedRadius, 3),
+    radius: estimatedRadius,
     scaled: 1,
   };
 

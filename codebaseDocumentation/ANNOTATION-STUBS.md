@@ -175,9 +175,20 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 
 ### Stub size matches annotation size
 - `getStubStyleFromBaseStyle()` accepts `estimatedRadius` parameter
-- Stubs render as dots sized to their actual annotation size (bbox diagonal / 2)
-- Minimum radius of 3 world units to keep tiny annotations visible
+- Stubs render as dots sized to their actual annotation size (max bbox half-extent)
+- No minimum radius — `estimatedRadius` used as-is
 - `stubRadius` stored in GeoJS annotation options for restyle persistence
+
+### Hash-based random hydration (replaces "first 20%")
+- `hashString()` now uses djb2 + murmurhash3 finalizer for good dispersion on sequential MongoDB ObjectIDs
+- Mock hydration strategy uses `selectRandomSubset()` capped at `maxHydrated` instead of first 20% by array order
+- Avoids wasted allocation (previously built 100K-entry Map at 500K scale, immediately discarded)
+
+### Known issue: stub circles too large for small annotations
+- Stub circles appear ~2× too large for annotations with very small radii (~2 world units)
+- Works correctly for larger annotations (tested on square annotations dataset)
+- Suspected cause: GeoJS may have an internal minimum point feature size, or `baseStyle.radius` (global annotation radius setting, default 4) may interact with the stub point rendering
+- `estimateAnnotationRadius()` returns correct values (verified via console) — the issue is in rendering, not computation
 
 ### Selection includes non-visible annotations
 - `getSelectedAnnotationsFromAnnotation()` queries both the displayed RBush and the global `annotationSpatialIndex`
