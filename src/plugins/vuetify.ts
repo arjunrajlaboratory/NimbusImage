@@ -8,7 +8,10 @@ const vuetify = createVuetify({
     VCard: { variant: "flat" },
     VAlert: { variant: "tonal" },
     VSwitch: { color: "primary" },
-    VCheckbox: { color: "primary" },
+    VCheckbox: { color: "primary", density: "comfortable" },
+    VCheckboxBtn: { density: "comfortable" },
+    VList: { density: "comfortable" },
+    VListItem: { density: "comfortable" },
   },
   theme: {
     defaultTheme: Persister.get("theme", "dark") === "dark" ? "dark" : "light",
