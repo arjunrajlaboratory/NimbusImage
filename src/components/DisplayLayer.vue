@@ -2,7 +2,7 @@
   <v-expansion-panels>
     <v-expansion-panel>
       <v-expansion-panel-title class="displayLayerHeader">
-        <v-row dense class="align-center">
+        <v-row density="comfortable" class="align-center">
           <v-col cols="7" class="d-flex align-center">
             <v-icon :color="modelValue.color" start>mdi-circle</v-icon>
             <div class="header pa-1 text-truncate">{{ modelValue.name }}</div>

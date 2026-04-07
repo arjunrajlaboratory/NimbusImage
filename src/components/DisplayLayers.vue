@@ -6,7 +6,7 @@
   >
     <div>
       <div class="pr-8">
-        <v-row dense>
+        <v-row density="comfortable">
           <v-col cols="7">
             <draggable
               v-model="dropZoneArray"

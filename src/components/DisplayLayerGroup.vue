@@ -1,6 +1,6 @@
 <template>
   <div :class="{ background: !singleLayer }">
-    <v-row dense v-if="!singleLayer" class="pl-4 py-1 pr-8">
+    <v-row density="comfortable" v-if="!singleLayer" class="pl-4 py-1 pr-8">
       <v-col class="textCol">
         <div class="subtitle-1">Group</div>
       </v-col>
