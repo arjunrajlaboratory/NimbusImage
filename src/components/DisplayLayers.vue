@@ -4,38 +4,40 @@
     class="d-block mt-2"
     v-mousetrap="mousetrapGlobalToggles"
   >
-    <div>
-      <div class="pr-8">
-        <v-row density="comfortable">
-          <v-col cols="7">
-            <draggable
-              v-model="dropZoneArray"
-              group="layerZoneElement"
-              class="ma-1 pa-1 drop"
-              :class="{ dragging: isDragging, 'not-dragging': !isDragging }"
-              :item-key="(el: any) => el.layer?.id || String(el)"
+    <v-expansion-panels class="layer-header-panels">
+      <v-expansion-panel :disabled="true">
+        <v-expansion-panel-title class="layer-header-title" hide-actions>
+          <v-row density="comfortable" class="align-center">
+            <v-col cols="7">
+              <draggable
+                v-model="dropZoneArray"
+                group="layerZoneElement"
+                class="ma-1 pa-1 drop"
+                :class="{ dragging: isDragging, 'not-dragging': !isDragging }"
+                :item-key="(el: any) => el.layer?.id || String(el)"
+              >
+                <template #item="{ element }">
+                  <div>{{ element }}</div>
+                </template>
+                <template #footer>
+                  <span>Drag layer here to create group</span>
+                </template>
+              </draggable>
+            </v-col>
+            <v-col
+              class="text-caption header-col"
+              title="hotkey Z"
+              v-show="hasMultipleZ"
             >
-              <template #item="{ element }">
-                <div>{{ element }}</div>
-              </template>
-              <template #footer>
-                <span>Drag layer here to create group</span>
-              </template>
-            </draggable>
-          </v-col>
-          <v-col
-            class="text-caption header-col"
-            title="hotkey Z"
-            v-show="hasMultipleZ"
-          >
-            Z max-merge
-          </v-col>
-          <v-col class="text-caption header-col" title="hotkey 0">
-            Channel on/off
-          </v-col>
-        </v-row>
-      </div>
-    </div>
+              Z merge
+            </v-col>
+            <v-col class="text-caption header-col" title="hotkey 0">
+              On/off
+            </v-col>
+          </v-row>
+        </v-expansion-panel-title>
+      </v-expansion-panel>
+    </v-expansion-panels>
     <v-divider />
     <draggable
       v-model="groupsArrayWithSpacers"
@@ -354,6 +356,27 @@ defineExpose({
   justify-content: center;
   align-items: center;
   text-align: center;
+}
+
+/* Header uses a real expansion panel title for pixel-perfect alignment
+   with layer rows, but is non-interactive */
+.layer-header-panels {
+  pointer-events: none;
+}
+
+.layer-header-panels
+  :deep(.v-expansion-panel--disabled .v-expansion-panel-title) {
+  color: rgb(var(--v-theme-on-surface)) !important;
+}
+
+.layer-header-panels
+  :deep(.v-expansion-panel--disabled .v-expansion-panel-title__overlay) {
+  opacity: 0 !important;
+}
+
+.layer-header-title {
+  min-height: 32px !important;
+  cursor: default !important;
 }
 
 .drop {

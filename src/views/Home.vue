@@ -125,10 +125,7 @@
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <div class="d-flex align-center mb-4">
-                <v-list-subheader
-                  class="headline section-title text-h5 pa-0 mr-4"
-                  >Browse</v-list-subheader
-                >
+                <span class="text-h6 font-weight-medium mr-4">Browse</span>
                 <v-btn-toggle
                   v-model="browseMode"
                   mandatory

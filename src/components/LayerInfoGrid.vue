@@ -1,5 +1,5 @@
 <template>
-  <v-container fluid class="overflow-auto pa-2">
+  <v-container fluid class="overflow-auto pa-2 layer-info-grid">
     <v-row v-if="layers.length > 0" no-gutters class="flex-nowrap">
       <v-col v-for="layer in layers" :key="layer.id" cols="auto" class="mr-2">
         <v-card variant="outlined" width="300">
@@ -104,7 +104,8 @@ defineExpose({
 
 <style lang="scss" scoped>
 .layer-info-grid {
-  background-color: rgb(0, 0, 0);
+  background-color: rgba(var(--v-theme-surface), 0.85);
+  backdrop-filter: blur(8px);
   max-width: 100vw;
 }
 </style>

@@ -9,21 +9,25 @@
         </div>
       </v-col>
       <!-- Compute button -->
-      <v-col class="px-0" cols="1">
-        <v-btn size="small" icon @click.stop :disabled="false" @click="compute">
-          <v-badge
-            color="red"
-            :model-value="uncomputed[property.id].length > 0 && !status.running"
-            :content="uncomputed[property.id].length"
-          >
-            <template v-if="status.running">
-              <v-progress-circular indeterminate />
-            </template>
-            <template v-else>
-              <v-icon color="primary"> mdi-play </v-icon>
-            </template>
-          </v-badge>
+      <v-col class="px-0 d-flex align-center justify-end ga-1" cols="auto">
+        <v-btn
+          size="x-small"
+          variant="tonal"
+          color="primary"
+          @click.stop
+          @click="compute"
+        >
+          <template v-if="status.running">
+            <v-progress-circular indeterminate size="14" width="2" />
+          </template>
+          <template v-else> Run </template>
         </v-btn>
+        <span
+          v-if="uncomputed[property.id].length > 0 && !status.running"
+          class="uncomputed-count"
+        >
+          {{ uncomputed[property.id].length }}
+        </span>
       </v-col>
     </v-row>
     <v-row v-if="status.running">
@@ -188,5 +192,19 @@ defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
   max-width: 300px;
   word-wrap: break-word; /* Ensures long words don't overflow */
   opacity: 0.9;
+}
+
+.uncomputed-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  background: rgb(var(--v-theme-error));
+  border-radius: 9999px;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
 }
 </style>

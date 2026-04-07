@@ -664,100 +664,98 @@ onBeforeUnmount(() => {
   padding-right: 16px;
 }
 
-// Unscoped styles for search bar in dark mode
-.v-theme--dark {
-  .custom-file-manager-wrapper {
-    .search-container {
-      // Target v-autocomplete (girder-search likely uses this)
-      .v-autocomplete,
-      .v-text-field {
-        .v-input__control {
-          .v-input__slot {
-            background-color: rgba(255, 255, 255, 0.05) !important;
-            border: 1px solid rgba(255, 255, 255, 0.12) !important;
-            border-radius: 4px !important;
+// Unscoped styles for search bar (nimbus tokens handle dark/light)
+.custom-file-manager-wrapper {
+  .search-container {
+    // Target v-autocomplete (girder-search likely uses this)
+    .v-autocomplete,
+    .v-text-field {
+      .v-input__control {
+        .v-input__slot {
+          background-color: var(--nimbus-glass-hover) !important;
+          border: 1px solid var(--nimbus-border-strong) !important;
+          border-radius: 4px !important;
 
-            &::before,
-            &::after {
-              display: none !important;
-            }
+          &::before,
+          &::after {
+            display: none !important;
+          }
 
-            .v-text-field__slot,
-            .v-autocomplete__slot {
-              input {
-                background-color: transparent !important;
-                color: rgba(255, 255, 255, 0.87) !important;
-                border: none !important;
-                box-shadow: none !important;
+          .v-text-field__slot,
+          .v-autocomplete__slot {
+            input {
+              background-color: transparent !important;
+              color: rgb(var(--v-theme-on-surface)) !important;
+              border: none !important;
+              box-shadow: none !important;
 
-                &::placeholder {
-                  color: rgba(255, 255, 255, 0.38) !important;
-                }
-              }
-            }
-
-            .v-input__append-inner,
-            .v-input__prepend-inner {
-              .v-icon {
-                color: rgba(255, 255, 255, 0.6) !important;
+              &::placeholder {
+                color: var(--nimbus-text-faint) !important;
               }
             }
           }
 
-          .v-text-field__details,
-          .v-autocomplete__details {
-            .v-messages {
-              color: rgba(255, 255, 255, 0.6) !important;
+          .v-input__append-inner,
+          .v-input__prepend-inner {
+            .v-icon {
+              color: var(--nimbus-text-muted) !important;
             }
           }
         }
 
-        &.v-input--is-focused {
-          .v-input__control {
-            .v-input__slot {
-              background-color: rgba(255, 255, 255, 0.08) !important;
-              border-color: rgba(255, 255, 255, 0.24) !important;
-            }
+        .v-text-field__details,
+        .v-autocomplete__details {
+          .v-messages {
+            color: var(--nimbus-text-muted) !important;
           }
         }
       }
 
-      // Fallback for direct input elements
-      input[type="text"],
-      input[type="search"] {
-        background-color: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        border-radius: 4px !important;
-        color: rgba(255, 255, 255, 0.87) !important;
-
-        &::placeholder {
-          color: rgba(255, 255, 255, 0.38) !important;
-        }
-
-        &:focus {
-          background-color: rgba(255, 255, 255, 0.08) !important;
-          border-color: rgba(255, 255, 255, 0.24) !important;
-          outline: none !important;
+      &.v-input--is-focused {
+        .v-input__control {
+          .v-input__slot {
+            background-color: var(--nimbus-glass-hover) !important;
+            border-color: var(--nimbus-border-strong) !important;
+          }
         }
       }
     }
+
+    // Fallback for direct input elements
+    input[type="text"],
+    input[type="search"] {
+      background-color: var(--nimbus-glass-hover) !important;
+      border: 1px solid var(--nimbus-border-strong) !important;
+      border-radius: 4px !important;
+      color: rgb(var(--v-theme-on-surface)) !important;
+
+      &::placeholder {
+        color: var(--nimbus-text-faint) !important;
+      }
+
+      &:focus {
+        background-color: var(--nimbus-glass-hover) !important;
+        border-color: var(--nimbus-border-strong) !important;
+        outline: none !important;
+      }
+    }
   }
+}
 
-  // More aggressive selector to catch any input in the search container
-  .custom-file-manager-wrapper .search-container * {
-    .v-input__slot {
-      background-color: rgba(255, 255, 255, 0.05) !important;
-      border: 1px solid rgba(255, 255, 255, 0.12) !important;
+// More aggressive selector to catch any input in the search container
+.custom-file-manager-wrapper .search-container * {
+  .v-input__slot {
+    background-color: var(--nimbus-glass-hover) !important;
+    border: 1px solid var(--nimbus-border-strong) !important;
 
-      input {
-        background-color: transparent !important;
-        color: rgba(255, 255, 255, 0.87) !important;
-        border: none !important;
-        box-shadow: none !important;
+    input {
+      background-color: transparent !important;
+      color: rgb(var(--v-theme-on-surface)) !important;
+      border: none !important;
+      box-shadow: none !important;
 
-        &::placeholder {
-          color: rgba(255, 255, 255, 0.38) !important;
-        }
+      &::placeholder {
+        color: var(--nimbus-text-faint) !important;
       }
     }
   }
@@ -803,31 +801,15 @@ onBeforeUnmount(() => {
   }
 }
 
-// Dark mode styles
-.v-theme--dark {
-  .ghost-button {
-    border-color: rgba(255, 255, 255, 0.12);
-    color: rgba(255, 255, 255, 0.7);
+// Theme-aware ghost button styles
+.ghost-button {
+  border-color: var(--nimbus-border);
+  color: var(--nimbus-text-secondary);
 
-    &:hover:not(.v-btn--disabled) {
-      background-color: rgba(255, 255, 255, 0.08);
-      border-color: rgba(255, 255, 255, 0.24);
-      color: rgba(255, 255, 255, 0.87);
-    }
-  }
-}
-
-// Light mode styles
-.v-theme--light {
-  .ghost-button {
-    border-color: rgba(0, 0, 0, 0.12);
-    color: rgba(0, 0, 0, 0.7);
-
-    &:hover:not(.v-btn--disabled) {
-      background-color: rgba(0, 0, 0, 0.04);
-      border-color: rgba(0, 0, 0, 0.24);
-      color: rgba(0, 0, 0, 0.87);
-    }
+  &:hover:not(.v-btn--disabled) {
+    background-color: var(--nimbus-glass-hover);
+    border-color: var(--nimbus-border-strong);
+    color: rgb(var(--v-theme-on-surface));
   }
 }
 </style>

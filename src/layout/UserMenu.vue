@@ -103,7 +103,7 @@ defineExpose({ userMenu, isDomainLocked, domain, loggedInOrOut });
 .link {
   display: inline-block;
   margin: 5px 0;
-  color: #64b5f6; // A lighter blue that works well with dark themes
+  color: rgb(var(--v-theme-primary));
   text-decoration: none;
 
   &:hover {

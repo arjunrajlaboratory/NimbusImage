@@ -9,7 +9,7 @@
     >
       <help-panel @close="helpPanelIsOpen = false" />
     </v-dialog>
-    <v-app-bar class="elevation-1">
+    <v-app-bar>
       <v-tooltip text="NimbusImage home" :open-delay="500">
         <template v-slot:activator="{ props: activatorProps }">
           <v-toolbar-title v-bind="activatorProps" @click="goHome" class="logo">
@@ -113,6 +113,8 @@
             <v-btn
               v-bind="activatorProps"
               class="ml-4"
+              :color="annotationPanel ? 'primary' : undefined"
+              :variant="annotationPanel ? 'tonal' : 'text'"
               @click.stop="toggleRightPanel('annotationPanel')"
               id="object-list-button-tourstep"
               v-tour-trigger="'object-list-button-tourtrigger'"
@@ -129,6 +131,8 @@
             <v-btn
               v-bind="activatorProps"
               class="ml-4"
+              :color="snapshotPanel ? 'primary' : undefined"
+              :variant="snapshotPanel ? 'tonal' : 'text'"
               @click.stop="toggleRightPanel('snapshotPanel')"
               id="snapshots-button-tourstep"
               v-tour-trigger="'snapshots-button-tourtrigger'"
@@ -142,6 +146,8 @@
             <v-btn
               v-bind="activatorProps"
               class="ml-4"
+              :color="settingsPanel ? 'primary' : undefined"
+              :variant="settingsPanel ? 'tonal' : 'text'"
               @click.stop="toggleRightPanel('settingsPanel')"
               id="settings-button-tourstep"
               v-tour-trigger="'settings-button-tourtrigger'"
@@ -599,25 +605,14 @@ body > div {
   max-height: 100%;
 }
 
-/* Flat cards get a subtle line border for section discrimination */
-.v-card--variant-flat {
-  border: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+/* Secondary text uses nimbus muted token */
+.text-grey {
+  color: var(--nimbus-text-muted);
 }
 
-/* Improve secondary text contrast in dark mode */
-.v-theme--dark .text-grey {
-  color: rgba(255, 255, 255, 0.5);
-}
-
-/* More breathing room in list rows */
-.v-theme--dark .v-list-item {
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-
-/* Better type-indicator chip legibility in dark mode */
-.v-theme--dark .type-indicator.v-chip {
-  background-color: rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.7);
+/* Type-indicator chips use ghost styling */
+.type-indicator.v-chip {
+  background: var(--nimbus-glass) !important;
+  color: var(--nimbus-text-secondary);
 }
 </style>

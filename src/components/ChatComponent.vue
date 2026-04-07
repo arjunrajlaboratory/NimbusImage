@@ -323,12 +323,13 @@ defineExpose({
   height: 680px;
   max-height: 680px;
   z-index: 1000;
-  background-color: rgba(0, 0, 0, 0.8);
+  background-color: rgba(var(--v-theme-surface-bright), 0.88);
+  backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--nimbus-border-strong);
+  border-radius: var(--nimbus-radius-lg);
 }
 
 /* === Header === */
