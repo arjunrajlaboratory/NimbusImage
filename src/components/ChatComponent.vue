@@ -323,12 +323,12 @@ defineExpose({
   height: 680px;
   max-height: 680px;
   z-index: 1000;
-  background-color: rgba(0, 0, 0, 0.8) !important;
+  background-color: rgba(0, 0, 0, 0.8);
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 12px !important;
+  border-radius: 12px;
 }
 
 /* === Header === */
@@ -360,7 +360,7 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: 8px !important;
+  padding: 8px;
 }
 
 .chat-messages {
@@ -477,7 +477,7 @@ defineExpose({
   flex-direction: column;
   align-items: stretch;
   flex-shrink: 0;
-  padding: 0 !important;
+  padding: 0;
 }
 
 .current-images {
@@ -502,7 +502,7 @@ defineExpose({
   position: absolute;
   top: -4px;
   right: -4px;
-  background: rgba(255, 60, 60, 0.8) !important;
+  background: rgba(255, 60, 60, 0.8);
   color: white;
 }
 

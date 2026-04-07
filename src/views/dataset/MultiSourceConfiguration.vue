@@ -2403,9 +2403,9 @@ defineExpose({
 }
 
 .values-popover__title {
-  font-size: 14px !important;
+  font-size: 14px;
   font-weight: 500;
-  padding: 12px 16px !important;
+  padding: 12px 16px;
   display: flex;
   align-items: baseline;
   gap: 8px;

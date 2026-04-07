@@ -600,13 +600,61 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
+// Girder DataBrowser uses a <table> with <tr>/<td> rows.
+// @girder/components bundles Vuetify 3 CSS (un-layered) which competes
+// with our Vuetify 4 styles, so !important is needed in some places.
+
+// Prevent horizontal overflow from the file manager.
+.custom-file-manager-wrapper {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+// Force the table to fit within container width.
+// Set explicit column widths so content column gets remaining space.
+.custom-file-manager-wrapper table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+// Checkbox column: narrow
+.custom-file-manager-wrapper table col:first-child {
+  width: 40px;
+}
+
+// Size column: narrow, right-aligned
+.custom-file-manager-wrapper table col:last-child {
+  width: 90px;
+}
+
+// Also target td directly in case <col> elements don't exist
+.custom-file-manager-wrapper table tr td:first-child {
+  width: 40px;
+}
+
+.custom-file-manager-wrapper table tr td:last-child {
+  width: 90px;
+  text-align: right;
+}
+
 // Fix file browser rows: icon and content on same line, vertically centered
 .custom-file-manager-wrapper .select-cursor {
   display: flex !important;
   align-items: center;
 }
 
+// Checkbox needs margin for separation from icon
+.custom-file-manager-wrapper .v-checkbox-btn {
+  margin-inline-end: 4px;
+}
+
+// File size column: prevent text from wrapping (e.g., "575.50\nMB")
+.custom-file-manager-wrapper tr td.text-right {
+  white-space: nowrap !important;
+}
+
 // Fix file manager header: checkbox, breadcrumb, and action buttons on same row
+// !important needed for same reason as .select-cursor above.
 .custom-file-manager-wrapper .data-table-header {
   display: flex !important;
   flex-direction: row;
@@ -730,13 +778,13 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .type-indicator {
-  border-radius: 4px !important; // More rectangular
-  font-family: "Roboto Mono", monospace !important; // Monospace font
-  font-size: 9px !important;
-  letter-spacing: 0.5px !important;
-  height: 16px !important;
-  padding: 0 4px !important;
-  font-weight: 500 !important;
+  border-radius: 4px; // More rectangular
+  font-family: "Roboto Mono", monospace; // Monospace font
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  height: 16px;
+  padding: 0 4px;
+  font-weight: 500;
 }
 
 .chip-label {
@@ -744,10 +792,10 @@ onBeforeUnmount(() => {
 }
 
 .ghost-button {
-  background-color: transparent !important;
+  background-color: transparent;
 
   .v-icon {
-    color: inherit !important;
+    color: inherit;
   }
 
   &.v-btn--disabled {
@@ -758,13 +806,13 @@ onBeforeUnmount(() => {
 // Dark mode styles
 .v-theme--dark {
   .ghost-button {
-    border-color: rgba(255, 255, 255, 0.12) !important;
-    color: rgba(255, 255, 255, 0.7) !important;
+    border-color: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.7);
 
     &:hover:not(.v-btn--disabled) {
-      background-color: rgba(255, 255, 255, 0.08) !important;
-      border-color: rgba(255, 255, 255, 0.24) !important;
-      color: rgba(255, 255, 255, 0.87) !important;
+      background-color: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.24);
+      color: rgba(255, 255, 255, 0.87);
     }
   }
 }
@@ -772,13 +820,13 @@ onBeforeUnmount(() => {
 // Light mode styles
 .v-theme--light {
   .ghost-button {
-    border-color: rgba(0, 0, 0, 0.12) !important;
-    color: rgba(0, 0, 0, 0.7) !important;
+    border-color: rgba(0, 0, 0, 0.12);
+    color: rgba(0, 0, 0, 0.7);
 
     &:hover:not(.v-btn--disabled) {
-      background-color: rgba(0, 0, 0, 0.04) !important;
-      border-color: rgba(0, 0, 0, 0.24) !important;
-      color: rgba(0, 0, 0, 0.87) !important;
+      background-color: rgba(0, 0, 0, 0.04);
+      border-color: rgba(0, 0, 0, 0.24);
+      color: rgba(0, 0, 0, 0.87);
     }
   }
 }

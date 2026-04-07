@@ -610,9 +610,9 @@ tbody tr.is-hovered:hover {
 }
 
 .v-text-field .v-input__control .v-input__slot {
-  min-height: 0 !important;
-  display: flex !important;
-  align-items: center !important;
+  min-height: 0;
+  display: flex;
+  align-items: center;
 }
 
 .v-dialog {

@@ -142,7 +142,7 @@ defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
 
 <style lang="scss">
 .text-progress {
-  height: fit-content !important;
+  height: fit-content;
   min-height: 10px;
   padding: 4px;
 }

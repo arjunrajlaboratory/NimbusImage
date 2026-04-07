@@ -521,7 +521,7 @@ defineExpose({
   cursor: pointer;
   text-overflow: unset;
   overflow: unset;
-  flex: 0 0 auto !important;
+  flex: 0 0 auto;
 }
 </style>
 <style lang="scss">
@@ -594,9 +594,9 @@ body > div {
 }
 
 .help-dialog-overlay {
-  background: transparent !important;
-  box-shadow: none !important;
-  max-height: 100% !important;
+  background: transparent;
+  box-shadow: none;
+  max-height: 100%;
 }
 
 /* Flat cards get a subtle line border for section discrimination */
@@ -606,7 +606,7 @@ body > div {
 
 /* Improve secondary text contrast in dark mode */
 .v-theme--dark .text-grey {
-  color: rgba(255, 255, 255, 0.5) !important;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 /* More breathing room in list rows */
@@ -617,7 +617,7 @@ body > div {
 
 /* Better type-indicator chip legibility in dark mode */
 .v-theme--dark .type-indicator.v-chip {
-  background-color: rgba(255, 255, 255, 0.12) !important;
-  color: rgba(255, 255, 255, 0.7) !important;
+  background-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
 }
 </style>

@@ -1320,7 +1320,7 @@ defineExpose({
 .upload-card {
   cursor: pointer;
   position: relative;
-  border: 2px dashed rgba(255, 255, 255, 0.3) !important;
+  border: 2px dashed rgba(255, 255, 255, 0.3);
 
   &.drag-active {
     border: 2px dashed var(--v-primary-base);
