@@ -72,7 +72,8 @@ import UserMenuLoginForm from "@/layout/UserMenuLoginForm.vue";
 useRouter()
   .isReady()
   .then(() => {
-    userMenu.value = route.name === "root";
+    // Only auto-open the login dialog, not the profile menu
+    userMenu.value = route.name === "root" && !store.isLoggedIn;
   });
 
 const route = useRoute();
