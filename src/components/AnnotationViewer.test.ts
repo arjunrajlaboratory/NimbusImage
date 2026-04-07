@@ -494,6 +494,7 @@ describe("AnnotationViewer", () => {
     mockedStore.annotationSelectionType = "ADD" as any;
     mockedStore.showAnnotationsFromHiddenLayers = false;
     mockedStore.valueOnHover = false;
+    mockedStore.cameraInfo = { gcsBounds: [] } as any;
 
     mockedAnnotationStore.annotations = [];
     mockedAnnotationStore.annotationConnections = [];
@@ -502,6 +503,12 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.hoveredAnnotationId = null;
     mockedAnnotationStore.pendingAnnotation = null;
     mockedAnnotationStore.annotationIdToIdx = {};
+    mockedAnnotationStore.annotationStubs = new Map();
+    mockedAnnotationStore.visibilityConfig = {
+      maxVisible: 10000,
+      maxHydrated: 5000,
+    };
+    mockedAnnotationStore.updateVisibilityAndHydration = vi.fn();
 
     mockedPropertiesStore.displayWorkerPreview = false;
     mockedPropertiesStore.displayedPropertyPaths = [];

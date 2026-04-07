@@ -1369,8 +1369,8 @@ export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
 export type THydrationMode = "shapes" | "dots";
 
 export interface IVisibilityConfig {
-  maxVisible: number;
-  maxHydrated: number;
+  maxVisible: number;   // Max annotations to render (stubs or shapes)
+  maxHydrated: number;  // Max annotations to keep hydrated (full coordinates in memory)
 }
 
 export function isHydratedAnnotation(

@@ -116,8 +116,8 @@ export class Annotations extends VuexModule {
   visibleAnnotationIds: Set<string> = markRaw(new Set());
   hydrationMode: THydrationMode = "dots";
   visibilityConfig: IVisibilityConfig = {
-    maxVisible: 20000,
-    maxHydrated: 10000,
+    maxVisible: 10000,
+    maxHydrated: 5000,
   };
 
   get isHydrated() {
@@ -646,25 +646,9 @@ export class Annotations extends VuexModule {
     // Spatial index
     annotationSpatialIndex.bulkLoad(spatialItems);
 
-    // Mock data strategy: hydrate a hash-random subset up to maxHydrated
-    const newHydrated = new Map<string, IAnnotation>();
-    const allIds = this.annotations.map((a) => a.id);
-    const hydrateIds = selectRandomSubset(
-      allIds,
-      this.visibilityConfig.maxHydrated,
-    );
-    for (const id of hydrateIds) {
-      const idx2 = this.annotationIdToIdx[id];
-      newHydrated.set(id, this.annotations[idx2]);
-    }
-    // Also preserve previously selected annotations that are still present
-    for (const id of this.selectedAnnotationIds) {
-      const idx2 = this.annotationIdToIdx[id];
-      if (idx2 !== undefined && !newHydrated.has(id)) {
-        newHydrated.set(id, this.annotations[idx2]);
-      }
-    }
-    this.hydratedAnnotations = markRaw(newHydrated);
+    // Clear hydration cache — will be repopulated on demand by
+    // updateVisibilityAndHydration
+    this.hydratedAnnotations = markRaw(new Map());
   }
 
   @Action
@@ -1786,27 +1770,24 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
-  hydrateAnnotations(ids: string[]) {
-    const newMap = new Map(this.hydratedAnnotations);
-    for (const id of ids) {
-      const idx = this.annotationIdToIdx[id];
-      if (idx !== undefined) {
-        newMap.set(id, this.annotations[idx]);
+  setHydratedAnnotations(entries: { id: string; annotation: IAnnotation }[]) {
+    const newMap = new Map<string, IAnnotation>();
+    // Always preserve selected annotations in the hydration cache
+    for (const id of this.selectedAnnotationIds) {
+      const existing = this.hydratedAnnotations.get(id);
+      if (existing) {
+        newMap.set(id, existing);
       }
+    }
+    for (const { id, annotation } of entries) {
+      newMap.set(id, annotation);
     }
     this.hydratedAnnotations = markRaw(newMap);
   }
 
   @Mutation
-  clearNonSelectedHydration(preserveIds?: string[]) {
-    const newMap = new Map<string, IAnnotation>();
-    const preserveSet = preserveIds ? new Set(preserveIds) : new Set<string>();
-    for (const [id, annotation] of this.hydratedAnnotations) {
-      if (this.selectedAnnotationIds.has(id) || preserveSet.has(id)) {
-        newMap.set(id, annotation);
-      }
-    }
-    this.hydratedAnnotations = markRaw(newMap);
+  clearHydrationCache() {
+    this.hydratedAnnotations = markRaw(new Map());
   }
 
   @Action
@@ -1905,12 +1886,20 @@ export class Annotations extends VuexModule {
     // Step 6: Determine hydration mode
     this.setHydrationMode(idsToHydrate.length > 0 ? "shapes" : "dots");
 
-    // Step 7: Clear non-selected hydration from previous frame, preserving new targets
-    this.clearNonSelectedHydration(idsToHydrate);
-
-    // Step 8: Hydrate new targets
-    this.hydrateAnnotations(idsToHydrate);
+    // Step 7: Hydrate — sync from local data (mock), async from backend (future)
+    // Mock strategy: all annotations are in memory, hydrate synchronously.
+    // When the backend stub API exists, replace this with an async fetch:
+    //   const annotations = await this.annotationsAPI.getAnnotationsByIds(idsToHydrate);
+    const entries: { id: string; annotation: IAnnotation }[] = [];
+    for (const id of idsToHydrate) {
+      const idx = this.annotationIdToIdx[id];
+      if (idx !== undefined) {
+        entries.push({ id, annotation: this.annotations[idx] });
+      }
+    }
+    this.setHydratedAnnotations(entries);
   }
+
 }
 
 export default getModule(Annotations);

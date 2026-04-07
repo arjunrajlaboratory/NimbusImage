@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status:** Frontend implementation complete (mock data strategy). Backend stub API deferred.
+**Status:** Frontend implementation complete with viewport-driven hydration (mock data strategy). Backend stub API deferred.
 
 ---
 
@@ -30,7 +30,7 @@ frame split (current frame vs other frames)
        │                          └── outOfViewportIds
        │
        ▼
-two-tier visibility budget (max 20K)
+two-tier visibility budget (maxVisible, default 10K)
   Tier 1: inViewportIds (hash-ranked if over budget)
   Tier 2: outOfViewportIds (hash-ranked, fill remaining)
        │
@@ -38,12 +38,17 @@ two-tier visibility budget (max 20K)
 visibleAnnotationIds (render budget)
        │
        ▼
-two-tier hydration budget (max 10K)
+two-tier hydration budget (maxHydrated, default 5K)
   Tier 1: inViewportIds (largest first by estimatedRadius)
   Tier 2: outOfViewportIds (largest first, fill remaining)
        │
        ▼
-hydratedAnnotations (top 10K, shapes rendered)
+hydratedAnnotations (viewport-driven, replaced each update)
+       │
+       ▼
+layerAnnotations gate: needsStubSystem?
+  frameCount > maxVisible → use stub system (visibility + hydration)
+  frameCount ≤ maxVisible → bypass, use full annotations directly
        │
        ▼
 GeoJS Renderer (dots for stubs, full shapes for hydrated)
@@ -68,8 +73,8 @@ type TAnnotationOrStub = IAnnotation | IAnnotationStub;
 type THydrationMode = "shapes" | "dots";
 
 interface IVisibilityConfig {
-  maxVisible: number;   // Max annotations to render (default 20,000)
-  maxHydrated: number;  // Max annotations to hydrate as shapes (default 10,000)
+  maxVisible: number;   // Max annotations to render as stubs or shapes (default 10,000)
+  maxHydrated: number;  // Max annotations to keep hydrated with full coordinates (default 5,000)
 }
 
 // Type guard
@@ -99,7 +104,7 @@ This ensures selecting a region and deleting captures ALL annotations in that ar
 | `src/store/model.ts` | `IAnnotationStub`, `TAnnotationOrStub`, `THydrationMode`, `IVisibilityConfig`, `isHydratedAnnotation()` |
 | `src/utils/annotation.ts` | `getStubStyleFromBaseStyle()`, `hashString()`, `selectRandomSubset()`, `estimateAnnotationRadius()`, exported `TAnnotationStyle` |
 | `src/utils/spatialIndex.ts` | **NEW** — `AnnotationSpatialIndex` class wrapping RBush for centroid-based viewport queries. Module-level singleton `annotationSpatialIndex` (outside Vuex to avoid reactivity corruption) |
-| `src/store/annotation.ts` | New state: `annotationStubs`, `hydratedAnnotations`, `visibleAnnotationIds`, `hydrationMode`, `visibilityConfig`. New getters: `isHydrated`, `getStub`, `getHydratedAnnotation`, `isVisible`, `shouldRenderAsShape`, `getForRendering`. New mutations: `setVisibleAnnotationIds`, `setHydrationMode`, `hydrateAnnotations`, `clearNonSelectedHydration`. New action: `updateVisibilityAndHydration`. Modified mutations: `setAnnotations`, `addAnnotationImpl`, `setAnnotation` |
+| `src/store/annotation.ts` | New state: `annotationStubs`, `hydratedAnnotations`, `visibleAnnotationIds`, `hydrationMode`, `visibilityConfig`. New getters: `isHydrated`, `getStub`, `getHydratedAnnotation`, `isVisible`, `shouldRenderAsShape`, `getForRendering`. New mutations: `setVisibleAnnotationIds`, `setHydrationMode`, `setHydratedAnnotations`, `clearHydrationCache`. New action: `updateVisibilityAndHydration`. Modified mutations: `setAnnotations`, `addAnnotationImpl`, `setAnnotation` |
 | `src/components/ImageViewer.vue` | Added `geojs.event.zoom` listener so `cameraInfo.gcsBounds` updates on zoom |
 | `src/components/AnnotationViewer.vue` | `layerAnnotations` visibility filtering, `createGeoJSAnnotation` stub handling, stub-specific styling in restyle paths, debounced visibility watcher, global spatial index for selection of non-visible annotations |
 | `src/utils/__tests__/spatialIndex.test.ts` | **NEW** — 9 tests |
@@ -114,10 +119,13 @@ Since the backend doesn't yet return stubs natively, the frontend simulates the 
 
 1. `fetchAnnotations()` loads ALL annotations with full coordinates (as before)
 2. `setAnnotations()` builds stubs from the full data, computing centroids and `estimatedRadius`
-3. First 20% of annotations (by array order) are kept in `hydratedAnnotations`
-4. The full `annotations[]` array is retained for backward compatibility with all existing consumers (AnnotationBrowser, export, property computation, etc.)
+3. Hydration cache starts empty — populated on demand by `updateVisibilityAndHydration`
+4. Each visibility update computes `idsToHydrate` (viewport-prioritized, largest first) and replaces the hydration cache by looking up full annotations from the local `annotations[]` array
+5. The full `annotations[]` array is retained for backward compatibility with all existing consumers (AnnotationBrowser, export, property computation, etc.)
 
 **Implication:** The mock strategy uses MORE memory than the current system (stubs + full array), not less. The savings come when the backend returns real stubs (Phase 5).
+
+**Backend swap point:** In `updateVisibilityAndHydration` Step 7, the inline loop that reads from `this.annotations[idx]` is the single point to replace with `this.annotationsAPI.getAnnotationsByIds(idsToHydrate)`. The fetch would become async + debounced, and the cache would accumulate rather than replace (with LRU eviction at a configurable cap) to avoid re-fetching on every pan.
 
 ---
 
@@ -179,10 +187,13 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - No minimum radius — `estimatedRadius` used as-is
 - `stubRadius` stored in GeoJS annotation options for restyle persistence
 
-### Hash-based random hydration (replaces "first 20%")
-- `hashString()` now uses djb2 + murmurhash3 finalizer for good dispersion on sequential MongoDB ObjectIDs
-- Mock hydration strategy uses `selectRandomSubset()` capped at `maxHydrated` instead of first 20% by array order
-- Avoids wasted allocation (previously built 100K-entry Map at 500K scale, immediately discarded)
+### Viewport-driven hydration (replaces random pre-hydration)
+- Hydration cache is no longer pre-populated on annotation load — starts empty
+- Each `updateVisibilityAndHydration` call computes `idsToHydrate` (up to `maxHydrated`) and **replaces** the cache entirely
+- Viewport annotations are prioritized (largest first by `estimatedRadius`), then off-viewport fills remaining budget
+- Zooming in immediately hydrates viewport annotations and drops off-viewport ones
+- **Why replace, not accumulate:** With the mock strategy (all data local), there's no network cost to "re-fetch." Replacing ensures the hydration budget always reflects the current viewport. When the backend API exists, the strategy will switch to accumulate + LRU eviction to minimize network transfers.
+- `selectRandomSubset()` is still used for the visibility budget (hash-based random downsampling when over `maxVisible`)
 
 ### Expanded hydration viewport (2x)
 - `updateVisibilityAndHydration` expands the viewport bounds by 50% on each side before the spatial index query
@@ -218,8 +229,8 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 ## To-Do List
 
 ### Threshold and Hydration Refinement
-- [ ] Test and tune `maxVisible` (currently 20,000) — balance between coverage and rendering performance
-- [ ] Test and tune `maxHydrated` (currently 10,000) — how many shapes to render before performance degrades
+- [ ] Test and tune `maxVisible` (currently 10,000) — balance between coverage and rendering performance
+- [ ] Test and tune `maxHydrated` (currently 5,000) — how many shapes to render before performance degrades
 - [ ] Consider making thresholds configurable via UI settings panel
 - [ ] Evaluate whether size-based hydration ranking (largest first) is the right heuristic vs. alternatives (density, distance to viewport center, user focus area)
 - [ ] Consider zoom-based adaptive thresholds — show shapes only when annotations are large enough relative to the viewport (code is deferred/commented out in Vue 2 version)
@@ -236,16 +247,43 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - [ ] Verify point-click selection works correctly for stub annotations (centroid hit-testing)
 - [ ] Consider whether non-visible, non-rendered annotations should be selectable via point-click (currently only drag-select catches them)
 
-### Backend API (Phase 5 — Deferred)
-- [ ] Create `GET /upenn_annotation/stubs` endpoint returning stub data with server-computed centroids
-- [ ] Create `GET /upenn_annotation/hydrate` batch endpoint returning full annotations by ID
-- [ ] Remove mock data strategy from `setAnnotations` — replace with real stub fetching
-- [ ] Server-side `estimatedRadius` computation (client won't have coordinates)
+### Backend API (Phase 5 — Next)
 
-### On-Demand Hydration (Phase 6 — Deferred)
+**Goal:** Two new endpoints so the frontend can load stubs first (fast) and hydrate on demand (viewport-driven).
+
+**Endpoint 1: `GET /upenn_annotation/stubs?datasetId=X`**
+- Returns all annotations WITHOUT `coordinates` field
+- Must include: `_id`, `location`, `shape`, `channel`, `tags`, `color`, server-computed `centroid` and `estimatedRadius`
+- MongoDB approach: projection `{coordinates: 0}` on the existing query, plus compute centroid/radius
+- `estimatedRadius` = max half-extent of bounding box of coordinates (see `estimateAnnotationRadius()` in `src/utils/annotation.ts`)
+- `centroid` = average of all coordinate x/y values (see `simpleCentroid()` in `src/utils/annotation.ts`)
+- Consider precomputing centroid + estimatedRadius on annotation creation/update and storing in the document, so the stub query is a simple projection with no computation
+- Source file: `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/annotation.py`
+
+**Endpoint 2: `GET /upenn_annotation/hydrate` (POST with body)**
+- Accepts a list of annotation IDs, returns full annotation documents (with coordinates)
+- MongoDB: `{_id: {$in: [ObjectId(...), ...]}}` query
+- Batch size will typically be 5K–10K IDs
+- Must verify dataset access control (user has READ on the dataset)
+
+**Frontend swap points:**
+- Stub fetch: `src/store/annotation.ts` → `fetchAnnotations()` action → currently calls `annotationsAPI.getAnnotationsForDatasetId()`. Replace with new `annotationsAPI.getAnnotationStubs()` call. `setAnnotations()` mutation would receive stubs instead of full annotations.
+- Hydration fetch: `src/store/annotation.ts` → `updateVisibilityAndHydration()` Step 7 → inline loop reads from `this.annotations[idx]`. Replace with `await this.annotationsAPI.getAnnotationsByIds(ids)`. Make the action async, add debounced fetch (200ms) to avoid request spam during pan/zoom.
+- API client: `src/store/AnnotationsAPI.ts` — add `getAnnotationStubs(datasetId)` and `getAnnotationsByIds(ids)` methods.
+
+**Development approach:**
+- Use `/nimbus-local-ops` for live testing with curl and direct MongoDB queries
+- Profile existing annotation query with `.explain()` to understand current index usage
+- Test MongoDB projection performance (`{coordinates: 0}`) on 500K annotation dataset
+- Test `$in` query performance with 5K–10K IDs
+- Verify access control patterns match existing endpoints
+
+### On-Demand Hydration (Part of Phase 5)
+- [ ] Make `updateVisibilityAndHydration` async when using real API
+- [ ] Re-introduce accumulating cache with LRU eviction (don't re-fetch on every pan)
+- [ ] Debounced fetch (200ms) to batch rapid viewport changes into single request
 - [ ] Hydrate on selection (currently done via mock — needs real API)
 - [ ] Consider hydrate-on-hover for quick preview
-- [ ] Hydration batching/queuing (50ms debounce to batch requests)
 - [ ] Hydrate all before export operations
 - [ ] Handle hydration failures gracefully
 
@@ -287,3 +325,4 @@ Property values (`IAnnotationPropertyValues`) are a separate and potentially lar
 6. **`annotations[]` retained**: Full array stays for backward compatibility. Stub architecture is additive.
 7. **Shape as string enum**: Not worth compressing to numeric index (~13 bytes savings vs added complexity)
 8. **Connections don't need stubs**: Connections are lightweight (just two annotation IDs + label/tags), so stub treatment is unnecessary
+9. **No plain private methods in Vuex modules**: vuex-module-decorators `@Action` proxy only exposes state, getters, `@Mutation`, and `@Action` methods on `this`. A plain `private` method (no decorator) is invisible to the proxy — calling it silently throws TypeError, swallowed by Vuex without `rawError: true`. All private methods must be decorated or their logic inlined in the action.
