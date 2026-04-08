@@ -30,11 +30,12 @@
       <template v-if="debouncedChipsPerItemId[collection._id]?.chips">
         <v-chip
           size="x-small"
+          variant="outlined"
           v-for="(chipItem, i) in debouncedChipsPerItemId[collection._id]
             ?.chips"
           :key="'chip ' + i + ' collection ' + collection._id"
-          class="ma-1"
-          v-bind="chipItem"
+          class="ma-1 colored-chip"
+          :style="{ '--chip-color': chipItem.color }"
           @click.stop="navigateToChip(chipItem)"
         >
           {{ chipItem.text }}
