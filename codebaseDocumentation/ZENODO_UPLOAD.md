@@ -53,7 +53,7 @@ Filenames use `--` as a folder separator because Zenodo's bucket API does not su
 | `PUT` | `/api/v1/zenodo_credentials` | Store token (encrypted with Fernet) |
 | `DELETE` | `/api/v1/zenodo_credentials` | Remove stored token |
 
-Tokens are encrypted at rest using Fernet symmetric encryption. The encryption key is read from the `ZENODO_ENCRYPTION_KEY` environment variable. If not set, a development default key is used and a **warning is logged** on first use.
+Tokens are encrypted at rest using Fernet symmetric encryption. The encryption key is read from the `ZENODO_ENCRYPTION_KEY` environment variable. In production mode (determined by Girder's `getServerMode()`), the key is **required** — the endpoint will return a 500 error if it's not set. In development/testing mode, a hardcoded dev key is used with a warning logged.
 
 ### Upload/Publish Workflow
 
@@ -132,7 +132,7 @@ All paths relative to `devops/girder/plugins/AnnotationPlugin/upenncontrast_anno
 | File | Purpose |
 |------|---------|
 | `server/helpers/zenodo_client.py` | Zenodo REST API wrapper (create, upload, publish, new version) |
-| `server/helpers/zenodo_job.py` | Local job `run(job)` entry point — contains all upload logic |
+| `server/helpers/zenodo_job.py` | Local job `run(job)` entry point — contains all upload logic and `batch_load_project_data()` shared helper |
 | `server/api/zenodo.py` | REST endpoints for upload/publish/status/discard |
 | `server/api/zenodo_credentials.py` | Token CRUD with Fernet encryption |
 
@@ -178,7 +178,9 @@ File uploads use `PUT {bucket_url}/{filename}` with:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ZENODO_ENCRYPTION_KEY` | Fernet key or passphrase for encrypting stored tokens | Development default (logs warning — set in production!) |
+| `ZENODO_ENCRYPTION_KEY` | Fernet key or passphrase for encrypting stored tokens. Set in `girder.env` alongside `ANTHROPIC_API_KEY`. | **Required** in production mode (error if missing). In dev/testing mode, falls back to a hardcoded dev key. |
+
+Server mode is determined by Girder's `getServerMode()` from `girder.utility.config` (see [Girder source](https://github.com/girder/girder/blob/master/girder/api/rest.py)). The local Docker setup runs in `production` mode by default, so you'll need to set this key even locally if you want to test Zenodo credential storage. Alternatively, Girder tests run in `testing` mode, so `tox` tests work without it.
 
 ### Dependencies
 
