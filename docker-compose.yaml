@@ -26,8 +26,6 @@ services:
     env_file:
       - "./girder.env"
       - "./worker.env"
-    environment:
-      - ZENODO_ENCRYPTION_KEY=${ZENODO_ENCRYPTION_KEY:-}
     depends_on:
       - "mongodb"
       - "broker"
