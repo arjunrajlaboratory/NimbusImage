@@ -586,6 +586,39 @@ class TestConnectionEndpoints:
         )
         assert loaded is None
 
+    def testUpdateIgnoresUnknownFields(self, admin, server):
+        """PUT /annotation_connection/:id drops unknown fields."""
+        (parent, child, dataset) = createTwoAnnotations(admin)
+        connection = upenn_utilities.getSampleConnection(
+            parent["_id"], child["_id"], dataset["_id"]
+        )
+        created = AnnotationConnection().create(connection)
+
+        updated_data = {
+            "label": "Filtered Label",
+            "tags": ["filtered"],
+            "_malicious": "should be dropped",
+            "accessLevel": 99,
+            "unknownField": True,
+        }
+        resp = server.request(
+            path=f"/annotation_connection/{created['_id']}",
+            method="PUT",
+            user=admin,
+            body=json.dumps(updated_data),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        loaded = AnnotationConnection().load(
+            created["_id"], user=admin
+        )
+        assert loaded["label"] == "Filtered Label"
+        assert loaded["tags"] == ["filtered"]
+        assert "_malicious" not in loaded
+        assert "accessLevel" not in loaded
+        assert "unknownField" not in loaded
+
     def testFindEndpoint(self, admin, server):
         """Test GET /annotation_connection returns connections."""
         (parent, child, dataset) = createTwoAnnotations(admin)
