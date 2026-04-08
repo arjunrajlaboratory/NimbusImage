@@ -11,6 +11,7 @@ import datetime
 import io
 import json
 import logging
+from collections import defaultdict
 
 import orjson
 
@@ -168,7 +169,7 @@ def _report_progress(job, job_model, current, total,
             )
 
 
-def _batch_load_project_data(project):
+def batch_load_project_data(project):
     """Batch load all folders, items, and files for a
     project's datasets in minimal DB round-trips.
 
@@ -189,14 +190,14 @@ def _batch_load_project_data(project):
             folders_by_id[f['_id']] = f
 
     # Batch load items
-    items_by_folder = {}
+    items_by_folder = defaultdict(list)
     if dataset_ids:
         for item in Item().find(
             {'folderId': {'$in': dataset_ids}}
         ):
-            items_by_folder.setdefault(
-                item['folderId'], []
-            ).append(item)
+            items_by_folder[item['folderId']].append(
+                item
+            )
 
     # Batch load files
     all_item_ids = [
@@ -204,15 +205,13 @@ def _batch_load_project_data(project):
         for items in items_by_folder.values()
         for item in items
     ]
-    files_by_item = {}
+    files_by_item = defaultdict(list)
     total_file_count = 0
     if all_item_ids:
         for f in File().find(
             {'itemId': {'$in': all_item_ids}}
         ):
-            files_by_item.setdefault(
-                f['itemId'], []
-            ).append(f)
+            files_by_item[f['itemId']].append(f)
             total_file_count += 1
 
     return (
@@ -281,7 +280,7 @@ def _do_upload(job, job_model, project, user, project_id,
     # Batch load all project data upfront
     (folders_by_id, items_by_folder,
      files_by_item, image_file_count) = (
-        _batch_load_project_data(project)
+        batch_load_project_data(project)
     )
 
     collection_model = CollectionModel()

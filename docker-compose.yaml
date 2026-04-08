@@ -27,7 +27,6 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ZENODO_ENCRYPTION_KEY=${ZENODO_ENCRYPTION_KEY:-}
-      - ZENODO_DEV_MODE=${ZENODO_DEV_MODE:-false}
     depends_on:
       - "mongodb"
       - "broker"

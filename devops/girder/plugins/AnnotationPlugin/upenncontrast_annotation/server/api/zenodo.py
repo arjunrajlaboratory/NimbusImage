@@ -17,9 +17,6 @@ from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
 from girder.constants import AccessType
 from girder.exceptions import RestException
-from girder.models.file import File
-from girder.models.folder import Folder
-from girder.models.item import Item
 from girder_jobs.models.job import Job as JobModel
 
 from ..helpers.zenodo_client import (
@@ -27,6 +24,7 @@ from ..helpers.zenodo_client import (
     get_zenodo_client_for_user,
     update_zenodo_meta,
 )
+from ..helpers.zenodo_job import batch_load_project_data
 from ..models.collection import Collection as CollectionModel
 from ..models.project import Project as ProjectModel
 
@@ -78,41 +76,10 @@ class Zenodo(Resource):
             'collections', []
         )
 
-        # Batch load all dataset folders
-        dataset_ids = [
-            ObjectId(d['datasetId']) for d in datasets
-        ]
-        folders_by_id = {}
-        if dataset_ids:
-            for f in Folder().find(
-                {'_id': {'$in': dataset_ids}}
-            ):
-                folders_by_id[f['_id']] = f
-
-        # Batch load all items across all folders
-        items_by_folder = {}
-        if dataset_ids:
-            for item in Item().find(
-                {'folderId': {'$in': dataset_ids}}
-            ):
-                items_by_folder.setdefault(
-                    item['folderId'], []
-                ).append(item)
-
-        # Batch load all files across all items
-        all_item_ids = [
-            item['_id']
-            for items in items_by_folder.values()
-            for item in items
-        ]
-        files_by_item = {}
-        if all_item_ids:
-            for f in File().find(
-                {'itemId': {'$in': all_item_ids}}
-            ):
-                files_by_item.setdefault(
-                    f['itemId'], []
-                ).append(f)
+        (folders_by_id, items_by_folder,
+         files_by_item, _) = (
+            batch_load_project_data(project)
+        )
 
         for d in datasets:
             ds_id = ObjectId(d['datasetId'])

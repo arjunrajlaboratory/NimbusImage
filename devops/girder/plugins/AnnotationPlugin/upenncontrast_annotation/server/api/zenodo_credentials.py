@@ -6,9 +6,9 @@ metadata using Fernet symmetric encryption. The encryption
 key is read from the ZENODO_ENCRYPTION_KEY environment
 variable.
 
-In production (GIRDER_SETTING_PLUGIN_REGISTRY or no
-explicit dev flag), the server refuses to start Zenodo
+In production mode, the server refuses to start Zenodo
 credential operations without ZENODO_ENCRYPTION_KEY set.
+In development/testing mode, a hardcoded dev key is used.
 """
 
 import logging
@@ -21,8 +21,10 @@ from cryptography.fernet import Fernet, InvalidToken
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
+from girder.constants import ServerMode
 from girder.exceptions import RestException
 from girder.models.user import User
+from girder.utility.config import getServerMode
 
 log = logging.getLogger(__name__)
 
@@ -41,8 +43,8 @@ def _get_fernet():
     key.
 
     Uses ZENODO_ENCRYPTION_KEY env var. If not set, raises
-    an error in production or uses a dev-only default when
-    ZENODO_DEV_MODE=true is set.
+    an error in production mode or uses a dev-only default
+    in development/testing mode.
 
     The result is cached after first call.
     """
@@ -64,23 +66,19 @@ def _get_fernet():
         _CACHED_FERNET = Fernet(key)
         return _CACHED_FERNET
 
-    # No env var set — only allow in dev mode.
-    dev_mode = os.environ.get(
-        "ZENODO_DEV_MODE", ""
-    ).lower() in ("true", "1", "yes")
-
-    if not dev_mode:
+    # No env var set — only allow outside production.
+    if getServerMode() == ServerMode.PRODUCTION:
         raise RestException(
             "ZENODO_ENCRYPTION_KEY environment variable "
             "is not set. Set it to a secret passphrase "
-            "or Fernet key, or set ZENODO_DEV_MODE=true "
-            "for development.",
+            "or Fernet key.",
             code=500,
         )
 
     log.warning(
-        "ZENODO_DEV_MODE is enabled. Using a hardcoded "
-        "development key. Do NOT use in production."
+        "Using hardcoded development encryption key "
+        "for Zenodo credentials. Do NOT use in "
+        "production."
     )
     key = _derive_fernet_key(
         "nimbus-zenodo-dev-key-change-in-prod"
