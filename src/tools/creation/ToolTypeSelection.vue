@@ -426,7 +426,7 @@ $color-featured: #fbbf24; // Gold for featured
 }
 
 .dialog-header {
-  padding: 24px 28px 20px !important;
+  padding: 24px 28px 20px;
   border-bottom: 1px solid rgba(128, 128, 128, 0.2);
 }
 
@@ -437,7 +437,7 @@ $color-featured: #fbbf24; // Gold for featured
 }
 
 .dialog-content {
-  padding: 8px 20px 28px !important;
+  padding: 8px 20px 28px;
   max-height: 70vh;
   overflow-y: auto;
 }

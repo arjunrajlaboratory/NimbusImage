@@ -23,17 +23,17 @@ setup(
         "Programming Language :: Python",
     ],
     install_requires=[
-        "girder[mount]<5,>=3.1.18",
-        "girder_worker<1",
-        "girder_worker_utils<1",
-        "girder-jobs <5,>=3.2.8",
-        "girder-user-quota<5",
+        "girder[mount]>5",
+        "girder-worker>5",
+        "girder-plugin-worker>5",
+        "girder-worker-utils",  # Doesn't follow Girder's version schema
+        "girder-jobs>5",
+        "girder-user-quota>5",
+        "girder-import-tracker>5",
         "fastjsonschema",
         "orjson",
         "cryptography",
         "requests",
-        "import_tracker "
-        "@ git+https://github.com/DigitalSlideArchive/import-tracker.git"
     ],
     extras_require={"girder": [], "worker": []},
     include_package_data=True,

@@ -16,7 +16,7 @@
   >
     <template v-slot:chip="{ item, props: chipProps }">
       <v-chip v-bind="chipProps" class="pa-2" closable pill size="x-small">
-        {{ item.raw }}
+        {{ (item as any).title }}
       </v-chip>
     </template>
   </v-combobox>

@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NimbusImage is a web-based image visualization and annotation platform for analyzing large multidimensional scientific images. The application consists of a Vue 2 frontend with Vuetify UI components and a Girder-based backend for data management and storage.
+NimbusImage is a web-based image visualization and annotation platform for analyzing large multidimensional scientific images. The application consists of a Vue 3 frontend with Vuetify 4 UI components and a Girder-based backend for data management and storage.
 
 **Key Technologies:**
-- Frontend: Vue 2.7, TypeScript, Vuetify 2, Vuex with vuex-module-decorators
+- Frontend: Vue 3, TypeScript, Vuetify 4, Vuex with vuex-module-decorators, `<script setup>` composition API
 - Backend: Girder (Python), MongoDB, Docker
 - Build: Vite, pnpm
 - Image Processing: ITK/WebAssembly, ONNX Runtime (SAM models)

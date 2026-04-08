@@ -796,6 +796,9 @@ export class Main extends VuexModule {
       this.setSelectedDataset(this.selectedDatasetId),
       this.fetchRecentDatasetViews(),
     );
+    // Initialize notification websocket as soon as the user has logged in because
+    // any notification sent without would be lost.
+    jobs.initializeNotificationSubscription();
     await Promise.allSettled(promises);
   }
 

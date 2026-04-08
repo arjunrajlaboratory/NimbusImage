@@ -5,17 +5,18 @@ services:
       - "./db:/data/db"
     ports:
       - 27017:27017
+    attach: false
 
   girder:
     build:
       context: ./devops/girder
     privileged: true
-    command: -c "python3 /src/provision.py && girder mount /mnt/fuse && girder serve"
+    command: -c "python3 /src/provision.py && girder mount /mnt/fuse && celery -A girder_worker.app worker -Q local -D && uvicorn girder.asgi:app --host 0.0.0.0 --port 8080"
     ports:
       - "${GIRDER_PORT-8080}:8080"
     links:
       - mongodb
-      - memcached
+      - redis
     volumes:
       # For some versions of Docker on OSX, adding delegated speeds up file
       # access.  It should do no harm on other systems.
@@ -23,29 +24,29 @@ services:
       - "./logs/girder:/root/.girder/logs:delegated"
       - '/var/run/docker.sock:/var/run/docker.sock'
     env_file:
-      - "./docker.env"
+      - "./girder.env"
+      - "./worker.env"
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ZENODO_ENCRYPTION_KEY=${ZENODO_ENCRYPTION_KEY:-}
     depends_on:
       - "mongodb"
       - "broker"
     container_name: "girder"
 
-  memcached:
-    image: memcached
-    # Set the item size to bigger than our uncompressed tiles and the memory
-    # allocation to 4 Gb.
-    command: -m 256 --max-item-size 8M
+  redis:
+    image: redis:latest
+    command: ["redis-server", "--maxmemory", "4096MB", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
 
   broker:
     image: rabbitmq:3
-    env_file: "./docker.env"
+    attach: false
+    env_file:
+    - "./worker.env"
 
   worker:
     image: girder/girder_worker
-    env_file:
-      - "./docker.env"
     links:
       - girder
     volumes:
@@ -54,3 +55,8 @@ services:
       - broker
     container_name: "worker"
     user: root
+    env_file:
+    - "./worker.env"
+
+volumes:
+  redis_data:

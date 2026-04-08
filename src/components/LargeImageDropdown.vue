@@ -13,23 +13,20 @@
     >
       <template v-slot:item="{ item: listItem, props: itemProps }">
         <v-list-item v-bind="itemProps">
-          <template #title>{{ listItem.raw.displayName }}</template>
-          <template #subtitle v-if="listItem.raw.meta">
+          <template #title>{{ listItem.displayName }}</template>
+          <template #subtitle v-if="listItem.meta">
             <span style="font-size: 0.875rem; opacity: 0.7">{{
-              formatMeta(listItem.raw.meta)
+              formatMeta(listItem.meta)
             }}</span>
           </template>
-          <template
-            #append
-            v-if="listItem.raw.name !== DEFAULT_LARGE_IMAGE_SOURCE"
-          >
+          <template #append v-if="listItem.name !== DEFAULT_LARGE_IMAGE_SOURCE">
             <v-btn
               icon
               size="small"
               color="error"
               class="ml-2"
-              :loading="deletingImageId === listItem.raw._id"
-              @click.stop="deleteImage(listItem.raw)"
+              :loading="deletingImageId === listItem._id"
+              @click.stop="deleteImage(listItem)"
             >
               <v-icon size="small">mdi-delete</v-icon>
             </v-btn>
@@ -38,12 +35,12 @@
       </template>
       <template v-slot:selection="{ item: listItem }">
         <div style="flex: 1 1 auto; min-width: 0; white-space: normal">
-          <v-list-item-title>{{ listItem.raw.displayName }}</v-list-item-title>
+          <v-list-item-title>{{ listItem.displayName }}</v-list-item-title>
           <v-list-item-subtitle
-            v-if="listItem.raw.meta"
+            v-if="listItem.meta"
             class="text-medium-emphasis"
             style="white-space: normal; font-size: 0.875rem; opacity: 0.7"
-            >{{ formatMeta(listItem.raw.meta) }}</v-list-item-subtitle
+            >{{ formatMeta(listItem.meta) }}</v-list-item-subtitle
           >
         </div>
       </template>

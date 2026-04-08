@@ -33,7 +33,7 @@
             />
           </template>
           <template v-else>
-            <v-icon size="small" end>mdi-play</v-icon>
+            <v-icon size="small" end>mdi-play-circle-outline</v-icon>
           </template>
         </v-btn>
       </div>

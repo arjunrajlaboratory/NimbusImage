@@ -218,7 +218,9 @@ raise AccessException("Permission denied")
 ## Logging
 
 ```python
-from girder import logprint
+import logging
+
+logger = logging.getLogger(__name__)
 
 logprint.info("Informational message")
 logprint.warning("Warning message")
