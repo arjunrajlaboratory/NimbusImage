@@ -255,7 +255,7 @@ class Annotation(Resource):
                     "Invalid annotation id: %s" % annId
                 )
             # Build clean update dict (no id keys, whitelist)
-            updateDoc = dict(update)
+            updateDoc = update.copy()
             updateDoc.pop("id", None)
             updateDoc.pop("_id", None)
             updateDoc = (
