@@ -272,11 +272,11 @@ JobModel().scheduleJob(job)
 
 ## Code Review Guidelines
 
-### Avoid Looped Database Calls
+### Avoid Looped Database Calls (Frontend AND Backend)
 
-Never iterate and make individual API calls in a loop. This hammers the backend and causes performance issues. Use batch/aggregated endpoints instead.
+Never iterate and make individual database or API calls in a loop. This applies to **both** frontend API calls and backend database queries. Use batch/aggregated operations instead.
 
-**Bad - Looped calls:**
+**Bad - Looped frontend calls:**
 ```typescript
 // DON'T DO THIS
 for (const annotation of annotations) {
@@ -288,14 +288,40 @@ for (const id of annotationIds) {
 }
 ```
 
-**Good - Batch calls:**
+**Good - Batch frontend calls:**
 ```typescript
 // USE BATCH ENDPOINTS
 await api.createMultipleAnnotations(annotations);
 await api.deleteMultipleAnnotations(annotationIds);
 ```
 
-**Available batch endpoints** (see `annotation_client/annotations.py`):
+**Bad - Looped backend DB queries:**
+```python
+# DON'T DO THIS - N individual queries
+for id in annotation_ids:
+    doc = AnnotationModel().load(id, user=user, level=AccessType.WRITE)
+    # ... process doc
+
+for folder_id in folder_ids:
+    folder = Folder().load(folder_id, user=user, level=AccessType.READ)
+```
+
+**Good - Batch backend DB queries:**
+```python
+# USE $in queries for bulk loading
+docs = list(AnnotationModel().find({
+    '_id': {'$in': [ObjectId(id) for id in annotation_ids]}
+}))
+
+# Then check access on the loaded documents, or use findWithPermissions
+folders = list(Folder().find({
+    '_id': {'$in': [ObjectId(id) for id in folder_ids]}
+}))
+```
+
+When you need access-checked bulk loads and no batch method exists, implement one rather than looping.
+
+**Available batch frontend endpoints** (see `annotation_client/annotations.py`):
 - `createMultipleAnnotations(annotations)` - Create annotations in bulk
 - `deleteMultipleAnnotations(annotationIds)` - Delete annotations in bulk
 - `createMultipleConnections(connections)` - Create connections in bulk
@@ -334,6 +360,9 @@ When editing backend code, always maintain the existing security and access cont
 - Validate that users have access to the dataset/resource being modified
 - Never bypass access checks, even for "convenience"
 - Follow existing patterns in the plugin for permission validation
+- **Security enforcement belongs in the backend, not the frontend.** Don't add frontend login/permission checks as a substitute for proper backend access control. If the backend enforces access correctly, the frontend doesn't need to duplicate those checks.
+- Consider permission escalation risks: e.g., if a user has WRITE access to a dataset, can they use that to grant themselves access to things the dataset owner didn't intend? Think through the access chain.
+- For public-access endpoints that hit the database, consider rate limiting to prevent abuse by unauthenticated users.
 
 ### Flag Repeated Frontend Calls
 
@@ -353,14 +382,18 @@ When you see such patterns, note them and suggest whether a new batch endpoint s
 - If you notice a pattern that looks like it should be handled by an existing package, mention it so we can search for appropriate libraries
 - Prefer composition over duplication
 - Extract common API patterns into reusable methods
+- **Backend helpers**: When the same logic appears in multiple API files (e.g., loading a dataset and checking permissions), extract it to a shared helper in `server/helpers/` or `server/models/`. Don't copy-paste between API endpoints.
+- **Frontend components**: When the same UI pattern appears 3+ times (e.g., similar form sections, similar list items), extract it into a reusable component
+- **Reuse existing results**: If a function fetches data that was already fetched earlier in the call chain, pass it as a parameter instead of re-fetching. Avoid redundant database/API calls for data you already have.
 
 ### Code Organization and Placement
 
 Place code in appropriate locations:
 
-- **API methods** should live in their respective API files (`GirderAPI.ts`, `AnnotationsAPI.ts`, etc.), not in Vue components
+- **API methods** should live in their respective API files (`GirderAPI.ts`, `AnnotationsAPI.ts`, etc.), not in Vue components. Any `this.girderRest.get(...)` or `this.girderRest.post(...)` call in a Vue component should be moved to the appropriate API file.
 - **Store state** should be organized into focused modules. `src/store/index.ts` is already large (2000+ lines); consider creating new store modules for distinct feature areas when implementing new categories of features.
 - **Utility functions** shared across components should go in `src/utils/`. Search for existing utility functions before creating new ones.
+- **Frontend should not compensate for backend issues.** Don't add frontend fallback logic to handle outdated backends or missing backend features. If the backend API is correct, the frontend should trust it. Double implementations (try new API, fall back to old API) create maintenance burdens.
 
 **Bad:**
 ```typescript
@@ -411,14 +444,92 @@ const propertyId = request.params.id;
 Don't add checks or code that duplicate existing behavior:
 
 - **Don't add validation** that will happen anyway (e.g., checking if an ID is valid before converting to ObjectId, when the conversion itself throws on invalid IDs)
+- **Don't catch broad exceptions** like `except Exception`. This swallows errors you don't want to catch (KeyboardInterrupt, MemoryError, storage failures). Catch specific exception types only.
 
 **Bad:**
 ```python
-// Backend - redundant validation
+# Redundant validation
 if not is_valid_object_id(id):
     raise ValidationException("Invalid ID")
 obj_id = ObjectId(id)  # This already throws on invalid ID
+
+# Overly broad exception handling
+try:
+    obj_id = ObjectId(string_id)
+except Exception:
+    raise ValidationException("Invalid ID")
 ```
+
+**Good:**
+```python
+obj_id = ObjectId(string_id)  # Let it raise naturally
+
+# If you must catch, be specific
+try:
+    obj_id = ObjectId(string_id)
+except bson.errors.InvalidId:
+    raise ValidationException("Invalid ID format")
+```
+
+### Backend: API Layer vs Model Layer Separation
+
+The API layer (`server/api/*.py`) and model layer (`server/models/*.py`) have distinct responsibilities. Do not mix them.
+
+**API layer** is responsible for:
+- Input parsing and validation (converting request params to domain types)
+- HTTP-specific concerns (`RestException` with status codes)
+- Calling model methods with validated, clean data
+
+**Model layer** is responsible for:
+- Business logic and data operations
+- Domain validation (raise `ValueError` or `ValidationException`, never `RestException`)
+- Being abstract from any HTTP/API concerns
+
+**Bad:**
+```python
+# In a model file - DON'T use RestException in models
+class AnnotationModel(ProxiedModel):
+    def update(self, annotation, body):
+        if 'tags' not in body:
+            raise RestException("tags is required", 400)  # Wrong!
+```
+
+**Good:**
+```python
+# In model - use domain errors
+class AnnotationModel(ProxiedModel):
+    def update(self, annotation, body):
+        if 'tags' not in body:
+            raise ValueError("tags is required")
+
+# In API - handle HTTP concerns, convert inputs once at the top
+class AnnotationResource(Resource):
+    def update(self, body):
+        # Convert/validate inputs at API boundary
+        tags = [ObjectId(t) for t in body.get('tags', [])]
+        # Pass clean data to model
+        return self._model.update(annotation, tags=tags)
+```
+
+Input conversion (e.g., string to ObjectId, parsing JSON body fields) should happen **once at the top of the API method**, not deep in utility functions or models.
+
+### Backend: Use Girder Model Methods, Not Raw PyMongo
+
+Always use `Model().find()`, never `Model().collection.find()`. Girder's model methods add security features (authorized field filtering, query timeouts).
+
+**Bad:**
+```python
+# Bypasses Girder's security
+docs = list(MyModel().collection.find({'datasetId': dataset_id}))
+```
+
+**Good:**
+```python
+# Uses Girder's find with security features
+docs = list(MyModel().find({'datasetId': dataset_id}))
+```
+
+**Exception:** Aggregation pipelines require `collection.aggregate()` since Girder's `find()` doesn't support them. This is the only acceptable use of `collection` directly.
 
 ### Backend Python Patterns
 
@@ -426,6 +537,9 @@ When working with Girder/Python backend code:
 
 - Use `exc=True` when loading models to automatically raise exceptions if not found, rather than manual null checks
 - Be mindful of ObjectId conversions - some values are stored as strings in metadata but need conversion for queries
+- Use JSON Schema validation for structured input data (see example in `server/models/collection.py`)
+- Use `list.copy()` instead of `list(mylist)` for copying lists — it's more readable
+- Use dataclasses or structured dicts defined at the top of a file for complex field definitions, rather than inline string manipulation
 
 **Bad:**
 ```python
@@ -446,6 +560,7 @@ Look for opportunities to simplify code:
 - Replace verbose null checks with concise equivalents: `if (value === null || value === undefined)` can become `if (value == null)`
 - Consider whether streaming/complex implementations are necessary for typical use cases
 - Question whether custom implementations can be replaced with library functions (e.g., `orjson.dumps()` instead of manual JSON streaming)
+- Before adding new functionality, ask: **is this change actually necessary?** Challenge assumptions about what needs to change. Unnecessary complexity is a liability.
 
 ## Testing
 
