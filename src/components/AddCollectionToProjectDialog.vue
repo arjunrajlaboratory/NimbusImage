@@ -35,9 +35,14 @@
 
               <v-list v-else density="compact" class="project-select-list">
                 <v-list-item
-                  v-for="project in availableProjects"
+                  v-for="(project, index) in availableProjects"
                   :key="project.id"
                   :disabled="isCollectionInProject(project)"
+                  :active="selectedProjectIndex === index"
+                  @click="
+                    !isCollectionInProject(project) &&
+                      (selectedProjectIndex = index)
+                  "
                 >
                   <v-icon
                     :color="isCollectionInProject(project) ? 'grey' : '#8e24aa'"
