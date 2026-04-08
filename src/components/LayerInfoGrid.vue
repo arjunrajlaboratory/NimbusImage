@@ -3,16 +3,18 @@
     <v-row v-if="layers.length > 0" no-gutters class="flex-nowrap">
       <v-col v-for="layer in layers" :key="layer.id" cols="auto" class="mr-2">
         <v-card variant="outlined" width="300">
-          <v-card-title class="text-subtitle-2">
+          <v-card-title class="text-caption d-flex align-center">
             <v-icon :color="layer.color" size="small" start>mdi-circle</v-icon>
-            {{ layer.name }}
+            <span class="text-truncate" style="min-width: 0">{{
+              layer.name
+            }}</span>
             <v-spacer></v-spacer>
             <v-switch
               v-model="layer.visible"
               @update:model-value="toggleVisibility(layer.id)"
               density="compact"
               hide-details
-              class="mt-0"
+              class="mt-0 flex-shrink-0"
             />
           </v-card-title>
           <v-card-text>

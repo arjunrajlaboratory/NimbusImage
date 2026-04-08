@@ -2,15 +2,15 @@
   <v-expansion-panels>
     <v-expansion-panel>
       <v-expansion-panel-title class="displayLayerHeader">
-        <v-row density="comfortable" class="align-center">
-          <v-col cols="7" class="d-flex align-center">
+        <div class="layer-title-row">
+          <div class="layer-name-cell">
             <v-icon :color="modelValue.color" start>mdi-circle</v-icon>
-            <div class="header pa-1 text-truncate">{{ modelValue.name }}</div>
+            <div class="header pa-1">{{ modelValue.name }}</div>
             <span v-if="hoverValue !== null" class="ml-auto text-no-wrap">{{
               hoverValue
             }}</span>
-          </v-col>
-          <v-col class="d-flex justify-center">
+          </div>
+          <div class="layer-switch-cell" v-show="hasMultipleZ">
             <v-switch
               @click.stop
               @mousedown.stop
@@ -18,13 +18,12 @@
               v-mousetrap="zMaxMergeHotkey"
               class="toggleButton"
               v-model="isZMaxMerge"
-              v-show="hasMultipleZ"
               :title="`Toggle Z Max Merge (hotkey ${zMaxMergeBinding})`"
               density="compact"
               hide-details
             />
-          </v-col>
-          <v-col class="d-flex justify-center">
+          </div>
+          <div class="layer-switch-cell">
             <v-switch
               @click.stop
               @mousedown.stop
@@ -36,8 +35,8 @@
               density="compact"
               hide-details
             />
-          </v-col>
-        </v-row>
+          </div>
+        </div>
       </v-expansion-panel-title>
       <v-expansion-panel-text :class="{ notVisible: !modelValue.visible }">
         <v-text-field
@@ -329,13 +328,38 @@ defineExpose({
   opacity: 0.5;
 }
 
-.displayLayerHeader {
-  > i {
-    flex: 0 0 auto;
-  }
+.layer-title-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+}
+
+.layer-name-cell {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.8125rem;
   > .header {
     flex: 1 1 0;
+    min-width: 0;
+    overflow-wrap: break-word;
+    word-break: break-all;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: normal;
   }
+}
+
+.layer-switch-cell {
+  display: flex;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0 4px;
 }
 
 .toggleButton {

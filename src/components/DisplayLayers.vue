@@ -7,8 +7,8 @@
     <v-expansion-panels class="layer-header-panels">
       <v-expansion-panel :disabled="true">
         <v-expansion-panel-title class="layer-header-title" hide-actions>
-          <v-row density="comfortable" class="align-center">
-            <v-col cols="7">
+          <div class="layer-title-row" style="padding-right: 20px">
+            <div class="layer-name-cell">
               <draggable
                 v-model="dropZoneArray"
                 group="layerZoneElement"
@@ -23,18 +23,21 @@
                   <span>Drag layer here to create group</span>
                 </template>
               </draggable>
-            </v-col>
-            <v-col
-              class="text-caption header-col"
+            </div>
+            <div
+              class="text-caption header-col layer-switch-cell"
               title="hotkey Z"
               v-show="hasMultipleZ"
             >
-              Z merge
-            </v-col>
-            <v-col class="text-caption header-col" title="hotkey 0">
-              On/off
-            </v-col>
-          </v-row>
+              Z max-merge
+            </div>
+            <div
+              class="text-caption header-col layer-switch-cell"
+              title="hotkey 0"
+            >
+              Channel on/off
+            </div>
+          </div>
         </v-expansion-panel-title>
       </v-expansion-panel>
     </v-expansion-panels>
@@ -351,11 +354,29 @@ defineExpose({
   align-items: center;
 }
 
+.layer-title-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.layer-name-cell {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.layer-switch-cell {
+  flex: 0 0 auto;
+}
+
 .header-col {
   display: flex;
   justify-content: center;
   align-items: center;
   text-align: center;
+  padding: 0 4px;
+  max-width: 60px;
 }
 
 /* Header uses a real expansion panel title for pixel-perfect alignment
@@ -377,11 +398,13 @@ defineExpose({
 .layer-header-title {
   min-height: 32px !important;
   cursor: default !important;
+  font-size: 0.75rem !important;
 }
 
 .drop {
   border: dashed;
   text-align: center;
+  pointer-events: auto;
 }
 
 .dragging {
