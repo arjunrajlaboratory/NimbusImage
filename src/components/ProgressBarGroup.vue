@@ -32,8 +32,19 @@
     >
       <!-- Single progress or multiple indeterminate with same title -->
       <template v-if="group.display === 'single'">
+        <!-- Indeterminate: show whimsical animation + title -->
+        <div v-if="group.indeterminate" class="indeterminate-group">
+          <WhimsicalLoader size="md" color="light" />
+          <div class="indeterminate-info">
+            <strong>{{ group.title }}</strong>
+            <template v-if="group.count > 1">
+              <span class="remaining-count">({{ group.count }} remaining)</span>
+            </template>
+          </div>
+        </div>
+        <!-- Determinate: show progress bar as before -->
         <v-progress-linear
-          :indeterminate="group.indeterminate"
+          v-else
           :model-value="group.value"
           color="primary"
           height="16"
@@ -53,24 +64,26 @@
       <!-- Multiple progresses that need individual display -->
       <template v-else>
         <div class="stacked-progress">
-          <v-progress-linear
-            v-for="progress in group.items"
-            :key="progress.id"
-            :indeterminate="progress.total === 0"
-            :model-value="
-              progress.total ? (100 * progress.progress) / progress.total : 0
-            "
-            color="primary"
-            height="10"
-            class="mb-1"
-          >
-            <strong class="caption">
-              {{ progress.title }}
-              <template v-if="progress.total > 0">
+          <template v-for="progress in group.items" :key="progress.id">
+            <!-- Indeterminate item in stack -->
+            <div v-if="progress.total === 0" class="indeterminate-group indeterminate-group--stacked">
+              <WhimsicalLoader size="sm" color="light" />
+              <strong class="caption">{{ progress.title }}</strong>
+            </div>
+            <!-- Determinate item in stack -->
+            <v-progress-linear
+              v-else
+              :model-value="(100 * progress.progress) / progress.total"
+              color="primary"
+              height="10"
+              class="mb-1"
+            >
+              <strong class="caption">
+                {{ progress.title }}
                 ({{ progress.progress }}/{{ progress.total }})
-              </template>
-            </strong>
-          </v-progress-linear>
+              </strong>
+            </v-progress-linear>
+          </template>
         </div>
       </template>
     </div>
@@ -79,6 +92,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 import progressStore from "@/store/progress";
 import { ProgressType, IProgress, IProgressGroup } from "@/store/model";
 
@@ -215,5 +229,31 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 
 :deep(.v-progress-linear) {
   font-size: 0.75rem;
+}
+
+.indeterminate-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  min-height: 32px;
+}
+
+.indeterminate-group--stacked {
+  gap: 8px;
+  min-height: 24px;
+  font-size: 0.7rem;
+}
+
+.indeterminate-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.75rem;
+}
+
+.remaining-count {
+  opacity: 0.7;
+  font-size: 0.7rem;
 }
 </style>

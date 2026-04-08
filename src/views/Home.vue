@@ -10,13 +10,7 @@
         class="d-flex align-center justify-center"
       >
         <div class="loading-container">
-          <v-progress-circular
-            indeterminate
-            size="128"
-            color="primary"
-            class="mb-4"
-          ></v-progress-circular>
-          <div class="loading-text">Loading dataset information...</div>
+          <WhimsicalLoader size="lg" text="Loading dataset information..." class="mb-4" />
         </div>
       </v-overlay>
       <v-container class="home-container">
@@ -464,6 +458,7 @@ import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
 import { useTour } from "@/utils/useTour";
+import WhimsicalLoader from "@/components/WhimsicalLoader.vue";
 
 // Suppress unused-variable warnings for auto-registered components
 void GirderLocationChooser;
