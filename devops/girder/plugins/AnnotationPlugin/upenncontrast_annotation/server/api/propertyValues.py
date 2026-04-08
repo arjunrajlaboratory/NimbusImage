@@ -3,7 +3,7 @@ from bson import ObjectId
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
@@ -32,7 +32,7 @@ class PropertyValues(Resource):
     # TODO(performance): proper indexing
     # TODO(performance): use objectId whenever possible
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Save computed property values")
         .param(
@@ -61,7 +61,7 @@ class PropertyValues(Resource):
             params["datasetId"],
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Save multiple computed property values").param(
             "body",
@@ -99,7 +99,7 @@ class PropertyValues(Resource):
         .errorResponse("Dataset ID was invalid.")
         .errorResponse("Write access was denied for the property values.", 403)
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     def delete(self, params):
         if "propertyId" not in params:
             raise RestException(

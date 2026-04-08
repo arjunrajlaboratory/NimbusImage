@@ -5,7 +5,7 @@ from bson import ObjectId
 from girder.api import access
 from girder.api.describe import autoDescribeRoute, Description, describeRoute
 from girder.api.rest import Resource, loadmodel
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.exceptions import AccessException
 from girder.exceptions import RestException
 from girder.models.folder import Folder
@@ -62,7 +62,7 @@ class DatasetView(Resource):
                 dataset_view, user)
         return dataset_view
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create a new dataset view.").param(
             "body", "Dataset View Object", paramType="body"
@@ -96,7 +96,7 @@ class DatasetView(Resource):
         .errorResponse("ID was invalid.")
         .errorResponse("Write access was denied for the dataset view.", 403)
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="dataset_view",
         plugin="upenncontrast_annotation",
@@ -117,7 +117,7 @@ class DatasetView(Resource):
         .errorResponse("Invalid JSON passed in request body.")
         .errorResponse("Validation Error: JSON doesn't follow schema.")
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="dataset_view",
         plugin="upenncontrast_annotation",
@@ -221,7 +221,7 @@ class DatasetView(Resource):
             level=AccessType.READ,
         ))
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description("Share or revoke access to DatasetViews for another user")
         .notes("""
@@ -294,7 +294,7 @@ class DatasetView(Resource):
 
         return True
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description(
             "Make a dataset and all associated views/configs public or private"
@@ -346,7 +346,7 @@ class DatasetView(Resource):
             'configurationsUpdated': len(configs)
         }
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Get access list for a dataset and its associated configs")
         .notes("""
@@ -396,7 +396,7 @@ class DatasetView(Resource):
         ]
         return result
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description(
             "Get access list for a configuration and its "

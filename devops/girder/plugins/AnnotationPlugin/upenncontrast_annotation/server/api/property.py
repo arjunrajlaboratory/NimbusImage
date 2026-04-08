@@ -1,6 +1,6 @@
 from girder.api import access
 from girder.api.describe import Description, describeRoute
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.api.rest import Resource, loadmodel
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
@@ -31,7 +31,7 @@ class AnnotationProperty(Resource):
             self.compute,
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description(
             (
@@ -67,7 +67,7 @@ class AnnotationProperty(Resource):
             )
         return {}
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create a new property").param(
             "body", "Property Object", paramType="body"
@@ -85,7 +85,7 @@ class AnnotationProperty(Resource):
         .errorResponse("ID was invalid.")
         .errorResponse("Write access was denied for the property.", 403)
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="annotation_property",
         plugin="upenncontrast_annotation",
@@ -106,7 +106,7 @@ class AnnotationProperty(Resource):
         .errorResponse("Invalid JSON passed in request body.")
         .errorResponse("Validation Error: JSON doesn't follow schema.")
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="annotation_property",
         plugin="upenncontrast_annotation",
