@@ -9,10 +9,8 @@
   >
     <template v-slot:item="{ item, props: itemProps }">
       <v-list-item v-bind="itemProps">
-        <v-list-item-subtitle
-          v-if="'description' in item.raw && item.raw.description"
-        >
-          {{ item.raw.description }}
+        <v-list-item-subtitle v-if="'description' in item && item.description">
+          {{ item.description }}
         </v-list-item-subtitle>
       </v-list-item>
     </template>

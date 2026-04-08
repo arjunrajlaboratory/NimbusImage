@@ -1,36 +1,41 @@
 ---
 name: nimbus-frontend
-description: "Use when writing or modifying Vue 2 components, Vuex store modules, TypeScript interfaces, or Vuetify UI in the src/ directory. Covers: vue-property-decorator class components, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 2 theming (light/dark mode), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button loading states, and style guidelines."
+description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button loading states, @girder/components compatibility, and style guidelines."
 ---
 
 # Nimbus Frontend Development
 
 ## Component Patterns
 
-### Class-Style Components
+### Script Setup (Composition API)
 
-```typescript
-import { Vue, Component, Prop, Watch } from "vue-property-decorator";
+All 121 components use `<script setup lang="ts">`:
 
-@Component
-export default class MyComponent extends Vue {
-  @Prop({ required: true }) readonly value!: string;
+```vue
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
+import store from "@/store";
 
-  localState = "";
+const props = defineProps<{
+  value: string;
+}>();
 
-  get computedValue() {
-    return this.value.toUpperCase();
-  }
+const emit = defineEmits<{
+  (e: "update:modelValue", value: string): void;
+}>();
 
-  @Watch("value")
-  onValueChange(newVal: string) {
-    this.localState = newVal;
-  }
+const localState = ref("");
 
-  mounted() {
-    // lifecycle hook
-  }
-}
+const computedValue = computed(() => props.value.toUpperCase());
+
+watch(() => props.value, (newVal) => {
+  localState.value = newVal;
+});
+
+onMounted(() => {
+  // lifecycle hook
+});
+</script>
 ```
 
 ### Store Access
@@ -39,64 +44,125 @@ export default class MyComponent extends Vue {
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 
-// In component
-readonly store = store;
-readonly annotationStore = annotationStore;
-
-// Use in methods
-this.store.someAction();
+// Direct usage in <script setup> — no `this` needed
+store.someAction();
+annotationStore.filteredAnnotations;
 ```
+
+Store modules still use `vuex-module-decorators` with `@Module`, `@Mutation`, and `@Action` decorators.
 
 For advanced store patterns (routeMapper, form change detection, caching with batch loading): read `references/store-module-patterns.md`
 
-## Light/Dark Mode Theming
+## Vuetify 4 Patterns
 
-### Checking Theme State
+### CSS Cascade Layers
+
+Vuetify 4 wraps all styles in CSS `@layer` declarations. Custom styles (outside layers) automatically win over Vuetify's defaults — no specificity wars.
+
+**Key implications:**
+- Most `!important` overrides for Vuetify are unnecessary — remove them
+- `:deep()` selectors targeting Vuetify internals "just work" without specificity tricks
+- **Exception:** `@girder/components` bundles Vuetify 3 CSS (un-layered), so `!important` IS still needed when overriding Girder component styles
+
+### Light/Dark Mode Theming
 
 ```typescript
-get isDarkMode() {
-  return this.$vuetify.theme.dark;
-}
+// In <script setup>
+import { useTheme } from "vuetify";
+const theme = useTheme();
+const isDark = computed(() => theme.current.value.dark);
 ```
+
+```vue
+<!-- In templates -->
+<div :class="{
+  'v-theme--light': !$vuetify.theme.current.dark,
+  'v-theme--dark': $vuetify.theme.current.dark
+}">
+```
+
+Theme config in `src/plugins/vuetify.ts`:
+```typescript
+defaultTheme: Persister.get("theme", "dark") === "dark" ? "dark" : "light",
+```
+
+Vuetify 4 changed the default theme from `"light"` to `"system"`. Our config sets it explicitly.
 
 ### Theme-Aware Styling
 
-**Option 1: Vuetify Components** (preferred)
-Use `v-card`, `v-dialog`, `v-btn` - they automatically inherit the theme.
+**Option 1: Vuetify Components** (preferred) — auto-inherit theme.
 
-**Option 2: Theme Classes in SCSS**
-
+**Option 2: Theme classes in SCSS**
 ```scss
-.my-component.theme--dark {
+.v-theme--dark & {
   background: rgba(255, 255, 255, 0.05);
 }
-.my-component.theme--light {
+.v-theme--light & {
   background: rgba(0, 0, 0, 0.05);
 }
 ```
 
-**Option 3: Dynamic Class Binding**
-
-```vue
-<div :class="{ 'theme--light': !$vuetify.theme.dark, 'theme--dark': $vuetify.theme.dark }">
-```
-
-**Option 4: CSS Variables**
-
+**Option 3: CSS Variables**
 ```scss
 .my-element {
-  color: var(--v-primary-base);
-  background: var(--v-background-base);
+  color: rgb(var(--v-theme-primary));
+  background: rgb(var(--v-theme-surface));
 }
 ```
 
-### Theme Persistence
+### Select/Combobox Slot Items (No `.raw` Wrapper)
 
-```typescript
-import { Persister } from "@/store/Persister";
-const isDark = Persister.get("theme", "dark") === "dark";
-this.$vuetify.theme.dark = true;
+Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed directly:
+
+```vue
+<!-- Vuetify 4: access properties directly -->
+<v-select :items="items" item-title="displayName">
+  <template v-slot:item="{ item, props: itemProps }">
+    <v-list-item v-bind="itemProps">
+      <template #title>{{ item.displayName }}</template>
+      <template #subtitle>{{ item.description }}</template>
+    </v-list-item>
+  </template>
+</v-select>
 ```
+
+**The `#item` slot name did NOT change** (contrary to some sources claiming rename to `#internalItem`).
+
+### VRow Density
+
+`dense` prop is deprecated. Use `density="comfortable"`:
+```vue
+<v-row density="comfortable" align="center">
+```
+
+### v-menu / v-dialog Initial State
+
+Vuetify 4's `v-menu` respects the initial `v-model` value immediately on mount. Vuetify 3 deferred it. If you set `v-model` to `true` before mount, the menu WILL open. Guard with conditions:
+```typescript
+// Only auto-open when appropriate
+menuOpen.value = route.name === "root" && !store.isLoggedIn;
+```
+
+### Global Defaults
+
+Configured in `src/plugins/vuetify.ts`. Vuetify 4's default density is tighter than V3. We set `density: "comfortable"` for list/checkbox components to maintain V3 spacing (needed for `@girder/components` compatibility):
+```typescript
+defaults: {
+  VList: { density: "comfortable" },
+  VListItem: { density: "comfortable" },
+  VCheckbox: { color: "primary", density: "comfortable" },
+  VCheckboxBtn: { density: "comfortable" },
+}
+```
+
+## @girder/components Compatibility
+
+`@girder/components@4.0.0` depends on `vuetify: ^3.10.1` — no Vuetify 4-compatible version exists yet. Key issues:
+
+- Girder bundles ~6.9MB of Vuetify 3 CSS (un-layered), which competes with Vuetify 4 layered CSS
+- `!important` is still needed when overriding Girder component styles
+- `CustomFileManager.vue` has targeted CSS overrides for the file manager table layout
+- See `codebaseDocumentation/VUETIFY4_MIGRATION.md` for full details
 
 ## Dialogs
 
@@ -115,16 +181,16 @@ this.$vuetify.theme.dark = true;
 
 ## API Calls
 
-Use the API classes from store:
+Use the API classes from store — never put `girderRest.get(...)` in components:
 
 ```typescript
-import { api } from "@/store/GirderAPI";
-const result = await api.someMethod();
+import store from "@/store";
+const result = await store.api.someMethod();
 ```
 
 ## Logging
 
-**Never use `console.log`, `console.warn`, or `console.error`** - eslint will reject them.
+**Never use `console.log`, `console.warn`, or `console.error`** — eslint will reject them.
 
 ```typescript
 import { logWarning, logError } from "@/utils/log";
@@ -133,26 +199,12 @@ logWarning("Something unexpected happened");
 logError("An error occurred", error);
 ```
 
-## Vuetify Patterns
-
-### Button Loading States
-
-When using `:loading` on `v-btn`, the default slot content is replaced with just a spinner. To show custom loading content, use the `loader` slot:
+## Button Loading States
 
 ```vue
-<v-btn
-  :loading="isLoading"
-  :disabled="isLoading"
-  :min-width="isLoading ? 260 : undefined"
-  @click="doAction"
->
+<v-btn :loading="isLoading" :disabled="isLoading" @click="doAction">
   <template v-slot:loader>
-    <v-progress-circular
-      indeterminate
-      size="18"
-      width="2"
-      class="mr-2"
-    ></v-progress-circular>
+    <v-progress-circular indeterminate size="18" width="2" class="mr-2" />
     Loading...
   </template>
   <v-icon>mdi-check</v-icon>
@@ -160,17 +212,16 @@ When using `:loading` on `v-btn`, the default slot content is replaced with just
 </v-btn>
 ```
 
-Use `:min-width` to ensure the button expands to fit longer loading text.
-
 ## Style Guidelines
 
 - Use scoped SCSS: `<style lang="scss" scoped>`
 - Prefer Vuetify components over custom HTML
-- Use `!important` sparingly - only when overriding Vuetify internals
+- `!important` is rarely needed thanks to CSS Cascade Layers — only use for overriding `@girder/components` or non-Vuetify third-party styles
 - Keep custom colors as SCSS variables at the top of style blocks
 
 ## Codebase Documentation References
 
+- Vuetify 4 migration details: read `codebaseDocumentation/VUETIFY4_MIGRATION.md`
 - When working on batch processing: read `references/batch-processing-patterns.md`
 - When working on projects feature: read `codebaseDocumentation/PROJECTS.md`
 - When working on sharing UI: read `codebaseDocumentation/SHARING.md`

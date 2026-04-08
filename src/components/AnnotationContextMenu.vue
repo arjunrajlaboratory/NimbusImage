@@ -210,6 +210,6 @@ defineExpose({
 }
 
 .v-card::before {
-  background-color: transparent !important;
+  background-color: transparent;
 }
 </style>

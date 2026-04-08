@@ -7,6 +7,7 @@
     :id="id"
     :true-value="trueValue"
     :false-value="falseValue"
+    class="switch-toggle"
   >
     <template #prepend>
       <label
@@ -30,6 +31,13 @@
 }
 .v-input--selection-controls {
   margin-top: 8px;
+}
+.switch-toggle {
+  font-size: 0.8125rem;
+}
+.switch-toggle .v-label {
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  font-size: 0.8125rem;
 }
 </style>
 

@@ -111,10 +111,10 @@
             <template #item="{ item: listItem }">
               <div style="width: 100%">
                 <strong>
-                  {{ (listItem as any).raw?.text ?? listItem.title }}
+                  {{ (listItem as any).text }}
                 </strong>
                 <div class="body-2 text-medium-emphasis">
-                  {{ (listItem as any).raw?.help }}
+                  {{ (listItem as any).help }}
                 </div>
                 <v-divider />
               </div>
