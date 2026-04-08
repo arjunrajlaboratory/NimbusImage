@@ -18,7 +18,7 @@ setup(
     ],
     description='A Girder plugin for Claude chat functionality',
     install_requires=[
-        'girder[mount]<5,>=3.1.18',
+        'girder[mount]>5',
         'anthropic'
     ],
     license='Apache Software License 2.0',

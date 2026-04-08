@@ -35,12 +35,20 @@ const overriddenComponentsToNodeModules = Object.fromEntries(
 );
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ _, mode }) => {
+  const isProduction = mode === "production";
+
+
+  return {
   plugins: [
     vue(),
     vuetify({ autoImport: true }),
     yaml(),
-    visualizer(),
+    !isProduction && visualizer({
+      filename: "./dist/stats.html",
+      open: false,
+      gzipSize: true,
+    }),
     viteStaticCopy({
       silent: true,
       targets: [
@@ -66,7 +74,7 @@ export default defineConfig({
         },
       ],
       watch: {
-        reloadPageOnChange: true,
+        reloadPageOnChange: !isProduction,
       },
     }),
   ],
@@ -113,6 +121,20 @@ export default defineConfig({
     },
   },
   build: {
-    sourcemap: true,
-  },
+      // Production specific settings
+      minify: isProduction ? "esbuild" : false,
+      sourcemap: !isProduction, // Useful for debugging in dev, cleaner in prod
+      rollupOptions: {
+        output: {
+          // Helps with browser caching by adding hashes to filenames
+          chunkFileNames: "assets/js/[name]-[hash].js",
+          entryFileNames: "assets/js/[name]-[hash].js",
+          assetFileNames: "assets/[ext]/[name]-[hash].[ext]",
+        },
+      },
+      // Clear the output directory before building
+      emptyOutDir: true,
+      // Adjust chunk size warning limit (standard is 500kb)
+      chunkSizeWarningLimit: 1000,
+  }}
 });

@@ -1450,6 +1450,7 @@ export interface ISerializedData {
 }
 
 export interface IJobEventData {
+  _id: string;
   title?: string;
   text?: string;
   status?: number;

@@ -172,15 +172,7 @@
 <script setup lang="ts">
 // in cosole debugging, you can access the map via
 //  $('.geojs-map').data('data-geojs-map')
-import {
-  ref,
-  computed,
-  watch,
-  onMounted,
-  onBeforeUnmount,
-  nextTick,
-  markRaw,
-} from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount, markRaw } from "vue";
 import annotationStore from "@/store/annotation";
 import progressStore from "@/store/progress";
 import store from "@/store";
@@ -1363,13 +1355,19 @@ watch(
   },
 );
 
+// Debounce draw during rapid scrubbing (time/z/xy slider changes) so the
+// expensive GeoJS tile-reset + re-render only fires for the latest frame,
+// skipping intermediate values that the user scrubbed past.
+let debouncedDrawTimer: ReturnType<typeof setTimeout> | null = null;
 watch(mapLayerList, () => {
-  nextTick(() => {
+  if (debouncedDrawTimer) clearTimeout(debouncedDrawTimer);
+  debouncedDrawTimer = setTimeout(() => {
+    debouncedDrawTimer = null;
     if (!refsMounted.value) {
       return;
     }
     draw();
-  });
+  }, 10);
 });
 
 watch([showScalebar, pixelSize], updateScaleWidget);

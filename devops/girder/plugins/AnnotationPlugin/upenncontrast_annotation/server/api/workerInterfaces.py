@@ -1,13 +1,17 @@
+import docker
+import logging
+
+from docker.errors import DockerException
+
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
 from girder.constants import TokenScope
-from ..models.workerInterfaces import WorkerInterfaceModel as InterfaceModel
 from girder.exceptions import RestException
-from girder import logger
 
-import docker
-from docker.errors import DockerException
+from ..models.workerInterfaces import WorkerInterfaceModel as InterfaceModel
+
+logger = logging.getLogger(__name__)
 
 
 class WorkerInterfaces(Resource):
@@ -41,7 +45,7 @@ class WorkerInterfaces(Resource):
             "body", "A JSON object describing the interface.", paramType="body"
         )
     )
-    @access.admin
+    @access.user
     def update(self, params):
         if "image" not in params:
             raise RestException(code=400, message="Missing 'image' parameter")
