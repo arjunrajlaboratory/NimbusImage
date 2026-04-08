@@ -167,6 +167,7 @@ const allCollections = ref<IUPennCollection[]>([]);
 const selectedIds = ref<Set<string>>(new Set());
 const showPermissionConfirm = ref(false);
 const currentFolder = ref<IGirderLocation | null>(null);
+let fetchGeneration = 0;
 
 const existingCollectionIds = computed<Set<string>>(() => {
   return new Set(props.project.meta.collections.map((c) => c.collectionId));
@@ -216,6 +217,7 @@ async function fetchCollections() {
     return;
   }
 
+  const generation = ++fetchGeneration;
   loading.value = true;
   try {
     const response = await store.api.client.get("upenn_collection", {
@@ -226,14 +228,18 @@ async function fetchCollections() {
         sortdir: -1,
       },
     });
+    if (generation !== fetchGeneration) return;
     allCollections.value = response.data.map((item: any) => ({
       ...item,
       _modelType: "upenn_collection" as const,
     }));
   } catch (error) {
+    if (generation !== fetchGeneration) return;
     allCollections.value = [];
   } finally {
-    loading.value = false;
+    if (generation === fetchGeneration) {
+      loading.value = false;
+    }
   }
 }
 
@@ -280,8 +286,12 @@ watch(
 );
 
 onMounted(async () => {
-  const privateFolder = await store.api.getUserPrivateFolder();
-  currentFolder.value = privateFolder || store.girderUser;
+  try {
+    const privateFolder = await store.api.getUserPrivateFolder();
+    currentFolder.value = privateFolder || store.girderUser;
+  } catch {
+    currentFolder.value = store.girderUser;
+  }
 });
 
 defineExpose({
