@@ -67,7 +67,7 @@
     "html2canvas": "^1.4.1",
     "itk-wasm": "^1.0.0-b.166",
     "js-yaml": "^4.1.0",
-    "lodash": "^4.17.21",
+    "lodash": "^4.18.1",
     "marked": "^14.1.1",
     "mitt": "^3.0.1",
     "mousetrap": "^1.6.4",
