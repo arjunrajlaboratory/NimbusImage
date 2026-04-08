@@ -247,6 +247,13 @@ body {
   border-radius: var(--nimbus-radius-lg) !important;
 }
 
+/* Menus with v-list (e.g. GirderSearch dropdown): ensure opaque background */
+.v-menu > .v-overlay__content > .v-list {
+  background: rgb(var(--v-theme-surface-bright)) !important;
+  border: 1px solid var(--nimbus-border) !important;
+  border-radius: var(--nimbus-radius-lg) !important;
+}
+
 /* Dividers: use nimbus border */
 .v-divider {
   border-color: var(--nimbus-border) !important;
