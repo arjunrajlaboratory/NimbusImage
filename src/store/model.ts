@@ -228,6 +228,7 @@ export enum ProgressType {
   HISTOGRAM_CACHE = "HISTOGRAM_CACHE",
   MOVIE_GENERATION = "MOVIE_GENERATION",
   SNAPSHOT_BATCH_DOWNLOAD = "SNAPSHOT_BATCH_DOWNLOAD",
+  ZENODO_UPLOAD = "ZENODO_UPLOAD",
   GENERIC = "GENERIC",
 }
 
@@ -268,7 +269,8 @@ export const PROGRESS_TYPE_ORDER = new Map<ProgressType, number>([
   [ProgressType.HISTOGRAM_CACHE, 17],
   [ProgressType.MOVIE_GENERATION, 18],
   [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 19],
-  [ProgressType.GENERIC, 20],
+  [ProgressType.ZENODO_UPLOAD, 20],
+  [ProgressType.GENERIC, 21],
 ]);
 
 export interface IProgress {
@@ -510,6 +512,30 @@ export function getProjectStatusColor(
   }
 }
 
+export type TZenodoStatus =
+  | "none"
+  | "uploading"
+  | "draft"
+  | "published"
+  | "error";
+
+export interface IZenodoProgress {
+  current: number;
+  total: number;
+  message: string;
+}
+
+export interface IProjectZenodo {
+  depositionId?: number;
+  depositionUrl?: string;
+  doi?: string;
+  status: TZenodoStatus;
+  sandbox: boolean;
+  progress?: IZenodoProgress | null;
+  error?: string | null;
+  lastPublished?: string;
+}
+
 export interface IProject {
   id: string;
   name: string;
@@ -524,6 +550,7 @@ export interface IProject {
     collections: IProjectCollectionReference[];
     metadata: IProjectMetadata;
     status: TProjectStatus;
+    zenodo?: IProjectZenodo;
   };
 }
 

@@ -241,6 +241,35 @@ Workers run in Docker containers via Girder Worker:
 - Jobs tracked in `src/store/jobs.ts`
 - Progress monitoring via SSE events
 
+### Girder Job Status Codes
+
+The `girder_jobs` plugin defines these status constants (used by both backend `JobStatus` and frontend `jobStates`):
+
+| Value | Constant | Meaning |
+|-------|----------|---------|
+| 0 | `INACTIVE` | Not yet scheduled |
+| 1 | `QUEUED` | Waiting to run |
+| 2 | `RUNNING` | Currently executing |
+| 3 | `SUCCESS` | Completed successfully |
+| 4 | `ERROR` | Failed |
+| 5 | `CANCELED` | Cancelled |
+
+**Warning:** Status 3 means **SUCCESS**, not "running". This differs from some other job systems. Backend: `from girder_jobs.constants import JobStatus`. Frontend: `src/store/jobConstants.ts`.
+
+**Local Jobs:** For CPU-bound tasks that run inside the Girder process (not via Girder Worker), use `createLocalJob`:
+```python
+from girder_jobs.models.job import Job as JobModel
+job = JobModel().createLocalJob(
+    module='my.module',  # Must have a run(job) function
+    title='My Job',
+    type='my_job_type',
+    user=user,
+    kwargs={'key': 'value'},
+    asynchronous=True,
+)
+JobModel().scheduleJob(job)
+```
+
 ## Code Review Guidelines
 
 ### Avoid Looped Database Calls (Frontend AND Backend)

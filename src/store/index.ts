@@ -26,6 +26,7 @@ import ChatAPI from "./ChatAPI";
 import GirderAPI from "./GirderAPI";
 import ExportAPI from "./ExportAPI";
 import ProjectsAPI from "./ProjectsAPI";
+import ZenodoAPI from "./ZenodoAPI";
 import girderResources from "./girderResources";
 
 import { getLayerImages, getLayerSliceIndexes } from "./images";
@@ -123,6 +124,7 @@ export class Main extends VuexModule {
   chatAPI = new ChatAPI(this.girderRestProxy);
   exportAPI = new ExportAPI(this.girderRestProxy);
   projectsAPI = new ProjectsAPI(this.girderRestProxy);
+  zenodoAPI = new ZenodoAPI(this.girderRestProxy);
 
   readonly girderResources = girderResources;
 

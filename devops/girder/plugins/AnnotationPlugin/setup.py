@@ -32,6 +32,8 @@ setup(
         "girder-import-tracker>5",
         "fastjsonschema",
         "orjson",
+        "cryptography",
+        "requests",
     ],
     extras_require={"girder": [], "worker": []},
     include_package_data=True,
