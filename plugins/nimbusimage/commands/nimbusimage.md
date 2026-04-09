@@ -183,9 +183,9 @@ All models are Pydantic BaseModel with `to_dict()` and `from_dict()`:
 
 For deeper operations, route to the appropriate skill:
 
-- **`/nimbusimage:images`** — fetching image frames, composites, z-stacks, crops
-- **`/nimbusimage:annotations`** — creating, listing, filtering, deleting annotations; geometry helpers
-- **`/nimbusimage:workers`** — running annotation and property workers, job tracking
-- **`/nimbusimage:analyze`** — properties, export, connections, sharing
+- **`/nimbus-skills:images`** — fetching image frames, composites, z-stacks, crops
+- **`/nimbus-skills:annotations`** — creating, listing, filtering, deleting annotations; geometry helpers
+- **`/nimbus-skills:workers`** — running annotation and property workers, job tracking
+- **`/nimbus-skills:analyze`** — properties, export, connections, sharing
 
 For the full API reference for any accessor, read the corresponding reference file in the `references/` directory.
