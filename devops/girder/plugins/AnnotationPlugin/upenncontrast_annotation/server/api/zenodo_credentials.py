@@ -110,7 +110,7 @@ class ZenodoCredentials(Resource):
         super().__init__()
         self.resourceName = "zenodo_credentials"
 
-        self.route("GET", (), self.getCredentials)
+        self.route("GET", (), self.hasUserSetCredentials)
         self.route("PUT", (), self.setCredentials)
         self.route("DELETE", (), self.deleteCredentials)
 
@@ -124,10 +124,9 @@ class ZenodoCredentials(Resource):
             "stored and whether it is for the sandbox."
         )
     )
-    def getCredentials(self):
+    def hasUserSetCredentials(self):
         user = self.getCurrentUser()
-        fullUser = User().load(user['_id'], force=True)
-        zenodo = fullUser.get('meta', {}).get('zenodo', {})
+        zenodo = user.get('meta', {}).get('zenodo', {})
 
         has_token = bool(zenodo.get('encryptedToken'))
         sandbox = zenodo.get('sandbox', False)
