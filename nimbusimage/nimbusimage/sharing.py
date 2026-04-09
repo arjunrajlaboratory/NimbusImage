@@ -24,7 +24,7 @@ class SharingAccessor:
             access: 'read', 'write', 'admin', or 'remove'.
         """
         self._gc.post(
-            "/dataset_view/share",
+            "dataset_view/share",
             json={
                 "datasetId": self._dataset_id,
                 "userMailOrUsername": user_email_or_name,
@@ -35,7 +35,7 @@ class SharingAccessor:
     def set_public(self, public: bool = True) -> None:
         """Set whether this dataset is publicly accessible."""
         self._gc.post(
-            f"/dataset_view/set_public"
+            f"dataset_view/set_public"
             f"?datasetId={self._dataset_id}"
             f"&public={'true' if public else 'false'}"
         )
@@ -43,5 +43,5 @@ class SharingAccessor:
     def get_access(self) -> dict:
         """Get the access list for this dataset."""
         return self._gc.get(
-            f"/dataset_view/access/{self._dataset_id}"
+            f"dataset_view/access/{self._dataset_id}"
         )

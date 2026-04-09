@@ -26,7 +26,7 @@ class ConnectionAccessor:
         offset: int = 0,
     ) -> list[Connection]:
         """List connections in this dataset."""
-        url = f"/annotation_connection/?datasetId={self._dataset_id}"
+        url = f"annotation_connection/?datasetId={self._dataset_id}"
         if parent_id:
             url += f"&parentId={parent_id}"
         if child_id:
@@ -40,12 +40,12 @@ class ConnectionAccessor:
 
     def get(self, connection_id: str) -> Connection:
         """Get a single connection by ID."""
-        data = self._gc.get(f"/annotation_connection/{connection_id}")
+        data = self._gc.get(f"annotation_connection/{connection_id}")
         return Connection.from_dict(data)
 
     def count(self) -> int:
         """Count connections in this dataset."""
-        url = f"/annotation_connection/count?datasetId={self._dataset_id}"
+        url = f"annotation_connection/count?datasetId={self._dataset_id}"
         return self._gc.get(url)["count"]
 
     def create(
@@ -61,14 +61,14 @@ class ConnectionAccessor:
             "datasetId": self._dataset_id,
             "tags": tags or [],
         }
-        data = self._gc.post("/annotation_connection/", json=body)
+        data = self._gc.post("annotation_connection/", json=body)
         return Connection.from_dict(data)
 
     def create_many(self, connections: list[Connection]) -> list[Connection]:
         """Create multiple connections in bulk."""
         dicts = [c.to_dict() for c in connections]
         data = self._gc.post(
-            "/annotation_connection/multiple", json=dicts
+            "annotation_connection/multiple", json=dicts
         )
         return [Connection.from_dict(d) for d in data]
 
@@ -84,7 +84,7 @@ class ConnectionAccessor:
         in the wire format.
         """
         self._gc.post(
-            "/annotation_connection/connectTo",
+            "annotation_connection/connectTo",
             json={
                 "annotationsIds": annotation_ids,
                 "tags": tags,
@@ -96,16 +96,16 @@ class ConnectionAccessor:
     def update(self, connection_id: str, updates: dict) -> Connection:
         """Update a single connection."""
         data = self._gc.put(
-            f"/annotation_connection/{connection_id}", json=updates
+            f"annotation_connection/{connection_id}", json=updates
         )
         return Connection.from_dict(data)
 
     def delete(self, connection_id: str) -> None:
         """Delete a single connection."""
-        self._gc.delete(f"/annotation_connection/{connection_id}")
+        self._gc.delete(f"annotation_connection/{connection_id}")
 
     def delete_many(self, connection_ids: list[str]) -> None:
         """Delete multiple connections."""
         self._gc.sendRestRequest(
-            "DELETE", "/annotation_connection/multiple", json=connection_ids
+            "DELETE", "annotation_connection/multiple", json=connection_ids
         )

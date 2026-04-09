@@ -112,7 +112,7 @@ class NimbusClient:
         Returns:
             List of dataset folder dicts with _id, name, meta.
         """
-        views = self._gc.get("/dataset_view", parameters={"limit": 0})
+        views = self._gc.get("dataset_view", parameters={"limit": 0})
         seen: set[str] = set()
         datasets: list[dict] = []
         for v in views:
@@ -181,7 +181,7 @@ class NimbusClient:
                 return []
 
         data = self._gc.get(
-            f"/upenn_collection?folderId={folder_id}"
+            f"upenn_collection?folderId={folder_id}"
         )
         return [
             Collection(self._gc, d, frontend_url=self._frontend_url)
@@ -190,7 +190,7 @@ class NimbusClient:
 
     def collection(self, collection_id: str) -> Collection:
         """Get a Collection (configuration) by ID."""
-        data = self._gc.get(f"/upenn_collection/{collection_id}")
+        data = self._gc.get(f"upenn_collection/{collection_id}")
         return Collection(self._gc, data, frontend_url=self._frontend_url)
 
     # --- Workers ---
@@ -208,7 +208,7 @@ class NimbusClient:
             - ``description``: worker description
             - ``annotationShape``: shape it produces (point/polygon/...)
         """
-        return self._gc.get("/worker_interface/available")
+        return self._gc.get("worker_interface/available")
 
     def get_worker_interface(
         self, image: str, request_if_missing: bool = True
@@ -225,7 +225,7 @@ class NimbusClient:
             if no interface is available.
         """
         result = self._gc.get(
-            "/worker_interface",
+            "worker_interface",
             parameters={"image": image},
         )
         if result and isinstance(result, dict):
@@ -243,7 +243,7 @@ class NimbusClient:
 
         # Request the worker to register its interface
         resp = self._gc.post(
-            "/worker_interface/request",
+            "worker_interface/request",
             parameters={"image": image},
         )
         if isinstance(resp, (list, tuple)) and resp:
@@ -252,7 +252,7 @@ class NimbusClient:
 
         # Fetch the newly registered interface
         result = self._gc.get(
-            "/worker_interface",
+            "worker_interface",
             parameters={"image": image},
         )
         if result and isinstance(result, dict):
