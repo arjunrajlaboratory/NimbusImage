@@ -1,5 +1,5 @@
 {
-  "name": "nimbusimage",
+  "name": "nimbus-skills",
   "description": "Skills for working with NimbusImage scientific imaging datasets via the nimbusimage Python API",
   "author": {
     "name": "Arjun Raj Laboratory",
