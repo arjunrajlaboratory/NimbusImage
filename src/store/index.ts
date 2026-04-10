@@ -26,6 +26,7 @@ import ChatAPI from "./ChatAPI";
 import GirderAPI from "./GirderAPI";
 import ExportAPI from "./ExportAPI";
 import ProjectsAPI from "./ProjectsAPI";
+import ZenodoAPI from "./ZenodoAPI";
 import girderResources from "./girderResources";
 
 import { getLayerImages, getLayerSliceIndexes } from "./images";
@@ -123,6 +124,7 @@ export class Main extends VuexModule {
   chatAPI = new ChatAPI(this.girderRestProxy);
   exportAPI = new ExportAPI(this.girderRestProxy);
   projectsAPI = new ProjectsAPI(this.girderRestProxy);
+  zenodoAPI = new ZenodoAPI(this.girderRestProxy);
 
   readonly girderResources = girderResources;
 
@@ -794,6 +796,9 @@ export class Main extends VuexModule {
       this.setSelectedDataset(this.selectedDatasetId),
       this.fetchRecentDatasetViews(),
     );
+    // Initialize notification websocket as soon as the user has logged in because
+    // any notification sent without would be lost.
+    jobs.initializeNotificationSubscription();
     await Promise.allSettled(promises);
   }
 

@@ -92,7 +92,7 @@
 
 .no-underline :deep(.v-input__slot:before),
 .no-underline :deep(.v-input__slot:after) {
-  display: none !important;
+  display: none;
 }
 
 /* Keep vertical rhythm tight */
@@ -109,13 +109,13 @@
 }
 
 .step-btn {
-  height: 14px !important;
-  width: 14px !important;
-  min-width: 14px !important;
+  height: 14px;
+  width: 14px;
+  min-width: 14px;
 }
 
 .step-btn .v-icon {
-  font-size: 14px !important;
+  font-size: 14px;
 }
 </style>
 

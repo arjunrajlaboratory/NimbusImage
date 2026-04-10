@@ -1,3 +1,48 @@
+/* ── Linear-inspired theme tokens ────────────────────────────── */
+
+/* Inter Variable font setup */
+:root {
+  --nimbus-font: "Inter", "Inter Variable", "SF Pro Display", -apple-system,
+    system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
+    "Helvetica Neue", sans-serif;
+  --nimbus-radius: 8px;
+  --nimbus-radius-sm: 6px;
+  --nimbus-radius-lg: 12px;
+}
+
+/* Apply Inter globally with OpenType features */
+body,
+.v-application {
+  font-family: var(--nimbus-font) !important;
+  font-feature-settings: "cv01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Dark theme tokens */
+.v-theme--dark {
+  --nimbus-border: rgba(255, 255, 255, 0.06);
+  --nimbus-border-strong: rgba(255, 255, 255, 0.10);
+  --nimbus-glass: rgba(255, 255, 255, 0.02);
+  --nimbus-glass-hover: rgba(255, 255, 255, 0.05);
+  --nimbus-shadow: none;
+  --nimbus-text-secondary: #d0d6e0;
+  --nimbus-text-muted: #8a8f98;
+  --nimbus-text-faint: #62666d;
+}
+
+/* Light theme tokens */
+.v-theme--light {
+  --nimbus-border: rgba(0, 0, 0, 0.08);
+  --nimbus-border-strong: rgba(0, 0, 0, 0.12);
+  --nimbus-glass: rgba(0, 0, 0, 0.02);
+  --nimbus-glass-hover: rgba(0, 0, 0, 0.04);
+  --nimbus-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --nimbus-text-secondary: #4a5568;
+  --nimbus-text-muted: #6b7280;
+  --nimbus-text-faint: #9ca3af;
+}
+
 html,
 body {
   margin: 0;
@@ -20,7 +65,7 @@ body {
 }
 
 .girder-data-table.v-data-table tr .nobreak {
-  padding-left: 1em;
+  padding-left: 1.5em;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -52,4 +97,172 @@ body {
 // Hide the .short bar (second sweep element)
 .v-progress-linear__indeterminate.short {
   display: none !important;
+}
+
+/* ── Linear-inspired component overrides ─────────────────────── */
+
+/* App bar: flat with border, no elevation */
+.v-app-bar {
+  background: rgb(var(--v-theme-surface)) !important;
+  border-bottom: 1px solid var(--nimbus-border) !important;
+  box-shadow: none !important;
+}
+
+/* Navigation drawers: match panel surface */
+.v-navigation-drawer {
+  background: rgb(var(--v-theme-surface)) !important;
+  border-color: var(--nimbus-border) !important;
+}
+
+/* Cards: subtle border, inherit background (not forced transparent) */
+.v-card--variant-flat {
+  border: 1px solid var(--nimbus-border);
+  border-radius: var(--nimbus-radius);
+  box-shadow: var(--nimbus-shadow);
+}
+
+/* Buttons: ghost styling (skip icon-only buttons) */
+.v-btn--variant-tonal:not(.v-btn--icon) {
+  background: var(--nimbus-glass) !important;
+  border: 1px solid var(--nimbus-border);
+
+  &:hover {
+    background: var(--nimbus-glass-hover) !important;
+  }
+}
+
+/* Icon buttons: clean, no border */
+.v-btn--icon.v-btn--variant-tonal {
+  background: transparent !important;
+  border: none !important;
+
+  &:hover {
+    background: var(--nimbus-glass-hover) !important;
+  }
+}
+
+/* Primary-colored buttons: translucent primary accent */
+.v-btn--variant-tonal.text-primary,
+.v-btn.bg-primary {
+  background: rgba(var(--v-theme-primary), 0.15) !important;
+  border: 1px solid rgba(var(--v-theme-primary), 0.2);
+  color: rgb(var(--v-theme-primary)) !important;
+
+  &:hover {
+    background: rgba(var(--v-theme-primary), 0.25) !important;
+  }
+}
+
+/* Inputs: ghost outline */
+.v-field--variant-outlined .v-field__outline {
+  --v-field-border-opacity: 0.06;
+}
+
+.v-field--focused .v-field__outline {
+  --v-field-border-opacity: 0.10;
+}
+
+/* Expansion panels: inherit parent bg with subtle dividers */
+.v-expansion-panels {
+  .v-expansion-panel {
+    background: inherit !important;
+
+    &::after {
+      border-color: var(--nimbus-border) !important;
+    }
+  }
+
+  .v-expansion-panel-title {
+    &:hover {
+      background: var(--nimbus-glass-hover);
+    }
+  }
+}
+
+/* Lists: transparent with hover */
+.v-list {
+  background: transparent !important;
+}
+
+.v-list-item {
+  &:hover {
+    background: var(--nimbus-glass-hover);
+  }
+}
+
+/* Tabs: transparent with muted inactive text */
+.v-tab {
+  color: var(--nimbus-text-muted) !important;
+  letter-spacing: -0.01em;
+
+  &.v-tab--selected {
+    color: rgb(var(--v-theme-on-surface)) !important;
+  }
+}
+
+/* Chips: ensure readable text color */
+.v-chip {
+  color: rgb(var(--v-theme-on-surface)) !important;
+}
+
+.v-theme--dark .v-chip:not([style*="background-color"]):not(.bg-primary):not(.bg-success):not(.bg-error):not(.bg-warning):not(.bg-info) {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.22) !important;
+  }
+}
+
+/* Colored chips: add subtle border */
+.v-theme--dark .v-chip[style*="background-color"] {
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+}
+
+/* Switches: boost inactive track and thumb visibility */
+.v-theme--dark .v-switch__track {
+  background: rgba(255, 255, 255, 0.25) !important;
+  opacity: 1 !important;
+}
+
+.v-theme--dark .v-switch .v-switch__thumb {
+  background-color: #9ca3af !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5) !important;
+}
+
+.v-theme--dark .v-selection-control--dirty .v-switch__track {
+  background: rgb(var(--v-theme-primary)) !important;
+}
+
+.v-theme--dark .v-selection-control--dirty .v-switch__thumb {
+  background-color: #ffffff !important;
+}
+
+/* Dialogs and menus: elevated surface */
+.v-overlay__content > .v-card,
+.v-menu > .v-overlay__content > .v-card,
+.v-dialog > .v-overlay__content > .v-card {
+  background: rgb(var(--v-theme-surface-bright)) !important;
+  border: 1px solid var(--nimbus-border) !important;
+  border-radius: var(--nimbus-radius-lg) !important;
+}
+
+/* Menus with v-list (e.g. GirderSearch dropdown): ensure opaque background */
+.v-menu > .v-overlay__content > .v-list {
+  background: rgb(var(--v-theme-surface-bright)) !important;
+  border: 1px solid var(--nimbus-border) !important;
+  border-radius: var(--nimbus-radius-lg) !important;
+}
+
+/* Dividers: use nimbus border */
+.v-divider {
+  border-color: var(--nimbus-border) !important;
+  opacity: 1;
+}
+
+/* Tooltips: elevated surface style */
+.v-tooltip > .v-overlay__content {
+  background: rgb(var(--v-theme-surface-bright)) !important;
+  border: 1px solid var(--nimbus-border) !important;
+  border-radius: var(--nimbus-radius-sm) !important;
 }

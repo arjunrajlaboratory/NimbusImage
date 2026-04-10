@@ -1,10 +1,10 @@
 <template>
   <div :class="{ background: !singleLayer }">
-    <v-row dense v-if="!singleLayer" class="pl-4 py-1 pr-8">
-      <v-col class="textCol">
+    <div v-if="!singleLayer" class="d-flex align-center pl-4 py-1 pr-8">
+      <div class="textCol flex-grow-1">
         <div class="subtitle-1">Group</div>
-      </v-col>
-      <v-col class="denseCol">
+      </div>
+      <div class="denseCol flex-shrink-0" v-show="hasMultipleZ">
         <v-switch
           @click.stop
           @mousedown.stop
@@ -12,12 +12,11 @@
           class="toggleButton"
           v-model="isZMaxMerge"
           :title="`Toggle Z Max Merge for all layers`"
-          v-show="hasMultipleZ"
           density="compact"
           hide-details
         />
-      </v-col>
-      <v-col class="denseCol">
+      </div>
+      <div class="denseCol flex-shrink-0">
         <v-switch
           @click.stop
           @mousedown.stop
@@ -28,8 +27,8 @@
           density="compact"
           hide-details
         />
-      </v-col>
-    </v-row>
+      </div>
+    </div>
     <draggable
       v-bind="$attrs"
       :model-value="combinedLayers"

@@ -69,12 +69,16 @@
       <!-- Rest of the chips -->
       <v-chip
         size="x-small"
+        variant="outlined"
         v-for="(chipItem, i) in debouncedChipsPerItemId[item._id]?.chips?.slice(
           1,
         )"
         :key="'chip ' + i + ' item ' + item._id"
-        class="ma-1"
-        v-bind="chipItem"
+        class="ma-1 colored-chip"
+        :style="{
+          '--chip-color': chipItem.color,
+        }"
+        :to="chipItem.to"
         @click.stop
       >
         {{ chipItem.text }}
@@ -107,3 +111,12 @@ const shareDialogVisible = ref(false);
 
 defineExpose({ shareDialogVisible });
 </script>
+
+<style>
+/* Override global chip color reset for colored relation chips */
+.v-chip.colored-chip {
+  color: var(--chip-color) !important;
+  border-color: var(--chip-color) !important;
+  background: transparent !important;
+}
+</style>

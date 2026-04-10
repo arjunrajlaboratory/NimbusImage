@@ -10,8 +10,8 @@ Teach Claude Code how to work with NimbusImage scientific imaging datasets via t
 # Add the NimbusImage marketplace (one-time)
 claude plugin marketplace add arjunrajlaboratory/NimbusImage
 
-# Install the nimbusimage plugin
-claude plugin install nimbusimage@arjunrajlaboratory/NimbusImage
+# Install the nimbus-skills plugin
+claude plugin install nimbus-skills@arjunrajlaboratory/NimbusImage
 ```
 
 **Option B — For this session only (development):**
@@ -24,11 +24,11 @@ claude --plugin-dir /path/to/NimbusImage/plugins/nimbusimage
 
 | Skill | Command | What it covers |
 |-------|---------|---------------|
-| Core | `/nimbusimage` | Connection, dataset discovery, metadata, projects |
-| Annotations | `/nimbusimage:annotations` | CRUD, geometry helpers, bulk operations |
-| Images | `/nimbusimage:images` | Frame retrieval, composites, z-stacks, crops |
-| Workers | `/nimbusimage:workers` | Docker worker discovery, execution, job tracking |
-| Analyze | `/nimbusimage:analyze` | Properties, export, connections, sharing |
+| Core | `/nimbus-skills` | Connection, dataset discovery, metadata, projects |
+| Annotations | `/nimbus-skills:annotations` | CRUD, geometry helpers, bulk operations |
+| Images | `/nimbus-skills:images` | Frame retrieval, composites, z-stacks, crops |
+| Workers | `/nimbus-skills:workers` | Docker worker discovery, execution, job tracking |
+| Analyze | `/nimbus-skills:analyze` | Properties, export, connections, sharing |
 
 ## Progressive disclosure
 

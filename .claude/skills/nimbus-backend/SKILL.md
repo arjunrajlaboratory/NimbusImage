@@ -1,6 +1,6 @@
 ---
 name: nimbus-backend
-description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic), database queries (Model.find vs collection.find), model loading patterns, error handling, and backend test patterns."
+description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), and backend test patterns. Use this skill even for small backend changes — layer violations and looped DB queries are the most common review issues."
 ---
 
 # Nimbus Backend Development (Girder)
@@ -154,6 +154,44 @@ query = {'_id': {'$in': [ObjectId(id) for id in string_ids]}}
 
 Note: `Model().load()` handles ObjectId conversion internally.
 
+## API vs Model Layer Separation
+
+The API and model layers have strict responsibilities. Never mix them.
+
+### API Layer (`server/api/*.py`)
+- Parses and validates input from HTTP requests
+- Converts input types (string → ObjectId, JSON → dict) **once at the top of the method**
+- Raises `RestException` for HTTP error responses
+- Calls model methods with clean, validated data
+
+### Model Layer (`server/models/*.py`)
+- Contains business logic and data operations
+- Raises `ValueError` or `ValidationException` — **never `RestException`**
+- Must be abstract from HTTP/API concerns
+- Should not know about request parameters or HTTP status codes
+
+```python
+# Good - API handles input, model handles logic
+# In server/api/annotation.py
+def update(self, annotation, body):
+    tag_ids = [ObjectId(t) for t in body.get('tags', [])]
+    return AnnotationModel().updateTags(annotation, tag_ids)
+
+# In server/models/annotation.py
+def updateTags(self, annotation, tag_ids):
+    if not tag_ids:
+        raise ValueError("At least one tag required")
+    # ... business logic
+```
+
+```python
+# Bad - model raising HTTP exceptions
+# In server/models/annotation.py
+def updateTags(self, annotation, body):
+    if 'tags' not in body:
+        raise RestException("tags required", 400)  # WRONG - HTTP in model
+```
+
 ## Error Handling
 
 ```python
@@ -161,20 +199,90 @@ from girder.exceptions import (
     RestException, ValidationException, AccessException
 )
 
+# API layer - HTTP errors
 raise RestException("Bad request message", code=400)
+
+# Model layer - domain errors
 raise ValidationException("Field X is invalid")
+raise ValueError("Invalid state")
+
+# Either layer - access errors
 raise AccessException("Permission denied")
 ```
+
+### Exception Handling Rules
+- **Never** use `except Exception:` or bare `except:` — too broad, swallows system errors
+- Catch **specific** exception types only (e.g., `except bson.errors.InvalidId:`)
+- Don't add validation that duplicates framework behavior (e.g., checking ObjectId validity before `ObjectId()` conversion)
 
 ## Logging
 
 ```python
-from girder import logprint
+import logging
+
+logger = logging.getLogger(__name__)
 
 logprint.info("Informational message")
 logprint.warning("Warning message")
 logprint.error(f"Error: {details}")
 ```
+
+## Girder Jobs
+
+### Job Status Constants
+
+```python
+from girder_jobs.constants import JobStatus
+
+# JobStatus values:
+# INACTIVE = 0  (not yet scheduled)
+# QUEUED   = 1  (waiting to run)
+# RUNNING  = 2  (currently executing)
+# SUCCESS  = 3  (completed successfully)
+# ERROR    = 4  (failed)
+# CANCELED = 5  (cancelled)
+```
+
+**Warning:** Status 3 means **SUCCESS**, not "running". This is a common source of confusion.
+
+Frontend equivalent: `src/store/jobConstants.ts` (`jobStates.success === 3`).
+
+### Local Jobs (In-Process)
+
+For tasks that run inside the Girder process (not via Girder Worker/Celery), use `createLocalJob`. The target module must define a `run(job)` function.
+
+```python
+from girder_jobs.models.job import Job as JobModel
+
+job = JobModel().createLocalJob(
+    module='upenncontrast_annotation.server.helpers.zenodo_job',
+    title='My Job',
+    type='my_job_type',
+    user=user,
+    kwargs={'projectId': str(project['_id'])},
+    asynchronous=True,
+)
+JobModel().scheduleJob(job)
+```
+
+### Progress Reporting via SSE
+
+Jobs report progress through `Job().updateJob()` which emits SSE events:
+
+```python
+from girder_jobs.models.job import Job
+
+job_model = Job()
+job_model.updateJob(
+    job,
+    status=JobStatus.RUNNING,
+    log='Progress message\n',  # Sent via SSE
+)
+# Terminal state:
+job_model.updateJob(job, status=JobStatus.SUCCESS)
+```
+
+The frontend subscribes to job SSE events via `src/store/jobs.ts`. Log entries can be JSON strings for structured progress data.
 
 ## Testing
 

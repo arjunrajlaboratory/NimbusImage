@@ -30,11 +30,12 @@
       <template v-if="debouncedChipsPerItemId[collection._id]?.chips">
         <v-chip
           size="x-small"
+          variant="outlined"
           v-for="(chipItem, i) in debouncedChipsPerItemId[collection._id]
             ?.chips"
           :key="'chip ' + i + ' collection ' + collection._id"
-          class="ma-1"
-          v-bind="chipItem"
+          class="ma-1 colored-chip"
+          :style="{ '--chip-color': chipItem.color }"
           @click.stop="navigateToChip(chipItem)"
         >
           {{ chipItem.text }}
@@ -90,13 +91,13 @@ defineExpose({ navigateToChip });
 
 <style lang="scss" scoped>
 .type-indicator {
-  border-radius: 4px !important;
-  font-family: "Roboto Mono", monospace !important;
-  font-size: 9px !important;
-  letter-spacing: 0.5px !important;
-  height: 16px !important;
-  padding: 0 4px !important;
-  font-weight: 500 !important;
+  border-radius: 4px;
+  font-family: "Roboto Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  height: 16px;
+  padding: 0 4px;
+  font-weight: 500;
 }
 
 .chip-label {

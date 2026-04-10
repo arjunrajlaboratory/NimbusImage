@@ -128,7 +128,7 @@ defineExpose({ maxOffsetValue, minOffsetValue, labelHint, changeSlice });
 
 <style lang="scss" scoped>
 .smaller {
-  margin-bottom: 0 !important;
+  margin-bottom: 0;
 
   :deep(.v-label) {
     font-size: 14px;
@@ -146,7 +146,7 @@ defineExpose({ maxOffsetValue, minOffsetValue, labelHint, changeSlice });
     margin: 0;
 
     :deep(input) {
-      padding: 0 !important;
+      padding: 0;
     }
   }
 }

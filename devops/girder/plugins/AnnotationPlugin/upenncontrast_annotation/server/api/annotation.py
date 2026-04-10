@@ -1,12 +1,13 @@
 import orjson
 import cherrypy
 
+from bson.errors import InvalidId
 from bson.objectid import ObjectId
 
 from girder.api import access
 from girder.api.describe import Description, describeRoute, autoDescribeRoute
 from girder.api.rest import Resource, loadmodel, setResponseHeader
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
@@ -26,7 +27,23 @@ def getDatasetIdFromAnnotationInBody(self: "Annotation", *args, **kwargs):
 
 def getDatasetIdFromAnnotationListInBody(self: "Annotation", *args, **kwargs):
     annotations = kwargs["memoizedBodyJson"]
-    return None if len(annotations) <= 0 else annotations[0]["datasetId"]
+    if (not isinstance(annotations, list)
+            or len(annotations) <= 0):
+        return None
+    first = annotations[0]
+    if not isinstance(first, dict):
+        return None
+    # If datasetId is present in the payload, use it directly
+    datasetId = first.get("datasetId")
+    if datasetId:
+        return datasetId
+    # For partial updates (e.g. updateMultiple), look up from DB
+    annId = first.get("id") or first.get("_id")
+    if annId:
+        ann = AnnotationModel().load(annId, force=True)
+        if ann:
+            return ann.get("datasetId")
+    return None
 
 
 def getDatasetIdFromLoadedAnnotation(self: "Annotation", *args, **kwargs):
@@ -77,7 +94,7 @@ class Annotation(Resource):
     # TODO(performance): use objectId whenever possible
     # TODO: error handling and documentation
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create a new annotation").param(
             "body", "Annotation Object", paramType="body"
@@ -96,7 +113,7 @@ class Annotation(Resource):
         )
         return self._annotationModel.create(annotation)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Create multiple new annotations").param(
             "body", "Annotation Object List", paramType="body"
@@ -122,7 +139,7 @@ class Annotation(Resource):
         .errorResponse("ID was invalid.")
         .errorResponse("Write access was denied for the annotation.", 403)
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="upenn_annotation",
         plugin="upenncontrast_annotation",
@@ -132,7 +149,7 @@ class Annotation(Resource):
     def delete(self, upenn_annotation, params):
         self._annotationModel.delete(upenn_annotation)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Delete all annotations in the id list")
         .param(
@@ -173,7 +190,7 @@ class Annotation(Resource):
         .errorResponse("Invalid JSON passed in request body.")
         .errorResponse("Validation Error: JSON doesn't follow schema.")
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @loadmodel(
         model="upenn_annotation",
         plugin="upenncontrast_annotation",
@@ -183,7 +200,10 @@ class Annotation(Resource):
     @recordable("Update an annotation", getDatasetIdFromLoadedAnnotation)
     def update(self, upenn_annotation, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        upenn_annotation.update(bodyJson)
+        filtered = self._annotationModel.filterUpdateFields(
+            bodyJson
+        )
+        upenn_annotation.update(filtered)
         self._annotationModel.save(upenn_annotation)
 
     @describeRoute(
@@ -200,12 +220,72 @@ class Annotation(Resource):
         .errorResponse("Invalid JSON passed in request body.")
         .errorResponse("Validation Error: JSON doesn't follow schema.")
     )
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @memoizeBodyJson
     @recordable("Update an annotation", getDatasetIdFromAnnotationListInBody)
     def updateMultiple(self, params, *args, **kwargs):
         bodyJson = kwargs["memoizedBodyJson"]
-        self._annotationModel.updateMultiple(bodyJson, self.getCurrentUser())
+
+        # --- Input validation (API layer responsibility) ---
+        if not isinstance(bodyJson, list):
+            raise RestException(
+                "Request body must be a JSON array."
+            )
+        if len(bodyJson) == 0:
+            return []
+
+        # Normalize: accept both "id" and "_id", validate entries
+        annotationIdToUpdate = {}
+        newDatasetIds = set()
+        for update in bodyJson:
+            if not isinstance(update, dict):
+                raise RestException(
+                    "Each annotation update must be a JSON object."
+                )
+            annId = update.get("id") or update.get("_id")
+            if not annId:
+                raise RestException(
+                    "Each annotation must have an 'id' or '_id'"
+                    " field."
+                )
+            try:
+                objId = ObjectId(annId)
+            except InvalidId:
+                raise RestException(
+                    "Invalid annotation id: %s" % annId
+                )
+            # Build clean update dict (no id keys, whitelist)
+            updateDoc = update.copy()
+            updateDoc.pop("id", None)
+            updateDoc.pop("_id", None)
+            updateDoc = (
+                self._annotationModel.filterUpdateFields(
+                    updateDoc
+                )
+            )
+            if "datasetId" in updateDoc:
+                try:
+                    dsId = ObjectId(
+                        updateDoc["datasetId"]
+                    )
+                except InvalidId:
+                    raise RestException(
+                        "Invalid datasetId: %s"
+                        % updateDoc["datasetId"]
+                    )
+                updateDoc["datasetId"] = dsId
+                newDatasetIds.add(dsId)
+            annotationIdToUpdate[objId] = updateDoc
+
+        # Check WRITE access on any destination datasets
+        if newDatasetIds:
+            requireDatasetsAccess(
+                newDatasetIds, self.getCurrentUser()
+            )
+
+        self._annotationModel.updateMultiple(
+            annotationIdToUpdate, self.getCurrentUser()
+        )
 
     @access.public
     @autoDescribeRoute(
@@ -335,7 +415,7 @@ class Annotation(Resource):
     def get(self, upenn_annotation, params):
         return upenn_annotation
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Compute annotations from a worker tool")
         .param("datasetId", "The dataset Id", required=False)

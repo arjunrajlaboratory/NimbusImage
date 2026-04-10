@@ -134,7 +134,7 @@
           <v-row>
             <v-col cols="12">
               <div class="subtitle-2 mb-2">Add User:</div>
-              <v-row dense align="center">
+              <v-row density="comfortable" align="center">
                 <v-col cols="5">
                   <v-text-field
                     v-model="newUserEmail"

@@ -1,12 +1,17 @@
+import docker
+import logging
+
+from docker.errors import DockerException
+
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
-from ..models.workerInterfaces import WorkerInterfaceModel as InterfaceModel
+from girder.constants import TokenScope
 from girder.exceptions import RestException
-from girder import logger
 
-import docker
-from docker.errors import DockerException
+from ..models.workerInterfaces import WorkerInterfaceModel as InterfaceModel
+
+logger = logging.getLogger(__name__)
 
 
 class WorkerInterfaces(Resource):
@@ -49,7 +54,7 @@ class WorkerInterfaces(Resource):
             self.getCurrentUser(), image, self.getBodyJson()
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Search for image interfaces").param(
             "image", "The docker image name for the worker."
@@ -61,7 +66,7 @@ class WorkerInterfaces(Resource):
         image = params.get("image")
         return self._interfaceModel.getImageInterface(image)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description(
             "List available worker images and their corresponding labels"
@@ -82,7 +87,7 @@ class WorkerInterfaces(Resource):
 
         return dict(map(mapTagAndLabels, filter(labelFilter, images)))
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Ask the worker to update its interface data").param(
             "image", "The docker image name for the worker."

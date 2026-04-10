@@ -69,7 +69,7 @@ hist = ds.properties.histogram("propertyId.Area", buckets=50)
 
 ### Running property workers
 
-For server-side computation using Docker workers, see `/nimbusimage:workers`.
+For server-side computation using Docker workers, see `/nimbus-skills:workers`.
 
 ## Connections
 

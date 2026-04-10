@@ -2,17 +2,18 @@
   <v-card :class="{ menu: true, loaded: !fetchingWorkerInterface }" v-if="tool">
     <v-card-title class="subtitle-1 d-flex align-start">
       <span class="flex-grow-1">{{ tool.name || "Worker menu" }}</span>
-      <div class="d-flex flex-column ml-2 action-buttons">
+      <div class="d-flex ml-2 ga-1">
         <v-tooltip text="Reset all values to defaults">
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              size="x-small"
-              variant="text"
+              size="small"
+              variant="tonal"
+              class="worker-action-btn"
               @click="resetInterfaceValues()"
             >
               <v-icon size="x-small" start>mdi-refresh</v-icon>
-              Reset defaults
+              Reset
             </v-btn>
           </template>
         </v-tooltip>
@@ -20,12 +21,13 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              size="x-small"
-              variant="text"
+              size="small"
+              variant="tonal"
+              class="worker-action-btn"
               @click="updateInterface(true)"
             >
               <v-icon size="x-small" start>mdi-sync</v-icon>
-              Reload interface
+              Reload
             </v-btn>
           </template>
         </v-tooltip>
@@ -80,7 +82,7 @@
         </v-row>
         <v-row>
           <v-btn @click="preview" v-if="hasPreview">Preview</v-btn>
-          <v-btn variant="text" @click="emit('close')">Close</v-btn>
+          <v-btn variant="tonal" @click="emit('close')">Close</v-btn>
           <v-spacer></v-spacer>
           <v-btn
             v-if="localJobLog"
@@ -92,19 +94,25 @@
             <v-icon start>mdi-text-box-outline</v-icon>
             Log
           </v-btn>
-          <v-btn @click="compute" v-if="!running">
-            <v-icon v-if="previousRunStatus === false">mdi-close</v-icon>
-            <v-icon v-if="previousRunStatus === true">mdi-check</v-icon>
-            <span>Compute</span>
+          <v-btn
+            @click="compute"
+            v-if="!running"
+            variant="tonal"
+            color="primary"
+          >
+            <v-icon v-if="previousRunStatus === false" start>mdi-close</v-icon>
+            <v-icon v-if="previousRunStatus === true" start>mdi-check</v-icon>
+            Compute
           </v-btn>
           <v-btn
             v-else
             @click="cancel"
+            variant="tonal"
             color="orange"
             :disabled="!currentJob && !batchCancelFunction"
           >
-            <v-progress-circular size="16" indeterminate />
-            <span>Cancel{{ batchCancelFunction ? " All" : "" }}</span>
+            <v-progress-circular size="16" indeterminate class="mr-2" />
+            Cancel{{ batchCancelFunction ? " All" : "" }}
           </v-btn>
         </v-row>
         <v-row>
@@ -642,34 +650,40 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
+.worker-action-btn {
+  font-size: 11px !important;
+  letter-spacing: 0;
+}
+
 .menu {
-  border: solid 1px rgba(255, 255, 255, 0.8);
+  background: rgb(var(--v-theme-surface-bright)) !important;
+  border: 1px solid var(--nimbus-border-strong) !important;
   box-shadow:
-    0 12px 24px rgba(0, 0, 0, 0.8),
-    0 4px 8px rgba(0, 0, 0, 0.6);
+    0 12px 24px rgba(0, 0, 0, 0.5),
+    0 4px 8px rgba(0, 0, 0, 0.3);
   min-height: 600px;
 
   :deep(.v-card__text) {
     max-height: 600px;
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.2);
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 
     &::-webkit-scrollbar {
       width: 8px;
     }
 
     &::-webkit-scrollbar-track {
-      background: rgba(0, 0, 0, 0.2);
+      background: transparent;
       border-radius: 4px;
     }
 
     &::-webkit-scrollbar-thumb {
-      background-color: rgba(255, 255, 255, 0.3);
+      background-color: rgba(255, 255, 255, 0.2);
       border-radius: 4px;
 
       &:hover {
-        background-color: rgba(255, 255, 255, 0.4);
+        background-color: rgba(255, 255, 255, 0.3);
       }
     }
   }

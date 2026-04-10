@@ -2,7 +2,7 @@ from bson import ObjectId
 from girder.api import access
 from girder.api.rest import Resource, filtermodel, loadmodel
 from girder.api.describe import Description, autoDescribeRoute
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 
 from girder.models.folder import Folder
 
@@ -26,7 +26,7 @@ class Collection(Resource):
         self.route("DELETE", (":id",), self.delete)
         self.route('POST', ('by_folders',), self.findByFolders)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=CollectionModel)
     @autoDescribeRoute(
         Description('Create a new collection.')
@@ -92,7 +92,7 @@ class Collection(Resource):
     def get(self, upenn_collection):
         return upenn_collection
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=CollectionModel)
     @autoDescribeRoute(
         Description('Set metadata fields on an collection.')
@@ -113,7 +113,7 @@ class Collection(Resource):
         return self._collectionModel.setMetadata(
             upenn_collection, metadata, allowNull=allowNull)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=CollectionModel)
     @autoDescribeRoute(
         Description('Update collection name/description.')
@@ -139,7 +139,7 @@ class Collection(Resource):
             description,
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description('Delete an item by ID.')
         .modelParam('id', model=CollectionModel, level=AccessType.WRITE)

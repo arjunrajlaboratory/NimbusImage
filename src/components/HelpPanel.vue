@@ -129,7 +129,7 @@ defineExpose({ hotkeyItems, featureItems });
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: rgba(20, 20, 20, 0.7);
+  background: rgba(var(--v-theme-surface), 0.95);
   overflow: hidden;
 }
 
@@ -138,24 +138,24 @@ defineExpose({ hotkeyItems, featureItems });
   align-items: center;
   gap: 16px;
   padding: 20px 32px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--nimbus-border);
   flex-shrink: 0;
 }
 
 .hud-title {
   font-size: 1.1rem;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+  color: rgb(var(--v-theme-on-surface));
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .hud-subtitle {
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--nimbus-text-muted);
 
   a {
-    color: rgba(100, 180, 255, 0.8);
+    color: rgb(var(--v-theme-primary));
     text-decoration: none;
     &:hover {
       text-decoration: underline;
@@ -179,14 +179,14 @@ defineExpose({ hotkeyItems, featureItems });
 
 .hud-divider {
   height: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--nimbus-border);
   margin: 20px 0;
 }
 
 .section-title {
   font-size: 0.75rem;
   font-weight: 600;
-  color: rgba(100, 180, 255, 0.7);
+  color: rgb(var(--v-theme-primary));
   letter-spacing: 0.1em;
   text-transform: uppercase;
   margin-bottom: 12px;
@@ -206,10 +206,10 @@ defineExpose({ hotkeyItems, featureItems });
 .group-title {
   font-size: 0.8rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--nimbus-text-secondary);
   margin-bottom: 6px;
   padding-bottom: 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--nimbus-border);
 }
 
 .hotkey-row {
@@ -227,9 +227,9 @@ kbd {
     Consolas, monospace;
   font-size: 0.75rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgb(var(--v-theme-on-surface));
+  background: var(--nimbus-glass-hover);
+  border: 1px solid var(--nimbus-border-strong);
   border-radius: 4px;
   text-align: center;
   white-space: nowrap;
@@ -239,6 +239,6 @@ kbd {
 
 .hotkey-desc {
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--nimbus-text-muted);
 }
 </style>

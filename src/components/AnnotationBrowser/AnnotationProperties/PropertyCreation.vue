@@ -8,7 +8,7 @@
     </div>
     <v-card-text>
       <v-container class="pa-2">
-        <v-row align="center" class="mb-1" dense>
+        <v-row align="center" class="mb-1" density="comfortable">
           <v-col cols="4">
             <v-list-subheader dense>Measure by tag:</v-list-subheader>
           </v-col>
@@ -29,7 +29,7 @@
             ></v-checkbox>
           </v-col>
         </v-row>
-        <v-row align="center" dense>
+        <v-row align="center" density="comfortable">
           <v-col cols="4">
             <v-list-subheader dense id="shape-selection-tourstep">{{
               shapeSelectionString
@@ -51,7 +51,7 @@
       </v-container>
       <v-container class="elevation-3 mt-2 pa-2" v-if="filteringShape !== null">
         <div class="subtitle-1" mb-3>Measure this property:</div>
-        <v-row dense>
+        <v-row density="comfortable">
           <v-col>
             <docker-image-select
               dense
@@ -63,7 +63,7 @@
           </v-col>
         </v-row>
         <template v-if="dockerImage !== null">
-          <v-row dense>
+          <v-row density="comfortable">
             <v-col>
               <property-worker-menu
                 v-model="interfaceValues"
@@ -72,7 +72,7 @@
               />
             </v-col>
           </v-row>
-          <v-row dense>
+          <v-row density="comfortable">
             <v-col>
               <v-textarea
                 v-model="originalName"
@@ -358,6 +358,6 @@ defineExpose({
 .property-creation-card {
   position: relative; // Ensure proper stacking context
   z-index: 100; // Ensure card stays above other content
-  overflow: visible !important;
+  overflow: visible;
 }
 </style>

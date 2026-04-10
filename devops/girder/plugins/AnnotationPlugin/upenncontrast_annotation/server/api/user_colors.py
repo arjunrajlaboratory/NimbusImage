@@ -4,6 +4,7 @@ from typing import Dict
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
+from girder.constants import TokenScope
 
 from ..models.userColors import UserColors as UserColorsModel
 
@@ -24,7 +25,7 @@ class UserColors(Resource):
         # Initialize the model
         self.userColorsModel = UserColorsModel()
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Get user's color preferences")
         .responseClass("UserColorPreferences")
@@ -35,7 +36,7 @@ class UserColors(Resource):
         # Convert dataclass to dictionary for proper JSON serialization
         return asdict(UserColorPreferences(channelColors=channelColors))
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description("Set user's color preferences")
         .jsonParam('body', 'Request body containing channelColors object',

@@ -530,6 +530,6 @@ defineExpose({
 }
 
 .folder-breadcrumb :deep(.v-breadcrumbs__item) {
-  color: #424242 !important;
+  color: #424242;
 }
 </style>

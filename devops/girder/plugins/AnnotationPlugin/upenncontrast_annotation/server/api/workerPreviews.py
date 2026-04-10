@@ -1,6 +1,7 @@
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
+from girder.constants import TokenScope
 from ..models.workerPreviews import WorkerPreviewModel as PreviewModel
 from girder.exceptions import RestException
 
@@ -48,7 +49,7 @@ class WorkerPreviews(Resource):
             self.getCurrentUser(), image, self.getBodyJson()
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Get a preview for the given image").param(
             "image", "The docker image name for the worker."
@@ -60,7 +61,7 @@ class WorkerPreviews(Resource):
         image = params.get("image")
         return self._previewModel.getImagePreview(image) or {}
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Ask the worker to update its preview data")
         .param("datasetId", "The dataset Id", required=False)

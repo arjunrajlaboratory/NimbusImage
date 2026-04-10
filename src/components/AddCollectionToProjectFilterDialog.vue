@@ -1,10 +1,44 @@
 <template>
-  <v-card>
-    <v-card-title>
+  <v-card class="collection-dialog-card">
+    <v-card-title class="flex-shrink-0">
       <span class="text-medium-emphasis">Adding collection to project:</span>
       <span class="text-high-emphasis ml-1">{{ project.name }}</span>
     </v-card-title>
-    <v-card-text>
+    <v-card-text class="collection-dialog-content">
+      <!-- Folder chooser -->
+      <div class="d-flex align-center pa-2 folder-chooser">
+        <v-icon class="mr-2" size="20" color="grey-darken-2">mdi-folder</v-icon>
+        <span class="text-body-2 mr-2">Collections in:</span>
+        <girder-breadcrumb
+          v-if="currentFolder"
+          :location="currentFolder"
+          root-location-disabled
+          readonly
+          class="folder-breadcrumb"
+        />
+        <span v-else class="text-body-2 text-grey">Loading...</span>
+        <v-spacer />
+        <girder-location-chooser
+          v-model="currentFolder"
+          title="Choose a folder"
+          :breadcrumb="false"
+          :activator-disabled="false"
+        >
+          <template #activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              variant="outlined"
+              size="small"
+              class="ml-2"
+            >
+              <v-icon start size="small">mdi-folder-open</v-icon>
+              Change folder
+            </v-btn>
+          </template>
+        </girder-location-chooser>
+      </div>
+
+      <!-- Search -->
       <v-text-field
         v-model="searchQuery"
         label="Search collections..."
@@ -12,7 +46,7 @@
         clearable
         variant="outlined"
         density="compact"
-        class="mb-2"
+        class="mb-2 mx-2"
       />
 
       <v-progress-linear v-if="loading" indeterminate />
@@ -26,7 +60,7 @@
           {{
             searchQuery
               ? "No collections match your search"
-              : "No collections available"
+              : "No collections in this folder"
           }}
         </div>
       </div>
@@ -34,25 +68,25 @@
       <v-list v-else density="compact" class="collection-list">
         <v-list-item
           v-for="collection in filteredCollections"
-          :key="collection.id"
-          :disabled="isInProject(collection.id)"
-          @click="toggleSelection(collection.id)"
+          :key="collection._id"
+          :disabled="isInProject(collection._id)"
+          @click="toggleSelection(collection._id)"
         >
           <template #prepend>
             <v-checkbox
-              :model-value="selectedIds.has(collection.id)"
-              :disabled="isInProject(collection.id)"
+              :model-value="selectedIds.has(collection._id)"
+              :disabled="isInProject(collection._id)"
               color="primary"
               density="compact"
               hide-details
-              @update:model-value="toggleSelection(collection.id)"
+              @update:model-value="toggleSelection(collection._id)"
               @click.stop
             />
           </template>
           <v-list-item-title>
             {{ collection.name }}
             <v-chip
-              v-if="isInProject(collection.id)"
+              v-if="isInProject(collection._id)"
               size="x-small"
               class="ml-2"
               color="grey"
@@ -66,7 +100,7 @@
         </v-list-item>
       </v-list>
     </v-card-text>
-    <v-card-actions>
+    <v-card-actions class="ma-2">
       <v-btn variant="text" @click="$emit('done')">Cancel</v-btn>
       <v-spacer />
       <v-btn
@@ -105,9 +139,15 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
-import { IProject, IDatasetConfiguration } from "@/store/model";
+import { IProject } from "@/store/model";
+import { IGirderLocation, IUPennCollection } from "@/girder";
 import store from "@/store";
 import projects from "@/store/projects";
+import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
+import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
+
+// Suppress unused import warning
+void GirderBreadcrumb;
 
 const props = defineProps<{
   project: IProject;
@@ -123,15 +163,17 @@ const emit = defineEmits<{
 const searchQuery = ref("");
 const loading = ref(false);
 const adding = ref(false);
-const allCollections = ref<IDatasetConfiguration[]>([]);
+const allCollections = ref<IUPennCollection[]>([]);
 const selectedIds = ref<Set<string>>(new Set());
 const showPermissionConfirm = ref(false);
+const currentFolder = ref<IGirderLocation | null>(null);
+let fetchGeneration = 0;
 
 const existingCollectionIds = computed<Set<string>>(() => {
   return new Set(props.project.meta.collections.map((c) => c.collectionId));
 });
 
-const filteredCollections = computed<IDatasetConfiguration[]>(() => {
+const filteredCollections = computed<IUPennCollection[]>(() => {
   if (!searchQuery.value) {
     return allCollections.value;
   }
@@ -143,9 +185,9 @@ const filteredCollections = computed<IDatasetConfiguration[]>(() => {
   );
 });
 
-const selectedCollections = computed<IDatasetConfiguration[]>(() => {
+const selectedCollections = computed<IUPennCollection[]>(() => {
   return allCollections.value.filter(
-    (c) => selectedIds.value.has(c.id) && !isInProject(c.id),
+    (c) => selectedIds.value.has(c._id) && !isInProject(c._id),
   );
 });
 
@@ -165,11 +207,39 @@ function toggleSelection(collectionId: string) {
 }
 
 async function fetchCollections() {
+  const folder = currentFolder.value;
+  let folderId: string | null = null;
+  if (folder && "_id" in folder) {
+    folderId = folder._id;
+  }
+  if (!folderId) {
+    allCollections.value = [];
+    return;
+  }
+
+  const generation = ++fetchGeneration;
   loading.value = true;
   try {
-    allCollections.value = await store.api.getAllConfigurations();
+    const response = await store.api.client.get("upenn_collection", {
+      params: {
+        folderId,
+        limit: 0,
+        sort: "updated",
+        sortdir: -1,
+      },
+    });
+    if (generation !== fetchGeneration) return;
+    allCollections.value = response.data.map((item: any) => ({
+      ...item,
+      _modelType: "upenn_collection" as const,
+    }));
+  } catch (error) {
+    if (generation !== fetchGeneration) return;
+    allCollections.value = [];
   } finally {
-    loading.value = false;
+    if (generation === fetchGeneration) {
+      loading.value = false;
+    }
   }
 }
 
@@ -191,18 +261,22 @@ async function addCollections() {
     for (const collection of selectedCollections.value) {
       await projects.addCollectionToProject({
         projectId: props.project.id,
-        collectionId: collection.id,
+        collectionId: collection._id,
       });
     }
     emit(
       "added",
-      selectedCollections.value.map((c) => c.id),
+      selectedCollections.value.map((c) => c._id),
     );
     selectedIds.value = new Set();
   } finally {
     adding.value = false;
   }
 }
+
+watch(currentFolder, () => {
+  fetchCollections();
+});
 
 watch(
   () => props.project,
@@ -211,8 +285,13 @@ watch(
   },
 );
 
-onMounted(() => {
-  fetchCollections();
+onMounted(async () => {
+  try {
+    const privateFolder = await store.api.getUserPrivateFolder();
+    currentFolder.value = privateFolder || store.girderUser;
+  } catch {
+    currentFolder.value = store.girderUser;
+  }
 });
 
 defineExpose({
@@ -222,6 +301,7 @@ defineExpose({
   allCollections,
   selectedIds,
   showPermissionConfirm,
+  currentFolder,
   existingCollectionIds,
   filteredCollections,
   selectedCollections,
@@ -234,8 +314,33 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
+.collection-dialog-card {
+  display: flex;
+  flex-direction: column;
+  height: 85vh;
+  max-height: 800px;
+  overflow: hidden;
+}
+
+.collection-dialog-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 0;
+}
+
+.folder-chooser {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.folder-breadcrumb {
+  font-size: 14px;
+}
+
 .collection-list {
-  max-height: 400px;
+  max-height: 100%;
   overflow-y: auto;
 }
 </style>

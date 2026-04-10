@@ -2,15 +2,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
 
-const mockGetAllConfigurations = vi.fn();
+const mockGetUserPrivateFolder = vi.fn();
+const mockClientGet = vi.fn();
 const mockAddCollectionToProject = vi.fn();
 
 vi.mock("@/store", () => ({
   default: {
     api: {
-      getAllConfigurations: (...args: any[]) =>
-        mockGetAllConfigurations(...args),
+      getUserPrivateFolder: (...args: any[]) =>
+        mockGetUserPrivateFolder(...args),
+      client: {
+        get: (...args: any[]) => mockClientGet(...args),
+      },
     },
+    girderUser: { _id: "user1", login: "testuser" },
   },
 }));
 
@@ -18,6 +23,17 @@ vi.mock("@/store/projects", () => ({
   default: {
     addCollectionToProject: (...args: any[]) =>
       mockAddCollectionToProject(...args),
+  },
+}));
+
+vi.mock("@/girder/components", () => ({
+  Breadcrumb: { name: "GirderBreadcrumb", template: "<div></div>" },
+}));
+
+vi.mock("@/components/GirderLocationChooser.vue", () => ({
+  default: {
+    name: "GirderLocationChooser",
+    template: "<div></div>",
   },
 }));
 
@@ -48,58 +64,32 @@ const sampleProject = {
 
 const sampleCollections = [
   {
-    id: "existing-col-1",
+    _id: "existing-col-1",
+    _modelType: "upenn_collection" as const,
     name: "Collection Alpha",
     description: "Alpha description",
-    compatibility: {
-      xyDimensions: {},
-      zDimensions: {},
-      tDimensions: {},
-      channels: {},
-    },
-    layers: [],
-    tools: [],
-    snapshots: [],
-    propertyIds: [],
-    scales: {},
   },
   {
-    id: "col-3",
+    _id: "col-3",
+    _modelType: "upenn_collection" as const,
     name: "Collection Beta",
     description: "Beta description",
-    compatibility: {
-      xyDimensions: {},
-      zDimensions: {},
-      tDimensions: {},
-      channels: {},
-    },
-    layers: [],
-    tools: [],
-    snapshots: [],
-    propertyIds: [],
-    scales: {},
   },
   {
-    id: "col-4",
+    _id: "col-4",
+    _modelType: "upenn_collection" as const,
     name: "Collection Gamma",
     description: "",
-    compatibility: {
-      xyDimensions: {},
-      zDimensions: {},
-      tDimensions: {},
-      channels: {},
-    },
-    layers: [],
-    tools: [],
-    snapshots: [],
-    propertyIds: [],
-    scales: {},
   },
 ];
 
 async function mountComponent(props = {}) {
-  // Prevent mounted() from making real API calls
-  mockGetAllConfigurations.mockResolvedValue([]);
+  mockGetUserPrivateFolder.mockResolvedValue({
+    _id: "private-folder",
+    name: "Private",
+    _modelType: "folder",
+  });
+  mockClientGet.mockResolvedValue({ data: [] });
 
   const wrapper = shallowMount(AddCollectionToProjectFilterDialog, {
     props: {
@@ -108,7 +98,7 @@ async function mountComponent(props = {}) {
     },
   });
 
-  // Wait for mounted() async fetchCollections to complete
+  // Wait for onMounted async to complete
   await nextTick();
   await nextTick();
 
@@ -144,7 +134,7 @@ describe("AddCollectionToProjectFilterDialog", () => {
     vm.allCollections = sampleCollections;
     vm.searchQuery = "beta";
     expect(vm.filteredCollections).toHaveLength(1);
-    expect(vm.filteredCollections[0].id).toBe("col-3");
+    expect(vm.filteredCollections[0]._id).toBe("col-3");
   });
 
   it("filteredCollections filters by searchQuery on description", async () => {
@@ -153,7 +143,7 @@ describe("AddCollectionToProjectFilterDialog", () => {
     vm.allCollections = sampleCollections;
     vm.searchQuery = "alpha description";
     expect(vm.filteredCollections).toHaveLength(1);
-    expect(vm.filteredCollections[0].id).toBe("existing-col-1");
+    expect(vm.filteredCollections[0]._id).toBe("existing-col-1");
   });
 
   it("isInProject checks existingCollectionIds Set", async () => {
@@ -170,10 +160,9 @@ describe("AddCollectionToProjectFilterDialog", () => {
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
     vm.searchQuery = "";
-    // Select existing-col-1 (already in project) and col-3 (not in project)
     vm.selectedIds = new Set(["existing-col-1", "col-3"]);
     expect(vm.selectedCollections).toHaveLength(1);
-    expect(vm.selectedCollections[0].id).toBe("col-3");
+    expect(vm.selectedCollections[0]._id).toBe("col-3");
   });
 
   it("selectedCollections returns empty when no ids selected", async () => {
@@ -190,7 +179,6 @@ describe("AddCollectionToProjectFilterDialog", () => {
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
     vm.searchQuery = "";
-    // Select col-3 and col-4 - both not in project
     vm.selectedIds = new Set(["col-3", "col-4"]);
 
     await vm.addCollections();

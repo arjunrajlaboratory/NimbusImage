@@ -177,7 +177,7 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 }
 
 .notification {
-  margin-bottom: 0 !important;
+  margin-bottom: 0;
 
   :deep(.v-alert__content) {
     display: flex;

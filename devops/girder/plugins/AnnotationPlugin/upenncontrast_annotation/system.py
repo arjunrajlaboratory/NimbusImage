@@ -1,8 +1,10 @@
 import io
 import json
+import logging
 
 import large_image
 import yaml
+from girder import events
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import boundHandler, filtermodel
@@ -16,7 +18,8 @@ from girder.models.user import User
 from girder_jobs.constants import JobStatus
 from girder_large_image.models.image_item import ImageItem
 
-from girder import events, logger
+
+logger = logging.getLogger(__name__)
 
 conversionJobs = {}
 

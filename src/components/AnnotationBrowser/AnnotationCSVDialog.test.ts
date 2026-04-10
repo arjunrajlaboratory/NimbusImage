@@ -36,7 +36,10 @@ vi.mock("@/store/properties", () => ({
 }));
 
 vi.mock("@/store/annotation", () => ({
-  default: {},
+  default: {
+    annotations: [] as any[],
+    selectedAnnotationIds: new Set<string>(),
+  },
 }));
 
 vi.mock("@/store/filters", () => ({
@@ -73,6 +76,7 @@ vi.mock("@/utils/paths", () => ({
 import AnnotationCSVDialog from "./AnnotationCSVDialog.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import annotationStore from "@/store/annotation";
 
 const sampleAnnotations = [
   {
@@ -131,6 +135,8 @@ describe("AnnotationCSVDialog", () => {
       batchFetchResources: vi.fn().mockResolvedValue(undefined),
       watchFolder: vi.fn().mockReturnValue({ name: "Folder" }),
     };
+    (annotationStore as any).annotations = sampleAnnotations;
+    (annotationStore as any).selectedAnnotationIds = new Set<string>();
     (propertyStore as any).displayedPropertyPaths = [["propA", "sub1"]];
     (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
       const map: Record<string, string> = {
@@ -161,6 +167,7 @@ describe("AnnotationCSVDialog", () => {
       datasetId: "ds1",
       color: null,
     }));
+    (annotationStore as any).annotations = manyAnnotations;
     const wrapper = mountComponent({ annotations: manyAnnotations });
     const vm = wrapper.vm as any;
     expect(vm.isTooLargeForPreview).toBe(true);
@@ -311,7 +318,9 @@ describe("AnnotationCSVDialog", () => {
     expect(arg.datasetId).toBe("ds1");
     expect(arg.filename).toBe("export.csv");
     expect(arg.undefinedValue).toBe("");
-    expect(arg.annotationIds).toEqual(["ann1", "ann2"]);
+    // When exporting all annotations (not a subset), annotationIds is omitted
+    // to avoid exceeding MongoDB's BSON size limit
+    expect(arg.annotationIds).toBeUndefined();
   });
 
   it("generateCSVStringForAnnotations produces CSV with headers", async () => {

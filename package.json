@@ -90,7 +90,7 @@
     "vue-async-computed": "^4.0.1",
     "vue-router": "^4.6.4",
     "vuedraggable": "^4.1.0",
-    "vuetify": "^3.12.0",
+    "vuetify": "^4.0.0",
     "vuex": "^4.1.0",
     "vuex-module-decorators": "^2.0.0"
   },

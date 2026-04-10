@@ -9,7 +9,7 @@ from bson import ObjectId
 from girder.api import access
 from girder.api.rest import Resource, filtermodel, loadmodel
 from girder.api.describe import Description, autoDescribeRoute
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 from girder.models.user import User
@@ -66,7 +66,7 @@ class Project(Resource):
             "GET", (":id", "access"), self.getAccess
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Create a new project.')
@@ -122,7 +122,7 @@ class Project(Resource):
             query, offset=offset, limit=limit, sort=sort, user=user
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Update project name/description.')
@@ -137,7 +137,7 @@ class Project(Resource):
             upenn_project, name, description
         )
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description('Delete a project by ID.')
         .modelParam('id', model=ProjectModel, level=AccessType.ADMIN)
@@ -148,7 +148,7 @@ class Project(Resource):
         self._projectModel.remove(upenn_project)
         return {'message': f"Deleted project {upenn_project['name']}"}
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Add a dataset to a project.')
@@ -181,7 +181,7 @@ class Project(Resource):
         )
         return result
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Remove a dataset from a project.')
@@ -193,7 +193,7 @@ class Project(Resource):
     def removeDataset(self, project, datasetId):
         return self._projectModel.removeDataset(project, datasetId)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Add a collection to a project.')
@@ -227,7 +227,7 @@ class Project(Resource):
         )
         return result
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Remove a collection from a project.')
@@ -239,7 +239,7 @@ class Project(Resource):
     def removeCollection(self, project, collectionId):
         return self._projectModel.removeCollection(project, collectionId)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Update project publication metadata.')
@@ -254,7 +254,7 @@ class Project(Resource):
     def updateMetadata(self, upenn_project, metadata):
         return self._projectModel.updateMetadata(upenn_project, metadata)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Update project status.')
@@ -268,7 +268,7 @@ class Project(Resource):
     def updateStatus(self, upenn_project, status):
         return self._projectModel.updateStatus(upenn_project, status)
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description('Share a project with another user.')
         .notes("""
@@ -331,7 +331,7 @@ class Project(Resource):
 
         return True
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description(
             'Get access list for a project.'
@@ -360,7 +360,7 @@ class Project(Resource):
         result['projectId'] = str(project['_id'])
         return result
 
-    @access.user
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description(
             'Make a project and all its resources '

@@ -78,6 +78,32 @@ class CustomNimbusImageModel(AccessControlledModel):
 
         return documents
 
+    def getUpdatableFields(self):
+        """Return the set of fields that may be modified via update.
+
+        Derived from the model's JSON schema ``properties``.  Internal
+        fields (``_id``) are always excluded.  Models can override this
+        to further restrict the set.
+        """
+        if not self.schema:
+            raise NotImplementedError(
+                "Need to define schema to get updatable fields"
+            )
+        return frozenset(
+            self.schema["properties"].keys()
+        ) - {"_id"}
+
+    def filterUpdateFields(self, update):
+        """Strip any keys from *update* that are not updatable.
+
+        Returns a new dict containing only whitelisted keys.
+        """
+        allowed = self.getUpdatableFields()
+        return {
+            k: v for k, v in update.items()
+            if k in allowed
+        }
+
     def convertIdsToObjectIds(self, objOrObjs):
         if not self.schema:
             raise NotImplementedError(

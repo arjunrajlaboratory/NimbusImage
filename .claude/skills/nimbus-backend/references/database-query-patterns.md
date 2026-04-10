@@ -74,7 +74,7 @@ When adding new query patterns that filter on specific fields, check if an index
 
 ## Batch Query Patterns
 
-When fetching multiple documents by ID, use `$in` queries instead of individual loads:
+When fetching multiple documents by ID, use `$in` queries instead of individual loads. This is the **single most common code review issue** in this project.
 
 ```python
 # Good - single query for multiple documents
@@ -82,8 +82,39 @@ docs = list(MyModel().find({
     '_id': {'$in': [ObjectId(id) for id in ids]}
 }))
 
-# Bad - N individual queries
+# Bad - N individual queries (NEVER do this)
 docs = [MyModel().load(id) for id in ids]
+
+# Bad - looped loads
+for id in ids:
+    doc = MyModel().load(id, user=user, level=AccessType.READ)
+    # ... process
+
+# Bad - looped saves
+for doc in docs:
+    MyModel().setUserAccess(doc, user, AccessType.WRITE, save=True)
+```
+
+When Girder doesn't provide a built-in batch method (e.g., batch `setUserAccess`), **implement one** rather than looping. Use `update_many` or `bulk_write` on the collection for bulk updates — this is one of the accepted exceptions to the "no direct collection access" rule (see [Aggregation Queries](#aggregation-queries) note).
+
+### Avoiding Redundant Fetches
+
+If data was already fetched earlier in the call chain, pass it as a parameter instead of re-fetching:
+
+```python
+# Bad - re-fetching data we already have
+def process_datasets(dataset_ids, user):
+    datasets = [Folder().load(id) for id in dataset_ids]  # fetch #1
+    for ds in datasets:
+        _validate_dataset(ds['_id'])  # fetches again inside!
+
+# Good - pass already-loaded data
+def process_datasets(dataset_ids, user):
+    datasets = list(Folder().find({
+        '_id': {'$in': [ObjectId(id) for id in dataset_ids]}
+    }))
+    for ds in datasets:
+        _validate_dataset(ds)  # uses already-loaded data
 ```
 
 ## Aggregation Queries
@@ -99,4 +130,4 @@ pipeline = [
 results = list(MyModel().collection.aggregate(pipeline))
 ```
 
-**Note:** Aggregation is the one case where `collection` access is acceptable, since Girder's `find()` doesn't support aggregation pipelines.
+**Note:** Direct `collection` access is acceptable for operations that Girder's Model API doesn't support: aggregation pipelines (above) and bulk writes like `update_many`/`bulk_write` for batch permission updates (see [Batch Query Patterns](#batch-query-patterns)). For all other read/write operations, use Model methods.
