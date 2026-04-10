@@ -197,9 +197,12 @@ class Annotation(ProxiedModel, AccessControlMixin):
         return annotations
 
     def create(self, annotation):
+        annotation.pop('_id', None)
         return self.save(annotation)
 
     def createMultiple(self, annotations):
+        for annotation in annotations:
+            annotation.pop('_id', None)
         return self.saveMany(annotations)
 
     def delete(self, annotation):
