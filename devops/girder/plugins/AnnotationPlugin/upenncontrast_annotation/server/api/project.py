@@ -80,7 +80,7 @@ class Project(Resource):
         user = self.getCurrentUser()
         return self._projectModel.createProject(name, user, description)
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('Get a project by ID.')
@@ -97,7 +97,7 @@ class Project(Resource):
     def get(self, upenn_project):
         return upenn_project
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @filtermodel(model=ProjectModel)
     @autoDescribeRoute(
         Description('List projects.')
