@@ -403,11 +403,13 @@ const layerAnnotations = computed(() => {
     Map<string, TAnnotationOrStub>
   > = new Map();
   const stubsSize = annotationStore.annotationStubs?.size ?? 0;
-  const { maxVisible } = annotationStore.visibilityConfig;
-  for (const layer of validLayers.value) {
-    const annotationIdsSet: Map<string, TAnnotationOrStub> = new Map();
-    layerIdToAnnotationIds.set(layer.id, annotationIdsSet);
+  const { maxVisible, globalThreshold } = annotationStore.visibilityConfig;
 
+  // First pass: collect frame annotations per layer
+  const layerFrameAnnotations: Map<string, IAnnotation[]> = new Map();
+  let totalFrameCount = 0;
+  for (const layer of validLayers.value) {
+    layerIdToAnnotationIds.set(layer.id, new Map());
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
       const layerChannelAnnotations =
         displayableAnnotationsByChannel.value.get(layer.channel) || [];
@@ -415,8 +417,6 @@ const layerAnnotations = computed(() => {
       const allXY = store.unrollXY || layer.xy.type === "max-merge";
       const allZ = store.unrollZ || layer.z.type === "max-merge";
       const allT = store.unrollT || layer.time.type === "max-merge";
-      // Count frame annotations to decide if visibility filtering is needed
-      let frameCount = 0;
       const frameAnnotations: IAnnotation[] = [];
       for (const annotation of layerChannelAnnotations) {
         if (
@@ -425,21 +425,32 @@ const layerAnnotations = computed(() => {
           (allT || annotation.location.Time === sliceIndexes?.tIndex)
         ) {
           frameAnnotations.push(annotation);
-          frameCount++;
         }
       }
-      // Skip visibility filtering and stub rendering when annotations fit
-      // within the budget — avoids flash of stubs on frame change
-      const needsStubSystem = stubsSize > 0 && frameCount > maxVisible;
-      for (const annotation of frameAnnotations) {
-        if (needsStubSystem && !annotationStore.isVisible(annotation.id)) {
-          continue;
-        }
-        const renderData: TAnnotationOrStub = needsStubSystem
-          ? annotationStore.getForRendering(annotation.id) ?? annotation
-          : annotation;
-        annotationIdsSet.set(annotation.id, renderData);
+      layerFrameAnnotations.set(layer.id, frameAnnotations);
+      totalFrameCount += frameAnnotations.length;
+    }
+  }
+
+  // Global mode: single threshold check across all layers
+  const globalNeedsStubSystem = stubsSize > 0 && totalFrameCount > maxVisible;
+
+  // Second pass: apply visibility filtering
+  for (const layer of validLayers.value) {
+    const frameAnnotations = layerFrameAnnotations.get(layer.id);
+    if (!frameAnnotations) continue;
+    const annotationIdsSet = layerIdToAnnotationIds.get(layer.id)!;
+    const needsStubSystem = globalThreshold
+      ? globalNeedsStubSystem
+      : stubsSize > 0 && frameAnnotations.length > maxVisible;
+    for (const annotation of frameAnnotations) {
+      if (needsStubSystem && !annotationStore.isVisible(annotation.id)) {
+        continue;
       }
+      const renderData: TAnnotationOrStub = needsStubSystem
+        ? annotationStore.getForRendering(annotation.id) ?? annotation
+        : annotation;
+      annotationIdsSet.set(annotation.id, renderData);
     }
   }
   return layerIdToAnnotationIds;

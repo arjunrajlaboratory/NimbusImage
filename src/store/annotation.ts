@@ -118,7 +118,13 @@ export class Annotations extends VuexModule {
   visibilityConfig: IVisibilityConfig = {
     maxVisible: 10000,
     maxHydrated: 5000,
+    globalThreshold: true,
   };
+
+  @Mutation
+  setVisibilityConfig(config: Partial<IVisibilityConfig>) {
+    this.visibilityConfig = { ...this.visibilityConfig, ...config };
+  }
 
   get isHydrated() {
     return (id: string): boolean => this.hydratedAnnotations.has(id);

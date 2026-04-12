@@ -507,6 +507,7 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.visibilityConfig = {
       maxVisible: 10000,
       maxHydrated: 5000,
+      globalThreshold: true,
     };
     mockedAnnotationStore.updateVisibilityAndHydration = vi.fn();
 

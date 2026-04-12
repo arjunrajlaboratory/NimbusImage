@@ -1398,6 +1398,7 @@ export type THydrationMode = "shapes" | "dots";
 export interface IVisibilityConfig {
   maxVisible: number;   // Max annotations to render (stubs or shapes)
   maxHydrated: number;  // Max annotations to keep hydrated (full coordinates in memory)
+  globalThreshold: boolean; // If true, threshold applies to total frame annotations across all layers
 }
 
 export function isHydratedAnnotation(
