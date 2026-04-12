@@ -19,8 +19,11 @@
           <div class="loading-text">Loading dataset information...</div>
         </div>
       </v-overlay>
-      <v-container class="home-container">
-        <v-row class="home-row">
+      <v-container
+        class="home-container"
+        :class="{ 'browse-expanded': fileBrowserExpanded }"
+      >
+        <v-row v-if="!fileBrowserExpanded" class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <!-- Upload Files -->
@@ -120,8 +123,11 @@
             </section>
           </v-col>
         </v-row>
-        <v-divider class="my-4"></v-divider>
-        <v-row class="home-row">
+        <v-divider v-if="!fileBrowserExpanded" class="my-4"></v-divider>
+        <v-row
+          class="home-row"
+          :class="{ 'browse-row-expanded': fileBrowserExpanded }"
+        >
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <div class="d-flex align-center mb-4">
@@ -145,6 +151,31 @@
                     Projects
                   </v-btn>
                 </v-btn-toggle>
+                <v-spacer />
+                <v-tooltip
+                  :text="
+                    fileBrowserExpanded
+                      ? 'Exit full screen'
+                      : 'Expand to full screen'
+                  "
+                  location="top"
+                >
+                  <template v-slot:activator="{ props: tooltipProps }">
+                    <v-btn
+                      v-bind="tooltipProps"
+                      icon
+                      size="small"
+                      variant="text"
+                      @click="toggleFileBrowserExpanded"
+                    >
+                      <v-icon>{{
+                        fileBrowserExpanded
+                          ? "mdi-arrow-collapse"
+                          : "mdi-arrow-expand"
+                      }}</v-icon>
+                    </v-btn>
+                  </template>
+                </v-tooltip>
               </div>
               <div class="scrollable">
                 <v-dialog
@@ -163,8 +194,8 @@
                   v-if="browseMode === 'files'"
                   :location="location"
                   @update:location="onLocationUpdate"
-                  :initial-items-per-page="100"
-                  :items-per-page-options="[10, 20, 50, 100, -1]"
+                  :items-per-page="25"
+                  :items-per-page-options="[10, 25, 50, 100, -1]"
                 >
                   <template #options="{ items }">
                     <!--
@@ -503,6 +534,7 @@ const showZenodoImporter = ref(false);
 const showUploadDialog = ref(false);
 const showUploadInfo = ref(false);
 const browseMode = ref<"files" | "collections" | "projects">("files");
+const fileBrowserExpanded = ref(Persister.get("fileBrowserExpanded", false));
 const datasetsTab = ref(0);
 const loadingProjects = ref(false);
 
@@ -1050,6 +1082,11 @@ function handleSampleDatasetSelected(dataset: any) {
   showZenodoImporter.value = true;
 }
 
+function toggleFileBrowserExpanded() {
+  fileBrowserExpanded.value = !fileBrowserExpanded.value;
+  Persister.set("fileBrowserExpanded", fileBrowserExpanded.value);
+}
+
 function handleProjectClicked() {
   // Switch to Projects browse mode when clicking a project
   browseMode.value = "projects";
@@ -1192,6 +1229,7 @@ defineExpose({
   showUploadDialog,
   showUploadInfo,
   browseMode,
+  fileBrowserExpanded,
   datasetsTab,
   loadingProjects,
   pendingFiles,
@@ -1235,6 +1273,7 @@ defineExpose({
   closeUploadDialog,
   toggleZenodoImporter,
   handleSampleDatasetSelected,
+  toggleFileBrowserExpanded,
   handleProjectClicked,
   navigateToDatasetView,
   quickUpload,
@@ -1261,12 +1300,19 @@ defineExpose({
   flex-wrap: nowrap;
 }
 
-.home-row:nth-of-type(1) {
+.home-container:not(.browse-expanded) > .home-row:nth-of-type(1) {
   height: 40%;
 }
 
-.home-row:nth-of-type(2) {
+.home-container:not(.browse-expanded) > .home-row:nth-of-type(2) {
   height: 60%;
+}
+
+.browse-expanded {
+  .browse-row-expanded {
+    height: 100%;
+    flex: 1 1 auto;
+  }
 }
 
 .recent-dataset {
@@ -1402,5 +1448,46 @@ defineExpose({
 .flex-window-items,
 .flex-window-items .v-window-item {
   height: inherit;
+}
+
+// Compact row padding when file browser is in expanded mode.
+// Girder bundles Vuetify 3 CSS (un-layered), so !important is required.
+.browse-expanded .custom-file-manager-wrapper {
+  table tr td {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    height: 28px !important;
+  }
+
+  table tr {
+    height: 28px !important;
+  }
+
+  // Vuetify 3 data-table row height
+  .v-data-table__tr {
+    height: 28px !important;
+  }
+
+  .v-data-table__td {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    height: 28px !important;
+  }
+
+  .itemRow {
+    padding-top: 0;
+    padding-bottom: 0;
+    min-height: 0;
+  }
+
+  // Compact the checkbox cells
+  .v-checkbox-btn {
+    min-height: 0 !important;
+  }
+
+  // Reduce icon spacing
+  .v-icon.pr-2 {
+    padding-right: 4px !important;
+  }
 }
 </style>

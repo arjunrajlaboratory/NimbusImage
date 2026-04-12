@@ -79,8 +79,13 @@
                 v-if="menuEnabled"
               >
                 <template v-slot:activator="{ props: activatorProps }">
-                  <v-btn icon v-bind="activatorProps">
-                    <v-icon>mdi-dots-vertical</v-icon>
+                  <v-btn
+                    icon
+                    v-bind="activatorProps"
+                    size="x-small"
+                    variant="text"
+                  >
+                    <v-icon size="small">mdi-dots-vertical</v-icon>
                   </v-btn>
                 </template>
                 <file-manager-options
