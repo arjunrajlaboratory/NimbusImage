@@ -657,6 +657,25 @@ export class Annotations extends VuexModule {
     this.hydratedAnnotations = markRaw(new Map());
   }
 
+  @Mutation
+  public setStubsFromServer(stubs: IAnnotationStub[]) {
+    const newStubs = new Map<string, IAnnotationStub>();
+    const spatialItems: { id: string; x: number; y: number }[] = new Array(
+      stubs.length,
+    );
+    for (let idx = 0; idx < stubs.length; ++idx) {
+      const stub = stubs[idx];
+      newStubs.set(stub.id, stub);
+      spatialItems[idx] = {
+        id: stub.id,
+        x: stub.centroid.x,
+        y: stub.centroid.y,
+      };
+    }
+    this.annotationStubs = markRaw(newStubs);
+    annotationSpatialIndex.bulkLoad(spatialItems);
+  }
+
   @Action
   public async createConnections({
     annotationsIds,
@@ -1329,29 +1348,23 @@ export class Annotations extends VuexModule {
       return;
     }
     try {
-      const annotationsPromise = this.annotationsAPI.getAnnotationsForDatasetId(
-        main.dataset.id,
-      );
-      const connectionsPromise = this.annotationsAPI.getConnectionsForDatasetId(
-        main.dataset.id,
-      );
-      const promises: [
-        Promise<IAnnotation[]>,
-        Promise<IAnnotationConnection[]>,
-      ] = [annotationsPromise, connectionsPromise];
-      const [annotations, connections]: [
-        IAnnotation[],
-        IAnnotationConnection[],
-      ] = await Promise.all(promises);
-      if (connections?.length) {
-        this.setConnections(connections);
-      } else {
-        this.setConnections([]);
-      }
-      if (annotations?.length) {
-        this.setAnnotations(annotations);
-      } else {
-        this.setAnnotations([]);
+      const datasetId = main.dataset.id;
+      const annotationsPromise =
+        this.annotationsAPI.getAnnotationsForDatasetId(datasetId);
+      const connectionsPromise =
+        this.annotationsAPI.getConnectionsForDatasetId(datasetId);
+      const stubsPromise =
+        this.annotationsAPI.getAnnotationStubs(datasetId);
+
+      const [annotations, connections, stubs] = await Promise.all([
+        annotationsPromise,
+        connectionsPromise,
+        stubsPromise,
+      ]);
+      this.setConnections(connections?.length ? connections : []);
+      this.setAnnotations(annotations?.length ? annotations : []);
+      if (stubs?.length) {
+        this.setStubsFromServer(stubs);
       }
     } catch (error) {
       this.setAnnotations([]);
