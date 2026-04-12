@@ -1451,24 +1451,15 @@ defineExpose({
 }
 
 // Compact row padding when file browser is in expanded mode.
-// Girder bundles Vuetify 3 CSS (un-layered), so !important is required.
+// Girder's DataTable renders <tr class="v-data-table__tr"> > <td class="v-data-table__td">,
+// so targeting `table tr` / `table tr td` covers both Vuetify class names and raw elements.
+// !important is required because Girder bundles un-layered Vuetify 3 CSS.
 .browse-expanded .custom-file-manager-wrapper {
-  table tr td {
-    padding-top: 0 !important;
-    padding-bottom: 0 !important;
-    height: 28px !important;
-  }
-
   table tr {
     height: 28px !important;
   }
 
-  // Vuetify 3 data-table row height
-  .v-data-table__tr {
-    height: 28px !important;
-  }
-
-  .v-data-table__td {
+  table tr td {
     padding-top: 0 !important;
     padding-bottom: 0 !important;
     height: 28px !important;
@@ -1480,12 +1471,10 @@ defineExpose({
     min-height: 0;
   }
 
-  // Compact the checkbox cells
   .v-checkbox-btn {
     min-height: 0 !important;
   }
 
-  // Reduce icon spacing
   .v-icon.pr-2 {
     padding-right: 4px !important;
   }
