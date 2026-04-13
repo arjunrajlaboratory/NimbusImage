@@ -112,10 +112,11 @@ Vuetify 4 changed the default theme from `"light"` to `"system"`. Our config set
 
 ### Select/Combobox Slot Items (No `.raw` Wrapper)
 
-Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed directly:
+Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed directly. This applies to ALL slot types: `#item`, `#chip`, and `#selection`.
 
+**Object items** — access properties directly:
 ```vue
-<!-- Vuetify 4: access properties directly -->
+<!-- Vuetify 4: access properties directly on object items -->
 <v-select :items="items" item-title="displayName">
   <template v-slot:item="{ item, props: itemProps }">
     <v-list-item v-bind="itemProps">
@@ -124,6 +125,23 @@ Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed di
     </v-list-item>
   </template>
 </v-select>
+```
+
+**String items** — `item` IS the string, not a wrapped object. Do NOT use `item.title`:
+```vue
+<!-- BAD: item.title is undefined on a string — renders empty chips -->
+<v-combobox :items="tagList" chips multiple>
+  <template v-slot:chip="{ item, props: chipProps }">
+    <v-chip v-bind="chipProps">{{ item.title }}</v-chip>  <!-- WRONG -->
+  </template>
+</v-combobox>
+
+<!-- GOOD: use item directly for string items -->
+<v-combobox :items="tagList" chips multiple>
+  <template v-slot:chip="{ item, props: chipProps }">
+    <v-chip v-bind="chipProps">{{ item }}</v-chip>  <!-- CORRECT -->
+  </template>
+</v-combobox>
 ```
 
 **The `#item` slot name did NOT change** (contrary to some sources claiming rename to `#internalItem`).
