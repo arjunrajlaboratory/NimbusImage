@@ -1116,6 +1116,11 @@ async function initializeWelcomeTour() {
 
   // If it was the default value of NOT_YET_RUN, then update the status and start tour
   if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
+    // Collapse expanded file browser so tour anchors (#upload-files-tourstep, etc.) are mounted
+    if (fileBrowserExpanded.value) {
+      fileBrowserExpanded.value = false;
+      Persister.set("fileBrowserExpanded", false);
+    }
     Persister.set(WelcomeTourTypes.HOME, WelcomeTourStatus.ALREADY_RUN);
     startTour(WelcomeTourNames[WelcomeTourTypes.HOME]);
   }
