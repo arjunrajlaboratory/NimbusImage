@@ -164,6 +164,52 @@ defaults: {
 - `CustomFileManager.vue` has targeted CSS overrides for the file manager table layout
 - See `codebaseDocumentation/VUETIFY4_MIGRATION.md` for full details
 
+### GirderFileManager Prop Names
+
+GirderFileManager (from `@girder/components`) uses **Vuetify 3 prop naming**, not Vuetify 4. Key props:
+
+- `itemsPerPage` (kebab: `items-per-page`) — sets default page size. **NOT** `initialItemsPerPage`.
+- `itemsPerPageOptions` (kebab: `items-per-page-options`) — array of page size choices.
+
+These props are defined in `node_modules/@girder/components/src/components/FileManager.vue`. If you use a wrong prop name, it silently falls through as an unrecognized attribute and the component uses its internal default (10).
+
+### Overriding Girder DataTable Row Styles
+
+Girder's `DataTable.vue` renders a `v-data-table-server` with `<tr>` > `<td>` rows. The DOM structure is:
+
+```html
+<tr class="v-data-table__tr">
+  <td class="...">checkbox</td>
+  <td>icon + #row slot content</td>
+  <td class="text-right">file size</td>
+</tr>
+```
+
+To override row styles from a parent component:
+- Use **unscoped** `<style>` blocks (scoped styles can't reach into Girder internals)
+- Target `table tr` and `table tr td` — these cover both raw elements and Vuetify class selectors (`.v-data-table__tr`, `.v-data-table__td`) since they're the same DOM nodes. No need to duplicate selectors for both.
+- `!important` is required because Girder's bundled Vuetify 3 CSS is un-layered
+- Scope overrides with a parent wrapper class (e.g., `.browse-expanded .custom-file-manager-wrapper`) to avoid leaking globally
+
+### Persisting User Preferences with Persister
+
+For UI preferences that should survive page reloads (expand/collapse states, view modes, etc.), use `Persister` from `@/store/Persister`:
+
+```typescript
+import Persister from "@/store/Persister";
+
+// Read with default
+const expanded = ref(Persister.get("myPreferenceKey", false));
+
+// Write on change
+function toggle() {
+  expanded.value = !expanded.value;
+  Persister.set("myPreferenceKey", expanded.value);
+}
+```
+
+Persister wraps `localStorage` with JSON serialization. It's already used for theme, tour status, and browse mode preferences.
+
 ## Dialogs
 
 ```vue
