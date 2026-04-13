@@ -1905,23 +1905,60 @@ export class Annotations extends VuexModule {
     // Step 6: Determine hydration mode
     this.setHydrationMode(idsToHydrate.length > 0 ? "shapes" : "dots");
 
-    // Step 7: Hydrate — sync from local data (mock), async from backend (future)
-    // Mock strategy: all annotations are in memory, hydrate synchronously.
-    // When the backend stub API exists, replace this with an async fetch:
-    //   const annotations = await this.annotationsAPI.getAnnotationsByIds(idsToHydrate);
-    const entries: { id: string; annotation: IAnnotation }[] = [];
-    for (const id of idsToHydrate) {
-      const idx = this.annotationIdToIdx[id];
-      if (idx !== undefined) {
-        entries.push({ id, annotation: this.annotations[idx] });
-      }
-    }
-    this.setHydratedAnnotations(entries);
+    // Step 7: Hydrate from backend API
+    // Capture state synchronously, then fire async hydration outside
+    // the Vuex action proxy (vuex-module-decorators breaks after await).
+    const hydratedCache = this.hydratedAnnotations;
+    const api = this.annotationsAPI;
+    const idsToFetch = idsToHydrate.filter(
+      (id) => !hydratedCache.has(id),
+    );
+    const keepEntries = idsToHydrate
+      .filter((id) => hydratedCache.has(id))
+      .map((id) => ({
+        id,
+        annotation: hydratedCache.get(id)!,
+      }));
+    _hydrateFromBackend(api, idsToFetch, keepEntries);
   }
 
 }
 
-export default getModule(Annotations);
+const annotationModule = getModule(Annotations);
+export default annotationModule;
+
+/**
+ * Hydrate annotations from the backend, outside the Vuex action proxy.
+ * vuex-module-decorators breaks this/state/mutation access after await,
+ * so we run the async fetch as a plain function and commit directly
+ * to the module instance.
+ */
+import type AnnotationsAPI from "./AnnotationsAPI";
+async function _hydrateFromBackend(
+  api: AnnotationsAPI,
+  idsToFetch: string[],
+  keepEntries: { id: string; annotation: IAnnotation }[],
+) {
+  if (idsToFetch.length > 0) {
+    try {
+      const fetched = await api.hydrateAnnotations(idsToFetch);
+      const newEntries = fetched.map((a) => ({
+        id: a.id,
+        annotation: a,
+      }));
+      annotationModule.setHydratedAnnotations([
+        ...keepEntries,
+        ...newEntries,
+      ]);
+    } catch (error) {
+      logError(
+        `Hydration fetch failed: ${(error as Error).message}`,
+      );
+    }
+  } else {
+    annotationModule.setHydratedAnnotations(keepEntries);
+  }
+}
 
 // Self-accept HMR to prevent vuex-module-decorators from re-registering
 // the dynamic module (which causes duplicate getters and state overwrites).

@@ -404,6 +404,9 @@ const layerAnnotations = computed(() => {
   > = new Map();
   const stubsSize = annotationStore.annotationStubs?.size ?? 0;
   const { maxVisible, globalThreshold } = annotationStore.visibilityConfig;
+  // Direct read creates reactive dependency so layerAnnotations
+  // recomputes when async hydration completes
+  const hydratedAnnotations = annotationStore.hydratedAnnotations;
 
   // First pass: collect frame annotations per layer
   const layerFrameAnnotations: Map<string, IAnnotation[]> = new Map();
@@ -448,7 +451,9 @@ const layerAnnotations = computed(() => {
         continue;
       }
       const renderData: TAnnotationOrStub = needsStubSystem
-        ? annotationStore.getForRendering(annotation.id) ?? annotation
+        ? hydratedAnnotations.get(annotation.id)
+          ?? annotationStore.annotationStubs?.get(annotation.id)
+          ?? annotation
         : annotation;
       annotationIdsSet.set(annotation.id, renderData);
     }
