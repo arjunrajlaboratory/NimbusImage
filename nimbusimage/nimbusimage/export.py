@@ -31,7 +31,7 @@ class ExportAccessor:
             f"{'true' if include_property_values else 'false'}"
         )
         return self._gc.get(
-            f"/export/json?datasetId={self._dataset_id}&{params}"
+            f"export/json?datasetId={self._dataset_id}&{params}"
         )
 
     def to_csv(
@@ -62,7 +62,7 @@ class ExportAccessor:
         import json as json_mod
 
         response = self._gc.sendRestRequest(
-            "POST", "/export/csv",
+            "POST", "export/csv",
             data=json_mod.dumps(body),
             headers={"Content-Type": "application/json"},
             jsonResp=False,
