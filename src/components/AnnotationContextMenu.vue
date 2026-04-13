@@ -121,7 +121,7 @@ function save() {
 
   if (applyToSameTags.value) {
     // Get all annotations with the same original tags
-    const annotationsWithSameTags = annotationStore.annotations.filter(
+    const annotationsWithSameTags = annotationStore.annotationsForIteration.filter(
       (annotation: IAnnotation) =>
         props.annotation &&
         annotation.tags.length === props.annotation.tags.length &&

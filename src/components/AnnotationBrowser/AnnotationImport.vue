@@ -51,7 +51,7 @@
           <div class="pa-2">
             <v-checkbox
               v-model="overwriteAnnotations"
-              :label="`Overwrite ${annotationStore.annotations.length} annotations (delete current annotations)`"
+              :label="`Overwrite ${annotationStore.annotationsForIteration.length} annotations (delete current annotations)`"
               @update:model-value="
                 overwriteAnnotationsDialog = overwriteAnnotations
               "
@@ -68,7 +68,7 @@
                 <v-card-title> Overwrite annotations? </v-card-title>
                 <v-card-text>
                   This will remove
-                  {{ annotationStore.annotations.length }} annotations forever
+                  {{ annotationStore.annotationsForIteration.length }} annotations forever
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer />

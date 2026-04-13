@@ -72,7 +72,13 @@ export class Annotations extends VuexModule {
 
   isDeletingAnnotations: boolean = false;
 
+  // When true, annotations[] is empty and all metadata lives in annotationStubs.
+  stubOnlyMode: boolean = false;
+
   get allAnnotationIds() {
+    if (this.stubOnlyMode) {
+      return Array.from(this.annotationStubs.keys());
+    }
     return this.annotations.map((annotation: IAnnotation) => annotation.id);
   }
 
@@ -87,13 +93,15 @@ export class Annotations extends VuexModule {
 
   get inactiveAnnotationIds() {
     const activeIds = new Set(this.activeAnnotationIds);
-    return this.annotations
-      .map((annotation: IAnnotation) => annotation.id)
-      .filter((id: string) => !activeIds.has(id));
+    return this.allAnnotationIds.filter(
+      (id: string) => !activeIds.has(id),
+    );
   }
 
   get getAnnotationFromId() {
     return (annotationId: string) => {
+      const hydrated = this.hydratedAnnotations.get(annotationId);
+      if (hydrated) return hydrated;
       const idx = this.annotationIdToIdx[annotationId];
       return idx === undefined ? undefined : this.annotations[idx];
     };
@@ -101,12 +109,29 @@ export class Annotations extends VuexModule {
 
   get annotationTags() {
     const tagSet: Set<string> = new Set();
-    for (const { tags } of this.annotations) {
-      for (const tag of tags) {
-        tagSet.add(tag);
+    if (this.stubOnlyMode) {
+      for (const stub of this.annotationStubs.values()) {
+        for (const tag of stub.tags) {
+          tagSet.add(tag);
+        }
+      }
+    } else {
+      for (const { tags } of this.annotations) {
+        for (const tag of tags) {
+          tagSet.add(tag);
+        }
       }
     }
     return tagSet;
+  }
+
+  get annotationsForIteration(): IAnnotation[] {
+    if (!this.stubOnlyMode) {
+      return this.annotations;
+    }
+    return Array.from(
+      this.annotationStubs.values(),
+    ) as unknown as IAnnotation[];
   }
 
   hoveredAnnotationId: string | null = null;
@@ -655,6 +680,7 @@ export class Annotations extends VuexModule {
     // Clear hydration cache — will be repopulated on demand by
     // updateVisibilityAndHydration
     this.hydratedAnnotations = markRaw(new Map());
+    this.stubOnlyMode = false;
   }
 
   @Mutation
@@ -674,6 +700,27 @@ export class Annotations extends VuexModule {
     }
     this.annotationStubs = markRaw(newStubs);
     annotationSpatialIndex.bulkLoad(spatialItems);
+  }
+
+  @Mutation
+  public removeAnnotationStubs(ids: string[]) {
+    const newStubs = new Map(this.annotationStubs);
+    const newHydrated = new Map(this.hydratedAnnotations);
+    const newCentroids = { ...this.annotationCentroids };
+    for (const id of ids) {
+      newStubs.delete(id);
+      newHydrated.delete(id);
+      delete newCentroids[id];
+      annotationSpatialIndex.remove(id);
+    }
+    this.annotationStubs = markRaw(newStubs);
+    this.hydratedAnnotations = markRaw(newHydrated);
+    this.annotationCentroids = markRaw(newCentroids);
+  }
+
+  @Mutation
+  public setStubOnlyMode(mode: boolean) {
+    this.stubOnlyMode = mode;
   }
 
   @Action
@@ -894,7 +941,7 @@ export class Annotations extends VuexModule {
     // 1. Collect all annotations into a single set
     const allIds = new Set([...parentIds, ...childIds]);
     const annotations = Array.from(allIds)
-      .map((id) => this.annotations.find((a) => a.id === id))
+      .map((id) => this.getAnnotationFromId(id))
       .filter((a): a is IAnnotation => !!a);
 
     // 2. Find closest temporal parent for each annotation
@@ -989,12 +1036,16 @@ export class Annotations extends VuexModule {
     try {
       await this.annotationsAPI.deleteMultipleAnnotations(ids);
 
-      const idsSet = new Set(ids);
-      this.setAnnotations(
-        this.annotations.filter(
-          (annotation: IAnnotation) => !idsSet.has(annotation.id),
-        ),
-      );
+      if (this.stubOnlyMode) {
+        this.removeAnnotationStubs(ids);
+      } else {
+        const idsSet = new Set(ids);
+        this.setAnnotations(
+          this.annotations.filter(
+            (annotation: IAnnotation) => !idsSet.has(annotation.id),
+          ),
+        );
+      }
     } finally {
       // Always set the state back to false, even if there's an error
       sync.setSaving(false);
@@ -1349,22 +1400,37 @@ export class Annotations extends VuexModule {
     }
     try {
       const datasetId = main.dataset.id;
-      const annotationsPromise =
-        this.annotationsAPI.getAnnotationsForDatasetId(datasetId);
       const connectionsPromise =
         this.annotationsAPI.getConnectionsForDatasetId(datasetId);
-      const stubsPromise =
-        this.annotationsAPI.getAnnotationStubs(datasetId);
 
-      const [annotations, connections, stubs] = await Promise.all([
-        annotationsPromise,
-        connectionsPromise,
-        stubsPromise,
-      ]);
-      this.setConnections(connections?.length ? connections : []);
-      this.setAnnotations(annotations?.length ? annotations : []);
-      if (stubs?.length) {
-        this.setStubsFromServer(stubs);
+      const count =
+        await this.annotationsAPI.getAnnotationCount(datasetId);
+      const { maxVisible } = this.visibilityConfig;
+
+      if (count <= maxVisible) {
+        // Under threshold: full fetch + server stubs
+        const [annotations, connections, stubs] = await Promise.all([
+          this.annotationsAPI.getAnnotationsForDatasetId(datasetId),
+          connectionsPromise,
+          this.annotationsAPI.getAnnotationStubs(datasetId),
+        ]);
+        this.setConnections(connections?.length ? connections : []);
+        this.setAnnotations(annotations?.length ? annotations : []);
+        if (stubs?.length) {
+          this.setStubsFromServer(stubs);
+        }
+      } else {
+        // Over threshold: stubs only, hydrate on demand
+        const [stubs, connections] = await Promise.all([
+          this.annotationsAPI.getAnnotationStubs(datasetId),
+          connectionsPromise,
+        ]);
+        this.setConnections(connections?.length ? connections : []);
+        this.setAnnotations([]);
+        if (stubs?.length) {
+          this.setStubsFromServer(stubs);
+          this.setStubOnlyMode(true);
+        }
       }
     } catch (error) {
       this.setAnnotations([]);

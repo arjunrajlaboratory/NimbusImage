@@ -510,7 +510,7 @@ function clickedTag(tag: string) {
 }
 
 function hover(annotationId: string | null) {
-  if (annotationStore.annotations.length < 5000) {
+  if (annotationStore.annotationsForIteration.length < 5000) {
     hoverFromList = true;
     annotationStore.setHoveredAnnotationId(annotationId);
   }

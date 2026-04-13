@@ -27,8 +27,8 @@ const mockColorSelectedAnnotations = vi.fn();
 const mockUpdateAnnotationName = vi.fn();
 const mockGetAnnotationFromId = vi.fn();
 
-vi.mock("@/store/annotation", () => ({
-  default: {
+vi.mock("@/store/annotation", () => {
+  const state = {
     selectedAnnotationIds: new Set<string>(),
     setSelected: (...args: any[]) => mockSetSelected(...args),
     toggleSelected: (...args: any[]) => mockToggleSelected(...args),
@@ -51,8 +51,13 @@ vi.mock("@/store/annotation", () => ({
     getAnnotationFromId: (...args: any[]) => mockGetAnnotationFromId(...args),
     annotations: [],
     annotationIdToIdx: {} as Record<string, number>,
-  },
-}));
+  };
+  Object.defineProperty(state, "annotationsForIteration", {
+    get() { return state.annotations; },
+    enumerable: true,
+  });
+  return { default: state };
+});
 
 vi.mock("@/store/properties", () => ({
   default: {

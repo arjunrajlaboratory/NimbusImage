@@ -210,7 +210,7 @@ export class Filters extends VuexModule {
     const enabledAnnotationIdFilters = this.annotationIdFilters.filter(
       (filter: IIdAnnotationFilter) => filter.enabled,
     );
-    return annotation.annotations.filter((annotation: IAnnotation) => {
+    return annotation.annotationsForIteration.filter((annotation: IAnnotation) => {
       // Location filter
       if (
         onlyCurrentFrame &&

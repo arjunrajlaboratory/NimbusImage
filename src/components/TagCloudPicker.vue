@@ -178,7 +178,7 @@ async function handleTagRemoveFromAll(tag: string) {
 }
 
 async function applyColorToTag(tag: string) {
-  const annotationsWithTag = annotationStore.annotations.filter(
+  const annotationsWithTag = annotationStore.annotationsForIteration.filter(
     (annotation: IAnnotation) => annotation.tags.includes(tag),
   );
   const annotationIds = annotationsWithTag.map((a: IAnnotation) => a.id);

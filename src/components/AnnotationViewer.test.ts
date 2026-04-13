@@ -247,38 +247,42 @@ vi.mock("@/store", () => {
 
 vi.mock("@/store/annotation", () => {
   const { reactive } = require("vue");
-  return {
-    default: reactive({
-      annotations: [] as any[],
-      annotationConnections: [] as any[],
-      annotationCentroids: {} as Record<string, any>,
-      selectedAnnotationIds: new Set<string>(),
-      hoveredAnnotationId: null as string | null,
-      pendingAnnotation: null as any,
-      getAnnotationFromId: vi.fn().mockReturnValue(undefined),
-      isAnnotationSelected: vi.fn().mockReturnValue(false),
-      annotationIdToIdx: {} as Record<string, number>,
-      selectAnnotations: vi.fn(),
-      unselectAnnotations: vi.fn(),
-      toggleSelected: vi.fn(),
-      clearSelectedAnnotations: vi.fn(),
-      deleteSelectedAnnotations: vi.fn(),
-      deleteUnselectedAnnotations: vi.fn(),
-      addAnnotationFromTool: vi.fn().mockResolvedValue(null),
-      updateAnnotationsPerId: vi.fn().mockResolvedValue(undefined),
-      createConnection: vi.fn(),
-      createTimelapseConnection: vi.fn(),
-      createAllConnections: vi.fn().mockResolvedValue(undefined),
-      createAllTimelapseConnections: vi.fn().mockResolvedValue(undefined),
-      deleteAllConnections: vi.fn().mockResolvedValue(undefined),
-      combineAnnotations: vi.fn().mockResolvedValue(true),
-      colorAnnotationIds: vi.fn(),
-      colorSelectedAnnotations: vi.fn(),
-      tagSelectedAnnotations: vi.fn(),
-      removeTagsFromSelectedAnnotations: vi.fn(),
-      setHoveredAnnotationId: vi.fn(),
-    }),
-  };
+  const state = reactive({
+    annotations: [] as any[],
+    annotationConnections: [] as any[],
+    annotationCentroids: {} as Record<string, any>,
+    selectedAnnotationIds: new Set<string>(),
+    hoveredAnnotationId: null as string | null,
+    pendingAnnotation: null as any,
+    stubOnlyMode: false,
+    getAnnotationFromId: vi.fn().mockReturnValue(undefined),
+    isAnnotationSelected: vi.fn().mockReturnValue(false),
+    annotationIdToIdx: {} as Record<string, number>,
+    selectAnnotations: vi.fn(),
+    unselectAnnotations: vi.fn(),
+    toggleSelected: vi.fn(),
+    clearSelectedAnnotations: vi.fn(),
+    deleteSelectedAnnotations: vi.fn(),
+    deleteUnselectedAnnotations: vi.fn(),
+    addAnnotationFromTool: vi.fn().mockResolvedValue(null),
+    updateAnnotationsPerId: vi.fn().mockResolvedValue(undefined),
+    createConnection: vi.fn(),
+    createTimelapseConnection: vi.fn(),
+    createAllConnections: vi.fn().mockResolvedValue(undefined),
+    createAllTimelapseConnections: vi.fn().mockResolvedValue(undefined),
+    deleteAllConnections: vi.fn().mockResolvedValue(undefined),
+    combineAnnotations: vi.fn().mockResolvedValue(true),
+    colorAnnotationIds: vi.fn(),
+    colorSelectedAnnotations: vi.fn(),
+    tagSelectedAnnotations: vi.fn(),
+    removeTagsFromSelectedAnnotations: vi.fn(),
+    setHoveredAnnotationId: vi.fn(),
+  });
+  Object.defineProperty(state, "annotationsForIteration", {
+    get() { return state.annotations; },
+    enumerable: true,
+  });
+  return { default: state };
 });
 
 vi.mock("@/store/properties", () => {

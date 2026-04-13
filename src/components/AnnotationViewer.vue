@@ -363,7 +363,7 @@ const displayableAnnotations = computed(() => {
   }
   return store.filteredDraw
     ? filteredAnnotations.value
-    : annotationStore.annotations;
+    : annotationStore.annotationsForIteration;
 });
 
 const displayableAnnotationsByChannel = computed(() => {
@@ -443,9 +443,10 @@ const layerAnnotations = computed(() => {
     const frameAnnotations = layerFrameAnnotations.get(layer.id);
     if (!frameAnnotations) continue;
     const annotationIdsSet = layerIdToAnnotationIds.get(layer.id)!;
-    const needsStubSystem = globalThreshold
-      ? globalNeedsStubSystem
-      : stubsSize > 0 && frameAnnotations.length > maxVisible;
+    const needsStubSystem = annotationStore.stubOnlyMode
+      || (globalThreshold
+        ? globalNeedsStubSystem
+        : stubsSize > 0 && frameAnnotations.length > maxVisible);
     for (const annotation of frameAnnotations) {
       if (needsStubSystem && !annotationStore.isVisible(annotation.id)) {
         continue;
@@ -530,7 +531,7 @@ const unrolledCentroidCoordinates = computed(() => {
 
   const anyImage = store.dataset?.anyImage();
   if (anyImage) {
-    for (const annotation of annotationStore.annotations) {
+    for (const annotation of annotationStore.annotationsForIteration) {
       const centroid = annotationCentroids[annotation.id];
       const unrolledCentroid = unrolledCoordinates(
         [centroid],
@@ -783,11 +784,19 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
 
         const annotation = getAnnotationFromId.value(girderId);
         const layer = store.getLayerFromId(layerId);
+        const wasStub = geoJsAnnotation.options("isStub");
+        const layerData = layerAnnotations.value
+          .get(layerId)?.get(girderId);
+        const isNowHydrated = layerData
+          ? isHydratedAnnotation(layerData)
+          : false;
+        const stubStateChanged = wasStub === isNowHydrated;
         if (
           layer &&
           annotation &&
           layerDisplaysAnnotation.value(layer.id, annotation.id) &&
-          annotation.color === color
+          annotation.color === color &&
+          !stubStateChanged
         ) {
           return;
         }
@@ -3192,7 +3201,7 @@ watch(selectedToolConfiguration, () => {
 // Visibility and hydration updates
 function updateVisibility() {
   const ids = (
-    store.filteredDraw ? filteredAnnotations.value : annotationStore.annotations
+    store.filteredDraw ? filteredAnnotations.value : annotationStore.annotationsForIteration
   ).map((a: IAnnotation) => a.id);
   annotationStore.updateVisibilityAndHydration({
     filteredIds: ids,
