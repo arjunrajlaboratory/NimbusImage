@@ -25,7 +25,7 @@
         <custom-file-manager
           v-model:location="selected"
           v-bind="$attrs"
-          :initial-items-per-page="-1"
+          :items-per-page="-1"
           :items-per-page-options="[-1]"
           :menu-enabled="false"
           :more-chips="false"
