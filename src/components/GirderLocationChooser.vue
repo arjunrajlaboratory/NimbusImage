@@ -130,8 +130,10 @@ defineExpose({ dialogInternal, selectedName, select, selected });
 
 <style lang="scss">
 // Override Vuetify 3's default .v-dialog { width: 50% } on outer overlay element.
-// Without this, width="80vw" on v-dialog only applies to the inner .v-overlay__content,
-// making the actual dialog 80vw of 50% = 40vw. (See VUE3_STEPS.md P14)
+// Without this, width="70vw" on v-dialog only applies to the inner .v-overlay__content,
+// making the actual dialog 70vw of 50% = 35vw. (See VUE3_STEPS.md P14)
+// Note: same rule exists in ProjectInfo.vue — both are needed since unscoped
+// styles are only emitted when the component is mounted.
 .wide-dialog.v-dialog {
   width: auto;
 }
