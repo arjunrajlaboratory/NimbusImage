@@ -1,5 +1,10 @@
 <template>
-  <v-dialog v-model="dialogInternal" scrollable width="auto">
+  <v-dialog
+    v-model="dialogInternal"
+    scrollable
+    width="70vw"
+    class="wide-dialog"
+  >
     <template
       #activator="{ props: activatorProps }"
       v-if="activatorDisabled === false"
@@ -19,7 +24,7 @@
         />
       </div>
     </template>
-    <v-card class="pa-2" style="min-width: 70vh">
+    <v-card class="pa-2">
       <v-card-title>{{ title }}</v-card-title>
       <v-card-text style="height: 70vh">
         <custom-file-manager
@@ -122,3 +127,12 @@ function select() {
 
 defineExpose({ dialogInternal, selectedName, select, selected });
 </script>
+
+<style lang="scss">
+// Override Vuetify 3's default .v-dialog { width: 50% } on outer overlay element.
+// Without this, width="80vw" on v-dialog only applies to the inner .v-overlay__content,
+// making the actual dialog 80vw of 50% = 40vw. (See VUE3_STEPS.md P14)
+.wide-dialog.v-dialog {
+  width: auto;
+}
+</style>
