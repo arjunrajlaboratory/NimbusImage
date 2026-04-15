@@ -1079,6 +1079,8 @@ export class Main extends VuexModule {
     try {
       const recentDatasetViews = await this.api.getRecentDatasetViews(
         MAX_NUMBER_OF_RECENT_DATASET_VIEWS,
+        0,
+        !this.isAdmin,
       );
       this.setRecentDatasetViewsImpl(recentDatasetViews);
     } catch {
