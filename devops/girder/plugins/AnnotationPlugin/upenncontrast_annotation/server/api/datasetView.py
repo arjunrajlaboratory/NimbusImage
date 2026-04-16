@@ -143,22 +143,40 @@ class DatasetView(Resource):
             "Get all dataset views using this configuration",
             required=False,
         )
+        .param(
+            "currentUserOnly",
+            "If true, only return views owned by the current user "
+            "(where the user has ADMIN access).",
+            required=False,
+            dataType="boolean",
+        )
         .pagingParams(defaultSort="_id")
         .errorResponse()
     )
     def find(self, params):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
+        user = self.getCurrentUser()
 
         # Handle single IDs from query params
         for key in ["datasetId", "configurationId"]:
             if key in params:
                 query[key] = ObjectId(params[key])
 
+        # Filter to only views owned by the current user
+        if (params.get("currentUserOnly", "").lower()
+                in ("true", "1", "yes") and user):
+            query["access.users"] = {
+                "$elemMatch": {
+                    "id": user["_id"],
+                    "level": AccessType.ADMIN,
+                }
+            }
+
         return self._datasetViewModel.findWithPermissions(
             query,
             sort=sort,
-            user=self.getCurrentUser(),
+            user=user,
             level=AccessType.READ,
             limit=limit,
             offset=offset,

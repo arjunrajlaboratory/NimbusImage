@@ -479,13 +479,18 @@ export default class GirderAPI {
     }
   }
 
-  async getRecentDatasetViews(limit: number, offset: number = 0) {
+  async getRecentDatasetViews(
+    limit: number,
+    offset: number = 0,
+    currentUserOnly: boolean = false,
+  ) {
     const formData: AxiosRequestConfig = {
       params: {
         limit,
         offset,
         sort: "lastViewed",
         sortdir: -1,
+        ...(currentUserOnly ? { currentUserOnly: true } : {}),
       },
     };
     const response = await this.client.get("dataset_view", formData);
