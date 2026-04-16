@@ -70,8 +70,10 @@ function markCopied() {
 }
 
 async function copyLink() {
+  let success = false;
   try {
     await navigator.clipboard.writeText(fullUrl.value);
+    success = true;
   } catch {
     // Fallback for older browsers
     const textarea = document.createElement("textarea");
@@ -80,10 +82,10 @@ async function copyLink() {
     textarea.style.opacity = "0";
     document.body.appendChild(textarea);
     textarea.select();
-    document.execCommand("copy");
+    success = document.execCommand("copy");
     document.body.removeChild(textarea);
   }
-  markCopied();
+  if (success) markCopied();
 }
 
 defineExpose({ copied, fullUrl, copyLink });
