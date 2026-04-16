@@ -61,14 +61,17 @@ const fullUrl = computed(() => {
   return `${base}#${props.routePath}`;
 });
 
+function markCopied() {
+  copied.value = true;
+  if (resetTimer) clearTimeout(resetTimer);
+  resetTimer = setTimeout(() => {
+    copied.value = false;
+  }, 2000);
+}
+
 async function copyLink() {
   try {
     await navigator.clipboard.writeText(fullUrl.value);
-    copied.value = true;
-    if (resetTimer) clearTimeout(resetTimer);
-    resetTimer = setTimeout(() => {
-      copied.value = false;
-    }, 2000);
   } catch {
     // Fallback for older browsers
     const textarea = document.createElement("textarea");
@@ -79,12 +82,8 @@ async function copyLink() {
     textarea.select();
     document.execCommand("copy");
     document.body.removeChild(textarea);
-    copied.value = true;
-    if (resetTimer) clearTimeout(resetTimer);
-    resetTimer = setTimeout(() => {
-      copied.value = false;
-    }, 2000);
   }
+  markCopied();
 }
 
 defineExpose({ copied, fullUrl, copyLink });

@@ -7,6 +7,7 @@
         v-if="configuration"
         :route-path="`/configuration/${configuration.id}`"
         tooltip="Copy shareable link to this collection"
+        icon-only
         class="mr-2"
       />
       <v-btn

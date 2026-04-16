@@ -21,6 +21,7 @@
               v-if="dataset"
               :route-path="`/dataset/${dataset.id}`"
               tooltip="Copy shareable link to this dataset"
+              icon-only
               class="mr-2"
             />
             <v-btn
@@ -777,20 +778,14 @@ function onAddedToProject() {
 watch(dataset, () => {
   fetchCounts();
   fetchSharingInfoData();
+  updateDatasetViews();
+  fetchDatasetParentFolder();
 });
 
 watch(shareDatasetDialog, (open) => {
   if (!open) {
     fetchSharingInfoData();
   }
-});
-
-watch(dataset, () => {
-  updateDatasetViews();
-});
-
-watch(dataset, () => {
-  fetchDatasetParentFolder();
 });
 
 watch(datasetName, () => {
