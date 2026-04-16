@@ -794,7 +794,7 @@ export class Main extends VuexModule {
     promises.push(
       this.setSelectedConfiguration(this.selectedConfigurationId),
       this.setSelectedDataset(this.selectedDatasetId),
-      this.fetchRecentDatasetViews(),
+      this.fetchRecentDatasetViews(!this.isAdmin),
     );
     // Initialize notification websocket as soon as the user has logged in because
     // any notification sent without would be lost.
@@ -1075,12 +1075,12 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async fetchRecentDatasetViews() {
+  async fetchRecentDatasetViews(currentUserOnly: boolean = false) {
     try {
       const recentDatasetViews = await this.api.getRecentDatasetViews(
         MAX_NUMBER_OF_RECENT_DATASET_VIEWS,
         0,
-        !this.isAdmin,
+        currentUserOnly,
       );
       this.setRecentDatasetViewsImpl(recentDatasetViews);
     } catch {
