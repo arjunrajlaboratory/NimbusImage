@@ -7,6 +7,23 @@
             <v-toolbar-title> Dataset </v-toolbar-title>
             <v-spacer></v-spacer>
             <v-btn
+              color="primary"
+              variant="outlined"
+              size="small"
+              class="mr-2"
+              @click="shareDatasetDialog = true"
+              :disabled="!dataset"
+            >
+              <v-icon start>mdi-share-variant</v-icon>
+              Share
+            </v-btn>
+            <copy-link-button
+              v-if="dataset"
+              :route-path="`/dataset/${dataset.id}`"
+              tooltip="Copy shareable link to this dataset"
+              class="mr-2"
+            />
+            <v-btn
               color="green"
               @click="goToDefaultView"
               :disabled="!dataset"
@@ -335,6 +352,9 @@
       :dataset-name="datasetName"
       @added="onAddedToProject"
     />
+
+    <!-- Share Dataset Dialog -->
+    <share-dataset v-model="shareDatasetDialog" :dataset="dataset" />
   </v-container>
 </template>
 <script setup lang="ts">
@@ -355,12 +375,16 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import AddToProjectDialog from "@/components/AddToProjectDialog.vue";
 import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
 import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
+import ShareDataset from "@/components/ShareDataset.vue";
+import CopyLinkButton from "@/components/CopyLinkButton.vue";
 
 // Suppress unused import warnings — auto-registered in <script setup>
 void GirderLocationChooser;
 void AddToProjectDialog;
 void SharingStatusDisplay;
 void SharingStatusIcon;
+void ShareDataset;
+void CopyLinkButton;
 
 const route = useRoute();
 const router = useRouter();
@@ -376,6 +400,7 @@ const defaultConfigurationName = ref("");
 const showNewCollectionDialog = ref(false);
 const showNewCollectionNameDialog = ref(false);
 const showAddToProjectDialog = ref(false);
+const shareDatasetDialog = ref(false);
 const newCollectionName = ref("");
 const selectedFolderId = ref<string | null>(null);
 const datasetParentId = ref<string | null>(null);
@@ -754,6 +779,12 @@ watch(dataset, () => {
   fetchSharingInfoData();
 });
 
+watch(shareDatasetDialog, (open) => {
+  if (!open) {
+    fetchSharingInfoData();
+  }
+});
+
 watch(dataset, () => {
   updateDatasetViews();
 });
@@ -800,6 +831,7 @@ defineExpose({
   showNewCollectionDialog,
   showNewCollectionNameDialog,
   showAddToProjectDialog,
+  shareDatasetDialog,
   newCollectionName,
   selectedFolderId,
   datasetParentId,

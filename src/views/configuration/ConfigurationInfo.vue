@@ -3,6 +3,12 @@
     <alert-dialog ref="alert" />
     <v-container class="d-flex">
       <v-spacer />
+      <copy-link-button
+        v-if="configuration"
+        :route-path="`/configuration/${configuration.id}`"
+        tooltip="Copy shareable link to this collection"
+        class="mr-2"
+      />
       <v-btn
         color="primary"
         class="mr-2"
@@ -196,6 +202,7 @@ import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddCollectionToProjectDialog from "@/components/AddCollectionToProjectDialog.vue";
 import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
 import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
+import CopyLinkButton from "@/components/CopyLinkButton.vue";
 import { fetchSharingInfo } from "@/utils/sharingInfo";
 
 // Suppress unused import warnings — auto-registered in <script setup>
@@ -205,6 +212,7 @@ void AlertDialog;
 void AddCollectionToProjectDialog;
 void SharingStatusDisplay;
 void SharingStatusIcon;
+void CopyLinkButton;
 
 const route = useRoute();
 const router = useRouter();
