@@ -175,6 +175,11 @@
         </v-container>
       </v-card-text>
       <v-card-actions>
+        <copy-link-button
+          v-if="project"
+          :route-path="`/project/${project.id}`"
+          tooltip="Copy shareable link to this project"
+        />
         <v-spacer />
         <v-btn color="primary" variant="text" @click="close">Done</v-btn>
       </v-card-actions>
@@ -218,6 +223,10 @@ import { isAxiosError } from "axios";
 import store from "@/store";
 import { logError } from "@/utils/log";
 import { IDatasetAccessUser, IProject } from "@/store/model";
+import CopyLinkButton from "@/components/CopyLinkButton.vue";
+
+// Suppress unused import warnings — auto-registered in <script setup>
+void CopyLinkButton;
 
 const props = defineProps<{
   project: IProject | null;
