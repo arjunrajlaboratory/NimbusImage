@@ -420,13 +420,14 @@ function findCommonPrefix(strings: string[]): string {
   }
 
   // For non-numeric prefixes:
-  // Extract the non-metadata prefix of each filename. Note that because of the
-  // way the regex is constructed, the first match group will never be `null`.
+  // Extract the non-metadata prefix of each filename. If a filename contains
+  // none of the delimiters or trigger patterns, fall back to the whole string
+  // so the character-by-character comparison below still runs.
   const triggerAndDigit = allTriggers.map(
     (trigger) => `\\d${trigger}|${trigger}\\d`,
   );
   const re = new RegExp(`(.*?)(?:_|-|${triggerAndDigit.join("|")})`);
-  const matches = strings.map((s) => s.match(re)![1]);
+  const matches = strings.map((s) => s.match(re)?.[1] ?? s);
 
   // Get the minimum length of all the strings; the common prefix cannot be
   // longer than this.
