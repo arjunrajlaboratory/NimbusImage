@@ -39,7 +39,8 @@
       <template v-slot:activator="{ props: activatorProps }">
         <span
           v-bind="activatorProps"
-          class="text-caption text-medium-emphasis mx-2"
+          class="text-caption"
+          style="margin-left: 8px; margin-right: 8px; opacity: 0.4"
         >
           Modified:
           {{ item.updated ? formatDateString(item.updated) : "Unknown" }}

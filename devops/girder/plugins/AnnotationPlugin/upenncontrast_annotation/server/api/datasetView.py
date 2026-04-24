@@ -44,7 +44,7 @@ class DatasetView(Resource):
         # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
         self.route("POST", ("map",), self.map)
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Get a dataset view by its id.").param(
             "id", "The dataset view's id", paramType="path"
@@ -129,7 +129,7 @@ class DatasetView(Resource):
         self._datasetViewModel.updateDatasetView(
             dataset_view, new_dataset_view)
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Search for dataset views.")
         .responseClass("dataset_view")
@@ -164,7 +164,7 @@ class DatasetView(Resource):
             offset=offset,
         )
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("""
         Bulk search for dataset views (READ OPERATION).
@@ -464,7 +464,7 @@ class DatasetView(Resource):
         result['datasets'] = datasets
         return result
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Bulk map dataset and configuration ids")
         .notes(

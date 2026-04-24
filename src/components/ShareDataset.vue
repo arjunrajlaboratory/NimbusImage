@@ -215,6 +215,11 @@
         </v-container>
       </v-card-text>
       <v-card-actions>
+        <copy-link-button
+          v-if="datasetId"
+          :route-path="`/dataset/${datasetId}`"
+          tooltip="Copy shareable link to this dataset"
+        />
         <v-spacer />
         <v-btn color="primary" variant="text" @click="close">Done</v-btn>
       </v-card-actions>
@@ -246,13 +251,18 @@ import store from "@/store";
 import { logError } from "@/utils/log";
 import { accessLevelLabel } from "@/utils/accessLevel";
 import {
+  IDataset,
   IDatasetAccessUser,
   IDatasetAccessConfiguration,
   IDatasetView,
 } from "@/store/model";
+import CopyLinkButton from "@/components/CopyLinkButton.vue";
+
+// Suppress unused import warnings — auto-registered in <script setup>
+void CopyLinkButton;
 
 const props = defineProps<{
-  dataset: IGirderSelectAble | null;
+  dataset: IGirderSelectAble | IDataset | null;
   modelValue: boolean;
 }>();
 
@@ -263,6 +273,14 @@ const emit = defineEmits<{
 const dialog = computed({
   get: () => props.modelValue,
   set: (val: boolean) => emit("update:modelValue", val),
+});
+
+/** Extract the dataset ID regardless of whether it's IGirderSelectAble or IDataset */
+const datasetId = computed((): string | null => {
+  if (!props.dataset) return null;
+  if ("_id" in props.dataset) return (props.dataset as IGirderSelectAble)._id;
+  if ("id" in props.dataset) return (props.dataset as IDataset).id;
+  return null;
 });
 
 const loading = ref(false);
@@ -304,7 +322,7 @@ const isResourceAdmin = computed((): boolean => {
 
 watch(dialog, (val) => {
   if (val && props.dataset) {
-    fetchAccessInfo(props.dataset._id);
+    fetchAccessInfo(datasetId.value!);
   } else if (!val) {
     resetState();
   }
@@ -368,7 +386,7 @@ async function togglePublic(newValue: boolean | null) {
   publicLoading.value = true;
   showError.value = false;
   try {
-    await store.api.setDatasetPublic(props.dataset._id, value);
+    await store.api.setDatasetPublic(datasetId.value!, value);
     isPublic.value = value;
   } catch (error) {
     logError("Failed to toggle public access", error);
@@ -495,7 +513,7 @@ async function addUser() {
     } else {
       // Refresh the access list to show the new user
       if (props.dataset) {
-        await fetchAccessInfo(props.dataset._id);
+        await fetchAccessInfo(datasetId.value!);
       }
       // Clear the form
       newUserEmail.value = "";
@@ -512,6 +530,7 @@ async function addUser() {
 
 defineExpose({
   dialog,
+  datasetId,
   loading,
   showError,
   errorString,

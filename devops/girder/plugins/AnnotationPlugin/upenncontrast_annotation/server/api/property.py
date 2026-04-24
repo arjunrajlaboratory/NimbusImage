@@ -119,7 +119,7 @@ class AnnotationProperty(Resource):
         annotation_property.update(filtered)
         self._propertyModel.save(annotation_property)
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Search for properties")
         .responseClass("property")
@@ -162,7 +162,7 @@ class AnnotationProperty(Resource):
             offset=offset,
         )
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Get property count for a configuration")
         .param(
@@ -192,7 +192,7 @@ class AnnotationProperty(Resource):
 
         return {"count": count}
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Get a property by its id.").param(
             "id", "The annotation property's id", paramType="path"

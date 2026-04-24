@@ -151,9 +151,12 @@ class AnnotationConnection(ProxiedModel, AccessControlMixin):
         return connections
 
     def create(self, connection):
+        connection.pop('_id', None)
         return self.save(connection)
 
     def createMultiple(self, connections):
+        for connection in connections:
+            connection.pop('_id', None)
         return self.saveMany(connections)
 
     def delete(self, connection):

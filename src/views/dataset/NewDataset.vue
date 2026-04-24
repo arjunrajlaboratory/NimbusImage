@@ -402,7 +402,7 @@ function findCommonPrefix(strings: string[]): string {
     (trigger) => `\\d${trigger}|${trigger}\\d`,
   );
   const re = new RegExp(`(.*?)(?:_|-|${triggerAndDigit.join("|")})`);
-  const matches = strings.map((s) => s.match(re)![1]);
+  const matches = strings.map((s) => s.match(re)?.[1] ?? s);
 
   const minLength = matches.reduce(
     (acc, cur) => Math.min(acc, cur.length),

@@ -289,7 +289,7 @@ class Annotation(Resource):
             annotationIdToUpdate, self.getCurrentUser()
         )
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Search for annotations")
         .responseClass("upenn_annotation")
@@ -368,7 +368,7 @@ class Annotation(Resource):
             cherrypy.response.headers['Girder-Total-Count'] = cursor.count()
         return generateResult
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Get annotation count for a dataset")
         .param("datasetId", "Get count for this dataset", required=True)
@@ -403,7 +403,7 @@ class Annotation(Resource):
             "count": self._annotationModel.collection.count_documents(query)
         }
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Get an annotation by its id.").param(
             "id", "The annotation's id", paramType="path"

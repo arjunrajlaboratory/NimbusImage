@@ -13,7 +13,7 @@ from bson.objectid import ObjectId
 from girder.api import access
 from girder.api.describe import autoDescribeRoute, Description
 from girder.api.rest import Resource, setResponseHeader, setContentDisposition
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.models.folder import Folder
 
 from ..models.annotation import Annotation as AnnotationModel
@@ -66,7 +66,7 @@ class Export(Resource):
         self.route("GET", ("json",), self.exportJson)
         self.route("POST", ("csv",), self.exportCsv)
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Export dataset annotations and related data as JSON")
         .param("datasetId", "The dataset ID", required=True)
@@ -251,7 +251,7 @@ class Export(Resource):
 
         return result
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Export dataset annotations as CSV")
         .notes("""
