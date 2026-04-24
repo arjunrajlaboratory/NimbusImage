@@ -439,7 +439,7 @@ class Annotation(Resource):
             datasetId, bodyJson, self.getCurrentUser()
         )
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Get annotation stubs (without coordinates)")
         .notes(
@@ -537,7 +537,7 @@ class Annotation(Resource):
         setResponseHeader("Content-Type", "application/json")
         return generateResult
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Hydrate annotations by ID list")
         .notes(
