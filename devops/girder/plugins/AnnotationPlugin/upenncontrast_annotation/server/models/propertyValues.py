@@ -41,7 +41,7 @@ class PropertySchema:
     }
 
 
-class AnnotationPropertyValues(ProxiedModel, AccessControlMixin):
+class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
 
     def __init__(self):
         super().__init__()
