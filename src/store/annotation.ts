@@ -144,6 +144,7 @@ export class Annotations extends VuexModule {
   visibilityConfig: IVisibilityConfig = {
     maxVisible: 10000,
     maxHydrated: 5000,
+    hydrationCacheCap: 10000,
     globalThreshold: true,
   };
 
@@ -1860,21 +1861,58 @@ export class Annotations extends VuexModule {
     this.hydrationMode = mode;
   }
 
+  /**
+   * Accumulating LRU hydration cache.
+   *
+   * - Entries already in the cache whose ids appear in `touchedIds` are
+   *   bumped to the tail (most-recently-used).
+   * - `newEntries` (freshly fetched from the backend) are inserted at the
+   *   tail, overwriting any prior value for their ids.
+   * - If the total exceeds `hydrationCacheCap`, LRU entries (at the head)
+   *   are evicted. Selected annotation ids are skipped during eviction so
+   *   they are never dropped from the cache.
+   *
+   * JS Map preserves insertion order, so `delete(id); set(id, v)` moves an
+   * entry to the tail — that's the touch operation.
+   */
   @Mutation
-  setHydratedAnnotations(entries: { id: string; annotation: IAnnotation }[]) {
-    const newMap = new Map<string, IAnnotation>();
-    // Always preserve selected annotations in the hydration cache
-    for (const id of this.selectedAnnotationIds) {
-      const existing = this.hydratedAnnotations.get(id);
-      if (existing) {
+  mergeHydratedAnnotations(payload: {
+    newEntries: { id: string; annotation: IAnnotation }[];
+    touchedIds: string[];
+  }) {
+    const newMap = new Map(this.hydratedAnnotations);
+    for (const id of payload.touchedIds) {
+      const existing = newMap.get(id);
+      if (existing !== undefined) {
+        newMap.delete(id);
         newMap.set(id, existing);
       }
     }
-    for (const { id, annotation } of entries) {
+    for (const { id, annotation } of payload.newEntries) {
+      newMap.delete(id);
       newMap.set(id, annotation);
     }
+    const cap = this.visibilityConfig.hydrationCacheCap;
+    if (cap > 0 && newMap.size > cap) {
+      const selected = this.selectedAnnotationIds;
+      let toEvict = newMap.size - cap;
+      let evicted = 0;
+      let protectedCount = 0;
+      const snapshotKeys = Array.from(newMap.keys());
+      for (const id of snapshotKeys) {
+        if (toEvict <= 0) break;
+        if (selected.has(id)) {
+          protectedCount += 1;
+          continue;
+        }
+        newMap.delete(id);
+        evicted += 1;
+        toEvict -= 1;
+      }
+      stubPerf.trackEviction(evicted, protectedCount);
+    }
     this.hydratedAnnotations = markRaw(newMap);
-    stubPerf.trackCache(newMap.size, this.visibilityConfig.maxHydrated);
+    stubPerf.trackCache(newMap.size, cap);
   }
 
   @Mutation
@@ -1983,18 +2021,18 @@ export class Annotations extends VuexModule {
     // the Vuex action proxy (vuex-module-decorators breaks after await).
     const hydratedCache = this.hydratedAnnotations;
     const api = this.annotationsAPI;
-    const idsToFetch = idsToHydrate.filter(
-      (id) => !hydratedCache.has(id),
-    );
-    const keepEntries = idsToHydrate
-      .filter((id) => hydratedCache.has(id))
-      .map((id) => ({
-        id,
-        annotation: hydratedCache.get(id)!,
-      }));
+    const idsToFetch: string[] = [];
+    const idsToTouch: string[] = [];
+    for (const id of idsToHydrate) {
+      if (hydratedCache.has(id)) {
+        idsToTouch.push(id);
+      } else {
+        idsToFetch.push(id);
+      }
+    }
     stubPerf.trackVisibilityUpdate();
-    stubPerf.trackRequest(idsToFetch.length, keepEntries.length);
-    _hydrateFromBackend(api, idsToFetch, keepEntries);
+    stubPerf.trackRequest(idsToFetch.length, idsToTouch.length);
+    _hydrateFromBackend(api, idsToFetch, idsToTouch);
   }
 
 }
@@ -2012,28 +2050,27 @@ import type AnnotationsAPI from "./AnnotationsAPI";
 async function _hydrateFromBackend(
   api: AnnotationsAPI,
   idsToFetch: string[],
-  keepEntries: { id: string; annotation: IAnnotation }[],
+  idsToTouch: string[],
 ) {
   if (idsToFetch.length > 0) {
     const start = performance.now();
     try {
       const fetched = await api.hydrateAnnotations(idsToFetch);
       stubPerf.trackLatency(performance.now() - start);
-      const newEntries = fetched.map((a) => ({
-        id: a.id,
-        annotation: a,
-      }));
-      annotationModule.setHydratedAnnotations([
-        ...keepEntries,
-        ...newEntries,
-      ]);
+      annotationModule.mergeHydratedAnnotations({
+        newEntries: fetched.map((a) => ({ id: a.id, annotation: a })),
+        touchedIds: idsToTouch,
+      });
     } catch (error) {
       logError(
         `Hydration fetch failed: ${(error as Error).message}`,
       );
     }
-  } else {
-    annotationModule.setHydratedAnnotations(keepEntries);
+  } else if (idsToTouch.length > 0) {
+    annotationModule.mergeHydratedAnnotations({
+      newEntries: [],
+      touchedIds: idsToTouch,
+    });
   }
 }
 

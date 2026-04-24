@@ -43,6 +43,20 @@
               'Maximum annotations to render as full shapes (rest shown as dots)',
           }"
         />
+        <v-text-field
+          v-model.number="hydrationCacheCap"
+          label="Hydration cache cap"
+          type="number"
+          density="compact"
+          hide-details
+          class="mb-2"
+          v-description="{
+            section: 'Interface settings',
+            title: 'Hydration cache cap',
+            description:
+              'Total cap on cached hydrated annotations. Accumulates across pans/zooms; LRU-evicts when over cap (selected never evicted).',
+          }"
+        />
         <v-switch
           hide-details
           density="compact"
@@ -85,6 +99,14 @@ const maxHydrated = computed({
   get: () => annotationStore.visibilityConfig.maxHydrated,
   set: (value: number) => {
     if (value > 0) annotationStore.setVisibilityConfig({ maxHydrated: value });
+  },
+});
+
+const hydrationCacheCap = computed({
+  get: () => annotationStore.visibilityConfig.hydrationCacheCap,
+  set: (value: number) => {
+    if (value > 0)
+      annotationStore.setVisibilityConfig({ hydrationCacheCap: value });
   },
 });
 
