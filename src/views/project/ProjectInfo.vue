@@ -20,6 +20,13 @@
         {{ formatSize(totalProjectSize) }} total
       </v-chip>
       <v-spacer />
+      <copy-link-button
+        v-if="project"
+        :route-path="`/project/${project.id}`"
+        tooltip="Copy shareable link to this project"
+        icon-only
+        class="mr-2"
+      />
       <v-btn color="primary" class="mr-2" @click="shareDialog = true">
         <v-icon start>mdi-share-variant</v-icon>
         Share Project
@@ -470,6 +477,7 @@ import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vu
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
 import ShareProject from "@/components/ShareProject.vue";
 import ZenodoPublish from "@/components/ZenodoPublish.vue";
+import CopyLinkButton from "@/components/CopyLinkButton.vue";
 import { formatSize } from "@/utils/conversion";
 
 // Suppress unused import warnings — auto-registered in <script setup>
@@ -478,6 +486,7 @@ void AddDatasetToProjectDialog;
 void AddCollectionToProjectFilterDialog;
 void ShareProject;
 void ZenodoPublish;
+void CopyLinkButton;
 
 const router = useRouter();
 

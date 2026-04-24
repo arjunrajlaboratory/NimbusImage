@@ -10,7 +10,11 @@
       location="end"
     >
       <template v-slot:activator="{ props: activatorProps }">
-        <span v-bind="activatorProps" class="text-caption text-grey mx-2">
+        <span
+          v-bind="activatorProps"
+          class="text-caption"
+          style="margin-left: 8px; margin-right: 8px; opacity: 0.4"
+        >
           Modified:
           {{
             collection.updated

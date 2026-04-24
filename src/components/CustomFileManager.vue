@@ -79,8 +79,13 @@
                 v-if="menuEnabled"
               >
                 <template v-slot:activator="{ props: activatorProps }">
-                  <v-btn icon v-bind="activatorProps">
-                    <v-icon>mdi-dots-vertical</v-icon>
+                  <v-btn
+                    icon
+                    v-bind="activatorProps"
+                    size="x-small"
+                    variant="text"
+                  >
+                    <v-icon size="small">mdi-dots-vertical</v-icon>
                   </v-btn>
                 </template>
                 <file-manager-options
@@ -617,28 +622,24 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
-// Checkbox column: narrow
-.custom-file-manager-wrapper table col:first-child {
-  width: 40px;
-}
-
-// Size column: narrow, right-aligned
+// Size column: narrow, right-aligned.
+// Checkbox column width is set inline (style="width: 65px") in the Girder
+// DataTable template, so it doesn't need CSS. Content column auto-fills
+// the remaining space.
 .custom-file-manager-wrapper table col:last-child {
-  width: 90px;
-}
-
-// Also target td directly in case <col> elements don't exist
-.custom-file-manager-wrapper table tr td:first-child {
-  width: 40px;
+  width: 100px;
 }
 
 .custom-file-manager-wrapper table tr td:last-child {
-  width: 90px;
+  width: 100px;
   text-align: right;
 }
 
-// Fix file browser rows: icon and content on same line, vertically centered
-.custom-file-manager-wrapper .select-cursor {
+// Fix file browser rows: icon and content on same line, vertically centered.
+// Scoped to td > .select-cursor so it targets the <span> inside cells,
+// NOT the <tr> elements (which also get .select-cursor from getRowClass).
+// display: flex on <tr> would break table-layout: fixed column sizing.
+.custom-file-manager-wrapper td > .select-cursor {
   display: flex !important;
   align-items: center;
 }
