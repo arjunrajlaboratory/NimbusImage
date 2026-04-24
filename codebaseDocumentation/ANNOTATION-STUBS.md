@@ -5,7 +5,46 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status:** Backend endpoints implemented and tested. Frontend integration in progress — core plumbing works but rendering/hydration has unresolved issues (see Phase 5 Implementation Notes below).
+**Status (2026-04-24):** Backend endpoints + frontend incremental migration complete. Stub-only mode renders correctly, hydrates from backend on viewport change, and deletes correctly. Ready for optimization work — see **Next Steps** below.
+
+---
+
+## Next Steps (post-migration)
+
+Pick these up in this order — each unblocks the next and the first one is the biggest win.
+
+### 1. Accumulating hydration cache with LRU eviction (highest leverage)
+
+Right now every `updateVisibilityAndHydration` call builds `idsToHydrate` (up to `maxHydrated` = 5000) and `_hydrateFromBackend` replaces the entire `hydratedAnnotations` map. On every pan the cache is rebuilt; annotations that were hydrated 200ms ago get refetched. With `maxHydrated = 5000`, one pan can cost ~3–5 MB of redundant HTTP traffic.
+
+**Approach:** Keep a global cap (say 10–15k entries), accumulate on `setHydratedAnnotations`, and LRU-evict when over cap. `updateVisibilityAndHydration` Step 7 computes `idsToFetch = idsToHydrate.filter(id => !cache.has(id))` and `keepEntries = everything already in cache` — don't restrict keep to the current viewport. Touch order on read (for LRU) can be piggybacked on the Step 4 "should be hydrated this frame" list.
+
+**Files:** `src/store/annotation.ts` — `setHydratedAnnotations` mutation, `_hydrateFromBackend` keep-logic, and the Step 7 block in `updateVisibilityAndHydration`.
+
+**Verification:** Network tab shows mostly cache hits on short pans (`idsToFetch` count drops to near 0 when revisiting already-hydrated regions). Watch for memory — confirm LRU actually evicts when over cap.
+
+### 2. Debounce the hydration fetch itself (~200 ms)
+
+`updateVisibilityDebounced` is debounced 250 ms, but a zoom-then-pan can legitimately call `updateVisibility` multiple times (the cameraInfo watcher debounces; the `xy/z/time` and `filteredAnnotations` watchers fire immediately). Each fires `_hydrateFromBackend` independently. With (1) done, this matters less, but still batches HTTP.
+
+**Approach:** Debounce `_hydrateFromBackend` itself (or the Step 7 computation) with a short trailing-edge timer. Latest call wins; earlier in-flight requests can be cancelled via `AbortController` to stop stale responses from overwriting newer cache state.
+
+**Files:** `src/store/annotation.ts` — the module-level `_hydrateFromBackend` function.
+
+### 3. Zoom doesn't change hydration selection (real bug)
+
+Documented in Phase 5 notes below under "Hydration set doesn't change on zoom." The 2× viewport expansion (applied in Step 2 of `updateVisibilityAndHydration`) was designed for pan pre-loading, but when zoomed out the expanded box covers the entire frame — so `inViewportIds ≈ currentFrameIds` and viewport-based prioritization becomes a no-op. Zoom-in does not cause the newly-visible region to be preferentially hydrated.
+
+**Approach (simplest):** Use **unexpanded** bounds for the hydration viewport split (Step 4), and expanded bounds only for the visibility split (Step 3). Two separate `annotationSpatialIndex.splitByViewport` calls.
+
+**Files:** `src/store/annotation.ts` — `updateVisibilityAndHydration` Steps 2–4.
+
+### Future (smaller wins)
+
+- **Hydrate-on-selection via backend API** — currently selection preservation only works if the annotation is already in the hydration cache (see `setHydratedAnnotations` loop over `selectedAnnotationIds`). If user selects a stub that isn't hydrated, we should trigger a one-off hydrate for that id.
+- **Hydrate-all before export** — `export` endpoints currently iterate `annotationsForIteration`. In stub-only mode that's stubs (no coordinates). Need to either hydrate everything first or export server-side.
+- **Handle hydration failures gracefully** — `logError` is called but the UI doesn't retry or surface the error to the user.
+- **Property values lazy loading** — see section below; likely a bigger memory win than stub annotations at scale.
 
 ---
 
