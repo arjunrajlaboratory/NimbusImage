@@ -121,7 +121,7 @@ class PropertyValues(Resource):
             params["propertyId"], params["datasetId"]
         )
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Search for property values")
         .responseClass("annotation")
@@ -172,7 +172,7 @@ class PropertyValues(Resource):
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Get property value count for a dataset")
         .param("datasetId", "Get count for this dataset", required=True)
@@ -195,7 +195,7 @@ class PropertyValues(Resource):
             )
         }
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description(
             "Get a histogram for property values in the specified dataset"
