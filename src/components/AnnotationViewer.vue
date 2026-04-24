@@ -112,6 +112,7 @@ import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
 import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/polygonSlice";
+import { stubPerf } from "@/utils/stubPerf";
 import RBush from "rbush";
 
 // Module-level helpers
@@ -3219,7 +3220,10 @@ const updateVisibilityDebounced = debounce(updateVisibility, 250);
 watch([filteredAnnotations, xy, z, time], updateVisibility);
 
 // Camera changes (pan/zoom) are debounced since they fire rapidly
-watch(() => store.cameraInfo, updateVisibilityDebounced);
+watch(() => store.cameraInfo, () => {
+  stubPerf.trackCameraUpdate();
+  updateVisibilityDebounced();
+});
 
 // ROI filter
 watch(roiFilter, () => {

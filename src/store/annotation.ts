@@ -45,6 +45,7 @@ import {
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { logError } from "@/utils/log";
+import { stubPerf } from "@/utils/stubPerf";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
@@ -1399,8 +1400,10 @@ export class Annotations extends VuexModule {
     this.setAnnotations([]);
     this.setConnections([]);
     if (!main.dataset || !main.configuration) {
+      stubPerf.setDataset(null);
       return;
     }
+    stubPerf.setDataset(main.dataset.id);
     try {
       const datasetId = main.dataset.id;
       const connectionsPromise =
@@ -1871,6 +1874,7 @@ export class Annotations extends VuexModule {
       newMap.set(id, annotation);
     }
     this.hydratedAnnotations = markRaw(newMap);
+    stubPerf.trackCache(newMap.size, this.visibilityConfig.maxHydrated);
   }
 
   @Mutation
@@ -1988,6 +1992,8 @@ export class Annotations extends VuexModule {
         id,
         annotation: hydratedCache.get(id)!,
       }));
+    stubPerf.trackVisibilityUpdate();
+    stubPerf.trackRequest(idsToFetch.length, keepEntries.length);
     _hydrateFromBackend(api, idsToFetch, keepEntries);
   }
 
@@ -2009,8 +2015,10 @@ async function _hydrateFromBackend(
   keepEntries: { id: string; annotation: IAnnotation }[],
 ) {
   if (idsToFetch.length > 0) {
+    const start = performance.now();
     try {
       const fetched = await api.hydrateAnnotations(idsToFetch);
+      stubPerf.trackLatency(performance.now() - start);
       const newEntries = fetched.map((a) => ({
         id: a.id,
         annotation: a,
