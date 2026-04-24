@@ -3,6 +3,7 @@ import {
   IAnnotation,
   IAnnotationConnection,
   IAnnotationBase,
+  IAnnotationStub,
   IToolConfiguration,
   IAnnotationConnectionBase,
   IWorkerInterfaceValues,
@@ -98,6 +99,24 @@ export default class AnnotationsAPI {
       annotations.push(...newAnnotations);
     }
     return annotations;
+  }
+
+  async getAnnotationStubs(datasetId: string): Promise<IAnnotationStub[]> {
+    const response = await this.client.get("upenn_annotation/stubs", {
+      params: { datasetId },
+    });
+    return (response.data as any[]).map(this.toStub);
+  }
+
+  async hydrateAnnotations(annotationIds: string[]): Promise<IAnnotation[]> {
+    if (annotationIds.length === 0) {
+      return [];
+    }
+    const response = await this.client.post(
+      "upenn_annotation/hydrate",
+      annotationIds,
+    );
+    return (response.data as any[]).map(this.toAnnotation);
   }
 
   async deleteAnnotation(id: string): Promise<void> {
@@ -272,6 +291,30 @@ export default class AnnotationsAPI {
       params,
     );
   }
+
+  toStub = (item: any): IAnnotationStub => {
+    const {
+      _id,
+      tags,
+      shape,
+      channel,
+      location,
+      datasetId,
+      color,
+      centroid,
+      estimatedRadius,
+    } = item;
+    return markRaw({
+      id: _id,
+      tags,
+      shape,
+      channel,
+      location,
+      color: color ?? null,
+      centroid,
+      estimatedRadius,
+    });
+  };
 
   toConnection = (item: any): IAnnotationConnection => {
     const { label, tags, _id, parentId, childId, datasetId } = item;

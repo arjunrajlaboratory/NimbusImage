@@ -85,6 +85,8 @@ class Annotation(Resource):
         self.route("POST", ("compute",), self.compute)
         self.route("POST", ("multiple",), self.createMultiple)
         self.route("DELETE", ("multiple",), self.deleteMultiple)
+        self.route("GET", ("stubs",), self.stubs)
+        self.route("POST", ("hydrate",), self.hydrate)
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
@@ -436,3 +438,169 @@ class Annotation(Resource):
         return self._annotationModel.compute(
             datasetId, bodyJson, self.getCurrentUser()
         )
+
+    @access.public
+    @autoDescribeRoute(
+        Description("Get annotation stubs (without coordinates)")
+        .notes(
+            "Returns lightweight annotation stubs with server-computed "
+            "centroid and estimatedRadius but no coordinates array. "
+            "Used by the frontend stub/hydration architecture to "
+            "quickly load annotation metadata for large datasets."
+        )
+        .param(
+            "datasetId",
+            "Get stubs for all annotations in this dataset",
+            required=True,
+        )
+        .param(
+            "shape",
+            "Filter annotations by shape",
+            required=False,
+        )
+        .jsonParam(
+            "tags",
+            "Filter annotations by tags",
+            required=False,
+            requireArray=True,
+        )
+        .errorResponse()
+    )
+    def stubs(self, params):
+        datasetId = ObjectId(params["datasetId"])
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
+
+        match = {"datasetId": datasetId}
+        if params.get("shape"):
+            match["shape"] = params["shape"]
+        if params.get("tags") and len(params["tags"]) > 0:
+            match["tags"] = {"$all": params["tags"]}
+
+        pipeline = [
+            {"$match": match},
+            {"$addFields": {
+                "centroid": {
+                    "x": {"$avg": "$coordinates.x"},
+                    "y": {"$avg": "$coordinates.y"},
+                },
+                "estimatedRadius": {
+                    "$divide": [
+                        {"$sqrt": {"$add": [
+                            {"$pow": [
+                                {"$subtract": [
+                                    {"$max": "$coordinates.x"},
+                                    {"$min": "$coordinates.x"},
+                                ]},
+                                2,
+                            ]},
+                            {"$pow": [
+                                {"$subtract": [
+                                    {"$max": "$coordinates.y"},
+                                    {"$min": "$coordinates.y"},
+                                ]},
+                                2,
+                            ]},
+                        ]}},
+                        2,
+                    ]
+                },
+            }},
+            {"$project": {"coordinates": 0}},
+        ]
+
+        cursor = self._annotationModel.collection.aggregate(
+            pipeline,
+            hint={"datasetId": 1, "_id": 1},
+        )
+
+        def generateResult():
+            chunk = [b"["]
+            first = True
+            for stub in cursor:
+                if not first:
+                    chunk.append(b",")
+                chunk.append(
+                    orjson.dumps(stub, default=orJsonDefaults)
+                )
+                first = False
+                if len(chunk) > 1000:
+                    yield b"".join(chunk)
+                    chunk = []
+            chunk.append(b"]")
+            yield b"".join(chunk)
+
+        setResponseHeader("Content-Type", "application/json")
+        return generateResult
+
+    @access.public
+    @autoDescribeRoute(
+        Description("Hydrate annotations by ID list")
+        .notes(
+            "Accepts a list of annotation IDs and returns full "
+            "annotation documents (with coordinates). Used by the "
+            "frontend stub/hydration architecture to load full "
+            "geometry for viewport-visible annotations on demand.\n\n"
+            "Note: For very large ID lists (500K+), the $in query "
+            "could approach MongoDB's 16MB BSON document size limit. "
+            "The frontend hydration budget (default 5K-10K) keeps "
+            "requests well under this, but if this endpoint is ever "
+            "used for larger batches, add $in chunking as done in "
+            "the CSV export endpoint."
+        )
+        .jsonParam(
+            "annotationIds",
+            "List of annotation IDs to hydrate",
+            paramType="body",
+            requireArray=True,
+        )
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
+    def hydrate(self, annotationIds):
+        if not annotationIds:
+            return []
+
+        objectIds = [ObjectId(sid) for sid in annotationIds]
+
+        # Find the distinct datasets these annotations belong to
+        # and verify READ access on each.
+        datasetIds = [
+            doc["_id"] for doc in
+            self._annotationModel.collection.aggregate([
+                {"$match": {"_id": {"$in": objectIds}}},
+                {"$group": {"_id": "$datasetId"}},
+            ], hint="_id_")
+        ]
+        requireDatasetsAccess(
+            datasetIds, self.getCurrentUser(), level=AccessType.READ
+        )
+
+        cursor = self._annotationModel.find(
+            {"_id": {"$in": objectIds}}
+        )
+
+        def generateResult():
+            chunk = [b"["]
+            first = True
+            for annotation in cursor:
+                if not first:
+                    chunk.append(b",")
+                chunk.append(
+                    orjson.dumps(
+                        annotation, default=orJsonDefaults
+                    )
+                )
+                first = False
+                if len(chunk) > 1000:
+                    yield b"".join(chunk)
+                    chunk = []
+            chunk.append(b"]")
+            yield b"".join(chunk)
+
+        setResponseHeader("Content-Type", "application/json")
+        return generateResult
