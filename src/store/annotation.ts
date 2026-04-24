@@ -686,12 +686,14 @@ export class Annotations extends VuexModule {
   @Mutation
   public setStubsFromServer(stubs: IAnnotationStub[]) {
     const newStubs = new Map<string, IAnnotationStub>();
+    const newCentroids: { [annotationId: string]: IGeoJSPosition } = {};
     const spatialItems: { id: string; x: number; y: number }[] = new Array(
       stubs.length,
     );
     for (let idx = 0; idx < stubs.length; ++idx) {
       const stub = stubs[idx];
       newStubs.set(stub.id, stub);
+      newCentroids[stub.id] = markRaw(stub.centroid);
       spatialItems[idx] = {
         id: stub.id,
         x: stub.centroid.x,
@@ -699,6 +701,7 @@ export class Annotations extends VuexModule {
       };
     }
     this.annotationStubs = markRaw(newStubs);
+    this.annotationCentroids = markRaw(newCentroids);
     annotationSpatialIndex.bulkLoad(spatialItems);
   }
 

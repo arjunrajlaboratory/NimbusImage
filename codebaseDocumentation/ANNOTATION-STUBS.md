@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status:** Frontend implementation complete with viewport-driven hydration (mock data strategy). Backend stub API deferred.
+**Status:** Backend endpoints implemented and tested. Frontend integration in progress — core plumbing works but rendering/hydration has unresolved issues (see Phase 5 Implementation Notes below).
 
 ---
 
@@ -247,42 +247,56 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - [ ] Verify point-click selection works correctly for stub annotations (centroid hit-testing)
 - [ ] Consider whether non-visible, non-rendered annotations should be selectable via point-click (currently only drag-select catches them)
 
-### Backend API (Phase 5 — Next)
+### Backend API (Phase 5 — DONE)
 
-**Goal:** Two new endpoints so the frontend can load stubs first (fast) and hydrate on demand (viewport-driven).
+Two new endpoints implemented in `server/api/annotation.py`, registered as routes on the `Annotation` resource class.
 
 **Endpoint 1: `GET /upenn_annotation/stubs?datasetId=X`**
-- Returns all annotations WITHOUT `coordinates` field
-- Must include: `_id`, `location`, `shape`, `channel`, `tags`, `color`, server-computed `centroid` and `estimatedRadius`
-- MongoDB approach: projection `{coordinates: 0}` on the existing query, plus compute centroid/radius
-- `estimatedRadius` = max half-extent of bounding box of coordinates (see `estimateAnnotationRadius()` in `src/utils/annotation.ts`)
-- `centroid` = average of all coordinate x/y values (see `simpleCentroid()` in `src/utils/annotation.ts`)
-- Consider precomputing centroid + estimatedRadius on annotation creation/update and storing in the document, so the stub query is a simple projection with no computation
-- Source file: `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/annotation.py`
+- Returns all annotations WITHOUT `coordinates` field, WITH server-computed `centroid` and `estimatedRadius`
+- Supports `shape` and `tags` query filters (same as existing `find` endpoint)
+- Uses MongoDB aggregation pipeline: `$match` → `$addFields` (centroid via `$avg`, estimatedRadius via bbox diagonal) → `$project {coordinates: 0}`
+- Hints `{datasetId: 1, _id: 1}` compound index
+- ACL: `@access.public`, loads dataset folder with `AccessType.READ`
+- Streams response using same chunked `orjson` generator pattern as `find`
+- Performance (26K annotations): 497ms, 6.7 MB (vs 738ms, 9.5 MB for full fetch)
 
-**Endpoint 2: `GET /upenn_annotation/hydrate` (POST with body)**
-- Accepts a list of annotation IDs, returns full annotation documents (with coordinates)
-- MongoDB: `{_id: {$in: [ObjectId(...), ...]}}` query
-- Batch size will typically be 5K–10K IDs
-- Must verify dataset access control (user has READ on the dataset)
+**Endpoint 2: `POST /upenn_annotation/hydrate`**
+- Accepts JSON array of annotation IDs in body, returns full documents with coordinates
+- ACL: Aggregates distinct `datasetId` values from requested annotations, checks READ access on each via `requireDatasetsAccess`
+- Streams response
+- Performance: 104ms for 5K IDs, 329ms for 10K IDs
+- Includes a note about `$in` chunking for future 500K+ scenarios (matching the CSV export lesson)
 
-**Frontend swap points:**
-- Stub fetch: `src/store/annotation.ts` → `fetchAnnotations()` action → currently calls `annotationsAPI.getAnnotationsForDatasetId()`. Replace with new `annotationsAPI.getAnnotationStubs()` call. `setAnnotations()` mutation would receive stubs instead of full annotations.
-- Hydration fetch: `src/store/annotation.ts` → `updateVisibilityAndHydration()` Step 7 → inline loop reads from `this.annotations[idx]`. Replace with `await this.annotationsAPI.getAnnotationsByIds(ids)`. Make the action async, add debounced fetch (200ms) to avoid request spam during pan/zoom.
-- API client: `src/store/AnnotationsAPI.ts` — add `getAnnotationStubs(datasetId)` and `getAnnotationsByIds(ids)` methods.
+**Tests:** 13 new tests in `test_stubs.py` covering both endpoints (empty dataset, centroid/radius computation, shape/tag filters, access denied, nonexistent IDs, point annotations).
 
-**Development approach:**
-- Use `/nimbus-local-ops` for live testing with curl and direct MongoDB queries
-- Profile existing annotation query with `.explain()` to understand current index usage
-- Test MongoDB projection performance (`{coordinates: 0}`) on 500K annotation dataset
-- Test `$in` query performance with 5K–10K IDs
-- Verify access control patterns match existing endpoints
+**All 136 backend tests pass, flake8 clean.**
 
-### On-Demand Hydration (Part of Phase 5)
-- [ ] Make `updateVisibilityAndHydration` async when using real API
+### Frontend Integration (Phase 5 — IN PROGRESS, has unresolved issues)
+
+**What's been implemented:**
+
+- `AnnotationsAPI.ts`: Added `getAnnotationStubs(datasetId)` and `hydrateAnnotations(annotationIds)` methods with `toStub()` converter
+- `annotation.ts`: `fetchAnnotations()` checks annotation count — under `maxVisible` threshold uses existing full fetch, over threshold uses stubs endpoint
+- `annotation.ts`: New `setAnnotationStubsFromBackend()` mutation populates stubs/centroids/spatial index directly from server data (no client-side computation)
+- `annotation.ts`: New `stubOnlyMode` state flag, `annotationsForIteration` getter (returns `annotations[]` normally, stubs in stub-only mode)
+- `annotation.ts`: `removeAnnotationStubs()` mutation for deletions in stub-only mode
+- `annotation.ts`: `_hydrateFromBackend()` module-level async function (see gotcha below)
+- `AnnotationViewer.vue`: Uses `annotationsForIteration` instead of `annotations`, direct `hydratedAnnotations` read for reactive dependency
+- Multiple component updates to use `annotationsForIteration` (filters.ts, AnnotationContextMenu, TagCloudPicker, AnnotationList, AnnotationImport, DeleteConnections, PropertyCreation, annotationImport.ts)
+- All test mocks updated with `annotationsForIteration` getter
+
+**TypeScript: 0 errors. Frontend tests: 2187/2187 passing.**
+
+### On-Demand Hydration (Part of Phase 5 — IN PROGRESS)
+- [x] Backend endpoints for stubs and hydration
+- [x] Frontend API client methods
+- [x] Count-based threshold to choose full fetch vs stubs
+- [x] Hydration cache with keep/fetch logic
+- [ ] **Fix rendering — hydrated annotations not reliably rendering as shapes (see Unresolved Issues below)**
+- [ ] Viewport-driven hydration that actually tracks zoom level
 - [ ] Re-introduce accumulating cache with LRU eviction (don't re-fetch on every pan)
 - [ ] Debounced fetch (200ms) to batch rapid viewport changes into single request
-- [ ] Hydrate on selection (currently done via mock — needs real API)
+- [ ] Hydrate on selection (currently done via mock — needs real API path)
 - [ ] Consider hydrate-on-hover for quick preview
 - [ ] Hydrate all before export operations
 - [ ] Handle hydration failures gracefully
@@ -315,6 +329,112 @@ Property values (`IAnnotationPropertyValues`) are a separate and potentially lar
 
 ---
 
+## Phase 5 Implementation Notes — Unresolved Issues and Lessons Learned
+
+### Critical: Mock strategy hid a rendering non-distinction
+
+In the mock strategy, `layerAnnotations` falls back to the original `annotation` object when `getForRendering()` returns undefined:
+```typescript
+const renderData = needsStubSystem
+  ? annotationStore.getForRendering(annotation.id) ?? annotation
+  : annotation;
+```
+In mock mode, `annotation` comes from `this.annotations[]` which are full `IAnnotation` objects WITH coordinates. So `isHydratedAnnotation(renderData)` was always `true` — every annotation rendered as a shape regardless of whether it was in the hydrated set. **The stub/shape visual distinction was never actually exercised in mock mode.**
+
+In backend mode, `annotation` comes from `annotationsForIteration` which returns stubs (no coordinates). Now the distinction is real: non-hydrated annotations render as dots, hydrated ones as shapes. This exposed multiple issues that were invisible before.
+
+### Critical: vuex-module-decorators async actions are fundamentally broken
+
+`@Action` methods in vuex-module-decorators use a `this` proxy. After an `await`:
+- `this.someState` → `undefined` (reads fail silently)
+- `this.someMutation()` → silently fails (no error without `rawError: true`)
+- `this.context.commit()` → also unreliable after await
+
+**Solution:** Extract async work into a **module-level function** outside the class. Capture all needed state into local variables BEFORE calling the async function. The async function commits mutations via the exported module instance (`annotationModule.setHydratedAnnotations(...)`) rather than through the action proxy.
+
+Current implementation:
+```typescript
+// Inside the @Action (synchronous):
+const hydratedCache = this.hydratedAnnotations;  // capture state
+const api = this.annotationsAPI;                  // capture API ref
+_hydrateFromBackend(api, idsToFetch, keepEntries); // fire-and-forget
+
+// Outside the class (async, no proxy issues):
+async function _hydrateFromBackend(api, idsToFetch, keepEntries) {
+  const fetched = await api.hydrateAnnotations(idsToFetch);
+  annotationModule.setHydratedAnnotations([...keepEntries, ...fetched]);
+}
+```
+
+### Critical: Vuex getter functions defeat Vue reactivity tracking
+
+Vuex getters like `isVisible`, `shouldRenderAsShape`, and `getForRendering` return **functions**. When a Vue `computed()` calls these functions, Vue tracks the dependency on the getter (the function reference), NOT on the state the function reads internally. So when `hydratedAnnotations` or `visibleAnnotationIds` change, `layerAnnotations` doesn't recompute unless it also reads those state properties directly.
+
+**Solution:** In `layerAnnotations`, added explicit read of `annotationStore.hydratedAnnotations` to create a reactive dependency:
+```typescript
+const hydratedAnnotations = annotationStore.hydratedAnnotations;
+```
+This is also used directly for the hydration lookup (`hydratedAnnotations.get(annotation.id)`) instead of going through `getForRendering()`.
+
+**`visibleAnnotationIds` has the same problem** — `annotationStore.isVisible(id)` calls go through a function-returning getter. This may need a similar direct-read fix.
+
+### Resolved: Annotations disappear after hydration in stub-only mode
+
+**Symptom:** In stub-only mode, stubs rendered correctly on initial load. As soon as async hydration populated `hydratedAnnotations`, all annotations disappeared from the canvas. Pan/drag briefly repainted them via GeoJS's internal redraw, then they vanished again on the next hydration cycle.
+
+**Root cause:** `setStubsFromServer` populated `annotationStubs` and the spatial index but **not** `annotationCentroids`. In under-threshold mode, `setAnnotations` builds `annotationCentroids` from full annotation coordinates; in stub-only mode, `setAnnotations([])` is called first (zeroing `annotationCentroids`) and `setStubsFromServer` runs after — but the centroid map was never rebuilt from `stub.centroid`.
+
+The `unrolledCentroidCoordinates` computed reads `annotationStore.annotationCentroids[annotation.id]`, which returned `undefined` for every stub. `drawGeoJSAnnotationFromConnection` spreads that undefined into empty `{}` objects and passes them to `geojs.annotation.lineAnnotation()`, which throws **"Invalid coordinates"**. The error propagated up through `drawNewConnections` → `drawAnnotationsNoThrottle`, **aborting before the final `annotationLayer.draw()`**. Since `clearOldAnnotations(true, false)` had already triggered GeoJS's internal `removeAllAnnotations` (which calls `draw()` internally when `update !== false`, painting an empty canvas), the canvas stayed empty.
+
+The bug only manifested after hydration because `drawNewConnections` requires `getAnnotationFromId` to return truthy for both endpoints of a connection. In stub-only mode, that only happens after hydration populates the relevant ids — so the connection-drawing code path (and its error) was dormant on the initial stub-only render.
+
+Pan/drag briefly reappeared annotations because GeoJS's internal pan handler triggers `_update()` on the layer, which rebuilds features from `m_annotations` (which DID receive the 10K added annotations via `addMultipleAnnotations` before the connection error aborted the flow).
+
+**Fix:** Populate `annotationCentroids` in `setStubsFromServer` from each `stub.centroid`. The invariant "every annotation id in stubOnlyMode has a centroid in `annotationCentroids`" was already assumed by `removeAnnotationStubs` — this fix makes it hold.
+
+### Unresolved: Hydration set doesn't change on zoom
+
+With uniform-size annotations (all ~7.07 radius), the 2x viewport expansion makes `inViewportIds ≈ currentFrameIds` (the expanded viewport covers the entire frame). So viewport-based prioritization has no effect — hydration always selects from the full frame.
+
+**Attempted fixes:**
+- Sort by distance to viewport center → creates visible "hydration ring" (center hydrated, edges not)
+- Hash-based random from visible set → even distribution but doesn't prioritize viewport on zoom
+- Neither approach properly responds to zooming in (selecting annotations in the actual viewport)
+
+**Root cause:** The 2x viewport expansion (designed for pre-hydration during pan) is too aggressive for this dataset geometry. When zoomed out, the expanded viewport covers everything.
+
+**Potential solutions:**
+1. Use the **unexpanded** viewport for hydration, expanded only for visibility
+2. Adaptive expansion based on zoom level (less expansion when zoomed out)
+3. Two-pass: hydrate all in actual (unexpanded) viewport first, fill remaining budget from expanded area
+4. Just increase `maxHydrated` to match `maxVisible` (simpler, costs more memory but these are only 4-coord annotations)
+
+### Files modified in Phase 5 frontend integration
+
+| File | Changes |
+|------|---------|
+| `src/store/AnnotationsAPI.ts` | Added `getAnnotationStubs()`, `hydrateAnnotations()`, `toStub()` |
+| `src/store/annotation.ts` | `stubOnlyMode` flag, `annotationsForIteration` getter, `setAnnotationStubsFromBackend()` mutation, `removeAnnotationStubs()` mutation, `_hydrateFromBackend()` module-level function, modified `fetchAnnotations()` (count-based branching), modified `updateVisibilityAndHydration()` Step 7, fixed `allAnnotationIds`/`inactiveAnnotationIds`/`annotationTags`/`getAnnotationFromId`/`deleteAnnotations`/`combineAnnotations` for dual-mode |
+| `src/components/AnnotationViewer.vue` | `annotationsForIteration` refs (3 places), direct `hydratedAnnotations` reactive dependency, inline hydration lookup in `layerAnnotations`, stub-state-change check in `clearOldAnnotations` |
+| `src/store/filters.ts` | `annotationsForIteration` in `filteredAnnotations` getter |
+| `src/components/AnnotationContextMenu.vue` | `annotationsForIteration` |
+| `src/components/TagCloudPicker.vue` | `annotationsForIteration` |
+| `src/components/AnnotationBrowser/AnnotationList.vue` | `annotationsForIteration` |
+| `src/components/AnnotationBrowser/AnnotationImport.vue` | `annotationsForIteration` |
+| `src/components/AnnotationBrowser/DeleteConnections.vue` | `annotationsForIteration` |
+| `src/components/AnnotationBrowser/AnnotationProperties/PropertyCreation.vue` | `annotationsForIteration` |
+| `src/utils/annotationImport.ts` | `annotationsForIteration` |
+| Tests: `AnnotationViewer.test.ts`, `TagCloudPicker.test.ts`, `AnnotationList.test.ts`, `DeleteConnections.test.ts`, `PropertyCreation.test.ts` | Added `annotationsForIteration` getter to mocks |
+
+### Backend files modified in Phase 5
+
+| File | Changes |
+|------|---------|
+| `server/api/annotation.py` | Added `stubs` and `hydrate` route + handler methods |
+| `test/test_stubs.py` | **NEW** — 13 tests for both endpoints |
+
+---
+
 ## Resolved Design Decisions
 
 1. **Stub fields**: Include tags, shape, channel, location, centroid, color, estimatedRadius. Exclude datasetId (redundant), name (usually null), coordinates (the whole point)
@@ -322,7 +442,9 @@ Property values (`IAnnotationPropertyValues`) are a separate and potentially lar
 3. **Stub rendering**: Points at centroid, sized to `estimatedRadius`
 4. **Vue 3 reactivity**: All new Maps/Sets wrapped with `markRaw()`, replaced on mutation for Vuex reactivity
 5. **Two spatial indexes coexist**: Displayed annotations RBush (bbox-based, for click/lasso hit-testing) and global centroid RBush (for visibility viewport queries). Independent, different purposes.
-6. **`annotations[]` retained**: Full array stays for backward compatibility. Stub architecture is additive.
+6. **`annotations[]` retained in under-threshold mode**: When count ≤ `maxVisible`, full fetch is used and `annotations[]` is populated normally. When count > `maxVisible`, `annotations[]` is empty and `annotationsForIteration` returns stubs cast as `IAnnotation[]`. The cast is safe because downstream iteration only reads metadata fields (id, channel, location, tags, shape, color) that stubs share. Making `coordinates` optional in `IAnnotation` was considered but rejected — it would require restructuring the type hierarchy (`IAnnotation extends IAnnotationBase` where `IAnnotationBase.coordinates` is required for creation) and adding guards at every coordinates access point. The separate-types approach (3 AnnotationViewer references + ~8 component references to update) was cleaner.
 7. **Shape as string enum**: Not worth compressing to numeric index (~13 bytes savings vs added complexity)
 8. **Connections don't need stubs**: Connections are lightweight (just two annotation IDs + label/tags), so stub treatment is unnecessary
 9. **No plain private methods in Vuex modules**: vuex-module-decorators `@Action` proxy only exposes state, getters, `@Mutation`, and `@Action` methods on `this`. A plain `private` method (no decorator) is invisible to the proxy — calling it silently throws TypeError, swallowed by Vuex without `rawError: true`. All private methods must be decorated or their logic inlined in the action.
+10. **No async/await in `@Action` methods that need state after the await**: The vuex-module-decorators proxy completely breaks after `await` — state reads return undefined, mutation calls silently fail. Solution: extract async work to a module-level function, capture all state before calling it, commit via the exported module instance.
+11. **Vuex getter functions defeat Vue computed dependency tracking**: Getters that return functions (e.g., `get isVisible() { return (id) => this.visibleAnnotationIds.has(id); }`) don't create reactive dependencies on the underlying state when the returned function is called inside a `computed()`. The computed only tracks the getter reference, not what the function reads. Fix: also read the underlying state directly in the computed.

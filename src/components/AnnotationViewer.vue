@@ -404,9 +404,12 @@ const layerAnnotations = computed(() => {
   > = new Map();
   const stubsSize = annotationStore.annotationStubs?.size ?? 0;
   const { maxVisible, globalThreshold } = annotationStore.visibilityConfig;
-  // Direct read creates reactive dependency so layerAnnotations
-  // recomputes when async hydration completes
+  // Direct reads create reactive dependencies so layerAnnotations
+  // recomputes when these change. The getter-returning-function pattern
+  // (isVisible, getForRendering) defeats Vue's dependency tracking —
+  // Vue tracks the getter reference, not the state the function reads.
   const hydratedAnnotations = annotationStore.hydratedAnnotations;
+  const visibleAnnotationIds = annotationStore.visibleAnnotationIds;
 
   // First pass: collect frame annotations per layer
   const layerFrameAnnotations: Map<string, IAnnotation[]> = new Map();
@@ -448,7 +451,7 @@ const layerAnnotations = computed(() => {
         ? globalNeedsStubSystem
         : stubsSize > 0 && frameAnnotations.length > maxVisible);
     for (const annotation of frameAnnotations) {
-      if (needsStubSystem && !annotationStore.isVisible(annotation.id)) {
+      if (needsStubSystem && !visibleAnnotationIds.has(annotation.id)) {
         continue;
       }
       const renderData: TAnnotationOrStub = needsStubSystem
