@@ -78,17 +78,29 @@
           </v-col>
           <v-col class="fill-height recent-dataset">
             <section class="mb-4 home-section">
-              <v-tabs v-model="datasetsTab" color="primary">
-                <v-tab>Recent Datasets</v-tab>
-                <v-tab>Recent Projects</v-tab>
-                <v-tab
-                  v-if="Boolean(zenodoCommunityId)"
-                  id="try-sample-dataset-tourstep"
-                  v-tour-trigger="'try-sample-dataset-tourtrigger'"
+              <div class="d-flex align-center">
+                <v-tabs v-model="datasetsTab" color="primary">
+                  <v-tab>Recent Datasets</v-tab>
+                  <v-tab>Recent Projects</v-tab>
+                  <v-tab
+                    v-if="Boolean(zenodoCommunityId)"
+                    id="try-sample-dataset-tourstep"
+                    v-tour-trigger="'try-sample-dataset-tourtrigger'"
+                  >
+                    Sample Datasets
+                  </v-tab>
+                </v-tabs>
+                <v-chip
+                  v-if="datasetsTab === 0"
+                  size="small"
+                  variant="tonal"
+                  :color="recentsShowMineOnly ? 'primary' : undefined"
+                  class="ml-2"
+                  @click="recentsShowMineOnly = !recentsShowMineOnly"
                 >
-                  Sample Datasets
-                </v-tab>
-              </v-tabs>
+                  Mine only
+                </v-chip>
+              </div>
               <v-window v-model="datasetsTab" class="fill-height">
                 <v-window-item class="fill-height">
                   <recent-datasets
@@ -538,6 +550,7 @@ const browseMode = ref<"files" | "collections" | "projects">("files");
 const fileBrowserExpanded = ref(Persister.get("fileBrowserExpanded", false));
 const datasetsTab = ref(0);
 const loadingProjects = ref(false);
+const recentsShowMineOnly = ref(!store.isAdmin);
 
 const pendingFiles = ref<File[]>([]);
 const datasetName = ref("");
@@ -878,7 +891,7 @@ async function fetchDatasetsAndConfigurations() {
 
 async function initializeRecentViews() {
   try {
-    await store.fetchRecentDatasetViews();
+    await store.fetchRecentDatasetViews(recentsShowMineOnly.value);
   } catch (error) {
     logError("Failed to initialize recent views:", error);
   }
@@ -1129,6 +1142,7 @@ async function initializeWelcomeTour() {
 
 // Watchers
 watch(datasetViews, () => fetchDatasetsAndConfigurations());
+watch(recentsShowMineOnly, () => initializeRecentViews());
 watch(
   () => girderResources.resources,
   () => fetchDatasetsAndConfigurations(),
@@ -1238,6 +1252,7 @@ defineExpose({
   fileBrowserExpanded,
   datasetsTab,
   loadingProjects,
+  recentsShowMineOnly,
   pendingFiles,
   datasetName,
   selectedLocation,
