@@ -8,6 +8,8 @@ import {
 import store from "./root";
 import { markRaw } from "vue";
 
+type TimeoutHandle = ReturnType<typeof setTimeout>;
+
 import {
   IAnnotationProperty,
   IWorkerInterface,
@@ -75,6 +77,11 @@ export class Properties extends VuexModule {
   workerPreviews: { [image: string]: { text: string; image: string } } = {};
   displayWorkerPreview = true;
 
+  // Pending fallback timers from requestWorkerPreview, keyed by image so a
+  // new request supersedes the previous one. Held in markRaw to keep Vue
+  // from making the timer handles reactive.
+  pendingWorkerPreviewTimeouts: Map<string, TimeoutHandle> = markRaw(new Map());
+
   get getStatus() {
     return (propertyId: string) => {
       return this.propertyStatuses[propertyId] || defaultStatus();
@@ -132,6 +139,47 @@ export class Properties extends VuexModule {
   @Mutation
   setDisplayWorkerPreview(value: boolean) {
     this.displayWorkerPreview = value;
+  }
+
+  @Mutation
+  setPendingWorkerPreviewTimeout({
+    image,
+    handle,
+  }: {
+    image: string;
+    handle: TimeoutHandle;
+  }) {
+    const previous = this.pendingWorkerPreviewTimeouts.get(image);
+    if (previous !== undefined) {
+      clearTimeout(previous);
+    }
+    this.pendingWorkerPreviewTimeouts.set(image, handle);
+  }
+
+  @Mutation
+  clearPendingWorkerPreviewTimeout(image: string) {
+    const handle = this.pendingWorkerPreviewTimeouts.get(image);
+    if (handle !== undefined) {
+      clearTimeout(handle);
+      this.pendingWorkerPreviewTimeouts.delete(image);
+    }
+  }
+
+  @Mutation
+  protected resetPropertyStateImpl() {
+    this.propertyStatuses = {};
+    this.workerPreviews = {};
+    for (const handle of this.pendingWorkerPreviewTimeouts.values()) {
+      clearTimeout(handle);
+    }
+    this.pendingWorkerPreviewTimeouts.clear();
+  }
+
+  // Clear per-dataset property state. Worker interfaces and the worker
+  // image list are intentionally preserved since they are not dataset-scoped.
+  @Action
+  public resetPropertyState() {
+    this.resetPropertyStateImpl();
   }
 
   @Action
@@ -730,12 +778,15 @@ export class Properties extends VuexModule {
             })
             .then((success: boolean) => {
               if (success) {
+                this.clearPendingWorkerPreviewTimeout(image);
                 this.fetchWorkerPreview(image);
               }
             });
-          setTimeout(() => {
+          const handle = setTimeout(() => {
+            this.clearPendingWorkerPreviewTimeout(image);
             this.fetchWorkerPreview(image);
           }, 5000);
+          this.setPendingWorkerPreviewTimeout({ image, handle });
         }
       });
   }
