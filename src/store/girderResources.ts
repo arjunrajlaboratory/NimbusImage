@@ -18,6 +18,12 @@ import {
 import { IDataset, IDatasetConfiguration } from "./model";
 import { setBaseCollectionValues, asDataset, parseTiles } from "./GirderAPI";
 import { logError } from "@/utils/log";
+import { markRaw } from "vue";
+
+// Hard cap on the resource cache. Browsing many datasets/folders within a
+// session previously caused this map to grow without bound. The cap is high
+// enough that normal navigation stays fully cached.
+const MAX_CACHED_RESOURCES = 1000;
 
 /**
  * Store to cache requests to resources, mostly items and folders
@@ -27,6 +33,10 @@ export class GirderResources extends VuexModule {
   resources: { [resourceId: string]: IGirderSelectAble | null } = {};
   resourcesLocks: { [resourceId: string]: Promise<void> } = {};
 
+  // Insertion-order tracker for FIFO eviction. markRaw avoids reactive
+  // overhead since the order has no UI consumers.
+  private resourceInsertionOrder: Set<string> = markRaw(new Set());
+
   @Mutation
   public setResource({
     id,
@@ -35,7 +45,23 @@ export class GirderResources extends VuexModule {
     id: string;
     resource: IGirderSelectAble | null;
   }) {
+    // Bump existing entry to most-recent slot.
+    if (this.resourceInsertionOrder.has(id)) {
+      this.resourceInsertionOrder.delete(id);
+    }
+    this.resourceInsertionOrder.add(id);
     this.resources[id] = resource;
+
+    // Evict oldest entries once the cap is exceeded.
+    while (this.resourceInsertionOrder.size > MAX_CACHED_RESOURCES) {
+      const oldest = this.resourceInsertionOrder.values().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.resourceInsertionOrder.delete(oldest);
+      delete this.resources[oldest];
+      delete this.resourcesLocks[oldest];
+    }
   }
 
   @Action
@@ -154,6 +180,7 @@ export class GirderResources extends VuexModule {
   private resetResource(id: string) {
     delete this.resources[id];
     delete this.resourcesLocks[id];
+    this.resourceInsertionOrder.delete(id);
   }
 
   @Action

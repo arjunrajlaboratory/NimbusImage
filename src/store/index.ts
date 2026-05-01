@@ -1232,6 +1232,8 @@ export class Main extends VuexModule {
   @Action
   async setSelectedDataset(id: string | null) {
     this.api.flushCaches();
+    this.context.dispatch("resetAnnotationState");
+    this.context.dispatch("resetPropertyState");
     if (!id) {
       this.setDataset({ id, data: null });
       return;

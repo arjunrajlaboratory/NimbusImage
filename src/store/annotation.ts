@@ -222,6 +222,24 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
+  protected resetAnnotationStateImpl() {
+    this.selectedAnnotationIds = markRaw(new Set());
+    this.activeAnnotationIds = [];
+    this.copiedAnnotations = [];
+    this.hoveredAnnotationId = null;
+    this.pendingAnnotation = null;
+    this.submitPendingAnnotation = null;
+  }
+
+  // Clear per-dataset annotation state. Call when switching datasets so
+  // stale references (selection, active set, copied annotations, hover,
+  // pending) don't pin objects from the previous view.
+  @Action
+  public resetAnnotationState() {
+    this.resetAnnotationStateImpl();
+  }
+
+  @Mutation
   public activateAnnotations(ids: string[]) {
     const activeIds = new Set(this.activeAnnotationIds);
     const idsToAdd = ids.filter((id: string) => !activeIds.has(id));
