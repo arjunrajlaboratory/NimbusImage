@@ -106,6 +106,7 @@
                   <recent-datasets
                     :dataset-view-items="datasetViewItems"
                     :get-user-display-name="getUserDisplayName"
+                    :get-user-short-name="getUserShortName"
                     :format-date-number="formatDateNumber"
                     @dataset-clicked="navigateToDatasetView"
                     class="fill-height"
@@ -484,6 +485,7 @@ import {
 import girderResources from "@/store/girderResources";
 import {
   IDatasetView,
+  IRecentDatasetViewItem,
   WelcomeTourNames,
   WelcomeTourTypes,
   WelcomeTourStatus,
@@ -565,7 +567,11 @@ const nameConflicts = ref<number[]>([]);
 const validatingNames = ref(false);
 let validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-const userDisplayNames = ref<Record<string, string>>({});
+interface IUserDisplayInfo {
+  full: string; // "Name (email)" — used in tooltips and project list
+  short: string; // "Name" only — used in dense recents row
+}
+const userDisplayNames = ref<Record<string, IUserDisplayInfo>>({});
 
 const selectedZenodoDataset = ref<any>(null);
 
@@ -684,8 +690,8 @@ const configInfo = computed(() => {
   return infos;
 });
 
-const datasetViewItems = computed(() => {
-  const items = [];
+const datasetViewItems = computed<IRecentDatasetViewItem[]>(() => {
+  const items: IRecentDatasetViewItem[] = [];
   for (const datasetView of datasetViews.value) {
     const configI = configInfo.value[datasetView.configurationId];
     const datasetI = datasetInfo.value[datasetView.datasetId];
@@ -813,20 +819,31 @@ async function getUsernameFromId(
   };
 }
 
-function getUserDisplayName(creatorId: string): string {
+function ensureUserDisplayInfo(creatorId: string) {
   if (!userDisplayNames.value[creatorId]) {
     userDisplayNames.value = {
       ...userDisplayNames.value,
-      [creatorId]: "Loading...",
+      [creatorId]: { full: "Loading...", short: "Loading..." },
     };
     getUsernameFromId(creatorId).then((user) => {
       userDisplayNames.value = {
         ...userDisplayNames.value,
-        [creatorId]: `${user.fullname} (${user.username})`,
+        [creatorId]: {
+          full: `${user.fullname} (${user.username})`,
+          short: user.fullname,
+        },
       };
     });
   }
   return userDisplayNames.value[creatorId];
+}
+
+function getUserDisplayName(creatorId: string): string {
+  return ensureUserDisplayInfo(creatorId).full;
+}
+
+function getUserShortName(creatorId: string): string {
+  return ensureUserDisplayInfo(creatorId).short;
 }
 
 async function fetchUsersForDatasets() {
@@ -844,12 +861,16 @@ async function fetchUsersForDatasets() {
     });
 
     // Update display names using object spread for reactivity
-    const updates: Record<string, string> = {};
+    const updates: Record<string, IUserDisplayInfo> = {};
     for (const userId of userIds) {
       const user = girderResources.watchUser(userId);
       if (user) {
-        const fullname = `${user.firstName} ${user.lastName}`.trim();
-        updates[userId] = `${fullname || user.email} (${user.email})`;
+        const fullname =
+          `${user.firstName} ${user.lastName}`.trim() || user.email;
+        updates[userId] = {
+          full: `${fullname} (${user.email})`,
+          short: fullname,
+        };
       }
     }
     if (Object.keys(updates).length > 0) {
@@ -1152,6 +1173,11 @@ watch(
   () => store.isLoggedIn,
   (val) => {
     if (val) {
+      // Auth has resolved — set the mine-only default based on the now-known
+      // admin status. Without this, an admin who reloads the page sees the
+      // chip stuck on "Mine only" because Home's setup ran before
+      // store.isAdmin was populated.
+      recentsShowMineOnly.value = !store.isAdmin;
       initializeWelcomeTour();
       fetchRecentProjects();
     }
@@ -1282,6 +1308,7 @@ defineExpose({
   validateDatasetNames,
   getNameError,
   getUserDisplayName,
+  getUserShortName,
   setLocation,
   onLocationUpdate,
   handleDrop,

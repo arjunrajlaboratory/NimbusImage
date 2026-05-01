@@ -163,9 +163,17 @@ class DatasetView(Resource):
             if key in params:
                 query[key] = ObjectId(params[key])
 
-        # Filter to only views owned by the current user
-        if (params.get("currentUserOnly", "").lower()
-                in ("true", "1", "yes") and user):
+        # Filter to only views owned by the current user.
+        # describeRoute does not auto-convert types, so coerce to str
+        # before lowering in case a client sends a non-string truthy.
+        # Intentionally checks only direct user grants (not group-based
+        # access) — "Mine only" means views the user personally owns,
+        # which corresponds to the explicit ADMIN entry creators receive.
+        currentUserOnly = (
+            str(params.get("currentUserOnly", "")).lower()
+            in ("true", "1", "yes", "on")
+        )
+        if currentUserOnly and user:
             query["access.users"] = {
                 "$elemMatch": {
                     "id": user["_id"],
