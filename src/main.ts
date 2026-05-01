@@ -22,6 +22,7 @@ import "mousetrap";
 import "mousetrap/plugins/record/mousetrap-record.min.js";
 import { mousetrapDirective } from "@/utils/v-mousetrap";
 import { descriptionDirective } from "@/utils/v-description";
+import { initSentry } from "@/utils/sentry";
 import chat from "./store/chat";
 import { installTour } from "./plugins/tour";
 import { tourTriggerDirective } from "./plugins/tour-trigger.directive";
@@ -31,6 +32,8 @@ main.setupWatchers();
 chat.initializeChatDatabase();
 
 const app = createApp(App);
+
+initSentry(app);
 
 app.use(router);
 app.use(store);

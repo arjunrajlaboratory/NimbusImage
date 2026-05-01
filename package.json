@@ -33,6 +33,7 @@
   "dependencies": {
     "@girder/components": "4.0.0",
     "@mdi/font": "^5.3.45",
+    "@sentry/vue": "^10.51.0",
     "@types/bluebird": "^3.5.42",
     "@types/d3-array": "^3.0.1",
     "@types/d3-color": "^1.2.2",
@@ -96,6 +97,7 @@
   },
   "devDependencies": {
     "@rollup/plugin-yaml": "^4.1.2",
+    "@sentry/vite-plugin": "^5.2.1",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.19.33",
     "@types/papaparse": "^5.3.8",
