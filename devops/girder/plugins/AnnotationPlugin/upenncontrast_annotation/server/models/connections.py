@@ -37,7 +37,7 @@ class ConnectionSchema:
     }
 
 
-class AnnotationConnection(ProxiedModel, AccessControlMixin):
+class AnnotationConnection(AccessControlMixin, ProxiedModel):
     # TODO: write lock
 
     def __init__(self):

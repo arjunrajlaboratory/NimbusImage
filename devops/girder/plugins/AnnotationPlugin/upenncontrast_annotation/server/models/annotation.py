@@ -77,7 +77,7 @@ class AnnotationSchema:
     }
 
 
-class Annotation(ProxiedModel, AccessControlMixin):
+class Annotation(AccessControlMixin, ProxiedModel):
     """
     Defines a model for storing and handling UPennContrast annotations in the
     database.
