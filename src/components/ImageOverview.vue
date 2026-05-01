@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount, markRaw } from "vue";
 import geojs from "geojs";
 
 import store from "@/store";
@@ -210,7 +210,7 @@ function create() {
       actions: {},
     },
   });
-  map.value = geojs.map(params.map);
+  map.value = markRaw(geojs.map(params.map));
 
   if (window.ResizeObserver) {
     observer.value = new window.ResizeObserver(() => {
@@ -230,18 +230,22 @@ function create() {
   params.layer.autoshareRenderer = false;
   // Always use level 0
   params.layer.tileRounding = () => 0;
-  osmLayer.value = map.value.createLayer("osm", params.layer);
-  featureLayer.value = map.value.createLayer("feature", {
-    features: ["polygon"],
-  });
-  outlineFeature.value = featureLayer.value.createFeature("polygon", {
-    style: {
-      stroke: true,
-      strokeColor: "cyan",
-      strokeWidth: 2,
-      fill: false,
-    },
-  });
+  osmLayer.value = markRaw(map.value.createLayer("osm", params.layer));
+  featureLayer.value = markRaw(
+    map.value.createLayer("feature", {
+      features: ["polygon"],
+    }),
+  );
+  outlineFeature.value = markRaw(
+    featureLayer.value.createFeature("polygon", {
+      style: {
+        stroke: true,
+        strokeColor: "cyan",
+        strokeWidth: 2,
+        fill: false,
+      },
+    }),
+  );
   /* Clicking in the overview recenters to that spot */
   featureLayer.value.geoOn(geojs.event.mouseclick, (evt: any) => {
     emit("centerChange", evt.geo);
