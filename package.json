@@ -85,7 +85,7 @@
     "roboto-fontface": "*",
     "shepherd.js": "^8.3.1",
     "sortablejs": "^1.15.2",
-    "uuid": "^3.4.0",
+    "uuid": "^14.0.0",
     "vue": "^3.5.28",
     "vue-async-computed": "^4.0.1",
     "vue-router": "^4.6.4",
