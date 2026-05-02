@@ -237,11 +237,11 @@ describe("useRouteMapper", () => {
     expect(setter).not.toHaveBeenCalled();
 
     // 3. Drain: resolve the in-flight replace so pendingUrlWrites returns
-    //    to 0. The fix should re-run syncFromRoute with the current route.
+    //    to 0. The drain replay is debounced (DRAIN_DEBOUNCE_MS = 100ms) so
+    //    that fast-scrub cascades don't fire syncFromRoute between every
+    //    queued router.replace — wait past the debounce window.
     resolveReplace();
-    // Let the promise chain settle (await router.replace + finally + drain
-    // callback).
-    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 150));
     await nextTick();
     await nextTick();
 

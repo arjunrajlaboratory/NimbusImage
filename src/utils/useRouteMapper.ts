@@ -23,25 +23,48 @@ let currentRouteChanges = 0;
 // reads the (now-outdated) URL value and overwrites the user's latest input.
 let pendingUrlWrites = 0;
 
-// Callbacks to run when pendingUrlWrites returns to 0. A syncFromRoute that
-// is skipped because writes are still in flight registers itself here and
-// re-runs once the URL has settled — without this, a real external URL
-// change (browser back/forward, manual edit) landing during the drain
-// window is silently dropped and the store stays out of sync with the URL
-// until some unrelated future route change happens.
+// Callbacks to run when pendingUrlWrites returns to 0 AND stays there for
+// DRAIN_DEBOUNCE_MS. A syncFromRoute that is skipped because writes are
+// still in flight registers itself here and re-runs once the URL has
+// settled — without this, a real external URL change (browser back/forward,
+// manual edit) landing during the drain window is silently dropped and the
+// store stays out of sync with the URL until some unrelated future route
+// change happens.
+//
+// The debounce is critical for fast slider scrubs: each router.replace
+// resolves with the URL at *that* tick's value, while later ticks are still
+// queued behind it. If the drain fires the moment pendingUrlWrites hits 0
+// (between every queued replace), syncFromRoute reads the now-stale URL
+// value and writes it to the store via mapper.set — clobbering the user's
+// most recent input. That manifests as render stutter because every
+// scrub tick triggers two store writes (user → store, then stale URL →
+// store) and double the render churn. See PR #1129 follow-up for the log
+// trace that motivated this.
 const onDrainCallbacks: Array<() => void> = [];
+const DRAIN_DEBOUNCE_MS = 100;
+let drainTimer: ReturnType<typeof setTimeout> | null = null;
 
 function notifyDrainIfIdle() {
   if (pendingUrlWrites !== 0 || onDrainCallbacks.length === 0) {
     return;
   }
-  // splice + iterate so callbacks that re-register (very unlikely, but
-  // possible if a sync immediately triggers a new write and another skip)
-  // don't run twice in the same drain.
-  const drained = onDrainCallbacks.splice(0);
-  for (const cb of drained) {
-    cb();
+  // Debounce: each call resets the timer. Continuous router.replace
+  // activity (fast slider scrub) keeps resetting it, so the callbacks
+  // only fire once the writer has been quiet for DRAIN_DEBOUNCE_MS.
+  if (drainTimer !== null) {
+    clearTimeout(drainTimer);
   }
+  drainTimer = setTimeout(() => {
+    drainTimer = null;
+    // Re-check: a write may have started between schedule and fire.
+    if (pendingUrlWrites !== 0 || onDrainCallbacks.length === 0) {
+      return;
+    }
+    const drained = onDrainCallbacks.splice(0);
+    for (const cb of drained) {
+      cb();
+    }
+  }, DRAIN_DEBOUNCE_MS);
 }
 
 // Avoid "navigation cancelled" errors by doing calls to router.replace() one at a time
