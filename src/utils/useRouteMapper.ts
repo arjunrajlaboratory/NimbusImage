@@ -1,4 +1,4 @@
-import { watch, computed } from "vue";
+import { watch, computed, onScopeDispose } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { Router, RouteLocationNormalized } from "vue-router";
 import { logError } from "./log";
@@ -23,6 +23,27 @@ let currentRouteChanges = 0;
 // reads the (now-outdated) URL value and overwrites the user's latest input.
 let pendingUrlWrites = 0;
 
+// Callbacks to run when pendingUrlWrites returns to 0. A syncFromRoute that
+// is skipped because writes are still in flight registers itself here and
+// re-runs once the URL has settled — without this, a real external URL
+// change (browser back/forward, manual edit) landing during the drain
+// window is silently dropped and the store stays out of sync with the URL
+// until some unrelated future route change happens.
+const onDrainCallbacks: Array<() => void> = [];
+
+function notifyDrainIfIdle() {
+  if (pendingUrlWrites !== 0 || onDrainCallbacks.length === 0) {
+    return;
+  }
+  // splice + iterate so callbacks that re-register (very unlikely, but
+  // possible if a sync immediately triggers a new write and another skip)
+  // don't run twice in the same drain.
+  const drained = onDrainCallbacks.splice(0);
+  for (const cb of drained) {
+    cb();
+  }
+}
+
 // Avoid "navigation cancelled" errors by doing calls to router.replace() one at a time
 const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
   async (
@@ -46,6 +67,7 @@ const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
       await router.replace(replacement);
     } finally {
       pendingUrlWrites--;
+      notifyDrainIfIdle();
     }
   },
 );
@@ -101,12 +123,35 @@ export function useRouteMapper(
   const route = useRoute();
   const router = useRouter();
 
+  // Per-instance flags so we can safely register a one-shot drain callback
+  // (no duplicates per instance) and skip it if the component has already
+  // unmounted by the time the drain fires.
+  let drainReplayQueued = false;
+  let isAlive = true;
+  onScopeDispose(() => {
+    isAlive = false;
+  });
+
   // URL → Store sync
   async function syncFromRoute(r: RouteLocationNormalized) {
     // Skip if our own Store→URL writes are still draining — the URL value we
     // would read here is stale, and writing it back to the store would clobber
-    // the user's newer input (e.g., during fast slider scrubbing).
+    // the user's newer input (e.g., during fast slider scrubbing). We
+    // register a one-shot replay so a real external URL change that arrives
+    // during the drain window doesn't get permanently dropped.
     if (pendingUrlWrites > 0) {
+      if (!drainReplayQueued) {
+        drainReplayQueued = true;
+        onDrainCallbacks.push(() => {
+          drainReplayQueued = false;
+          if (isAlive) {
+            // Use the current route, not the (possibly stale) `r` from when
+            // this was originally skipped — `route` is reactive and reflects
+            // the URL state right now.
+            syncFromRoute(route);
+          }
+        });
+      }
       return;
     }
     currentRouteChanges++;

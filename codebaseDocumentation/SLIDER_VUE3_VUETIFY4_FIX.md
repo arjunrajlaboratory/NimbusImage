@@ -54,7 +54,7 @@ async function syncFromRoute(r) {
 }
 ```
 
-This is symmetric with the existing `currentRouteChanges` guard. Edge case: a real external URL change (browser back) that lands while we have pending writes will be missed — but this is vanishingly rare during a slider drag, and the next external change will sync correctly once writes drain.
+This is symmetric with the existing `currentRouteChanges` guard. To avoid silently dropping a real external URL change (browser back/forward, manual edit) that lands during the drain window, a skipped `syncFromRoute` registers a one-shot drain-replay callback on a module-level `onDrainCallbacks` queue. When `pendingUrlWrites` returns to 0, all queued callbacks fire and re-run `syncFromRoute` with the *current* (now-settled) `route`. Each `useRouteMapper` instance dedupes its own callback registration with a `drainReplayQueued` flag and gates the replay on `isAlive` (set false by `onScopeDispose`) so a callback that fires after the component unmounts is a no-op.
 
 ### 2. Counter layout shift (`src/components/ValueSlider.vue`)
 
