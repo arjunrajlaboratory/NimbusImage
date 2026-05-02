@@ -14,6 +14,15 @@ export interface IMapper<T> {
 // It counts how many instances of syncFromRoute are being called
 let currentRouteChanges = 0;
 
+// Counts in-flight Store→URL writes. While > 0, the URL is mid-transition
+// because of our own router.replace() calls — skip URL→Store sync to avoid
+// reading a stale URL value (a previously-queued router.replace that just
+// resolved) and writing it back over a newer store value. Without this guard,
+// rapid slider scrubbing causes store.time/xy/z to ping-pong as queued URL
+// writes drain, because each fullPath change triggers syncFromRoute which
+// reads the (now-outdated) URL value and overwrites the user's latest input.
+let pendingUrlWrites = 0;
+
 // Avoid "navigation cancelled" errors by doing calls to router.replace() one at a time
 const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
   async (
@@ -32,7 +41,12 @@ const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
       query: { ...route.query },
     };
     replacement[type][key] = stringifiedValue;
-    await router.replace(replacement);
+    pendingUrlWrites++;
+    try {
+      await router.replace(replacement);
+    } finally {
+      pendingUrlWrites--;
+    }
   },
 );
 
@@ -89,6 +103,12 @@ export function useRouteMapper(
 
   // URL → Store sync
   async function syncFromRoute(r: RouteLocationNormalized) {
+    // Skip if our own Store→URL writes are still draining — the URL value we
+    // would read here is stale, and writing it back to the store would clobber
+    // the user's newer input (e.g., during fast slider scrubbing).
+    if (pendingUrlWrites > 0) {
+      return;
+    }
     currentRouteChanges++;
     try {
       const promises = [
