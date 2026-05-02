@@ -105,19 +105,30 @@
       </div>
     </div>
     <toolset></toolset>
-    <v-radio-group
-      v-model="layerMode"
-      label="Layers: "
-      mandatory
-      density="compact"
-      inline
-      hide-details
-      class="layer-mode-controls"
-    >
-      <v-radio value="single" label="Single" class="smaller" />
-      <v-radio value="multiple" label="Multiple" class="smaller" />
-      <v-radio value="unroll" label="Unroll" class="smaller" />
-    </v-radio-group>
+    <div class="layer-mode-wrapper">
+      <v-radio-group
+        v-model="layerMode"
+        label="Layers: "
+        mandatory
+        density="compact"
+        inline
+        hide-details
+        class="layer-mode-controls"
+      >
+        <v-radio value="single" label="Single" class="smaller" />
+        <v-radio value="multiple" label="Multiple" class="smaller" />
+        <v-radio value="unroll" label="Unroll" class="smaller" />
+      </v-radio-group>
+      <v-btn
+        class="add-layer-btn"
+        variant="outlined"
+        color="primary"
+        size="x-small"
+        @click="store.addLayer"
+      >
+        Add layer
+      </v-btn>
+    </div>
     <div>
       <slot></slot>
     </div>
@@ -148,6 +159,16 @@
       margin-right: 0;
     }
   }
+}
+.layer-mode-wrapper {
+  position: relative;
+}
+.add-layer-btn {
+  position: absolute;
+  top: 10px;
+  right: 0;
+  text-transform: none;
+  letter-spacing: normal;
 }
 </style>
 <script setup lang="ts">
