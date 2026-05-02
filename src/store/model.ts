@@ -1,4 +1,4 @@
-import { IGirderItem } from "@/girder";
+import { IGirderItem, IGirderFolder, IUPennCollection } from "@/girder";
 import type { ITileHistogram } from "./images";
 import Shepherd from "shepherd.js";
 
@@ -427,6 +427,15 @@ export interface IDatasetViewBase {
 export interface IDatasetView extends IDatasetViewBase {
   readonly id: string;
   readonly _accessLevel?: number;
+}
+
+// Resolved view tile shown in the Recent Datasets list.
+// Built in Home.vue by joining a datasetView with the corresponding
+// resolved Girder folder (dataset) and configuration documents.
+export interface IRecentDatasetViewItem {
+  datasetView: IDatasetView;
+  datasetInfo: IGirderFolder;
+  configInfo: IUPennCollection;
 }
 
 // Access control types for sharing datasets

@@ -98,6 +98,12 @@ function apiRootFromGirderUrl(girderUrl: string) {
   return girderUrl + apiRootSuffix;
 }
 
+// Tracks the most recently issued fetchRecentDatasetViews call so older
+// in-flight requests can detect they are stale and skip the state write.
+// Without this, a slower request with a different filter can land last and
+// overwrite the result of a newer request.
+let recentDatasetViewsRequestId = 0;
+
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
   girderRest = new RestClient({
@@ -794,7 +800,7 @@ export class Main extends VuexModule {
     promises.push(
       this.setSelectedConfiguration(this.selectedConfigurationId),
       this.setSelectedDataset(this.selectedDatasetId),
-      this.fetchRecentDatasetViews(),
+      this.fetchRecentDatasetViews(!this.isAdmin),
     );
     // Initialize notification websocket as soon as the user has logged in because
     // any notification sent without would be lost.
@@ -1075,13 +1081,22 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async fetchRecentDatasetViews() {
+  async fetchRecentDatasetViews(currentUserOnly: boolean = false) {
+    const requestId = ++recentDatasetViewsRequestId;
     try {
       const recentDatasetViews = await this.api.getRecentDatasetViews(
         MAX_NUMBER_OF_RECENT_DATASET_VIEWS,
+        0,
+        currentUserOnly,
       );
+      if (requestId !== recentDatasetViewsRequestId) {
+        return;
+      }
       this.setRecentDatasetViewsImpl(recentDatasetViews);
     } catch {
+      if (requestId !== recentDatasetViewsRequestId) {
+        return;
+      }
       this.setRecentDatasetViewsImpl([]);
     }
   }
