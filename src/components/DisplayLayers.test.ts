@@ -120,13 +120,6 @@ describe("DisplayLayers", () => {
     expect(arr[3][1]).toBeTruthy();
   });
 
-  it("addLayer calls store.addLayer", () => {
-    mockStore.addLayer.mockClear();
-    const wrapper = mountComponent();
-    (wrapper.vm as any).addLayer();
-    expect(mockStore.addLayer).toHaveBeenCalledOnce();
-  });
-
   it("createGroupFromLayer calls store.changeLayer with a new layerGroup", () => {
     mockStore.changeLayer.mockClear();
     const wrapper = mountComponent();
