@@ -276,6 +276,24 @@ logError("An error occurred", error);
 </v-btn>
 ```
 
+## Memory Diagnostics
+
+`window.__nimbusMem` is registered globally (from `src/utils/memoryDiagnostics.ts`) for browser-console memory monitoring. **Zero overhead unless enabled** — the hook in `setSelectedDataset` short-circuits on `if (!enabled) return;`.
+
+Use it when investigating memory leaks, comparing memory pressure across changes, or sanity-checking a new cache:
+
+```
+__nimbusMem.enable()         // auto-snapshot on each dataset switch (persists in localStorage)
+__nimbusMem.snapshot('lbl')  // manual snapshot at any moment
+__nimbusMem.print()          // table of snapshots with heap deltas
+__nimbusMem.compare('a','b') // diff two labeled snapshots
+__nimbusMem.export()         // copy raw JSON to clipboard
+```
+
+Each snapshot records `performance.memory` heap (Chrome) plus live cache/store sizes from `GirderAPI`, `girderResources`, `annotation`, and `properties` modules.
+
+**Important:** `memoryDiagnostics.ts` must not import store modules at top level — that creates a load-order cycle with `index.ts`. The provider is registered from `main.ts` after stores have initialized. To extend with a new counter, add the field to `MemoryCounts` and update the provider closure in `main.ts`. To add an auto-snapshot point in another action, call `memDiag.autoSnapshot('label')` — it no-ops when disabled.
+
 ## Style Guidelines
 
 - Use scoped SCSS: `<style lang="scss" scoped>`

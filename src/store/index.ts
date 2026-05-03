@@ -78,6 +78,7 @@ export { default as store } from "./root";
 // NOTE: router is imported lazily where needed to avoid circular dependency with main.ts
 
 import { Debounce } from "@/utils/debounce";
+import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
 import { createSamToolStateFromToolConfiguration } from "@/pipelines/samPipeline";
 import { isEqual } from "lodash";
@@ -1231,11 +1232,13 @@ export class Main extends VuexModule {
 
   @Action
   async setSelectedDataset(id: string | null) {
+    memDiag.autoSnapshot(`setSelectedDataset:enter id=${id ?? "null"}`);
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
     if (!id) {
       this.setDataset({ id, data: null });
+      memDiag.autoSnapshot("setSelectedDataset:exit (null)");
       return;
     }
     try {
@@ -1255,6 +1258,7 @@ export class Main extends VuexModule {
       sync.setLoading(error as Error);
       sync.setDatasetLoading(false);
     }
+    memDiag.autoSnapshot(`setSelectedDataset:exit id=${id}`);
   }
 
   @Action
