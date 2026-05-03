@@ -169,6 +169,11 @@ export class Properties extends VuexModule {
   protected resetPropertyStateImpl() {
     this.propertyStatuses = {};
     this.workerPreviews = {};
+    // Property paths reference the previous dataset's property IDs and are
+    // not meaningful in the new dataset. updateDisplayedFromComputedProperties
+    // would prune them once new property values arrive, but resetting here
+    // releases the references immediately and avoids a UI flash.
+    this.displayedPropertyPaths = [];
     for (const handle of this.pendingWorkerPreviewTimeouts.values()) {
       clearTimeout(handle);
     }

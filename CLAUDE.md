@@ -564,21 +564,9 @@ Look for opportunities to simplify code:
 
 ## Memory Diagnostics
 
-A browser-console memory monitoring tool is registered globally as `window.__nimbusMem` (implementation in `src/utils/memoryDiagnostics.ts`). Auto-tracking is **opt-in** via `__nimbusMem.enable()` and adds zero overhead otherwise — the hook in `setSelectedDataset` short-circuits on a single boolean check when disabled.
+A browser-console memory monitoring tool is registered globally as `window.__nimbusMem` (implementation in `src/utils/memoryDiagnostics.ts`). Auto-tracking is opt-in via `__nimbusMem.enable()` and adds zero overhead otherwise. Use it for live heap/cache/store inspection or for cross-branch memory comparisons.
 
-**Console API:**
-- `__nimbusMem.enable()` / `disable()` — toggle auto-snapshots on dataset switch (persists in localStorage)
-- `__nimbusMem.snapshot('label')` — manual snapshot at any moment
-- `__nimbusMem.print()` — `console.table` of all snapshots with heap deltas
-- `__nimbusMem.compare('labelA', 'labelB')` — diff two labels
-- `__nimbusMem.export()` — copy raw JSON of all snapshots to clipboard
-- `__nimbusMem.clear()` — reset history
-
-Each snapshot records `performance.memory` (Chrome only — `usedJSHeapSize`, `totalJSHeapSize`, `jsHeapSizeLimit`) plus live cache/store sizes for things that have historically leaked: `resourcesCache`, `imageCache`, `histogramCache`, annotation arrays, `propertyStatuses`, `workerPreviews`, `pendingWorkerPreviewTimeouts`, etc.
-
-**Architecture:** `memoryDiagnostics.ts` does NOT import any store modules at the top level — that would create a load-order cycle with `index.ts`, breaking class-field initializers in `annotation.ts`/`properties.ts`. Instead, `main.ts` calls `memDiag.register(provider)` with a closure that reads live counts. To add a new tracked counter, add the field to `MemoryCounts` in `memoryDiagnostics.ts` and update the provider closure in `main.ts`. To add a new auto-snapshot point, call `memDiag.autoSnapshot('label')` in the relevant action — it no-ops when disabled.
-
-**Comparing branches:** the file is self-contained. Cherry-pick `memoryDiagnostics.ts`, the `getCacheSizes()` accessor on `GirderAPI.ts`, the `setSelectedDataset` hook in `index.ts`, and the `main.ts` registration onto the comparison branch. Run the same workflow on each, `__nimbusMem.export()` to grab JSON, diff externally.
+For the full console API, what gets recorded, the load-order constraint, and how to compare branches via cherry-pick, see `codebaseDocumentation/MEMORY_DEBUGGING.md`.
 
 ## Testing
 

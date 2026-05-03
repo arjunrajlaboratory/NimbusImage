@@ -229,6 +229,14 @@ export class Annotations extends VuexModule {
     this.hoveredAnnotationId = null;
     this.pendingAnnotation = null;
     this.submitPendingAnnotation = null;
+    // Drop the previous dataset's annotations and connections. Without this,
+    // navigating away from a viewer (e.g. on logout, or to a non-viewer
+    // route) leaves the full array pinned on the heap until the next viewer
+    // entry calls fetchAnnotations.
+    this.annotations = [];
+    this.annotationConnections = [];
+    this.annotationCentroids = markRaw({});
+    this.annotationIdToIdx = markRaw({});
   }
 
   // Clear per-dataset annotation state. Call when switching datasets so

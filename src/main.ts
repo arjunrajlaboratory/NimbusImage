@@ -63,9 +63,8 @@ memDiag.register(() => {
     workerImageList: Object.keys(propertiesStore.workerImageList).length,
     workerInterfaces: Object.keys(propertiesStore.workerInterfaces).length,
     workerPreviews: Object.keys(propertiesStore.workerPreviews).length,
-    pendingWorkerPreviewTimeouts: propertiesStore.pendingWorkerPreviewTimeouts
-      ? propertiesStore.pendingWorkerPreviewTimeouts.size
-      : 0,
+    pendingWorkerPreviewTimeouts:
+      propertiesStore.pendingWorkerPreviewTimeouts.size,
   };
 });
 
