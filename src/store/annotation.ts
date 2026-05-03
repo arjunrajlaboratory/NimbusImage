@@ -244,6 +244,16 @@ export class Annotations extends VuexModule {
   // pending) don't pin objects from the previous view.
   @Action
   public resetAnnotationState() {
+    // If a submission is pending, cancel it so the awaiting Promise inside
+    // getAnnotationSubmission resolves (with `false`) and its timer is
+    // cleared. Otherwise nulling submitPendingAnnotation in the mutation
+    // below would orphan the Promise — the timer's
+    // `submitPendingAnnotation?.(true)` would no-op, and createAnnotation
+    // would await indefinitely. The callback itself nulls
+    // submitPendingAnnotation and pendingAnnotation via their setters.
+    if (this.submitPendingAnnotation) {
+      this.submitPendingAnnotation(false);
+    }
     this.resetAnnotationStateImpl();
   }
 
