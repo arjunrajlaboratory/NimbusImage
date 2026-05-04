@@ -209,14 +209,17 @@ const props = withDefaults(
 const isDragging = ref(false);
 const dragStartPosition = ref<IGeoJSPosition | null>(null);
 const draggedAnnotation = ref<IAnnotation | null>(null);
-const dragGhostAnnotation = ref<IGeoJSAnnotation | null>(null);
-const dragOriginalCoordinates = ref<IGeoJSPosition[] | null>(null);
-const pendingAnnotation = ref<IGeoJSAnnotation | null>(null);
-const selectionAnnotation = ref<IGeoJSAnnotation | null>(null);
-const samPromptAnnotations = ref<IGeoJSAnnotation[]>([]);
-const samUnsubmittedAnnotation = ref<IGeoJSAnnotation | null>(null);
-const samLivePreviewAnnotation = ref<IGeoJSAnnotation | null>(null);
-const cursorAnnotation = ref<IGeoJSAnnotation | null>(null);
+// IGeoJSAnnotation instances are heavy native objects whose internals must
+// not be Proxy-wrapped. shallowRef tracks identity (so swap/clear triggers
+// reactivity) but skips deep-walking the object graph.
+const dragGhostAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+const dragOriginalCoordinates = shallowRef<IGeoJSPosition[] | null>(null);
+const pendingAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+const selectionAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+const samPromptAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
+const samUnsubmittedAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+const samLivePreviewAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const lastCursorPosition = ref<{ x: number; y: number }>({ x: 0, y: 0 });
 const handlingPrimaryChange = ref(false);
 const showContextMenu = ref(false);
@@ -2559,17 +2562,18 @@ function drawRoiFilters() {
   });
 }
 
-function bindAnnotationEvents() {
-  props.annotationLayer.geoOn(
-    geojs.event.mouseclick,
-    (evt: IGeoJSMouseState) => {
-      if (evt.buttonsDown.right) {
-        handleAnnotationRightClick(evt);
-      }
-    },
-  );
+function handleAnnotationLayerMouseclick(evt: IGeoJSMouseState) {
+  if (evt.buttonsDown.right) {
+    handleAnnotationRightClick(evt);
+  }
+}
 
-  const map = props.annotationLayer.map();
+function bindAnnotationEvents(
+  layer: IGeoJSAnnotationLayer = props.annotationLayer,
+) {
+  layer.geoOn(geojs.event.mouseclick, handleAnnotationLayerMouseclick);
+
+  const map = layer.map();
   const interactorOpts = map.interactor().options();
   const actions = interactorOpts.actions || [];
 
@@ -2580,44 +2584,59 @@ function bindAnnotationEvents() {
 
   map.interactor().options({ ...interactorOpts, actions });
 
-  props.annotationLayer.geoOn(geojs.event.mousedown, handleDragStart);
-  props.annotationLayer.geoOn(geojs.event.mousemove, handleDragMove);
-  props.annotationLayer.geoOn(geojs.event.mouseup, handleDragEnd);
+  layer.geoOn(geojs.event.mousedown, handleDragStart);
+  layer.geoOn(geojs.event.mousemove, handleDragMove);
+  layer.geoOn(geojs.event.mouseup, handleDragEnd);
 
   drawAnnotationsAndTooltips();
 }
 
-function bindInteractionEvents() {
-  if (!props.interactionLayer) {
+function unbindAnnotationEvents(layer: IGeoJSAnnotationLayer | undefined) {
+  if (!layer) return;
+  layer.geoOff(geojs.event.mouseclick, handleAnnotationLayerMouseclick);
+  layer.geoOff(geojs.event.mousedown, handleDragStart);
+  layer.geoOff(geojs.event.mousemove, handleDragMove);
+  layer.geoOff(geojs.event.mouseup, handleDragEnd);
+  layer.geoOff(geojs.event.mousemove, handleValueOnMouseMove);
+}
+
+function bindInteractionEvents(
+  layer: IGeoJSAnnotationLayer | undefined = props.interactionLayer,
+) {
+  if (!layer) {
     return;
   }
-  props.interactionLayer.geoOn(
-    geojs.event.annotation.mode,
-    handleInteractionModeChange,
-  );
-  props.interactionLayer.geoOn(
-    geojs.event.annotation.add,
-    handleInteractionAnnotationChange,
-  );
-  props.interactionLayer.geoOn(
-    geojs.event.annotation.update,
-    handleInteractionAnnotationChange,
-  );
-  props.interactionLayer.geoOn(
-    geojs.event.annotation.state,
-    handleInteractionAnnotationChange,
-  );
+  layer.geoOn(geojs.event.annotation.mode, handleInteractionModeChange);
+  layer.geoOn(geojs.event.annotation.add, handleInteractionAnnotationChange);
+  layer.geoOn(geojs.event.annotation.update, handleInteractionAnnotationChange);
+  layer.geoOn(geojs.event.annotation.state, handleInteractionAnnotationChange);
   if (selectedToolConfiguration.value?.type === "tagging") {
-    props.interactionLayer.geoOn(geojs.event.mouseclick, handleTaggingClick);
+    layer.geoOn(geojs.event.mouseclick, handleTaggingClick);
   }
   refreshAnnotationMode();
 }
 
-function bindTimelapseEvents() {
-  props.timelapseLayer.geoOn(
-    geojs.event.mouseclick,
-    handleTimelapseAnnotationClick,
+function unbindInteractionEvents(layer: IGeoJSAnnotationLayer | undefined) {
+  if (!layer) return;
+  layer.geoOff(geojs.event.annotation.mode, handleInteractionModeChange);
+  layer.geoOff(geojs.event.annotation.add, handleInteractionAnnotationChange);
+  layer.geoOff(
+    geojs.event.annotation.update,
+    handleInteractionAnnotationChange,
   );
+  layer.geoOff(geojs.event.annotation.state, handleInteractionAnnotationChange);
+  layer.geoOff(geojs.event.mouseclick, handleTaggingClick);
+}
+
+function bindTimelapseEvents(
+  layer: IGeoJSAnnotationLayer = props.timelapseLayer,
+) {
+  layer.geoOn(geojs.event.mouseclick, handleTimelapseAnnotationClick);
+}
+
+function unbindTimelapseEvents(layer: IGeoJSAnnotationLayer | undefined) {
+  if (!layer) return;
+  layer.geoOff(geojs.event.mouseclick, handleTimelapseAnnotationClick);
 }
 
 function updateValueOnHover() {
@@ -3081,8 +3100,20 @@ watch(samLivePreviewOutput, () => {
   onSamLivePreviewOutputChanged();
 });
 
-// Captured mouse state
-watch(() => props.capturedMouseState, onMousePathChanged, { deep: true });
+// Captured mouse state — split into two cheap watchers instead of one
+// `{ deep: true }` watcher that recursively dirty-checks IMouseState (which
+// includes the entire IMapEntry → GeoJS map). Identity transitions handle
+// state→null (consume) and state-object swap (new preview); a length watcher
+// on `path` handles in-place vertex pushes during a drag.
+watch(() => props.capturedMouseState, onMousePathChanged);
+watch(
+  () => props.capturedMouseState?.path.length ?? 0,
+  () => {
+    if (props.capturedMouseState) {
+      previewMouseState(props.capturedMouseState);
+    }
+  },
+);
 
 // Worker preview
 watch([displayWorkerPreview, workerPreview], () => {
@@ -3099,11 +3130,13 @@ watch(selectedToolRadius, () => {
   updateCursorAnnotation();
 });
 
-// Annotation layer
+// Annotation layer — geoOff old layer before re-binding to prevent
+// handler accumulation across mapentry rebuilds (e.g., dataset reset).
 watch(
   () => props.annotationLayer,
-  () => {
-    bindAnnotationEvents();
+  (newLayer, oldLayer) => {
+    unbindAnnotationEvents(oldLayer);
+    bindAnnotationEvents(newLayer);
     addHoverCallback();
   },
 );
@@ -3116,16 +3149,18 @@ watch([() => props.annotationLayer, valueOnHover], () => {
 // Interaction layer
 watch(
   () => props.interactionLayer,
-  () => {
-    bindInteractionEvents();
+  (newLayer, oldLayer) => {
+    unbindInteractionEvents(oldLayer);
+    bindInteractionEvents(newLayer);
   },
 );
 
 // Timelapse layer
 watch(
   () => props.timelapseLayer,
-  () => {
-    bindTimelapseEvents();
+  (newLayer, oldLayer) => {
+    unbindTimelapseEvents(oldLayer);
+    bindTimelapseEvents(newLayer);
   },
 );
 
@@ -3141,11 +3176,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  if (props.annotationLayer) {
-    props.annotationLayer.geoOff(geojs.event.mousedown, handleDragStart);
-    props.annotationLayer.geoOff(geojs.event.mousemove, handleDragMove);
-    props.annotationLayer.geoOff(geojs.event.mouseup, handleDragEnd);
-  }
+  unbindAnnotationEvents(props.annotationLayer);
+  unbindInteractionEvents(props.interactionLayer);
+  unbindTimelapseEvents(props.timelapseLayer);
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
   }

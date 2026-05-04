@@ -19,6 +19,7 @@ import {
   Mutation,
   VuexModule,
 } from "vuex-module-decorators";
+import { markRaw } from "vue";
 
 import AnnotationsAPI from "./AnnotationsAPI";
 import PropertiesAPI from "./PropertiesAPI";
@@ -100,31 +101,41 @@ function apiRootFromGirderUrl(girderUrl: string) {
 
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
-  girderRest = new RestClient({
-    apiRoot: apiRootFromGirderUrl(persister.get("girderUrl", defaultGirderUrl)),
-  });
+  // RestClient and the API class instances hold heavy non-Vue state — Axios
+  // clients, in-memory Maps used as caches, etc. Wrap them with `markRaw` so
+  // Vuex's reactive() doesn't deep-Proxy them and pay trap overhead on every
+  // method call. Each one is a stable reference; they're never replaced.
+  girderRest = markRaw(
+    new RestClient({
+      apiRoot: apiRootFromGirderUrl(
+        persister.get("girderUrl", defaultGirderUrl),
+      ),
+    }),
+  );
 
   // Use a proxy to dynamically resolve to the right girderRest client
-  girderRestProxy = new Proxy(this, {
-    get(obj: Main, prop: keyof RestClientInstance) {
-      return obj.girderRest[prop];
-    },
-    set(target: Main, p: keyof RestClientInstance, newValue: any) {
-      if (p != "token") {
-        throw "Can only set token to RestClient";
-      }
-      target.girderRest[p] = newValue;
-      return true;
-    },
-  }) as unknown as RestClientInstance;
+  girderRestProxy = markRaw(
+    new Proxy(this, {
+      get(obj: Main, prop: keyof RestClientInstance) {
+        return obj.girderRest[prop];
+      },
+      set(target: Main, p: keyof RestClientInstance, newValue: any) {
+        if (p != "token") {
+          throw "Can only set token to RestClient";
+        }
+        target.girderRest[p] = newValue;
+        return true;
+      },
+    }) as unknown as RestClientInstance,
+  );
 
-  api = new GirderAPI(this.girderRestProxy);
-  annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
-  propertiesAPI = new PropertiesAPI(this.girderRestProxy);
-  chatAPI = new ChatAPI(this.girderRestProxy);
-  exportAPI = new ExportAPI(this.girderRestProxy);
-  projectsAPI = new ProjectsAPI(this.girderRestProxy);
-  zenodoAPI = new ZenodoAPI(this.girderRestProxy);
+  api = markRaw(new GirderAPI(this.girderRestProxy));
+  annotationsAPI = markRaw(new AnnotationsAPI(this.girderRestProxy));
+  propertiesAPI = markRaw(new PropertiesAPI(this.girderRestProxy));
+  chatAPI = markRaw(new ChatAPI(this.girderRestProxy));
+  exportAPI = markRaw(new ExportAPI(this.girderRestProxy));
+  projectsAPI = markRaw(new ProjectsAPI(this.girderRestProxy));
+  zenodoAPI = markRaw(new ZenodoAPI(this.girderRestProxy));
 
   readonly girderResources = girderResources;
 
@@ -514,7 +525,12 @@ export class Main extends VuexModule {
 
   @Mutation
   public setMaps(maps: IMapEntry[]) {
-    this.maps = maps;
+    // Each entry already markRaws its inner GeoJS layers, but the IMapEntry
+    // wrapper itself would still be Proxy-wrapped on assignment. Skip that —
+    // every map-access in the canvas hot path is a Proxy.get otherwise.
+    // The outer array stays reactive so push/pop and length changes still
+    // trigger watchers (ImageViewer mutates maps.value.pop() in place).
+    this.maps = maps.map((m) => markRaw(m));
   }
 
   @Mutation

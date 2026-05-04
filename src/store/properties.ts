@@ -64,7 +64,12 @@ export class Properties extends VuexModule {
 
   displayedPropertyPaths: string[][] = [];
 
-  propertyValues: IAnnotationPropertyValues = {};
+  // Largest mutable structure in the app (annotations × properties). The
+  // mutation that replaces it already wraps with markRaw, but the initial
+  // empty object would still go through Vuex's reactive() at module init.
+  // Mark it raw at declaration so first-load assignment doesn't proxy-walk
+  // the whole tree.
+  propertyValues: IAnnotationPropertyValues = markRaw({});
 
   propertyStatuses: {
     [propertyId: string]: IPropertyStatus;
