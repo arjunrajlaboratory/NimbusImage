@@ -129,7 +129,12 @@ export class Main extends VuexModule {
     }) as unknown as RestClientInstance,
   );
 
-  api = markRaw(new GirderAPI(this.girderRestProxy));
+  // GirderAPI exposes `histogramsLoaded` as a reactive field that
+  // `layerStackImages` getter depends on (see line ~2224). markRaw'ing it
+  // would break that reactivity and leave the layer list empty forever.
+  // The other API classes have no externally-read reactive state, so
+  // markRaw'ing them avoids the per-method-call Proxy.get cost.
+  api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = markRaw(new AnnotationsAPI(this.girderRestProxy));
   propertiesAPI = markRaw(new PropertiesAPI(this.girderRestProxy));
   chatAPI = markRaw(new ChatAPI(this.girderRestProxy));
