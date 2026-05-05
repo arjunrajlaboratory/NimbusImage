@@ -101,46 +101,38 @@ function apiRootFromGirderUrl(girderUrl: string) {
 
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
-  // RestClient and the API class instances hold heavy non-Vue state — Axios
-  // clients, in-memory Maps used as caches, etc. Wrap them with `markRaw` so
-  // Vuex's reactive() doesn't deep-Proxy them and pay trap overhead on every
-  // method call. Each one is a stable reference; they're never replaced.
-  girderRest = markRaw(
-    new RestClient({
-      apiRoot: apiRootFromGirderUrl(
-        persister.get("girderUrl", defaultGirderUrl),
-      ),
-    }),
-  );
+  girderRest = new RestClient({
+    apiRoot: apiRootFromGirderUrl(persister.get("girderUrl", defaultGirderUrl)),
+  });
 
   // Use a proxy to dynamically resolve to the right girderRest client
-  girderRestProxy = markRaw(
-    new Proxy(this, {
-      get(obj: Main, prop: keyof RestClientInstance) {
-        return obj.girderRest[prop];
-      },
-      set(target: Main, p: keyof RestClientInstance, newValue: any) {
-        if (p != "token") {
-          throw "Can only set token to RestClient";
-        }
-        target.girderRest[p] = newValue;
-        return true;
-      },
-    }) as unknown as RestClientInstance,
-  );
+  girderRestProxy = new Proxy(this, {
+    get(obj: Main, prop: keyof RestClientInstance) {
+      return obj.girderRest[prop];
+    },
+    set(target: Main, p: keyof RestClientInstance, newValue: any) {
+      if (p != "token") {
+        throw "Can only set token to RestClient";
+      }
+      target.girderRest[p] = newValue;
+      return true;
+    },
+  }) as unknown as RestClientInstance;
 
-  // GirderAPI exposes `histogramsLoaded` as a reactive field that
-  // `layerStackImages` getter depends on (see line ~2224). markRaw'ing it
-  // would break that reactivity and leave the layer list empty forever.
-  // The other API classes have no externally-read reactive state, so
-  // markRaw'ing them avoids the per-method-call Proxy.get cost.
+  // The API instances stay reactive: GirderAPI exposes `histogramsLoaded`
+  // that `layerStackImages` depends on; the others may grow similar
+  // reactive fields. The actual Proxy-overhead concern from the diagnostic
+  // was the heavy Maps inside GirderAPI (imageCache, histogramCache,
+  // resolvedHistogramCache) — those are markRaw'd at their declaration in
+  // GirderAPI.ts, which keeps Map.get/set out of Vue's reactive interceptor
+  // without breaking field-level reactivity on the API instance itself.
   api = new GirderAPI(this.girderRestProxy);
-  annotationsAPI = markRaw(new AnnotationsAPI(this.girderRestProxy));
-  propertiesAPI = markRaw(new PropertiesAPI(this.girderRestProxy));
-  chatAPI = markRaw(new ChatAPI(this.girderRestProxy));
-  exportAPI = markRaw(new ExportAPI(this.girderRestProxy));
-  projectsAPI = markRaw(new ProjectsAPI(this.girderRestProxy));
-  zenodoAPI = markRaw(new ZenodoAPI(this.girderRestProxy));
+  annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
+  propertiesAPI = new PropertiesAPI(this.girderRestProxy);
+  chatAPI = new ChatAPI(this.girderRestProxy);
+  exportAPI = new ExportAPI(this.girderRestProxy);
+  projectsAPI = new ProjectsAPI(this.girderRestProxy);
+  zenodoAPI = new ZenodoAPI(this.girderRestProxy);
 
   readonly girderResources = girderResources;
 
