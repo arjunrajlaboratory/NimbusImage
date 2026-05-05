@@ -174,6 +174,7 @@
 //  $('.geojs-map').data('data-geojs-map')
 import {
   ref,
+  shallowRef,
   computed,
   watch,
   onMounted,
@@ -328,7 +329,9 @@ const samLoadingMessages = computed(() => {
   if (state?.type !== SamAnnotationToolStateSymbol) return [];
   return (state as { loadingMessages: string[] }).loadingMessages ?? [];
 });
-const samMapEntry = ref<IMapEntry | null>(null);
+// IMapEntry contains heavy GeoJS map + layers — shallowRef tracks identity
+// so the SAM watcher fires on swap, but skips deep-walking the GeoJS tree.
+const samMapEntry = shallowRef<IMapEntry | null>(null);
 const mouseState = ref<IMouseState | null>(null);
 let synchronisationEnabled = true;
 

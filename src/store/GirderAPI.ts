@@ -47,6 +47,7 @@ import { AxiosRequestConfig, AxiosResponse, isAxiosError } from "axios";
 import { fetchAllPages } from "@/utils/fetch";
 import { stringify } from "qs";
 import { logError, logWarning } from "@/utils/log";
+import { markRaw } from "vue";
 
 // Modern browsers limit concurrency to a single domain at 6 requests (though
 // using HTML 2 might improve that slightly).  For a single layer, if we set
@@ -77,9 +78,17 @@ function itemsToResourceObject(items: IGirderSelectAble[]) {
 export default class GirderAPI {
   client: RestClientInstance;
 
-  private readonly imageCache = new Map<string, HTMLImageElement>();
-  private readonly histogramCache = new Map<string, Promise<ITileHistogram>>();
-  private readonly resolvedHistogramCache = new Map<string, ITileHistogram>();
+  // markRaw on each cache so Vue's reactive() doesn't intercept Map.get/set
+  // with track/trigger calls. Lookups happen on every tile fetch — the
+  // overhead adds up. The GirderAPI instance itself stays reactive so
+  // `histogramsLoaded` (and any future reactive fields) still work.
+  private readonly imageCache = markRaw(new Map<string, HTMLImageElement>());
+  private readonly histogramCache = markRaw(
+    new Map<string, Promise<ITileHistogram>>(),
+  );
+  private readonly resolvedHistogramCache = markRaw(
+    new Map<string, ITileHistogram>(),
+  );
 
   constructor(client: RestClientInstance) {
     this.client = client;

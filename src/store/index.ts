@@ -19,6 +19,7 @@ import {
   Mutation,
   VuexModule,
 } from "vuex-module-decorators";
+import { markRaw } from "vue";
 
 import AnnotationsAPI from "./AnnotationsAPI";
 import PropertiesAPI from "./PropertiesAPI";
@@ -118,6 +119,13 @@ export class Main extends VuexModule {
     },
   }) as unknown as RestClientInstance;
 
+  // The API instances stay reactive: GirderAPI exposes `histogramsLoaded`
+  // that `layerStackImages` depends on; the others may grow similar
+  // reactive fields. The actual Proxy-overhead concern from the diagnostic
+  // was the heavy Maps inside GirderAPI (imageCache, histogramCache,
+  // resolvedHistogramCache) — those are markRaw'd at their declaration in
+  // GirderAPI.ts, which keeps Map.get/set out of Vue's reactive interceptor
+  // without breaking field-level reactivity on the API instance itself.
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
@@ -514,7 +522,17 @@ export class Main extends VuexModule {
 
   @Mutation
   public setMaps(maps: IMapEntry[]) {
-    this.maps = maps;
+    // Each entry already markRaws its inner GeoJS layers, but the IMapEntry
+    // wrapper itself would still be Proxy-wrapped on assignment. Skip that —
+    // every map-access in the canvas hot path is a Proxy.get otherwise.
+    // The outer array stays reactive so push/pop and length changes still
+    // trigger watchers (ImageViewer mutates maps.value.pop() in place).
+    //
+    // Note: markRaw(m) tags `m` itself by setting `__v_skip` — i.e., it
+    // mutates the elements of the input array. In-practice unobservable
+    // since the only caller (_setupMap) discards its array reference
+    // immediately after, but worth knowing if a future caller reuses it.
+    this.maps = maps.map((m) => markRaw(m));
   }
 
   @Mutation
