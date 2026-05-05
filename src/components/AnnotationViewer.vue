@@ -210,16 +210,18 @@ const isDragging = ref(false);
 const dragStartPosition = ref<IGeoJSPosition | null>(null);
 const draggedAnnotation = ref<IAnnotation | null>(null);
 // IGeoJSAnnotation instances are heavy native objects whose internals must
-// not be Proxy-wrapped. shallowRef tracks identity (so swap/clear triggers
-// reactivity) but skips deep-walking the object graph.
+// not be Proxy-wrapped — shallowRef tracks identity (so swap/clear
+// triggers reactivity) but skips deep-walking the object graph.
 const dragGhostAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
-const dragOriginalCoordinates = shallowRef<IGeoJSPosition[] | null>(null);
 const pendingAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const selectionAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const samPromptAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
 const samUnsubmittedAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const samLivePreviewAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+// Plain coordinate array, fully replaced on each set — shallowRef purely
+// because nothing reads its inner mutations, not because it's heavy.
+const dragOriginalCoordinates = shallowRef<IGeoJSPosition[] | null>(null);
 const lastCursorPosition = ref<{ x: number; y: number }>({ x: 0, y: 0 });
 const handlingPrimaryChange = ref(false);
 const showContextMenu = ref(false);
@@ -2597,6 +2599,11 @@ function unbindAnnotationEvents(layer: IGeoJSAnnotationLayer | undefined) {
   layer.geoOff(geojs.event.mousedown, handleDragStart);
   layer.geoOff(geojs.event.mousemove, handleDragMove);
   layer.geoOff(geojs.event.mouseup, handleDragEnd);
+  // handleValueOnMouseMove is bound elsewhere (updateValueOnHover) but
+  // detached here so layer-prop changes don't leak it onto the old layer.
+  // Mildly asymmetric — geoOff is a no-op when nothing matches, so safe.
+  // A symmetric refactor that pulls hover-handler ownership into
+  // updateValueOnHover broke initial render in testing; leaving as-is.
   layer.geoOff(geojs.event.mousemove, handleValueOnMouseMove);
 }
 
@@ -2625,6 +2632,8 @@ function unbindInteractionEvents(layer: IGeoJSAnnotationLayer | undefined) {
     handleInteractionAnnotationChange,
   );
   layer.geoOff(geojs.event.annotation.state, handleInteractionAnnotationChange);
+  // handleTaggingClick is conditionally bound based on tool type; geoOff
+  // is a no-op when nothing matches, so always-detach is safe.
   layer.geoOff(geojs.event.mouseclick, handleTaggingClick);
 }
 
@@ -3105,6 +3114,11 @@ watch(samLivePreviewOutput, () => {
 // includes the entire IMapEntry → GeoJS map). Identity transitions handle
 // state→null (consume) and state-object swap (new preview); a length watcher
 // on `path` handles in-place vertex pushes during a drag.
+//
+// Note: on a state-object swap (e.g., preview-A → fresh-B at mouseDown when
+// path lengths differ), both watchers fire and previewMouseState gets called
+// twice. Idempotent and rare, so we accept the duplicate over the complexity
+// of deduping.
 watch(() => props.capturedMouseState, onMousePathChanged);
 watch(
   () => props.capturedMouseState?.path.length ?? 0,

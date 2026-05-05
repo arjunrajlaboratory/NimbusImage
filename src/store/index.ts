@@ -527,6 +527,11 @@ export class Main extends VuexModule {
     // every map-access in the canvas hot path is a Proxy.get otherwise.
     // The outer array stays reactive so push/pop and length changes still
     // trigger watchers (ImageViewer mutates maps.value.pop() in place).
+    //
+    // Note: markRaw(m) tags `m` itself by setting `__v_skip` — i.e., it
+    // mutates the elements of the input array. In-practice unobservable
+    // since the only caller (_setupMap) discards its array reference
+    // immediately after, but worth knowing if a future caller reuses it.
     this.maps = maps.map((m) => markRaw(m));
   }
 
