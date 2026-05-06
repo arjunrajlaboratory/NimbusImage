@@ -147,8 +147,8 @@ defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
 <style lang="scss">
 .text-progress {
   height: fit-content;
-  min-height: 10px;
-  padding: 4px;
+  min-height: 28px;
+  padding: 4px 8px;
 }
 
 .text-progress .v-progress-linear__content {
