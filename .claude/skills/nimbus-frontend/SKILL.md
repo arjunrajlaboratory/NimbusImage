@@ -276,6 +276,14 @@ logError("An error occurred", error);
 </v-btn>
 ```
 
+## Memory Diagnostics
+
+`window.__nimbusMem` is registered globally for browser-console memory monitoring (zero overhead unless enabled via `__nimbusMem.enable()`). Useful when investigating memory leaks, comparing memory pressure across changes, or sanity-checking a new cache.
+
+Quick API: `__nimbusMem.enable()`, `snapshot('label')`, `print()`, `compare('a','b')`, `export()`.
+
+For the full API, recorded fields, the load-order constraint (don't import stores at top level — register from `main.ts`), instructions for adding new counters or auto-snapshot points, and the cherry-pick procedure for cross-branch comparison: read `codebaseDocumentation/MEMORY_DEBUGGING.md`.
+
 ## Style Guidelines
 
 - Use scoped SCSS: `<style lang="scss" scoped>`

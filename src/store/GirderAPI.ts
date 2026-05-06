@@ -880,6 +880,15 @@ export default class GirderAPI {
     this.resolvedHistogramCache.clear();
   }
 
+  // Read-only snapshot of cache sizes for memory diagnostics.
+  getCacheSizes() {
+    return {
+      imageCache: this.imageCache.size,
+      histogramCache: this.histogramCache.size,
+      resolvedHistogramCache: this.resolvedHistogramCache.size,
+    };
+  }
+
   scheduleTileFramesComputation(datasetId: string) {
     return this.getImages(datasetId).then((items: IGirderItem[]) => {
       return items.map((item: IGirderItem) => {

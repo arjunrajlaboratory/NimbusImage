@@ -222,6 +222,42 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
+  protected resetAnnotationStateImpl() {
+    this.selectedAnnotationIds = markRaw(new Set());
+    this.activeAnnotationIds = [];
+    this.copiedAnnotations = [];
+    this.hoveredAnnotationId = null;
+    this.pendingAnnotation = null;
+    this.submitPendingAnnotation = null;
+    // Drop the previous dataset's annotations and connections. Without this,
+    // navigating away from a viewer (e.g. on logout, or to a non-viewer
+    // route) leaves the full array pinned on the heap until the next viewer
+    // entry calls fetchAnnotations.
+    this.annotations = [];
+    this.annotationConnections = [];
+    this.annotationCentroids = markRaw({});
+    this.annotationIdToIdx = markRaw({});
+  }
+
+  // Clear per-dataset annotation state. Call when switching datasets so
+  // stale references (selection, active set, copied annotations, hover,
+  // pending) don't pin objects from the previous view.
+  @Action
+  public resetAnnotationState() {
+    // If a submission is pending, cancel it so the awaiting Promise inside
+    // getAnnotationSubmission resolves (with `false`) and its timer is
+    // cleared. Otherwise nulling submitPendingAnnotation in the mutation
+    // below would orphan the Promise — the timer's
+    // `submitPendingAnnotation?.(true)` would no-op, and createAnnotation
+    // would await indefinitely. The callback itself nulls
+    // submitPendingAnnotation and pendingAnnotation via their setters.
+    if (this.submitPendingAnnotation) {
+      this.submitPendingAnnotation(false);
+    }
+    this.resetAnnotationStateImpl();
+  }
+
+  @Mutation
   public activateAnnotations(ids: string[]) {
     const activeIds = new Set(this.activeAnnotationIds);
     const idsToAdd = ids.filter((id: string) => !activeIds.has(id));

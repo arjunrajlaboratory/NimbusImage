@@ -562,6 +562,12 @@ Look for opportunities to simplify code:
 - Question whether custom implementations can be replaced with library functions (e.g., `orjson.dumps()` instead of manual JSON streaming)
 - Before adding new functionality, ask: **is this change actually necessary?** Challenge assumptions about what needs to change. Unnecessary complexity is a liability.
 
+## Memory Diagnostics
+
+A browser-console memory monitoring tool is registered globally as `window.__nimbusMem` (implementation in `src/utils/memoryDiagnostics.ts`). Auto-tracking is opt-in via `__nimbusMem.enable()` and adds zero overhead otherwise. Use it for live heap/cache/store inspection or for cross-branch memory comparisons.
+
+For the full console API, what gets recorded, the load-order constraint, and how to compare branches via cherry-pick, see `codebaseDocumentation/MEMORY_DEBUGGING.md`.
+
 ## Testing
 
 ### Frontend Tests
