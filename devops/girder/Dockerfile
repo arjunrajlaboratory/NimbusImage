@@ -8,6 +8,12 @@ RUN mkdir /mnt/fuse
 RUN mkdir /src
 WORKDIR /src
 
+# Pin Girder explicitly. Investigating a login-persistence regression that
+# coincides with recent Girder 5.0.x point releases; the plugins specify
+# girder[mount]>5 which would otherwise pull whatever 5.x is current at
+# build time.
+RUN pip install "girder[mount]==5.0.3"
+
 COPY ./provision.py /src/provision.py
 
 COPY plugins/AnnotationPlugin /src/AnnotationPlugin
