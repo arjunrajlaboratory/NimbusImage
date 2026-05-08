@@ -1181,10 +1181,11 @@ function draw() {
 
   const currentMapLayerList = mapLayerList.value;
   while (maps.value.length > currentMapLayerList.length) {
-    const mapentry = maps.value.pop();
+    const mapentry = maps.value[maps.value.length - 1];
     if (mapentry) {
       mapentry.map.exit();
     }
+    store.popMap();
   }
   let baseLayerIndex = 0;
   const currentResetMaps = resetMapsOnDraw.value;
@@ -1431,7 +1432,7 @@ onBeforeUnmount(() => {
   }
   if (maps.value) {
     maps.value.forEach((mapentry) => mapentry.map.exit());
-    maps.value = [];
+    store.clearMaps();
   }
 });
 

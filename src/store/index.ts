@@ -526,14 +526,24 @@ export class Main extends VuexModule {
     // Each entry already markRaws its inner GeoJS layers, but the IMapEntry
     // wrapper itself would still be Proxy-wrapped on assignment. Skip that —
     // every map-access in the canvas hot path is a Proxy.get otherwise.
-    // The outer array stays reactive so push/pop and length changes still
-    // trigger watchers (ImageViewer mutates maps.value.pop() in place).
+    // The outer array stays reactive so mutation handlers and replacements
+    // still trigger watchers.
     //
     // Note: markRaw(m) tags `m` itself by setting `__v_skip` — i.e., it
     // mutates the elements of the input array. In-practice unobservable
     // since the only caller (_setupMap) discards its array reference
     // immediately after, but worth knowing if a future caller reuses it.
     this.maps = maps.map((m) => markRaw(m));
+  }
+
+  @Mutation
+  public popMap() {
+    this.maps = this.maps.slice(0, -1);
+  }
+
+  @Mutation
+  public clearMaps() {
+    this.maps = [];
   }
 
   @Mutation

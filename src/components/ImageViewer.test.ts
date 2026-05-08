@@ -112,6 +112,8 @@ vi.mock("@/store", () => {
       drawAnnotations: true,
       showTooltips: false,
       setMaps: vi.fn(),
+      popMap: vi.fn(),
+      clearMaps: vi.fn(),
       setCameraInfo: vi.fn(),
       setDrawAnnotations: vi.fn(),
       setShowTooltips: vi.fn(),
@@ -302,6 +304,12 @@ describe("ImageViewer", () => {
     (mockedStore.setMaps as any).mockImplementation((v: any) => {
       mockedStore.maps = v;
     });
+    (mockedStore.popMap as any).mockImplementation(() => {
+      mockedStore.maps = mockedStore.maps.slice(0, -1);
+    });
+    (mockedStore.clearMaps as any).mockImplementation(() => {
+      mockedStore.maps = [];
+    });
     (mockedStore.setCameraInfo as any).mockImplementation((v: any) => {
       mockedStore.cameraInfo = v;
     });
@@ -337,12 +345,12 @@ describe("ImageViewer", () => {
       // Clear any calls from mount
       map1.exit.mockClear();
       map2.exit.mockClear();
-      (mockedStore.setMaps as any).mockClear();
+      (mockedStore.clearMaps as any).mockClear();
       // Trigger onBeforeUnmount
       wrapper.unmount();
       expect(map1.exit).toHaveBeenCalled();
       expect(map2.exit).toHaveBeenCalled();
-      expect(mockedStore.setMaps).toHaveBeenCalledWith([]);
+      expect(mockedStore.clearMaps).toHaveBeenCalledOnce();
     });
 
     it("calls draw on mount when dataset and layers exist", () => {
@@ -1123,6 +1131,28 @@ describe("ImageViewer", () => {
       // draw runs on mount
       expect((wrapper.vm as any).tileWidth).toBe(256);
       expect((wrapper.vm as any).tileHeight).toBe(256);
+    });
+
+    it("shrinks excess maps through the store", () => {
+      const map1 = mockMap();
+      const map2 = mockMap();
+      const removedMaps: any[] = [];
+      (mockedStore.popMap as any).mockImplementation(() => {
+        removedMaps.push(mockedStore.maps[mockedStore.maps.length - 1]);
+        mockedStore.maps = mockedStore.maps.slice(0, -1);
+      });
+      mockedStore.maps = [
+        { map: map1, imageLayers: [], params: {} } as any,
+        { map: map2, imageLayers: [], params: {} } as any,
+      ];
+      mockedStore.layerStackImages = [createLayerStackImage()];
+
+      wrapper = mountComponent();
+
+      expect(map2.exit).toHaveBeenCalled();
+      expect(mockedStore.popMap).toHaveBeenCalledOnce();
+      expect(removedMaps[0].map.exit).toBe(map2.exit);
+      expect(mockedStore.maps).toHaveLength(1);
     });
   });
 
