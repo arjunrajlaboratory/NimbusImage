@@ -30,11 +30,19 @@ import {
   IDatasetView,
 } from "./model";
 
-import { markRaw } from "vue";
+import { markRaw, toRaw } from "vue";
 import { simpleCentroid } from "@/utils/annotation";
 import { logError } from "@/utils/log";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
+
+function markRawAnnotation(annotation: IAnnotation): IAnnotation {
+  return markRaw(annotation);
+}
+
+function cloneAnnotation(annotation: IAnnotation): IAnnotation {
+  return markRawAnnotation(structuredClone(toRaw(annotation)));
+}
 
 @Module({ dynamic: true, store, name: "annotation" })
 export class Annotations extends VuexModule {
@@ -128,9 +136,7 @@ export class Annotations extends VuexModule {
 
       // Add the new annotations to the store
       if (newAnnotations && newAnnotations.length > 0) {
-        newAnnotations.forEach((annotation) => {
-          this.addAnnotationImpl(annotation);
-        });
+        this.addAnnotationsImpl(newAnnotations);
       }
 
       return newAnnotations || [];
@@ -496,11 +502,27 @@ export class Annotations extends VuexModule {
 
   @Mutation
   private addAnnotationImpl(value: IAnnotation) {
-    this.annotations.push(value);
-    this.annotationCentroids[value.id] = markRaw(
-      simpleCentroid(value.coordinates),
+    const annotation = markRawAnnotation(value);
+    this.annotations = [...this.annotations, annotation];
+    this.annotationCentroids[annotation.id] = markRaw(
+      simpleCentroid(annotation.coordinates),
     );
-    this.annotationIdToIdx[value.id] = this.annotations.length - 1;
+    this.annotationIdToIdx[annotation.id] = this.annotations.length - 1;
+  }
+
+  @Mutation
+  private addAnnotationsImpl(values: IAnnotation[]) {
+    const startIndex = this.annotations.length;
+    const annotations = values.map(markRawAnnotation);
+    this.annotations = [...this.annotations, ...annotations];
+    for (let offset = 0; offset < annotations.length; ++offset) {
+      const annotation = annotations[offset];
+      const index = startIndex + offset;
+      this.annotationCentroids[annotation.id] = markRaw(
+        simpleCentroid(annotation.coordinates),
+      );
+      this.annotationIdToIdx[annotation.id] = index;
+    }
   }
 
   @Mutation
@@ -511,7 +533,9 @@ export class Annotations extends VuexModule {
     annotation: IAnnotation;
     index: number;
   }) {
-    this.annotations.splice(index, 1, annotation);
+    const nextAnnotations = [...this.annotations];
+    nextAnnotations[index] = markRawAnnotation(annotation);
+    this.annotations = nextAnnotations;
     this.annotationCentroids[annotation.id] = markRaw(
       simpleCentroid(annotation.coordinates),
     );
@@ -534,7 +558,7 @@ export class Annotations extends VuexModule {
         return;
       }
     }
-    this.annotations = values;
+    this.annotations = values.map(markRawAnnotation);
     this.annotationCentroids = markRaw({});
     this.annotationIdToIdx = markRaw({});
     for (let idx = 0; idx < this.annotations.length; ++idx) {
@@ -908,7 +932,7 @@ export class Annotations extends VuexModule {
         continue;
       }
       const oldAnnotation = this.annotations[annotationIndex];
-      const newAnnotation = markRaw(structuredClone(oldAnnotation));
+      const newAnnotation = cloneAnnotation(oldAnnotation);
       editFunction(newAnnotation);
       this.setAnnotation({
         annotation: newAnnotation,
