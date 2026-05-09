@@ -14,6 +14,7 @@ const mockAddUploadedDataset = vi.fn();
 const mockAdvanceUploadDatasetIndex = vi.fn();
 const mockSetUploadOriginalPath = vi.fn();
 const mockCompleteUploadWorkflow = vi.fn();
+const mockRefreshUserQuota = vi.fn();
 const mockGetFolder = vi.fn().mockResolvedValue({
   _id: "folder2",
   _modelType: "folder",
@@ -85,6 +86,7 @@ vi.mock("@/store", () => ({
       mockSetUploadOriginalPath(...args),
     completeUploadWorkflow: (...args: any[]) =>
       mockCompleteUploadWorkflow(...args),
+    refreshUserQuota: (...args: any[]) => mockRefreshUserQuota(...args),
   },
 }));
 
@@ -238,6 +240,7 @@ describe("NewDataset", () => {
     resetUploadWorkflow();
     mockGetUserApiKeys.mockResolvedValue([]);
     mockCreateDataset.mockResolvedValue(null);
+    mockRefreshUserQuota.mockClear();
     mockGetFolder.mockResolvedValue({
       _id: "folder1",
       _modelType: "folder",

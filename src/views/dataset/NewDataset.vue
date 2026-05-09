@@ -999,6 +999,7 @@ function interruptedUpload() {
 function nextStep() {
   hideUploader.value = true;
   uploading.value = false;
+  store.refreshUserQuota();
 
   if (!dataset.value) {
     logError("nextStep called but dataset is null");

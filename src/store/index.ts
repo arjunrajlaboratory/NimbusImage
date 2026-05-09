@@ -89,6 +89,11 @@ const apiRootSuffix = "/api/v1";
 const defaultGirderUrl =
   import.meta.env.VITE_GIRDER_URL || "http://localhost:8080";
 
+export interface IUserQuotaStatus {
+  used: number;
+  limit: number;
+}
+
 export function girderUrlFromApiRoot(apiRoot: string): string {
   if (apiRoot.endsWith(apiRootSuffix)) {
     return apiRoot.slice(0, apiRoot.length - apiRootSuffix.length);
@@ -138,6 +143,7 @@ export class Main extends VuexModule {
   readonly girderResources = girderResources;
 
   girderUser: IGirderUser | null = this.girderRest.user as IGirderUser | null;
+  userQuota: IUserQuotaStatus | null = null;
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
   hasUserLoggedOut: boolean = false;
@@ -517,6 +523,11 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  setUserQuota(userQuota: IUserQuotaStatus | null) {
+    this.userQuota = userQuota;
+  }
+
+  @Mutation
   setFolderLocation(location: IGirderLocation) {
     this.folderLocation = location;
   }
@@ -803,12 +814,14 @@ export class Main extends VuexModule {
           .catch(() => {
             this.setAssetstores([]);
           }),
+        this.refreshUserQuota(),
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
       );
     } else {
       this.setAssetstores([]);
+      this.setUserQuota(null);
     }
     promises.push(
       this.setSelectedConfiguration(this.selectedConfigurationId),
@@ -832,11 +845,31 @@ export class Main extends VuexModule {
   @Mutation
   protected loggedOut() {
     this.girderUser = null;
+    this.userQuota = null;
     this.selectedDatasetId = null;
     this.dataset = null;
     this.selectedConfigurationId = null;
     this.configuration = null;
     this.hasUserLoggedOut = true;
+  }
+
+  @Action
+  async refreshUserQuota() {
+    const user = this.girderUser;
+    if (!user) {
+      this.setUserQuota(null);
+      return;
+    }
+
+    const quotaResource = await this.api.getUserQuota(user._id);
+    const limit = quotaResource?.quota?._currentFileSizeQuota;
+    const used = quotaResource?.size ?? user.size;
+
+    if (typeof limit === "number" && typeof used === "number") {
+      this.setUserQuota({ used, limit });
+    } else {
+      this.setUserQuota(null);
+    }
   }
 
   @Mutation
