@@ -4,7 +4,7 @@ from bson.objectid import ObjectId
 
 from girder import events
 from girder.constants import AccessType, SortDir
-from girder.exceptions import ValidationException
+from girder.exceptions import AccessException, ValidationException
 from girder.models.folder import Folder
 
 from girder.utility.acl_mixin import AccessControlMixin
@@ -242,12 +242,19 @@ class Annotation(AccessControlMixin, ProxiedModel):
         cursor = self.findWithPermissions(
             query, user=user, level=AccessType.WRITE
         )
+        expectedIds = set(annotationIdToUpdate.keys())
+        foundIds = set()
         updatedAnnotations = []
         for annotation in cursor:
             annotationId = annotation["_id"]
             updateDoc = annotationIdToUpdate[annotationId]
             annotation.update(updateDoc)
+            foundIds.add(annotationId)
             updatedAnnotations.append(annotation)
+        if foundIds != expectedIds:
+            raise AccessException(
+                "Write access was denied for one or more annotations."
+            )
         return self.saveMany(updatedAnnotations)
 
     def compute(self, datasetId, tool, user=None):

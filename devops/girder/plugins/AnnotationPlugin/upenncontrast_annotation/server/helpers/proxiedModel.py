@@ -56,7 +56,11 @@ class recordable:
 
             # Wrap original endpoint between a start and a stop recording
             events.trigger("proxiedModel.startRecording")
-            val = fun(*args, **kwargs)
+            try:
+                val = fun(*args, **kwargs)
+            except Exception:
+                events.trigger("proxiedModel.stopRecording", {})
+                raise
             record = events.trigger("proxiedModel.stopRecording", {}).info
 
             # Create a new history document

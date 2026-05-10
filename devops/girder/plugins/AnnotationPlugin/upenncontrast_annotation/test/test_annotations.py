@@ -7,6 +7,7 @@ from pytest_girder.assertions import assertStatus, assertStatusOk
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models import annotation
 
+from girder.constants import AccessType
 from girder.models.folder import Folder
 
 from girder.exceptions import ValidationException
@@ -145,6 +146,78 @@ class TestUpdateMultiple:
         assert "updated" in loaded1["tags"]
         loaded2 = Annotation().load(a2["_id"], user=admin)
         assert "updated2" in loaded2["tags"]
+
+    def testUpdateMultipleOwnerPersists(self, user, server):
+        """Dataset owners can bulk-update annotation geometry."""
+        folder = utilities.createFolder(
+            user, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, user)
+        coordinates = [
+            {"x": 3, "y": 4},
+            {"x": 5, "y": 6},
+        ]
+        updates = [
+            {
+                "id": str(ann["_id"]),
+                "coordinates": coordinates,
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=user,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        assert resp.json[0]["coordinates"] == coordinates
+
+        loaded = Annotation().load(ann["_id"], user=user)
+        assert loaded["coordinates"] == coordinates
+
+    def testUpdateMultipleDeniedWithoutAccess(
+        self, admin, user, server
+    ):
+        """Bulk updates must not silently skip inaccessible annotations."""
+        folder = utilities.createPrivateFolder(
+            admin, "private_ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, admin)
+        originalTags = list(ann["tags"])
+        updates = [
+            {
+                "id": str(ann["_id"]),
+                "tags": ["should-not-save"],
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=user,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatus(resp, 403)
+
+        loaded = Annotation().load(ann["_id"], user=admin)
+        assert loaded["tags"] == originalTags
+
+    def testFindWithPermissionsUsesDatasetAccess(self, user):
+        """Annotation access is inherited from the parent dataset."""
+        folder = utilities.createFolder(
+            user, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, user)
+
+        docs = list(Annotation().findWithPermissions(
+            {"_id": ann["_id"]},
+            user=user,
+            level=AccessType.WRITE,
+        ))
+
+        assert len(docs) == 1
+        assert docs[0]["_id"] == ann["_id"]
 
     def testUpdateMultipleAcceptsUnderscoreId(self, admin, server):
         """_id field should be accepted as an alias for id."""

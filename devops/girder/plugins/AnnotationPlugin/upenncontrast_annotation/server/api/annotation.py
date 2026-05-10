@@ -283,7 +283,7 @@ class Annotation(Resource):
                 newDatasetIds, self.getCurrentUser()
             )
 
-        self._annotationModel.updateMultiple(
+        return self._annotationModel.updateMultiple(
             annotationIdToUpdate, self.getCurrentUser()
         )
 
