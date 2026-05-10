@@ -36,12 +36,8 @@ import { logError } from "@/utils/log";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
-function markRawAnnotation(annotation: IAnnotation): IAnnotation {
-  return markRaw(annotation);
-}
-
 function cloneAnnotation(annotation: IAnnotation): IAnnotation {
-  return markRawAnnotation(structuredClone(toRaw(annotation)));
+  return markRaw(structuredClone(toRaw(annotation)));
 }
 
 @Module({ dynamic: true, store, name: "annotation" })
@@ -502,7 +498,7 @@ export class Annotations extends VuexModule {
 
   @Mutation
   private addAnnotationImpl(value: IAnnotation) {
-    const annotation = markRawAnnotation(value);
+    const annotation = markRaw(value);
     this.annotations = [...this.annotations, annotation];
     this.annotationCentroids[annotation.id] = markRaw(
       simpleCentroid(annotation.coordinates),
@@ -513,7 +509,7 @@ export class Annotations extends VuexModule {
   @Mutation
   private addAnnotationsImpl(values: IAnnotation[]) {
     const startIndex = this.annotations.length;
-    const annotations = values.map(markRawAnnotation);
+    const annotations = values.map((annotation) => markRaw(annotation));
     this.annotations = [...this.annotations, ...annotations];
     for (let offset = 0; offset < annotations.length; ++offset) {
       const annotation = annotations[offset];
@@ -534,7 +530,7 @@ export class Annotations extends VuexModule {
     index: number;
   }) {
     const nextAnnotations = [...this.annotations];
-    nextAnnotations[index] = markRawAnnotation(annotation);
+    nextAnnotations[index] = markRaw(annotation);
     this.annotations = nextAnnotations;
     this.annotationCentroids[annotation.id] = markRaw(
       simpleCentroid(annotation.coordinates),
@@ -544,21 +540,7 @@ export class Annotations extends VuexModule {
 
   @Mutation
   public setAnnotations(values: IAnnotation[]) {
-    const nAnnotations = values.length;
-    // Check if annotations are the same
-    if (nAnnotations === this.annotations.length) {
-      let equals = true;
-      for (let i = 0; i < nAnnotations; ++i) {
-        if (values[i].id !== this.annotations[i].id) {
-          equals = false;
-          break;
-        }
-      }
-      if (equals) {
-        return;
-      }
-    }
-    this.annotations = values.map(markRawAnnotation);
+    this.annotations = values.map((annotation) => markRaw(annotation));
     this.annotationCentroids = markRaw({});
     this.annotationIdToIdx = markRaw({});
     for (let idx = 0; idx < this.annotations.length; ++idx) {
