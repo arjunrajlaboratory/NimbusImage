@@ -171,7 +171,6 @@ class TestUpdateMultiple:
             type="application/json",
         )
         assertStatusOk(resp)
-        assert resp.json[0]["coordinates"] == coordinates
 
         loaded = Annotation().load(ann["_id"], user=user)
         assert loaded["coordinates"] == coordinates
