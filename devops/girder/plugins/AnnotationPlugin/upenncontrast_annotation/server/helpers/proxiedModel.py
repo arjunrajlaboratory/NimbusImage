@@ -54,10 +54,16 @@ class recordable:
             if datasetId is None:
                 return fun(*args, **kwargs)
 
-            # Wrap original endpoint between a start and a stop recording
+            # Wrap original endpoint between a start and a stop recording.
+            # The finally ensures stopRecording fires even on failure so the
+            # model's recording state never leaks across requests.
             events.trigger("proxiedModel.startRecording")
-            val = fun(*args, **kwargs)
-            record = events.trigger("proxiedModel.stopRecording", {}).info
+            try:
+                val = fun(*args, **kwargs)
+            finally:
+                record = events.trigger(
+                    "proxiedModel.stopRecording", {}
+                ).info
 
             # Create a new history document
             user = rest.getCurrentUser()
