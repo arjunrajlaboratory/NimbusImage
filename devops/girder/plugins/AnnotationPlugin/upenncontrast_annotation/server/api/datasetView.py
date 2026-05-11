@@ -14,6 +14,7 @@ from girder.models.user import User
 from upenncontrast_annotation.server.helpers.access_helpers import (
     formatAccessList
 )
+from upenncontrast_annotation.server.helpers.params import getBooleanParam
 from upenncontrast_annotation.server.models.datasetView import \
     DatasetView as DatasetViewModel
 from upenncontrast_annotation.server.models.collection import \
@@ -163,17 +164,10 @@ class DatasetView(Resource):
             if key in params:
                 query[key] = ObjectId(params[key])
 
-        # Filter to only views owned by the current user.
-        # describeRoute does not auto-convert types, so coerce to str
-        # before lowering in case a client sends a non-string truthy.
-        # Intentionally checks only direct user grants (not group-based
-        # access) — "Mine only" means views the user personally owns,
-        # which corresponds to the explicit ADMIN entry creators receive.
-        currentUserOnly = (
-            str(params.get("currentUserOnly", "")).lower()
-            in ("true", "1", "yes", "on")
-        )
-        if currentUserOnly and user:
+        if getBooleanParam(params, "currentUserOnly") and user:
+            # Intentionally checks only direct user grants (not group-based
+            # access): "Mine only" means views the user personally owns,
+            # which corresponds to the explicit ADMIN entry creators receive.
             query["access.users"] = {
                 "$elemMatch": {
                     "id": user["_id"],
