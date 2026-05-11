@@ -77,6 +77,9 @@ class AnnotationSchema:
     }
 
 
+# AccessControlMixin must precede ProxiedModel so its permission-aware
+# find/load methods (e.g. findWithPermissions) take MRO precedence over
+# the unchecked methods on the base model.
 class Annotation(AccessControlMixin, ProxiedModel):
     """
     Defines a model for storing and handling UPennContrast annotations in the

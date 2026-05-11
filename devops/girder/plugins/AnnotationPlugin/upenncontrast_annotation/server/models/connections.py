@@ -37,6 +37,8 @@ class ConnectionSchema:
     }
 
 
+# AccessControlMixin must precede ProxiedModel so its permission-aware
+# find/load methods take MRO precedence over the unchecked base methods.
 class AnnotationConnection(AccessControlMixin, ProxiedModel):
     # TODO: write lock
 

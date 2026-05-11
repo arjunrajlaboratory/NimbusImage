@@ -202,8 +202,9 @@ class TestUpdateMultiple:
         loaded = Annotation().load(ann["_id"], user=admin)
         assert loaded["tags"] == originalTags
 
-    def testFindWithPermissionsUsesDatasetAccess(self, user):
+    def testFindWithPermissionsUsesDatasetAccess(self, admin, user):
         """Annotation access is inherited from the parent dataset."""
+        # Owner sees their own annotation.
         folder = utilities.createFolder(
             user, "ds", upenn_utilities.datasetMetadata
         )
@@ -217,6 +218,21 @@ class TestUpdateMultiple:
 
         assert len(docs) == 1
         assert docs[0]["_id"] == ann["_id"]
+
+        # A user without access to the parent dataset gets an empty cursor
+        # — guards against MRO regressions that bypass AccessControlMixin.
+        privateFolder = utilities.createPrivateFolder(
+            admin, "private_ds", upenn_utilities.datasetMetadata
+        )
+        privateAnn = self._createAnnotation(privateFolder, admin)
+
+        deniedDocs = list(Annotation().findWithPermissions(
+            {"_id": privateAnn["_id"]},
+            user=user,
+            level=AccessType.WRITE,
+        ))
+
+        assert deniedDocs == []
 
     def testUpdateMultipleAcceptsUnderscoreId(self, admin, server):
         """_id field should be accepted as an alias for id."""

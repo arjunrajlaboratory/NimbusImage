@@ -41,6 +41,8 @@ class PropertySchema:
     }
 
 
+# AccessControlMixin must precede ProxiedModel so its permission-aware
+# find/load methods take MRO precedence over the unchecked base methods.
 class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
 
     def __init__(self):
