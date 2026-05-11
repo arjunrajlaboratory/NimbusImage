@@ -159,7 +159,7 @@
             <v-progress-linear
               :model-value="batchProgressPercent"
               color="primary"
-              height="20"
+              height="28"
               striped
             >
               <template v-slot:default>

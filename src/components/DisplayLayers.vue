@@ -73,11 +73,6 @@
         </draggable>
       </template>
     </draggable>
-    <div class="add-layer">
-      <v-btn @click="addLayer" icon title="Add new layer">
-        <v-icon>mdi-plus-circle</v-icon>
-      </v-btn>
-    </div>
   </div>
 </template>
 <script setup lang="ts">
@@ -307,10 +302,6 @@ function createGroupFromLayer(combinedLayer: ICombinedLayer) {
   });
 }
 
-function addLayer() {
-  store.addLayer();
-}
-
 // Mousetrap bindings
 const mousetrapGlobalToggles: IHotkey[] = [
   {
@@ -341,19 +332,12 @@ defineExpose({
   spacerUpdate,
   changeLayersInGroup,
   createGroupFromLayer,
-  addLayer,
   mousetrapGlobalToggles,
   singleLayerPrefix,
 });
 </script>
 
 <style lang="scss" scoped>
-.add-layer {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
 .layer-title-row {
   display: flex;
   align-items: center;

@@ -26,9 +26,47 @@ import chat from "./store/chat";
 import { installTour } from "./plugins/tour";
 import { tourTriggerDirective } from "./plugins/tour-trigger.directive";
 
+// Registers `window.__nimbusMem` for browser-console memory diagnostics.
+// Auto-tracking is opt-in via `__nimbusMem.enable()` and adds no overhead
+// otherwise.
+import { memDiag } from "@/utils/memoryDiagnostics";
+import annotationStore from "./store/annotation";
+import propertiesStore from "./store/properties";
+import girderResourcesStore from "./store/girderResources";
+
 main.initialize();
 main.setupWatchers();
 chat.initializeChatDatabase();
+
+// Wire up live store/cache counts now that all store modules have finished
+// initializing. memDiag does not import these stores itself to avoid a
+// load-order cycle with index.ts.
+memDiag.register(() => {
+  const apiSizes = main.api.getCacheSizes();
+  return {
+    resourcesCache: Object.keys(girderResourcesStore.resources).length,
+    resourcesLocks: Object.keys(girderResourcesStore.resourcesLocks).length,
+    imageCache: apiSizes.imageCache,
+    histogramCache: apiSizes.histogramCache,
+    resolvedHistogramCache: apiSizes.resolvedHistogramCache,
+    annotations: annotationStore.annotations.length,
+    annotationConnections: annotationStore.annotationConnections.length,
+    annotationCentroids: Object.keys(annotationStore.annotationCentroids)
+      .length,
+    selectedAnnotationIds: annotationStore.selectedAnnotationIds.size,
+    activeAnnotationIds: annotationStore.activeAnnotationIds.length,
+    copiedAnnotations: annotationStore.copiedAnnotations.length,
+    pendingAnnotation: annotationStore.pendingAnnotation ? 1 : 0,
+    submitPendingAnnotation: annotationStore.submitPendingAnnotation ? 1 : 0,
+    propertyValues: Object.keys(propertiesStore.propertyValues).length,
+    propertyStatuses: Object.keys(propertiesStore.propertyStatuses).length,
+    workerImageList: Object.keys(propertiesStore.workerImageList).length,
+    workerInterfaces: Object.keys(propertiesStore.workerInterfaces).length,
+    workerPreviews: Object.keys(propertiesStore.workerPreviews).length,
+    pendingWorkerPreviewTimeouts:
+      propertiesStore.pendingWorkerPreviewTimeouts.size,
+  };
+});
 
 const app = createApp(App);
 

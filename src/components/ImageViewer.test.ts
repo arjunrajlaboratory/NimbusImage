@@ -208,6 +208,7 @@ const mockedAnnotationStore = vi.mocked(annotationStore);
 const mockedProgressStore = vi.mocked(progressStore);
 
 function createLayerStackImage(overrides: any = {}): any {
+  const { layer: layerOverride, image: imageOverride, ...rest } = overrides;
   return {
     layer: {
       id: "layer1",
@@ -215,7 +216,7 @@ function createLayerStackImage(overrides: any = {}): any {
       color: "#ff0000",
       contrast: { whitePoint: 100, blackPoint: 0, mode: "percentile" },
       layerGroup: null,
-      ...overrides.layer,
+      ...layerOverride,
     },
     images: [
       {
@@ -227,7 +228,7 @@ function createLayerStackImage(overrides: any = {}): any {
         tileWidth: 256,
         tileHeight: 256,
         tileinfo: {},
-        ...overrides.image,
+        ...imageOverride,
       },
     ],
     urls: ["http://localhost/api/v1/tile/{z}/{x}/{y}"],
@@ -235,7 +236,7 @@ function createLayerStackImage(overrides: any = {}): any {
     hist: { min: 0, max: 255 },
     singleFrame: 0,
     baseQuadOptions: {},
-    ...overrides,
+    ...rest,
   };
 }
 

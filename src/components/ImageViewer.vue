@@ -172,7 +172,16 @@
 <script setup lang="ts">
 // in cosole debugging, you can access the map via
 //  $('.geojs-map').data('data-geojs-map')
-import { ref, computed, watch, onMounted, onBeforeUnmount, markRaw } from "vue";
+import {
+  ref,
+  shallowRef,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  markRaw,
+} from "vue";
 import annotationStore from "@/store/annotation";
 import progressStore from "@/store/progress";
 import store from "@/store";
@@ -320,7 +329,9 @@ const samLoadingMessages = computed(() => {
   if (state?.type !== SamAnnotationToolStateSymbol) return [];
   return (state as { loadingMessages: string[] }).loadingMessages ?? [];
 });
-const samMapEntry = ref<IMapEntry | null>(null);
+// IMapEntry contains heavy GeoJS map + layers — shallowRef tracks identity
+// so the SAM watcher fires on swap, but skips deep-walking the GeoJS tree.
+const samMapEntry = shallowRef<IMapEntry | null>(null);
 const mouseState = ref<IMouseState | null>(null);
 let synchronisationEnabled = true;
 
@@ -1355,19 +1366,19 @@ watch(
   },
 );
 
-// Debounce draw during rapid scrubbing (time/z/xy slider changes) so the
-// expensive GeoJS tile-reset + re-render only fires for the latest frame,
-// skipping intermediate values that the user scrubbed past.
-let debouncedDrawTimer: ReturnType<typeof setTimeout> | null = null;
+// Draw on every mapLayerList change. nextTick lets the v-for over
+// mapLayerList settle so getMapRefSetter has populated mapRefs before draw()
+// reads them. draw() itself is fast (~1-2ms) because the fullLayer
+// setFrameQuad path swaps a pre-loaded quad texture instead of re-fetching
+// tiles, so debouncing here would just drop intermediate frames and make
+// scrubbing feel skippy.
 watch(mapLayerList, () => {
-  if (debouncedDrawTimer) clearTimeout(debouncedDrawTimer);
-  debouncedDrawTimer = setTimeout(() => {
-    debouncedDrawTimer = null;
+  nextTick(() => {
     if (!refsMounted.value) {
       return;
     }
     draw();
-  }, 10);
+  });
 });
 
 watch([showScalebar, pixelSize], updateScaleWidget);
