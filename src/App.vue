@@ -90,6 +90,17 @@
       </h1>
       <bread-crumbs />
       <v-spacer />
+      <v-alert
+        v-if="showQuotaWarning"
+        type="error"
+        density="compact"
+        variant="tonal"
+        closable
+        class="quota-warning ml-4"
+        @click:close="dismissQuotaWarning"
+      >
+        {{ quotaWarningMessage }}
+      </v-alert>
       <v-tooltip text="Upload a new dataset">
         <template v-slot:activator="{ props: activatorProps }">
           <v-btn
@@ -317,6 +328,7 @@ import ChatComponent from "@/components/ChatComponent.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
+import { formatSize } from "@/utils/conversion";
 
 // Suppress unused import warnings for template-only components
 void UserMenu;
@@ -346,6 +358,9 @@ const chatbotOpen = ref(false);
 const lastModifiedRightPanel = ref<string | null>(null);
 const isUploadLoading = ref(false);
 const helpPanelIsOpen = ref(false);
+const quotaWarningDismissed = ref(false);
+
+const QUOTA_WARNING_THRESHOLD_BYTES = 100 * 1024 * 1024;
 
 const panelRefs: Record<string, Ref<boolean>> = {
   snapshotPanel,
@@ -413,6 +428,29 @@ const hasUncomputedProperties = computed(() => {
   return false;
 });
 
+const isNearUserQuota = computed(() => {
+  if (!store.userQuota) {
+    return false;
+  }
+  return (
+    store.userQuota.limit - store.userQuota.used <=
+    QUOTA_WARNING_THRESHOLD_BYTES
+  );
+});
+
+const showQuotaWarning = computed(
+  () => isNearUserQuota.value && !quotaWarningDismissed.value,
+);
+
+const quotaWarningMessage = computed(() => {
+  if (!store.userQuota) {
+    return "";
+  }
+  return `Your usage is ${formatSize(store.userQuota.used)} out of ${formatSize(
+    store.userQuota.limit,
+  )}; some functionality may be limited as you approach your quota.`;
+});
+
 const filteredToursByCategory = computed(
   (): Record<string, Record<string, ITourMetadata>> => {
     const tours = availableTours.value;
@@ -448,6 +486,10 @@ function handleTourStart(tourId: string) {
     router.push({ name: tour.entryPoint });
   }
   startTour(tourId);
+}
+
+function dismissQuotaWarning() {
+  quotaWarningDismissed.value = true;
 }
 
 async function goToNewDataset() {
@@ -491,6 +533,11 @@ function datasetChanged() {
 
 watch(annotationPanel, () => annotationPanelChanged());
 watch(routeName, () => datasetChanged());
+watch(isNearUserQuota, (nearQuota) => {
+  if (!nearQuota) {
+    quotaWarningDismissed.value = false;
+  }
+});
 
 onMounted(() => {
   fetchConfig();
@@ -512,6 +559,9 @@ defineExpose({
   appHotkeys,
   routeName,
   hasUncomputedProperties,
+  isNearUserQuota,
+  showQuotaWarning,
+  quotaWarningMessage,
   filteredToursByCategory,
   fetchConfig,
   loadAllTours,
@@ -519,6 +569,7 @@ defineExpose({
   toggleRightPanel,
   toggleHelpDialogUsingHotkey,
   handleTourStart,
+  dismissQuotaWarning,
   goToNewDataset,
 });
 </script>
@@ -528,6 +579,19 @@ defineExpose({
   text-overflow: unset;
   overflow: unset;
   flex: 0 0 auto;
+}
+
+.quota-warning {
+  flex: 1 1 360px;
+  max-width: min(560px, 42vw);
+  min-width: 0;
+  font-size: 0.8125rem;
+}
+
+.quota-warning :deep(.v-alert__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
 <style lang="scss">

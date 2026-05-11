@@ -10,6 +10,7 @@ import {
   IGirderApiKey,
   IUPennCollection,
   IGirderLocation,
+  IGirderUserQuota,
 } from "@/girder";
 import {
   configurationBaseKeys,
@@ -1024,6 +1025,16 @@ export default class GirderAPI {
     } catch (error) {
       logError("Failed to fetch user API keys");
       return [];
+    }
+  }
+
+  async getUserQuota(userId: string): Promise<IGirderUserQuota | null> {
+    try {
+      const response = await this.client.get(`user/${userId}/quota`);
+      return response.data;
+    } catch (error) {
+      logWarning("Failed to fetch user quota", error);
+      return null;
     }
   }
 

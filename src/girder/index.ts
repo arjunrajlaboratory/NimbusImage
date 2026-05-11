@@ -7,12 +7,20 @@ export interface IGirderAssetstore {
   name: string;
 }
 
+export interface IGirderQuotaPolicy {
+  fileSizeQuota?: number | null;
+  useQuotaDefault?: boolean;
+  _currentFileSizeQuota?: number | null;
+  [key: string]: unknown;
+}
+
 interface IGirderBase {
   _id: string;
   name: string;
   created?: string;
   updated?: string;
   icon?: string;
+  size?: number;
 }
 
 export interface IGirderUser extends IGirderBase {
@@ -27,6 +35,10 @@ export interface IGirderUser extends IGirderBase {
     channelColors?: { [key: string]: string };
     [key: string]: any;
   };
+}
+
+export interface IGirderUserQuota extends IGirderUser {
+  quota: IGirderQuotaPolicy;
 }
 
 export interface IGirderItem extends IGirderBase {

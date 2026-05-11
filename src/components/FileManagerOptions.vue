@@ -196,6 +196,7 @@ function afterMutating() {
   for (const item of props.items) {
     girderResources.ressourceChanged(item._id);
   }
+  store.refreshUserQuota();
   emit("itemsChanged");
 }
 

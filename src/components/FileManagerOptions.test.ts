@@ -7,6 +7,7 @@ const mockRenameItem = vi.fn();
 const mockDeleteItems = vi.fn();
 const mockDownloadResource = vi.fn();
 const mockMoveFolderToAssetstore = vi.fn();
+const mockRefreshUserQuota = vi.fn();
 
 vi.mock("@/store", () => ({
   default: {
@@ -23,6 +24,7 @@ vi.mock("@/store", () => ({
       moveFolderToAssetstore: (...args: any[]) =>
         mockMoveFolderToAssetstore(...args),
     },
+    refreshUserQuota: (...args: any[]) => mockRefreshUserQuota(...args),
   },
 }));
 
@@ -74,6 +76,7 @@ describe("FileManagerOptions", () => {
     mockDeleteItems.mockResolvedValue(undefined);
     mockDownloadResource.mockResolvedValue(new Blob(["data"]));
     mockMoveFolderToAssetstore.mockResolvedValue(undefined);
+    mockRefreshUserQuota.mockClear();
   });
 
   it("initializes with disableOptions false", () => {
@@ -200,6 +203,7 @@ describe("FileManagerOptions", () => {
     vm.deleteDialog = true;
     await vm.deleteItems();
     expect(mockDeleteItems).toHaveBeenCalledWith(items);
+    expect(mockRefreshUserQuota).toHaveBeenCalled();
     expect(vm.deleteDialog).toBe(false);
     expect(wrapper.emitted("itemsChanged")).toBeTruthy();
   });

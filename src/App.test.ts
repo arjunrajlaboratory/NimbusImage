@@ -10,6 +10,7 @@ vi.mock("@/store", () => ({
   default: {
     isLoggedIn: false,
     girderUser: null,
+    userQuota: null,
     dataset: null,
     setToolTemplateList: vi.fn(),
     setIsAnnotationPanelOpen: vi.fn(),
@@ -97,6 +98,7 @@ describe("App", () => {
     // Reset store mocks
     (store as any).isLoggedIn = false;
     (store as any).girderUser = null;
+    (store as any).userQuota = null;
     (store as any).dataset = null;
     (store as any).setToolTemplateList = vi.fn();
     (store as any).setIsAnnotationPanelOpen = vi.fn();
@@ -201,6 +203,41 @@ describe("App", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasUncomputedProperties).toBe(false);
+  });
+
+  it("shows quota warning when usage is within 100 MB of the limit", () => {
+    (store as any).userQuota = {
+      used: 950 * 1024 * 1024,
+      limit: 1024 * 1024 * 1024,
+    };
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.isNearUserQuota).toBe(true);
+    expect(vm.showQuotaWarning).toBe(true);
+    expect(vm.quotaWarningMessage).toContain("Your usage is 950.00 MB out of");
+  });
+
+  it("does not show quota warning when usage is more than 100 MB below the limit", () => {
+    (store as any).userQuota = {
+      used: 800 * 1024 * 1024,
+      limit: 1024 * 1024 * 1024,
+    };
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.isNearUserQuota).toBe(false);
+    expect(vm.showQuotaWarning).toBe(false);
+  });
+
+  it("dismisses quota warning for the current near-quota state", async () => {
+    (store as any).userQuota = {
+      used: 950 * 1024 * 1024,
+      limit: 1024 * 1024 * 1024,
+    };
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.dismissQuotaWarning();
+    await nextTick();
+    expect(vm.showQuotaWarning).toBe(false);
   });
 
   // -- Computed: filteredToursByCategory --
