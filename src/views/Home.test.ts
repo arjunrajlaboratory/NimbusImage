@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { nextTick } from "vue";
-import { shallowMount } from "@vue/test-utils";
+import { shallowMount, type VueWrapper } from "@vue/test-utils";
 
 // --- Top-level mock fn handles (hoisted before vi.mock calls) ---
 const mockSetFolderLocation = vi.fn();
@@ -16,26 +16,33 @@ const mockPersisterGet = vi.fn(
 const mockPersisterSet = vi.fn();
 
 // --- Store mocks ---
-vi.mock("@/store", () => ({
-  default: {
-    isLoggedIn: true,
-    folderLocation: {
-      _id: "folder1",
-      _modelType: "folder",
-      name: "My Folder",
-    },
-    recentDatasetViews: [],
-    setFolderLocation: (...args: any[]) => mockSetFolderLocation(...args),
-    initializeUploadWorkflow: (...args: any[]) =>
-      mockInitializeUploadWorkflow(...args),
-    fetchRecentDatasetViews: (...args: any[]) =>
-      mockFetchRecentDatasetViews(...args),
-    api: {
-      checkDatasetNameExists: (...args: any[]) =>
-        mockCheckDatasetNameExists(...args),
-    },
-  },
-}));
+// Wrap in reactive() so watch(() => store.isLoggedIn, ...) can fire when
+// tests mutate properties — this is required to test the post-login
+// reset of recentsShowMineOnly.
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      isLoggedIn: true,
+      isAdmin: false,
+      folderLocation: {
+        _id: "folder1",
+        _modelType: "folder",
+        name: "My Folder",
+      },
+      recentDatasetViews: [],
+      setFolderLocation: (...args: any[]) => mockSetFolderLocation(...args),
+      initializeUploadWorkflow: (...args: any[]) =>
+        mockInitializeUploadWorkflow(...args),
+      fetchRecentDatasetViews: (...args: any[]) =>
+        mockFetchRecentDatasetViews(...args),
+      api: {
+        checkDatasetNameExists: (...args: any[]) =>
+          mockCheckDatasetNameExists(...args),
+      },
+    }),
+  };
+});
 
 vi.mock("@/store/girderResources", () => ({
   default: {
@@ -108,12 +115,17 @@ import { isDatasetFolder, isConfigurationItem } from "@/utils/girderSelectable";
 const mockRouter = { push: vi.fn() };
 const mockStartTour = vi.fn();
 
+// Track every mounted Home wrapper so afterEach can unmount them. Without
+// this, watchers (e.g. on store.isLoggedIn) leak between tests and fire
+// when later tests mutate reactive store state.
+const mountedWrappers: VueWrapper[] = [];
+
 function mountComponent() {
   const app = document.createElement("div");
   app.setAttribute("data-app", "true");
   document.body.appendChild(app);
 
-  return shallowMount(Home, {
+  const wrapper = shallowMount(Home, {
     attachTo: app,
     global: {
       provide: {
@@ -134,6 +146,8 @@ function mountComponent() {
       },
     },
   });
+  mountedWrappers.push(wrapper);
+  return wrapper;
 }
 
 // --- Import standalone functions for direct testing ---
@@ -159,6 +173,7 @@ describe("Home", () => {
 
     // Reset store state
     (store as any).isLoggedIn = true;
+    (store as any).isAdmin = false;
     (store as any).folderLocation = {
       _id: "folder1",
       _modelType: "folder",
@@ -170,6 +185,12 @@ describe("Home", () => {
     vi.mocked(girderResources.watchFolder).mockReturnValue(null as any);
     vi.mocked(girderResources.watchCollection).mockReturnValue(null as any);
     (girderResources as any).resourcesLocks = {};
+  });
+
+  afterEach(() => {
+    while (mountedWrappers.length > 0) {
+      mountedWrappers.pop()!.unmount();
+    }
   });
 
   // =========================================================================
@@ -745,7 +766,10 @@ describe("Home", () => {
       await new Promise((r) => setTimeout(r, 0));
       await nextTick();
 
-      expect(vm.userDisplayNames["user1"]).toBe("John Doe (jdoe@test.com)");
+      expect(vm.userDisplayNames["user1"]).toEqual({
+        full: "John Doe (jdoe@test.com)",
+        short: "John Doe",
+      });
     });
   });
 
@@ -919,6 +943,55 @@ describe("Home", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.isNavigating).toBe(false);
+    });
+  });
+
+  // =========================================================================
+  // 20. recentsShowMineOnly default & login transition
+  // =========================================================================
+  describe("recentsShowMineOnly", () => {
+    it("defaults to !isAdmin at mount (admin → off)", () => {
+      (store as any).isLoggedIn = true;
+      (store as any).isAdmin = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.recentsShowMineOnly).toBe(false);
+    });
+
+    it("defaults to !isAdmin at mount (non-admin → on)", () => {
+      (store as any).isLoggedIn = true;
+      (store as any).isAdmin = false;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.recentsShowMineOnly).toBe(true);
+    });
+
+    it("resets to !isAdmin when isLoggedIn flips false → true", async () => {
+      // Mount while still authenticating: pretend we're an admin who has
+      // not yet been recognized. Setup snapshot would yield true (chip on)
+      // even though admin should default to off.
+      (store as any).isLoggedIn = false;
+      (store as any).isAdmin = false;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.recentsShowMineOnly).toBe(true);
+
+      // Auth resolves: user is actually an admin.
+      (store as any).isAdmin = true;
+      (store as any).isLoggedIn = true;
+      await nextTick();
+
+      expect(vm.recentsShowMineOnly).toBe(false);
+    });
+
+    it("triggers refetch when toggled", async () => {
+      mockFetchRecentDatasetViews.mockClear();
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchRecentDatasetViews.mockClear();
+      vm.recentsShowMineOnly = !vm.recentsShowMineOnly;
+      await nextTick();
+      expect(mockFetchRecentDatasetViews).toHaveBeenCalled();
     });
   });
 });
