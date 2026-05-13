@@ -4,6 +4,7 @@ import { mount } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
   default: {
+    isLoggedIn: true,
     toolTags: [],
   },
 }));
