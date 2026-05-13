@@ -1,19 +1,39 @@
 <template>
   <div class="action-panel">
     <div class="selected-count">{{ selectedCount }} objects selected</div>
-    <v-btn size="small" class="ma-1" @click="$emit('delete-selected')">
+    <v-btn
+      size="small"
+      class="ma-1"
+      :disabled="!isLoggedIn"
+      @click="$emit('delete-selected')"
+    >
       <v-icon start size="small">mdi-delete</v-icon>
       Delete Selected
     </v-btn>
-    <v-btn size="small" class="ma-1" @click="$emit('delete-unselected')">
+    <v-btn
+      size="small"
+      class="ma-1"
+      :disabled="!isLoggedIn"
+      @click="$emit('delete-unselected')"
+    >
       <v-icon start size="small">mdi-delete-sweep</v-icon>
       Delete Unselected
     </v-btn>
-    <v-btn size="small" class="ma-1" @click="$emit('tag-selected')">
+    <v-btn
+      size="small"
+      class="ma-1"
+      :disabled="!isLoggedIn"
+      @click="$emit('tag-selected')"
+    >
       <v-icon start size="small">mdi-tag</v-icon>
       Tag Selected
     </v-btn>
-    <v-btn size="small" class="ma-1" @click="$emit('color-selected')">
+    <v-btn
+      size="small"
+      class="ma-1"
+      :disabled="!isLoggedIn"
+      @click="$emit('color-selected')"
+    >
       <v-icon start size="small">mdi-palette</v-icon>
       Color Selected
     </v-btn>
@@ -31,13 +51,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { logError } from "@/utils/log";
+import store from "@/store";
 import annotationStore from "@/store/annotation";
 
 defineProps<{
   selectedCount: number;
 }>();
+
+const isLoggedIn = computed(() => store.isLoggedIn);
 
 defineEmits<{
   (e: "delete-selected"): void;

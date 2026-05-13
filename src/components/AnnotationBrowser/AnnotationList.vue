@@ -11,7 +11,7 @@
               size="small"
               variant="outlined"
               :loading="isDeletingAnnotations"
-              :disabled="isDeletingAnnotations"
+              :disabled="!isLoggedIn || isDeletingAnnotations"
               @click.stop="deleteSelected"
             >
               Delete Selected
@@ -28,18 +28,24 @@
               <v-list>
                 <v-list-item
                   @click="deleteUnselected"
-                  :disabled="isDeletingAnnotations"
+                  :disabled="!isLoggedIn || isDeletingAnnotations"
                 >
                   <v-icon>mdi-delete-outline</v-icon>
                   <v-list-item-title>Delete Unselected</v-list-item-title>
                 </v-list-item>
 
-                <v-list-item @click="showTagDialog = true">
+                <v-list-item
+                  @click="showTagDialog = true"
+                  :disabled="!isLoggedIn"
+                >
                   <v-icon>mdi-tag</v-icon>
                   <v-list-item-title>Tag Selected</v-list-item-title>
                 </v-list-item>
 
-                <v-list-item @click="showColorDialog = true">
+                <v-list-item
+                  @click="showColorDialog = true"
+                  :disabled="!isLoggedIn"
+                >
                   <v-icon>mdi-palette</v-icon>
                   <v-list-item-title>Color Selected</v-list-item-title>
                 </v-list-item>
@@ -313,6 +319,8 @@ const showTagDialog = ref(false);
 const showColorDialog = ref(false);
 
 // Computeds
+const isLoggedIn = computed(() => store.isLoggedIn);
+
 const isDeletingAnnotations = computed(() => {
   return annotationStore.isDeleting;
 });
@@ -560,6 +568,7 @@ function deleteUnselected() {
 }
 
 defineExpose({
+  isLoggedIn,
   isDeletingAnnotations,
   columnOptions,
   selectedColumns,
