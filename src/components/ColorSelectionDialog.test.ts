@@ -1,6 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
+
+vi.mock("@/store", () => ({
+  default: {
+    isLoggedIn: true,
+  },
+}));
+
 import ColorSelectionDialog from "./ColorSelectionDialog.vue";
 
 function mountComponent(props = {}) {

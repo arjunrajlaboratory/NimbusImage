@@ -60,8 +60,6 @@ defineProps<{
   selectedCount: number;
 }>();
 
-const isLoggedIn = computed(() => store.isLoggedIn);
-
 defineEmits<{
   (e: "delete-selected"): void;
   (e: "delete-unselected"): void;
@@ -69,6 +67,8 @@ defineEmits<{
   (e: "color-selected"): void;
   (e: "deselect-all"): void;
 }>();
+
+const isLoggedIn = computed(() => store.isLoggedIn);
 
 const copySuccess = ref(false);
 
