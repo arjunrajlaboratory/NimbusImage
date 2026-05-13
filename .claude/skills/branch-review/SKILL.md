@@ -100,6 +100,10 @@ This keeps every actionable item discoverable from the Findings Summary table by
 | **Security / Access Control** | Missing permission checks, bypassed access control |
 | **Raw PyMongo** | Using `Model().collection.find()` instead of `Model().find()` |
 | **Redundant Validation** | Checks that duplicate framework behavior |
+| **API calls in Vue components** | Direct `this.girderRest.get(...)` / `this.girderRest.post(...)` in components instead of an API file (`GirderAPI.ts`, `AnnotationsAPI.ts`, etc.) |
+| **Frontend compensating for backend** | Frontend fallback logic that masks backend issues or duplicates backend access control |
+| **Store Organization** | New state added to `src/store/index.ts` instead of a focused store module |
+| **Naming** | Generic variable names or function names that no longer match their behavior |
 
 ## Backend-Specific Checks
 
@@ -222,6 +226,8 @@ The two tables are numbered and serve different purposes:
 | Redundant Validation | pass | — |
 | API calls in Vue components | pass | — |
 | Frontend compensating for backend | pass | — |
+| Store Organization | pass | — |
+| Naming | pass | — |
 
 ### Questions for Clarification
 [Only include this section if there are open questions. Otherwise omit it.]
