@@ -1,5 +1,15 @@
 FROM girder/tox-and-node-lts:latest
 
+# fusepy (pulled in by girder[mount]) dlopens libfuse.so.2 at module import
+# time. Recent rebuilds of the base image dropped libfuse2 because Debian's
+# `fuse` apt package became a transitional alias for fuse3, breaking
+# `girder mount` and emitting an entry-point load warning on every CLI call.
+# Install libfuse2 explicitly until fusepy/Girder support libfuse3.
+# See https://github.com/girder/girder/issues/3814
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libfuse2 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN virtualenv /venv --python=3.11
 ENV PATH=/venv/bin:$PATH
 
