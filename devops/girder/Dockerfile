@@ -3,8 +3,6 @@ FROM girder/tox-and-node-lts:latest
 RUN virtualenv /venv --python=3.11
 ENV PATH=/venv/bin:$PATH
 
-RUN mkdir /mnt/fuse
-
 RUN mkdir /src
 WORKDIR /src
 

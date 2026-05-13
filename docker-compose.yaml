@@ -11,7 +11,7 @@ services:
     build:
       context: ./devops/girder
     privileged: true
-    command: -c "python3 /src/provision.py && girder mount /mnt/fuse && celery -A girder_worker.app worker -Q local -D && uvicorn girder.asgi:app --host 0.0.0.0 --port 8080"
+    command: -c "python3 /src/provision.py && celery -A girder_worker.app worker -Q local -D && uvicorn girder.asgi:app --host 0.0.0.0 --port 8080"
     ports:
       - "${GIRDER_PORT-8080}:8080"
     links:
