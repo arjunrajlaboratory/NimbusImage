@@ -145,13 +145,41 @@ vi.mock("@girder/components", () => ({
 vi.mock("@/girder/components", () => ({
   Upload: {
     name: "GirderUpload",
-    template: "<div><slot name='files' :files='[]' /></div>",
-    props: ["dest", "uploadCls", "hideStartButton", "hideHeadline"],
+    template: `
+      <div>
+        <slot
+          name="dropzone"
+          :files="files"
+          :dropzoneMessage="dropzoneMessage"
+          :multiple="multiple"
+          :accept="accept"
+          :inputFilesChanged="inputFilesChanged"
+        />
+        <slot name="files" :files="files" />
+      </div>
+    `,
+    props: {
+      dest: { type: Object, required: true },
+      uploadCls: { type: Function, default: undefined },
+      hideStartButton: { type: Boolean, default: false },
+      hideHeadline: { type: Boolean, default: false },
+      multiple: { type: Boolean, default: true },
+      accept: { type: String, default: undefined },
+    },
     methods: {
-      inputFilesChanged: vi.fn(),
+      inputFilesChanged(this: any, files: File[]) {
+        this.files = files;
+        if (files.length > 0) {
+          this.$emit("filesChanged", files);
+        }
+      },
       startUpload: vi.fn(),
     },
-    data: () => ({ totalProgressPercent: 0 }),
+    data: () => ({
+      files: [],
+      dropzoneMessage: "Drag files here or click to select them",
+      totalProgressPercent: 0,
+    }),
   },
 }));
 
@@ -161,11 +189,39 @@ import { parseTranscodeOutput } from "@/utils/strings";
 
 const GirderUploadStub = {
   name: "GirderUpload",
-  template: "<div><slot name='files' :files='[]' /></div>",
-  props: ["dest", "uploadCls", "hideStartButton", "hideHeadline"],
-  data: () => ({ totalProgressPercent: 0 }),
+  template: `
+    <div>
+      <slot
+        name="dropzone"
+        :files="files"
+        :dropzoneMessage="dropzoneMessage"
+        :multiple="multiple"
+        :accept="accept"
+        :inputFilesChanged="inputFilesChanged"
+      />
+      <slot name="files" :files="files" />
+    </div>
+  `,
+  props: {
+    dest: { type: Object, required: true },
+    uploadCls: { type: Function, default: undefined },
+    hideStartButton: { type: Boolean, default: false },
+    hideHeadline: { type: Boolean, default: false },
+    multiple: { type: Boolean, default: true },
+    accept: { type: String, default: undefined },
+  },
+  data: () => ({
+    files: [],
+    dropzoneMessage: "Drag files here or click to select them",
+    totalProgressPercent: 0,
+  }),
   methods: {
-    inputFilesChanged: vi.fn(),
+    inputFilesChanged(this: any, files: File[]) {
+      this.files = files;
+      if (files.length > 0) {
+        this.$emit("filesChanged", files);
+      }
+    },
     startUpload: vi.fn(),
   },
 };
@@ -837,6 +893,34 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       const result = await vm.getMaxUploadSize();
       expect(result).toBeNull();
+    });
+  });
+
+  describe("primary upload dropzone", () => {
+    it("renders the app FileDropzone in GirderUpload's dropzone slot", async () => {
+      const wrapper = mountComponent();
+      await nextTick();
+
+      const dropzone = wrapper.findComponent({ name: "FileDropzone" });
+
+      expect(dropzone.exists()).toBe(true);
+      expect(dropzone.props("multiple")).toBe(true);
+      expect(dropzone.props("accept")).toBeUndefined();
+    });
+
+    it("updates selected files when the primary dropzone emits files", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      await nextTick();
+
+      const file = createFile("dropped-image.tif", 50);
+      const dropzone = wrapper.findComponent({ name: "FileDropzone" });
+
+      await dropzone.vm.$emit("update:modelValue", [file]);
+
+      expect(vm.uploadedFiles).toEqual([file]);
+      expect(vm.files).toEqual([file]);
+      expect(vm.name).toBe("dropped-image");
     });
   });
 

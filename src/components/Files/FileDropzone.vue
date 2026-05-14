@@ -2,9 +2,10 @@
   <div
     :class="dropzoneClass"
     class="dropzone-wrapper"
-    @dragenter="dropzoneClass = 'animate'"
+    @dragenter.prevent="dropzoneClass = 'animate'"
+    @dragover.prevent
     @dragleave="dropzoneClass = null"
-    @drop="dropzoneClass = null"
+    @drop.prevent="onDrop"
   >
     <div class="dropzone-overlay"></div>
     <v-row
@@ -67,7 +68,12 @@ function onChange(event: Event) {
   files.value = [...fileList];
 }
 
-defineExpose({ dropzoneClass });
+function onDrop(event: DragEvent) {
+  dropzoneClass.value = null;
+  files.value = [...(event.dataTransfer?.files || [])];
+}
+
+defineExpose({ dropzoneClass, onDrop });
 </script>
 
 <style lang="scss" scoped>

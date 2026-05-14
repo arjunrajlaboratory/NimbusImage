@@ -31,6 +31,29 @@
         @error="interruptedUpload"
         @vue:mounted="uploadMounted"
       >
+        <template
+          #dropzone="{
+            files: uploadFiles,
+            dropzoneMessage,
+            multiple,
+            accept,
+            inputFilesChanged,
+          }"
+        >
+          <file-dropzone
+            v-if="!uploadFiles.length"
+            :multiple="multiple"
+            :accept="accept"
+            class="new-dataset-primary-dropzone"
+            @update:model-value="inputFilesChanged"
+          >
+            <template #default>
+              <v-icon size="50px">mdi-file-upload</v-icon>
+              <div class="title mt-3">{{ dropzoneMessage }}</div>
+            </template>
+          </file-dropzone>
+        </template>
+
         <template #files="{ files }" v-if="quickupload && !pipelineError">
           <v-card>
             <v-card-text>
@@ -1266,6 +1289,10 @@ defineExpose({
 <style lang="scss">
 .new-dataset-upload .files-list {
   max-height: 260px;
+}
+
+.new-dataset-primary-dropzone {
+  height: 100%;
 }
 
 .job-log {
