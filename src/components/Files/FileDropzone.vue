@@ -70,7 +70,8 @@ function onChange(event: Event) {
 
 function onDrop(event: DragEvent) {
   dropzoneClass.value = null;
-  files.value = [...(event.dataTransfer?.files || [])];
+  const dropped = [...(event.dataTransfer?.files || [])];
+  files.value = props.multiple ? dropped : dropped.slice(0, 1);
 }
 
 defineExpose({ dropzoneClass, onDrop });
