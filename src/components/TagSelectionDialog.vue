@@ -22,7 +22,9 @@
       <v-card-actions>
         <v-spacer></v-spacer>
         <v-btn color="warning" @click="clearTags"> Clear input </v-btn>
-        <v-btn color="primary" @click="submit"> Add/remove tags </v-btn>
+        <v-btn color="primary" :disabled="!isLoggedIn" @click="submit">
+          Add/remove tags
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -30,6 +32,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
+import store from "@/store";
 import TagPicker from "@/components/TagPicker.vue";
 
 const props = defineProps<{
@@ -47,6 +50,8 @@ const emit = defineEmits<{
     },
   ): void;
 }>();
+
+const isLoggedIn = computed(() => store.isLoggedIn);
 
 const localTags = ref<string[]>([]);
 const localAddOrRemove = ref<"add" | "remove">("add");
@@ -74,6 +79,7 @@ function submit() {
 }
 
 defineExpose({
+  isLoggedIn,
   localTags,
   localAddOrRemove,
   localReplaceExisting,

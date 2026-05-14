@@ -32,6 +32,10 @@ import {
 
 import { markRaw, toRaw } from "vue";
 import { simpleCentroid } from "@/utils/annotation";
+import {
+  getAnnotationUpdatePatch,
+  type AnnotationUpdatePatch,
+} from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
@@ -907,25 +911,43 @@ export class Annotations extends VuexModule {
       return;
     }
     sync.setSaving(true);
-    const newAnnotations = [];
-    for (const annotationId of annotationIds) {
-      const annotationIndex = this.annotationIdToIdx[annotationId];
-      if (annotationIndex === undefined) {
-        continue;
+    const originalAnnotations: { annotation: IAnnotation; index: number }[] =
+      [];
+    const annotationUpdates: AnnotationUpdatePatch[] = [];
+    try {
+      for (const annotationId of annotationIds) {
+        const annotationIndex = this.annotationIdToIdx[annotationId];
+        if (annotationIndex === undefined) {
+          continue;
+        }
+        const oldAnnotation = this.annotations[annotationIndex];
+        const newAnnotation = cloneAnnotation(oldAnnotation);
+        editFunction(newAnnotation);
+        this.setAnnotation({
+          annotation: newAnnotation,
+          index: annotationIndex,
+        });
+        originalAnnotations.push({
+          annotation: oldAnnotation,
+          index: annotationIndex,
+        });
+        const update = getAnnotationUpdatePatch(oldAnnotation, newAnnotation);
+        if (update) {
+          annotationUpdates.push(update);
+        }
       }
-      const oldAnnotation = this.annotations[annotationIndex];
-      const newAnnotation = cloneAnnotation(oldAnnotation);
-      editFunction(newAnnotation);
-      this.setAnnotation({
-        annotation: newAnnotation,
-        index: annotationIndex,
-      });
-      newAnnotations.push(newAnnotation);
+      if (annotationUpdates.length) {
+        await this.annotationsAPI.updateAnnotations(annotationUpdates);
+      }
+      sync.setSaving(false);
+    } catch (error) {
+      for (const { annotation, index } of originalAnnotations) {
+        this.setAnnotation({ annotation, index });
+      }
+      logError(`Failed to update annotations: ${(error as Error).message}`);
+      sync.setSaving(error as Error);
+      throw error;
     }
-    if (newAnnotations.length) {
-      await this.annotationsAPI.updateAnnotations(newAnnotations);
-    }
-    sync.setSaving(false);
   }
 
   @Action
@@ -945,7 +967,7 @@ export class Annotations extends VuexModule {
       }, annotation.tags);
       annotation.tags = newTags;
     };
-    this.updateAnnotationsPerId({ annotationIds, editFunction });
+    await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
@@ -959,7 +981,7 @@ export class Annotations extends VuexModule {
     const editFunction = (annotation: IAnnotation): void => {
       annotation.tags = [...tags];
     };
-    this.updateAnnotationsPerId({ annotationIds, editFunction });
+    await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
@@ -973,11 +995,11 @@ export class Annotations extends VuexModule {
     const editFunction = (annotation: IAnnotation): void => {
       annotation.tags = annotation.tags.filter((tag) => !tags.includes(tag));
     };
-    this.updateAnnotationsPerId({ annotationIds, editFunction });
+    await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
-  public tagSelectedAnnotations({
+  public async tagSelectedAnnotations({
     tags,
     replace,
   }: {
@@ -985,12 +1007,12 @@ export class Annotations extends VuexModule {
     replace: boolean;
   }) {
     if (replace) {
-      this.replaceTagsByAnnotationIds({
+      await this.replaceTagsByAnnotationIds({
         annotationIds: [...this.selectedAnnotationIds],
         tags,
       });
     } else {
-      this.addTagsByAnnotationIds({
+      await this.addTagsByAnnotationIds({
         annotationIds: [...this.selectedAnnotationIds],
         tags,
       });
@@ -998,8 +1020,8 @@ export class Annotations extends VuexModule {
   }
 
   @Action
-  public removeTagsFromSelectedAnnotations(tags: string[]) {
-    this.removeTagsByAnnotationIds({
+  public async removeTagsFromSelectedAnnotations(tags: string[]) {
+    await this.removeTagsByAnnotationIds({
       annotationIds: [...this.selectedAnnotationIds],
       tags,
     });
@@ -1022,7 +1044,7 @@ export class Annotations extends VuexModule {
   }
 
   @Action
-  public colorAnnotationIds({
+  public async colorAnnotationIds({
     color,
     annotationIds,
     randomize = false,
@@ -1041,18 +1063,18 @@ export class Annotations extends VuexModule {
         annotation.color = color;
       }
     };
-    this.updateAnnotationsPerId({ annotationIds, editFunction });
+    await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
-  public colorSelectedAnnotations({
+  public async colorSelectedAnnotations({
     color,
     randomize = false,
   }: {
     color: string | null;
     randomize?: boolean;
   }) {
-    this.colorAnnotationIds({
+    await this.colorAnnotationIds({
       annotationIds: [...this.selectedAnnotationIds],
       color,
       randomize,
@@ -1060,11 +1082,17 @@ export class Annotations extends VuexModule {
   }
 
   @Action
-  public updateAnnotationName({ name, id }: { name: string; id: string }) {
+  public async updateAnnotationName({
+    name,
+    id,
+  }: {
+    name: string;
+    id: string;
+  }) {
     const editFunction = (annotation: IAnnotation): void => {
       annotation.name = name;
     };
-    this.updateAnnotationsPerId({ annotationIds: [id], editFunction });
+    await this.updateAnnotationsPerId({ annotationIds: [id], editFunction });
   }
 
   /**

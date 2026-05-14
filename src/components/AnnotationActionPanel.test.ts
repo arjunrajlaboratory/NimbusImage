@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import AnnotationActionPanel from "./AnnotationActionPanel.vue";
 
+vi.mock("@/store", () => ({
+  default: {
+    isLoggedIn: true,
+  },
+}));
+
 vi.mock("@/store/annotation", () => ({
   default: {
     selectedAnnotationIds: new Set(["id1", "id2", "id3"]),

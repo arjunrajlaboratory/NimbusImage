@@ -30,6 +30,19 @@ export function formatDateNumber(timestamp: number) {
   }
 }
 
+// Short calendar day, dropping the year when it matches the current year.
+// e.g. "Apr 24" (current year) or "Apr 24, 2024" (other years).
+export function formatDayShort(timestamp: number): string {
+  const date = new Date(timestamp);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return format(date, sameYear ? "MMM d" : "MMM d, yyyy");
+}
+
+// Time of day in 12-hour format with AM/PM, e.g. "10:50 AM".
+export function formatTimeOfDay(timestamp: number): string {
+  return format(new Date(timestamp), "h:mm a");
+}
+
 export function formatDuration(milliseconds: number): string {
   if (!milliseconds || milliseconds <= 0) {
     return "00:00:00";
