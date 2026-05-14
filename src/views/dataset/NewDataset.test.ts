@@ -4,10 +4,19 @@ import { shallowMount } from "@vue/test-utils";
 
 // --- Top-level mock fn handles ---
 const mockGetUserApiKeys = vi.fn().mockResolvedValue([]);
+const mockGetUserPrivateFolder = vi.fn().mockResolvedValue({
+  _id: "private-folder",
+  _modelType: "folder",
+});
 const mockCreateDataset = vi.fn().mockResolvedValue(null);
 const mockSetSelectedDataset = vi.fn().mockResolvedValue(undefined);
 const mockCreateDatasetView = vi.fn().mockResolvedValue(null);
 const mockSetDatasetViewId = vi.fn();
+const mockCreateDefaultView = vi.fn().mockResolvedValue({ id: "view-1" });
+const mockDatasetInfoToRoute = vi.fn().mockReturnValue({
+  name: "dataset",
+  params: { datasetId: "ds-1" },
+});
 const mockSetSelectedConfiguration = vi.fn();
 const mockCreateUploadCollection = vi.fn().mockResolvedValue(null);
 const mockAddUploadedDataset = vi.fn();
@@ -69,6 +78,8 @@ vi.mock("@/store", () => ({
     },
     api: {
       getUserApiKeys: (...args: any[]) => mockGetUserApiKeys(...args),
+      getUserPrivateFolder: (...args: any[]) =>
+        mockGetUserPrivateFolder(...args),
     },
     createDataset: (...args: any[]) => mockCreateDataset(...args),
     setSelectedDataset: (...args: any[]) => mockSetSelectedDataset(...args),
@@ -226,6 +237,14 @@ const GirderUploadStub = {
   },
 };
 
+const DatasetInfoStub = {
+  template: "<div />",
+  methods: {
+    createDefaultView: (...args: any[]) => mockCreateDefaultView(...args),
+    toRoute: (...args: any[]) => mockDatasetInfoToRoute(...args),
+  },
+};
+
 function createFile(name: string, size = 100): File {
   const file = new File(["x"], name, { type: "application/octet-stream" });
   Object.defineProperty(file, "size", { value: size });
@@ -245,7 +264,7 @@ function mountComponent(props: Record<string, any> = {}, options: any = {}) {
         GirderLocationChooser: true,
         FileDropzone: true,
         MultiSourceConfiguration: true,
-        DatasetInfo: true,
+        DatasetInfo: DatasetInfoStub,
         GirderUpload: GirderUploadStub,
         // Vuetify 3 layout stubs need to render slot content for DOM tests
         VContainer: { template: "<div><slot /></div>" },
@@ -293,7 +312,16 @@ describe("NewDataset", () => {
     mockRouter.push = vi.fn();
     resetUploadWorkflow();
     mockGetUserApiKeys.mockResolvedValue([]);
+    mockGetUserPrivateFolder.mockResolvedValue({
+      _id: "private-folder",
+      _modelType: "folder",
+    });
     mockCreateDataset.mockResolvedValue(null);
+    mockCreateDefaultView.mockResolvedValue({ id: "view-1" });
+    mockDatasetInfoToRoute.mockReturnValue({
+      name: "dataset",
+      params: { datasetId: "ds-1" },
+    });
     mockGetFolder.mockResolvedValue({
       _id: "folder1",
       _modelType: "folder",
@@ -811,6 +839,16 @@ describe("NewDataset", () => {
       expect(vm.path).toEqual({ _id: "prop-folder", _modelType: "folder" });
       expect(vm.name).toBe("Prop Name");
       expect(vm.description).toBe("Prop Desc");
+    });
+
+    it("falls back to the user private folder when no initial location exists", async () => {
+      mockUploadWorkflow.active = false;
+      const wrapper = mountComponent({ initialUploadLocation: null });
+      await nextTick();
+      await nextTick();
+      const vm = wrapper.vm as any;
+      expect(mockGetUserPrivateFolder).toHaveBeenCalled();
+      expect(vm.path).toEqual({ _id: "private-folder", _modelType: "folder" });
     });
 
     it("calls getMaxUploadSize on mount", async () => {
@@ -1345,10 +1383,14 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.dataset = { id: "ds-1" };
-      // createView will fail without refs but we verify it's called path
       await vm.generationDone("json-id");
-      // setSelectedDataset should be called in createView path
       expect(mockSetSelectedDataset).toHaveBeenCalledWith("ds-1");
+      expect(mockCreateDefaultView).toHaveBeenCalled();
+      expect(mockSetDatasetViewId).toHaveBeenCalledWith({ id: "view-1" });
+      expect(mockRouter.push).toHaveBeenCalledWith({
+        name: "dataset",
+        params: { datasetId: "ds-1" },
+      });
     });
 
     it("returns for non-quick non-batch mode", () => {

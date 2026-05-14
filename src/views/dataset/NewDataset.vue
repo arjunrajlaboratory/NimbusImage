@@ -1069,9 +1069,9 @@ async function configureDataset() {
 
 function generationDone(jsonId: string | null) {
   if (isBatchMode.value) {
-    handleCollectionGenerationDone(jsonId);
+    return handleCollectionGenerationDone(jsonId);
   } else if (isQuickImport.value) {
-    createView(jsonId);
+    return createView(jsonId);
   } else {
     return;
   }
@@ -1200,6 +1200,17 @@ onMounted(async () => {
     path.value = props.initialUploadLocation ?? null;
     if (props.initialName) name.value = props.initialName;
     if (props.initialDescription) description.value = props.initialDescription;
+  }
+
+  if (!path.value) {
+    try {
+      const privateFolder = await store.api.getUserPrivateFolder();
+      if (!path.value) {
+        path.value = privateFolder;
+      }
+    } catch (error) {
+      logError(error);
+    }
   }
 
   maxApiKeyFileSize.value = await getMaxUploadSize();
