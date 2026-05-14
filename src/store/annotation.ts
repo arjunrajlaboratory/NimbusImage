@@ -40,8 +40,20 @@ import { logError } from "@/utils/log";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
+type IndexedAnnotationUpdate = {
+  annotation: IAnnotation;
+  index: number;
+  updateCentroid?: boolean;
+};
+
 function cloneAnnotation(annotation: IAnnotation): IAnnotation {
-  return markRaw(structuredClone(toRaw(annotation)));
+  const rawAnnotation = toRaw(annotation);
+  return markRaw({
+    ...rawAnnotation,
+    tags: [...rawAnnotation.tags],
+    location: { ...rawAnnotation.location },
+    coordinates: toRaw(rawAnnotation.coordinates),
+  });
 }
 
 @Module({ dynamic: true, store, name: "annotation" })
@@ -543,6 +555,26 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
+  private setAnnotationsAtIndices(values: IndexedAnnotationUpdate[]) {
+    if (!values.length) {
+      return;
+    }
+
+    const nextAnnotations = [...this.annotations];
+    for (const { annotation: value, index, updateCentroid = true } of values) {
+      const annotation = markRaw(value);
+      nextAnnotations[index] = annotation;
+      if (updateCentroid) {
+        this.annotationCentroids[annotation.id] = markRaw(
+          simpleCentroid(annotation.coordinates),
+        );
+      }
+      this.annotationIdToIdx[annotation.id] = index;
+    }
+    this.annotations = nextAnnotations;
+  }
+
+  @Mutation
   public setAnnotations(values: IAnnotation[]) {
     this.annotations = values.map((annotation) => markRaw(annotation));
     this.annotationCentroids = markRaw({});
@@ -911,8 +943,8 @@ export class Annotations extends VuexModule {
       return;
     }
     sync.setSaving(true);
-    const originalAnnotations: { annotation: IAnnotation; index: number }[] =
-      [];
+    const originalAnnotations: IndexedAnnotationUpdate[] = [];
+    const localUpdates: IndexedAnnotationUpdate[] = [];
     const annotationUpdates: AnnotationUpdatePatch[] = [];
     try {
       for (const annotationId of annotationIds) {
@@ -923,27 +955,29 @@ export class Annotations extends VuexModule {
         const oldAnnotation = this.annotations[annotationIndex];
         const newAnnotation = cloneAnnotation(oldAnnotation);
         editFunction(newAnnotation);
-        this.setAnnotation({
-          annotation: newAnnotation,
-          index: annotationIndex,
-        });
-        originalAnnotations.push({
-          annotation: oldAnnotation,
-          index: annotationIndex,
-        });
         const update = getAnnotationUpdatePatch(oldAnnotation, newAnnotation);
         if (update) {
+          const coordinatesChanged = update.coordinates !== undefined;
+          originalAnnotations.push({
+            annotation: oldAnnotation,
+            index: annotationIndex,
+            updateCentroid: coordinatesChanged,
+          });
+          localUpdates.push({
+            annotation: newAnnotation,
+            index: annotationIndex,
+            updateCentroid: coordinatesChanged,
+          });
           annotationUpdates.push(update);
         }
       }
+      this.setAnnotationsAtIndices(localUpdates);
       if (annotationUpdates.length) {
         await this.annotationsAPI.updateAnnotations(annotationUpdates);
       }
       sync.setSaving(false);
     } catch (error) {
-      for (const { annotation, index } of originalAnnotations) {
-        this.setAnnotation({ annotation, index });
-      }
+      this.setAnnotationsAtIndices(originalAnnotations);
       logError(`Failed to update annotations: ${(error as Error).message}`);
       sync.setSaving(error as Error);
       throw error;
