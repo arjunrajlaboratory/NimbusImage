@@ -235,6 +235,22 @@ describe("AnnotationCSVDialog", () => {
     expect(vm.getUndefinedValueString()).toBe("NaN");
   });
 
+  it("sanitizeColumnNames defaults to false", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.sanitizeColumnNames).toBe(false);
+  });
+
+  it("sanitizeCsvColumnName replaces special characters", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(
+      vm.sanitizeCsvColumnName(
+        "cell, fibroblast/Blob Metrics (%) / Mean Area (um^2)",
+      ),
+    ).toBe("cell_fibroblast_Blob_Metrics_Mean_Area_um_2");
+  });
+
   it("getIncludedPropertyPaths filters based on mode", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
@@ -318,6 +334,7 @@ describe("AnnotationCSVDialog", () => {
     expect(arg.datasetId).toBe("ds1");
     expect(arg.filename).toBe("export.csv");
     expect(arg.undefinedValue).toBe("");
+    expect(arg.sanitizeColumnNames).toBe(false);
     // When exporting all annotations (not a subset), annotationIds is omitted
     // to avoid exceeding MongoDB's BSON size limit
     expect(arg.annotationIds).toBeUndefined();
@@ -346,6 +363,24 @@ describe("AnnotationCSVDialog", () => {
     vm.undefinedHandling = "na";
     const csv = await vm.generateCSVStringForAnnotations();
     expect(csv).toContain("NA");
+  });
+
+  it("generateCSVStringForAnnotations sanitizes headers when enabled", async () => {
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
+      const map: Record<string, string> = {
+        "propA.sub1": "cell, fibroblast/Blob Metrics (%)",
+        "propB.sub2": "Property B > Sub2",
+        "propC.sub3": "Property C > Sub3",
+      };
+      return map[path.join(".")] || null;
+    });
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    const csv = await vm.generateCSVStringForAnnotations();
+    expect(csv).toContain("cell_fibroblast_Blob_Metrics");
+    expect(csv).not.toContain("cell, fibroblast/Blob Metrics (%)");
   });
 
   it("watcher on propertyExportMode causes text regeneration when dialog open", async () => {
@@ -478,6 +513,17 @@ describe("AnnotationCSVDialog", () => {
     await vm.download();
     const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
     expect(arg.delimiter).toBe(",");
+  });
+
+  it("download passes sanitizeColumnNames when enabled", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.sanitizeColumnNames = true;
+    vm.filename = "export.csv";
+    vm.propertyExportMode = "all";
+    await vm.download();
+    const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+    expect(arg.sanitizeColumnNames).toBe(true);
   });
 
   it("hasCommasInPropertyNames detects commas in property names", () => {
@@ -626,6 +672,7 @@ describe("AnnotationCSVDialog", () => {
         ],
         undefinedValue: "NA",
         delimiter: ",",
+        sanitizeColumnNames: false,
       }),
     );
   });
@@ -649,6 +696,19 @@ describe("AnnotationCSVDialog", () => {
     await vm.downloadAllDatasets();
     expect(store.exportAPI.exportBulkCsv).toHaveBeenCalledWith(
       expect.objectContaining({ delimiter: "\t" }),
+    );
+  });
+
+  it("downloadAllDatasets passes sanitizeColumnNames when enabled", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [{ datasetId: "ds1", datasetName: "DS1" }];
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    await vm.downloadAllDatasets();
+    expect(store.exportAPI.exportBulkCsv).toHaveBeenCalledWith(
+      expect.objectContaining({ sanitizeColumnNames: true }),
     );
   });
 

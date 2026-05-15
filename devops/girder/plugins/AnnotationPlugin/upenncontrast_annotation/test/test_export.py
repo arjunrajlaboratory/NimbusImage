@@ -12,7 +12,10 @@ from upenncontrast_annotation.server.models.collection import Collection
 from upenncontrast_annotation.server.models.datasetView import (
     DatasetView as DatasetViewModel
 )
-from upenncontrast_annotation.server.api.export import Export
+from upenncontrast_annotation.server.api.export import (
+    Export,
+    sanitizeCsvColumnName,
+)
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -663,6 +666,25 @@ class TestCSVExport:
         # Test empty path
         assert export._getPropertyColumnName([], propertyNameMap) is None
 
+    def testSanitizeCsvColumnName(self, admin):
+        """Column names can be normalized for R-friendly CSV headers."""
+        assert sanitizeCsvColumnName(
+            "cell, fibroblast/Blob Metrics (%) / Mean Area (um^2)"
+        ) == "cell_fibroblast_Blob_Metrics_Mean_Area_um_2"
+        assert sanitizeCsvColumnName("already_ok_123") == "already_ok_123"
+        assert sanitizeCsvColumnName("///") == "_"
+
+    def testGetPropertyColumnNameSanitized(self, admin):
+        """Sanitized property columns replace delimiters and punctuation."""
+        export = Export()
+        propertyNameMap = {"prop123": "cell, fibroblast/Blob Metrics (%)"}
+
+        assert export._getPropertyColumnName(
+            ["prop123", "Mean Area (um^2)"],
+            propertyNameMap,
+            sanitizeColumnNames=True,
+        ) == "cell_fibroblast_Blob_Metrics_Mean_Area_um_2"
+
     def testPropertyColumnQuotedWhenNameContainsComma(self, admin):
         """Property columns with commas in name are quoted in CSV."""
         dataset, annotations, _ = createDatasetWithData(admin)
@@ -701,6 +723,62 @@ class TestCSVExport:
         # Verify a column without comma is not quoted
         col_no_comma = CsvColumn("Area", is_quoted=',' in "Area")
         assert col_no_comma.is_quoted is False
+
+    def testExportCsvGeneratedHeaderSanitizesColumnNames(self, admin):
+        """CSV generation applies sanitized column names when requested."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        prop = AnnotationProperty().save({
+            "name": "cell, fibroblast/Blob Metrics (%)",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        PropertyValuesModel = AnnotationPropertyValues()
+        PropertyValuesModel.appendValues(
+            {propId: {"Mean Area (um^2)": 100}},
+            annotations[0]["_id"],
+            dataset["_id"]
+        )
+
+        export = Export()
+        lines = list(export._generateCsvLines(
+            dataset["_id"],
+            [[propId, "Mean Area (um^2)"]],
+            sanitizeColumnNames=True,
+        ))
+
+        header = lines[0].strip()
+        assert "cell_fibroblast_Blob_Metrics_Mean_Area_um_2" in header
+        assert "cell, fibroblast" not in header
+        assert "/" not in header
+        assert "(" not in header
+
+    def testExportCsvGeneratedHeaderKeepsColumnNamesByDefault(self, admin):
+        """CSV generation preserves existing header format by default."""
+        dataset, _, _ = createDatasetWithData(admin)
+
+        prop = AnnotationProperty().save({
+            "name": "cell, fibroblast/Blob Metrics (%)",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        export = Export()
+        lines = list(export._generateCsvLines(
+            dataset["_id"],
+            [[propId, "Mean Area (um^2)"]],
+        ))
+
+        header = lines[0].strip()
+        assert '"cell, fibroblast/Blob Metrics (%) / Mean Area (um^2)"' \
+            in header
 
     def testPropertyColumnNotQuotedWhenNoComma(self, admin):
         """Property columns without commas are not quoted."""

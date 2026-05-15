@@ -17,6 +17,7 @@ export interface ICsvExportOptions {
   annotationIds?: string[];
   undefinedValue?: "" | "NA" | "NaN";
   delimiter?: "," | "\t";
+  sanitizeColumnNames?: boolean;
   filename?: string;
 }
 
@@ -40,6 +41,7 @@ export interface IBulkCsvExportOptions {
   propertyPaths?: string[][];
   undefinedValue?: "" | "NA" | "NaN";
   delimiter?: "," | "\t";
+  sanitizeColumnNames?: boolean;
   onProgress?: (completed: number, total: number) => void;
 }
 
@@ -109,6 +111,7 @@ export default class ExportAPI {
       annotationIds: options.annotationIds || [],
       undefinedValue: options.undefinedValue ?? "",
       delimiter: options.delimiter || ",",
+      sanitizeColumnNames: options.sanitizeColumnNames ?? false,
       filename: options.filename || "export.csv",
     };
 
@@ -195,6 +198,7 @@ export default class ExportAPI {
         propertyPaths: options.propertyPaths,
         undefinedValue: options.undefinedValue,
         delimiter: options.delimiter,
+        sanitizeColumnNames: options.sanitizeColumnNames,
         filename,
       });
 

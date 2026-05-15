@@ -98,7 +98,7 @@
         </v-radio-group>
 
         <v-alert
-          v-if="hasCommasInPropertyNames"
+          v-if="hasCommasInPropertyNames && !sanitizeColumnNames"
           :type="fileFormat === 'csv' ? 'warning' : 'info'"
           variant="tonal"
           class="mb-4"
@@ -122,6 +122,13 @@
             value="selected"
           ></v-radio>
         </v-radio-group>
+
+        <v-checkbox
+          v-model="sanitizeColumnNames"
+          label="Replace special characters in column names"
+          class="mb-4"
+          hide-details
+        />
 
         <v-list-subheader>Undefined Value Handling</v-list-subheader>
         <v-radio-group v-model="undefinedHandling" class="mb-4">
@@ -285,6 +292,7 @@ const UNDEFINED_VALUE_MAP = {
 
 const PREVIEW_ANNOTATION_LIMIT = 1000;
 const DISPLAY_CHAR_LIMIT = 10000;
+const UNSAFE_CSV_COLUMN_CHARS = /[^A-Za-z0-9_]+/g;
 
 const props = defineProps<{
   annotations: IAnnotation[];
@@ -302,6 +310,7 @@ const displayText = ref("");
 const propertyExportMode = ref<"all" | "selected" | "listed">("all");
 const propertyFilter = ref("");
 const selectedPropertyPaths = ref<string[]>([]);
+const sanitizeColumnNames = ref(false);
 
 const fileFormat = ref<"csv" | "tsv">("csv");
 const fileDelimiter = computed(() => (fileFormat.value === "tsv" ? "\t" : ","));
@@ -415,6 +424,16 @@ function copyCSVText() {
   }
 }
 
+function sanitizeCsvColumnName(name: string): string {
+  return (
+    name.replace(UNSAFE_CSV_COLUMN_CHARS, "_").replace(/^_+|_+$/g, "") || "_"
+  );
+}
+
+function getCsvColumnName(name: string): string {
+  return sanitizeColumnNames.value ? sanitizeCsvColumnName(name) : name;
+}
+
 async function generateCSVStringForAnnotations() {
   isProcessing.value = true;
   processingProgress.value = 0;
@@ -430,7 +449,7 @@ async function generateCSVStringForAnnotations() {
       "Tags",
       "Shape",
       "Name",
-    ];
+    ].map(getCsvColumnName);
     const quotes = [true, false, false, false, false, true, true, true];
     const usedPaths: string[][] = [];
 
@@ -442,8 +461,9 @@ async function generateCSVStringForAnnotations() {
 
     includedPaths.forEach((path) => {
       const name = propertyStore.getFullNameFromPath(path)!;
-      fields.push(name);
-      quotes.push(name.includes(","));
+      const columnName = getCsvColumnName(name);
+      fields.push(columnName);
+      quotes.push(columnName.includes(","));
       usedPaths.push(path);
     });
 
@@ -560,6 +580,7 @@ async function downloadSingleDataset() {
         : {}),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
+      sanitizeColumnNames: sanitizeColumnNames.value,
       filename:
         filename.value || `upenn_annotation_export${fileExtension.value}`,
     });
@@ -581,6 +602,7 @@ async function downloadAllDatasets() {
       propertyPaths: getIncludedPropertyPaths(),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
+      sanitizeColumnNames: sanitizeColumnNames.value,
       onProgress: (completed) => {
         bulkExportProgress.value = completed;
       },
@@ -616,6 +638,7 @@ watch(
     propertyExportMode,
     selectedPropertyPaths,
     undefinedHandling,
+    sanitizeColumnNames,
     fileFormat,
     dialog,
     annotationScope,
@@ -635,6 +658,7 @@ defineExpose({
   propertyExportMode,
   fileFormat,
   undefinedHandling,
+  sanitizeColumnNames,
   processingProgress,
   isProcessing,
   isTooLargeForPreview,
@@ -643,6 +667,7 @@ defineExpose({
   propertyNamesWithCommas,
   hasCommasInPropertyNames,
   resetFilename,
+  sanitizeCsvColumnName,
   generateCSVStringForAnnotations,
   updateText,
   getIncludedPropertyPaths,
