@@ -383,6 +383,27 @@ describe("AnnotationCSVDialog", () => {
     expect(csv).not.toContain("cell, fibroblast/Blob Metrics (%)");
   });
 
+  it("generateCSVStringForAnnotations deduplicates colliding sanitized headers", async () => {
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
+      const map: Record<string, string> = {
+        "propA.sub1": "Mean Area (um^2)",
+        "propB.sub2": "Mean/Area/um/2",
+        "propC.sub3": "Property C",
+      };
+      return map[path.join(".")] || null;
+    });
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    const csv = await vm.generateCSVStringForAnnotations();
+    const header = csv.split("\n")[0];
+    expect(header).toContain("Mean_Area_um_2");
+    expect(header).toContain("Mean_Area_um_2_2");
+    const columns = header.split(",");
+    expect(new Set(columns).size).toBe(columns.length);
+  });
+
   it("watcher on propertyExportMode causes text regeneration when dialog open", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;

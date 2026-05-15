@@ -49,6 +49,9 @@ CSV_FIXED_COLUMNS = [
     CsvColumn("Name", is_quoted=True),
 ]
 
+# Must stay in sync with UNSAFE_CSV_COLUMN_CHARS in
+# src/components/AnnotationBrowser/AnnotationCSVDialog.vue so that the
+# client-side preview matches the server-generated CSV exactly.
 CSV_UNSAFE_COLUMN_CHARS = re.compile(r"[^A-Za-z0-9_]+")
 
 
@@ -61,6 +64,22 @@ def sanitizeCsvColumnName(name):
     """
     sanitized = CSV_UNSAFE_COLUMN_CHARS.sub("_", name).strip("_")
     return sanitized or "_"
+
+
+def _deduplicateColumnNames(names):
+    """Suffix repeated names with _2, _3, ... in order of appearance.
+
+    Sanitization can collapse distinct names to the same token (e.g.,
+    "Mean Area (um^2)" and "Mean/Area/um/2" both -> "Mean_Area_um_2"),
+    which would break R imports that rely on unique header names.
+    """
+    seen = {}
+    result = []
+    for name in names:
+        count = seen.get(name, 0)
+        result.append(name if count == 0 else f"{name}_{count + 1}")
+        seen[name] = count + 1
+    return result
 
 
 class Export(Resource):
@@ -483,14 +502,17 @@ class Export(Resource):
         sanitizeColumnNames=False,
     ):
         """Build CSV columns and matching property paths."""
-        columns = [
-            CsvColumn(
+        # After sanitization, names cannot contain commas, so fixed
+        # columns get is_quoted recomputed on the sanitized name to
+        # match the property-column rule below.
+        columns = []
+        for col in CSV_FIXED_COLUMNS:
+            name = (
                 sanitizeCsvColumnName(col.name)
-                if sanitizeColumnNames else col.name,
-                is_quoted=col.is_quoted,
+                if sanitizeColumnNames else col.name
             )
-            for col in CSV_FIXED_COLUMNS
-        ]
+            is_quoted = ',' in name if sanitizeColumnNames else col.is_quoted
+            columns.append(CsvColumn(name, is_quoted=is_quoted))
         includedPaths = []
         for path in parsedPropertyPaths:
             propertyName = self._getPropertyColumnName(
@@ -504,6 +526,14 @@ class Export(Resource):
                     is_quoted=',' in propertyName
                 ))
                 includedPaths.append(path)
+        if sanitizeColumnNames:
+            uniqueNames = _deduplicateColumnNames(
+                [c.name for c in columns]
+            )
+            columns = [
+                CsvColumn(name, is_quoted=c.is_quoted)
+                for c, name in zip(columns, uniqueNames)
+            ]
         return columns, includedPaths
 
     def _iterAnnotations(self, datasetId, annotationIds):
@@ -564,9 +594,13 @@ class Export(Resource):
         Args:
             path: Property path [propertyId, subKey1, subKey2, ...]
             propertyNameMap: Dict mapping propertyId -> propertyName
+            sanitizeColumnNames: When True, replace non-alphanumeric
+                characters with underscores (e.g., "Foo / Bar" ->
+                "Foo_Bar").
 
         Returns:
-            Column name like "PropertyName / SubKey1 / SubKey2"
+            Column name like "PropertyName / SubKey1 / SubKey2", or the
+            sanitized form when sanitizeColumnNames is True.
         """
         if not path:
             return None

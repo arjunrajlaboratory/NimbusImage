@@ -292,6 +292,9 @@ const UNDEFINED_VALUE_MAP = {
 
 const PREVIEW_ANNOTATION_LIMIT = 1000;
 const DISPLAY_CHAR_LIMIT = 10000;
+// Must stay in sync with CSV_UNSAFE_COLUMN_CHARS in
+// devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py
+// so this client-side preview matches the server-generated CSV exactly.
 const UNSAFE_CSV_COLUMN_CHARS = /[^A-Za-z0-9_]+/g;
 
 const props = defineProps<{
@@ -434,13 +437,25 @@ function getCsvColumnName(name: string): string {
   return sanitizeColumnNames.value ? sanitizeCsvColumnName(name) : name;
 }
 
+// Sanitization can collapse distinct names to the same token, which would
+// break R imports that rely on unique header names. Suffix repeats with
+// _2, _3, ... in order of appearance to match the backend dedup logic.
+function deduplicateColumnNames(names: string[]): string[] {
+  const seen = new Map<string, number>();
+  return names.map((name) => {
+    const count = seen.get(name) ?? 0;
+    seen.set(name, count + 1);
+    return count === 0 ? name : `${name}_${count + 1}`;
+  });
+}
+
 async function generateCSVStringForAnnotations() {
   isProcessing.value = true;
   processingProgress.value = 0;
 
   try {
     // Fields
-    const fields = [
+    const fixedFields = [
       "Id",
       "Channel",
       "XY",
@@ -449,8 +464,13 @@ async function generateCSVStringForAnnotations() {
       "Tags",
       "Shape",
       "Name",
-    ].map(getCsvColumnName);
-    const quotes = [true, false, false, false, false, true, true, true];
+    ];
+    const fields = fixedFields.map(getCsvColumnName);
+    // After sanitization, names can't contain commas, so recompute
+    // fixed-column quoting on the sanitized name to match property-column logic.
+    const quotes = sanitizeColumnNames.value
+      ? fields.map((name) => name.includes(","))
+      : [true, false, false, false, false, true, true, true];
     const usedPaths: string[][] = [];
 
     // Pre-compute included paths to avoid repeated checks
@@ -466,6 +486,11 @@ async function generateCSVStringForAnnotations() {
       quotes.push(columnName.includes(","));
       usedPaths.push(path);
     });
+
+    if (sanitizeColumnNames.value) {
+      const uniqueFields = deduplicateColumnNames(fields);
+      fields.splice(0, fields.length, ...uniqueFields);
+    }
 
     // Process annotations in chunks
     const CHUNK_SIZE = 100;

@@ -14,6 +14,7 @@ from upenncontrast_annotation.server.models.datasetView import (
 )
 from upenncontrast_annotation.server.api.export import (
     Export,
+    _deduplicateColumnNames,
     sanitizeCsvColumnName,
 )
 
@@ -673,6 +674,44 @@ class TestCSVExport:
         ) == "cell_fibroblast_Blob_Metrics_Mean_Area_um_2"
         assert sanitizeCsvColumnName("already_ok_123") == "already_ok_123"
         assert sanitizeCsvColumnName("///") == "_"
+
+    def testDeduplicateColumnNames(self, admin):
+        """Repeated column names are suffixed _2, _3, ... in order."""
+        assert _deduplicateColumnNames(["A", "B", "A"]) == ["A", "B", "A_2"]
+        assert _deduplicateColumnNames(["A", "A", "A"]) == ["A", "A_2", "A_3"]
+        assert _deduplicateColumnNames(["A", "B"]) == ["A", "B"]
+        assert _deduplicateColumnNames([]) == []
+
+    def testBuildCsvColumnsDeduplicatesAfterSanitization(self, admin):
+        """Collisions from sanitization get unique suffixes."""
+        export = Export()
+        propertyNameMap = {
+            "p1": "Mean Area (um^2)",
+            "p2": "Mean/Area/um/2",
+        }
+        columns, includedPaths = export._buildCsvColumns(
+            [["p1"], ["p2"]],
+            propertyNameMap,
+            sanitizeColumnNames=True,
+        )
+        names = [c.name for c in columns]
+        # Two property columns sanitize to the same token; the second
+        # must be suffixed to keep header names unique.
+        assert "Mean_Area_um_2" in names
+        assert "Mean_Area_um_2_2" in names
+        assert len(names) == len(set(names))
+
+    def testBuildCsvColumnsRecomputesFixedColumnQuotingWhenSanitized(
+        self, admin
+    ):
+        """After sanitization, fixed columns drop comma-based quoting."""
+        export = Export()
+        columns, _ = export._buildCsvColumns(
+            [], {}, sanitizeColumnNames=True
+        )
+        fixed = {c.name: c.is_quoted for c in columns}
+        # Sanitized fixed names contain no commas, so none should be quoted.
+        assert all(not is_quoted for is_quoted in fixed.values())
 
     def testGetPropertyColumnNameSanitized(self, admin):
         """Sanitized property columns replace delimiters and punctuation."""
