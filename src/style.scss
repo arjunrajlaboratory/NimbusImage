@@ -247,6 +247,14 @@ body {
   border-radius: var(--nimbus-radius-lg) !important;
 }
 
+/* Vuetify ships .v-dialog { width: 50% } on the outer overlay wrapper, so a
+   width="N%" or width="Nvw" prop on <v-dialog> only sizes the inner
+   .v-overlay__content within that 50% box (e.g. width="60%" → 30% of viewport).
+   Opt a dialog into using the prop directly by adding class="wide-dialog". */
+.wide-dialog.v-dialog {
+  width: auto;
+}
+
 /* Menus with v-list (e.g. GirderSearch dropdown): ensure opaque background */
 .v-menu > .v-overlay__content > .v-list {
   background: rgb(var(--v-theme-surface-bright)) !important;

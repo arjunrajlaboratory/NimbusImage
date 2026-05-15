@@ -19,7 +19,7 @@
           v-model="showJobsDialog"
           width="90vw"
           max-width="1400px"
-          class="jobs-logs-dialog"
+          class="wide-dialog"
         >
           <v-card>
             <v-toolbar density="compact" color="transparent">
@@ -93,7 +93,7 @@
           v-model="showLogDialog"
           width="80vw"
           max-width="1000px"
-          class="jobs-logs-dialog"
+          class="wide-dialog"
         >
           <v-card>
             <v-toolbar density="compact" color="transparent">
@@ -401,13 +401,5 @@ defineExpose({
   border-radius: 4px;
   width: 100%;
   color: rgba(255, 255, 255, 0.85);
-}
-</style>
-<style>
-/* Unscoped: v-dialog teleports to body-level overlay container.
-   Vuetify 4 defaults .v-dialog { width: 50% } on the outer overlay,
-   so the `width` prop only applies within that 50% box. (See VUE3_STEPS.md P14) */
-.jobs-logs-dialog.v-dialog {
-  width: auto;
 }
 </style>

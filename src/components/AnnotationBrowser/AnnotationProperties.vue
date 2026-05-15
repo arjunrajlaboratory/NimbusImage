@@ -24,6 +24,7 @@
       min-width="1150px"
       max-width="1300px"
       width="85%"
+      class="wide-dialog"
       @update:model-value="onDialogClose"
     >
       <v-card>

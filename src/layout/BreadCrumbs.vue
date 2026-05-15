@@ -117,7 +117,7 @@
     <!-- Dialog to add a dataset to the current collection -->
     <v-dialog
       content-class="smart-overflow"
-      class="add-dataset-dialog"
+      class="wide-dialog"
       v-model="addDatasetFlag"
       width="60%"
     >
@@ -561,9 +561,5 @@ defineExpose({
 
 .v-alert__content {
   min-width: 0;
-}
-
-.add-dataset-dialog.v-dialog {
-  width: auto;
 }
 </style>

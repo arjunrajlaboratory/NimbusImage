@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="showDialog" width="50%">
+  <v-dialog v-model="showDialog" width="50%" class="wide-dialog">
     <v-card>
       <v-card-title> Color selected annotations </v-card-title>
       <v-card-text>

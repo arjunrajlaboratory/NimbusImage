@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="showDialog" width="50%">
+  <v-dialog v-model="showDialog" width="50%" class="wide-dialog">
     <v-card>
       <v-card-title>
         Add tags to or remove tags from selected objects
