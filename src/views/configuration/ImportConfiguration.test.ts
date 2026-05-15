@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
   default: {
@@ -70,19 +70,23 @@ describe("ImportConfiguration", () => {
     expect(mockRouter.back).toHaveBeenCalled();
   });
 
-  it("folderId derives from selectedFolder", async () => {
+  it("does not replace a user-selected folder during reinitialization", async () => {
     const wrapper = mountComponent();
-    (wrapper.vm as any).selectedFolder = {
-      _id: "folder-abc",
-      name: "Abc",
+    await flushPromises();
+
+    const userFolder = {
+      _id: "user-folder",
+      name: "User Folder",
       _modelType: "folder",
     };
-    expect((wrapper.vm as any).folderId).toBe("folder-abc");
-  });
 
-  it("folderId falls back to route query", () => {
-    const wrapper = mountComponent({ folderId: "query-folder" });
-    expect((wrapper.vm as any).folderId).toBe("query-folder");
+    (wrapper.vm as any).onNavigatorLocationUpdate(userFolder);
+    await (wrapper.vm as any).initializeSelectedFolder({
+      replaceDefault: true,
+    });
+
+    expect((wrapper.vm as any).selectedFolder).toEqual(userFolder);
+    expect((wrapper.vm as any).selectedFolderSource).toBe("user");
   });
 
   it("submit calls createDatasetView for each configuration", async () => {

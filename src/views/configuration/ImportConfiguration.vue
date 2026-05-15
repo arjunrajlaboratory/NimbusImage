@@ -1,7 +1,8 @@
 <template>
   <v-container>
     <collection-navigator
-      v-model:location="selectedFolder"
+      :location="selectedFolder"
+      @update:location="onNavigatorLocationUpdate"
       @submit="submit"
       @cancel="cancel"
       :title="`Add dataset ${datasetName} to one or several existing collections`"
@@ -19,12 +20,15 @@ import CollectionNavigator from "@/components/CollectionNavigator.vue";
 import { IDatasetConfiguration } from "@/store/model";
 import { IGirderLocation } from "@/girder";
 import { useRouteMapper } from "@/utils/useRouteMapper";
+import { getDefaultGirderLocation } from "@/utils/girderLocation";
 
 const route = useRoute();
 const router = useRouter();
 
 const selectedFolder = ref<IGirderLocation | null>(null);
-const currentFolderName = ref("");
+const selectedFolderSource = ref<
+  "route" | "dataset" | "default" | "user" | null
+>(null);
 
 useRouteMapper(
   {},
@@ -40,36 +44,13 @@ useRouteMapper(
 const dataset = computed(() => store.dataset);
 const datasetName = computed(() => store.dataset?.name || "");
 
-const folderId = computed((): string | undefined => {
-  const folder = selectedFolder.value as any;
-  if (folder && folder._modelType === "folder") {
-    return folder._id;
+async function initializeSelectedFolder(options = { replaceDefault: false }) {
+  if (
+    selectedFolder.value &&
+    !(options.replaceDefault && selectedFolderSource.value === "default")
+  ) {
+    return;
   }
-  // Fallback to route query if folder not yet loaded
-  const folderIdQuery = route.query.folderId;
-  if (Array.isArray(folderIdQuery)) {
-    return folderIdQuery[0] || undefined;
-  }
-  if (folderIdQuery === null) {
-    return undefined;
-  }
-  return folderIdQuery;
-});
-
-watch(selectedFolder, async () => {
-  const sel = selectedFolder.value as any;
-  if (sel && sel._modelType === "folder") {
-    currentFolderName.value = sel.name || "";
-    if (!currentFolderName.value) {
-      const folder = await girderResources.getFolder(sel._id);
-      currentFolderName.value = folder?.name || "Unknown folder";
-    }
-  } else {
-    currentFolderName.value = "";
-  }
-});
-
-async function initializeSelectedFolder() {
   const folderIdQuery = route.query.folderId;
   const targetFolderId = Array.isArray(folderIdQuery)
     ? folderIdQuery[0]
@@ -78,7 +59,8 @@ async function initializeSelectedFolder() {
     const folder = await girderResources.getFolder(targetFolderId);
     if (folder) {
       selectedFolder.value = folder;
-      currentFolderName.value = folder.name;
+      selectedFolderSource.value = "route";
+      return;
     }
   } else {
     if (dataset.value) {
@@ -89,22 +71,28 @@ async function initializeSelectedFolder() {
         );
         if (parentFolder) {
           selectedFolder.value = parentFolder;
-          currentFolderName.value = parentFolder.name;
+          selectedFolderSource.value = "dataset";
+          return;
         }
       }
     }
-    if (!selectedFolder.value) {
-      const privateFolder = await store.api.getUserPrivateFolder();
-      selectedFolder.value = privateFolder || store.girderUser;
-    }
   }
+  selectedFolder.value = await getDefaultGirderLocation();
+  selectedFolderSource.value = "default";
 }
 
-watch(dataset, initializeSelectedFolder);
+watch(dataset, () => {
+  initializeSelectedFolder({ replaceDefault: true });
+});
 
 onMounted(() => {
   initializeSelectedFolder();
 });
+
+function onNavigatorLocationUpdate(location: IGirderLocation | null) {
+  selectedFolder.value = location;
+  selectedFolderSource.value = "user";
+}
 
 async function submit(configurations: IDatasetConfiguration[]) {
   const dataset = store.dataset;
@@ -130,11 +118,11 @@ function cancel() {
 
 defineExpose({
   selectedFolder,
-  currentFolderName,
+  selectedFolderSource,
   datasetName,
   dataset,
-  folderId,
   initializeSelectedFolder,
+  onNavigatorLocationUpdate,
   submit,
   cancel,
 });

@@ -103,7 +103,7 @@
         }}
       </span>
       <v-btn
-        :disabled="selectedConfigurations.length <= 0"
+        :disabled="selectedConfigurations.length === 0"
         color="primary"
         class="mr-4"
         @click="submit"
@@ -119,9 +119,14 @@ import { computed, onMounted, ref, watch } from "vue";
 import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
 import { IGirderFolder, IGirderLocation, IGirderSelectAble } from "@/girder";
 import store from "@/store";
-import { areCompatibles, IDatasetConfiguration } from "@/store/model";
+import {
+  areCompatibles,
+  IDatasetConfiguration,
+  IDatasetView,
+} from "@/store/model";
 import { getDatasetCompatibility } from "@/store/GirderAPI";
 import { isDatasetFolder } from "@/utils/girderSelectable";
+import { getDefaultGirderLocation } from "@/utils/girderLocation";
 import { logError } from "@/utils/log";
 
 const props = withDefaults(
@@ -204,13 +209,7 @@ async function initializeDefaultLocation() {
   if (!props.useDefaultLocation || currentLocation.value) {
     return;
   }
-  try {
-    const privateFolder = await store.api.getUserPrivateFolder();
-    emit("update:location", privateFolder || store.girderUser);
-  } catch (error) {
-    logError("Failed to initialize collection navigator location:", error);
-    emit("update:location", store.girderUser);
-  }
+  emit("update:location", await getDefaultGirderLocation());
 }
 
 async function refreshRows() {
@@ -259,7 +258,7 @@ async function refreshRows() {
     );
 
     const linkedConfigurationIds = new Set<string>(
-      linkedViews.map((view: any) => String(view.configurationId)),
+      linkedViews.map((view: IDatasetView) => String(view.configurationId)),
     );
     const nextSelected = new Map(selectedConfigurationMap.value);
     linkedConfigurationIds.forEach((id) => nextSelected.delete(id));
