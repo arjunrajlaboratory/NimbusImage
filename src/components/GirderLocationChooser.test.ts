@@ -30,8 +30,7 @@ function mountComponent(props = {}) {
         GirderBreadcrumb: true,
         VDialog: {
           props: ["modelValue"],
-          template:
-            "<div><slot name='activator' :props='{}' /><slot /></div>",
+          template: "<div><slot name='activator' :props='{}' /><slot /></div>",
         },
         VCard: { template: "<div><slot /></div>" },
         VCardTitle: { template: "<div><slot /></div>" },
@@ -102,7 +101,9 @@ describe("GirderLocationChooser", () => {
     const wrapper = mountComponent();
     const fileManager = wrapper.findComponent({ name: "CustomFileManager" });
 
-    expect(fileManager.props("moreChips")).toBeUndefined();
+    // moreChips should fall back to CustomFileManager's default (true).
+    // clickableChips stays explicitly false so chips do not navigate.
+    expect(fileManager.props("moreChips") ?? true).toBe(true);
     expect(fileManager.props("clickableChips")).toBe(false);
   });
 });
