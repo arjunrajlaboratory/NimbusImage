@@ -4,6 +4,21 @@ import { mount } from "@vue/test-utils";
 vi.mock("@/store", () => ({
   default: {
     dataset: { id: "ds-1", name: "Test Dataset" },
+    selectedDatasetId: "ds-1",
+    setSelectedDataset: vi.fn().mockResolvedValue(undefined),
+    girderUser: {
+      _id: "user-1",
+      _modelType: "user",
+      login: "user",
+      name: "user",
+    },
+    api: {
+      getUserPrivateFolder: vi.fn().mockResolvedValue({
+        _id: "private-folder",
+        name: "Private",
+        _modelType: "folder",
+      }),
+    },
     createDatasetView: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -33,8 +48,7 @@ function mountComponent(routeQuery = {}) {
         ...routerProvider(mockRouter),
       },
       stubs: {
-        ConfigurationSelect: true,
-        GirderLocationChooser: true,
+        CollectionNavigator: true,
       },
     },
   });
