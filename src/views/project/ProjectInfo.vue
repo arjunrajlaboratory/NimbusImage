@@ -1153,12 +1153,3 @@ defineExpose({
   align-items: center;
 }
 </style>
-
-<style lang="scss">
-// Override Vuetify 3's default .v-dialog { width: 50% } on outer overlay element.
-// Without this, width="70%" on v-dialog only applies to the inner .v-overlay__content,
-// making the actual dialog 90% of 50% = 45% of viewport. (See VUE3_STEPS.md P14)
-.wide-dialog.v-dialog {
-  width: auto;
-}
-</style>

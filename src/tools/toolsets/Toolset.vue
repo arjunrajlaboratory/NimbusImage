@@ -117,7 +117,7 @@
     v-model="toolCreationDialogOpen"
     :width="toolCreationWide ? '85%' : '55%'"
     :max-width="toolCreationWide ? '1400px' : '800px'"
-    class="tool-creation-dialog"
+    class="wide-dialog"
     @update:model-value="onToolCreationDialogInput"
   >
     <tool-creation
@@ -275,13 +275,5 @@ defineExpose({
 .tight-list :deep(.v-list-item) {
   padding-left: 8px;
   padding-right: 4px;
-}
-</style>
-<style>
-/* Unscoped: v-dialog teleports to body-level overlay container.
-   Vuetify 3 defaults .v-dialog { width: 50% } on the outer overlay,
-   making percentage-based content widths relative to half the viewport. */
-.tool-creation-dialog.v-dialog {
-  width: auto;
 }
 </style>

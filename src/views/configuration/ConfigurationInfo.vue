@@ -134,6 +134,7 @@
         </div>
         <v-dialog
           content-class="smart-overflow"
+          class="wide-dialog"
           v-model="addDatasetDialog"
           width="60%"
         >

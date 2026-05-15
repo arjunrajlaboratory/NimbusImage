@@ -243,6 +243,27 @@ Persister wraps `localStorage` with JSON serialization. It's already used for th
 </v-dialog>
 ```
 
+### Wide dialogs: `class="wide-dialog"` when using percentage or `vw` widths
+
+Vuetify ships `.v-dialog { width: 50% }` on the outer overlay wrapper. The `width` / `max-width` props on `<v-dialog>` only size the inner `.v-overlay__content` — so `width="60%"` actually renders at 60% of that 50% box (= 30% of viewport), and `width="70vw"` is silently clamped to 50vw.
+
+Whenever a dialog needs a percentage or `vw` width, opt in with `class="wide-dialog"`. The shared rule lives in `src/style.scss` (look for `.wide-dialog.v-dialog { width: auto }`) and lets the prop size against the viewport directly.
+
+```vue
+<!-- Bad: width prop silently shrinks to 30% of viewport -->
+<v-dialog v-model="open" width="60%">…</v-dialog>
+
+<!-- Good: class lets the 60% prop apply to the viewport -->
+<v-dialog v-model="open" width="60%" class="wide-dialog">…</v-dialog>
+```
+
+When **not** to add the class:
+- `max-width` in pixels (e.g. `max-width="500px"`) — works correctly without the class on any reasonable screen.
+- `max-width="33vw"` and similar — `vw` max-widths smaller than 50vw fit inside the default wrapper, so the class is unnecessary.
+- Dialogs with no width prop — they rely on the implicit 50% wrapper as a sane default; adding the class would let them shrink to content width, which is usually not what's wanted for confirmation-style dialogs.
+
+If you see a dialog with a `width="N%"` or `width="Nvw"` prop and no `wide-dialog` class, it's almost certainly rendering narrower than intended — add the class.
+
 ## API Calls
 
 Use the API classes from store — never put `girderRest.get(...)` in components:
