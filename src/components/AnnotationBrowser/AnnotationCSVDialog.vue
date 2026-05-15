@@ -455,7 +455,10 @@ async function generateCSVStringForAnnotations() {
 
   try {
     // Fields
-    const fixedFields = [
+    // Fixed-column quote flags control value quoting too (Tags joins
+    // multiple tags with ", ", Name is freeform user text), so preserve
+    // them regardless of sanitization.
+    const fields = [
       "Id",
       "Channel",
       "XY",
@@ -464,13 +467,8 @@ async function generateCSVStringForAnnotations() {
       "Tags",
       "Shape",
       "Name",
-    ];
-    const fields = fixedFields.map(getCsvColumnName);
-    // After sanitization, names can't contain commas, so recompute
-    // fixed-column quoting on the sanitized name to match property-column logic.
-    const quotes = sanitizeColumnNames.value
-      ? fields.map((name) => name.includes(","))
-      : [true, false, false, false, false, true, true, true];
+    ].map(getCsvColumnName);
+    const quotes = [true, false, false, false, false, true, true, true];
     const usedPaths: string[][] = [];
 
     // Pre-compute included paths to avoid repeated checks

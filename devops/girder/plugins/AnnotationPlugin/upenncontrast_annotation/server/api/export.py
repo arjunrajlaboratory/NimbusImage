@@ -502,17 +502,17 @@ class Export(Resource):
         sanitizeColumnNames=False,
     ):
         """Build CSV columns and matching property paths."""
-        # After sanitization, names cannot contain commas, so fixed
-        # columns get is_quoted recomputed on the sanitized name to
-        # match the property-column rule below.
-        columns = []
-        for col in CSV_FIXED_COLUMNS:
-            name = (
+        # Fixed-column is_quoted controls value quoting, not just header
+        # quoting (Tags joins multiple tags with ", ", Name is freeform
+        # user text), so preserve it regardless of sanitization.
+        columns = [
+            CsvColumn(
                 sanitizeCsvColumnName(col.name)
-                if sanitizeColumnNames else col.name
+                if sanitizeColumnNames else col.name,
+                is_quoted=col.is_quoted,
             )
-            is_quoted = ',' in name if sanitizeColumnNames else col.is_quoted
-            columns.append(CsvColumn(name, is_quoted=is_quoted))
+            for col in CSV_FIXED_COLUMNS
+        ]
         includedPaths = []
         for path in parsedPropertyPaths:
             propertyName = self._getPropertyColumnName(

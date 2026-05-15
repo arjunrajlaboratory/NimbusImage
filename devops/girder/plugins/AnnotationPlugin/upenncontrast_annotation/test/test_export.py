@@ -701,17 +701,25 @@ class TestCSVExport:
         assert "Mean_Area_um_2_2" in names
         assert len(names) == len(set(names))
 
-    def testBuildCsvColumnsRecomputesFixedColumnQuotingWhenSanitized(
+    def testBuildCsvColumnsPreservesFixedColumnQuotingWhenSanitized(
         self, admin
     ):
-        """After sanitization, fixed columns drop comma-based quoting."""
+        """Fixed-column quoting is preserved through sanitization.
+
+        Fixed-column is_quoted controls value quoting too (Tags joins
+        multiple tags with ', ', Name is freeform user text), so it must
+        not change just because the column NAME no longer has commas.
+        """
         export = Export()
         columns, _ = export._buildCsvColumns(
             [], {}, sanitizeColumnNames=True
         )
         fixed = {c.name: c.is_quoted for c in columns}
-        # Sanitized fixed names contain no commas, so none should be quoted.
-        assert all(not is_quoted for is_quoted in fixed.values())
+        assert fixed["Id"] is True
+        assert fixed["Tags"] is True
+        assert fixed["Shape"] is True
+        assert fixed["Name"] is True
+        assert fixed["Channel"] is False
 
     def testGetPropertyColumnNameSanitized(self, admin):
         """Sanitized property columns replace delimiters and punctuation."""
@@ -795,6 +803,28 @@ class TestCSVExport:
         assert "cell, fibroblast" not in header
         assert "/" not in header
         assert "(" not in header
+
+    def testExportCsvSanitizedQuotesMultiTagValues(self, admin):
+        """Tags with multiple values keep CSV quoting under sanitization.
+
+        Tags render as ', '.join(tags). Without quoting, a multi-tag
+        value like 'red, blue' would split the row across columns.
+        """
+        dataset = utilities.createFolder(
+            admin, "multi_tag_dataset", upenn_utilities.datasetMetadata
+        )
+        ann_data = upenn_utilities.getSampleAnnotation(dataset["_id"])
+        ann_data["tags"] = ["red", "blue"]
+        Annotation().create(ann_data)
+
+        export = Export()
+        lines = list(export._generateCsvLines(
+            dataset["_id"], [], sanitizeColumnNames=True,
+        ))
+
+        assert len(lines) == 2
+        # Tags column is index 5; rendered as 'red, blue' and must be quoted.
+        assert '"red, blue"' in lines[1]
 
     def testExportCsvGeneratedHeaderKeepsColumnNamesByDefault(self, admin):
         """CSV generation preserves existing header format by default."""
