@@ -33,7 +33,6 @@
           :items-per-page="-1"
           :items-per-page-options="[-1]"
           :menu-enabled="false"
-          :more-chips="false"
           :clickable-chips="false"
         />
       </v-card-text>
