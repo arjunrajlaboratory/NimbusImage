@@ -132,7 +132,7 @@ describe("CollectionNavigator", () => {
     mockGetUserPrivateFolder.mockResolvedValue(rootFolder);
   });
 
-  it("shows normal folders and compatible unlinked collections", async () => {
+  it("shows normal folders, compatible collections, and incompatible collections", async () => {
     const wrapper = mountComponent();
     await flushPromises();
 
@@ -150,6 +150,26 @@ describe("CollectionNavigator", () => {
     expect(
       vm.configurations.map((configuration: any) => configuration.id),
     ).toEqual(["compatible"]);
+    expect(
+      vm.incompatibleConfigurations.map(
+        (configuration: any) => configuration.id,
+      ),
+    ).toEqual(["incompatible"]);
+  });
+
+  it("filters incompatible collections separately from selectable collections", async () => {
+    const wrapper = mountComponent();
+    await flushPromises();
+
+    const vm = wrapper.vm as any;
+    vm.search = "incompatible";
+
+    expect(vm.filteredConfigurations).toEqual([]);
+    expect(
+      vm.filteredIncompatibleConfigurations.map(
+        (configuration: any) => configuration.id,
+      ),
+    ).toEqual(["incompatible"]);
   });
 
   it("navigates by emitting the selected folder location", async () => {
@@ -193,5 +213,6 @@ describe("CollectionNavigator", () => {
     expect(mockGetFolders).toHaveBeenCalledWith("user-1", "user");
     expect(mockGetAllConfigurations).not.toHaveBeenCalled();
     expect((wrapper.vm as any).configurations).toEqual([]);
+    expect((wrapper.vm as any).incompatibleConfigurations).toEqual([]);
   });
 });

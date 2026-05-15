@@ -34,7 +34,11 @@
 
       <div v-else class="navigator-list-wrap">
         <v-list
-          v-if="filteredFolders.length || filteredConfigurations.length"
+          v-if="
+            filteredFolders.length ||
+            filteredConfigurations.length ||
+            filteredIncompatibleConfigurations.length
+          "
           class="navigator-list"
           density="compact"
         >
@@ -56,7 +60,7 @@
           </v-list-item>
 
           <v-list-subheader v-if="filteredConfigurations.length">
-            Collections
+            Compatible Collections
           </v-list-subheader>
           <v-list-item
             v-for="configuration in filteredConfigurations"
@@ -79,6 +83,27 @@
               {{ configuration.description }}
             </v-list-item-subtitle>
           </v-list-item>
+
+          <v-list-subheader v-if="filteredIncompatibleConfigurations.length">
+            Incompatible Collections
+          </v-list-subheader>
+          <v-list-item
+            v-for="configuration in filteredIncompatibleConfigurations"
+            :key="`incompatible-configuration-${configuration.id}`"
+            disabled
+            class="incompatible-configuration"
+          >
+            <template #prepend>
+              <v-icon color="grey">mdi-file-tree-outline</v-icon>
+            </template>
+            <v-list-item-title>{{ configuration.name }}</v-list-item-title>
+            <v-list-item-subtitle v-if="configuration.description">
+              {{ configuration.description }}
+            </v-list-item-subtitle>
+            <v-list-item-subtitle>
+              Not compatible with this dataset
+            </v-list-item-subtitle>
+          </v-list-item>
         </v-list>
 
         <div v-else class="empty-state text-center pa-6">
@@ -86,8 +111,8 @@
           <div class="text-body-1 text-grey mt-2">
             {{
               search
-                ? "No folders or compatible collections match your search"
-                : "No folders or compatible collections in this folder"
+                ? "No folders or collections match your search"
+                : "No folders or collections in this folder"
             }}
           </div>
         </div>
@@ -153,6 +178,7 @@ const errorMessage = ref("");
 const search = ref("");
 const folders = ref<IGirderFolder[]>([]);
 const configurations = ref<IDatasetConfiguration[]>([]);
+const incompatibleConfigurations = ref<IDatasetConfiguration[]>([]);
 const selectedConfigurationMap = ref<Map<string, IDatasetConfiguration>>(
   new Map(),
 );
@@ -194,6 +220,18 @@ const filteredConfigurations = computed(() => {
   );
 });
 
+const filteredIncompatibleConfigurations = computed(() => {
+  const query = search.value.trim().toLowerCase();
+  if (!query) {
+    return incompatibleConfigurations.value;
+  }
+  return incompatibleConfigurations.value.filter(
+    (configuration) =>
+      configuration.name.toLowerCase().includes(query) ||
+      configuration.description?.toLowerCase().includes(query),
+  );
+});
+
 function folderId(location: IGirderLocation): string | null {
   if ("_modelType" in location && location._modelType === "folder") {
     return location._id;
@@ -217,6 +255,7 @@ async function refreshRows() {
   if (!location) {
     folders.value = [];
     configurations.value = [];
+    incompatibleConfigurations.value = [];
     loading.value = false;
     return;
   }
@@ -266,14 +305,20 @@ async function refreshRows() {
 
     if (!dataset.value) {
       configurations.value = [];
+      incompatibleConfigurations.value = [];
       return;
     }
 
     const datasetCompatibility = getDatasetCompatibility(dataset.value);
-    configurations.value = folderConfigurations.filter(
+    const unlinkedConfigurations = folderConfigurations.filter(
+      (configuration) => !linkedConfigurationIds.has(configuration.id),
+    );
+    configurations.value = unlinkedConfigurations.filter((configuration) =>
+      areCompatibles(configuration.compatibility, datasetCompatibility),
+    );
+    incompatibleConfigurations.value = unlinkedConfigurations.filter(
       (configuration) =>
-        !linkedConfigurationIds.has(configuration.id) &&
-        areCompatibles(configuration.compatibility, datasetCompatibility),
+        !areCompatibles(configuration.compatibility, datasetCompatibility),
     );
   } catch (error) {
     if (generation !== fetchGeneration) {
@@ -282,6 +327,7 @@ async function refreshRows() {
     logError("Failed to fetch collection navigator rows:", error);
     folders.value = [];
     configurations.value = [];
+    incompatibleConfigurations.value = [];
     errorMessage.value = "Could not load collections for this folder.";
   } finally {
     if (generation === fetchGeneration) {
@@ -324,6 +370,7 @@ defineExpose({
   search,
   folders,
   configurations,
+  incompatibleConfigurations,
   selectedConfigurationMap,
   dataset,
   currentLocation,
@@ -331,6 +378,7 @@ defineExpose({
   selectedConfigurationIds,
   filteredFolders,
   filteredConfigurations,
+  filteredIncompatibleConfigurations,
   refreshRows,
   navigateToLocation,
   toggleSelection,
@@ -377,6 +425,10 @@ defineExpose({
 
 .navigator-list {
   padding: 0;
+}
+
+.incompatible-configuration {
+  opacity: 0.62;
 }
 
 .collection-navigator-actions {
