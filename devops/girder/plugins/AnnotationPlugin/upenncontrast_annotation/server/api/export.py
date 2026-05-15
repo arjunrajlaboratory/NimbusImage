@@ -71,14 +71,20 @@ def _deduplicateColumnNames(names):
 
     Sanitization can collapse distinct names to the same token (e.g.,
     "Mean Area (um^2)" and "Mean/Area/um/2" both -> "Mean_Area_um_2"),
-    which would break R imports that rely on unique header names.
+    which would break R imports that rely on unique header names. The
+    suffixed candidate is also checked against the used set to avoid
+    cases like ["Area", "Area_2", "Area"] producing two "Area_2".
     """
-    seen = {}
+    used = set()
     result = []
     for name in names:
-        count = seen.get(name, 0)
-        result.append(name if count == 0 else f"{name}_{count + 1}")
-        seen[name] = count + 1
+        candidate = name
+        counter = 1
+        while candidate in used:
+            counter += 1
+            candidate = f"{name}_{counter}"
+        used.add(candidate)
+        result.append(candidate)
     return result
 
 

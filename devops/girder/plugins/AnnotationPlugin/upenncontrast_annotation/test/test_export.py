@@ -682,6 +682,23 @@ class TestCSVExport:
         assert _deduplicateColumnNames(["A", "B"]) == ["A", "B"]
         assert _deduplicateColumnNames([]) == []
 
+    def testDeduplicateColumnNamesSkipsExistingSuffixCollisions(
+        self, admin
+    ):
+        """Suffixed candidate that already exists is skipped."""
+        # Naive count-based suffixing would emit two "Area_2"s here.
+        assert _deduplicateColumnNames(
+            ["Area", "Area_2", "Area"]
+        ) == ["Area", "Area_2", "Area_3"]
+        assert _deduplicateColumnNames(
+            ["A", "A_2", "A_3", "A"]
+        ) == ["A", "A_2", "A_3", "A_4"]
+        # Pre-existing _2 that isn't tied to a collision is left alone;
+        # subsequent "X" collision walks past the taken _2.
+        assert _deduplicateColumnNames(
+            ["X_2", "X", "X"]
+        ) == ["X_2", "X", "X_3"]
+
     def testBuildCsvColumnsDeduplicatesAfterSanitization(self, admin):
         """Collisions from sanitization get unique suffixes."""
         export = Export()
@@ -808,8 +825,13 @@ class TestCSVExport:
         """Tags with multiple values keep CSV quoting under sanitization.
 
         Tags render as ', '.join(tags). Without quoting, a multi-tag
-        value like 'red, blue' would split the row across columns.
+        value like 'red, blue' would split the row across columns when a
+        real CSV parser reads it. Parse the output with csv.reader to
+        verify the round-trip rather than just substring-matching.
         """
+        import csv as csv_module
+        import io
+
         dataset = utilities.createFolder(
             admin, "multi_tag_dataset", upenn_utilities.datasetMetadata
         )
@@ -818,13 +840,16 @@ class TestCSVExport:
         Annotation().create(ann_data)
 
         export = Export()
-        lines = list(export._generateCsvLines(
+        csv_output = "".join(export._generateCsvLines(
             dataset["_id"], [], sanitizeColumnNames=True,
         ))
 
-        assert len(lines) == 2
-        # Tags column is index 5; rendered as 'red, blue' and must be quoted.
-        assert '"red, blue"' in lines[1]
+        rows = list(csv_module.reader(io.StringIO(csv_output)))
+        assert len(rows) == 2
+        header, data_row = rows
+        assert len(data_row) == len(header)
+        tags_idx = header.index("Tags")
+        assert data_row[tags_idx] == "red, blue"
 
     def testExportCsvGeneratedHeaderKeepsColumnNamesByDefault(self, admin):
         """CSV generation preserves existing header format by default."""

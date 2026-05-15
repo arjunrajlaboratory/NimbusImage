@@ -439,13 +439,20 @@ function getCsvColumnName(name: string): string {
 
 // Sanitization can collapse distinct names to the same token, which would
 // break R imports that rely on unique header names. Suffix repeats with
-// _2, _3, ... in order of appearance to match the backend dedup logic.
+// _2, _3, ... in order of appearance, checking each candidate against the
+// used set so ["Area", "Area_2", "Area"] becomes ["Area", "Area_2",
+// "Area_3"] rather than two "Area_2"s. Matches the backend dedup logic.
 function deduplicateColumnNames(names: string[]): string[] {
-  const seen = new Map<string, number>();
+  const used = new Set<string>();
   return names.map((name) => {
-    const count = seen.get(name) ?? 0;
-    seen.set(name, count + 1);
-    return count === 0 ? name : `${name}_${count + 1}`;
+    let candidate = name;
+    let counter = 1;
+    while (used.has(candidate)) {
+      counter += 1;
+      candidate = `${name}_${counter}`;
+    }
+    used.add(candidate);
+    return candidate;
   });
 }
 

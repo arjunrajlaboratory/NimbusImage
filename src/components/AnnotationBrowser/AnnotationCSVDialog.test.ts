@@ -427,6 +427,31 @@ describe("AnnotationCSVDialog", () => {
     expect(new Set(columns).size).toBe(columns.length);
   });
 
+  it("generateCSVStringForAnnotations dedup walks past existing suffixed names", async () => {
+    // Naive count-based suffixing would emit two "Area_2" headers if a
+    // sanitized name happens to already match the would-be suffix; the
+    // dedup must check candidates against the used set.
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
+      const map: Record<string, string> = {
+        "propA.sub1": "Area",
+        "propB.sub2": "Area_2",
+        "propC.sub3": "Area",
+      };
+      return map[path.join(".")] || null;
+    });
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    const csv = await vm.generateCSVStringForAnnotations();
+    const header = csv.split("\n")[0];
+    const columns = header.split(",");
+    expect(columns).toContain("Area");
+    expect(columns).toContain("Area_2");
+    expect(columns).toContain("Area_3");
+    expect(new Set(columns).size).toBe(columns.length);
+  });
+
   it("watcher on propertyExportMode causes text regeneration when dialog open", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
