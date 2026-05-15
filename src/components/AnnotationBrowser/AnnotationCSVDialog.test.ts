@@ -73,6 +73,7 @@ vi.mock("@/utils/paths", () => ({
   }),
 }));
 
+import Papa from "papaparse";
 import AnnotationCSVDialog from "./AnnotationCSVDialog.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
@@ -381,6 +382,28 @@ describe("AnnotationCSVDialog", () => {
     const csv = await vm.generateCSVStringForAnnotations();
     expect(csv).toContain("cell_fibroblast_Blob_Metrics");
     expect(csv).not.toContain("cell, fibroblast/Blob Metrics (%)");
+  });
+
+  it("generateCSVStringForAnnotations preserves fixed-column quoting under sanitization", async () => {
+    // Regression: fixed-column is_quoted controls VALUE quoting too.
+    // Tags is rendered as ", ".join(tags); without quoting on the Tags
+    // column, a multi-tag value would split the row across columns when
+    // parsed. Verify the `quotes` array passed to Papa.unparse keeps
+    // Id/Tags/Shape/Name force-quoted even when sanitization is on.
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    await vm.generateCSVStringForAnnotations();
+    const lastCall = (Papa.unparse as any).mock.calls.at(-1);
+    const fields = lastCall[0].fields as string[];
+    const quotes = lastCall[1].quotes as boolean[];
+    expect(quotes.length).toBe(fields.length);
+    // Fixed-column quote flags: Id, Tags, Shape, Name (indices 0, 5, 6, 7).
+    expect(quotes[0]).toBe(true);
+    expect(quotes[5]).toBe(true);
+    expect(quotes[6]).toBe(true);
+    expect(quotes[7]).toBe(true);
   });
 
   it("generateCSVStringForAnnotations deduplicates colliding sanitized headers", async () => {
