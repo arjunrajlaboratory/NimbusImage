@@ -1047,26 +1047,25 @@ function _setupTileLayers(
   }
 }
 
-const pendingHistogramRedraws = new Set<Promise<unknown>>();
+const pendingHistogramFetches = new Set<string>();
 
-function scheduleHistogramRedraw(layer: ILayerStackImage["layer"]) {
-  const request = store.getLayerHistogram(layer);
-  if (pendingHistogramRedraws.has(request)) {
+// Kick off a histogram fetch for a layer whose tiles can't render yet. We
+// don't schedule a draw here: when the fetch resolves, GirderAPI bumps
+// `histogramsLoaded`, which invalidates `layerStackImages` and fires the
+// `watch(mapLayerList)` redraw. Dedupe by `layer.id` so repeated calls (and
+// promise replacements inside `nextHistogram`) don't pile on .then handlers.
+function requestLayerHistogram(layer: ILayerStackImage["layer"]) {
+  if (pendingHistogramFetches.has(layer.id)) {
     return;
   }
-  pendingHistogramRedraws.add(request);
-  request.then(
+  pendingHistogramFetches.add(layer.id);
+  store.getLayerHistogram(layer).then(
     () => {
-      pendingHistogramRedraws.delete(request);
-      nextTick(() => {
-        if (refsMounted.value) {
-          draw();
-        }
-      });
+      pendingHistogramFetches.delete(layer.id);
     },
     (err) => {
-      pendingHistogramRedraws.delete(request);
-      logWarning("Histogram redraw failed", err);
+      pendingHistogramFetches.delete(layer.id);
+      logWarning("Layer histogram fetch failed", err);
     },
   );
 }
@@ -1094,7 +1093,7 @@ function _setTileUrls(
       adjLayer.node().css("filter", "none");
       if (!fullUrls[0] || !urls[0] || !baseQuadOptions) {
         if (!hist && images.length) {
-          scheduleHistogramRedraw(layer);
+          requestLayerHistogram(layer);
         }
         if (singleFrame !== null && fullLayer.setFrameQuad) {
           fullLayer.setFrameQuad(singleFrame);

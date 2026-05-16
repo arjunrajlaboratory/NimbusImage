@@ -1091,7 +1091,7 @@ describe("ImageViewer", () => {
   // ---- 13. _setTileUrls ----
 
   describe("_setTileUrls", () => {
-    it("assigns unrolled tile URLs and skips redraw when hist is ready", () => {
+    it("assigns unrolled tile URLs and skips histogram fetch when hist is ready", () => {
       wrapper = mountComponent();
       vi.clearAllMocks();
 
@@ -1130,7 +1130,7 @@ describe("ImageViewer", () => {
       expect(mockedStore.getLayerHistogram).not.toHaveBeenCalled();
     });
 
-    it("requests a histogram redraw when tile URLs are not ready", async () => {
+    it("requests a histogram fetch when tile URLs are not ready", async () => {
       wrapper = mountComponent();
       vi.clearAllMocks();
 
