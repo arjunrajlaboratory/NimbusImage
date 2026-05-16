@@ -593,6 +593,7 @@ export interface IDisplayLayer {
     lastImages: IImage[] | null;
     nextImages: IImage[] | null;
     lock: boolean;
+    cacheRevision: number;
   };
 }
 

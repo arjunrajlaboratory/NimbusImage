@@ -2361,6 +2361,7 @@ export class Main extends VuexModule {
           lastImages: null,
           nextImages: null,
           lock: false,
+          cacheRevision: this.api.histogramCacheRevision,
         };
       }
 
@@ -2373,6 +2374,7 @@ export class Main extends VuexModule {
         ) {
           const histogramObj = layer._histogram;
           const images = layer._histogram.nextImages;
+          const cacheRevision = this.api.histogramCacheRevision;
           histogramObj.nextImages = null;
           histogramObj.lock = true;
           histogramObj.promise = this.api.getLayerHistogram(images);
@@ -2384,6 +2386,7 @@ export class Main extends VuexModule {
           });
           histogramObj.promise.finally(() => {
             histogramObj.lastImages = images;
+            histogramObj.cacheRevision = cacheRevision;
             histogramObj.lock = false;
             nextHistogram();
           });
@@ -2402,6 +2405,7 @@ export class Main extends VuexModule {
 
       if (
         lastImages === null ||
+        layer._histogram.cacheRevision !== this.api.histogramCacheRevision ||
         nextImages.length !== lastImages.length ||
         nextImages.some((image, idx) => image !== lastImages[idx])
       ) {

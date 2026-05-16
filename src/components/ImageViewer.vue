@@ -1047,6 +1047,30 @@ function _setupTileLayers(
   }
 }
 
+const pendingHistogramRedraws = new Set<Promise<unknown>>();
+
+function scheduleHistogramRedraw(layer: ILayerStackImage["layer"]) {
+  const request = store.getLayerHistogram(layer);
+  if (pendingHistogramRedraws.has(request)) {
+    return;
+  }
+  pendingHistogramRedraws.add(request);
+  request.then(
+    () => {
+      pendingHistogramRedraws.delete(request);
+      nextTick(() => {
+        if (refsMounted.value) {
+          draw();
+        }
+      });
+    },
+    (err) => {
+      pendingHistogramRedraws.delete(request);
+      logWarning("Histogram redraw failed", err);
+    },
+  );
+}
+
 /**
  * Set tile urls for all tile layers.
  */
@@ -1059,7 +1083,7 @@ function _setTileUrls(
   const mapentry = maps.value[mllidx];
   mll.forEach(
     (
-      { layer, urls, fullUrls, hist, singleFrame, baseQuadOptions },
+      { layer, images, urls, fullUrls, hist, singleFrame, baseQuadOptions },
       layerIndex: number,
     ) => {
       const fullLayer = mapentry.imageLayers[layerIndex * 2];
@@ -1069,6 +1093,9 @@ function _setTileUrls(
       fullLayer.node().css("filter", `url(#recolor-${layerIndex})`);
       adjLayer.node().css("filter", "none");
       if (!fullUrls[0] || !urls[0] || !baseQuadOptions) {
+        if (!hist && images.length) {
+          scheduleHistogramRedraw(layer);
+        }
         if (singleFrame !== null && fullLayer.setFrameQuad) {
           fullLayer.setFrameQuad(singleFrame);
           fullLayer.visible(true);
