@@ -13,7 +13,13 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn class="ma-2" @click="scaleDialog = false">Close</v-btn>
+          <v-btn
+            variant="text"
+            size="small"
+            class="ma-2"
+            @click="scaleDialog = false"
+            >Close</v-btn
+          >
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -93,10 +99,11 @@
     <div class="bottom-right-container">
       <v-btn
         v-if="submitPendingAnnotation"
+        variant="text"
+        size="small"
         @click.capture.stop="
           submitPendingAnnotation && submitPendingAnnotation(false)
         "
-        size="small"
       >
         Cancel (ctrl-Z)
       </v-btn>
@@ -127,6 +134,7 @@
       <template #activator="{ props: activatorProps }">
         <v-btn
           id="layer-info-tourstep"
+          variant="text"
           icon
           size="small"
           v-bind="activatorProps"
@@ -141,6 +149,7 @@
     </v-menu>
     <v-btn
       id="lock-view-tourstep"
+      variant="text"
       icon
       size="small"
       class="lock-view-btn"
@@ -158,6 +167,7 @@
     </v-btn>
     <v-btn
       id="reset-rotation-tourstep"
+      variant="text"
       icon
       size="small"
       class="reset-rotation-btn"

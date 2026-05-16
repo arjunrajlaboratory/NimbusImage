@@ -72,7 +72,11 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn color="primary" @click="applyColorToTag(tag)"
+              <v-btn
+                variant="flat"
+                color="primary"
+                size="small"
+                @click="applyColorToTag(tag)"
                 >Apply Color</v-btn
               >
             </v-card-actions>

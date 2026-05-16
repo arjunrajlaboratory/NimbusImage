@@ -65,6 +65,7 @@
                 class="current-image"
               />
               <v-btn
+                variant="text"
                 icon
                 size="small"
                 class="remove-image"

@@ -2,6 +2,9 @@
   <v-dialog v-model="dialog">
     <template v-slot:activator="{ props: activatorProps }">
       <v-btn
+        variant="text"
+        color="error"
+        size="small"
         v-bind="{ ...activatorProps, ...$attrs }"
         :disabled="!isLoggedIn"
         v-description="{
@@ -34,8 +37,15 @@
       </v-card-text>
       <v-card-actions :disabled="deleting">
         <v-spacer />
-        <v-btn @click.prevent="cancel" color="warning"> Cancel </v-btn>
-        <v-btn @click.prevent="submit" color="primary">
+        <v-btn variant="text" size="small" @click.prevent="cancel">
+          Cancel
+        </v-btn>
+        <v-btn
+          variant="flat"
+          color="error"
+          size="small"
+          @click.prevent="submit"
+        >
           Submit: delete connections
         </v-btn>
       </v-card-actions>

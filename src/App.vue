@@ -94,11 +94,13 @@
         <template v-slot:activator="{ props: activatorProps }">
           <v-btn
             v-bind="activatorProps"
+            variant="flat"
             color="primary"
+            size="small"
             class="ml-4"
-            @click="goToNewDataset"
             :disabled="!store.isLoggedIn || !store.girderUser"
             :loading="isUploadLoading"
+            @click="goToNewDataset"
           >
             Upload Data
           </v-btn>
@@ -112,12 +114,13 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              class="ml-4"
-              :color="annotationPanel ? 'primary' : undefined"
-              :variant="annotationPanel ? 'tonal' : 'text'"
-              @click.stop="toggleRightPanel('annotationPanel')"
               id="object-list-button-tourstep"
               v-tour-trigger="'object-list-button-tourtrigger'"
+              :variant="annotationPanel ? 'outlined' : 'text'"
+              :color="annotationPanel ? 'primary' : undefined"
+              size="small"
+              class="ml-4"
+              @click.stop="toggleRightPanel('annotationPanel')"
             >
               Object list
             </v-btn>
@@ -130,12 +133,13 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              class="ml-4"
-              :color="snapshotPanel ? 'primary' : undefined"
-              :variant="snapshotPanel ? 'tonal' : 'text'"
-              @click.stop="toggleRightPanel('snapshotPanel')"
               id="snapshots-button-tourstep"
               v-tour-trigger="'snapshots-button-tourtrigger'"
+              :variant="snapshotPanel ? 'outlined' : 'text'"
+              :color="snapshotPanel ? 'primary' : undefined"
+              size="small"
+              class="ml-4"
+              @click.stop="toggleRightPanel('snapshotPanel')"
             >
               Snapshots
             </v-btn>
@@ -145,12 +149,13 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              class="ml-4"
-              :color="settingsPanel ? 'primary' : undefined"
-              :variant="settingsPanel ? 'tonal' : 'text'"
-              @click.stop="toggleRightPanel('settingsPanel')"
               id="settings-button-tourstep"
               v-tour-trigger="'settings-button-tourtrigger'"
+              :variant="settingsPanel ? 'outlined' : 'text'"
+              :color="settingsPanel ? 'primary' : undefined"
+              size="small"
+              class="ml-4"
+              @click.stop="toggleRightPanel('settingsPanel')"
             >
               Settings
             </v-btn>
@@ -161,10 +166,12 @@
         <v-menu>
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
-              icon
               v-bind="activatorProps"
               id="help-button-tourstep"
               v-tour-trigger="'help-button-tourtrigger'"
+              variant="text"
+              icon
+              size="small"
             >
               <v-icon>mdi-help-circle-outline</v-icon>
             </v-btn>
@@ -236,10 +243,12 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              icon
-              @click="chatbotOpen = !chatbotOpen"
               id="chat-button-tourstep"
               v-tour-trigger="'chat-button-tourtrigger'"
+              variant="text"
+              icon
+              size="small"
+              @click="chatbotOpen = !chatbotOpen"
             >
               <v-icon>mdi-chat</v-icon>
             </v-btn>

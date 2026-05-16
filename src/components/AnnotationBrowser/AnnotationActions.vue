@@ -5,7 +5,14 @@
       <v-container>
         <v-row>
           <v-col class="pa-1">
-            <v-btn :disabled="!undoEntry || isDoing" @click="undo" block>
+            <v-btn
+              variant="outlined"
+              color="primary"
+              size="small"
+              :disabled="!undoEntry || isDoing"
+              block
+              @click="undo"
+            >
               <template v-if="undoEntry">
                 Undo {{ undoEntry.actionName }}
               </template>
@@ -13,7 +20,14 @@
             </v-btn>
           </v-col>
           <v-col class="pa-1">
-            <v-btn :disabled="!redoEntry || isDoing" @click="redo" block>
+            <v-btn
+              variant="outlined"
+              color="primary"
+              size="small"
+              :disabled="!redoEntry || isDoing"
+              block
+              @click="redo"
+            >
               <template v-if="redoEntry">
                 Redo {{ redoEntry.actionName }}
               </template>
@@ -28,10 +42,24 @@
         </v-row>
         <v-row>
           <v-col class="pa-1">
-            <v-btn v-if="selectionFilterEnabled" @click="clearSelection" block>
+            <v-btn
+              v-if="selectionFilterEnabled"
+              variant="outlined"
+              color="primary"
+              size="small"
+              block
+              @click="clearSelection"
+            >
               Clear selection filter
             </v-btn>
-            <v-btn v-else @click="filterBySelection" block>
+            <v-btn
+              v-else
+              variant="outlined"
+              color="primary"
+              size="small"
+              block
+              @click="filterBySelection"
+            >
               Use selection as filter
             </v-btn>
           </v-col>

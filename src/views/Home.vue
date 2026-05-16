@@ -242,6 +242,7 @@
           <v-card-title class="headline d-flex align-center">
             Create dataset
             <v-btn
+              variant="text"
               icon
               size="small"
               class="ml-2"
@@ -378,12 +379,15 @@
             </v-card>
           </v-card-text>
           <v-card-actions>
-            <v-btn variant="text" @click="closeUploadDialog">Cancel</v-btn>
+            <v-btn variant="text" size="small" @click="closeUploadDialog">
+              Cancel
+            </v-btn>
             <v-spacer></v-spacer>
             <v-btn
               id="configure-dataset-button-tourstep"
               variant="outlined"
               color="primary"
+              size="small"
               v-tour-trigger="'configure-dataset-tourtrigger'"
               :disabled="!isFormValid"
               @click="handleConfigureDataset"
@@ -393,7 +397,9 @@
             </v-btn>
             <v-btn
               id="accept-defaults-button-tourstep"
+              variant="flat"
               color="primary"
+              size="small"
               v-tour-trigger="'accept-defaults-tourtrigger'"
               :disabled="!isFormValid"
               @click="handleAcceptDefaults"

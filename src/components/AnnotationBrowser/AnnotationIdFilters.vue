@@ -1,6 +1,10 @@
 <template>
   <div>
-    <v-btn size="small" @click="openNewFilterDialog"
+    <v-btn
+      variant="outlined"
+      color="primary"
+      size="small"
+      @click="openNewFilterDialog"
       >Annotation ID filter</v-btn
     >
     <div class="d-flex flex-column">
@@ -14,10 +18,16 @@
           :model-value="filter.enabled"
           @click="toggleEnabled(filter.id)"
         />
-        <v-btn variant="text" @click="editFilter(filter)">
+        <v-btn variant="text" size="small" @click="editFilter(filter)">
           {{ filter.id }} ({{ filter.annotationIds.length }} IDs)
         </v-btn>
-        <v-btn class="mx-2" icon size="small" @click="removeFilter(filter.id)">
+        <v-btn
+          class="mx-2"
+          variant="text"
+          icon
+          size="small"
+          @click="removeFilter(filter.id)"
+        >
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </div>
@@ -37,8 +47,15 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" variant="text" @click="saveFilter">
+          <v-btn variant="text" size="small" @click="dialog = false">
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="saveFilter"
+          >
             {{ editingFilter ? "Update" : "Add Filter" }}
           </v-btn>
         </v-card-actions>

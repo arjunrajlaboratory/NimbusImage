@@ -3,7 +3,7 @@
     <v-card>
       <v-card-title class="d-flex justify-space-between align-center">
         Import Sample Dataset
-        <v-btn icon @click="$emit('close')">
+        <v-btn variant="text" icon size="small" @click="$emit('close')">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </v-card-title>
@@ -76,7 +76,9 @@
       <v-card-actions>
         <v-spacer></v-spacer>
         <v-btn
+          variant="flat"
           color="primary"
+          size="small"
           :disabled="!canImport || importing"
           @click="importSelectedDataset"
           id="zenodo-importer-import-dataset-tourstep"

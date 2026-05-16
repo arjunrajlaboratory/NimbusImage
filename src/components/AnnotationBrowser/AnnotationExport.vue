@@ -2,6 +2,9 @@
   <v-dialog v-model="dialog">
     <template v-slot:activator="{ props: activatorProps }">
       <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
         v-bind="{ ...activatorProps, ...$attrs }"
         v-description="{
           section: 'Object list actions',
@@ -115,10 +118,19 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn @click="dialog = false" :disabled="exporting"> Cancel </v-btn>
         <v-btn
-          @click="submit"
+          variant="text"
+          size="small"
+          @click="dialog = false"
+          :disabled="exporting"
+        >
+          Cancel
+        </v-btn>
+        <v-btn
+          variant="flat"
           color="primary"
+          size="small"
+          @click="submit"
           :disabled="!canSubmit"
           :loading="exporting"
         >

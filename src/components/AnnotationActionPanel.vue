@@ -2,6 +2,8 @@
   <div class="action-panel">
     <div class="selected-count">{{ selectedCount }} objects selected</div>
     <v-btn
+      variant="text"
+      color="error"
       size="small"
       class="ma-1"
       :disabled="!isLoggedIn"
@@ -11,6 +13,8 @@
       Delete Selected
     </v-btn>
     <v-btn
+      variant="text"
+      color="error"
       size="small"
       class="ma-1"
       :disabled="!isLoggedIn"
@@ -20,6 +24,7 @@
       Delete Unselected
     </v-btn>
     <v-btn
+      variant="outlined"
       size="small"
       class="ma-1"
       :disabled="!isLoggedIn"
@@ -29,6 +34,7 @@
       Tag Selected
     </v-btn>
     <v-btn
+      variant="outlined"
       size="small"
       class="ma-1"
       :disabled="!isLoggedIn"
@@ -37,13 +43,23 @@
       <v-icon start size="small">mdi-palette</v-icon>
       Color Selected
     </v-btn>
-    <v-btn size="small" class="ma-1" @click="copyAnnotationIds">
+    <v-btn
+      variant="outlined"
+      size="small"
+      class="ma-1"
+      @click="copyAnnotationIds"
+    >
       <v-icon start size="small" :color="copySuccess ? 'success' : undefined">
         {{ copySuccess ? "mdi-check" : "mdi-content-copy" }}
       </v-icon>
       Copy Selected IDs
     </v-btn>
-    <v-btn size="small" class="ma-1" @click="$emit('deselect-all')">
+    <v-btn
+      variant="text"
+      size="small"
+      class="ma-1"
+      @click="$emit('deselect-all')"
+    >
       <v-icon start size="small">mdi-select-off</v-icon>
       Deselect All
     </v-btn>

@@ -99,6 +99,7 @@
         <v-spacer></v-spacer>
         <v-btn
           class="mr-2"
+          variant="flat"
           color="primary"
           size="small"
           @click="createProperty"
@@ -107,7 +108,7 @@
         >
           Create Property
         </v-btn>
-        <v-btn class="mr-2" color="warning" size="small" @click="reset"
+        <v-btn class="mr-2" variant="text" size="small" @click="reset"
           >Reset</v-btn
         >
       </div>

@@ -130,7 +130,13 @@
 
           <v-divider class="my-4" />
 
-          <v-btn color="primary" @click="showColorDialog = true" block>
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            block
+            @click="showColorDialog = true"
+          >
             <v-icon start>mdi-palette</v-icon>
             Customize Default Channel Colors
           </v-btn>

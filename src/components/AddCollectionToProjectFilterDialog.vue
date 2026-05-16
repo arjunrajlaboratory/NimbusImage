@@ -28,6 +28,7 @@
             <v-btn
               v-bind="activatorProps"
               variant="outlined"
+              color="primary"
               size="small"
               class="ml-2"
             >
@@ -101,10 +102,12 @@
       </v-list>
     </v-card-text>
     <v-card-actions class="ma-2">
-      <v-btn variant="text" @click="$emit('done')">Cancel</v-btn>
+      <v-btn variant="text" size="small" @click="$emit('done')">Cancel</v-btn>
       <v-spacer />
       <v-btn
+        variant="flat"
         color="primary"
+        size="small"
         :disabled="selectedCollections.length === 0"
         :loading="adding"
         @click="confirmAdd"
@@ -127,10 +130,19 @@
           their permissions to match the project's access settings.
         </v-card-text>
         <v-card-actions class="justify-end" style="gap: 8px">
-          <v-btn variant="text" @click="showPermissionConfirm = false"
+          <v-btn
+            variant="text"
+            size="small"
+            @click="showPermissionConfirm = false"
             >Cancel</v-btn
           >
-          <v-btn color="primary" @click="addCollections">Continue</v-btn>
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="addCollections"
+            >Continue</v-btn
+          >
         </v-card-actions>
       </v-card>
     </v-dialog>

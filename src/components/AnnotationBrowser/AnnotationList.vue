@@ -7,20 +7,26 @@
         <v-row>
           <v-col class="pa-0 mx-1">
             <v-btn
+              variant="text"
               color="error"
               size="small"
-              variant="outlined"
               :loading="isDeletingAnnotations"
               :disabled="!isLoggedIn || isDeletingAnnotations"
               @click.stop="deleteSelected"
             >
+              <v-icon start>mdi-delete</v-icon>
               Delete Selected
             </v-btn>
           </v-col>
           <v-col class="pa-0 mx-1">
             <v-menu>
               <template v-slot:activator="{ props: activatorProps }">
-                <v-btn size="small" v-bind="activatorProps">
+                <v-btn
+                  variant="outlined"
+                  color="primary"
+                  size="small"
+                  v-bind="activatorProps"
+                >
                   More Actions
                   <v-icon size="small" end>mdi-chevron-down</v-icon>
                 </v-btn>
@@ -74,7 +80,13 @@
           </v-card-title>
           <v-card-actions>
             <v-spacer />
-            <v-btn @click="annotationFilteredDialog = false">OK</v-btn>
+            <v-btn
+              variant="flat"
+              color="primary"
+              size="small"
+              @click="annotationFilteredDialog = false"
+              >OK</v-btn
+            >
           </v-card-actions>
         </v-card>
       </v-dialog>

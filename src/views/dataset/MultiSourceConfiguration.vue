@@ -210,6 +210,8 @@
         >
         <v-spacer />
         <v-btn
+          variant="text"
+          size="small"
           @click="resetDimensionsToDefault"
           :disabled="areDimensionsSetToDefault()"
           class="ml-4"
@@ -320,6 +322,7 @@
             >
               <template v-slot:activator="{ props: activatorProps }">
                 <v-btn
+                  variant="text"
                   icon
                   size="small"
                   v-bind="activatorProps"
@@ -367,8 +370,10 @@
         <v-btn
           id="submit-button-tourstep"
           v-tour-trigger="'submit-button-tourtrigger'"
+          variant="flat"
+          color="success"
+          size="small"
           @click="submit"
-          color="green"
           :disabled="!submitEnabled() || !isRGBAssignmentValid || isUploading"
         >
           <v-progress-circular size="16" v-if="isUploading" indeterminate />
@@ -416,13 +421,24 @@
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
             <template v-slot:activator="{ props: activatorProps }">
-              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
+              <v-btn
+                variant="text"
+                icon
+                size="small"
+                v-bind="activatorProps"
+                @click="copyLogToClipboard"
+              >
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
             <span>Copy to clipboard</span>
           </v-tooltip>
-          <v-btn icon @click="showLogDialog = false">
+          <v-btn
+            variant="text"
+            icon
+            size="small"
+            @click="showLogDialog = false"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-card-title>
@@ -431,7 +447,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" variant="text" @click="showLogDialog = false"
+          <v-btn variant="text" size="small" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>

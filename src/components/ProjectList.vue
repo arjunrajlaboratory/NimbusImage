@@ -14,6 +14,7 @@
       </div>
       <v-btn
         v-if="store.isLoggedIn"
+        variant="flat"
         color="primary"
         size="small"
         class="ml-2"
@@ -94,7 +95,7 @@
           <template #append>
             <v-menu>
               <template #activator="{ props: activatorProps }">
-                <v-btn icon size="small" variant="text" v-bind="activatorProps">
+                <v-btn v-bind="activatorProps" variant="text" icon size="small">
                   <v-icon size="small">mdi-dots-vertical</v-icon>
                 </v-btn>
               </template>
@@ -142,9 +143,13 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="showCreateDialog = false">Cancel</v-btn>
+          <v-btn variant="text" size="small" @click="showCreateDialog = false"
+            >Cancel</v-btn
+          >
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             :disabled="!newProjectName.trim()"
             :loading="creating"
             @click="createProject"
@@ -176,9 +181,13 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="showEditDialog = false">Cancel</v-btn>
+          <v-btn variant="text" size="small" @click="showEditDialog = false"
+            >Cancel</v-btn
+          >
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             :disabled="!editProjectName.trim()"
             :loading="saving"
             @click="saveProject"
@@ -199,8 +208,16 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="showDeleteDialog = false">Cancel</v-btn>
-          <v-btn color="error" :loading="deleting" @click="deleteProject">
+          <v-btn variant="text" size="small" @click="showDeleteDialog = false"
+            >Cancel</v-btn
+          >
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            :loading="deleting"
+            @click="deleteProject"
+          >
             Delete
           </v-btn>
         </v-card-actions>

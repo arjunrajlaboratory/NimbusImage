@@ -99,6 +99,7 @@
                       <td class="text-center">
                         <v-btn
                           v-if="user.level !== 2"
+                          variant="text"
                           icon
                           size="small"
                           color="error"
@@ -160,7 +161,9 @@
                 </v-col>
                 <v-col cols="3">
                   <v-btn
+                    variant="flat"
                     color="primary"
+                    size="small"
                     :loading="addUserLoading"
                     :disabled="!newUserEmail || addUserLoading"
                     @click="confirmAddUser"
@@ -181,7 +184,7 @@
           tooltip="Copy shareable link to this project"
         />
         <v-spacer />
-        <v-btn color="primary" variant="text" @click="close">Done</v-btn>
+        <v-btn variant="text" size="small" @click="close">Done</v-btn>
       </v-card-actions>
     </v-card>
 
@@ -203,10 +206,13 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="confirmDialog = false">Cancel</v-btn>
+          <v-btn variant="text" size="small" @click="confirmDialog = false">
+            Cancel
+          </v-btn>
           <v-btn
             :color="confirmColor"
-            variant="text"
+            variant="flat"
+            size="small"
             @click="executeConfirmedAction"
           >
             {{ confirmActionLabel }}

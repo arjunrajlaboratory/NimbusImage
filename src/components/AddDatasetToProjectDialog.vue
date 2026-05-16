@@ -45,10 +45,12 @@
       </v-alert>
     </v-card-text>
     <v-card-actions class="ma-2">
-      <v-btn variant="text" @click="$emit('done')">Cancel</v-btn>
+      <v-btn variant="text" size="small" @click="$emit('done')">Cancel</v-btn>
       <v-spacer />
       <v-btn
+        variant="flat"
         color="primary"
+        size="small"
         :disabled="selectedDatasets.length === 0"
         :loading="adding"
         @click="confirmAdd"
@@ -71,10 +73,19 @@
           permissions to match the project's access settings.
         </v-card-text>
         <v-card-actions class="justify-end" style="gap: 8px">
-          <v-btn variant="text" @click="showPermissionConfirm = false"
+          <v-btn
+            variant="text"
+            size="small"
+            @click="showPermissionConfirm = false"
             >Cancel</v-btn
           >
-          <v-btn color="primary" @click="addDatasets">Continue</v-btn>
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="addDatasets"
+            >Continue</v-btn
+          >
         </v-card-actions>
       </v-card>
     </v-dialog>

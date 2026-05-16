@@ -10,7 +10,9 @@
               <template v-slot:activator="{ props: tooltipProps }">
                 <v-btn
                   class="ml-2"
+                  variant="flat"
                   color="primary"
+                  size="small"
                   v-bind="mergeProps(dialogProps, tooltipProps)"
                   id="add-tool-tourstep"
                   v-tour-trigger="'add-tool-tourtrigger'"

@@ -21,8 +21,16 @@
       <v-divider></v-divider>
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn color="warning" @click="clearTags"> Clear input </v-btn>
-        <v-btn color="primary" :disabled="!isLoggedIn" @click="submit">
+        <v-btn variant="text" size="small" @click="clearTags">
+          Clear input
+        </v-btn>
+        <v-btn
+          variant="flat"
+          color="primary"
+          size="small"
+          :disabled="!isLoggedIn"
+          @click="submit"
+        >
           Add/remove tags
         </v-btn>
       </v-card-actions>

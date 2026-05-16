@@ -35,17 +35,26 @@
       <v-card-actions class="d-flex justify-end gap-2">
         <v-btn
           v-if="hasExistingToken"
-          color="error"
           variant="text"
+          color="error"
+          size="small"
           :loading="deleting"
           @click="removeToken"
         >
+          <v-icon start>mdi-delete</v-icon>
           Remove Token
         </v-btn>
         <v-spacer />
-        <v-btn @click="$emit('update:modelValue', false)">Cancel</v-btn>
         <v-btn
+          variant="text"
+          size="small"
+          @click="$emit('update:modelValue', false)"
+          >Cancel</v-btn
+        >
+        <v-btn
+          variant="flat"
           color="primary"
+          size="small"
           :loading="saving"
           :disabled="!token"
           @click="saveToken"

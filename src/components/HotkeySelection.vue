@@ -4,6 +4,8 @@
       {{ hotkey === null ? "No hotkey yet" : `Hotkey: ${hotkey}` }}
     </span>
     <v-btn
+      variant="outlined"
+      color="primary"
       size="small"
       class="mr-2"
       @click="editHotkey()"
@@ -17,7 +19,7 @@
       />
       {{ isRecordingHotkey ? "Recording..." : "Record" }}
     </v-btn>
-    <v-btn size="small" @click="hotkey = null"> Clear </v-btn>
+    <v-btn variant="text" size="small" @click="hotkey = null"> Clear </v-btn>
   </div>
 </template>
 

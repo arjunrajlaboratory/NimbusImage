@@ -13,7 +13,13 @@
           </div>
           <div class="d-flex">
             <v-spacer />
-            <v-btn @click="imageTooBigDialog = false">OK</v-btn>
+            <v-btn
+              variant="flat"
+              color="primary"
+              size="small"
+              @click="imageTooBigDialog = false"
+              >OK</v-btn
+            >
           </div>
         </v-alert>
       </v-dialog>
@@ -66,6 +72,8 @@
         </v-row>
         <v-row class="pl-3">
           <v-btn
+            variant="outlined"
+            color="primary"
             size="small"
             class="my-2"
             @click="setArea('viewport')"
@@ -73,7 +81,13 @@
           >
             Set frame to current view
           </v-btn>
-          <v-btn size="small" class="my-2" @click="setArea('full')">
+          <v-btn
+            variant="outlined"
+            color="primary"
+            size="small"
+            class="my-2"
+            @click="setArea('full')"
+          >
             Set frame to maximum view size
           </v-btn>
         </v-row>
@@ -81,7 +95,9 @@
           <v-dialog v-model="createDialog">
             <template v-slot:activator="{ props: activatorProps }">
               <v-btn
+                variant="flat"
                 color="primary"
+                size="small"
                 v-bind="activatorProps"
                 :disabled="!isLoggedIn"
                 v-description="{
@@ -135,7 +151,9 @@
                 <v-card-actions>
                   <v-spacer />
                   <v-btn
+                    variant="flat"
                     color="primary"
+                    size="small"
                     :disabled="!isSaveSnapshotValid"
                     type="submit"
                   >
@@ -191,9 +209,10 @@
           <!-- Delete icon -->
           <template v-slot:item.delete="{ item }">
             <v-btn
+              variant="text"
               icon
               size="small"
-              color="red"
+              color="error"
               @click.stop="removeSnapshot(item.name)"
             >
               <v-icon>mdi-trash-can</v-icon>
@@ -401,7 +420,10 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn variant="text" @click="scalebarSettingsDialog = false"
+              <v-btn
+                variant="text"
+                size="small"
+                @click="scalebarSettingsDialog = false"
                 >Close</v-btn
               >
             </v-card-actions>
@@ -412,7 +434,9 @@
 
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="downloadImagesForCurrentState()"
             :disabled="unroll || downloading"
           >
@@ -421,7 +445,9 @@
         </div>
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="downloadImagesForAllSnapshots()"
             :disabled="unroll || downloading"
           >
@@ -430,7 +456,9 @@
         </div>
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="downloadImagesForSelectedSnapshots()"
             :disabled="
               unroll || downloading || selectedSnapshotItems.length === 0
@@ -441,7 +469,9 @@
         </div>
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="snapshotWithAnnotations()"
             :disabled="unroll || downloading"
           >
@@ -450,7 +480,9 @@
         </div>
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="movieDialog = true"
             :disabled="unroll || downloading"
           >
@@ -469,7 +501,12 @@
       <v-divider />
 
       <div class="d-flex pa-2">
-        <v-btn color="primary" @click="screenshotViewport()">
+        <v-btn
+          variant="flat"
+          color="primary"
+          size="small"
+          @click="screenshotViewport()"
+        >
           Download Screenshot of Current Viewport
         </v-btn>
       </div>
@@ -484,13 +521,27 @@
             removed or because layer channels have changed.
           </v-card-text>
           <v-card-actions class="d-flex justify-end">
-            <v-btn @click="overwriteConfigurationLayers" color="red">
+            <v-btn
+              variant="flat"
+              color="error"
+              size="small"
+              @click="overwriteConfigurationLayers"
+            >
               Overwrite configuration layers
             </v-btn>
-            <v-btn @click="changeDatasetViewContrasts" color="secondary">
+            <v-btn
+              variant="outlined"
+              color="primary"
+              size="small"
+              @click="changeDatasetViewContrasts"
+            >
               Try to apply contrasts anyway
             </v-btn>
-            <v-btn @click="layersOverwritePanel = false" color="primary">
+            <v-btn
+              variant="text"
+              size="small"
+              @click="layersOverwritePanel = false"
+            >
               Do not change layers
             </v-btn>
           </v-card-actions>

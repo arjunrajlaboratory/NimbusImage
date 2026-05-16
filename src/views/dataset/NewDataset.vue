@@ -143,6 +143,9 @@
           <v-btn
             id="upload-button-tourstep"
             v-tour-trigger="'upload-button-tourtrigger'"
+            variant="flat"
+            color="success"
+            size="small"
             :disabled="
               !valid ||
               !filesSelected ||
@@ -151,7 +154,6 @@
               invalidLocation ||
               configuring
             "
-            color="success"
             @click="submit"
           >
             Upload
@@ -291,13 +293,24 @@
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
             <template v-slot:activator="{ props: activatorProps }">
-              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
+              <v-btn
+                v-bind="activatorProps"
+                variant="text"
+                icon
+                size="small"
+                @click="copyLogToClipboard"
+              >
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
             <span>Copy to clipboard</span>
           </v-tooltip>
-          <v-btn icon @click="showLogDialog = false">
+          <v-btn
+            variant="text"
+            icon
+            size="small"
+            @click="showLogDialog = false"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-card-title>
@@ -306,7 +319,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" variant="text" @click="showLogDialog = false"
+          <v-btn variant="text" size="small" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -342,12 +355,17 @@
           </p>
         </v-card-text>
         <v-card-actions>
-          <v-btn variant="text" @click="handleStopBatch">
+          <v-btn variant="text" size="small" @click="handleStopBatch">
             <v-icon start>mdi-stop</v-icon>
             Stop and Review
           </v-btn>
           <v-spacer></v-spacer>
-          <v-btn color="primary" @click="handleContinueBatch">
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="handleContinueBatch"
+          >
             <v-icon start>mdi-skip-next</v-icon>
             Skip and Continue
           </v-btn>
