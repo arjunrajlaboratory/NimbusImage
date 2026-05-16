@@ -144,12 +144,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, defineAsyncComponent } from "vue";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
 import { IGirderFolder, IGirderSelectAble } from "@/girder";
 import { downloadToClient } from "@/utils/download";
 import AddToProjectDialog from "@/components/AddToProjectDialog.vue"; // eslint-disable-line @typescript-eslint/no-unused-vars
+
+// Async import to break the circular dependency:
+// FileManagerOptions -> GirderLocationChooser -> CustomFileManager -> FileManagerOptions
+const GirderLocationChooser = defineAsyncComponent(
+  () => import("@/components/GirderLocationChooser.vue"),
+);
 
 const props = defineProps<{
   items: IGirderSelectAble[];
