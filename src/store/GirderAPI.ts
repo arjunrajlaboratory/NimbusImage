@@ -94,7 +94,14 @@ export default class GirderAPI {
     this.client = client;
   }
 
+  // Reactive counters used by viewer getters. `histogramsLoaded` is bumped
+  // both when a histogram resolves and when caches are invalidated, so
+  // computed tile URLs re-evaluate. `histogramCacheRevision` is bumped only
+  // on cache invalidation and is recorded on each layer's `_histogram` so
+  // `getLayerHistogram` can force a refetch when the revision no longer
+  // matches.
   histogramsLoaded = 0;
+  histogramCacheRevision = 0;
 
   baseHistogramOptions: IHistogramOptions = {
     frame: 0,
@@ -883,6 +890,8 @@ export default class GirderAPI {
     this.imageCache.clear();
     this.histogramCache.clear();
     this.resolvedHistogramCache.clear();
+    this.histogramCacheRevision = this.histogramCacheRevision + 1;
+    this.histogramsLoaded = this.histogramsLoaded + 1;
   }
 
   // Read-only snapshot of cache sizes for memory diagnostics.

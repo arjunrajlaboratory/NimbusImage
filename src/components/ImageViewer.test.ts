@@ -118,6 +118,7 @@ vi.mock("@/store", () => {
       setCameraInfo: vi.fn(),
       setDrawAnnotations: vi.fn(),
       setShowTooltips: vi.fn(),
+      getLayerHistogram: vi.fn().mockResolvedValue(null),
     }),
   };
 });
@@ -300,6 +301,7 @@ describe("ImageViewer", () => {
     mockedStore.showPixelScalebar = false;
     mockedStore.scalebarColor = "#ffffff";
     mockedAnnotationStore.submitPendingAnnotation = null;
+    (mockedStore as any).getLayerHistogram = vi.fn().mockResolvedValue(null);
     vi.clearAllMocks();
     // Make setMaps/setCameraInfo actually update the reactive store
     (mockedStore.setMaps as any).mockImplementation((v: any) => {
@@ -1102,7 +1104,80 @@ describe("ImageViewer", () => {
     });
   });
 
-  // ---- 13. draw() ----
+  // ---- 13. _setTileUrls ----
+
+  describe("_setTileUrls", () => {
+    it("assigns unrolled tile URLs and skips histogram fetch when hist is ready", () => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+
+      const fullLayer = mockLayer();
+      const adjLayer = mockLayer();
+      mockedStore.maps = [
+        {
+          map: mockMap(),
+          imageLayers: [fullLayer, adjLayer],
+          params: {},
+        } as any,
+      ];
+
+      const baseImage = createLayerStackImage().images[0];
+      const lsi = createLayerStackImage({
+        images: [baseImage, { ...baseImage, frameIndex: 1 }],
+        urls: [
+          "http://localhost/api/v1/tile/0/{z}/{x}/{y}",
+          "http://localhost/api/v1/tile/1/{z}/{x}/{y}",
+        ],
+        fullUrls: [
+          "http://localhost/api/v1/tile/0/{z}/{x}/{y}?full=true",
+          "http://localhost/api/v1/tile/1/{z}/{x}/{y}?full=true",
+        ],
+        singleFrame: null,
+        baseQuadOptions: {},
+      });
+
+      (wrapper.vm as any)._setTileUrls([lsi], 0, lsi.images[0], 0);
+
+      expect(fullLayer._imageUrls).toEqual(lsi.fullUrls);
+      expect(adjLayer._imageUrls).toEqual(lsi.urls);
+      expect(fullLayer.visible).toHaveBeenCalledWith(true);
+      expect(adjLayer.visible).toHaveBeenCalledWith(true);
+      expect(fullLayer.visible).not.toHaveBeenCalledWith(false);
+      expect(mockedStore.getLayerHistogram).not.toHaveBeenCalled();
+    });
+
+    it("requests a histogram fetch when tile URLs are not ready", async () => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+
+      const fullLayer = mockLayer();
+      const adjLayer = mockLayer();
+      mockedStore.maps = [
+        {
+          map: mockMap(),
+          imageLayers: [fullLayer, adjLayer],
+          params: {},
+        } as any,
+      ];
+
+      const lsi = createLayerStackImage({
+        urls: [],
+        fullUrls: [],
+        hist: null,
+        singleFrame: null,
+        baseQuadOptions: undefined,
+      });
+
+      (wrapper.vm as any)._setTileUrls([lsi], 0, lsi.images[0], 0);
+      await Promise.resolve();
+
+      expect(mockedStore.getLayerHistogram).toHaveBeenCalledWith(lsi.layer);
+      expect(fullLayer.visible).toHaveBeenCalledWith(false);
+      expect(adjLayer.visible).toHaveBeenCalledWith(false);
+    });
+  });
+
+  // ---- 14. draw() ----
 
   describe("draw", () => {
     it("returns early when width equals height equals 1", () => {
