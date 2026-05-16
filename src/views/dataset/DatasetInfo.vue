@@ -21,11 +21,14 @@
               v-if="dataset"
               :route-path="`/dataset/${dataset.id}`"
               tooltip="Copy shareable link to this dataset"
-              icon-only
+              label="Copy link"
+              size="small"
               class="mr-2"
             />
             <v-btn
-              color="green"
+              color="success"
+              variant="flat"
+              size="small"
               @click="goToDefaultView"
               :disabled="!dataset"
               class="pulse-btn"
@@ -241,11 +244,9 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
-                    :to="{
-                      name: 'importconfiguration',
-                      query: { datasetId, folderId: datasetParentId },
-                    }"
+                    @click="goToImportConfiguration"
                   >
                     Add to an existing collection…
                   </v-btn>
@@ -263,11 +264,9 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
-                    :to="{
-                      name: 'duplicateimportconfiguration',
-                      query: { datasetId },
-                    }"
+                    @click="goToDuplicateImportConfiguration"
                   >
                     Copy existing collection…
                   </v-btn>
@@ -285,6 +284,7 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
                     @click="showNewCollectionDialog = true"
                   >
@@ -657,6 +657,23 @@ async function duplicateView(
   });
 }
 
+function goToImportConfiguration() {
+  router.push({
+    name: "importconfiguration",
+    query: {
+      datasetId: datasetId.value,
+      folderId: datasetParentId.value ?? undefined,
+    },
+  });
+}
+
+function goToDuplicateImportConfiguration() {
+  router.push({
+    name: "duplicateimportconfiguration",
+    query: { datasetId: datasetId.value },
+  });
+}
+
 async function goToDefaultView() {
   if (datasetViews.value.length > 0) {
     const selectedView = selectedDatasetViewId.value
@@ -852,6 +869,8 @@ defineExpose({
   closeRemoveConfigurationDialog,
   removeDatasetView,
   duplicateView,
+  goToImportConfiguration,
+  goToDuplicateImportConfiguration,
   goToDefaultView,
   createDefaultView,
   handleLocationSelected,

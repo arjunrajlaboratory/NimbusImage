@@ -19,6 +19,17 @@ body,
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Form elements have their own UA font by default; make sure they inherit.
+   Without this, a v-btn rendered as <button> uses the browser's default font
+   while a v-btn with :to (rendered as <a>) inherits Inter — causing visual
+   inconsistency between otherwise identical v-btns. */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
 /* Dark theme tokens */
 .v-theme--dark {
   --nimbus-border: rgba(255, 255, 255, 0.06);
