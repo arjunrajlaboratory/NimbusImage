@@ -31,6 +31,29 @@
         @error="interruptedUpload"
         @vue:mounted="uploadMounted"
       >
+        <template
+          #dropzone="{
+            files: uploadFiles,
+            dropzoneMessage,
+            multiple,
+            accept,
+            inputFilesChanged,
+          }"
+        >
+          <file-dropzone
+            v-if="!uploadFiles.length"
+            :multiple="multiple"
+            :accept="accept"
+            class="new-dataset-primary-dropzone"
+            @update:model-value="inputFilesChanged"
+          >
+            <template #default>
+              <v-icon size="50px">mdi-file-upload</v-icon>
+              <div class="title mt-3">{{ dropzoneMessage }}</div>
+            </template>
+          </file-dropzone>
+        </template>
+
         <template #files="{ files }" v-if="quickupload && !pipelineError">
           <v-card>
             <v-card-text>
@@ -1046,9 +1069,9 @@ async function configureDataset() {
 
 function generationDone(jsonId: string | null) {
   if (isBatchMode.value) {
-    handleCollectionGenerationDone(jsonId);
+    return handleCollectionGenerationDone(jsonId);
   } else if (isQuickImport.value) {
-    createView(jsonId);
+    return createView(jsonId);
   } else {
     return;
   }
@@ -1179,6 +1202,17 @@ onMounted(async () => {
     if (props.initialDescription) description.value = props.initialDescription;
   }
 
+  if (!path.value) {
+    try {
+      const privateFolder = await store.api.getUserPrivateFolder();
+      if (!path.value) {
+        path.value = privateFolder;
+      }
+    } catch (error) {
+      logError(error);
+    }
+  }
+
   maxApiKeyFileSize.value = await getMaxUploadSize();
 });
 
@@ -1266,6 +1300,10 @@ defineExpose({
 <style lang="scss">
 .new-dataset-upload .files-list {
   max-height: 260px;
+}
+
+.new-dataset-primary-dropzone {
+  height: 100%;
 }
 
 .job-log {

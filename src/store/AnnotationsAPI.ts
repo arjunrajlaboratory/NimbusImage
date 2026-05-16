@@ -23,8 +23,6 @@ export default class AnnotationsAPI {
     this.client = client;
   }
 
-  histogramsLoaded = 0;
-
   undo(datasetId: string) {
     return this.client.put("history/undo", undefined, {
       params: { datasetId },

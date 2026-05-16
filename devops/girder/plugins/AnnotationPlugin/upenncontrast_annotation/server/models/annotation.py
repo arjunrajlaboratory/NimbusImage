@@ -13,8 +13,6 @@ from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
 
-from .propertyValues import AnnotationPropertyValues as PropertiesModel
-
 
 class AnnotationSchema:
     coordSchema = {
@@ -161,14 +159,6 @@ class Annotation(AccessControlMixin, ProxiedModel):
         return self.validateMultiple([document])[0]
 
     def validateMultiple(self, annotations):
-        # Extract property values if they exist
-        propertyValues = []
-        for annotation in annotations:
-            if "properties" in annotation:
-                propertyValues.append(
-                    (annotation, annotation.pop("properties"))
-                )
-
         # Validate using the schema
         try:
             for annotation in annotations:
@@ -182,20 +172,6 @@ class Annotation(AccessControlMixin, ProxiedModel):
         for datasetId in datasetIds:
             if not self.isDatasetId(datasetId):
                 raise ValidationException("Annotation dataset ID is invalid")
-
-        # Add the property values if given
-        if len(propertyValues) > 0:
-            PropertiesModel().appendMultipleValues(
-                None,
-                [
-                    {
-                        "annotationId": annotation["_id"],
-                        "datasetId": annotation["datasetId"],
-                        "values": values,
-                    }
-                    for annotation, values in propertyValues
-                ],
-            )
 
         return annotations
 

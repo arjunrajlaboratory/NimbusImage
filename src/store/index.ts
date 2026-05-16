@@ -532,14 +532,30 @@ export class Main extends VuexModule {
     // Each entry already markRaws its inner GeoJS layers, but the IMapEntry
     // wrapper itself would still be Proxy-wrapped on assignment. Skip that —
     // every map-access in the canvas hot path is a Proxy.get otherwise.
-    // The outer array stays reactive so push/pop and length changes still
-    // trigger watchers (ImageViewer mutates maps.value.pop() in place).
+    // The outer array stays reactive so mutation handlers and replacements
+    // still trigger watchers.
     //
     // Note: markRaw(m) tags `m` itself by setting `__v_skip` — i.e., it
     // mutates the elements of the input array. In-practice unobservable
-    // since the only caller (_setupMap) discards its array reference
-    // immediately after, but worth knowing if a future caller reuses it.
+    // since callers should not rely on entries staying unmarked.
     this.maps = maps.map((m) => markRaw(m));
+  }
+
+  @Mutation
+  public setMapAt(payload: { index: number; mapEntry: IMapEntry }) {
+    const maps = [...this.maps];
+    maps[payload.index] = markRaw(payload.mapEntry);
+    this.maps = maps;
+  }
+
+  @Mutation
+  public popMap() {
+    this.maps = this.maps.slice(0, -1);
+  }
+
+  @Mutation
+  public clearMaps() {
+    this.maps = [];
   }
 
   @Mutation
@@ -2361,6 +2377,7 @@ export class Main extends VuexModule {
           lastImages: null,
           nextImages: null,
           lock: false,
+          cacheRevision: this.api.histogramCacheRevision,
         };
       }
 
@@ -2373,6 +2390,7 @@ export class Main extends VuexModule {
         ) {
           const histogramObj = layer._histogram;
           const images = layer._histogram.nextImages;
+          const cacheRevision = this.api.histogramCacheRevision;
           histogramObj.nextImages = null;
           histogramObj.lock = true;
           histogramObj.promise = this.api.getLayerHistogram(images);
@@ -2384,6 +2402,7 @@ export class Main extends VuexModule {
           });
           histogramObj.promise.finally(() => {
             histogramObj.lastImages = images;
+            histogramObj.cacheRevision = cacheRevision;
             histogramObj.lock = false;
             nextHistogram();
           });
@@ -2402,6 +2421,7 @@ export class Main extends VuexModule {
 
       if (
         lastImages === null ||
+        layer._histogram.cacheRevision !== this.api.histogramCacheRevision ||
         nextImages.length !== lastImages.length ||
         nextImages.some((image, idx) => image !== lastImages[idx])
       ) {
