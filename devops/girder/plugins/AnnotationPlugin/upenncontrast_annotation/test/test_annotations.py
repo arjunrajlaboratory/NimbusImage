@@ -1,3 +1,4 @@
+import inspect
 import json
 
 import pytest
@@ -6,6 +7,9 @@ from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models import annotation
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
 
 from girder.constants import AccessType
 from girder.models.folder import Folder
@@ -487,3 +491,73 @@ class TestUpdateMultiple:
         assert "single-update" in loaded["tags"]
         assert "_internalField" not in loaded
         assert "accessLevel" not in loaded
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestInlinePropertiesField:
+    """Regression tests for the removed inline-properties extraction.
+
+    Annotation.validateMultiple previously tried to pop a "properties"
+    field off submitted annotations and forward it to
+    PropertiesModel.appendMultipleValues(None, [...]) — a two-argument
+    call into a single-argument method. The branch was unreachable in
+    practice but would have raised TypeError if hit. These tests guard
+    against re-introducing either side of that contract.
+    """
+
+    def testAppendMultipleValuesTakesOnePositionalArg(self):
+        """The model API the removed branch tried to call has not grown
+        a second positional parameter."""
+        sig = inspect.signature(
+            AnnotationPropertyValues.appendMultipleValues
+        )
+        positional = [
+            p for p in sig.parameters.values()
+            if p.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        # self + list_of_property_values
+        assert len(positional) == 2
+
+    def testAppendMultipleValuesRejectsExtraPositionalArg(self):
+        """Calling with the legacy (None, list) shape still TypeErrors —
+        proves the original removed code would never have worked."""
+        with pytest.raises(TypeError):
+            AnnotationPropertyValues().appendMultipleValues(
+                None, []
+            )
+
+    def testValidateAcceptsInlinePropertiesField(self, admin):
+        """Annotations carrying an inline 'properties' field validate
+        and persist without raising."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        sample = upenn_utilities.getSampleAnnotation(folder["_id"])
+        sample["properties"] = {"some-prop-id": 1.23}
+
+        # Must not raise (previously would have TypeError'd if the dead
+        # branch had actually fired).
+        result = Annotation().create(sample)
+        assert "_id" in result
+
+    def testInlinePropertiesDoNotCreatePropertyValues(self, admin):
+        """Submitting an inline 'properties' payload no longer creates
+        AnnotationPropertyValues records. The legacy docstring claim is
+        gone; this pins current behavior so a future reviver of the
+        feature has to update the test deliberately."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        sample = upenn_utilities.getSampleAnnotation(folder["_id"])
+        sample["properties"] = {"some-prop-id": 1.23}
+
+        result = Annotation().create(sample)
+
+        values = list(AnnotationPropertyValues().find(
+            {"annotationId": result["_id"]}
+        ))
+        assert values == []
