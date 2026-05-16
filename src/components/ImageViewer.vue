@@ -885,9 +885,7 @@ function _setupMap(
       workerPreviewFeature,
       interactionLayer,
     };
-    const newMaps = [...maps.value];
-    newMaps[mllidx] = mapentry;
-    maps.value = newMaps;
+    store.setMapAt({ index: mllidx, mapEntry: mapentry });
   } else {
     const mapentry = maps.value[mllidx];
     mapentry.params = markRaw(params);
@@ -1181,10 +1179,8 @@ function draw() {
 
   const currentMapLayerList = mapLayerList.value;
   while (maps.value.length > currentMapLayerList.length) {
-    const mapentry = maps.value.pop();
-    if (mapentry) {
-      mapentry.map.exit();
-    }
+    maps.value.at(-1)?.map.exit();
+    store.popMap();
   }
   let baseLayerIndex = 0;
   const currentResetMaps = resetMapsOnDraw.value;
@@ -1431,7 +1427,7 @@ onBeforeUnmount(() => {
   }
   if (maps.value) {
     maps.value.forEach((mapentry) => mapentry.map.exit());
-    maps.value = [];
+    store.clearMaps();
   }
 });
 
