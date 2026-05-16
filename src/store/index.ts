@@ -537,9 +537,15 @@ export class Main extends VuexModule {
     //
     // Note: markRaw(m) tags `m` itself by setting `__v_skip` — i.e., it
     // mutates the elements of the input array. In-practice unobservable
-    // since the only caller (_setupMap) discards its array reference
-    // immediately after, but worth knowing if a future caller reuses it.
+    // since callers should not rely on entries staying unmarked.
     this.maps = maps.map((m) => markRaw(m));
+  }
+
+  @Mutation
+  public setMapAt(payload: { index: number; mapEntry: IMapEntry }) {
+    const maps = [...this.maps];
+    maps[payload.index] = markRaw(payload.mapEntry);
+    this.maps = maps;
   }
 
   @Mutation

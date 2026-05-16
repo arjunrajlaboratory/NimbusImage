@@ -112,6 +112,7 @@ vi.mock("@/store", () => {
       drawAnnotations: true,
       showTooltips: false,
       setMaps: vi.fn(),
+      setMapAt: vi.fn(),
       popMap: vi.fn(),
       clearMaps: vi.fn(),
       setCameraInfo: vi.fn(),
@@ -304,6 +305,13 @@ describe("ImageViewer", () => {
     (mockedStore.setMaps as any).mockImplementation((v: any) => {
       mockedStore.maps = v;
     });
+    (mockedStore.setMapAt as any).mockImplementation(
+      ({ index, mapEntry }: any) => {
+        const maps = [...mockedStore.maps];
+        maps[index] = mapEntry;
+        mockedStore.maps = maps;
+      },
+    );
     (mockedStore.popMap as any).mockImplementation(() => {
       mockedStore.maps = mockedStore.maps.slice(0, -1);
     });
