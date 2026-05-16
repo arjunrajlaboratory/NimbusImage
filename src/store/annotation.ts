@@ -931,6 +931,13 @@ export class Annotations extends VuexModule {
     await this.deleteAnnotations(unselectedIds);
   }
 
+  /**
+   * editFunction must reassign fields (e.g. `ann.coordinates = newArray`)
+   * rather than mutate them in place. cloneAnnotation shares the original
+   * `coordinates` array reference for performance, so an in-place mutation
+   * would corrupt the stored annotation, defeat patch diffing in
+   * getAnnotationUpdatePatch, and prevent rollback on error.
+   */
   @Action
   public async updateAnnotationsPerId({
     annotationIds,
