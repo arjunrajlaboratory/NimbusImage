@@ -30,7 +30,11 @@ export function getAnnotationUpdatePatch(
 
   for (const field of annotationUpdateFields) {
     const value = after[field];
-    if (value === undefined || jsonEqual(before[field], value)) {
+    if (
+      value === undefined ||
+      before[field] === value ||
+      jsonEqual(before[field], value)
+    ) {
       continue;
     }
     patch[field] = value as never;
