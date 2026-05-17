@@ -15,8 +15,16 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn color="warning" @click="showDialog = false"> Cancel </v-btn>
-        <v-btn color="primary" :disabled="!isLoggedIn" @click="submit">
+        <v-btn variant="text" size="small" @click="showDialog = false">
+          Cancel
+        </v-btn>
+        <v-btn
+          variant="flat"
+          color="primary"
+          size="small"
+          :disabled="!isLoggedIn"
+          @click="submit"
+        >
           Apply color
         </v-btn>
       </v-card-actions>

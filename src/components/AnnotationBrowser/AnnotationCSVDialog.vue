@@ -2,6 +2,9 @@
   <v-dialog v-model="dialog">
     <template v-slot:activator="{ props: activatorProps }">
       <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
         v-bind="{ ...activatorProps, ...$attrs }"
         v-description="{
           section: 'Object list actions',
@@ -178,7 +181,9 @@
               {{ displayText }}
               <template v-slot:append>
                 <v-btn
+                  variant="text"
                   icon
+                  size="small"
                   title="Copy to clipboard"
                   @click="copyCSVText"
                   :disabled="!canUseClipboard"
@@ -235,14 +240,21 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn @click="dialog = false" variant="text" :disabled="bulkExporting">
+        <v-btn
+          variant="text"
+          size="small"
+          :disabled="bulkExporting"
+          @click="dialog = false"
+        >
           Close
         </v-btn>
         <v-btn
+          variant="flat"
+          color="success"
+          size="small"
           @click="download"
           :disabled="!canDownload"
           :loading="isDownloading || bulkExporting"
-          color="success"
           :min-width="isDownloading || bulkExporting ? 260 : undefined"
         >
           <template v-slot:loader>

@@ -16,11 +16,17 @@
         density="compact"
         @update:model-value="updateViewMode"
       >
-        <v-btn value="range" size="small">Histogram</v-btn>
-        <v-btn value="values" size="small">Values</v-btn>
+        <v-btn variant="text" value="range" size="small">Histogram</v-btn>
+        <v-btn variant="text" value="values" size="small">Values</v-btn>
       </v-btn-toggle>
       <v-spacer></v-spacer>
-      <v-btn icon size="small" class="mr-2" @click="removeFilter">
+      <v-btn
+        variant="text"
+        icon
+        size="small"
+        class="mr-2"
+        @click="removeFilter"
+      >
         <v-icon>mdi-close</v-icon>
       </v-btn>
     </v-row>

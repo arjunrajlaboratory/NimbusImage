@@ -21,11 +21,14 @@
               v-if="dataset"
               :route-path="`/dataset/${dataset.id}`"
               tooltip="Copy shareable link to this dataset"
-              icon-only
+              label="Copy link"
+              size="small"
               class="mr-2"
             />
             <v-btn
-              color="green"
+              color="success"
+              variant="flat"
+              size="small"
               @click="goToDefaultView"
               :disabled="!dataset"
               class="pulse-btn"
@@ -65,12 +68,12 @@
               <v-dialog v-model="removeDatasetConfirm" max-width="33vw">
                 <template #activator="{ props: activatorProps }">
                   <v-btn
+                    variant="outlined"
                     color="error"
                     size="small"
-                    variant="outlined"
                     v-bind="activatorProps"
                   >
-                    <v-icon start>mdi-close</v-icon>
+                    <v-icon start>mdi-delete</v-icon>
                     Remove Dataset
                   </v-btn>
                 </template>
@@ -79,10 +82,21 @@
                     Are you sure to remove "{{ datasetName }}"?
                   </v-card-title>
                   <v-card-actions class="button-bar">
-                    <v-btn @click="removeDatasetConfirm = false">
+                    <v-btn
+                      variant="text"
+                      size="small"
+                      @click="removeDatasetConfirm = false"
+                    >
                       Cancel
                     </v-btn>
-                    <v-btn @click="removeDataset" color="warning">Remove</v-btn>
+                    <v-btn
+                      variant="flat"
+                      color="error"
+                      size="small"
+                      @click="removeDataset"
+                    >
+                      Remove
+                    </v-btn>
                   </v-card-actions>
                 </v-card>
               </v-dialog>
@@ -119,10 +133,19 @@
                   }}"?
                 </v-card-title>
                 <v-card-actions class="button-bar">
-                  <v-btn @click="closeRemoveConfigurationDialog()">
+                  <v-btn
+                    variant="text"
+                    size="small"
+                    @click="closeRemoveConfigurationDialog()"
+                  >
                     Cancel
                   </v-btn>
-                  <v-btn @click="removeDatasetView()" color="warning">
+                  <v-btn
+                    variant="flat"
+                    color="error"
+                    size="small"
+                    @click="removeDatasetView()"
+                  >
                     Remove
                   </v-btn>
                 </v-card-actions>
@@ -241,6 +264,7 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
                     :to="{
                       name: 'importconfiguration',
@@ -263,6 +287,7 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
                     :to="{
                       name: 'duplicateimportconfiguration',
@@ -285,6 +310,7 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
                     @click="showNewCollectionDialog = true"
                   >
@@ -307,9 +333,13 @@
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer></v-spacer>
-                  <v-btn variant="text" @click="showNewCollectionDialog = false"
-                    >Cancel</v-btn
+                  <v-btn
+                    variant="text"
+                    size="small"
+                    @click="showNewCollectionDialog = false"
                   >
+                    Cancel
+                  </v-btn>
                 </v-card-actions>
               </v-card>
             </v-dialog>
@@ -331,12 +361,19 @@
                   <v-spacer></v-spacer>
                   <v-btn
                     variant="text"
+                    size="small"
                     @click="showNewCollectionNameDialog = false"
-                    >Cancel</v-btn
                   >
-                  <v-btn color="success" @click="createNewCollection"
-                    >Create</v-btn
+                    Cancel
+                  </v-btn>
+                  <v-btn
+                    variant="flat"
+                    color="success"
+                    size="small"
+                    @click="createNewCollection"
                   >
+                    Create
+                  </v-btn>
                 </v-card-actions>
               </v-card>
             </v-dialog>

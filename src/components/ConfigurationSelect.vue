@@ -30,10 +30,14 @@
       No compatible collection were found for this dataset.
     </v-alert>
     <div class="button-bar">
-      <v-btn color="warning" class="mr-4" @click="cancel">Cancel</v-btn>
+      <v-btn variant="text" size="small" class="mr-4" @click="cancel"
+        >Cancel</v-btn
+      >
       <v-btn
         :disabled="selectedConfigurations.length <= 0"
+        variant="flat"
         color="primary"
+        size="small"
         class="mr-4"
         @click="submit"
       >

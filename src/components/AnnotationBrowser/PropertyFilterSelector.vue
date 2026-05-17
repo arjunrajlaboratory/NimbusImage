@@ -1,6 +1,12 @@
 <template>
   <div>
-    <v-btn class="filter-element" size="small" @click="dialog = true">
+    <v-btn
+      class="filter-element"
+      variant="outlined"
+      color="primary"
+      size="small"
+      @click="dialog = true"
+    >
       Property value filter
     </v-btn>
     <v-dialog v-model="dialog" max-width="500px">
@@ -31,7 +37,9 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn variant="text" @click="dialog = false">Close</v-btn>
+          <v-btn variant="text" size="small" @click="dialog = false"
+            >Close</v-btn
+          >
         </v-card-actions>
       </v-card>
     </v-dialog>

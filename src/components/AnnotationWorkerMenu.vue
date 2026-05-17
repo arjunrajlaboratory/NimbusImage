@@ -7,8 +7,8 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
+              variant="text"
               size="small"
-              variant="tonal"
               class="worker-action-btn"
               @click="resetInterfaceValues()"
             >
@@ -21,8 +21,8 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
+              variant="text"
               size="small"
-              variant="tonal"
               class="worker-action-btn"
               @click="updateInterface(true)"
             >
@@ -81,13 +81,23 @@
           />
         </v-row>
         <v-row>
-          <v-btn @click="preview" v-if="hasPreview">Preview</v-btn>
-          <v-btn variant="tonal" @click="emit('close')">Close</v-btn>
+          <v-btn
+            v-if="hasPreview"
+            variant="outlined"
+            color="primary"
+            size="small"
+            @click="preview"
+            >Preview</v-btn
+          >
+          <v-btn variant="text" size="small" @click="emit('close')"
+            >Close</v-btn
+          >
           <v-spacer></v-spacer>
           <v-btn
             v-if="localJobLog"
             variant="text"
             color="info"
+            size="small"
             class="mr-2"
             @click="showLogDialog = true"
           >
@@ -95,10 +105,11 @@
             Log
           </v-btn>
           <v-btn
-            @click="compute"
             v-if="!running"
-            variant="tonal"
+            variant="flat"
             color="primary"
+            size="small"
+            @click="compute"
           >
             <v-icon v-if="previousRunStatus === false" start>mdi-close</v-icon>
             <v-icon v-if="previousRunStatus === true" start>mdi-check</v-icon>
@@ -106,10 +117,11 @@
           </v-btn>
           <v-btn
             v-else
-            @click="cancel"
-            variant="tonal"
-            color="orange"
+            variant="text"
+            color="warning"
+            size="small"
             :disabled="!currentJob && !batchCancelFunction"
+            @click="cancel"
           >
             <v-progress-circular size="16" indeterminate class="mr-2" />
             Cancel{{ batchCancelFunction ? " All" : "" }}
@@ -182,13 +194,24 @@
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
             <template v-slot:activator="{ props: activatorProps }">
-              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
+              <v-btn
+                v-bind="activatorProps"
+                variant="text"
+                icon
+                size="small"
+                @click="copyLogToClipboard"
+              >
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
             <span>Copy to clipboard</span>
           </v-tooltip>
-          <v-btn icon @click="showLogDialog = false">
+          <v-btn
+            variant="text"
+            icon
+            size="small"
+            @click="showLogDialog = false"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-card-title>
@@ -197,7 +220,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" variant="text" @click="showLogDialog = false"
+          <v-btn variant="text" size="small" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>

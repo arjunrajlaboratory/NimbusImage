@@ -24,10 +24,17 @@
         v-if="project"
         :route-path="`/project/${project.id}`"
         tooltip="Copy shareable link to this project"
-        icon-only
+        label="Copy link"
+        size="small"
         class="mr-2"
       />
-      <v-btn color="primary" class="mr-2" @click="shareDialog = true">
+      <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
+        class="mr-2"
+        @click="shareDialog = true"
+      >
         <v-icon start>mdi-share-variant</v-icon>
         Share Project
       </v-btn>
@@ -35,7 +42,9 @@
            Uncomment when Zenodo export integration is ready
       <v-btn
         v-if="canStartExport"
+        variant="flat"
         color="primary"
+        size="small"
         class="mr-2"
         @click="startExport"
       >
@@ -44,7 +53,9 @@
       </v-btn>
       <v-btn
         v-if="canMarkExported"
+        variant="flat"
         color="success"
+        size="small"
         class="mr-2"
         @click="markExported"
       >
@@ -54,7 +65,12 @@
       -->
       <v-dialog v-model="deleteConfirm" max-width="33vw">
         <template #activator="{ props: activatorProps }">
-          <v-btn color="red" v-bind="activatorProps">
+          <v-btn
+            variant="outlined"
+            color="error"
+            size="small"
+            v-bind="activatorProps"
+          >
             <v-icon start>mdi-delete</v-icon>
             Delete Project
           </v-btn>
@@ -68,8 +84,17 @@
             reference.
           </v-card-text>
           <v-card-actions class="button-bar">
-            <v-btn @click="deleteConfirm = false">Cancel</v-btn>
-            <v-btn @click="deleteProject" color="error">Delete</v-btn>
+            <v-btn variant="text" size="small" @click="deleteConfirm = false">
+              Cancel
+            </v-btn>
+            <v-btn
+              variant="flat"
+              color="error"
+              size="small"
+              @click="deleteProject"
+            >
+              Delete
+            </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -163,19 +188,25 @@
                 <span class="button-bar">
                   <v-btn
                     v-if="item.source === 'direct'"
-                    color="warning"
+                    variant="outlined"
+                    color="error"
+                    size="small"
                     @click="confirmRemoveDataset(item.datasetId)"
                   >
-                    <v-icon start>mdi-close</v-icon>remove
+                    <v-icon start>mdi-delete</v-icon>
+                    Remove
                   </v-btn>
                   <v-btn
-                    color="primary"
+                    variant="flat"
+                    color="success"
+                    size="small"
                     :to="{
                       name: 'dataset',
                       params: { datasetId: item.datasetId },
                     }"
                   >
-                    <v-icon start>mdi-eye</v-icon>view
+                    <v-icon start>mdi-eye</v-icon>
+                    View
                   </v-btn>
                 </span>
               </template>
@@ -187,12 +218,18 @@
           </template>
         </v-list>
       </v-card-text>
-      <v-card-actions>
+      <v-card-actions class="d-block">
         <v-divider />
-        <div class="clickable-flex pa-2 body" @click="addDatasetDialog = true">
-          <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
+        <v-btn
+          variant="text"
+          color="primary"
+          size="small"
+          class="ma-2"
+          @click="addDatasetDialog = true"
+        >
+          <v-icon start>mdi-plus-circle</v-icon>
           Add dataset to project
-        </div>
+        </v-btn>
       </v-card-actions>
     </v-card>
 
@@ -250,16 +287,22 @@
                   <template #append>
                     <span class="button-bar">
                       <v-btn
-                        color="warning"
+                        variant="outlined"
+                        color="error"
+                        size="small"
                         @click.stop="confirmRemoveCollection(item.collectionId)"
                       >
-                        <v-icon start>mdi-close</v-icon>remove
+                        <v-icon start>mdi-delete</v-icon>
+                        Remove
                       </v-btn>
                       <v-btn
-                        color="primary"
+                        variant="flat"
+                        color="success"
+                        size="small"
                         @click.stop="navigateToCollection(item.collectionId)"
                       >
-                        <v-icon start>mdi-eye</v-icon>view
+                        <v-icon start>mdi-eye</v-icon>
+                        View
                       </v-btn>
                     </span>
                   </template>
@@ -283,13 +326,16 @@
                   </span>
                 </v-list-item-title>
                 <v-btn
-                  color="primary"
+                  variant="flat"
+                  color="success"
+                  size="small"
                   :to="{
                     name: 'dataset',
                     params: { datasetId: dv.datasetId },
                   }"
                 >
-                  <v-icon start>mdi-eye</v-icon>view
+                  <v-icon start>mdi-eye</v-icon>
+                  View
                 </v-btn>
               </v-list-item>
             </v-list-group>
@@ -300,15 +346,18 @@
           </template>
         </v-list>
       </v-card-text>
-      <v-card-actions>
+      <v-card-actions class="d-block">
         <v-divider />
-        <div
-          class="clickable-flex pa-2 body"
+        <v-btn
+          variant="text"
+          color="primary"
+          size="small"
+          class="ma-2"
           @click="addCollectionDialog = true"
         >
-          <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
+          <v-icon start>mdi-plus-circle</v-icon>
           Add collection to project
-        </div>
+        </v-btn>
       </v-card-actions>
     </v-card>
 
@@ -382,7 +431,9 @@
       <v-card-actions>
         <v-spacer />
         <v-btn
+          variant="flat"
           color="primary"
+          size="small"
           :loading="savingMetadata"
           :disabled="!hasMetadataChanges"
           @click="saveMetadata"
@@ -401,8 +452,21 @@
           itself will not be deleted.
         </v-card-text>
         <v-card-actions class="button-bar">
-          <v-btn @click="removeDatasetConfirm = false">Cancel</v-btn>
-          <v-btn @click="removeDataset" color="warning">Remove</v-btn>
+          <v-btn
+            variant="text"
+            size="small"
+            @click="removeDatasetConfirm = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            @click="removeDataset"
+          >
+            Remove
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -416,8 +480,21 @@
           collection itself will not be deleted.
         </v-card-text>
         <v-card-actions class="button-bar">
-          <v-btn @click="removeCollectionConfirm = false">Cancel</v-btn>
-          <v-btn @click="removeCollection" color="warning">Remove</v-btn>
+          <v-btn
+            variant="text"
+            size="small"
+            @click="removeCollectionConfirm = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            @click="removeCollection"
+          >
+            Remove
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1125,12 +1202,6 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.clickable-flex {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-}
-
 .button-bar {
   display: flex;
   align-items: center;

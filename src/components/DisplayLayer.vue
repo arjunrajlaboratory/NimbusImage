@@ -108,9 +108,15 @@
                 :offset="1"
               />
               <div class="buttons">
-                <v-btn color="warning" size="small" @click="removeLayer"
-                  >Delete layer</v-btn
+                <v-btn
+                  variant="text"
+                  color="error"
+                  size="small"
+                  @click="removeLayer"
                 >
+                  <v-icon start>mdi-delete</v-icon>
+                  Delete layer
+                </v-btn>
               </div>
             </v-expansion-panel-text>
           </v-expansion-panel>

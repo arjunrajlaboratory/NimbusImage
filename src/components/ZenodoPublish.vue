@@ -83,6 +83,7 @@
       <v-btn
         v-if="depositionUrl"
         variant="text"
+        size="small"
         :href="depositionUrl"
         target="_blank"
       >
@@ -95,8 +96,9 @@
       <!-- Discard draft -->
       <v-btn
         v-if="zenodoStatus === 'draft' || zenodoStatus === 'error'"
-        color="warning"
         variant="text"
+        color="warning"
+        size="small"
         :loading="discarding"
         @click="discardDraft"
       >
@@ -106,7 +108,9 @@
       <!-- Publish (mint DOI) -->
       <v-btn
         v-if="zenodoStatus === 'draft'"
+        variant="flat"
         color="success"
+        size="small"
         :loading="publishing"
         @click="confirmPublish = true"
       >
@@ -117,7 +121,9 @@
       <!-- Upload to Zenodo -->
       <v-btn
         v-if="canUpload"
+        variant="flat"
         color="primary"
+        size="small"
         :loading="uploading"
         :disabled="!hasToken"
         @click="startUpload"
@@ -149,8 +155,16 @@
           </p>
         </v-card-text>
         <v-card-actions class="d-flex justify-end gap-2">
-          <v-btn @click="confirmPublish = false">Cancel</v-btn>
-          <v-btn color="success" :loading="publishing" @click="doPublish">
+          <v-btn variant="text" size="small" @click="confirmPublish = false"
+            >Cancel</v-btn
+          >
+          <v-btn
+            variant="flat"
+            color="success"
+            size="small"
+            :loading="publishing"
+            @click="doPublish"
+          >
             Publish
           </v-btn>
         </v-card-actions>

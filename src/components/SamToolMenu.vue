@@ -7,10 +7,20 @@
       <v-checkbox label="Turbo mode" v-model="turboMode" />
       <div v-if="!turboMode">
         <div>
-          <v-btn class="my-1" @click="undo" :disabled="prompts.length === 0">
+          <v-btn
+            variant="outlined"
+            color="primary"
+            size="small"
+            class="my-1"
+            @click="undo"
+            :disabled="prompts.length === 0"
+          >
             Undo last prompt
           </v-btn>
           <v-btn
+            variant="outlined"
+            color="primary"
+            size="small"
             class="my-1"
             @click="redo"
             :disabled="promptHistory.length === 0"
@@ -18,13 +28,23 @@
             Redo last prompt
           </v-btn>
           <v-btn
+            variant="outlined"
+            color="primary"
+            size="small"
             class="my-1"
             @click="resetPrompts"
             :disabled="prompts.length === 0"
           >
             Reset prompts
           </v-btn>
-          <v-btn class="my-1" @click="submit" :disabled="!outputCoordinates">
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            class="my-1"
+            @click="submit"
+            :disabled="!outputCoordinates"
+          >
             Submit annotation
           </v-btn>
         </div>

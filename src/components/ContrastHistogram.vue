@@ -71,25 +71,28 @@
     </div>
     <div class="toolbar">
       <v-btn
+        variant="outlined"
+        color="primary"
         size="x-small"
         @click="reset"
-        color="secondary"
         title="Reset to histogram limits"
       >
         Reset
       </v-btn>
       <v-btn
+        variant="outlined"
+        color="primary"
         size="x-small"
         @click="revertSaved"
-        color="secondary"
         title="Revert to saved points"
       >
         Revert to saved
       </v-btn>
       <v-btn
+        variant="flat"
+        color="primary"
         size="x-small"
         @click="saveCurrent"
-        color="secondary"
         title="Save current points"
         >Save</v-btn
       >

@@ -3,8 +3,10 @@
     <template v-slot:activator="{ props: activatorProps }">
       <v-btn
         v-bind="{ ...activatorProps, ...$attrs }"
+        variant="outlined"
+        size="small"
         :disabled="!isLoggedIn"
-        :color="showSuccess ? 'success' : undefined"
+        :color="showSuccess ? 'success' : 'primary'"
         v-description="{
           section: 'Object list actions',
           title: 'Import from JSON',
@@ -89,22 +91,25 @@
                 <v-card-actions>
                   <v-spacer />
                   <v-btn
-                    @click="
-                      overwriteAnnotations = true;
-                      overwriteAnnotationsDialog = false;
-                    "
-                    color="warning"
-                  >
-                    Overwrite
-                  </v-btn>
-                  <v-btn
+                    variant="text"
+                    size="small"
                     @click="
                       overwriteAnnotations = false;
                       overwriteAnnotationsDialog = false;
                     "
-                    color="primary"
                   >
                     Cancel
+                  </v-btn>
+                  <v-btn
+                    variant="flat"
+                    color="error"
+                    size="small"
+                    @click="
+                      overwriteAnnotations = true;
+                      overwriteAnnotationsDialog = false;
+                    "
+                  >
+                    Overwrite
                   </v-btn>
                 </v-card-actions>
               </v-card>
@@ -119,22 +124,25 @@
                 <v-card-actions>
                   <v-spacer />
                   <v-btn
-                    @click="
-                      overwriteProperties = true;
-                      overwritePropertiesDialog = false;
-                    "
-                    color="warning"
-                  >
-                    Overwrite
-                  </v-btn>
-                  <v-btn
+                    variant="text"
+                    size="small"
                     @click="
                       overwriteProperties = false;
                       overwritePropertiesDialog = false;
                     "
-                    color="primary"
                   >
                     Cancel
+                  </v-btn>
+                  <v-btn
+                    variant="flat"
+                    color="error"
+                    size="small"
+                    @click="
+                      overwriteProperties = true;
+                      overwritePropertiesDialog = false;
+                    "
+                  >
+                    Overwrite
                   </v-btn>
                 </v-card-actions>
               </v-card>
@@ -145,7 +153,9 @@
       <v-card-actions v-if="isJsonLoaded">
         <v-spacer />
         <v-progress-circular v-if="isImporting" indeterminate />
-        <v-btn @click="submit" color="primary"> Import selection </v-btn>
+        <v-btn variant="flat" color="primary" size="small" @click="submit">
+          Import selection
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

@@ -7,11 +7,14 @@
         v-if="configuration"
         :route-path="`/configuration/${configuration.id}`"
         tooltip="Copy shareable link to this collection"
-        icon-only
+        label="Copy link"
+        size="small"
         class="mr-2"
       />
       <v-btn
+        variant="outlined"
         color="primary"
+        size="small"
         class="mr-2"
         @click="showAddToProjectDialog = true"
         :disabled="!configuration"
@@ -21,8 +24,14 @@
       </v-btn>
       <v-dialog v-model="removeConfirm" max-width="33vw">
         <template #activator="{ props: activatorProps }">
-          <v-btn color="red" v-bind="activatorProps" :disabled="!configuration">
-            <v-icon start>mdi-close</v-icon>
+          <v-btn
+            variant="outlined"
+            color="error"
+            size="small"
+            v-bind="activatorProps"
+            :disabled="!configuration"
+          >
+            <v-icon start>mdi-delete</v-icon>
             Delete Collection
           </v-btn>
         </template>
@@ -31,8 +40,12 @@
             Are you sure you want to delete "{{ name }}" forever?
           </v-card-title>
           <v-card-actions class="button-bar">
-            <v-btn @click="removeConfirm = false">Cancel</v-btn>
-            <v-btn @click="remove" color="warning">Remove</v-btn>
+            <v-btn variant="text" size="small" @click="removeConfirm = false"
+              >Cancel</v-btn
+            >
+            <v-btn variant="flat" color="error" size="small" @click="remove"
+              >Remove</v-btn
+            >
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -67,8 +80,19 @@
               }}"?
             </v-card-title>
             <v-card-actions class="button-bar">
-              <v-btn @click="closeRemoveDatasetDialog()"> Cancel </v-btn>
-              <v-btn @click="removeDatasetView()" color="warning">
+              <v-btn
+                variant="text"
+                size="small"
+                @click="closeRemoveDatasetDialog()"
+              >
+                Cancel
+              </v-btn>
+              <v-btn
+                variant="flat"
+                color="error"
+                size="small"
+                @click="removeDatasetView()"
+              >
                 Remove
               </v-btn>
             </v-card-actions>
@@ -113,14 +137,22 @@
             </div>
             <span class="button-bar">
               <v-btn
-                color="warning"
+                variant="outlined"
+                color="error"
+                size="small"
                 v-on:click.stop="openRemoveDatasetDialog(d.datasetView)"
               >
-                <v-icon start>mdi-close</v-icon>remove
+                <v-icon start>mdi-delete</v-icon>
+                Remove
               </v-btn>
-              <v-btn color="primary" :to="toRoute(d.datasetView)">
+              <v-btn
+                variant="flat"
+                color="success"
+                size="small"
+                :to="toRoute(d.datasetView)"
+              >
                 <v-icon start>mdi-eye</v-icon>
-                view
+                View
               </v-btn>
             </span>
           </v-list-item>
@@ -128,10 +160,16 @@
       </v-card-text>
       <v-card-actions class="d-block">
         <v-divider />
-        <div class="clickable-flex pa-2 body" @click="addDatasetDialog = true">
-          <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
+        <v-btn
+          variant="text"
+          color="primary"
+          size="small"
+          class="ma-2"
+          @click="addDatasetDialog = true"
+        >
+          <v-icon start>mdi-plus-circle</v-icon>
           Add dataset to current collection
-        </div>
+        </v-btn>
         <v-dialog
           content-class="smart-overflow"
           class="wide-dialog"
@@ -541,13 +579,5 @@ defineExpose({
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-}
-</style>
-
-<style lang="scss">
-.clickable-flex {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
 }
 </style>

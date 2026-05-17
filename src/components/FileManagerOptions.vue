@@ -31,7 +31,21 @@
         <v-card-actions class="d-flex">
           <v-spacer />
           <v-progress-circular v-if="isLoading" indeterminate />
-          <v-btn color="red" @click="deleteItems" :disabled="disableOptions">
+          <v-btn
+            variant="text"
+            size="small"
+            @click="deleteDialog = false"
+            :disabled="disableOptions"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            @click="deleteItems"
+            :disabled="disableOptions"
+          >
             <template v-if="isLoading">
               Deleting {{ items.length }} item{{
                 items.length === 1 ? "" : "s"
@@ -40,13 +54,6 @@
             <template v-else>
               Delete {{ items.length }} item{{ items.length === 1 ? "" : "s" }}
             </template>
-          </v-btn>
-          <v-btn
-            color="primary"
-            @click="deleteDialog = false"
-            :disabled="disableOptions"
-          >
-            Cancel
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -80,7 +87,13 @@
               <div class="d-flex">
                 <v-spacer />
                 <v-progress-circular v-if="isLoading" indeterminate />
-                <v-btn type="submit" color="primary" :disabled="disableOptions">
+                <v-btn
+                  type="submit"
+                  variant="flat"
+                  color="primary"
+                  size="small"
+                  :disabled="disableOptions"
+                >
                   Submit
                 </v-btn>
               </div>
@@ -108,19 +121,23 @@
               <v-progress-circular v-if="isLoading" indeterminate />
               <v-spacer />
               <v-btn
-                @click="moveFolderToAssetstorResolve?.(true)"
-                :disabled="isLoading"
-                class="mx-2"
-                color="primary"
-              >
-                Confirm
-              </v-btn>
-              <v-btn
+                variant="text"
+                size="small"
                 @click="moveFolderToAssetstorResolve?.(false)"
                 class="mx-2"
                 :disabled="isLoading"
               >
                 Cancel
+              </v-btn>
+              <v-btn
+                variant="flat"
+                color="primary"
+                size="small"
+                @click="moveFolderToAssetstorResolve?.(true)"
+                :disabled="isLoading"
+                class="mx-2"
+              >
+                Confirm
               </v-btn>
             </v-card-text>
           </v-card>

@@ -50,10 +50,14 @@
           </div>
           <v-card-actions class="tool-creation-actions">
             <v-spacer />
-            <v-btn class="mr-4" color="warning" @click="close">CANCEL</v-btn>
+            <v-btn class="mr-4" variant="text" size="small" @click="close"
+              >CANCEL</v-btn
+            >
             <v-btn
               class="mr-4"
+              variant="flat"
               color="primary"
+              size="small"
               @click="createTool"
               :disabled="!selectedTemplate"
               id="tool-creation-add-tool-button-tourstep"

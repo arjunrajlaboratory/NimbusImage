@@ -1,6 +1,6 @@
 ---
 name: nimbus-frontend
-description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button loading states, @girder/components compatibility, and style guidelines."
+description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, @girder/components compatibility, and style guidelines."
 ---
 
 # Nimbus Frontend Development
@@ -284,15 +284,52 @@ logWarning("Something unexpected happened");
 logError("An error occurred", error);
 ```
 
-## Button Loading States
+## Buttons — five-role taxonomy
+
+Every `<v-btn>` should declare an explicit **`variant`** and **`size`**. Omitting them falls back to Vuetify's `elevated` default at default size, which looks generic and out of place against the Linear-inspired theme.
+
+| Role | Props | Use |
+|---|---|---|
+| Primary | `variant="flat" color="primary" size="small"` | The one main action of a view or dialog |
+| Primary positive | `variant="flat" color="success" size="small"` | View / Go / Start CTAs |
+| Secondary | `variant="outlined" color="primary" size="small"` | Supporting actions |
+| Tertiary / text | `variant="text" size="small"` | Cancel, low-emphasis, inline |
+| Destructive (confirmed) | `variant="flat" color="error" size="small"` | The irreversible button in a confirm dialog |
+| Destructive (inline) | `variant="text" color="error" size="small"` | The trigger that opens a confirm dialog (use `mdi-delete`, not `mdi-close`) |
+| Informational | `variant="text" color="info" size="small"` | View log / inspect detail / open help — actions that read rather than mutate |
+| Icon-only | `variant="text" icon size="small"` | Toolbar / row actions; wrap in `v-tooltip` if ambiguous |
+
+**Color tokens — never use literals.** Use `error`/`success`/`warning`/`secondary`, not `red`/`green`/`orange`/`grey`. Semantic tokens are theme-aware.
+
+**Dialog action bar pattern:**
+```vue
+<v-card-actions class="button-bar">
+  <v-btn variant="text" size="small" @click="close">Cancel</v-btn>
+  <v-btn variant="flat" color="primary" size="small" @click="save">Save</v-btn>
+</v-card-actions>
+```
+Never two filled buttons. For destructive confirms, swap `color="primary"` → `color="error"` on the right button.
+
+**`:to` vs `@click`:** a `v-btn` with `:to` renders as `<a>`, one with `@click` renders as `<button>`. `src/style.scss` makes form elements inherit `font-family` so they match; for groups of buttons that must look identical, use the same action type across all of them so they share the underlying tag.
+
+Full guide: `codebaseDocumentation/BUTTON_CONVENTIONS.md`
+
+### Loading state
 
 ```vue
-<v-btn :loading="isLoading" :disabled="isLoading" @click="doAction">
+<v-btn
+  variant="flat"
+  color="primary"
+  size="small"
+  :loading="isLoading"
+  :disabled="isLoading"
+  @click="doAction"
+>
   <template v-slot:loader>
     <v-progress-circular indeterminate size="18" width="2" class="mr-2" />
     Loading...
   </template>
-  <v-icon>mdi-check</v-icon>
+  <v-icon start>mdi-check</v-icon>
   Submit
 </v-btn>
 ```
@@ -315,6 +352,7 @@ For the full API, recorded fields, the load-order constraint (don't import store
 ## Codebase Documentation References
 
 - Vuetify 4 migration details: read `codebaseDocumentation/VUETIFY4_MIGRATION.md`
+- Button taxonomy and patterns: read `codebaseDocumentation/BUTTON_CONVENTIONS.md`
 - When working on batch processing: read `references/batch-processing-patterns.md`
 - When working on projects feature: read `codebaseDocumentation/PROJECTS.md`
 - When working on sharing UI: read `codebaseDocumentation/SHARING.md`

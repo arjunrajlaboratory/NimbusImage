@@ -4,7 +4,9 @@
     <v-expansion-panel-text>
       <v-container>
         <v-btn
+          variant="outlined"
           color="primary"
+          size="small"
           @click="showJobs"
           v-description="{
             section: 'Jobs and Logs',
@@ -74,9 +76,9 @@
                 </template>
                 <template #[`item.actions`]="{ item }">
                   <v-btn
-                    size="small"
                     variant="text"
                     color="info"
+                    size="small"
                     @click="viewJobLog(item)"
                   >
                     <v-icon size="small" start>mdi-text-box-outline</v-icon>
@@ -139,10 +141,7 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn
-                color="primary"
-                variant="text"
-                @click="showLogDialog = false"
+              <v-btn variant="text" size="small" @click="showLogDialog = false"
                 >Close</v-btn
               >
             </v-card-actions>

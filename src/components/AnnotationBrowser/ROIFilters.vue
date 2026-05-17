@@ -1,6 +1,13 @@
 <template>
   <div>
-    <v-btn size="small" @click="addNewFilter"> Region filter </v-btn>
+    <v-btn
+      variant="outlined"
+      color="primary"
+      size="small"
+      @click="addNewFilter"
+    >
+      Region filter
+    </v-btn>
     <div class="d-flex flex-column">
       <div
         v-for="filter in filters"
@@ -13,7 +20,13 @@
           @click="toggleEnabled(filter.id)"
         />
         {{ filter.id }}
-        <v-btn class="mx-2" icon size="small" @click="removeFilter(filter.id)">
+        <v-btn
+          class="mx-2"
+          variant="text"
+          icon
+          size="small"
+          @click="removeFilter(filter.id)"
+        >
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </div>

@@ -22,8 +22,9 @@
         <span class="counter-label ml-1">/{{ max + offset }}</span>
         <div class="step-arrows ml-1">
           <v-btn
-            size="x-small"
+            variant="text"
             icon
+            size="x-small"
             class="step-btn"
             :disabled="modelValue >= max"
             @click="increment"
@@ -31,8 +32,9 @@
             <v-icon size="x-small">mdi-chevron-up</v-icon>
           </v-btn>
           <v-btn
-            size="x-small"
+            variant="text"
             icon
+            size="x-small"
             class="step-btn"
             :disabled="modelValue <= min"
             @click="decrement"

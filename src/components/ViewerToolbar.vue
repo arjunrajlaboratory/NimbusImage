@@ -97,9 +97,12 @@
       <div v-if="timelapseMode" class="d-flex align-center">
         <v-btn
           class="ml-3"
+          variant="text"
+          color="error"
           size="small"
           @click="annotationStore.deleteAllTimelapseConnections"
         >
+          <v-icon start>mdi-delete</v-icon>
           Delete all timelapse connections
         </v-btn>
       </div>

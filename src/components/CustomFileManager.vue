@@ -37,6 +37,8 @@
               v-bind="activatorProps"
               :disabled="selected.length === 0"
               variant="outlined"
+              color="primary"
+              size="small"
               class="ghost-button"
             >
               Actions
@@ -60,6 +62,8 @@
           @click="fileInput?.click()"
           :disabled="shouldDisableSingleFileUpload"
           variant="outlined"
+          color="primary"
+          size="small"
         >
           <v-icon start>mdi-upload</v-icon>
           Upload Non-Image File

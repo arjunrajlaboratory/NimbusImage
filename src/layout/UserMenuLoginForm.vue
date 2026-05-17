@@ -18,9 +18,12 @@
         autocomplete="current-password"
       />
       <div class="d-flex flex-column">
-        <v-btn type="submit" color="primary">Login</v-btn>
+        <v-btn type="submit" variant="flat" color="primary" size="small">
+          Login
+        </v-btn>
         <v-btn
           variant="text"
+          size="small"
           class="align-self-end my-2"
           @click="switchToSignUp"
         >
@@ -87,13 +90,16 @@
         <div class="d-flex flex-column">
           <v-btn
             type="submit"
+            variant="flat"
             color="primary"
+            size="small"
             :disabled="signupPassword !== signupPasswordVerification"
           >
             Sign up
           </v-btn>
           <v-btn
             variant="text"
+            size="small"
             class="align-self-end my-2"
             @click="switchToLogin"
           >

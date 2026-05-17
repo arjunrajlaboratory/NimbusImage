@@ -44,6 +44,7 @@
             </router-link>
             <v-btn
               v-if="item.title === 'Dataset:' && showExternalLink"
+              variant="text"
               icon
               size="x-small"
               title="Open in Girder"
@@ -64,6 +65,7 @@
             </span>
             <v-btn
               v-if="item.title === 'Dataset:' && showExternalLink"
+              variant="text"
               icon
               size="x-small"
               title="Open in Girder"

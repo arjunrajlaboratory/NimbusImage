@@ -11,7 +11,13 @@
     >
       <div class="d-flex">
         <slot name="activator" v-bind="{ props: activatorProps }">
-          <v-btn v-bind="activatorProps" :disabled="disabled">
+          <v-btn
+            v-bind="activatorProps"
+            :disabled="disabled"
+            variant="outlined"
+            color="primary"
+            size="small"
+          >
             Choose...
           </v-btn>
         </slot>
@@ -38,13 +44,19 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn @click.prevent="dialogInternal = false" color="warning">
+        <v-btn
+          @click.prevent="dialogInternal = false"
+          variant="text"
+          size="small"
+        >
           Cancel
         </v-btn>
         <v-btn
           @click.prevent="select"
           :disabled="!isFolderSelected"
+          variant="flat"
           color="primary"
+          size="small"
         >
           Select
         </v-btn>

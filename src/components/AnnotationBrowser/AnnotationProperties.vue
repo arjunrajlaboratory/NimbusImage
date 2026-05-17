@@ -7,9 +7,9 @@
       Properties
       <v-spacer />
       <v-btn
+        variant="flat"
         color="primary"
-        dark
-        size="default"
+        size="small"
         @click.stop="showAnalyzeDialog = true"
         id="measure-objects-button-tourstep"
         v-tour-trigger="'measure-objects-button-tourtrigger'"
@@ -88,7 +88,8 @@
           </v-tooltip>
           <v-btn
             v-if="batchProgress"
-            color="orange"
+            variant="outlined"
+            color="warning"
             size="small"
             class="ml-4"
             @click="cancelBatch"
@@ -97,6 +98,8 @@
           </v-btn>
           <v-spacer />
           <v-btn
+            variant="text"
+            size="small"
             @click="onDialogClose(false)"
             id="measure-objects-close-button-tourstep"
             v-tour-trigger="'measure-objects-close-button-tourtrigger'"

@@ -120,7 +120,9 @@
     </v-card-text>
 
     <v-card-actions class="collection-navigator-actions">
-      <v-btn color="warning" class="mr-4" @click="cancel">Cancel</v-btn>
+      <v-btn variant="text" size="small" class="mr-4" @click="cancel"
+        >Cancel</v-btn
+      >
       <v-spacer />
       <span v-if="selectedConfigurations.length" class="text-caption mr-3">
         Selected {{ selectedConfigurations.length }} collection{{
@@ -129,7 +131,9 @@
       </span>
       <v-btn
         :disabled="selectedConfigurations.length === 0"
+        variant="flat"
         color="primary"
+        size="small"
         class="mr-4"
         @click="submit"
       >

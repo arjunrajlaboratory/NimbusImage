@@ -14,7 +14,7 @@
         id="zenodo-community-display-tourstep"
       >
         Sample Datasets
-        <v-btn icon @click="$emit('close')">
+        <v-btn variant="text" icon size="small" @click="$emit('close')">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </v-card-title>

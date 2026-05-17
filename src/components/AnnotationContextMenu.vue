@@ -48,10 +48,19 @@
         </div>
       </v-card-text>
       <v-card-actions>
-        <v-btn color="error" @click="deleteAnnotation"> Delete Object </v-btn>
+        <v-btn
+          variant="text"
+          color="error"
+          size="small"
+          @click="deleteAnnotation"
+        >
+          Delete Object
+        </v-btn>
         <v-spacer></v-spacer>
-        <v-btn color="secondary" @click="cancel"> Cancel </v-btn>
-        <v-btn color="primary" @click="save"> Apply </v-btn>
+        <v-btn variant="text" size="small" @click="cancel"> Cancel </v-btn>
+        <v-btn variant="flat" color="primary" size="small" @click="save">
+          Apply
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-menu>

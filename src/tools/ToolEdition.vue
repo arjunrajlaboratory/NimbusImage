@@ -22,16 +22,28 @@
       </div>
     </v-card-text>
     <v-card-actions class="py-4">
-      <v-btn @click="removeTool" color="red" class="mr-4">
+      <v-btn
+        variant="text"
+        color="error"
+        size="small"
+        class="mr-4"
+        @click="removeTool"
+      >
         Delete tool
         <v-icon class="ml-1">mdi-delete</v-icon>
       </v-btn>
       <v-spacer />
-      <v-btn @click="cancel" color="warning" class="mr-4">
+      <v-btn variant="text" size="small" class="mr-4" @click="cancel">
         Cancel
         <v-icon class="ml-1">mdi-undo</v-icon>
       </v-btn>
-      <v-btn @click="submit" color="primary" class="mr-4">
+      <v-btn
+        variant="flat"
+        color="primary"
+        size="small"
+        class="mr-4"
+        @click="submit"
+      >
         Update tool
         <v-icon class="ml-1">mdi-check</v-icon>
       </v-btn>
