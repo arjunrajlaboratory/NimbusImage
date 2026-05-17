@@ -2,7 +2,7 @@
   <div class="action-panel">
     <div class="selected-count">{{ selectedCount }} objects selected</div>
     <v-btn
-      variant="text"
+      variant="outlined"
       color="error"
       size="small"
       class="ma-1"
@@ -13,7 +13,7 @@
       Delete Selected
     </v-btn>
     <v-btn
-      variant="text"
+      variant="outlined"
       color="error"
       size="small"
       class="ma-1"
@@ -25,6 +25,7 @@
     </v-btn>
     <v-btn
       variant="outlined"
+      color="primary"
       size="small"
       class="ma-1"
       :disabled="!isLoggedIn"
@@ -35,6 +36,7 @@
     </v-btn>
     <v-btn
       variant="outlined"
+      color="primary"
       size="small"
       class="ma-1"
       :disabled="!isLoggedIn"
@@ -45,6 +47,7 @@
     </v-btn>
     <v-btn
       variant="outlined"
+      color="primary"
       size="small"
       class="ma-1"
       @click="copyAnnotationIds"
@@ -55,7 +58,8 @@
       Copy Selected IDs
     </v-btn>
     <v-btn
-      variant="text"
+      variant="outlined"
+      color="primary"
       size="small"
       class="ma-1"
       @click="$emit('deselect-all')"

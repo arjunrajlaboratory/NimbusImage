@@ -141,7 +141,35 @@ For destructive confirm dialogs:
 </v-card-actions>
 ```
 
-## Toolbar buttons
+## Stacked action panels — unify shape
+
+When buttons are stacked vertically (or arranged in a tight row) with **roughly equal emphasis** — for example, a floating action panel acting on selected items — prefer a unified shape across all of them and signal role differences through **color**, not variant.
+
+Mixed variants in a stacked row look ragged:
+
+```vue
+<!-- Don't: three different button shapes stacked together -->
+<v-btn variant="text" color="error">Delete Selected</v-btn>
+<v-btn variant="outlined" color="primary">Tag Selected</v-btn>
+<v-btn variant="text">Deselect All</v-btn>
+```
+
+Pick one shape (usually `outlined`) and vary color:
+
+```vue
+<!-- Do: same shape, color carries the role signal -->
+<v-btn variant="outlined" color="error" size="small">Delete Selected</v-btn>
+<v-btn variant="outlined" color="primary" size="small">Tag Selected</v-btn>
+<v-btn variant="outlined" color="primary" size="small">Deselect All</v-btn>
+```
+
+This rule applies **within** a tight cluster — across the page, the 5-role taxonomy still drives variant choice.
+
+## Toolbar buttons — same row, same shape
+
+Toolbars and tight horizontal clusters of buttons follow the same shape-unification rule as stacked panels. If a row has Share + Copy link + Delete, all three should be **outlined** with color carrying the role signal (`primary` for neutral secondaries, `error` for destructive). A single primary CTA in the same row can break the shape rule (e.g. View is `flat success` next to outlined Share/Copy link) — but a destructive `text error` next to an `outlined primary` looks ragged.
+
+Concretely: avoid `variant="text" color="error"` for the *Delete X* button when it lives in a toolbar alongside outlined buttons. Use `variant="outlined" color="error"` instead. Reserve `variant="text" color="error"` for row-level inline destructive triggers that don't share a row with outlined buttons.
 
 When buttons sit in a `v-toolbar` with a mix of secondary actions and a primary CTA:
 
@@ -197,6 +225,14 @@ For groups of buttons that should look identical (e.g. three secondary buttons s
   <v-icon>mdi-pencil</v-icon>
 </v-btn>
 ```
+
+## Theme interactions
+
+`src/style.scss` themes the `tonal` variant to look like a translucent "glass" button (Linear-inspired). It does **not** mute `flat color="primary"` — that variant must render as a solid filled button so primary CTAs read as prominent. If you find yourself adding `!important` rules to a button-color combination in `style.scss`, check that you're not muting a CTA variant by accident; only `tonal` should look translucent.
+
+A pale-looking `flat color="primary"` button in the running app usually means one of two things:
+1. The button is `:disabled` — Vuetify reduces opacity, and `style.scss` additionally applies a grayscale filter so disabled buttons read as clearly off (the opacity drop alone is too subtle on the dark theme).
+2. There's a stale theme override (`.v-btn.bg-primary { background: rgba(...) }`) — remove it.
 
 ## Migrating existing buttons
 

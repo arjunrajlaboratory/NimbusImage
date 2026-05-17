@@ -152,9 +152,12 @@ body {
   }
 }
 
-/* Primary-colored buttons: translucent primary accent */
-.v-btn--variant-tonal.text-primary,
-.v-btn.bg-primary {
+/* Tonal primary buttons: translucent primary accent (glass-style secondary).
+   Note: this rule must NOT target `.v-btn.bg-primary` — that selector matches
+   `variant="flat" color="primary"`, which is our prominent primary CTA and is
+   meant to render as a solid filled button. Keeping the muting confined to
+   `tonal` preserves the Linear-style glass treatment for that variant only. */
+.v-btn--variant-tonal.text-primary {
   background: rgba(var(--v-theme-primary), 0.15) !important;
   border: 1px solid rgba(var(--v-theme-primary), 0.2);
   color: rgb(var(--v-theme-primary)) !important;
@@ -162,6 +165,16 @@ body {
   &:hover {
     background: rgba(var(--v-theme-primary), 0.25) !important;
   }
+}
+
+/* Disabled buttons: clearer "not interactable" treatment.
+   Vuetify's default only drops opacity to ~38% but keeps the brand color,
+   which on dark themes can read as "subtle primary" rather than disabled.
+   Adding a grayscale filter desaturates the color so the off-state is
+   unambiguous. */
+.v-btn--disabled,
+.v-btn:disabled {
+  filter: grayscale(0.7);
 }
 
 /* Inputs: ghost outline */

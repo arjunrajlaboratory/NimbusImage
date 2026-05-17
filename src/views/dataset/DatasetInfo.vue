@@ -68,12 +68,12 @@
               <v-dialog v-model="removeDatasetConfirm" max-width="33vw">
                 <template #activator="{ props: activatorProps }">
                   <v-btn
-                    variant="text"
+                    variant="outlined"
                     color="error"
                     size="small"
                     v-bind="activatorProps"
                   >
-                    <v-icon start>mdi-close</v-icon>
+                    <v-icon start>mdi-delete</v-icon>
                     Remove Dataset
                   </v-btn>
                 </template>

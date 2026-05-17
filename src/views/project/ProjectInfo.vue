@@ -24,7 +24,8 @@
         v-if="project"
         :route-path="`/project/${project.id}`"
         tooltip="Copy shareable link to this project"
-        icon-only
+        label="Copy link"
+        size="small"
         class="mr-2"
       />
       <v-btn
@@ -65,7 +66,7 @@
       <v-dialog v-model="deleteConfirm" max-width="33vw">
         <template #activator="{ props: activatorProps }">
           <v-btn
-            variant="text"
+            variant="outlined"
             color="error"
             size="small"
             v-bind="activatorProps"
@@ -187,12 +188,13 @@
                 <span class="button-bar">
                   <v-btn
                     v-if="item.source === 'direct'"
-                    variant="text"
+                    variant="outlined"
                     color="error"
                     size="small"
                     @click="confirmRemoveDataset(item.datasetId)"
                   >
-                    <v-icon start>mdi-close</v-icon>remove
+                    <v-icon start>mdi-delete</v-icon>
+                    Remove
                   </v-btn>
                   <v-btn
                     variant="flat"
@@ -203,7 +205,8 @@
                       params: { datasetId: item.datasetId },
                     }"
                   >
-                    <v-icon start>mdi-eye</v-icon>view
+                    <v-icon start>mdi-eye</v-icon>
+                    View
                   </v-btn>
                 </span>
               </template>
@@ -215,12 +218,18 @@
           </template>
         </v-list>
       </v-card-text>
-      <v-card-actions>
+      <v-card-actions class="d-block">
         <v-divider />
-        <div class="clickable-flex pa-2 body" @click="addDatasetDialog = true">
-          <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
+        <v-btn
+          variant="text"
+          color="primary"
+          size="small"
+          class="ma-2"
+          @click="addDatasetDialog = true"
+        >
+          <v-icon start>mdi-plus-circle</v-icon>
           Add dataset to project
-        </div>
+        </v-btn>
       </v-card-actions>
     </v-card>
 
@@ -278,12 +287,13 @@
                   <template #append>
                     <span class="button-bar">
                       <v-btn
-                        variant="text"
+                        variant="outlined"
                         color="error"
                         size="small"
                         @click.stop="confirmRemoveCollection(item.collectionId)"
                       >
-                        <v-icon start>mdi-close</v-icon>remove
+                        <v-icon start>mdi-delete</v-icon>
+                        Remove
                       </v-btn>
                       <v-btn
                         variant="flat"
@@ -291,7 +301,8 @@
                         size="small"
                         @click.stop="navigateToCollection(item.collectionId)"
                       >
-                        <v-icon start>mdi-eye</v-icon>view
+                        <v-icon start>mdi-eye</v-icon>
+                        View
                       </v-btn>
                     </span>
                   </template>
@@ -323,7 +334,8 @@
                     params: { datasetId: dv.datasetId },
                   }"
                 >
-                  <v-icon start>mdi-eye</v-icon>view
+                  <v-icon start>mdi-eye</v-icon>
+                  View
                 </v-btn>
               </v-list-item>
             </v-list-group>
@@ -334,15 +346,18 @@
           </template>
         </v-list>
       </v-card-text>
-      <v-card-actions>
+      <v-card-actions class="d-block">
         <v-divider />
-        <div
-          class="clickable-flex pa-2 body"
+        <v-btn
+          variant="text"
+          color="primary"
+          size="small"
+          class="ma-2"
           @click="addCollectionDialog = true"
         >
-          <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
+          <v-icon start>mdi-plus-circle</v-icon>
           Add collection to project
-        </div>
+        </v-btn>
       </v-card-actions>
     </v-card>
 

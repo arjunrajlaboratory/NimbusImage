@@ -7,7 +7,8 @@
         v-if="configuration"
         :route-path="`/configuration/${configuration.id}`"
         tooltip="Copy shareable link to this collection"
-        icon-only
+        label="Copy link"
+        size="small"
         class="mr-2"
       />
       <v-btn
@@ -24,7 +25,7 @@
       <v-dialog v-model="removeConfirm" max-width="33vw">
         <template #activator="{ props: activatorProps }">
           <v-btn
-            variant="text"
+            variant="outlined"
             color="error"
             size="small"
             v-bind="activatorProps"
@@ -136,12 +137,13 @@
             </div>
             <span class="button-bar">
               <v-btn
-                variant="text"
+                variant="outlined"
                 color="error"
                 size="small"
                 v-on:click.stop="openRemoveDatasetDialog(d.datasetView)"
               >
-                <v-icon start>mdi-delete</v-icon>remove
+                <v-icon start>mdi-delete</v-icon>
+                Remove
               </v-btn>
               <v-btn
                 variant="flat"
@@ -150,7 +152,7 @@
                 :to="toRoute(d.datasetView)"
               >
                 <v-icon start>mdi-eye</v-icon>
-                view
+                View
               </v-btn>
             </span>
           </v-list-item>
@@ -158,10 +160,16 @@
       </v-card-text>
       <v-card-actions class="d-block">
         <v-divider />
-        <div class="clickable-flex pa-2 body" @click="addDatasetDialog = true">
-          <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
+        <v-btn
+          variant="text"
+          color="primary"
+          size="small"
+          class="ma-2"
+          @click="addDatasetDialog = true"
+        >
+          <v-icon start>mdi-plus-circle</v-icon>
           Add dataset to current collection
-        </div>
+        </v-btn>
         <v-dialog
           content-class="smart-overflow"
           class="wide-dialog"
