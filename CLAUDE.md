@@ -670,7 +670,16 @@ Sentry DSNs are **not secrets** — they're client-side ingest URLs designed to 
 
 **Production:** the DSN is injected by the private AWSDeploy repo (`TF_VAR_SENTRY_DSN` → `templates/startup_haproxy.tftpl` → front-end `.env` at build time). Updating the DSN requires `terraform apply -replace aws_instance.haproxy_load_balancer` since HAProxy ignores `user_data` changes.
 
-**Local testing:** create `.env.local` (already gitignored via `*.local`) with `VITE_SENTRY_DSN=...` and `VITE_SENTRY_ENV=local-dev`, then restart `pnpm run dev`. Comment out the DSN line to disable. Trigger a test event with `setTimeout(() => { throw new Error("test"); });` in the browser console — a synchronous throw from devtools is swallowed; async throws hit `window.onerror` which Sentry hooks.
+**Local testing:** create `.env.local` (already gitignored via `*.local`) with the DSN, then restart `pnpm run dev`. Comment out the DSN line to disable without losing the value. Example:
+
+```
+# Uncomment to enable Sentry error reporting in local dev (uses free-tier quota).
+# VITE_SENTRY_DSN=https://<key>@<orgid>.ingest.us.sentry.io/<projectid>
+VITE_SENTRY_ENV=local-dev
+VITE_SENTRY_TRACES_SAMPLE_RATE=1.0
+```
+
+Get the DSN value from the Sentry project's Settings → Client Keys (DSN) page. Trigger a test event with `setTimeout(() => { throw new Error("test"); });` in the browser console — a synchronous throw from devtools is swallowed, but async throws hit `window.onerror` which Sentry hooks. Filter on `environment:local-dev` in the Sentry UI to keep your test events out of the production view.
 
 ## Allowed Tools
 
