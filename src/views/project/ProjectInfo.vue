@@ -1202,12 +1202,6 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.clickable-flex {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-}
-
 .button-bar {
   display: flex;
   align-items: center;

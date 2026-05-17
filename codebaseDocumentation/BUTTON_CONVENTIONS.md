@@ -13,7 +13,7 @@ A 2026 audit of 300 button instances found:
 
 These conventions standardize button roles so the visual hierarchy on every page reads the same way.
 
-## The five button roles
+## The six button roles
 
 ### 1. Primary
 
@@ -59,6 +59,10 @@ Low-emphasis actions: Cancel buttons, inline actions, link-like buttons.
 
 Irreversible or risky actions: delete, remove, revoke.
 
+**Always use `color="error"`, not `color="warning"`.** Warning is for *cautionary* state (e.g., "this dataset is incompatible"), not for confirmed destructive intent. If the action irreversibly removes data, it's error-colored.
+
+**Pair destructive buttons with `mdi-delete` (trash), not `mdi-close` (×).** `mdi-close` is for dismissal — closing dialogs, deselecting chips, clearing input. The X icon reads as "cancel", which is the wrong signal for "delete this thing permanently."
+
 **Confirmed** (the irreversible button inside a confirmation dialog, or in a primary-action slot):
 
 ```vue
@@ -76,7 +80,22 @@ Irreversible or risky actions: delete, remove, revoke.
 </v-btn>
 ```
 
-### 5. Icon-only
+Inside a toolbar or row cluster where the destructive button sits next to outlined siblings, use `variant="outlined" color="error"` instead of `text` so the shape matches its neighbors (see [Toolbar buttons — same row, same shape](#toolbar-buttons--same-row-same-shape)).
+
+### 5. Informational accent
+
+Low-emphasis actions that open auxiliary information (view log, inspect detail, open help). Uses `color="info"` so it doesn't compete with primary CTAs but is still clearly clickable.
+
+```vue
+<v-btn variant="text" color="info" size="small" @click="viewLog">
+  <v-icon start>mdi-text-box-outline</v-icon>
+  View Log
+</v-btn>
+```
+
+Reach for `info` when an action is *about* inspecting state rather than *changing* it — log viewers, "open details" affordances, debug panels.
+
+### 6. Icon-only
 
 Toolbar icons and row actions where the icon is self-explanatory.
 
@@ -218,7 +237,13 @@ For groups of buttons that should look identical (e.g. three secondary buttons s
 <v-btn variant="flat" color="error" size="small">Delete</v-btn>
 
 <!-- Destructive (inline) -->
-<v-btn variant="text" color="error" size="small">Remove</v-btn>
+<v-btn variant="text" color="error" size="small">
+  <v-icon start>mdi-delete</v-icon>
+  Remove
+</v-btn>
+
+<!-- Informational accent -->
+<v-btn variant="text" color="info" size="small">View Log</v-btn>
 
 <!-- Icon-only -->
 <v-btn variant="text" icon size="small">

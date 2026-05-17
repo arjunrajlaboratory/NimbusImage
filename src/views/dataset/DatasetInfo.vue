@@ -266,7 +266,10 @@
                     size="small"
                     variant="outlined"
                     color="primary"
-                    @click="goToImportConfiguration"
+                    :to="{
+                      name: 'importconfiguration',
+                      query: { datasetId, folderId: datasetParentId },
+                    }"
                   >
                     Add to an existing collection…
                   </v-btn>
@@ -286,7 +289,10 @@
                     size="small"
                     variant="outlined"
                     color="primary"
-                    @click="goToDuplicateImportConfiguration"
+                    :to="{
+                      name: 'duplicateimportconfiguration',
+                      query: { datasetId },
+                    }"
                   >
                     Copy existing collection…
                   </v-btn>
@@ -688,23 +694,6 @@ async function duplicateView(
   });
 }
 
-function goToImportConfiguration() {
-  router.push({
-    name: "importconfiguration",
-    query: {
-      datasetId: datasetId.value,
-      folderId: datasetParentId.value ?? undefined,
-    },
-  });
-}
-
-function goToDuplicateImportConfiguration() {
-  router.push({
-    name: "duplicateimportconfiguration",
-    query: { datasetId: datasetId.value },
-  });
-}
-
 async function goToDefaultView() {
   if (datasetViews.value.length > 0) {
     const selectedView = selectedDatasetViewId.value
@@ -900,8 +889,6 @@ defineExpose({
   closeRemoveConfigurationDialog,
   removeDatasetView,
   duplicateView,
-  goToImportConfiguration,
-  goToDuplicateImportConfiguration,
   goToDefaultView,
   createDefaultView,
   handleLocationSelected,

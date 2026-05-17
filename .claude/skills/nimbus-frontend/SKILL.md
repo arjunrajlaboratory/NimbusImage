@@ -295,7 +295,8 @@ Every `<v-btn>` should declare an explicit **`variant`** and **`size`**. Omittin
 | Secondary | `variant="outlined" color="primary" size="small"` | Supporting actions |
 | Tertiary / text | `variant="text" size="small"` | Cancel, low-emphasis, inline |
 | Destructive (confirmed) | `variant="flat" color="error" size="small"` | The irreversible button in a confirm dialog |
-| Destructive (inline) | `variant="text" color="error" size="small"` | The trigger that opens a confirm dialog |
+| Destructive (inline) | `variant="text" color="error" size="small"` | The trigger that opens a confirm dialog (use `mdi-delete`, not `mdi-close`) |
+| Informational | `variant="text" color="info" size="small"` | View log / inspect detail / open help — actions that read rather than mutate |
 | Icon-only | `variant="text" icon size="small"` | Toolbar / row actions; wrap in `v-tooltip` if ambiguous |
 
 **Color tokens — never use literals.** Use `error`/`success`/`warning`/`secondary`, not `red`/`green`/`orange`/`grey`. Semantic tokens are theme-aware.

@@ -171,9 +171,14 @@ body {
    Vuetify's default only drops opacity to ~38% but keeps the brand color,
    which on dark themes can read as "subtle primary" rather than disabled.
    Adding a grayscale filter desaturates the color so the off-state is
-   unambiguous. */
-.v-btn--disabled,
-.v-btn:disabled {
+   unambiguous.
+
+   Targets every child of the v-btn EXCEPT `.v-btn__loader` so the loader
+   spinner keeps its color when a button is `:loading` and `:disabled` at
+   the same time (e.g., a submit button mid-flight that's also marked
+   `:disabled="loading"`). */
+.v-btn--disabled > *:not(.v-btn__loader),
+.v-btn:disabled > *:not(.v-btn__loader) {
   filter: grayscale(0.7);
 }
 

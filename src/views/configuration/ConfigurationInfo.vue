@@ -581,11 +581,3 @@ defineExpose({
   align-items: center;
 }
 </style>
-
-<style lang="scss">
-.clickable-flex {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-}
-</style>

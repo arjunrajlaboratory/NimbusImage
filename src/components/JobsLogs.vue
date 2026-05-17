@@ -77,7 +77,7 @@
                 <template #[`item.actions`]="{ item }">
                   <v-btn
                     variant="text"
-                    color="primary"
+                    color="info"
                     size="small"
                     @click="viewJobLog(item)"
                   >
