@@ -651,6 +651,27 @@ The chat system (`src/store/chat.ts`) integrates Claude for image analysis:
 - API key configured via `ANTHROPIC_API_KEY` environment variable
 - Chat UI in `ChatComponent.vue`
 
+## Error Reporting (Sentry)
+
+Front-end error reporting via `@sentry/vue` is **opt-in** and gated on `VITE_SENTRY_DSN` at build time. The init lives in `src/main.ts`, wrapped in try/catch so a failed chunk fetch (stale deploy, ad-blocker, blocked sentry.io) can never prevent `app.mount()`.
+
+When `VITE_SENTRY_DSN` is unset (the default for OSS/local installs), no Sentry code is loaded at runtime — the dynamic import is never evaluated.
+
+**Env vars** (all optional):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `VITE_SENTRY_DSN` | unset | Sentry project DSN — empty/unset → Sentry disabled |
+| `VITE_SENTRY_ENV` | `production` | Environment label in Sentry UI |
+| `VITE_SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Fraction of transactions sampled (free-tier conservative) |
+| `VITE_SENTRY_RELEASE` | unset | Release tag for grouping in Sentry |
+
+Sentry DSNs are **not secrets** — they're client-side ingest URLs designed to ship in browser bundles. The DSN value itself is fine in env files. (The build-time auth token used for source-map upload is the actual secret, but we don't currently upload source maps.)
+
+**Production:** the DSN is injected by the private AWSDeploy repo (`TF_VAR_SENTRY_DSN` → `templates/startup_haproxy.tftpl` → front-end `.env` at build time). Updating the DSN requires `terraform apply -replace aws_instance.haproxy_load_balancer` since HAProxy ignores `user_data` changes.
+
+**Local testing:** create `.env.local` (already gitignored via `*.local`) with `VITE_SENTRY_DSN=...` and `VITE_SENTRY_ENV=local-dev`, then restart `pnpm run dev`. Comment out the DSN line to disable. Trigger a test event with `setTimeout(() => { throw new Error("test"); });` in the browser console — a synchronous throw from devtools is swallowed; async throws hit `window.onerror` which Sentry hooks.
+
 ## Allowed Tools
 
 The following commands are pre-approved for Claude Code to run without confirmation:
