@@ -33,6 +33,7 @@
   "dependencies": {
     "@girder/components": "4.0.0",
     "@mdi/font": "^5.3.45",
+    "@sentry/vue": "^10.53.1",
     "@types/bluebird": "^3.5.42",
     "@types/d3-array": "^3.0.1",
     "@types/d3-color": "^1.2.2",
