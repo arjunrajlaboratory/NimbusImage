@@ -30,6 +30,7 @@ import { tourTriggerDirective } from "./plugins/tour-trigger.directive";
 // Auto-tracking is opt-in via `__nimbusMem.enable()` and adds no overhead
 // otherwise.
 import { memDiag } from "@/utils/memoryDiagnostics";
+import { logWarning } from "@/utils/log";
 import annotationStore from "./store/annotation";
 import propertiesStore from "./store/properties";
 import girderResourcesStore from "./store/girderResources";
@@ -93,7 +94,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   } catch (err) {
     // Never let telemetry initialization break the app (e.g. stale chunk
     // after deploy, blocked sentry.io domain, ad-blocker).
-    console.warn("Sentry initialization failed:", err);
+    logWarning("Sentry initialization failed:", err);
   }
 }
 
