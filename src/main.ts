@@ -75,20 +75,26 @@ const app = createApp(App);
 // Sentry DSNs are not secrets — they're rate-limited project ingest URLs and
 // are designed to ship in client bundles.
 if (import.meta.env.VITE_SENTRY_DSN) {
-  const Sentry = await import("@sentry/vue");
-  Sentry.init({
-    app,
-    dsn: import.meta.env.VITE_SENTRY_DSN,
-    environment: import.meta.env.VITE_SENTRY_ENV || "production",
-    release: import.meta.env.VITE_SENTRY_RELEASE || undefined,
-    sendDefaultPii: true,
-    integrations: [Sentry.browserTracingIntegration({ router })],
-    // Free tier has a finite span quota — sample tracing conservatively.
-    // Override via VITE_SENTRY_TRACES_SAMPLE_RATE (0.0 to 1.0).
-    tracesSampleRate: Number(
-      import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? 0.1,
-    ),
-  });
+  try {
+    const Sentry = await import("@sentry/vue");
+    Sentry.init({
+      app,
+      dsn: import.meta.env.VITE_SENTRY_DSN,
+      environment: import.meta.env.VITE_SENTRY_ENV || "production",
+      release: import.meta.env.VITE_SENTRY_RELEASE || undefined,
+      sendDefaultPii: true,
+      integrations: [Sentry.browserTracingIntegration({ router })],
+      // Free tier has a finite span quota — sample tracing conservatively.
+      // Override via VITE_SENTRY_TRACES_SAMPLE_RATE (0.0 to 1.0).
+      tracesSampleRate: Number(
+        import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? 0.1,
+      ),
+    });
+  } catch (err) {
+    // Never let telemetry initialization break the app (e.g. stale chunk
+    // after deploy, blocked sentry.io domain, ad-blocker).
+    console.warn("Sentry initialization failed:", err);
+  }
 }
 
 app.use(router);
