@@ -32,10 +32,12 @@
         <v-spacer />
         <v-btn
           v-if="hasToken"
-          variant="text"
+          variant="outlined"
+          color="primary"
           size="small"
           @click="tokenDialog = true"
         >
+          <v-icon start>mdi-key</v-icon>
           Change Token
         </v-btn>
         <v-btn
@@ -53,18 +55,24 @@
       <!-- Upload progress -->
       <!-- TODO(#1075): wire into the app-wide progress store so the bar
            remains visible after navigating away from this page. -->
-      <div v-if="zenodoStatus === 'uploading'" class="mb-3">
+      <div
+        v-if="zenodoStatus === 'uploading' || localProgress || uploading"
+        class="mb-3"
+      >
         <div class="text-body-2 mb-1">
           {{ localProgress?.message || "Upload in progress…" }}
         </div>
         <v-progress-linear
-          :indeterminate="!localProgress"
+          :indeterminate="!localProgress || localProgress.total === 0"
           :model-value="progressPercent"
           color="primary"
           height="8"
           rounded
         />
-        <div v-if="localProgress" class="text-caption text-grey mt-1">
+        <div
+          v-if="localProgress && localProgress.total > 0"
+          class="text-caption text-grey mt-1"
+        >
           {{ localProgress.current }} / {{ localProgress.total }} files
         </div>
         <div class="text-caption text-grey mt-1">
@@ -102,7 +110,8 @@
       <!-- View on Zenodo -->
       <v-btn
         v-if="depositionUrl"
-        variant="text"
+        variant="outlined"
+        color="primary"
         size="small"
         :href="depositionUrl"
         target="_blank"
@@ -111,17 +120,16 @@
         View on Zenodo
       </v-btn>
 
-      <v-spacer />
-
       <!-- Discard draft -->
       <v-btn
         v-if="zenodoStatus === 'draft' || zenodoStatus === 'error'"
-        variant="text"
-        color="warning"
+        variant="outlined"
+        color="error"
         size="small"
         :loading="discarding"
         @click="discardDraft"
       >
+        <v-icon start>mdi-delete</v-icon>
         Discard Draft
       </v-btn>
 
@@ -348,18 +356,26 @@ function trackJob(jobId: string) {
 
 async function startUpload() {
   uploading.value = true;
+  // Render the progress section immediately (indeterminate) so the user
+  // sees something while the request to kick off the job is in flight,
+  // before zenodoStatus refreshes to "uploading".
+  localProgress.value = {
+    current: 0,
+    total: 0,
+    message: "Starting upload…",
+  };
   try {
     const response = await store.zenodoAPI.uploadProject(props.project.id);
-    // Initialize local progress
     localProgress.value = {
       current: 0,
       total: response.totalFiles,
-      message: "Starting upload...",
+      message: "Starting upload…",
     };
     // Track job via SSE
     trackJob(response.jobId);
     emit("updated");
   } catch (error: any) {
+    localProgress.value = null;
     logError("Failed to start Zenodo upload", error);
   } finally {
     uploading.value = false;
