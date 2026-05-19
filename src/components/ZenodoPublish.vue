@@ -55,10 +55,7 @@
       <!-- Upload progress -->
       <!-- TODO(#1075): wire into the app-wide progress store so the bar
            remains visible after navigating away from this page. -->
-      <div
-        v-if="zenodoStatus === 'uploading' || localProgress || uploading"
-        class="mb-3"
-      >
+      <div v-if="zenodoStatus === 'uploading' || localProgress" class="mb-3">
         <div class="text-body-2 mb-1">
           {{ localProgress?.message || "Upload in progress…" }}
         </div>
@@ -147,8 +144,10 @@
       </v-btn>
 
       <!-- Upload to Zenodo -->
+      <!-- Hidden once an upload is in flight; the progress section above
+           is the single source of truth for "work is happening". -->
       <v-tooltip
-        v-if="canUpload"
+        v-if="canUpload && !localProgress"
         location="top"
         :disabled="hasToken"
         text="Configure a Zenodo token to enable upload"
@@ -160,7 +159,6 @@
               variant="flat"
               color="primary"
               size="small"
-              :loading="uploading"
               :disabled="!hasToken"
               @click="startUpload"
             >
@@ -236,7 +234,6 @@ const tokenDialog = ref(false);
 const confirmPublish = ref(false);
 const hasToken = ref(false);
 const isSandbox = ref(false);
-const uploading = ref(false);
 const publishing = ref(false);
 const discarding = ref(false);
 
@@ -355,10 +352,11 @@ function trackJob(jobId: string) {
 }
 
 async function startUpload() {
-  uploading.value = true;
   // Render the progress section immediately (indeterminate) so the user
   // sees something while the request to kick off the job is in flight,
-  // before zenodoStatus refreshes to "uploading".
+  // before zenodoStatus refreshes to "uploading". This also hides the
+  // upload button (it is gated on !localProgress), so we don't need a
+  // separate "uploading" flag.
   localProgress.value = {
     current: 0,
     total: 0,
@@ -374,11 +372,9 @@ async function startUpload() {
     // Track job via SSE
     trackJob(response.jobId);
     emit("updated");
-  } catch (error: any) {
+  } catch (error) {
     localProgress.value = null;
     logError("Failed to start Zenodo upload", error);
-  } finally {
-    uploading.value = false;
   }
 }
 
@@ -408,26 +404,15 @@ async function discardDraft() {
 }
 
 async function recoverActiveJob() {
-  // If we load the page while an upload is in progress,
-  // try to find the active job and re-subscribe to it.
-  // We fetch recent zenodo_upload jobs and filter to the
-  // one matching this project (by kwargs.projectId).
+  // If we load the page while an upload is in progress, find the
+  // active job and re-subscribe to its SSE stream.
   try {
-    const response = await store.girderRest.get("job", {
-      params: {
-        types: JSON.stringify(["zenodo_upload"]),
-        statuses: JSON.stringify([1, 2]), // queued, running
-        limit: 5,
-        sort: "created",
-        sortdir: -1,
-      },
-    });
-    const matchingJob = response.data.find(
-      (j: any) => j.kwargs?.projectId === props.project.id,
+    const activeJob = await store.zenodoAPI.findActiveUploadJob(
+      props.project.id,
     );
-    if (matchingJob) {
-      trackJob(matchingJob._id);
-      // Initialize progress from project meta
+    if (activeJob) {
+      trackJob(activeJob._id);
+      // Seed progress from project meta until the next SSE event arrives.
       const progress = zenodoMeta.value?.progress;
       if (progress) {
         localProgress.value = {
