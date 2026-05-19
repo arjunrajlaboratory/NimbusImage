@@ -218,6 +218,7 @@ async function submitAllDatasets() {
   exportProgress.value = 0;
 
   try {
+    const baseName = configuration.value?.name || "datasets";
     await store.exportAPI.exportBulkJson({
       datasets: collectionDatasets.value,
       configurationId:
@@ -226,6 +227,7 @@ async function submitAllDatasets() {
       includeConnections: exportConnections.value,
       includeProperties: exportProperties.value,
       includePropertyValues: exportValues.value,
+      zipFilename: `${baseName}.zip`,
       onProgress: (completed) => {
         exportProgress.value = completed;
       },

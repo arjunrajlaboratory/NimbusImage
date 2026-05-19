@@ -1,3 +1,5 @@
+import { DeflateOptions, Zip, ZipDeflate } from "fflate";
+
 import { RestClientInstance } from "@/girder";
 import { downloadToClient } from "@/utils/download";
 
@@ -32,6 +34,7 @@ export interface IBulkJsonExportOptions {
   includeConnections?: boolean;
   includeProperties?: boolean;
   includePropertyValues?: boolean;
+  zipFilename?: string;
   onProgress?: (completed: number, total: number) => void;
 }
 
@@ -143,37 +146,90 @@ export default class ExportAPI {
   }
 
   /**
-   * Export multiple datasets as JSON files (one file per dataset).
-   * Downloads are triggered sequentially with a delay to avoid browser issues.
+   * Export multiple datasets as a single ZIP file containing one JSON per
+   * dataset. Each dataset is fetched sequentially and streamed into the zip,
+   * so only one dataset's JSON is held in memory at a time. The browser is
+   * prompted to save once for the whole archive.
    */
   async exportBulkJson(options: IBulkJsonExportOptions): Promise<void> {
     const { datasets, onProgress } = options;
-    const delay = (ms: number) =>
-      new Promise((resolve) => setTimeout(resolve, ms));
+    if (datasets.length === 0) return;
+
+    const zip = new Zip();
+    const zipChunks: Uint8Array[] = [];
+    const zipDone = new Promise<Blob>((resolve, reject) => {
+      zip.ondata = (err, data, final) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        zipChunks.push(data);
+        if (final) {
+          resolve(
+            new Blob(zipChunks as BlobPart[], { type: "application/zip" }),
+          );
+        }
+      };
+    });
+
+    const deflateOptions: DeflateOptions = { level: 9 };
+    const usedFilenames = new Set<string>();
 
     for (let i = 0; i < datasets.length; i++) {
       const dataset = datasets[i];
-      const filename = `${dataset.datasetName}.json`;
 
-      this.exportJson({
-        datasetId: dataset.datasetId,
-        configurationId: options.configurationId,
-        includeAnnotations: options.includeAnnotations,
-        includeConnections: options.includeConnections,
-        includeProperties: options.includeProperties,
-        includePropertyValues: options.includePropertyValues,
-        filename,
-      });
+      const baseName = dataset.datasetName;
+      let fileName = `${baseName}.json`;
+      for (let counter = 1; usedFilenames.has(fileName); counter++) {
+        fileName = `${baseName} (${counter}).json`;
+      }
+      usedFilenames.add(fileName);
+
+      const params = new URLSearchParams();
+      params.set("datasetId", dataset.datasetId);
+      if (options.configurationId) {
+        params.set("configurationId", options.configurationId);
+      }
+      if (options.includeAnnotations !== undefined) {
+        params.set("includeAnnotations", String(options.includeAnnotations));
+      }
+      if (options.includeConnections !== undefined) {
+        params.set("includeConnections", String(options.includeConnections));
+      }
+      if (options.includeProperties !== undefined) {
+        params.set("includeProperties", String(options.includeProperties));
+      }
+      if (options.includePropertyValues !== undefined) {
+        params.set(
+          "includePropertyValues",
+          String(options.includePropertyValues),
+        );
+      }
+      params.set("filename", fileName);
+
+      const { data } = await this.client.get(
+        `export/json?${params.toString()}`,
+        { responseType: "arraybuffer" },
+      );
+
+      const zipFile = new ZipDeflate(fileName, deflateOptions);
+      zip.add(zipFile);
+      zipFile.push(new Uint8Array(data), true);
 
       if (onProgress) {
         onProgress(i + 1, datasets.length);
       }
-
-      // Add a small delay between downloads to allow browser to process
-      if (i < datasets.length - 1) {
-        await delay(500);
-      }
     }
+
+    zip.end();
+
+    const blob = await zipDone;
+    const downloadUrl = URL.createObjectURL(blob);
+    downloadToClient({
+      href: downloadUrl,
+      download: options.zipFilename || "datasets.zip",
+    });
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
   }
 
   /**
