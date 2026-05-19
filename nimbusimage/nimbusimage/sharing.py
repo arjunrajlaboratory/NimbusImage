@@ -1,4 +1,22 @@
-"""SharingAccessor — dataset access control."""
+"""SharingAccessor — dataset access control.
+
+All access changes go through the `dataset_view/share` endpoint, which is
+**incremental** (modifies one user's access at a time). This is the only
+safe way to change a dataset's ACL from Python.
+
+DO NOT bypass this accessor by calling the raw Girder endpoint:
+
+    # WRONG — replaces the entire ACL and can lock the owner out
+    client._gc.put(f"folder/{ds.id}/access", parameters={"access": ...})
+
+The raw `PUT /folder/{id}/access` replaces the access list with whatever
+you send. If the new list omits the dataset creator, the owner is
+silently locked out (``_accessLevel`` becomes ``-1`` and only a site
+admin can recover). The backend now rejects such saves on
+``contrastDataset`` folders, but the right answer is to never reach for
+the raw endpoint in the first place. See
+``plugins/nimbusimage/references/gotchas.md``.
+"""
 
 from __future__ import annotations
 from typing import TYPE_CHECKING
