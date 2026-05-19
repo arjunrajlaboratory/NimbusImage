@@ -16,40 +16,60 @@
       <!-- Token status -->
       <div class="d-flex align-center mb-3">
         <v-icon
-          :color="hasToken ? 'success' : 'grey'"
+          :color="hasToken ? 'success' : 'warning'"
           size="small"
           class="mr-2"
         >
-          {{ hasToken ? "mdi-check-circle" : "mdi-alert-circle-outline" }}
+          {{ hasToken ? "mdi-check-circle" : "mdi-alert-circle" }}
         </v-icon>
         <span class="text-body-2">
           {{
             hasToken
               ? `Zenodo token configured${isSandbox ? " (sandbox)" : ""}`
-              : "No Zenodo token configured"
+              : "No Zenodo token configured — required to upload"
           }}
         </span>
+        <v-spacer />
         <v-btn
+          v-if="hasToken"
           variant="text"
           size="small"
-          class="ml-2"
           @click="tokenDialog = true"
         >
-          {{ hasToken ? "Change" : "Configure" }}
+          Change Token
+        </v-btn>
+        <v-btn
+          v-else
+          variant="flat"
+          color="primary"
+          size="small"
+          @click="tokenDialog = true"
+        >
+          <v-icon start>mdi-key-plus</v-icon>
+          Configure Zenodo Token
         </v-btn>
       </div>
 
       <!-- Upload progress -->
-      <div v-if="zenodoStatus === 'uploading' && localProgress" class="mb-3">
-        <div class="text-body-2 mb-1">{{ localProgress.message }}</div>
+      <!-- TODO(#1075): wire into the app-wide progress store so the bar
+           remains visible after navigating away from this page. -->
+      <div v-if="zenodoStatus === 'uploading'" class="mb-3">
+        <div class="text-body-2 mb-1">
+          {{ localProgress?.message || "Upload in progress…" }}
+        </div>
         <v-progress-linear
+          :indeterminate="!localProgress"
           :model-value="progressPercent"
           color="primary"
           height="8"
           rounded
         />
-        <div class="text-caption text-grey mt-1">
+        <div v-if="localProgress" class="text-caption text-grey mt-1">
           {{ localProgress.current }} / {{ localProgress.total }} files
+        </div>
+        <div class="text-caption text-grey mt-1">
+          Uploads can take several minutes for large projects. You can keep
+          using NimbusImage in another tab while this runs.
         </div>
       </div>
 
@@ -119,22 +139,33 @@
       </v-btn>
 
       <!-- Upload to Zenodo -->
-      <v-btn
+      <v-tooltip
         v-if="canUpload"
-        variant="flat"
-        color="primary"
-        size="small"
-        :loading="uploading"
-        :disabled="!hasToken"
-        @click="startUpload"
+        location="top"
+        :disabled="hasToken"
+        text="Configure a Zenodo token to enable upload"
       >
-        <v-icon start>mdi-cloud-upload</v-icon>
-        {{
-          zenodoStatus === "published"
-            ? "Upload New Version"
-            : "Upload to Zenodo"
-        }}
-      </v-btn>
+        <template #activator="{ props: tooltipProps }">
+          <!-- span wrapper lets the tooltip activate over a disabled button -->
+          <span v-bind="tooltipProps">
+            <v-btn
+              variant="flat"
+              color="primary"
+              size="small"
+              :loading="uploading"
+              :disabled="!hasToken"
+              @click="startUpload"
+            >
+              <v-icon start>mdi-cloud-upload</v-icon>
+              {{
+                zenodoStatus === "published"
+                  ? "Upload New Version"
+                  : "Upload to Zenodo"
+              }}
+            </v-btn>
+          </span>
+        </template>
+      </v-tooltip>
     </v-card-actions>
 
     <!-- Token dialog -->
