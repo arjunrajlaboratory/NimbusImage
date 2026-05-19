@@ -226,6 +226,7 @@ async function submitAllDatasets() {
       includeConnections: exportConnections.value,
       includeProperties: exportProperties.value,
       includePropertyValues: exportValues.value,
+      zipFilename: `${configuration.value?.name || "datasets"}.zip`,
       onProgress: (completed) => {
         exportProgress.value = completed;
       },
