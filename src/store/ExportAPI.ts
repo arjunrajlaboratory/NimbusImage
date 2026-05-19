@@ -46,6 +46,13 @@ export interface IBulkCsvExportOptions {
   onProgress?: (completed: number, total: number) => void;
 }
 
+// Dataset names are user-controlled, so collapse anything that would turn
+// the ZIP entry into a nested or traversal path into a flat filename.
+function sanitizeZipEntryName(name: string): string {
+  const sanitized = name.replace(/[\\/]/g, "_").trim();
+  return sanitized || "dataset";
+}
+
 export default class ExportAPI {
   private readonly client: RestClientInstance;
 
@@ -156,6 +163,9 @@ export default class ExportAPI {
     if (datasets.length === 0) return;
 
     const zip = new Zip();
+    // The full archive is buffered in memory before the save prompt. JSON
+    // exports are small in practice, but very large bulk exports could OOM
+    // the tab. See issue #1169 for a streaming download alternative.
     const zipChunks: Uint8Array[] = [];
     const zipDone = new Promise<Blob>((resolve, reject) => {
       zip.ondata = (err, data, final) => {
@@ -178,7 +188,7 @@ export default class ExportAPI {
     for (let i = 0; i < datasets.length; i++) {
       const dataset = datasets[i];
 
-      const baseName = dataset.datasetName;
+      const baseName = sanitizeZipEntryName(dataset.datasetName);
       let fileName = `${baseName}.json`;
       for (let counter = 1; usedFilenames.has(fileName); counter++) {
         fileName = `${baseName} (${counter}).json`;
