@@ -53,6 +53,40 @@ function sanitizeZipEntryName(name: string): string {
   return sanitized || "dataset";
 }
 
+interface IJsonExportParams {
+  datasetId: string;
+  configurationId?: string;
+  includeAnnotations?: boolean;
+  includeConnections?: boolean;
+  includeProperties?: boolean;
+  includePropertyValues?: boolean;
+  filename?: string;
+}
+
+function buildJsonExportParams(opts: IJsonExportParams): URLSearchParams {
+  const params = new URLSearchParams();
+  params.set("datasetId", opts.datasetId);
+  if (opts.configurationId) {
+    params.set("configurationId", opts.configurationId);
+  }
+  if (opts.includeAnnotations !== undefined) {
+    params.set("includeAnnotations", String(opts.includeAnnotations));
+  }
+  if (opts.includeConnections !== undefined) {
+    params.set("includeConnections", String(opts.includeConnections));
+  }
+  if (opts.includeProperties !== undefined) {
+    params.set("includeProperties", String(opts.includeProperties));
+  }
+  if (opts.includePropertyValues !== undefined) {
+    params.set("includePropertyValues", String(opts.includePropertyValues));
+  }
+  if (opts.filename) {
+    params.set("filename", opts.filename);
+  }
+  return params;
+}
+
 export default class ExportAPI {
   private readonly client: RestClientInstance;
 
@@ -65,30 +99,7 @@ export default class ExportAPI {
    * Uses streaming from backend - no frontend memory usage.
    */
   exportJson(options: IExportOptions): void {
-    const params = new URLSearchParams();
-    params.set("datasetId", options.datasetId);
-
-    if (options.configurationId) {
-      params.set("configurationId", options.configurationId);
-    }
-    if (options.includeAnnotations !== undefined) {
-      params.set("includeAnnotations", String(options.includeAnnotations));
-    }
-    if (options.includeConnections !== undefined) {
-      params.set("includeConnections", String(options.includeConnections));
-    }
-    if (options.includeProperties !== undefined) {
-      params.set("includeProperties", String(options.includeProperties));
-    }
-    if (options.includePropertyValues !== undefined) {
-      params.set(
-        "includePropertyValues",
-        String(options.includePropertyValues),
-      );
-    }
-    if (options.filename) {
-      params.set("filename", options.filename);
-    }
+    const params = buildJsonExportParams(options);
 
     // Add auth token for authenticated downloads
     const token = (this.client as any).token;
@@ -195,27 +206,15 @@ export default class ExportAPI {
       }
       usedFilenames.add(fileName);
 
-      const params = new URLSearchParams();
-      params.set("datasetId", dataset.datasetId);
-      if (options.configurationId) {
-        params.set("configurationId", options.configurationId);
-      }
-      if (options.includeAnnotations !== undefined) {
-        params.set("includeAnnotations", String(options.includeAnnotations));
-      }
-      if (options.includeConnections !== undefined) {
-        params.set("includeConnections", String(options.includeConnections));
-      }
-      if (options.includeProperties !== undefined) {
-        params.set("includeProperties", String(options.includeProperties));
-      }
-      if (options.includePropertyValues !== undefined) {
-        params.set(
-          "includePropertyValues",
-          String(options.includePropertyValues),
-        );
-      }
-      params.set("filename", fileName);
+      const params = buildJsonExportParams({
+        datasetId: dataset.datasetId,
+        configurationId: options.configurationId,
+        includeAnnotations: options.includeAnnotations,
+        includeConnections: options.includeConnections,
+        includeProperties: options.includeProperties,
+        includePropertyValues: options.includePropertyValues,
+        filename: fileName,
+      });
 
       const { data } = await this.client.get(
         `export/json?${params.toString()}`,
