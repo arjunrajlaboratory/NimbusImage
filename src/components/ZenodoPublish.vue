@@ -16,40 +16,65 @@
       <!-- Token status -->
       <div class="d-flex align-center mb-3">
         <v-icon
-          :color="hasToken ? 'success' : 'grey'"
+          :color="hasToken ? 'success' : 'warning'"
           size="small"
           class="mr-2"
         >
-          {{ hasToken ? "mdi-check-circle" : "mdi-alert-circle-outline" }}
+          {{ hasToken ? "mdi-check-circle" : "mdi-alert-circle" }}
         </v-icon>
         <span class="text-body-2">
           {{
             hasToken
               ? `Zenodo token configured${isSandbox ? " (sandbox)" : ""}`
-              : "No Zenodo token configured"
+              : "No Zenodo token configured — required to upload"
           }}
         </span>
+        <v-spacer />
         <v-btn
-          variant="text"
+          v-if="hasToken"
+          variant="outlined"
+          color="primary"
           size="small"
-          class="ml-2"
           @click="tokenDialog = true"
         >
-          {{ hasToken ? "Change" : "Configure" }}
+          <v-icon start>mdi-key</v-icon>
+          Change Token
+        </v-btn>
+        <v-btn
+          v-else
+          variant="flat"
+          color="primary"
+          size="small"
+          @click="tokenDialog = true"
+        >
+          <v-icon start>mdi-key-plus</v-icon>
+          Configure Zenodo Token
         </v-btn>
       </div>
 
       <!-- Upload progress -->
-      <div v-if="zenodoStatus === 'uploading' && localProgress" class="mb-3">
-        <div class="text-body-2 mb-1">{{ localProgress.message }}</div>
+      <!-- TODO(#1075): wire into the app-wide progress store so the bar
+           remains visible after navigating away from this page. -->
+      <div v-if="zenodoStatus === 'uploading' || localProgress" class="mb-3">
+        <div class="text-body-2 mb-1">
+          {{ localProgress?.message || "Upload in progress…" }}
+        </div>
         <v-progress-linear
+          :indeterminate="!localProgress || localProgress.total === 0"
           :model-value="progressPercent"
           color="primary"
           height="8"
           rounded
         />
-        <div class="text-caption text-grey mt-1">
+        <div
+          v-if="localProgress && localProgress.total > 0"
+          class="text-caption text-grey mt-1"
+        >
           {{ localProgress.current }} / {{ localProgress.total }} files
+        </div>
+        <div class="text-caption text-grey mt-1">
+          Uploads can take several minutes for large projects. You can keep
+          using NimbusImage in another tab while this runs.
         </div>
       </div>
 
@@ -82,7 +107,8 @@
       <!-- View on Zenodo -->
       <v-btn
         v-if="depositionUrl"
-        variant="text"
+        variant="outlined"
+        color="primary"
         size="small"
         :href="depositionUrl"
         target="_blank"
@@ -91,17 +117,16 @@
         View on Zenodo
       </v-btn>
 
-      <v-spacer />
-
       <!-- Discard draft -->
       <v-btn
         v-if="zenodoStatus === 'draft' || zenodoStatus === 'error'"
-        variant="text"
-        color="warning"
+        variant="outlined"
+        color="error"
         size="small"
         :loading="discarding"
         @click="discardDraft"
       >
+        <v-icon start>mdi-delete</v-icon>
         Discard Draft
       </v-btn>
 
@@ -119,22 +144,34 @@
       </v-btn>
 
       <!-- Upload to Zenodo -->
-      <v-btn
-        v-if="canUpload"
-        variant="flat"
-        color="primary"
-        size="small"
-        :loading="uploading"
-        :disabled="!hasToken"
-        @click="startUpload"
+      <!-- Hidden once an upload is in flight; the progress section above
+           is the single source of truth for "work is happening". -->
+      <v-tooltip
+        v-if="canUpload && !localProgress"
+        location="top"
+        :disabled="hasToken"
+        text="Configure a Zenodo token to enable upload"
       >
-        <v-icon start>mdi-cloud-upload</v-icon>
-        {{
-          zenodoStatus === "published"
-            ? "Upload New Version"
-            : "Upload to Zenodo"
-        }}
-      </v-btn>
+        <template #activator="{ props: tooltipProps }">
+          <!-- span wrapper lets the tooltip activate over a disabled button -->
+          <span v-bind="tooltipProps">
+            <v-btn
+              variant="flat"
+              color="primary"
+              size="small"
+              :disabled="!hasToken"
+              @click="startUpload"
+            >
+              <v-icon start>mdi-cloud-upload</v-icon>
+              {{
+                zenodoStatus === "published"
+                  ? "Upload New Version"
+                  : "Upload to Zenodo"
+              }}
+            </v-btn>
+          </span>
+        </template>
+      </v-tooltip>
     </v-card-actions>
 
     <!-- Token dialog -->
@@ -197,7 +234,6 @@ const tokenDialog = ref(false);
 const confirmPublish = ref(false);
 const hasToken = ref(false);
 const isSandbox = ref(false);
-const uploading = ref(false);
 const publishing = ref(false);
 const discarding = ref(false);
 
@@ -316,22 +352,29 @@ function trackJob(jobId: string) {
 }
 
 async function startUpload() {
-  uploading.value = true;
+  // Render the progress section immediately (indeterminate) so the user
+  // sees something while the request to kick off the job is in flight,
+  // before zenodoStatus refreshes to "uploading". This also hides the
+  // upload button (it is gated on !localProgress), so we don't need a
+  // separate "uploading" flag.
+  localProgress.value = {
+    current: 0,
+    total: 0,
+    message: "Starting upload…",
+  };
   try {
     const response = await store.zenodoAPI.uploadProject(props.project.id);
-    // Initialize local progress
     localProgress.value = {
       current: 0,
       total: response.totalFiles,
-      message: "Starting upload...",
+      message: "Starting upload…",
     };
     // Track job via SSE
     trackJob(response.jobId);
     emit("updated");
-  } catch (error: any) {
+  } catch (error) {
+    localProgress.value = null;
     logError("Failed to start Zenodo upload", error);
-  } finally {
-    uploading.value = false;
   }
 }
 
@@ -361,26 +404,15 @@ async function discardDraft() {
 }
 
 async function recoverActiveJob() {
-  // If we load the page while an upload is in progress,
-  // try to find the active job and re-subscribe to it.
-  // We fetch recent zenodo_upload jobs and filter to the
-  // one matching this project (by kwargs.projectId).
+  // If we load the page while an upload is in progress, find the
+  // active job and re-subscribe to its SSE stream.
   try {
-    const response = await store.girderRest.get("job", {
-      params: {
-        types: JSON.stringify(["zenodo_upload"]),
-        statuses: JSON.stringify([1, 2]), // queued, running
-        limit: 5,
-        sort: "created",
-        sortdir: -1,
-      },
-    });
-    const matchingJob = response.data.find(
-      (j: any) => j.kwargs?.projectId === props.project.id,
+    const activeJob = await store.zenodoAPI.findActiveUploadJob(
+      props.project.id,
     );
-    if (matchingJob) {
-      trackJob(matchingJob._id);
-      // Initialize progress from project meta
+    if (activeJob) {
+      trackJob(activeJob._id);
+      // Seed progress from project meta until the next SSE event arrives.
       const progress = zenodoMeta.value?.progress;
       if (progress) {
         localProgress.value = {
