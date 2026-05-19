@@ -30,6 +30,28 @@ For Docker worker development (includes `large_image` for writing TIFF files):
 pip install nimbusimage[worker]
 ```
 
+### Install troubleshooting
+
+Two snags come up often enough that they belong here:
+
+- **`error: externally-managed-environment` (PEP 668).** Homebrew Python on macOS and most distro Pythons on Linux refuse `pip install` into the system interpreter. Use a venv:
+
+  ```bash
+  python3 -m venv ~/venvs/ni
+  source ~/venvs/ni/bin/activate
+  pip install nimbusimage
+  ```
+
+- **Phantom namespace package in the NimbusImage source repo.** The repo at `arjunrajlaboratory/NimbusImage` contains a top-level `nimbusimage/` directory (the source of the package). If you run Python from the repo root, PEP 420 namespace-package resolution will let `import nimbusimage` "succeed" with an empty module **even when nothing is installed**, so the usual `python -c "import nimbusimage"` smoke test is misleading. Verify with `__file__`:
+
+  ```python
+  import nimbusimage
+  assert nimbusimage.__file__, "nimbusimage is shadowed by a local directory"
+  print(nimbusimage.__file__)  # should point inside a site-packages dir
+  ```
+
+  If `__file__` is `None`, either `pip install nimbusimage` into a venv, or `cd` out of the NimbusImage repo before running your script.
+
 ## Connecting
 
 **Before writing any connection code, check whether the user already has credentials configured.** Follow this sequence:
