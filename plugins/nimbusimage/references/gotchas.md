@@ -33,9 +33,9 @@ Always check with `client.get_worker_interface(image)` first.
 
 MongoDB stores `_id`, but some parts of the API expect `id`. The Python models use `id` as the Python attribute with `_id` as the alias for serialization. The `properties.compute()` method handles this remapping automatically, but be aware of it if using raw dicts.
 
-## update_many has a known bug
+## update_many returns nothing
 
-`ds.annotations.update_many()` has a known bug (#780). Use individual `update()` calls for now.
+`ds.annotations.update_many()` sends all updates in one HTTP request, but the backend endpoint returns no body — so the method returns `None`, not a list of updated annotations. If you need the fresh state, call `ds.annotations.get(id)` on the IDs you updated.
 
 ## Connection update returns 500
 
