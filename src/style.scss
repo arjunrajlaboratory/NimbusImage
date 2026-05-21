@@ -1,28 +1,51 @@
-/* ── Linear-inspired theme tokens ────────────────────────────── */
-
-/* Inter Variable font setup */
+/* ── Type tokens ──────────────────────────────────────────────
+   Three families establish the visual voice of the app:
+   - sans:    Geist (UI, body, headings)
+   - mono:    Geist Mono (data, measurements, code)
+   - display: Instrument Serif (italic display moments — dataset
+              titles, section labels — used sparingly)
+   ───────────────────────────────────────────────────────────── */
 :root {
-  --nimbus-font: "Inter", "Inter Variable", "SF Pro Display", -apple-system,
-    system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
-    "Helvetica Neue", sans-serif;
+  --nimbus-font: "Geist", "SF Pro Display", -apple-system, system-ui,
+    "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --nimbus-font-mono: "Geist Mono", "SF Mono", "JetBrains Mono",
+    "Fira Code", Consolas, "Roboto Mono", monospace;
+  --nimbus-font-display: "Instrument Serif", "Iowan Old Style", Georgia,
+    "Times New Roman", serif;
   --nimbus-radius: 8px;
   --nimbus-radius-sm: 6px;
   --nimbus-radius-lg: 12px;
 }
 
-/* Apply Inter globally with OpenType features */
+/* Apply Geist globally */
 body,
 .v-application {
   font-family: var(--nimbus-font) !important;
-  font-feature-settings: "cv01", "ss03";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Tabular numbers + slashed zero for the mono family so data columns
+   align and 0 can't be confused with O. */
+code, kbd, samp, pre,
+.font-mono {
+  font-family: var(--nimbus-font-mono);
+  font-feature-settings: "zero", "ss01";
+  font-variant-numeric: tabular-nums;
+}
+
+/* Display class for editorial moments — apply sparingly to dataset
+   names, section headers, or marketing-style copy. */
+.font-display {
+  font-family: var(--nimbus-font-display);
+  font-style: italic;
+  letter-spacing: -0.01em;
+}
+
 /* Form elements have their own UA font by default; make sure they inherit.
    Without this, a v-btn rendered as <button> uses the browser's default font
-   while a v-btn with :to (rendered as <a>) inherits Inter — causing visual
-   inconsistency between otherwise identical v-btns. */
+   while a v-btn with :to (rendered as <a>) inherits the app font — causing
+   visual inconsistency between otherwise identical v-btns. */
 button,
 input,
 select,
