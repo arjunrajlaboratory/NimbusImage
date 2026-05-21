@@ -115,6 +115,10 @@ export default defineConfig(({ _, mode }) => {
       // Production specific settings
       minify: isProduction ? "esbuild" : false,
       sourcemap: !isProduction, // Useful for debugging in dev, cleaner in prod
+      // Bump above Vite's defaults (chrome87/edge88/firefox78/safari14/es2020)
+      // to versions that support top-level await, which `src/main.ts` uses
+      // to lazy-load Sentry when VITE_SENTRY_DSN is set.
+      target: ["chrome89", "edge89", "firefox89", "safari15"],
       rollupOptions: {
         output: {
           // Helps with browser caching by adding hashes to filenames
