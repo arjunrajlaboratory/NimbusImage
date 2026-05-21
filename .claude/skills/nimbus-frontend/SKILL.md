@@ -284,6 +284,21 @@ logWarning("Something unexpected happened");
 logError("An error occurred", error);
 ```
 
+## Error Reporting (Sentry)
+
+`@sentry/vue` is wired in `src/main.ts`, gated on `VITE_SENTRY_DSN` at build time. When the DSN is unset, no Sentry code is loaded — local installs and OSS users pay zero runtime cost. Uncaught Vue errors and async exceptions (`window.onerror`/`unhandledrejection`) are reported automatically via the Vue integration installed at init; you don't need to wrap component code in try/catch just to report errors.
+
+To capture an error or message manually from a component, dynamic-import the package so the no-DSN path stays free of any Sentry reference:
+
+```typescript
+if (import.meta.env.VITE_SENTRY_DSN) {
+  const Sentry = await import("@sentry/vue");
+  Sentry.captureException(err, { tags: { feature: "my-feature" } });
+}
+```
+
+In practice almost no component should need this — let the global handler do its job. Local testing: see `CLAUDE.md` § "Error Reporting (Sentry)" for `.env.local` setup and the `setTimeout` test recipe.
+
 ## Buttons — five-role taxonomy
 
 Every `<v-btn>` should declare an explicit **`variant`** and **`size`**. Omitting them falls back to Vuetify's `elevated` default at default size, which looks generic and out of place against the Linear-inspired theme.
