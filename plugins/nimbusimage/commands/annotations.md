@@ -95,9 +95,11 @@ ds.annotations.create_many(
 # Update one annotation
 ds.annotations.update("ann_id", {"tags": ["nucleus", "verified"]})
 
-# update_many has a known bug (#780) — use individual updates for now
-for ann_id, changes in updates:
-    ds.annotations.update(ann_id, changes)
+# Bulk update (single HTTP request, no return value)
+ds.annotations.update_many([
+    (ann_id1, {"color": "rgb(255,0,0)"}),
+    (ann_id2, {"tags": ["nucleus", "verified"]}),
+])
 ```
 
 ## Deleting
