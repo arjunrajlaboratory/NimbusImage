@@ -1,6 +1,5 @@
 <template>
   <v-card class="ma-1">
-    <v-card-title> Object Browser </v-card-title>
     <v-card-text class="pa-1">
       <v-expansion-panels hover multiple v-model="expanded">
         <annotation-filters></annotation-filters>

@@ -1,7 +1,6 @@
 <template>
   <div>
     <v-card v-if="store.configuration">
-      <v-card-title class="headline"> Snapshots </v-card-title>
       <v-dialog v-model="imageTooBigDialog">
         <v-alert class="ma-0" type="error">
           <div class="title">Image can't be downloaded</div>
