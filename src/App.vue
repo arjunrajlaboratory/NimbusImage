@@ -112,59 +112,60 @@
       </v-tooltip>
       <v-divider class="ml-1" vertical />
       <template v-if="store.dataset && routeName === 'datasetview'">
-        <v-tooltip
-          text="List of all objects in the dataset, including their properties, and various actions on them"
-        >
-          <template v-slot:activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              id="object-list-button-tourstep"
-              v-tour-trigger="'object-list-button-tourtrigger'"
-              :variant="annotationPanel ? 'outlined' : 'text'"
-              :color="annotationPanel ? 'primary' : undefined"
-              size="small"
-              class="ml-4"
-              @click.stop="toggleRightPanel('annotationPanel')"
-            >
-              Object list
-            </v-btn>
-          </template>
-        </v-tooltip>
-        <v-divider class="ml-4" vertical />
-        <v-tooltip
-          text="Snapshots for bookmarking and downloading cropped regions in your dataset"
-        >
-          <template v-slot:activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              id="snapshots-button-tourstep"
-              v-tour-trigger="'snapshots-button-tourtrigger'"
-              :variant="snapshotPanel ? 'outlined' : 'text'"
-              :color="snapshotPanel ? 'primary' : undefined"
-              size="small"
-              class="ml-4"
-              @click.stop="toggleRightPanel('snapshotPanel')"
-            >
-              Snapshots
-            </v-btn>
-          </template>
-        </v-tooltip>
-        <v-tooltip text="Image and object display settings">
-          <template v-slot:activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              id="settings-button-tourstep"
-              v-tour-trigger="'settings-button-tourtrigger'"
-              :variant="settingsPanel ? 'outlined' : 'text'"
-              :color="settingsPanel ? 'primary' : undefined"
-              size="small"
-              class="ml-4"
-              @click.stop="toggleRightPanel('settingsPanel')"
-            >
-              Settings
-            </v-btn>
-          </template>
-        </v-tooltip>
+        <div class="palette-cluster">
+          <v-tooltip
+            text="List of all objects in the dataset, including their properties, and various actions on them"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                id="object-list-button-tourstep"
+                v-tour-trigger="'object-list-button-tourtrigger'"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: annotationPanel }"
+                aria-label="Object list"
+                @click.stop="toggleRightPanel('annotationPanel')"
+              >
+                <v-icon size="18">mdi-format-list-bulleted-square</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip
+            text="Snapshots for bookmarking and downloading cropped regions in your dataset"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                id="snapshots-button-tourstep"
+                v-tour-trigger="'snapshots-button-tourtrigger'"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: snapshotPanel }"
+                aria-label="Snapshots"
+                @click.stop="toggleRightPanel('snapshotPanel')"
+              >
+                <v-icon size="18">mdi-camera-outline</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip text="Image and object display settings">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                id="settings-button-tourstep"
+                v-tour-trigger="'settings-button-tourtrigger'"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: settingsPanel }"
+                aria-label="Settings"
+                @click.stop="toggleRightPanel('settingsPanel')"
+              >
+                <v-icon size="18">mdi-tune</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+        </div>
       </template>
       <div class="mx-4 d-flex align-center">
         <v-menu>
@@ -277,36 +278,29 @@
       <analyze-annotations />
     </v-navigation-drawer>
 
-    <v-navigation-drawer
+    <floating-palette
       v-model="settingsPanel"
-      location="right"
-      :scrim="false"
+      title="Settings"
       :width="480"
-      :mobile="false"
     >
       <annotations-settings />
-    </v-navigation-drawer>
+    </floating-palette>
 
-    <v-navigation-drawer
+    <floating-palette
       v-model="snapshotPanel"
-      location="right"
-      :scrim="false"
+      title="Snapshots"
       :width="480"
-      :mobile="false"
-      @transitionend="snapshotPanelFull = snapshotPanel"
     >
-      <snapshots :snapshotVisible="snapshotPanel && snapshotPanelFull" />
-    </v-navigation-drawer>
+      <snapshots :snapshotVisible="snapshotPanel" />
+    </floating-palette>
 
-    <v-navigation-drawer
+    <floating-palette
       v-model="annotationPanel"
-      location="right"
-      :scrim="false"
+      title="Object Browser"
       :width="640"
-      :mobile="false"
     >
       <annotation-browser></annotation-browser>
-    </v-navigation-drawer>
+    </floating-palette>
   </v-app>
 </template>
 
@@ -327,6 +321,7 @@ import propertyStore from "@/store/properties";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
+import FloatingPalette from "@/components/FloatingPalette.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
@@ -542,6 +537,59 @@ defineExpose({
   text-overflow: unset;
   overflow: unset;
   flex: 0 0 auto;
+}
+
+/* Cluster of palette-toggle icon buttons in the app bar.
+   Pill-shaped group with hairline border; each button is a 32px circle. */
+.palette-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  margin-left: 12px;
+  border-radius: 100px;
+  background: rgba(15, 18, 23, 0.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
+}
+
+.palette-ibtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--nimbus-text-secondary, #d0d6e0);
+  border: none;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  position: relative;
+  transition: background 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--nimbus-text-secondary, #f3f5f7);
+  }
+
+  &.active {
+    background: rgba(var(--v-theme-primary), 0.18);
+    color: rgb(var(--v-theme-primary));
+    box-shadow: 0 0 0 1px rgba(var(--v-theme-primary), 0.25);
+  }
+
+  &.active::after {
+    content: "";
+    position: absolute;
+    bottom: -7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: rgb(var(--v-theme-primary));
+    box-shadow: 0 0 6px rgba(var(--v-theme-primary), 0.6);
+  }
 }
 </style>
 <style lang="scss">
