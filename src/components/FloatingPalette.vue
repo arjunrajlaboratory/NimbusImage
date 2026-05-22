@@ -1,7 +1,11 @@
 <template>
   <transition name="palette-fade">
+    <!-- Use v-show so the body content stays mounted across open/close.
+         This preserves child state (selected items, scroll position,
+         watchers that fire on visibility) the same way the previous
+         v-navigation-drawer did. -->
     <aside
-      v-if="modelValue"
+      v-show="modelValue"
       class="floating-palette"
       :style="paletteStyle"
       @click.stop
