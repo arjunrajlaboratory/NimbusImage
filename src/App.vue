@@ -1,5 +1,9 @@
 <template>
-  <v-app id="inspire" v-mousetrap="appHotkeys">
+  <v-app
+    id="inspire"
+    v-mousetrap="appHotkeys"
+    :class="{ 'datasetview-mode': isDatasetView }"
+  >
     <v-dialog
       v-model="helpPanelIsOpen"
       fullscreen
@@ -411,6 +415,7 @@ function toggleRightPanel(panel: string | null) {
 }
 
 const routeName = computed(() => route.name);
+const isDatasetView = computed(() => routeName.value === "datasetview");
 
 const hasUncomputedProperties = computed(() => {
   const uncomputed = propertyStore.uncomputedAnnotationsPerProperty;

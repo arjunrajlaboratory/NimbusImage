@@ -142,6 +142,26 @@ body {
   box-shadow: none !important;
 }
 
+/* ── Dataset view: fully transparent app bar ───────────────────
+   The bar is invisible — only its buttons remain, floating directly
+   over the image. No background, no blur, no border. The image
+   extends to y=0 behind the buttons; the left side panel is offset
+   down so its content stays clear. */
+.datasetview-mode {
+  .v-app-bar {
+    background: transparent !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  /* Zero the v-main top offset so the canvas fills behind the bar. */
+  .v-main {
+    --v-layout-top: 0px !important;
+    padding-top: 0 !important;
+  }
+}
+
 /* Navigation drawers: match panel surface */
 .v-navigation-drawer {
   background: rgb(var(--v-theme-surface)) !important;

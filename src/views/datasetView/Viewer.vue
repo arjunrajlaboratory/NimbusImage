@@ -80,12 +80,16 @@ defineExpose({
 <style lang="scss" scoped>
 .viewer {
   width: 100%;
-  height: calc(100vh - 64px);
+  /* Fill the viewport — the glass app bar floats over the image canvas. */
+  height: 100vh;
   display: flex;
 }
 
 .side {
   width: 20em;
+  /* Push side panel content below the floating bar so it isn't hidden
+     behind it. The image canvas (.main) still extends to y=0. */
+  padding-top: 64px;
 }
 
 .toolbar {
