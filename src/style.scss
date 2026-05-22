@@ -234,6 +234,83 @@ body {
   --v-field-border-opacity: 0.10;
 }
 
+/* ── Global form-control sizing ──────────────────────────────
+   Selection controls, inputs, sliders, and menu items all share
+   one type scale so the interface reads as a single system. The
+   Vuetify defaults (density="compact") provide the row heights;
+   these rules pin down typography and visual sizing. */
+
+/* Labels for checkbox / switch / radio / slider — all 13px. */
+.v-selection-control .v-label,
+.v-switch .v-label,
+.v-checkbox .v-label,
+.v-radio .v-label,
+.v-slider .v-label {
+  font-size: 13px !important;
+  letter-spacing: 0;
+  line-height: 1.4;
+  opacity: 1;
+}
+
+/* Field labels (the floating label on outlined inputs/selects). */
+.v-field-label {
+  font-size: 13px !important;
+}
+
+/* Field text (the value inside inputs/selects). */
+.v-field__input,
+.v-field input,
+.v-field textarea {
+  font-size: 13px !important;
+}
+
+/* The selected-value display inside a v-select. */
+.v-select__selection,
+.v-autocomplete__selection {
+  font-size: 13px;
+}
+
+/* Selection-control row height: compact density default is ~36px;
+   tighten further so multi-toggle palettes don't feel like a survey. */
+.v-selection-control--density-compact {
+  --v-selection-control-size: 28px;
+  min-height: 28px;
+}
+
+/* Tighter thumb + slimmer track for the slider. */
+.v-slider {
+  --v-slider-track-size: 3px;
+
+  .v-slider-thumb__surface {
+    width: 12px !important;
+    height: 12px !important;
+  }
+  .v-slider-thumb__ripple {
+    width: 24px !important;
+    height: 24px !important;
+    left: -12px !important;
+    top: -12px !important;
+  }
+}
+
+/* Menu items (dropdown options like Add/Toggle/Remove): 13px label,
+   tighter rows. v-list-item title is the bigger element by default. */
+.v-overlay__content .v-list-item-title {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+.v-overlay__content .v-list-item--density-compact {
+  --v-list-item-min-height: 32px;
+  padding-block: 2px;
+}
+
+/* Outlined fields: more compact internal padding. */
+.v-input--density-compact .v-field {
+  --v-input-control-height: 36px;
+}
+
 /* Expansion panels: inherit parent bg with subtle dividers */
 .v-expansion-panels {
   .v-expansion-panel {
