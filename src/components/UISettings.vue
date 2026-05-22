@@ -1,22 +1,20 @@
 <template>
-  <v-expansion-panel>
-    <v-expansion-panel-title> Interface settings </v-expansion-panel-title>
-    <v-expansion-panel-text>
-      <v-container>
-        <v-switch
-          hide-details
-          density="compact"
-          v-model="darkMode"
-          label="Dark mode"
-          v-description="{
-            section: 'Interface settings',
-            title: 'Dark mode',
-            description: 'Enable dark mode',
-          }"
-        />
-      </v-container>
-    </v-expansion-panel-text>
-  </v-expansion-panel>
+  <section class="settings-section">
+    <h4 class="settings-section-title">Interface</h4>
+    <div class="settings-section-body">
+      <v-switch
+        hide-details
+        density="compact"
+        v-model="darkMode"
+        label="Dark mode"
+        v-description="{
+          section: 'Interface settings',
+          title: 'Dark mode',
+          description: 'Enable dark mode',
+        }"
+      />
+    </div>
+  </section>
 </template>
 
 <script setup lang="ts">

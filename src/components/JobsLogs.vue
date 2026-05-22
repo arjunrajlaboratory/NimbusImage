@@ -1,21 +1,20 @@
 <template>
-  <v-expansion-panel>
-    <v-expansion-panel-title>Jobs and Logs</v-expansion-panel-title>
-    <v-expansion-panel-text>
-      <v-container>
-        <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          @click="showJobs"
-          v-description="{
-            section: 'Jobs and Logs',
-            title: 'Show Jobs and Logs',
-            description: 'View recent job history and logs',
-          }"
-        >
-          Show Jobs and Logs
-        </v-btn>
+  <section class="settings-section">
+    <h4 class="settings-section-title">Jobs & Logs</h4>
+    <div class="settings-section-body">
+      <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
+        @click="showJobs"
+        v-description="{
+          section: 'Jobs and Logs',
+          title: 'Show Jobs and Logs',
+          description: 'View recent job history and logs',
+        }"
+      >
+        Show jobs and logs
+      </v-btn>
 
         <v-dialog
           v-model="showJobsDialog"
@@ -157,9 +156,8 @@
         >
           Log copied to clipboard
         </v-snackbar>
-      </v-container>
-    </v-expansion-panel-text>
-  </v-expansion-panel>
+    </div>
+  </section>
 </template>
 
 <script setup lang="ts">
