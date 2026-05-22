@@ -100,6 +100,24 @@ function apiRootFromGirderUrl(girderUrl: string) {
   return girderUrl + apiRootSuffix;
 }
 
+// @girder/components v4.0.0 has a bug in its RestClient constructor: when no
+// `girderToken` cookie is set, it parses `window.location.hash` looking for a
+// `#girderToken=<64-char-token>__` marker, but if the marker is absent it
+// returns the entire hash (e.g. `#/datasetView/.../view`) as the "token"
+// anyway. That value is then sent as the `Girder-Token` header on every
+// request, producing 401s that look like spurious logouts. Strip any
+// `#`-prefixed bogus token at construction time — real Girder tokens are
+// 64-char hex strings and never contain `#`.
+function createGirderRestClient(options: {
+  apiRoot: string;
+}): RestClientInstance {
+  const client = new RestClient(options);
+  if (client.token && client.token.startsWith("#")) {
+    client.token = "";
+  }
+  return client;
+}
+
 // Tracks the most recently issued fetchRecentDatasetViews call so older
 // in-flight requests can detect they are stale and skip the state write.
 // Without this, a slower request with a different filter can land last and
@@ -108,7 +126,7 @@ let recentDatasetViewsRequestId = 0;
 
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
-  girderRest = new RestClient({
+  girderRest = createGirderRestClient({
     apiRoot: apiRootFromGirderUrl(persister.get("girderUrl", defaultGirderUrl)),
   });
 
@@ -1138,9 +1156,7 @@ export class Main extends VuexModule {
 
   @Action
   async initialize() {
-    // The Girder client may set the token to the path of the API, but this actually means that we
-    // have no token, hence we are disconnected.
-    if (!this.girderRest.token || this.girderRest.token === "#/") {
+    if (!this.girderRest.token) {
       return;
     }
     try {
@@ -1198,7 +1214,7 @@ export class Main extends VuexModule {
     username: string;
     password: string;
   }) {
-    const restClient = new RestClient({
+    const restClient = createGirderRestClient({
       apiRoot: apiRootFromGirderUrl(domain),
     });
 
@@ -1239,7 +1255,7 @@ export class Main extends VuexModule {
     password: string;
     admin: boolean;
   }): Promise<void> {
-    const restClient = new RestClient({
+    const restClient = createGirderRestClient({
       apiRoot: apiRootFromGirderUrl(domain),
     });
 
