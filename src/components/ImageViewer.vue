@@ -799,6 +799,12 @@ function _setupMap(
   );
   params.map.zoom = params.map.min;
   params.map.center = { x: mapWidth / 2, y: mapHeight / 2 };
+  // Unclamp pan + zoom so the user can move the image past the
+  // viewport edges (necessary now that floating palettes can cover
+  // parts of the canvas — pan the image to reveal what's hidden).
+  (params.map as any).clampBoundsX = false;
+  (params.map as any).clampBoundsY = false;
+  (params.map as any).clampZoom = false;
   params.layer.crossDomain = "use-credentials";
   params.layer.autoshareRenderer = false;
   params.layer.nearestPixel = params.layer.maxLevel;
@@ -911,6 +917,11 @@ function _setupMap(
         bottom: params.map.maxBounds!.bottom,
       });
       map.zoomRange(params.map);
+      // Re-assert unclamped pan/zoom on map reconfigure — see comment
+      // in the create branch above.
+      (map as any).clampBoundsX(false);
+      (map as any).clampBoundsY(false);
+      (map as any).clampZoom(false);
     }
   }
 
