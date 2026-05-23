@@ -119,14 +119,46 @@ function apiRootFromGirderUrl(girderUrl: string) {
 //
 // Key is namespaced to avoid collision if @girder/components ever adopts
 // its own localStorage strategy under the bare name `girderToken` (Girder's
-// own legacy web client does, per girder/girder#3484).
+// own legacy web client does, per girder/girder#3484). Stored value is
+// `{ apiRoot, token }` JSON so a token issued by one Girder server is never
+// replayed to a different one when the user switches domains.
 const TOKEN_STORAGE_KEY = "nimbus.girderToken";
+
+interface StoredAuth {
+  apiRoot: string;
+  token: string;
+}
+
+function loadStoredToken(apiRoot: string): string | null {
+  const raw = localStorage.getItem(TOKEN_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredAuth;
+    if (parsed.apiRoot !== apiRoot || !parsed.token) {
+      return null;
+    }
+    return parsed.token;
+  } catch {
+    // Legacy or corrupted payload — drop it and force a fresh login.
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    return null;
+  }
+}
+
+function storeToken(apiRoot: string, token: string) {
+  const value: StoredAuth = { apiRoot, token };
+  localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(value));
+}
+
+function clearStoredToken() {
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
+}
 
 function createGirderRestClient(options: {
   apiRoot: string;
 }): RestClientInstance {
   const client = new RestClient(options);
-  const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+  const stored = loadStoredToken(client.apiRoot);
   if (stored) {
     client.token = stored;
   } else if (client.token && client.token.startsWith("#")) {
@@ -134,19 +166,17 @@ function createGirderRestClient(options: {
   }
   client.on("userLoggedIn", () => {
     if (client.token) {
-      localStorage.setItem(TOKEN_STORAGE_KEY, client.token);
+      storeToken(client.apiRoot, client.token);
     }
   });
-  client.on("userLoggedOut", () => {
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-  });
+  client.on("userLoggedOut", clearStoredToken);
   client.on("userFetched", () => {
     if (!client.user) {
       // fetchUser clears this.token when /user/me returns null, but doesn't
       // emit userLoggedOut. Keying off `user` rather than `token` survives a
       // hypothetical upstream change where v4 stops zeroing the token on
       // anonymous /user/me. If user is null, the session is dead regardless.
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      clearStoredToken();
     }
   });
   // Belt-and-suspenders: any 401 anywhere indicates the persisted token is
@@ -160,7 +190,7 @@ function createGirderRestClient(options: {
     (response) => response,
     (error) => {
       if (error?.response?.status === 401) {
-        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        clearStoredToken();
       }
       return Promise.reject(error);
     },
