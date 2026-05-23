@@ -100,21 +100,53 @@ function apiRootFromGirderUrl(girderUrl: string) {
   return girderUrl + apiRootSuffix;
 }
 
-// @girder/components v4.0.0 has a bug in its RestClient constructor: when no
-// `girderToken` cookie is set, it parses `window.location.hash` looking for a
-// `#girderToken=<64-char-token>__` marker, but if the marker is absent it
-// returns the entire hash (e.g. `#/datasetView/.../view`) as the "token"
-// anyway. That value is then sent as the `Girder-Token` header on every
-// request, producing 401s that look like spurious logouts. Strip any
-// `#`-prefixed bogus token at construction time — real Girder tokens are
-// 64-char hex strings and never contain `#`.
+// Persist the Girder auth token in localStorage. @girder/components v4
+// tries to use a JS-set `girderToken` cookie for this, but on Girder 5+
+// the backend sets the same-named cookie as HttpOnly, and browsers reject
+// the JS set on cookie-hygiene grounds. So the token vanishes on reload,
+// the RestClient constructor falls back to parsing `window.location.hash`,
+// the fallback returns the entire route hash as the "token" when there's
+// no OAuth marker, and the bogus value goes out as `Girder-Token: #/...`
+// on every request → 401s that look like spurious logouts. localStorage
+// is the simplest fix: same XSS exposure as the JS-set cookie this code
+// is replacing (i.e., none added), and Girder's `Girder-Token` header path
+// continues to work normally.
+//
+// Cookie-based auth is not a viable substitute even though Girder 5 sets a
+// cookie: Girder's API endpoints reject cookies unless they carry the
+// `@access.cookie` decorator (a CSRF measure), which most don't.
+// See: https://github.com/girder/girder_web_components/issues/364
+const TOKEN_STORAGE_KEY = "girderToken";
+
 function createGirderRestClient(options: {
   apiRoot: string;
 }): RestClientInstance {
   const client = new RestClient(options);
-  if (client.token && client.token.startsWith("#")) {
+  const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+  if (stored) {
+    client.token = stored;
+  } else if (client.token && client.token.startsWith("#")) {
     client.token = "";
   }
+  const emitter = client as unknown as {
+    on: (event: string, handler: () => void) => void;
+  };
+  emitter.on("userLoggedIn", () => {
+    if (client.token) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, client.token);
+    }
+  });
+  emitter.on("userLoggedOut", () => {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  });
+  emitter.on("userFetched", () => {
+    if (!client.token) {
+      // fetchUser clears this.token when /user/me returns null, but doesn't
+      // emit userLoggedOut. Clean up localStorage so a stale token doesn't
+      // wedge us into a perpetual 401 loop on subsequent loads.
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+    }
+  });
   return client;
 }
 
