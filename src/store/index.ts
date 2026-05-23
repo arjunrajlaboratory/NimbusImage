@@ -9,7 +9,7 @@ import {
   IGirderLargeImage,
   DEFAULT_LARGE_IMAGE_SOURCE,
 } from "@/girder";
-import type { AxiosError } from "axios";
+import type { AxiosError, AxiosInstance } from "axios";
 import pLimit from "p-limit";
 import pRetry from "p-retry";
 import {
@@ -116,7 +116,11 @@ function apiRootFromGirderUrl(girderUrl: string) {
 // cookie: Girder's API endpoints reject cookies unless they carry the
 // `@access.cookie` decorator (a CSRF measure), which most don't.
 // See: https://github.com/girder/girder_web_components/issues/364
-const TOKEN_STORAGE_KEY = "girderToken";
+//
+// Key is namespaced to avoid collision if @girder/components ever adopts
+// its own localStorage strategy under the bare name `girderToken` (Girder's
+// own legacy web client does, per girder/girder#3484).
+const TOKEN_STORAGE_KEY = "nimbus.girderToken";
 
 function createGirderRestClient(options: {
   apiRoot: string;
@@ -128,25 +132,39 @@ function createGirderRestClient(options: {
   } else if (client.token && client.token.startsWith("#")) {
     client.token = "";
   }
-  const emitter = client as unknown as {
-    on: (event: string, handler: () => void) => void;
-  };
-  emitter.on("userLoggedIn", () => {
+  client.on("userLoggedIn", () => {
     if (client.token) {
       localStorage.setItem(TOKEN_STORAGE_KEY, client.token);
     }
   });
-  emitter.on("userLoggedOut", () => {
+  client.on("userLoggedOut", () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
   });
-  emitter.on("userFetched", () => {
-    if (!client.token) {
+  client.on("userFetched", () => {
+    if (!client.user) {
       // fetchUser clears this.token when /user/me returns null, but doesn't
-      // emit userLoggedOut. Clean up localStorage so a stale token doesn't
-      // wedge us into a perpetual 401 loop on subsequent loads.
+      // emit userLoggedOut. Keying off `user` rather than `token` survives a
+      // hypothetical upstream change where v4 stops zeroing the token on
+      // anonymous /user/me. If user is null, the session is dead regardless.
       localStorage.removeItem(TOKEN_STORAGE_KEY);
     }
   });
+  // Belt-and-suspenders: any 401 anywhere indicates the persisted token is
+  // no longer accepted (revoked, server-side cookie_lifetime hit, instance
+  // wiped, etc.). Drop the storage so the next reload starts clean rather
+  // than re-sending the dead token on every request. Reaches into `_axios`
+  // because the v4 RestClient's `.get`/`.post`/etc. forward to an internal
+  // axios instance and don't expose interceptors on the RestClient itself.
+  const axios = (client as unknown as { _axios: AxiosInstance })._axios;
+  axios.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error?.response?.status === 401) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+      }
+      return Promise.reject(error);
+    },
+  );
   return client;
 }
 
