@@ -63,29 +63,6 @@
               Use selection as filter
             </v-btn>
           </v-col>
-          <v-col class="pa-1">
-            <annotation-csv-dialog
-              block
-              :annotations="filteredAnnotations"
-              :propertyPaths="propertyPaths"
-            ></annotation-csv-dialog>
-          </v-col>
-        </v-row>
-        <v-row>
-          <v-col class="pa-1">
-            <annotation-import block />
-          </v-col>
-          <v-col class="pa-1">
-            <annotation-export block />
-          </v-col>
-        </v-row>
-        <v-row>
-          <v-col class="pa-1">
-            <index-conversion-dialog block />
-          </v-col>
-          <v-col class="pa-1">
-            <delete-connections block />
-          </v-col>
         </v-row>
       </v-container>
     </v-expansion-panel-text>
@@ -96,18 +73,9 @@
 import { ref, computed } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
-import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 
-import AnnotationCsvDialog from "@/components/AnnotationBrowser/AnnotationCSVDialog.vue";
-import AnnotationExport from "@/components/AnnotationBrowser/AnnotationExport.vue";
-import AnnotationImport from "@/components/AnnotationBrowser/AnnotationImport.vue";
-import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
-import IndexConversionDialog from "@/components/AnnotationBrowser/IndexConversionDialog.vue";
-
 const isDoing = ref(false);
-
-const propertyPaths = computed(() => propertyStore.computedPropertyPaths);
 
 const history = computed(() => store.history);
 
@@ -125,7 +93,6 @@ const redoEntry = computed(() => {
   return undefined;
 });
 
-const filteredAnnotations = computed(() => filterStore.filteredAnnotations);
 const selectionFilterEnabled = computed(
   () => filterStore.selectionFilter.enabled,
 );
@@ -163,7 +130,5 @@ defineExpose({
   clearSelection,
   filterBySelection,
   isDoing,
-  filteredAnnotations,
-  propertyPaths,
 });
 </script>

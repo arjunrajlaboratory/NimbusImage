@@ -16,16 +16,8 @@ vi.mock("@/store/annotation", () => ({
   },
 }));
 
-vi.mock("@/store/properties", () => ({
-  default: {
-    properties: [{ id: "p1" }],
-    computedPropertyPaths: [{ path: "p1/subpath" }],
-  },
-}));
-
 vi.mock("@/store/filters", () => ({
   default: {
-    filteredAnnotations: [{ id: "a1" }, { id: "a2" }],
     selectionFilter: { enabled: false },
     clearSelection: vi.fn(),
     addSelectionAsFilter: vi.fn(),
@@ -35,21 +27,10 @@ vi.mock("@/store/filters", () => ({
 import AnnotationActions from "./AnnotationActions.vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
-import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 
 function mountComponent() {
-  return shallowMount(AnnotationActions, {
-    global: {
-      stubs: {
-        AnnotationCsvDialog: true,
-        AnnotationExport: true,
-        AnnotationImport: true,
-        DeleteConnections: true,
-        IndexConversionDialog: true,
-      },
-    },
-  });
+  return shallowMount(AnnotationActions);
 }
 
 describe("AnnotationActions", () => {
@@ -110,19 +91,5 @@ describe("AnnotationActions", () => {
   it("isDoing starts as false", () => {
     const wrapper = mountComponent();
     expect(wrapper.vm.isDoing).toBe(false);
-  });
-
-  it("filteredAnnotations reads from filterStore", () => {
-    const wrapper = mountComponent();
-    expect(wrapper.vm.filteredAnnotations).toEqual(
-      filterStore.filteredAnnotations,
-    );
-  });
-
-  it("propertyPaths reads from propertyStore", () => {
-    const wrapper = mountComponent();
-    expect(wrapper.vm.propertyPaths).toEqual(
-      propertyStore.computedPropertyPaths,
-    );
   });
 });

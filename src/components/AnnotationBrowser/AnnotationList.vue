@@ -31,30 +31,41 @@
                   <v-icon size="small" end>mdi-chevron-down</v-icon>
                 </v-btn>
               </template>
-              <v-list>
+              <v-list density="compact">
                 <v-list-item
+                  prepend-icon="mdi-delete-outline"
+                  title="Delete Unselected"
                   @click="deleteUnselected"
                   :disabled="!isLoggedIn || isDeletingAnnotations"
-                >
-                  <v-icon>mdi-delete-outline</v-icon>
-                  <v-list-item-title>Delete Unselected</v-list-item-title>
-                </v-list-item>
+                />
 
                 <v-list-item
+                  prepend-icon="mdi-tag"
+                  title="Tag Selected"
                   @click="showTagDialog = true"
                   :disabled="!isLoggedIn"
-                >
-                  <v-icon>mdi-tag</v-icon>
-                  <v-list-item-title>Tag Selected</v-list-item-title>
-                </v-list-item>
+                />
 
                 <v-list-item
+                  prepend-icon="mdi-palette"
+                  title="Color Selected"
                   @click="showColorDialog = true"
                   :disabled="!isLoggedIn"
-                >
-                  <v-icon>mdi-palette</v-icon>
-                  <v-list-item-title>Color Selected</v-list-item-title>
-                </v-list-item>
+                />
+
+                <v-divider class="my-1" />
+
+                <delete-connections>
+                  <template v-slot:activator="{ props }">
+                    <v-list-item
+                      v-bind="props"
+                      prepend-icon="mdi-link-variant-off"
+                      title="Delete Connections…"
+                      :disabled="!isLoggedIn"
+                      base-color="error"
+                    />
+                  </template>
+                </delete-connections>
               </v-list>
             </v-menu>
           </v-col>
@@ -252,6 +263,7 @@ import { simpleCentroid } from "@/utils/annotation";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
+import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 
 import {
   AnnotationNames,

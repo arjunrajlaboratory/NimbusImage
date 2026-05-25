@@ -1,21 +1,23 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="{ props: activatorProps }">
-      <v-btn
-        variant="outlined"
-        color="primary"
-        size="small"
-        v-bind="{ ...activatorProps, ...$attrs }"
-        v-description="{
-          section: 'Object list actions',
-          title: 'Export CSV',
-          description:
-            'Export the current list of annotations and associated properties to a CSV file',
-        }"
-      >
-        <v-icon>mdi-application-export</v-icon>
-        EXPORT CSV
-      </v-btn>
+    <template v-slot:activator="activatorBinding">
+      <slot name="activator" v-bind="activatorBinding">
+        <v-btn
+          variant="outlined"
+          color="primary"
+          size="small"
+          v-bind="{ ...activatorBinding.props, ...$attrs }"
+          v-description="{
+            section: 'Object list actions',
+            title: 'Export CSV',
+            description:
+              'Export the current list of annotations and associated properties to a CSV file',
+          }"
+        >
+          <v-icon>mdi-application-export</v-icon>
+          EXPORT CSV
+        </v-btn>
+      </slot>
     </template>
     <v-card>
       <v-card-title> Current Annotation List as CSV </v-card-title>

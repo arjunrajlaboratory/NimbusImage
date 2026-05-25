@@ -1,21 +1,23 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="{ props: activatorProps }">
-      <v-btn
-        variant="outlined"
-        color="primary"
-        size="small"
-        v-bind="{ ...activatorProps, ...$attrs }"
-        v-description="{
-          section: 'Object list actions',
-          title: 'Download Index Conversions',
-          description:
-            'Download CSV files that map dimension indices (UI and JSON) to their string labels',
-        }"
-      >
-        <v-icon>mdi-table-arrow-down</v-icon>
-        Download Index Conversions
-      </v-btn>
+    <template v-slot:activator="activatorBinding">
+      <slot name="activator" v-bind="activatorBinding">
+        <v-btn
+          variant="outlined"
+          color="primary"
+          size="small"
+          v-bind="{ ...activatorBinding.props, ...$attrs }"
+          v-description="{
+            section: 'Object list actions',
+            title: 'Download Index Conversions',
+            description:
+              'Download CSV files that map dimension indices (UI and JSON) to their string labels',
+          }"
+        >
+          <v-icon>mdi-table-arrow-down</v-icon>
+          Download Index Conversions
+        </v-btn>
+      </slot>
     </template>
     <v-card>
       <v-card-title> Download Index Conversion CSVs </v-card-title>

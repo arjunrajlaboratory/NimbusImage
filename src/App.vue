@@ -166,6 +166,7 @@
             </template>
           </v-tooltip>
         </div>
+        <data-io-menu class="ml-1" />
       </template>
       <div class="mx-4 d-flex align-center">
         <v-menu>
@@ -314,6 +315,7 @@ import AnalyzeAnnotations from "./components/AnalyzePanel.vue";
 import AnnotationsSettings from "./components/SettingsPanel.vue";
 import Snapshots from "./components/Snapshots.vue";
 import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.vue";
+import DataIoMenu from "@/components/DataIOMenu.vue";
 import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
