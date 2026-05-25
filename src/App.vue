@@ -132,6 +132,24 @@
             </template>
           </v-tooltip>
           <v-tooltip
+            text="Filter objects by tags, scope, properties, ID and region"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                id="filters-button-tourstep"
+                v-tour-trigger="'filters-button-tourtrigger'"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: filtersPanel }"
+                aria-label="Filters"
+                @click.stop="filtersPanel = !filtersPanel"
+              >
+                <v-icon size="18">mdi-filter-variant</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip
             text="Snapshots for bookmarking and downloading cropped regions in your dataset"
           >
             <template v-slot:activator="{ props: activatorProps }">
@@ -302,6 +320,10 @@
     >
       <annotation-browser></annotation-browser>
     </floating-palette>
+
+    <floating-palette v-model="filtersPanel" title="Filters" :width="480">
+      <filters-panel />
+    </floating-palette>
   </v-app>
 </template>
 
@@ -316,6 +338,7 @@ import AnnotationsSettings from "./components/SettingsPanel.vue";
 import Snapshots from "./components/Snapshots.vue";
 import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.vue";
 import DataIoMenu from "@/components/DataIOMenu.vue";
+import FiltersPanel from "@/components/FiltersPanel.vue";
 import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
@@ -335,6 +358,7 @@ void AnalyzeAnnotations;
 void AnnotationsSettings;
 void Snapshots;
 void AnnotationBrowser;
+void FiltersPanel;
 void HelpPanel;
 void BreadCrumbs;
 void ChatComponent;
@@ -350,6 +374,7 @@ const snapshotPanel = ref(false);
 const snapshotPanelFull = ref(false);
 const annotationPanel = ref(false);
 const settingsPanel = ref(false);
+const filtersPanel = ref(false);
 const analyzePanel = ref(false);
 const chatbotOpen = ref(false);
 
@@ -357,6 +382,9 @@ const lastModifiedRightPanel = ref<string | null>(null);
 const isUploadLoading = ref(false);
 const helpPanelIsOpen = ref(false);
 
+// Filters is intentionally NOT in panelRefs — it toggles independently of
+// the mutex'd Object Browser / Snapshots / Settings cluster so you can keep
+// it open alongside one of those.
 const panelRefs: Record<string, Ref<boolean>> = {
   snapshotPanel,
   annotationPanel,
@@ -515,6 +543,7 @@ defineExpose({
   snapshotPanelFull,
   annotationPanel,
   settingsPanel,
+  filtersPanel,
   analyzePanel,
   chatbotOpen,
   lastModifiedRightPanel,

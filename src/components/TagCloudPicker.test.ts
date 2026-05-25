@@ -53,15 +53,13 @@ describe("TagCloudPicker", () => {
     expect(new Set(tags).size).toBe(tags.length);
   });
 
-  it("displayedTags filters by tagSearchFilter", () => {
-    const wrapper = mountComponent();
-    wrapper.vm.tagSearchFilter = "t1";
+  it("displayedTags filters by searchText prop", () => {
+    const wrapper = mountComponent({ searchText: "t1" });
     expect(wrapper.vm.displayedTags).toEqual(["t1"]);
   });
 
-  it("displayedTags returns all when tagSearchFilter is empty", () => {
-    const wrapper = mountComponent();
-    wrapper.vm.tagSearchFilter = "";
+  it("displayedTags returns all when searchText is empty", () => {
+    const wrapper = mountComponent({ searchText: "" });
     expect(wrapper.vm.displayedTags).toEqual(wrapper.vm.availableTags);
   });
 

@@ -27,9 +27,9 @@ function mountComponent() {
 }
 
 describe("AnnotationBrowser", () => {
-  it("default expanded is [2]", () => {
+  it("default expanded is [1] (properties)", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.expanded).toEqual([2]);
+    expect(wrapper.vm.expanded).toEqual([1]);
   });
 
   it("clickedTag calls filterStore.addTagToTagFilter", () => {
@@ -38,17 +38,17 @@ describe("AnnotationBrowser", () => {
     expect(filterStore.addTagToTagFilter).toHaveBeenCalledWith("myTag");
   });
 
-  it("expandProperties adds panel index 1 if not present", () => {
+  it("expandProperties adds panel index 0 (actions) if not present", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.expanded).toEqual([2]);
+    expect(wrapper.vm.expanded).toEqual([1]);
     wrapper.vm.expandProperties();
-    expect(wrapper.vm.expanded).toContain(1);
+    expect(wrapper.vm.expanded).toContain(0);
   });
 
-  it("expandProperties does not duplicate panel index 1", () => {
+  it("expandProperties does not duplicate panel index 0", () => {
     const wrapper = mountComponent();
     wrapper.vm.expandProperties();
     wrapper.vm.expandProperties();
-    expect(wrapper.vm.expanded.filter((i: number) => i === 1)).toHaveLength(1);
+    expect(wrapper.vm.expanded.filter((i: number) => i === 0)).toHaveLength(1);
   });
 });
