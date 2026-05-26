@@ -7,16 +7,51 @@
       </div>
     </section>
 
-    <section class="settings-section">
-      <h4 class="settings-section-title">Property values</h4>
-      <div class="settings-section-body">
-        <property-filter-selector />
-        <property-filter-histogram
-          v-for="(propertyPath, idx) in propertyPaths"
-          :key="'property ' + idx"
-          :propertyPath="propertyPath"
-        />
-      </div>
+    <section class="settings-section advanced-section">
+      <button
+        type="button"
+        class="advanced-toggle"
+        :aria-expanded="propertyValuesOpen"
+        @click="propertyValuesOpen = !propertyValuesOpen"
+      >
+        <v-icon size="14" class="advanced-chevron">
+          {{ propertyValuesOpen ? "mdi-chevron-down" : "mdi-chevron-right" }}
+        </v-icon>
+        Property values
+        <v-chip
+          v-if="propertyPaths.length > 0"
+          size="x-small"
+          variant="flat"
+          color="primary"
+          class="ml-2"
+        >
+          {{ propertyPaths.length }}
+        </v-chip>
+      </button>
+      <v-expand-transition>
+        <div v-show="propertyValuesOpen" class="advanced-body">
+          <div class="settings-section-body">
+            <property-picker mode="filter">
+              <template v-slot:activator="{ props: pickerProps }">
+                <v-btn
+                  v-bind="pickerProps"
+                  variant="outlined"
+                  color="primary"
+                  size="small"
+                  prepend-icon="mdi-plus"
+                >
+                  Add property filter
+                </v-btn>
+              </template>
+            </property-picker>
+            <property-filter-histogram
+              v-for="(propertyPath, idx) in propertyPaths"
+              :key="'property ' + idx"
+              :propertyPath="propertyPath"
+            />
+          </div>
+        </div>
+      </v-expand-transition>
     </section>
 
     <section class="settings-section advanced-section">
@@ -57,6 +92,29 @@
               <roi-filters />
             </div>
           </div>
+          <div class="advanced-group">
+            <h5 class="advanced-group-title">Selection</h5>
+            <div class="settings-section-body">
+              <v-btn
+                v-if="selectionFilterEnabled"
+                variant="outlined"
+                color="primary"
+                size="small"
+                @click="clearSelection"
+              >
+                Clear selection filter
+              </v-btn>
+              <v-btn
+                v-else
+                variant="outlined"
+                color="primary"
+                size="small"
+                @click="filterBySelection"
+              >
+                Use selection as filter
+              </v-btn>
+            </div>
+          </div>
         </div>
       </v-expand-transition>
     </section>
@@ -72,13 +130,26 @@ import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue"
 import PropertyFilterHistogram from "@/components/AnnotationBrowser/AnnotationProperties/PropertyFilterHistogram.vue";
 import RoiFilters from "@/components/AnnotationBrowser/ROIFilters.vue";
 import AnnotationIdFilters from "@/components/AnnotationBrowser/AnnotationIdFilters.vue";
-import PropertyFilterSelector from "@/components/AnnotationBrowser/PropertyFilterSelector.vue";
+import PropertyPicker from "@/components/PropertyPicker.vue";
 
 defineProps<{
   additionalTags?: string[];
 }>();
 
 const advancedOpen = ref(false);
+const propertyValuesOpen = ref(filterStore.filterPaths.length > 0);
+
+const selectionFilterEnabled = computed(
+  () => filterStore.selectionFilter.enabled,
+);
+
+function clearSelection() {
+  filterStore.clearSelection();
+}
+
+function filterBySelection() {
+  filterStore.addSelectionAsFilter();
+}
 
 const tagFilter = computed({
   get() {
@@ -111,10 +182,14 @@ const showAnnotationsFromHiddenLayers = computed({
 
 defineExpose({
   advancedOpen,
+  propertyValuesOpen,
   tagFilter,
   onlyCurrentFrame,
   propertyPaths,
   showAnnotationsFromHiddenLayers,
+  selectionFilterEnabled,
+  clearSelection,
+  filterBySelection,
 });
 </script>
 

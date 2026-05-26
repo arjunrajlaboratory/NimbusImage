@@ -112,6 +112,7 @@
       </v-tooltip>
       <v-divider class="ml-1" vertical />
       <template v-if="store.dataset && routeName === 'datasetview'">
+        <undo-redo-buttons class="mr-1" />
         <div class="palette-cluster">
           <v-tooltip
             text="List of all objects in the dataset, including their properties, and various actions on them"
@@ -184,6 +185,25 @@
             </template>
           </v-tooltip>
         </div>
+        <v-tooltip
+          text="Measure objects: configure and run property computations"
+        >
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              id="analyze-button-tourstep"
+              v-tour-trigger="'analyze-button-tourtrigger'"
+              variant="text"
+              icon
+              size="small"
+              class="ml-1"
+              aria-label="Measure objects"
+              @click="analyzeDialogOpen = true"
+            >
+              <v-icon>mdi-ruler-square</v-icon>
+            </v-btn>
+          </template>
+        </v-tooltip>
         <data-io-menu class="ml-1" />
       </template>
       <div class="mx-4 d-flex align-center">
@@ -324,6 +344,8 @@
     <floating-palette v-model="filtersPanel" title="Filters" :width="480">
       <filters-panel />
     </floating-palette>
+
+    <analyze-dialog v-model="analyzeDialogOpen" @show-in-list="onShowInList" />
   </v-app>
 </template>
 
@@ -339,6 +361,8 @@ import Snapshots from "./components/Snapshots.vue";
 import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.vue";
 import DataIoMenu from "@/components/DataIOMenu.vue";
 import FiltersPanel from "@/components/FiltersPanel.vue";
+import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
+import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
 import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
@@ -359,6 +383,8 @@ void AnnotationsSettings;
 void Snapshots;
 void AnnotationBrowser;
 void FiltersPanel;
+void AnalyzeDialog;
+void UndoRedoButtons;
 void HelpPanel;
 void BreadCrumbs;
 void ChatComponent;
@@ -376,6 +402,7 @@ const annotationPanel = ref(false);
 const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analyzePanel = ref(false);
+const analyzeDialogOpen = ref(false);
 const chatbotOpen = ref(false);
 
 const lastModifiedRightPanel = ref<string | null>(null);
@@ -424,6 +451,12 @@ async function loadAllTours() {
 
 function goHome() {
   router.push({ name: "root" });
+}
+
+function onShowInList() {
+  if (!annotationPanel.value) {
+    toggleRightPanel("annotationPanel");
+  }
 }
 
 function toggleRightPanel(panel: string | null) {

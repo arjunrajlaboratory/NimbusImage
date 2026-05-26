@@ -1,98 +1,107 @@
 <template>
-  <v-container v-if="propertyFullName">
-    <v-row class="title text-high-emphasis d-flex align-center">
+  <div v-if="propertyFullName" class="property-filter-histogram">
+    <div class="pfh-header">
       <v-checkbox
         v-model="propertyFilter.enabled"
-        class="ml-4"
         density="compact"
         hide-details
+        class="pfh-enable"
         @update:model-value="toggleFilterEnabled"
-      ></v-checkbox>
-      <span>{{ propertyFullName }}</span>
+      />
+      <span class="pfh-name" :title="propertyFullName">
+        {{ propertyFullName }}
+      </span>
+      <v-btn
+        variant="text"
+        size="x-small"
+        density="compact"
+        icon
+        title="Remove filter"
+        @click="removeFilter"
+      >
+        <v-icon size="16">mdi-close</v-icon>
+      </v-btn>
+    </div>
+
+    <div class="pfh-controls">
       <v-btn-toggle
         v-model="propertyFilter.valuesOrRange"
         mandatory
-        class="ml-4"
         density="compact"
+        variant="outlined"
         @update:model-value="updateViewMode"
       >
-        <v-btn variant="text" value="range" size="small">Histogram</v-btn>
-        <v-btn variant="text" value="values" size="small">Values</v-btn>
+        <v-btn value="range" size="x-small">Histogram</v-btn>
+        <v-btn value="values" size="x-small">Values</v-btn>
       </v-btn-toggle>
-      <v-spacer></v-spacer>
-      <v-btn
-        variant="text"
-        icon
-        size="small"
-        class="mr-2"
-        @click="removeFilter"
+      <v-spacer />
+      <template
+        v-if="propertyFilter.valuesOrRange === PropertyFilterMode.Range"
       >
-        <v-icon>mdi-close</v-icon>
-      </v-btn>
-    </v-row>
+        <v-checkbox
+          v-model="useCDF"
+          label="CDF"
+          density="compact"
+          hide-details
+          class="pfh-flag"
+        />
+        <v-checkbox
+          v-model="useLog"
+          label="log"
+          density="compact"
+          hide-details
+          class="pfh-flag"
+        />
+      </template>
+    </div>
 
     <template v-if="propertyFilter.valuesOrRange === PropertyFilterMode.Range">
-      <v-row>
-        <v-col class="wrapper" ref="wrapper" :style="{ width: `${width}px` }">
-          <svg :width="width" :height="height" v-if="hist">
-            <path class="path" :d="area" />
-          </svg>
-          <div class="min-hint" :style="{ width: toValue(minValue) }"></div>
-          <div
-            class="max-hint"
-            :style="{ width: toValue(maxValue, true) }"
-          ></div>
-          <div ref="min" class="min" :style="{ left: toValue(minValue) }"></div>
-          <div
-            ref="max"
-            class="max"
-            :style="{ right: toValue(maxValue, true) }"
-          ></div>
-        </v-col>
-        <v-col>
-          <v-checkbox v-model="useCDF" label="CDF"></v-checkbox>
-        </v-col>
-        <v-col>
-          <v-checkbox v-model="useLog" label="log"></v-checkbox>
-        </v-col>
-      </v-row>
-      <v-row>
-        <v-col class="pa-1">
-          <v-text-field
-            density="compact"
-            hide-details
-            label="Min"
-            type="number"
-            v-model="minValue"
-          ></v-text-field>
-        </v-col>
-        <v-col class="pa-1">
-          <v-text-field
-            density="compact"
-            hide-details
-            type="number"
-            label="Max"
-            v-model="maxValue"
-          ></v-text-field>
-        </v-col>
-      </v-row>
+      <div class="wrapper" ref="wrapper" :style="{ width: `${width}px` }">
+        <svg :width="width" :height="height" v-if="hist">
+          <path class="path" :d="area" />
+        </svg>
+        <div class="min-hint" :style="{ width: toValue(minValue) }"></div>
+        <div class="max-hint" :style="{ width: toValue(maxValue, true) }"></div>
+        <div ref="min" class="min" :style="{ left: toValue(minValue) }"></div>
+        <div
+          ref="max"
+          class="max"
+          :style="{ right: toValue(maxValue, true) }"
+        ></div>
+      </div>
+      <div class="pfh-minmax">
+        <v-text-field
+          density="compact"
+          variant="outlined"
+          hide-details
+          label="Min"
+          type="number"
+          v-model="minValue"
+        />
+        <v-text-field
+          density="compact"
+          variant="outlined"
+          hide-details
+          label="Max"
+          type="number"
+          v-model="maxValue"
+        />
+      </div>
     </template>
 
     <template v-else>
-      <v-row>
-        <v-col>
-          <v-textarea
-            v-model="valuesInput"
-            density="compact"
-            rows="4"
-            hide-details
-            placeholder="Enter values separated by spaces, commas, tabs, or newlines"
-            @input="debouncedUpdateValues"
-          ></v-textarea>
-        </v-col>
-      </v-row>
+      <v-textarea
+        v-model="valuesInput"
+        density="compact"
+        variant="outlined"
+        rows="4"
+        hide-details
+        placeholder="Enter values separated by spaces, commas, tabs, or newlines"
+        class="mt-2"
+        @input="debouncedUpdateValues"
+      />
     </template>
-  </v-container>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -128,7 +137,7 @@ const wrapper = ref<HTMLElement>();
 const min = ref<HTMLElement>();
 const max = ref<HTMLElement>();
 
-const width = ref(300);
+const width = ref(400);
 const height = ref(60);
 const useLog = ref(false);
 const useCDF = ref(false);
@@ -400,6 +409,62 @@ defineExpose({
 });
 </script>
 <style scoped lang="scss">
+.property-filter-histogram {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+
+  &:first-of-type {
+    border-top: none;
+  }
+}
+
+.pfh-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pfh-enable {
+  flex: 0 0 auto;
+}
+
+.pfh-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--nimbus-text-secondary, #d0d6e0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pfh-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pfh-flag {
+  flex: 0 0 auto;
+
+  :deep(.v-label) {
+    font-size: 12px;
+    opacity: 0.9;
+  }
+}
+
+.pfh-minmax {
+  display: flex;
+  gap: 8px;
+
+  > .v-input {
+    flex: 1 1 0;
+  }
+}
+
 .wrapper {
   margin-top: 0.5em;
   position: relative;
