@@ -131,13 +131,80 @@ reveal what's hidden.
 Unclamped `clampBoundsX` / `clampBoundsY` / `clampZoom` on the GeoJS map —
 both at create time and on bounds reconfigure.
 
+### ✅ Phase 2.4 · Object Browser decomposition
+
+The Object Browser was a four-section expansion-panel stack (Filters,
+Actions, Properties, List). Each part needed its own home; nothing
+deserved the modal it had become.
+
+What moved:
+
+- **Data I/O** → app-bar popover (`DataIOMenu.vue`, `mdi-swap-vertical-bold`).
+  Houses Import JSON · Export JSON · Export CSV · Index conversions.
+  The five dialog components forward a `#activator` slot so the popover
+  list-items can drive them.
+- **Delete connections** → bottom of the Annotation List "More Actions"
+  menu (operation on annotations, not data I/O).
+- **Filters** → its own palette (`FiltersPanel.vue`, `mdi-filter-variant`).
+  Toggles **independently** of the Object Browser / Snapshots / Settings
+  mutex — open alongside the list.
+  - Tags section: search + Match select in a single row above the chip
+    cloud (`TagFilterEditor.vue` reorganized; `TagCloudPicker.vue` now
+    takes `searchText` as a prop).
+  - Property values section: chevron-disclosure header with count chip;
+    default-open if any property filters exist, default-closed otherwise.
+  - Advanced disclosure: Scope (current frame / hidden layers), Object ID
+    & region, **Selection** (use selection as filter — moved from the old
+    Actions accordion).
+  - `PropertyFilterHistogram.vue` reflowed: tight header row, CDF/log
+    on their own controls row (was collapsing to one letter per line),
+    full-width histogram bar, side-by-side Min/Max.
+  - `PropertyFilterSelector.vue` deleted — Filters palette uses
+    `PropertyPicker` directly via `mode="filter"`.
+- **Properties** workflow split across three new homes:
+  - `mdi-ruler-square` icon in the app bar opens `AnalyzeDialog.vue`
+    (extracted from `AnnotationProperties.vue`). All measurement
+    configuration / compute / batch progress lives here.
+  - `PropertyPicker.vue` is the shared "pick which computed properties
+    to use" component. Two view modes (tree default + Miller fallback
+    via header toggle), Selected-list sidebar with × to unselect,
+    count chip, search. Mode prop drives display vs filter behavior
+    and is reused from both the annotation list and the Filters
+    palette.
+  - `PropertyTreeNode.vue` is the recursive tree node (chevron
+    branch / checkbox leaf).
+  - **+ Add property** lives in the Annotation List toolbar (primary
+    flat button). **Show in annotation list…** lives at the bottom of
+    the Measure dialog (primary flat button with ellipsis) and on
+    Done auto-opens the Object Browser palette.
+  - Column headers in the data table carry an × to remove the column.
+- **Undo / Redo** → `UndoRedoButtons.vue`, two icon buttons in the app
+  bar inside the dataset-view conditional. Tooltips name the pending
+  action.
+- **AnnotationActions accordion gone.** `AnnotationProperties.vue` gone.
+  `PropertyFilterSelector.vue` gone. Object Browser is now a thin
+  `<annotation-list />` — no expansion panels, no "Annotation List"
+  heading (palette header carries the title).
+- **Annotation list typography compacted** (12px headers / cells, 32px
+  rows, hairline row dividers) and the table itself is now translucent
+  so the palette's glass shows through. Property columns get
+  `minWidth: 140` so long names like "DAPI blob metrics / Centroid / x"
+  wrap sensibly instead of one word per line.
+
+Known persistence gap surfaced and filed as
+[#1177](https://github.com/arjunrajlaboratory/NimbusImage/issues/1177):
+`displayedPropertyPaths` and `filterStore.filterPaths` are pure in-memory
+mutations and don't survive a refresh. Pre-existing, not a regression
+from this work, but worth fixing on `IDatasetView`.
+
 ### ⏳ Phase 3 · Dissolve side panels (NOT STARTED)
 
-The big move. Left "Toolset / Layers" and right side panel become palettes.
+The remaining side panels: left "Toolset / Layers" and the right
+side panel. Becoming palettes.
 
 - Extract Toolset selector into a vertical `ToolDock.vue` on the left edge
 - Move Layers / Channels block into a Layers palette opened via dock button
-- (Object Browser already a palette — done in Phase 2)
+- (Object Browser, Filters, Properties already palettes — done in Phase 2)
 - Add a `workspace` Vuex module that persists palette positions per user
 - Decide always-float vs pin-pushes-canvas. **Current lean: always-float**
 - Keyboard: `tab` cycles palettes; `space` peeks the canvas (hide all)
@@ -158,32 +225,12 @@ The big move. Left "Toolset / Layers" and right side panel become palettes.
 Surfaced during conversation, awaiting direction. None of these are
 blocking:
 
-### Data import/export
+### Tag picker duplication in ViewerToolbar
 
-Currently lives in an Actions accordion inside Object Browser, mixed with
-unrelated things (Undo/Redo, selection filter, CSV export, Index
-conversion, Delete connections).
-
-**Recommendation:** decompose. Conservative version (recommended first):
-pull `Import / Export / CSV / Index conversion / Delete connections` into a
-new "Data" icon → modal (drawer surface). Full version (deferred to Phase
-4): also move Undo/Redo to the bottom dock and convert selection filter to
-an inline chip in Object Browser.
-
-### Tag browser / Filters palette
-
-Currently duplicated — appears inside Object Browser AND on the left side
-panel toolbar.
-
-**Recommendation:** consolidate into a **Filters** palette (not just Tags
-— there's TagPicker + Property filter + Annotation ID filter + Region
-filter, all the same question of "what subset am I looking at"). Toggleable
-via a new icon in the cluster. Default position bottom-left. Remove from
-left side panel and from inside Object Browser.
-
-Alternative considered: always-visible bottom-left palette that can't be
-hidden. Rejected — burns pixels even when not needed. Palette toggle is
-consistent with everything else.
+`ViewerToolbar.vue` still mounts a `TagFilterEditor` on the left side
+panel (`src/components/ViewerToolbar.vue:138`). The Filters palette is
+now the canonical home, so this should be removed once Phase 3 starts
+dissolving the side panel.
 
 ### Help / Account / Chat icons
 
@@ -191,6 +238,16 @@ Still loose icons next to the cluster, not in it. They are drawer / popover
 surfaces in the taxonomy, so leaving them outside the palette cluster is
 intentional. May want to give them their own visual treatment (a separate
 group) once the cluster has been lived with.
+
+### Per-dataset persistence (#1177)
+
+Selected columns and active property filters reset on refresh. Not a
+regression from this work — `togglePropertyPathVisibility` has always
+been a pure Vuex mutation with no backend sync. The right home is
+`IDatasetView`, alongside the existing per-user view state (contrast,
+last location). See issue
+[#1177](https://github.com/arjunrajlaboratory/NimbusImage/issues/1177)
+for the proposed wiring.
 
 ## Decisions log
 
@@ -225,6 +282,12 @@ Where things live:
 | Floating palette component | `src/components/FloatingPalette.vue` |
 | Palette cluster styles | `src/App.vue` (scoped) |
 | Settings section pattern | `src/components/SettingsPanel.vue` (scoped) |
+| Filters palette wrapper | `src/components/FiltersPanel.vue` |
+| Property picker (tree + miller) | `src/components/PropertyPicker.vue` |
+| Property tree node (recursive) | `src/components/PropertyTreeNode.vue` |
+| Analyze (measure) dialog | `src/components/AnalyzeDialog.vue` |
+| Data I/O popover | `src/components/DataIOMenu.vue` |
+| Undo/Redo app-bar buttons | `src/components/UndoRedoButtons.vue` |
 | GeoJS pan/zoom unclamping | `src/components/ImageViewer.vue` (~line 800 + ~line 906) |
 
 ## Pointers for picking up cold
