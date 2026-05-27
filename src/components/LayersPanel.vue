@@ -29,10 +29,10 @@
 
 <style lang="scss" scoped>
 .layers-panel {
-  padding: 8px 12px 12px;
+  padding: 6px 12px 12px;
 }
 .layer-mode-controls {
-  margin: 4px 0 10px;
+  margin: 0 0 4px;
   :deep(.v-radio) {
     margin-right: 10px;
     > .v-input--selection-controls__input {
@@ -45,7 +45,7 @@
 }
 .add-layer-btn {
   position: absolute;
-  top: 6px;
+  top: 2px;
   right: 0;
   text-transform: none;
   letter-spacing: normal;

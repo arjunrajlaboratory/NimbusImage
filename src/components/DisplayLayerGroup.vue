@@ -3,6 +3,20 @@
     <div v-if="!singleLayer" class="group-header pl-4 py-1">
       <div class="group-name-cell">
         <div class="subtitle-1">Group</div>
+        <v-tooltip text="Dissolve group">
+          <template v-slot:activator="{ props: tipProps }">
+            <v-btn
+              v-bind="tipProps"
+              icon
+              variant="text"
+              size="x-small"
+              class="dissolve-btn"
+              @click="dissolveGroup"
+            >
+              <v-icon size="16">mdi-close</v-icon>
+            </v-btn>
+          </template>
+        </v-tooltip>
       </div>
       <div class="group-switch-cell" v-show="hasMultipleZ">
         <v-switch
@@ -106,6 +120,10 @@ const visible = computed({
   },
 });
 
+function dissolveGroup() {
+  store.ungroupLayers(props.combinedLayers.map(({ layer }) => layer.id));
+}
+
 function update(value: ICombinedLayer[]) {
   emit("update", value);
 }
@@ -118,7 +136,13 @@ function endDragging(e: SortableEvent) {
   emit("end", e);
 }
 
-defineExpose({ hasMultipleZ, update, startDragging, endDragging });
+defineExpose({
+  hasMultipleZ,
+  dissolveGroup,
+  update,
+  startDragging,
+  endDragging,
+});
 </script>
 
 <style lang="scss" scoped>
@@ -147,9 +171,21 @@ defineExpose({ hasMultipleZ, update, startDragging, endDragging });
 }
 
 .group-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
+}
+
+.dissolve-btn {
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+
+  &:hover {
+    opacity: 1;
+  }
 }
 
 .group-switch-cell {
