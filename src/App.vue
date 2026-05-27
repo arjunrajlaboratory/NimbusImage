@@ -126,7 +126,7 @@
                 class="palette-ibtn"
                 :class="{ active: annotationPanel }"
                 aria-label="Object list"
-                @click.stop="toggleRightPanel('annotationPanel')"
+                @click.stop="togglePalette('annotationPanel')"
               >
                 <v-icon size="18">mdi-format-list-bulleted-square</v-icon>
               </button>
@@ -144,7 +144,7 @@
                 class="palette-ibtn"
                 :class="{ active: filtersPanel }"
                 aria-label="Filters"
-                @click.stop="filtersPanel = !filtersPanel"
+                @click.stop="togglePalette('filtersPanel')"
               >
                 <v-icon size="18">mdi-filter-variant</v-icon>
               </button>
@@ -162,7 +162,7 @@
                 class="palette-ibtn"
                 :class="{ active: snapshotPanel }"
                 aria-label="Snapshots"
-                @click.stop="toggleRightPanel('snapshotPanel')"
+                @click.stop="togglePalette('snapshotPanel')"
               >
                 <v-icon size="18">mdi-camera-outline</v-icon>
               </button>
@@ -178,7 +178,7 @@
                 class="palette-ibtn"
                 :class="{ active: settingsPanel }"
                 aria-label="Settings"
-                @click.stop="toggleRightPanel('settingsPanel')"
+                @click.stop="togglePalette('settingsPanel')"
               >
                 <v-icon size="18">mdi-tune</v-icon>
               </button>
@@ -317,19 +317,11 @@
       <analyze-annotations />
     </v-navigation-drawer>
 
-    <floating-palette
-      v-model="settingsPanel"
-      title="Settings"
-      :width="480"
-    >
+    <floating-palette v-model="settingsPanel" title="Settings" :width="480">
       <annotations-settings />
     </floating-palette>
 
-    <floating-palette
-      v-model="snapshotPanel"
-      title="Snapshots"
-      :width="480"
-    >
+    <floating-palette v-model="snapshotPanel" title="Snapshots" :width="480">
       <snapshots :snapshotVisible="snapshotPanel" />
     </floating-palette>
 
@@ -337,11 +329,19 @@
       v-model="annotationPanel"
       title="Object Browser"
       :width="640"
+      :top="annotationBrowserTop"
+      :max-height="annotationBrowserMaxHeight"
     >
       <annotation-browser></annotation-browser>
     </floating-palette>
 
-    <floating-palette v-model="filtersPanel" title="Filters" :width="480">
+    <floating-palette
+      ref="filtersPaletteRef"
+      v-model="filtersPanel"
+      title="Filters"
+      :width="480"
+      :max-height="filtersMaxHeight"
+    >
       <filters-panel />
     </floating-palette>
 
@@ -350,7 +350,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, Ref } from "vue";
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  Ref,
+  ComponentPublicInstance,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 import axios from "axios";
 import UserMenu from "./layout/UserMenu.vue";
@@ -405,20 +413,126 @@ const analyzePanel = ref(false);
 const analyzeDialogOpen = ref(false);
 const chatbotOpen = ref(false);
 
-const lastModifiedRightPanel = ref<string | null>(null);
 const isUploadLoading = ref(false);
 const helpPanelIsOpen = ref(false);
 
-// Filters is intentionally NOT in panelRefs — it toggles independently of
-// the mutex'd Object Browser / Snapshots / Settings cluster so you can keep
-// it open alongside one of those.
-const panelRefs: Record<string, Ref<boolean>> = {
-  snapshotPanel,
+// --- Right-column palette layout -------------------------------------------
+//
+// The right edge of the dataset view hosts a small set of palettes. Their
+// arrangement is driven by a declarative registry rather than ad-hoc toggle
+// bookkeeping:
+//
+//   * "primary" palettes own the column and are mutually exclusive — opening
+//     one closes the others.
+//   * a "companion" palette may share the column, but only alongside its
+//     host primary. Opening any other primary evicts it; closing the host on
+//     its own leaves the companion open (it can stand alone, top-right).
+//
+// Today the only companion is Filters (host: Object Browser), which is why
+// the two can be open together (Filters stacked above the Browser) while
+// Snapshots / Settings replace the whole column.
+type PaletteId =
+  | "annotationPanel"
+  | "filtersPanel"
+  | "snapshotPanel"
+  | "settingsPanel";
+
+interface PaletteRole {
+  role: "primary" | "companion";
+  host?: PaletteId;
+}
+
+const paletteOpen: Record<PaletteId, Ref<boolean>> = {
   annotationPanel,
+  filtersPanel,
+  snapshotPanel,
   settingsPanel,
-  analyzePanel,
-  chatbotOpen,
 };
+
+const paletteRoles: Record<PaletteId, PaletteRole> = {
+  annotationPanel: { role: "primary" },
+  snapshotPanel: { role: "primary" },
+  settingsPanel: { role: "primary" },
+  filtersPanel: { role: "companion", host: "annotationPanel" },
+};
+
+const paletteIds = Object.keys(paletteRoles) as PaletteId[];
+
+function openPalette(id: PaletteId) {
+  const def = paletteRoles[id];
+  for (const other of paletteIds) {
+    if (other === id) {
+      continue;
+    }
+    const otherDef = paletteRoles[other];
+    if (def.role === "primary") {
+      // A new primary clears every other primary, plus any companion that
+      // isn't hosted by it.
+      if (otherDef.role === "primary" || otherDef.host !== id) {
+        paletteOpen[other].value = false;
+      }
+    } else if (otherDef.role === "primary" && other !== def.host) {
+      // A companion evicts any primary that isn't its host.
+      paletteOpen[other].value = false;
+    }
+  }
+  paletteOpen[id].value = true;
+}
+
+function togglePalette(id: PaletteId) {
+  if (paletteOpen[id].value) {
+    paletteOpen[id].value = false;
+  } else {
+    openPalette(id);
+  }
+}
+
+function closeAllPalettes() {
+  for (const id of paletteIds) {
+    paletteOpen[id].value = false;
+  }
+}
+
+// --- Stacked positioning ----------------------------------------------------
+//
+// When Filters and the Object Browser are both open, Filters keeps the top of
+// the column and the Browser flows beneath it. We measure the rendered
+// Filters palette so the Browser sits flush below it with no dead gap.
+const PALETTE_TOP = 72; // clears the floating app bar
+const COLUMN_BOTTOM_INSET = 16;
+const STACK_GAP = 8;
+const MIN_BROWSER_HEIGHT = 260; // keep the Browser usable when stacked
+
+const filtersPaletteRef = ref<
+  ComponentPublicInstance & {
+    rootEl?: HTMLElement;
+  }
+>();
+const filtersHeight = ref(0);
+let filtersResizeObserver: ResizeObserver | null = null;
+
+const filtersStacked = computed(
+  () => filtersPanel.value && annotationPanel.value,
+);
+
+const annotationBrowserTop = computed(() =>
+  filtersStacked.value
+    ? PALETTE_TOP + filtersHeight.value + STACK_GAP
+    : PALETTE_TOP,
+);
+
+const annotationBrowserMaxHeight = computed(
+  () => `calc(100vh - ${annotationBrowserTop.value + COLUMN_BOTTOM_INSET}px)`,
+);
+
+// When stacked, cap Filters so the Browser always keeps a minimum height.
+const filtersMaxHeight = computed(() =>
+  filtersStacked.value
+    ? `calc(100vh - ${
+        PALETTE_TOP + COLUMN_BOTTOM_INSET + MIN_BROWSER_HEIGHT + STACK_GAP
+      }px)`
+    : `calc(100vh - ${PALETTE_TOP + COLUMN_BOTTOM_INSET}px)`,
+);
 
 function toggleHelpDialogUsingHotkey() {
   helpPanelIsOpen.value = !helpPanelIsOpen.value;
@@ -455,21 +569,8 @@ function goHome() {
 
 function onShowInList() {
   if (!annotationPanel.value) {
-    toggleRightPanel("annotationPanel");
+    openPalette("annotationPanel");
   }
-}
-
-function toggleRightPanel(panel: string | null) {
-  if (panel !== null) {
-    panelRefs[panel].value = !panelRefs[panel].value;
-  }
-  if (
-    lastModifiedRightPanel.value !== null &&
-    lastModifiedRightPanel.value !== panel
-  ) {
-    panelRefs[lastModifiedRightPanel.value].value = false;
-  }
-  lastModifiedRightPanel.value = panel;
 }
 
 const routeName = computed(() => route.name);
@@ -557,7 +658,7 @@ function annotationPanelChanged() {
 
 function datasetChanged() {
   if (routeName.value !== "datasetview") {
-    toggleRightPanel(null);
+    closeAllPalettes();
   }
 }
 
@@ -567,6 +668,22 @@ watch(routeName, () => datasetChanged());
 onMounted(() => {
   fetchConfig();
   loadAllTours();
+
+  // Track the Filters palette height so the Object Browser can stack flush
+  // beneath it. Guarded for non-DOM test environments.
+  if (typeof ResizeObserver !== "undefined") {
+    const el = filtersPaletteRef.value?.rootEl;
+    if (el) {
+      filtersResizeObserver = new ResizeObserver(() => {
+        filtersHeight.value = el.offsetHeight;
+      });
+      filtersResizeObserver.observe(el);
+    }
+  }
+});
+
+onBeforeUnmount(() => {
+  filtersResizeObserver?.disconnect();
 });
 
 defineExpose({
@@ -579,17 +696,20 @@ defineExpose({
   filtersPanel,
   analyzePanel,
   chatbotOpen,
-  lastModifiedRightPanel,
   isUploadLoading,
   helpPanelIsOpen,
   appHotkeys,
   routeName,
   hasUncomputedProperties,
   filteredToursByCategory,
+  filtersStacked,
+  annotationBrowserTop,
   fetchConfig,
   loadAllTours,
   goHome,
-  toggleRightPanel,
+  togglePalette,
+  openPalette,
+  closeAllPalettes,
   toggleHelpDialogUsingHotkey,
   handleTourStart,
   goToNewDataset,
@@ -629,7 +749,9 @@ defineExpose({
   display: grid;
   place-items: center;
   position: relative;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 
   &:hover {
     background: rgba(255, 255, 255, 0.06);

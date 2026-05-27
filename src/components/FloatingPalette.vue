@@ -6,6 +6,7 @@
          v-navigation-drawer did. -->
     <aside
       v-show="modelValue"
+      ref="rootEl"
       class="floating-palette"
       :style="paletteStyle"
       @click.stop
@@ -42,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -67,6 +68,11 @@ const props = withDefaults(
 defineEmits<{
   (e: "update:modelValue", value: boolean): void;
 }>();
+
+// Exposed so a parent can measure the rendered palette height (e.g. to stack
+// another palette beneath it). Always in the DOM thanks to v-show.
+const rootEl = ref<HTMLElement>();
+defineExpose({ rootEl });
 
 const paletteStyle = computed(() => ({
   width: typeof props.width === "number" ? `${props.width}px` : props.width,
@@ -147,7 +153,9 @@ const paletteStyle = computed(() => ({
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 
   svg {
     width: 14px;
@@ -168,7 +176,9 @@ const paletteStyle = computed(() => ({
 
 .palette-fade-enter-active,
 .palette-fade-leave-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
 }
 .palette-fade-enter-from,
 .palette-fade-leave-to {
