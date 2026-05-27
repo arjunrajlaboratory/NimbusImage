@@ -93,6 +93,52 @@
         NimbusImage
       </h1>
       <bread-crumbs />
+      <template v-if="store.dataset && routeName === 'datasetview'">
+        <div class="palette-cluster">
+          <v-tooltip text="Navigator: XY / Z / Time and timelapse controls">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: navigatorPanel }"
+                aria-label="Navigator"
+                @click.stop="togglePalette('navigatorPanel')"
+              >
+                <v-icon size="18">mdi-axis-arrow</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip text="Layers: channels, blending and layer mode">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: layersPanel }"
+                aria-label="Layers"
+                @click.stop="togglePalette('layersPanel')"
+              >
+                <v-icon size="18">mdi-layers</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip text="Tools: create and configure annotation tools">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: toolsPanel }"
+                aria-label="Tools"
+                @click.stop="togglePalette('toolsPanel')"
+              >
+                <v-icon size="18">mdi-tools</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+        </div>
+      </template>
       <v-spacer />
       <v-tooltip text="Upload a new dataset">
         <template v-slot:activator="{ props: activatorProps }">
@@ -345,6 +391,41 @@
       <filters-panel />
     </floating-palette>
 
+    <template v-if="store.dataset && routeName === 'datasetview'">
+      <floating-palette
+        ref="navigatorPaletteRef"
+        v-model="navigatorPanel"
+        title="Navigator"
+        :left="16"
+        :width="380"
+      >
+        <navigator-panel />
+      </floating-palette>
+
+      <floating-palette
+        ref="layersPaletteRef"
+        v-model="layersPanel"
+        title="Layers"
+        :left="16"
+        :width="420"
+        :top="layersPanelTop"
+        :max-height="layersPanelMaxHeight"
+      >
+        <layers-panel />
+      </floating-palette>
+
+      <floating-palette
+        v-model="toolsPanel"
+        title="Tools"
+        :left="16"
+        :width="380"
+        :top="toolsPanelTop"
+        :max-height="toolsPanelMaxHeight"
+      >
+        <toolset />
+      </floating-palette>
+    </template>
+
     <analyze-dialog v-model="analyzeDialogOpen" @show-in-list="onShowInList" />
   </v-app>
 </template>
@@ -354,6 +435,7 @@ import {
   ref,
   computed,
   watch,
+  nextTick,
   onMounted,
   onBeforeUnmount,
   Ref,
@@ -371,6 +453,9 @@ import DataIoMenu from "@/components/DataIOMenu.vue";
 import FiltersPanel from "@/components/FiltersPanel.vue";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
+import NavigatorPanel from "@/components/NavigatorPanel.vue";
+import LayersPanel from "@/components/LayersPanel.vue";
+import Toolset from "@/tools/toolsets/Toolset.vue";
 import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
@@ -393,6 +478,9 @@ void AnnotationBrowser;
 void FiltersPanel;
 void AnalyzeDialog;
 void UndoRedoButtons;
+void NavigatorPanel;
+void LayersPanel;
+void Toolset;
 void HelpPanel;
 void BreadCrumbs;
 void ChatComponent;
@@ -412,6 +500,11 @@ const filtersPanel = ref(false);
 const analyzePanel = ref(false);
 const chatbotOpen = ref(false);
 
+// Left-zone palettes (dissolved left sidebar).
+const navigatorPanel = ref(false);
+const toolsPanel = ref(false);
+const layersPanel = ref(false);
+
 // The Measure dialog is mounted once here but can be opened from several
 // places (app-bar ruler, Object Browser), so its open state lives in the
 // store rather than a local ref.
@@ -423,29 +516,37 @@ const analyzeDialogOpen = computed({
 const isUploadLoading = ref(false);
 const helpPanelIsOpen = ref(false);
 
-// --- Right-column palette layout -------------------------------------------
+// --- Palette layout ---------------------------------------------------------
 //
-// The right edge of the dataset view hosts a small set of palettes. Their
-// arrangement is driven by a declarative registry rather than ad-hoc toggle
-// bookkeeping:
+// The dataset view hosts palettes on two edges. Each declares a `zone` (which
+// edge it lives on) and a `role`.
 //
-//   * "primary" palettes own the column and are mutually exclusive — opening
-//     one closes the others.
-//   * a "companion" palette may share the column, but only alongside its
-//     host primary. Opening any other primary evicts it; closing the host on
-//     its own leaves the companion open (it can stand alone, top-right).
+// Right zone behaves as a mutually-exclusive column:
+//   * "primary" palettes (Object Browser / Snapshots / Settings) own the
+//     column — opening one closes the others.
+//   * the "companion" (Filters) may share the column, but only alongside its
+//     host primary (the Object Browser); any other primary evicts it.
 //
-// Today the only companion is Filters (host: Object Browser), which is why
-// the two can be open together (Filters stacked above the Browser) while
-// Snapshots / Settings replace the whole column.
+// Left zone (dissolved sidebar: Navigator / Layers / Tools) is an independent
+// vertical stack — all three can be open at once and flow top-to-bottom in a
+// fixed order, each positioned beneath the open palettes above it.
+//
+// The two zones are independent, so a left palette and a right palette can be
+// open simultaneously.
 type PaletteId =
   | "annotationPanel"
   | "filtersPanel"
   | "snapshotPanel"
-  | "settingsPanel";
+  | "settingsPanel"
+  | "navigatorPanel"
+  | "toolsPanel"
+  | "layersPanel";
+
+type PaletteZone = "left" | "right";
 
 interface PaletteRole {
   role: "primary" | "companion";
+  zone: PaletteZone;
   host?: PaletteId;
 }
 
@@ -454,33 +555,43 @@ const paletteOpen: Record<PaletteId, Ref<boolean>> = {
   filtersPanel,
   snapshotPanel,
   settingsPanel,
+  navigatorPanel,
+  toolsPanel,
+  layersPanel,
 };
 
 const paletteRoles: Record<PaletteId, PaletteRole> = {
-  annotationPanel: { role: "primary" },
-  snapshotPanel: { role: "primary" },
-  settingsPanel: { role: "primary" },
-  filtersPanel: { role: "companion", host: "annotationPanel" },
+  annotationPanel: { role: "primary", zone: "right" },
+  snapshotPanel: { role: "primary", zone: "right" },
+  settingsPanel: { role: "primary", zone: "right" },
+  filtersPanel: { role: "companion", zone: "right", host: "annotationPanel" },
+  navigatorPanel: { role: "primary", zone: "left" },
+  toolsPanel: { role: "primary", zone: "left" },
+  layersPanel: { role: "primary", zone: "left" },
 };
 
 const paletteIds = Object.keys(paletteRoles) as PaletteId[];
 
 function openPalette(id: PaletteId) {
   const def = paletteRoles[id];
-  for (const other of paletteIds) {
-    if (other === id) {
-      continue;
-    }
-    const otherDef = paletteRoles[other];
-    if (def.role === "primary") {
-      // A new primary clears every other primary, plus any companion that
-      // isn't hosted by it.
-      if (otherDef.role === "primary" || otherDef.host !== id) {
+  // Only the right zone has mutex/companion relationships; left-zone palettes
+  // stack independently and never evict each other.
+  if (def.zone === "right") {
+    for (const other of paletteIds) {
+      if (other === id || paletteRoles[other].zone !== "right") {
+        continue;
+      }
+      const otherDef = paletteRoles[other];
+      if (def.role === "primary") {
+        // A new primary clears every other primary, plus any companion that
+        // isn't hosted by it.
+        if (otherDef.role === "primary" || otherDef.host !== id) {
+          paletteOpen[other].value = false;
+        }
+      } else if (otherDef.role === "primary" && other !== def.host) {
+        // A companion evicts any primary that isn't its host.
         paletteOpen[other].value = false;
       }
-    } else if (otherDef.role === "primary" && other !== def.host) {
-      // A companion evicts any primary that isn't its host.
-      paletteOpen[other].value = false;
     }
   }
   paletteOpen[id].value = true;
@@ -502,19 +613,39 @@ function closeAllPalettes() {
 
 // --- Stacked positioning ----------------------------------------------------
 //
-// When Filters and the Object Browser are both open, Filters keeps the top of
-// the column and the Browser flows beneath it. We measure the rendered
-// Filters palette so the Browser sits flush below it with no dead gap.
+// Palettes that share a column flow vertically: each measures the rendered
+// height of the palette(s) above it (via ResizeObserver) so the next one sits
+// flush beneath with no dead gap. Used by both the right-zone Filters/Browser
+// pair and the left-zone Navigator/Layers/Tools stack.
 const PALETTE_TOP = 72; // clears the floating app bar
 const COLUMN_BOTTOM_INSET = 16;
 const STACK_GAP = 8;
 const MIN_BROWSER_HEIGHT = 260; // keep the Browser usable when stacked
 
-const filtersPaletteRef = ref<
-  ComponentPublicInstance & {
-    rootEl?: HTMLElement;
+type PaletteRefEl = ComponentPublicInstance & { rootEl?: HTMLElement };
+
+// Observe a FloatingPalette's rendered height into `heightRef`. Guarded for
+// non-DOM test environments. Returns a disconnect-able observer (or null).
+function observePaletteHeight(
+  paletteRef: Ref<PaletteRefEl | undefined>,
+  heightRef: Ref<number>,
+): ResizeObserver | null {
+  if (typeof ResizeObserver === "undefined") {
+    return null;
   }
->();
+  const el = paletteRef.value?.rootEl;
+  if (!el) {
+    return null;
+  }
+  const observer = new ResizeObserver(() => {
+    heightRef.value = el.offsetHeight;
+  });
+  observer.observe(el);
+  return observer;
+}
+
+// Right zone: Filters stacks above the Object Browser.
+const filtersPaletteRef = ref<PaletteRefEl>();
 const filtersHeight = ref(0);
 let filtersResizeObserver: ResizeObserver | null = null;
 
@@ -540,6 +671,64 @@ const filtersMaxHeight = computed(() =>
       }px)`
     : `calc(100vh - ${PALETTE_TOP + COLUMN_BOTTOM_INSET}px)`,
 );
+
+// Left zone: Navigator (top) -> Layers -> Tools stack, each flowing beneath
+// the open palettes above it. Navigator uses FloatingPalette defaults.
+const navigatorPaletteRef = ref<PaletteRefEl>();
+const layersPaletteRef = ref<PaletteRefEl>();
+const navigatorHeight = ref(0);
+const layersHeight = ref(0);
+let navigatorResizeObserver: ResizeObserver | null = null;
+let layersResizeObserver: ResizeObserver | null = null;
+
+const layersPanelTop = computed(
+  () =>
+    PALETTE_TOP +
+    (navigatorPanel.value && navigatorHeight.value
+      ? navigatorHeight.value + STACK_GAP
+      : 0),
+);
+
+const toolsPanelTop = computed(
+  () =>
+    layersPanelTop.value +
+    (layersPanel.value && layersHeight.value
+      ? layersHeight.value + STACK_GAP
+      : 0),
+);
+
+const layersPanelMaxHeight = computed(
+  () => `calc(100vh - ${layersPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
+);
+
+const toolsPanelMaxHeight = computed(
+  () => `calc(100vh - ${toolsPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
+);
+
+// The left palettes live inside a v-if, so attach their observers once they
+// mount (and tear down when leaving the dataset view).
+const leftPalettesMounted = computed(
+  () => !!store.dataset && routeName.value === "datasetview",
+);
+
+function setupLeftPaletteObservers() {
+  navigatorResizeObserver?.disconnect();
+  layersResizeObserver?.disconnect();
+  navigatorResizeObserver = observePaletteHeight(
+    navigatorPaletteRef,
+    navigatorHeight,
+  );
+  layersResizeObserver = observePaletteHeight(layersPaletteRef, layersHeight);
+}
+
+function teardownLeftPaletteObservers() {
+  navigatorResizeObserver?.disconnect();
+  layersResizeObserver?.disconnect();
+  navigatorResizeObserver = null;
+  layersResizeObserver = null;
+  navigatorHeight.value = 0;
+  layersHeight.value = 0;
+}
 
 function toggleHelpDialogUsingHotkey() {
   helpPanelIsOpen.value = !helpPanelIsOpen.value;
@@ -672,25 +861,35 @@ function datasetChanged() {
 watch(annotationPanel, () => annotationPanelChanged());
 watch(routeName, () => datasetChanged());
 
+// Left palettes mount/unmount with the dataset view, so (re)attach their
+// height observers whenever they appear.
+watch(
+  leftPalettesMounted,
+  async (mounted) => {
+    if (mounted) {
+      await nextTick();
+      setupLeftPaletteObservers();
+    } else {
+      teardownLeftPaletteObservers();
+    }
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   fetchConfig();
   loadAllTours();
 
-  // Track the Filters palette height so the Object Browser can stack flush
-  // beneath it. Guarded for non-DOM test environments.
-  if (typeof ResizeObserver !== "undefined") {
-    const el = filtersPaletteRef.value?.rootEl;
-    if (el) {
-      filtersResizeObserver = new ResizeObserver(() => {
-        filtersHeight.value = el.offsetHeight;
-      });
-      filtersResizeObserver.observe(el);
-    }
-  }
+  // The Filters palette is always mounted, so observe it directly.
+  filtersResizeObserver = observePaletteHeight(
+    filtersPaletteRef,
+    filtersHeight,
+  );
 });
 
 onBeforeUnmount(() => {
   filtersResizeObserver?.disconnect();
+  teardownLeftPaletteObservers();
 });
 
 defineExpose({
@@ -701,6 +900,9 @@ defineExpose({
   annotationPanel,
   settingsPanel,
   filtersPanel,
+  navigatorPanel,
+  toolsPanel,
+  layersPanel,
   analyzePanel,
   chatbotOpen,
   isUploadLoading,

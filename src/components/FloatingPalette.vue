@@ -50,8 +50,10 @@ const props = withDefaults(
     modelValue: boolean;
     title: string;
     width?: number | string;
-    /** Distance from the right edge (px) when anchor is "right". */
+    /** Distance from the right edge (px). Ignored when `left` is set. */
     right?: number;
+    /** Distance from the left edge (px). When set, the palette anchors left. */
+    left?: number;
     /** Distance from the top (px), measured below the floating app bar. */
     top?: number;
     /** Optional max-height; defaults to fitting in the viewport. */
@@ -76,7 +78,9 @@ defineExpose({ rootEl });
 
 const paletteStyle = computed(() => ({
   width: typeof props.width === "number" ? `${props.width}px` : props.width,
-  right: `${props.right}px`,
+  ...(props.left != null
+    ? { left: `${props.left}px` }
+    : { right: `${props.right}px` }),
   top: `${props.top}px`,
   maxHeight: props.maxHeight,
 }));

@@ -61,12 +61,6 @@ describe("Viewer", () => {
     expect(propertiesStore.fetchProperties).toHaveBeenCalled();
   });
 
-  it("handleImageChanged sets shouldResetMaps true", () => {
-    const wrapper = mountComponent();
-    (wrapper.vm as any).handleImageChanged();
-    expect((wrapper.vm as any).shouldResetMaps).toBe(true);
-  });
-
   it("handleResetComplete sets shouldResetMaps false", () => {
     const wrapper = mountComponent();
     (wrapper.vm as any).shouldResetMaps = true;

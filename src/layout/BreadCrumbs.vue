@@ -20,7 +20,6 @@
               item-value="value"
               :menu-props="{
                 closeOnContentClick: true,
-                density: 'compact',
                 maxHeight: 320,
               }"
               class="body-2 ml-1 breadcrumb-select"
