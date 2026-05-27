@@ -110,8 +110,11 @@ async function copyAnnotationIds() {
 <style lang="scss" scoped>
 .action-panel {
   position: absolute;
-  top: 20px;
-  right: 20px;
+  // Sit at the top-left of the canvas, clearing the floating app bar and the
+  // dataset breadcrumbs above it. The right side is reserved for the palette
+  // column, where this panel used to be hidden behind open palettes.
+  top: 72px;
+  left: 16px;
   background: rgba(33, 33, 33, 0.9);
   border-radius: 4px;
   padding: 12px;

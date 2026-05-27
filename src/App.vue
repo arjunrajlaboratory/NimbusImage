@@ -328,7 +328,7 @@
     <floating-palette
       v-model="annotationPanel"
       title="Object Browser"
-      :width="640"
+      :width="512"
       :top="annotationBrowserTop"
       :max-height="annotationBrowserMaxHeight"
     >
@@ -410,8 +410,15 @@ const annotationPanel = ref(false);
 const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analyzePanel = ref(false);
-const analyzeDialogOpen = ref(false);
 const chatbotOpen = ref(false);
+
+// The Measure dialog is mounted once here but can be opened from several
+// places (app-bar ruler, Object Browser), so its open state lives in the
+// store rather than a local ref.
+const analyzeDialogOpen = computed({
+  get: () => store.isAnalyzeDialogOpen,
+  set: (value: boolean) => store.setIsAnalyzeDialogOpen(value),
+});
 
 const isUploadLoading = ref(false);
 const helpPanelIsOpen = ref(false);

@@ -1,6 +1,23 @@
 <template>
   <div class="annotation-list-panel">
     <div class="annotation-list-toolbar">
+      <v-tooltip
+        text="Measure objects: configure and run property computations"
+      >
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            variant="text"
+            icon
+            size="small"
+            class="mr-1"
+            aria-label="Measure objects"
+            @click="store.setIsAnalyzeDialogOpen(true)"
+          >
+            <v-icon>mdi-ruler-square</v-icon>
+          </v-btn>
+        </template>
+      </v-tooltip>
       <property-picker>
         <template v-slot:activator="{ props: pickerProps }">
           <v-btn
