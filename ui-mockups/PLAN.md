@@ -34,14 +34,16 @@ interaction disappears.
 
 | Surface | When | Behavior | Examples in NimbusImage |
 |---|---|---|---|
-| **Dock** | Mode switches you make constantly | Always-visible icon strip on an edge | (planned) drawing tools left edge; Z + view controls bottom dock |
-| **Palette** | Data you want to keep open while working | Floating glass panel, toggleable, dismissible | Object Browser · Snapshots · Settings (planned: Layers, Tool Inspector, Filters) |
-| **Popover** | Brief, ephemeral choice | Small transient menu near trigger | Dataset switcher · account menu · tool sub-options |
-| **Drawer** | The task IS the workflow | Large overlay sheet, canvas dims behind | Upload · (planned) Data import/export · Help docs |
+| **Dock** | Mode switches you make constantly | Always-visible icon strip on an edge | (planned, Phase 4) Z + view controls bottom dock |
+| **Palette** | Data you want to keep open while working | Floating glass panel, toggleable, dismissible | Right zone: Object Browser · Snapshots · Settings · Filters. Left zone: Navigator · Layers · Tools |
+| **Popover** | Brief, ephemeral choice | Small transient menu near trigger | Dataset switcher · account menu · Data I/O · tool sub-options |
+| **Drawer** | The task IS the workflow | Large overlay sheet, canvas dims behind | Upload · Help docs |
 
 **Key rule:** circular icon buttons in the app bar should toggle *palettes*
 only. *Drawer* launchers look similar but behave differently — mixing the
-two semantics into one icon style is confusing.
+two semantics into one icon style is confusing. The app bar now has two such
+clusters: a **left cluster** (Navigator / Layers / Tools) and a **right
+cluster** (Object Browser / Filters / Snapshots / Settings).
 
 ## Phases
 
@@ -197,19 +199,66 @@ Known persistence gap surfaced and filed as
 mutations and don't survive a refresh. Pre-existing, not a regression
 from this work, but worth fixing on `IDatasetView`.
 
-### ⏳ Phase 3 · Dissolve side panels (NOT STARTED)
+### ✅ Phase 2.5 · Palette layout model + chrome polish
 
-The remaining side panels: left "Toolset / Layers" and the right
-side panel. Becoming palettes.
+The palettes stopped being a flat list of independently-pinned drawers and
+gained a small **declarative layout model** in `App.vue`. Plus a round of
+canvas-overlay repositioning so the floating chrome stops fighting itself.
 
-- Extract Toolset selector into a vertical `ToolDock.vue` on the left edge
-- Move Layers / Channels block into a Layers palette opened via dock button
-- (Object Browser, Filters, Properties already palettes — done in Phase 2)
-- Add a `workspace` Vuex module that persists palette positions per user
-- Decide always-float vs pin-pushes-canvas. **Current lean: always-float**
-- Keyboard: `tab` cycles palettes; `space` peeks the canvas (hide all)
-- Recommend behind a "New workspace" toggle in Settings; keep classic for
-  ~2 releases
+- **Declarative palette registry** (`App.vue`). Each palette has a `role`
+  (`primary` | `companion`) and a `zone` (`left` | `right`). Replaces the old
+  imperative `toggleRightPanel` / `lastModifiedRightPanel` bookkeeping.
+  - Right zone is a mutually-exclusive column: Object Browser / Snapshots /
+    Settings are primaries; **Filters** is a *companion* of the Object
+    Browser — it stacks **above** the Browser when both are open and is
+    evicted when another primary opens.
+  - Stacked palettes flow vertically: a `ResizeObserver` measures the upper
+    palette so the lower one sits flush beneath with no dead gap.
+    `FloatingPalette` exposes its `rootEl` for this.
+- **Canvas overlays repositioned.** Selection action panel → top-left (was
+  top-right, hidden behind the palette column). Minimap (`ImageOverview`) →
+  top-right, aligned with the palette column. Object Browser narrowed
+  640 → 512.
+- **Dataset breadcrumb pill.** The transparent bar left the dataset name hard
+  to read, so `BreadCrumbs` gets a left-anchored glass pill (slimmed to button
+  height, plain centered select).
+- **Object Browser measure icon.** A ruler icon left of "+ Add property"
+  opens the same Measure dialog as the app-bar ruler, via a shared
+  `isAnalyzeDialogOpen` store flag.
+
+Commits: `74651a1b` · `ead0a80d`
+
+### ✅ Phase 3 · Dissolve the left sidebar
+
+The left "Toolset / Layers / Z" sidebar is gone; the canvas is full-bleed and
+its contents became three left-zone palettes toggled from a **left app-bar
+cluster** (mirroring the right cluster — not the vertical edge-dock the
+original plan sketched).
+
+- **Navigator** (`NavigatorPanel.vue`) — XY / Z / Time sliders + unroll +
+  timelapse controls + large-image dropdown.
+- **Layers** (`LayersPanel.vue`) — layer-mode radios + Add layer +
+  `DisplayLayers`.
+- **Tools** — the existing `Toolset` (accordion removed; "Add new tool"
+  left-aligned in the panel body).
+- Left palettes **stack** (Navigator → Layers → Tools), independent of each
+  other and of the right zone, each measured so it flows beneath the open
+  ones above it.
+- `FloatingPalette` gained a `left` anchor. `ViewerToolbar.vue` deleted (this
+  also removed the duplicate tag-filter panel flagged below).
+- **Layer grouping reworked.** The drag-only "Drag layer here to create
+  group" landing pad is replaced by a **"Make group…" multi-select dropdown**
+  (pick channels → new group) plus an **(×) to dissolve** a group. Dragging
+  layers in/out of an existing group still works. New batched store actions
+  `groupLayers` / `ungroupLayers` (one sync each). Layer rows made
+  translucent; group-header switches aligned to the per-layer columns; row
+  heights and palette spacing tightened.
+
+Not done (deferred): a `workspace` Vuex module to persist palette
+positions/visibility per user, palette dragging/pinning, and the `tab`-cycle /
+`space`-peek keyboard gestures. These remain open for a later phase.
+
+Commits: `5a8235b7` · `8b03c882` (+ grouping-rework commit)
 
 ### ⏳ Phase 4 · Bottom dock + motion + polish (NOT STARTED)
 
@@ -225,12 +274,10 @@ side panel. Becoming palettes.
 Surfaced during conversation, awaiting direction. None of these are
 blocking:
 
-### Tag picker duplication in ViewerToolbar
+### ~~Tag picker duplication in ViewerToolbar~~ (resolved, Phase 3)
 
-`ViewerToolbar.vue` still mounts a `TagFilterEditor` on the left side
-panel (`src/components/ViewerToolbar.vue:138`). The Filters palette is
-now the canonical home, so this should be removed once Phase 3 starts
-dissolving the side panel.
+`ViewerToolbar.vue` (and its duplicate `TagFilterEditor`) was deleted when
+the left sidebar was dissolved. The Filters palette is the canonical home.
 
 ### Help / Account / Chat icons
 
@@ -265,6 +312,22 @@ Things that aren't going to change without revisiting:
 - **Always-float palettes (canvas full-bleed behind).** Aligned with Figma,
   not Lightroom. Required us to unclamp the canvas pan/zoom (Phase 2.3) so
   hidden areas are reachable.
+- **Palettes have a `role` + `zone`.** Right zone is a mutex column with one
+  companion (Filters↕Object Browser); left zone is an independent stack
+  (Navigator → Layers → Tools). The two zones are independent. Phase 2.5/3.
+- **Left tools became an app-bar cluster, not a vertical edge-dock.** The
+  original Phase 3 sketch called for a `ToolDock.vue` on the left edge; we
+  mirrored the right cluster instead so both edges share one mental model.
+- **Layer grouping = dropdown + drag.** "Make group…" multi-select dropdown
+  for discoverable creation, **plus** kept drag in/out of existing groups and
+  an (×) to dissolve. Phase 3.
+- **Don't re-render a vuedraggable list mid-drag.** The palette stacking
+  `ResizeObserver` fired during a layer drag and re-rendered the draggable
+  while SortableJS held the DOM → `emitsOptions` null crash. Drag state is
+  mirrored to `store.isLayerDragging` and the observers pause during a drag.
+- **Group aggregate state from data, not child refs.** A string `ref` inside
+  a vuedraggable slot can't be collected into an array; `DisplayLayerGroup`
+  computes its group switches from the layer data + store instead.
 
 ## File map
 
@@ -279,13 +342,22 @@ Where things live:
 | Vuetify defaults | `src/plugins/vuetify.ts` |
 | Transparent-bar mode | `src/style.scss` (`.datasetview-mode` block) |
 | Dataset-view route check | `src/App.vue` (`isDatasetView` computed) |
-| Floating palette component | `src/components/FloatingPalette.vue` |
-| Palette cluster styles | `src/App.vue` (scoped) |
+| Palette layout model (role/zone, stacking) | `src/App.vue` (`paletteRoles`, `openPalette`, `observePaletteHeight`) |
+| Floating palette component (left/right anchor, `rootEl`) | `src/components/FloatingPalette.vue` |
+| Palette cluster styles (left + right) | `src/App.vue` (scoped `.palette-cluster`) |
+| Dataset breadcrumb pill | `src/layout/BreadCrumbs.vue` (`.datasetview-mode .breadcrumbs`) |
+| Navigator palette (XY/Z/T + timelapse) | `src/components/NavigatorPanel.vue` |
+| Layers palette (mode + DisplayLayers + Make-group) | `src/components/LayersPanel.vue`, `src/components/DisplayLayers.vue` |
+| Layer group (header, dissolve ×) | `src/components/DisplayLayerGroup.vue` |
+| Tools palette | `src/tools/toolsets/Toolset.vue` |
+| Group/ungroup store actions | `src/store/index.ts` (`groupLayers`, `ungroupLayers`, `isLayerDragging`) |
+| Selection action panel (top-left) | `src/components/AnnotationActionPanel.vue` |
+| Minimap (top-right) | `src/components/ImageOverview.vue` |
 | Settings section pattern | `src/components/SettingsPanel.vue` (scoped) |
 | Filters palette wrapper | `src/components/FiltersPanel.vue` |
 | Property picker (tree + miller) | `src/components/PropertyPicker.vue` |
 | Property tree node (recursive) | `src/components/PropertyTreeNode.vue` |
-| Analyze (measure) dialog | `src/components/AnalyzeDialog.vue` |
+| Analyze (measure) dialog | `src/components/AnalyzeDialog.vue` (`isAnalyzeDialogOpen` store flag) |
 | Data I/O popover | `src/components/DataIOMenu.vue` |
 | Undo/Redo app-bar buttons | `src/components/UndoRedoButtons.vue` |
 | GeoJS pan/zoom unclamping | `src/components/ImageViewer.vue` (~line 800 + ~line 906) |
@@ -298,6 +370,7 @@ Where things live:
 4. The mockup file labels each phase with what's in scope — Section 04 of
    the HTML is the roadmap, Section 02b is the surface taxonomy, Section 03
    is the palette anatomy spec.
-5. The mockup's hero (Section 02) shows palette positions that don't yet
-   match the running app (vertical tool dock, bottom dock, minimap) —
-   those are Phase 3 / Phase 4 work.
+5. The mockup's hero (Section 02) predates the running app. Differences now:
+   the left tools are an **app-bar cluster + floating palettes**, not the
+   vertical edge-dock the mockup drew; the **minimap** sits top-right. The
+   **bottom dock** (Z slider + view controls) is still unbuilt — Phase 4.
