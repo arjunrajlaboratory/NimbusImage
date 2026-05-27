@@ -48,6 +48,8 @@
       :fallbackOnBody="true"
       :swapThreshold="0.65"
       :item-key="(el: any) => el[0]"
+      @start="isDragging = true"
+      @end="isDragging = false"
     >
       <template #item="{ element }">
         <display-layer-group
@@ -76,7 +78,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { IDisplayLayer, ICombinedLayer } from "@/store/model";
 import { v4 as uuidv4 } from "uuid";
 import DisplayLayerGroup from "./DisplayLayerGroup.vue";
@@ -105,6 +107,11 @@ function groupIdAfterSpacer(spacerId: string) {
 }
 
 const isDragging = ref(false);
+
+// Mirror drag state to the store so palette layout (which observes this
+// palette's height) can pause its reactive updates while a drag is in
+// progress — a mid-drag re-render corrupts vuedraggable's vnode tree.
+watch(isDragging, (dragging) => store.setIsLayerDragging(dragging));
 
 const hasMultipleZ = computed(() => {
   return store.dataset && store.dataset.z.length > 1;

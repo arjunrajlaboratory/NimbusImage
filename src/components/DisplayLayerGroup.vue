@@ -1,10 +1,10 @@
 <template>
   <div :class="{ background: !singleLayer }">
-    <div v-if="!singleLayer" class="d-flex align-center pl-4 py-1 pr-8">
-      <div class="textCol flex-grow-1">
+    <div v-if="!singleLayer" class="group-header pl-4 py-1">
+      <div class="group-name-cell">
         <div class="subtitle-1">Group</div>
       </div>
-      <div class="denseCol flex-shrink-0" v-show="hasMultipleZ">
+      <div class="group-switch-cell" v-show="hasMultipleZ">
         <v-switch
           @click.stop
           @mousedown.stop
@@ -16,7 +16,7 @@
           hide-details
         />
       </div>
-      <div class="denseCol flex-shrink-0">
+      <div class="group-switch-cell">
         <v-switch
           @click.stop
           @mousedown.stop
@@ -43,10 +43,7 @@
     >
       <template #item="{ element: combinedLayer }">
         <v-card class="mb-1 mx-1">
-          <display-layer
-            ref="displayLayerRefs"
-            :model-value="combinedLayer.layer"
-          />
+          <display-layer :model-value="combinedLayer.layer" />
         </v-card>
       </template>
     </draggable>
@@ -54,14 +51,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
-import { ICombinedLayer } from "@/store/model";
+import { computed } from "vue";
+import { ICombinedLayer, IDisplaySlice } from "@/store/model";
 import { SortableEvent } from "sortablejs";
 import DisplayLayer from "./DisplayLayer.vue";
 import draggable from "vuedraggable";
 import store from "@/store";
 
-defineProps<{
+const props = defineProps<{
   singleLayer: boolean;
   combinedLayers: ICombinedLayer[];
 }>();
@@ -72,35 +69,40 @@ const emit = defineEmits<{
   (e: "end", event: SortableEvent): void;
 }>();
 
-const displayLayerRefs = ref<InstanceType<typeof DisplayLayer>[]>([]);
-
-onMounted(() => {
-  // displayLayerRefs is populated automatically via template ref
-});
-
 const hasMultipleZ = computed(
   () => store.dataset && store.dataset.z.length > 1,
 );
 
+// Aggregate the group's state from the layer data rather than from child
+// component instances — a string ref inside the draggable slot can't be
+// collected into an array, which breaks .every/.forEach.
 const isZMaxMerge = computed({
   get: () =>
-    displayLayerRefs.value?.every((displayLayer) => displayLayer.isZMaxMerge) ??
-    false,
+    props.combinedLayers.length > 0 &&
+    props.combinedLayers.every(({ layer }) => layer.z.type === "max-merge"),
   set: (value: boolean) => {
-    displayLayerRefs.value?.forEach(
-      (displayLayer) => (displayLayer.isZMaxMerge = value),
-    );
+    const newZSlice: IDisplaySlice = value
+      ? { type: "max-merge", value: null }
+      : { type: "current", value: null };
+    for (const { layer } of props.combinedLayers) {
+      if ((layer.z.type === "max-merge") === value) {
+        continue;
+      }
+      store.changeLayer({ layerId: layer.id, delta: { z: newZSlice } });
+    }
   },
 });
 
 const visible = computed({
   get: () =>
-    displayLayerRefs.value?.every((displayLayer) => displayLayer.visible) ??
-    false,
+    props.combinedLayers.length > 0 &&
+    props.combinedLayers.every(({ layer }) => layer.visible),
   set: (value: boolean) => {
-    displayLayerRefs.value?.forEach(
-      (displayLayer) => (displayLayer.visible = value),
-    );
+    for (const { layer } of props.combinedLayers) {
+      if (layer.visible !== value) {
+        store.toggleLayerVisibility(layer.id);
+      }
+    }
   },
 });
 
@@ -128,15 +130,32 @@ defineExpose({ hasMultipleZ, update, startDragging, endDragging });
   border-radius: 14px;
   border: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
-</style>
 
-<style>
-.denseCol {
-  flex-grow: 0;
-  font-size: 0.8em;
+/* Mirror the per-layer row layout (DisplayLayer .layer-title-row) so the
+   group's aggregate switches line up with the per-layer switch columns. The
+   padding-right matches the expansion chevron that each layer row carries. */
+.group-header {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+  /* The group header has no per-row expansion chevron, so reserve its
+     footprint (~chevron width + the row's right padding) here so the group's
+     aggregate switches line up with the per-layer switch columns. */
+  padding-right: 53px;
 }
 
-.textCol {
+.group-name-cell {
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
+}
+
+.group-switch-cell {
+  display: flex;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0 4px;
 }
 </style>

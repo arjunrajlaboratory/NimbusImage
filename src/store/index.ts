@@ -285,6 +285,9 @@ export class Main extends VuexModule {
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
+  // True while a layer is being dragged (reordered/grouped). Used to suppress
+  // palette re-layout that would otherwise re-render the draggable mid-drag.
+  isLayerDragging: boolean = false;
 
   toolTemplateList: any[] = [];
   selectedTool: IActiveTool | null = null;
@@ -1076,6 +1079,11 @@ export class Main extends VuexModule {
   @Mutation
   public setIsAnalyzeDialogOpen(value: boolean) {
     this.isAnalyzeDialogOpen = value;
+  }
+
+  @Mutation
+  public setIsLayerDragging(value: boolean) {
+    this.isLayerDragging = value;
   }
 
   @Action

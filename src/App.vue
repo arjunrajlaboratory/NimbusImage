@@ -638,6 +638,12 @@ function observePaletteHeight(
     return null;
   }
   const observer = new ResizeObserver(() => {
+    // Don't write height (and trigger a re-layout / re-render) while a layer
+    // drag is underway — that re-renders the draggable mid-drag and corrupts
+    // its vnode tree. The final size is re-measured when the drag ends.
+    if (store.isLayerDragging) {
+      return;
+    }
     heightRef.value = el.offsetHeight;
   });
   observer.observe(el);
@@ -874,6 +880,26 @@ watch(
     }
   },
   { immediate: true },
+);
+
+// Height observers are paused during a layer drag (see observePaletteHeight),
+// so re-measure once it ends to settle the stack at the final heights.
+watch(
+  () => store.isLayerDragging,
+  async (dragging) => {
+    if (dragging) {
+      return;
+    }
+    await nextTick();
+    const navEl = navigatorPaletteRef.value?.rootEl;
+    const layEl = layersPaletteRef.value?.rootEl;
+    if (navEl) {
+      navigatorHeight.value = navEl.offsetHeight;
+    }
+    if (layEl) {
+      layersHeight.value = layEl.offsetHeight;
+    }
+  },
 );
 
 onMounted(() => {
