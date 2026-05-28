@@ -282,7 +282,7 @@ panel" and left users unsure what was open and why.
   the wider dialog also fixes the cramped, truncated interface fields.
 - **Left palettes open by default.** Navigator / Layers / Tools start open on
   each dataset-view entry (`datasetChanged` in `App.vue`).
-- **Chat above palettes.** `ChatComponent` `z-index` 1000 → 1007 (palettes are
+- **Chat above palettes.** `ChatComponent` `z-index` 1000 → 2000 (palettes are
   1006) so the assistant sits in front.
 - **"Make group…" → "Make layer group…"** for clarity in the Layers palette.
 - **Time-lapse controls tidied** (`NavigatorPanel.vue`): the "Track window"
@@ -296,6 +296,27 @@ panel" and left users unsure what was open and why.
   `location`/`max-width` still override the default.
 
 Commits: `6643a41b`
+
+### ✅ Phase 3.2 · Bottom-left canvas buttons + reset view
+
+Small canvas-overlay follow-ups (a preview of the Phase 4 bottom dock work).
+
+- **Bottom-left cluster dodges the left palettes.** The palette / lock / reset
+  buttons in the canvas's bottom-left corner were covered once the left stack
+  (Navigator + Layers + Tools) was fully open. `App.vue` exposes an
+  `allLeftPalettesOpen` flag and toggles a `left-palettes-open` class on
+  `<v-app>`; `ImageViewer` translates the cluster right past the column (the
+  widest palette, Layers, is `left 16 + width 420`) while it's set, with a
+  0.2s slide. Closing any of the three slides them back.
+- **Reset view button.** New `mdi-fit-to-page-outline` button in that cluster
+  recenters the image and fits it to the viewport via
+  `map.bounds(map.maxBounds(…))`, then syncs unrolled (multi-map) views —
+  mirroring the existing `setCenter` / `setCorners` pattern. Registered in the
+  Help panel via `v-description`, like the lock button. (Note: the obvious
+  `mdi-fit-to-screen-outline` does **not** exist in the bundled MDI font and
+  rendered as an invisible button — verify glyphs exist before using them.)
+
+Commits: `c4dea484`
 
 ### ⏳ Phase 4 · Bottom dock + motion + polish (NOT STARTED)
 
@@ -413,6 +434,8 @@ Where things live:
 | Data I/O popover | `src/components/DataIOMenu.vue` |
 | Undo/Redo app-bar buttons | `src/components/UndoRedoButtons.vue` |
 | GeoJS pan/zoom unclamping | `src/components/ImageViewer.vue` (~line 800 + ~line 906) |
+| Bottom-left canvas buttons (palette / lock / reset-view / reset-rotation) | `src/components/ImageViewer.vue` (`.left-palettes-open` shift, `resetView`) |
+| Left-palette-open flag (drives the button shift) | `src/App.vue` (`allLeftPalettesOpen`, `left-palettes-open` class) |
 
 ## Pointers for picking up cold
 
