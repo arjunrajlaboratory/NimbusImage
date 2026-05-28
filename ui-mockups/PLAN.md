@@ -260,6 +260,43 @@ positions/visibility per user, palette dragging/pinning, and the `tab`-cycle /
 
 Commits: `5a8235b7` · `8b03c882` (+ grouping-rework commit)
 
+### ✅ Phase 3.1 · Worker-tool dialog, tool sectioning & chrome polish
+
+A polish pass after living with the dissolved sidebar. The headline change is
+fixing the worker-tool interaction, which was "somewhere between a dialog and a
+panel" and left users unsure what was open and why.
+
+- **Tools palette sectioned by behavior.** `Toolset.vue` now groups its list
+  into **Annotation tools** (used directly on the canvas) and **Analysis
+  tools** (workers that open a configuration). A `toolGroups` computed splits
+  on `type === "segmentation"`. Canvas tools never open a panel; analysis
+  tools always do — so the surface a click produces is predictable.
+- **Worker config is a scrim-less modal.** The per-tool `v-menu` (anchored
+  `location="end"`, half-menu/half-panel) is gone. A single `v-dialog` tracks
+  whichever worker tool is selected (`selectedWorkerTool`) and renders
+  `AnnotationWorkerMenu` centered. It is `:scrim="false"` so the image and any
+  worker **preview overlays** stay visible behind it, and `persistent` so it
+  closes via its own Close button or by selecting another tool (not an
+  accidental canvas click). `AnnotationWorkerMenu` restyled from opaque
+  `surface-bright` to translucent glass + backdrop blur to match the palettes;
+  the wider dialog also fixes the cramped, truncated interface fields.
+- **Left palettes open by default.** Navigator / Layers / Tools start open on
+  each dataset-view entry (`datasetChanged` in `App.vue`).
+- **Chat above palettes.** `ChatComponent` `z-index` 1000 → 1007 (palettes are
+  1006) so the assistant sits in front.
+- **"Make group…" → "Make layer group…"** for clarity in the Layers palette.
+- **Time-lapse controls tidied** (`NavigatorPanel.vue`): the "Track window"
+  label was a plain `<div>` at the 16px body size — pinned to the 13px label
+  convention and kept on one line; "Delete all timelapse connections" moved
+  onto the "Show labels" row and dropped to 13px; the "Select Image"
+  large-image dropdown moved **below** all the timelapse controls.
+- **Tooltips default below + wrapped.** `vuetify.ts` sets
+  `VTooltip: { location: "bottom", maxWidth: 280 }`. App-bar icon tooltips were
+  growing sideways off `end` and unwrapped; tooltips with an explicit
+  `location`/`max-width` still override the default.
+
+Commits: `6643a41b`
+
 ### ⏳ Phase 4 · Bottom dock + motion + polish (NOT STARTED)
 
 - Bottom dock: Z slider + frame indicator + view actions
@@ -328,6 +365,18 @@ Things that aren't going to change without revisiting:
 - **Group aggregate state from data, not child refs.** A string `ref` inside
   a vuedraggable slot can't be collected into an array; `DisplayLayerGroup`
   computes its group switches from the layer data + store instead.
+- **Worker tools open a scrim-less centered modal**, not an inline panel or a
+  side-anchored menu. The scrim is off so the image + worker preview overlays
+  stay visible; it's `persistent` so it closes via its Close button or by
+  switching tools. This is a deliberate variant of the *Drawer* surface that
+  does **not** dim the canvas (because preview lives on the canvas). Phase 3.1.
+- **Tools list is sectioned by behavior** (Annotation vs Analysis) so the
+  surface a click produces is predictable — canvas tools never open a panel,
+  worker tools always do. Phase 3.1.
+- **Tooltips default to `location="bottom"` + wrapped** (`maxWidth: 280`) app
+  wide; explicit-location tooltips override. Phase 3.1.
+- **Left palettes (Navigator / Layers / Tools) open by default** on dataset
+  entry. Phase 3.1.
 
 ## File map
 
@@ -349,7 +398,10 @@ Where things live:
 | Navigator palette (XY/Z/T + timelapse) | `src/components/NavigatorPanel.vue` |
 | Layers palette (mode + DisplayLayers + Make-group) | `src/components/LayersPanel.vue`, `src/components/DisplayLayers.vue` |
 | Layer group (header, dissolve ×) | `src/components/DisplayLayerGroup.vue` |
-| Tools palette | `src/tools/toolsets/Toolset.vue` |
+| Tools palette (sectioned: Annotation / Analysis) | `src/tools/toolsets/Toolset.vue` (`toolGroups`, `selectedWorkerTool`) |
+| Worker config (scrim-less modal) | `src/components/AnnotationWorkerMenu.vue` (mounted from `Toolset.vue`) |
+| Tooltip defaults (bottom + wrap) | `src/plugins/vuetify.ts` (`VTooltip`) |
+| Default-open left palettes / chat z-index | `src/App.vue` (`datasetChanged`), `src/components/ChatComponent.vue` |
 | Group/ungroup store actions | `src/store/index.ts` (`groupLayers`, `ungroupLayers`, `isLayerDragging`) |
 | Selection action panel (top-left) | `src/components/AnnotationActionPanel.vue` |
 | Minimap (top-right) | `src/components/ImageOverview.vue` |
