@@ -318,14 +318,61 @@ Small canvas-overlay follow-ups (a preview of the Phase 4 bottom dock work).
 
 Commits: `c4dea484`
 
-### ⏳ Phase 4 · Bottom dock + motion + polish (NOT STARTED)
+### 🟡 Phase 4 · Bottom dock + motion + polish (PARTIAL)
+
+The **typography sweep** (the final item on the list) and a follow-up round
+of chrome polish are done. The structural items (bottom dock, presets,
+motion, peek gesture) are still unstarted.
+
+#### ✅ Typography sweep + chrome polish (done)
+
+- `style.scss`: global `.v-card-title` (14px / 500 / no uppercase) pulls
+  ~48 dialog/card titles off Vuetify's loud 20px default; new
+  `.panel-section-title` utility (11px uppercase letter-spaced) is the
+  canonical replacement for `text-subtitle-*` used as inner section labels.
+- Property panels (`PropertyPicker`, `PropertyList`, `PropertyCreation`,
+  `PropertyBody`, `AnnotationContextMenu`, `AnnotationCSVDialog`) and the
+  oddball 8 px caption in `PropertyWorkerMenu` were normalized.
+- Bare `font-family: monospace` / `"SF Mono"` swept to
+  `var(--nimbus-font-mono)` in `AnnotationWorkerMenu`, `JobsLogs`,
+  `HelpPanel`, `PropertyBody` (job logs + keyboard shortcuts now use Geist
+  Mono).
+- **Worker dialog reorganized.** `AnnotationWorkerMenu` Reset/Reload
+  buttons get full labels and a clearer Reload tooltip; action row is now
+  `Preview · Log · │ · Close (outlined) · Compute` with the "Apply to all
+  datasets in collection" checkbox moved above the row; the job-log
+  dialog's title row uses `d-flex align-center` so copy/close sit at the
+  top-right.
+- **Bulk-action panel** (`AnnotationActionPanel`): translucent glass to
+  match the palettes, content-sized width (`max-content`, 140 / 320 min/max)
+  with smaller buttons (12 px / 26 px height) and an uppercase 11 px
+  selection-count header. Slides right past any open left palette via
+  `transform`-based shift driven by `--nimbus-left-palette-clear-x`,
+  matching the bottom-left button cluster.
+- **Fit on dataset change.** Phase 2.3's `clampZoom = false` removed GeoJS's
+  auto-fit safety net, so fresh datasets opened at whatever zoom params
+  happened to land at. `_setupMap` now bumps `fitOnDatasetChange` whenever
+  it reconfigures the primary map for a new dataset ID; a watcher then
+  calls `map.bounds(maxBounds)` — equivalent to clicking the canvas
+  reset-view button on every dataset open. Unroll and layer reconfigures
+  don't fire the bump, so mid-interaction zoom is preserved.
+- **Shared design tokens** in `style.scss`: `--nimbus-glass-bg` /
+  `--nimbus-glass-filter` (consumed by `FloatingPalette` and
+  `AnnotationActionPanel`) and `--nimbus-left-palette-clear-x: 446px` (the
+  bottom-left button cluster and the action panel both derive their
+  palette-dodging shift from this so a future palette geometry change is a
+  one-token edit).
+
+Commits: `ba791d4b` · `c087bc36` · `66f6f673`
+
+#### ⏳ Still to do
 
 - Bottom dock: Z slider + frame indicator + view actions
-- Move the bottom-left palette/lock icons into the bottom dock
+- Move the bottom-left palette/lock/reset-view icons into the bottom dock
+  (the Phase 3.2 shift is an interim workaround)
 - Workspace presets ("Annotate", "Review", "Measure")
 - Spring motion on palette open/close
 - "Peek" gesture: hold space → palettes fade to 12%
-- Final typography sweep for any component no earlier phase touched
 
 ## Discussed but not committed
 
@@ -398,6 +445,22 @@ Things that aren't going to change without revisiting:
   wide; explicit-location tooltips override. Phase 3.1.
 - **Left palettes (Navigator / Layers / Tools) open by default** on dataset
   entry. Phase 3.1.
+- **Dialog / card titles render at 14 px (medium-weight, not uppercase).**
+  Vuetify's default 20 px reads loud against the 13 px label system; pulled
+  down once globally in `style.scss` so all ~48 dialog titles match. Inner
+  section labels inside cards use `.panel-section-title` (11 px uppercase
+  letter-spaced) instead of `text-subtitle-*`. Phase 4.
+- **Datasets open fitted to the viewport.** `_setupMap` signals
+  `fitOnDatasetChange` once per dataset-ID change; a watcher calls
+  `map.bounds(maxBounds)`. Replaces Phase 2.3's lost auto-fit safety net.
+  Mid-interaction reconfigures (unroll, layer changes) deliberately don't
+  fire the bump — only a new dataset does. Phase 4.
+- **Palette-edge geometry is a CSS token** (`--nimbus-left-palette-clear-x`,
+  set to 446 px in `style.scss`). Both the bottom-left button cluster and
+  the bulk-action panel derive their palette-dodging shift from it, so the
+  shift gap (10 px from the column's right edge) stays in sync if palette
+  geometry ever changes. Glass surfaces also share
+  `--nimbus-glass-bg` / `--nimbus-glass-filter`. Phase 4.
 
 ## File map
 
@@ -436,6 +499,12 @@ Where things live:
 | GeoJS pan/zoom unclamping | `src/components/ImageViewer.vue` (~line 800 + ~line 906) |
 | Bottom-left canvas buttons (palette / lock / reset-view / reset-rotation) | `src/components/ImageViewer.vue` (`.left-palettes-open` shift, `resetView`) |
 | Left-palette-open flag (drives the button shift) | `src/App.vue` (`allLeftPalettesOpen`, `left-palettes-open` class) |
+| Any-left-palette-open flag (drives the bulk-action panel shift) | `src/App.vue` (`anyLeftPaletteOpen`, `any-left-palette-open` class) |
+| Bulk-action panel (translucent, palette-aware, content-sized) | `src/components/AnnotationActionPanel.vue` |
+| Fit-on-dataset-change signal + watcher | `src/components/ImageViewer.vue` (`fitOnDatasetChange`, `lastFittedDatasetId`, bump inside `_setupMap`) |
+| Inner section title utility | `src/style.scss` (`.panel-section-title`) |
+| Global dialog title sizing | `src/style.scss` (`.v-card-title` 14 px rule) |
+| Shared chrome tokens (glass, palette-edge geometry) | `src/style.scss` (`--nimbus-glass-bg`, `--nimbus-glass-filter`, `--nimbus-left-palette-clear-x`) |
 
 ## Pointers for picking up cold
 
