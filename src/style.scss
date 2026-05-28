@@ -15,6 +15,19 @@
   --nimbus-radius: 8px;
   --nimbus-radius-sm: 6px;
   --nimbus-radius-lg: 12px;
+
+  /* Glass treatment for floating chrome (FloatingPalette, the bulk-action
+     panel, etc.). Hardcoded dark for now — matches the app's default theme. */
+  --nimbus-glass-bg: rgba(18, 22, 30, 0.78);
+  --nimbus-glass-filter: blur(28px) saturate(140%);
+
+  /* Right edge of the open left-palette column plus a 10 px gap. Surfaces
+     anchored to the canvas's left edge (bottom-left button cluster, the
+     selection action panel, future bottom-dock items) use this as their
+     "safe left" when any left palette is open. Derived from FloatingPalette
+     anchors in App.vue: left 16 + Layers palette width 420 (widest of the
+     three) + 10 px gap = 446. Update together if palette geometry changes. */
+  --nimbus-left-palette-clear-x: 446px;
 }
 
 /* Apply Geist globally */

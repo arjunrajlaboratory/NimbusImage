@@ -112,10 +112,8 @@ async function copyAnnotationIds() {
   position: absolute;
   // Sit at the top-left of the canvas, clearing the floating app bar and the
   // dataset breadcrumbs above it. When any left palette is open the panel
-  // would be hidden behind it, so we slide it right past the column (see the
-  // `.any-left-palette-open` ancestor selector below). The 462 value matches
-  // the bottom-left button shift (Layers palette: left 16 + width 420 +
-  // ~26 px gap).
+  // would be hidden behind it, so we slide it right past the column via the
+  // `.any-left-palette-open` ancestor selector below.
   top: 72px;
   left: 16px;
   // Shrink-wrap to the widest child (longest button or the "N objects
@@ -124,9 +122,9 @@ async function copyAnnotationIds() {
   width: max-content;
   min-width: 140px;
   max-width: 320px;
-  background: rgba(18, 22, 30, 0.78);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  background: var(--nimbus-glass-bg);
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
   border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
   border-radius: var(--nimbus-radius-lg, 12px);
   box-shadow:
@@ -139,7 +137,9 @@ async function copyAnnotationIds() {
   flex-direction: column;
   align-items: stretch;
   gap: 4px;
-  transition: left 0.2s ease;
+  // Animate the palette-driven shift via transform (GPU-composited, doesn't
+  // trigger layout) rather than `left`.
+  transition: transform 0.2s ease;
 }
 
 .selected-count {
@@ -169,8 +169,10 @@ async function copyAnnotationIds() {
 /* Slide the panel right of the open left-palette column so it isn't hidden
    behind it. `.any-left-palette-open` is set on `<v-app>` by App.vue (an
    ancestor of this panel); scoped CSS adds the data-v attribute to the last
-   compound selector only, so the ancestor class still matches. */
+   compound selector only, so the ancestor class still matches. The shift
+   matches the bottom-left button cluster (same 10 px gap to the palette's
+   right edge), driven by `--nimbus-left-palette-clear-x` in style.scss. */
 .any-left-palette-open .action-panel {
-  left: 462px;
+  transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 16px));
 }
 </style>

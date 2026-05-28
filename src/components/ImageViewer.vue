@@ -376,6 +376,13 @@ const cameraInfo = computed({
   set: (info: ICameraInfo) => store.setCameraInfo(info),
 });
 
+// Incremented by `_setupMap` once it has (re)configured the primary map for
+// a new dataset ID. The watcher below this declaration's use site then fits
+// the image to the viewport. `lastFittedDatasetId` is a "last seen" sentinel
+// guarding the bump — kept as a ref purely for symmetry with the bump ref.
+const fitOnDatasetChange = ref(0);
+const lastFittedDatasetId = ref<string | null>(null);
+
 const overview = computed(() => store.overview);
 const dataset = computed(() => store.dataset);
 const unrolling = computed(() => store.unroll);
@@ -962,6 +969,17 @@ function _setupMap(
     }
     updateScaleWidget();
     updateScalePixelWidget();
+
+    // Signal the "fit on dataset change" watcher: if the dataset ID has
+    // changed since the last fit, the map's bounds now reflect the new
+    // dataset and it's safe to fit the image to the viewport. Bump only
+    // on dataset change so unroll / layer reconfigures don't yank the
+    // user's zoom mid-interaction.
+    const currentDatasetId = dataset.value?.id ?? null;
+    if (currentDatasetId && currentDatasetId !== lastFittedDatasetId.value) {
+      lastFittedDatasetId.value = currentDatasetId;
+      fitOnDatasetChange.value++;
+    }
   }
 }
 
@@ -1461,6 +1479,20 @@ watch(dataset, () => {
   datasetReset();
 });
 
+// Fit the image to the viewport on dataset load / transition so each dataset
+// opens at a sensible zoom (Phase 2.3 unclamped clampZoom, removing GeoJS's
+// auto-fit safety net). `_setupMap` bumps `fitOnDatasetChange` after it has
+// (re)configured the primary map for a NEW dataset ID, and this watcher then
+// calls `map.bounds(maxBounds)` — equivalent to clicking the canvas
+// reset-view button. Driven by an actual signal instead of polling.
+watch(fitOnDatasetChange, () => {
+  const map = maps.value[0]?.map;
+  if (!map) {
+    return;
+  }
+  map.bounds(map.maxBounds(undefined, null), null);
+});
+
 // ---- Lifecycle ----
 
 let resizeObserver: ResizeObserver | null = null;
@@ -1743,14 +1775,15 @@ defineExpose({
   bottom: 10px;
   z-index: 1000;
 }
-/* The bottom-left cluster slides right of the open left-palette column (widest
-   is Layers: left 16 + width 420 ≈ 436px) so it isn't covered. Kept in sync
-   with the left palette widths in App.vue. */
+/* The bottom-left cluster slides right of the open left-palette column so it
+   isn't covered. Shift = clear-x minus the leftmost button's base `left`
+   (10 px), driven by `--nimbus-left-palette-clear-x` in style.scss so the
+   gap stays in sync with the bulk-action panel. */
 .left-palettes-open .layer-info-btn,
 .left-palettes-open .lock-view-btn,
 .left-palettes-open .reset-view-btn,
 .left-palettes-open .reset-rotation-btn {
-  transform: translateX(436px);
+  transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 10px));
 }
 .layer-info-container {
   position: absolute;

@@ -90,9 +90,9 @@ const paletteStyle = computed(() => ({
 .floating-palette {
   position: fixed;
   z-index: 1006; // above v-app-bar (1004 in Vuetify) so palette sits in front
-  background: rgba(18, 22, 30, 0.78);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  background: var(--nimbus-glass-bg);
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
   border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
   border-radius: var(--nimbus-radius-lg, 12px);
   box-shadow:
