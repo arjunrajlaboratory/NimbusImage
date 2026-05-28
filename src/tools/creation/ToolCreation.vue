@@ -51,7 +51,7 @@
           <v-card-actions class="tool-creation-actions">
             <v-spacer />
             <v-btn class="mr-4" variant="text" size="small" @click="close"
-              >CANCEL</v-btn
+              >Cancel</v-btn
             >
             <v-btn
               class="mr-4"
@@ -63,7 +63,7 @@
               id="tool-creation-add-tool-button-tourstep"
               v-tour-trigger="`tool-creation-add-tool-button-tourtrigger`"
             >
-              ADD TOOL TO TOOLSET
+              Add tool to toolset
             </v-btn>
           </v-card-actions>
         </div>
