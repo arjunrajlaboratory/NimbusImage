@@ -6,10 +6,10 @@
               titles, section labels — used sparingly)
    ───────────────────────────────────────────────────────────── */
 :root {
-  --nimbus-font: "Geist", "SF Pro Display", -apple-system, system-ui,
-    "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  --nimbus-font-mono: "Geist Mono", "SF Mono", "JetBrains Mono",
-    "Fira Code", Consolas, "Roboto Mono", monospace;
+  --nimbus-font: "Geist", "SF Pro Display", -apple-system, system-ui, "Segoe UI",
+    Roboto, "Helvetica Neue", sans-serif;
+  --nimbus-font-mono: "Geist Mono", "SF Mono", "JetBrains Mono", "Fira Code",
+    Consolas, "Roboto Mono", monospace;
   --nimbus-font-display: "Instrument Serif", "Iowan Old Style", Georgia,
     "Times New Roman", serif;
   --nimbus-radius: 8px;
@@ -27,7 +27,10 @@ body,
 
 /* Tabular numbers + slashed zero for the mono family so data columns
    align and 0 can't be confused with O. */
-code, kbd, samp, pre,
+code,
+kbd,
+samp,
+pre,
 .font-mono {
   font-family: var(--nimbus-font-mono);
   font-feature-settings: "zero", "ss01";
@@ -56,7 +59,7 @@ textarea {
 /* Dark theme tokens */
 .v-theme--dark {
   --nimbus-border: rgba(255, 255, 255, 0.06);
-  --nimbus-border-strong: rgba(255, 255, 255, 0.10);
+  --nimbus-border-strong: rgba(255, 255, 255, 0.1);
   --nimbus-glass: rgba(255, 255, 255, 0.02);
   --nimbus-glass-hover: rgba(255, 255, 255, 0.05);
   --nimbus-shadow: none;
@@ -116,8 +119,13 @@ body {
 // We keep the .long bar (which carries the primary color) but replace
 // its sweep animation with a full-width pulse. The .short bar is hidden.
 @keyframes progress-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 // Make the .long bar fill 100% and pulse instead of sweeping
@@ -231,7 +239,7 @@ body {
 }
 
 .v-field--focused .v-field__outline {
-  --v-field-border-opacity: 0.10;
+  --v-field-border-opacity: 0.1;
 }
 
 /* ── Global form-control sizing ──────────────────────────────
@@ -306,6 +314,29 @@ body {
   padding-block: 2px;
 }
 
+/* Dialog / card titles. Default Vuetify is 20px which feels loud against the
+   13px label system; pull them down to 14px medium-weight (not uppercase, so
+   user content like tool names still reads naturally). */
+.v-card-title {
+  font-size: 14px !important;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+
+/* Small uppercase section header for inner panel sections (e.g. "Color
+   Options" inside a card). Mirrors the FloatingPalette / settings-section
+   aesthetic; canonical replacement for `text-subtitle-1` / `text-subtitle-2`
+   used as section labels (not for user-content headers like names). */
+.panel-section-title {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--nimbus-text-secondary, rgba(var(--v-theme-on-surface), 0.85));
+  line-height: 1.4;
+}
+
 /* Outlined fields: more compact internal padding. */
 .v-input--density-compact .v-field {
   --v-input-control-height: 36px;
@@ -354,7 +385,10 @@ body {
   color: rgb(var(--v-theme-on-surface)) !important;
 }
 
-.v-theme--dark .v-chip:not([style*="background-color"]):not(.bg-primary):not(.bg-success):not(.bg-error):not(.bg-warning):not(.bg-info) {
+.v-theme--dark
+  .v-chip:not([style*="background-color"]):not(.bg-primary):not(
+    .bg-success
+  ):not(.bg-error):not(.bg-warning):not(.bg-info) {
   background: rgba(255, 255, 255, 0.15) !important;
   border: 1px solid rgba(255, 255, 255, 0.15) !important;
 
@@ -365,7 +399,7 @@ body {
 
 /* Colored chips: add subtle border */
 .v-theme--dark .v-chip[style*="background-color"] {
-  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Switches: boost inactive track and thumb visibility */

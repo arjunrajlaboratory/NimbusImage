@@ -219,7 +219,7 @@
 
         <template v-if="bulkExporting">
           <v-divider class="my-4" />
-          <div class="text-subtitle-2 mb-2">
+          <div class="panel-section-title mb-2">
             Exported {{ bulkExportProgress }} of
             {{ collectionDatasets.length }} datasets
           </div>

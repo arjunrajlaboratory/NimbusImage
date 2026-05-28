@@ -60,7 +60,7 @@
         </div>
         <div v-else class="picker-body">
           <div class="picker-available">
-            <h4 class="picker-section-title">Available</h4>
+            <h4 class="panel-section-title picker-section-title">Available</h4>
             <div v-if="tree.length === 0" class="empty-state pa-3">
               No matches.
             </div>
@@ -108,7 +108,7 @@
             </template>
           </div>
           <div class="picker-selected">
-            <h4 class="picker-section-title">Selected</h4>
+            <h4 class="panel-section-title picker-section-title">Selected</h4>
             <div v-if="selectedPaths.length === 0" class="empty-state pa-3">
               Nothing selected yet.
             </div>
@@ -372,12 +372,7 @@ defineExpose({
 }
 
 .picker-section-title {
-  font-family: var(--nimbus-font);
-  font-size: 10.5px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--nimbus-text-muted, #8a8f98);
+  // Inherits .panel-section-title from style.scss; keep the local margin.
   margin: 0 0 10px;
 }
 

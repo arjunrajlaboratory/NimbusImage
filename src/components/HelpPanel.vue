@@ -223,8 +223,7 @@ kbd {
   display: inline-block;
   min-width: 28px;
   padding: 2px 7px;
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", "JetBrains Mono",
-    Consolas, monospace;
+  font-family: var(--nimbus-font-mono, monospace);
   font-size: 0.75rem;
   font-weight: 500;
   color: rgb(var(--v-theme-on-surface));
