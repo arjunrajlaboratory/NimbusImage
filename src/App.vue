@@ -500,10 +500,10 @@ const filtersPanel = ref(false);
 const analyzePanel = ref(false);
 const chatbotOpen = ref(false);
 
-// Left-zone palettes (dissolved left sidebar).
-const navigatorPanel = ref(false);
-const toolsPanel = ref(false);
-const layersPanel = ref(false);
+// Left-zone palettes (dissolved left sidebar). Open by default.
+const navigatorPanel = ref(true);
+const toolsPanel = ref(true);
+const layersPanel = ref(true);
 
 // The Measure dialog is mounted once here but can be opened from several
 // places (app-bar ruler, Object Browser), so its open state lives in the
@@ -861,6 +861,11 @@ function annotationPanelChanged() {
 function datasetChanged() {
   if (routeName.value !== "datasetview") {
     closeAllPalettes();
+  } else {
+    // Left palettes (Navigator / Tools / Layers) open by default on each entry.
+    navigatorPanel.value = true;
+    toolsPanel.value = true;
+    layersPanel.value = true;
   }
 }
 

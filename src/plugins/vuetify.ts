@@ -4,6 +4,10 @@ import Persister from "@/store/Persister";
 
 const vuetify = createVuetify({
   defaults: {
+    // Tooltips below their trigger and wrapped to a sane width, rather than
+    // Vuetify's default of growing sideways off "end". Tooltips that set an
+    // explicit `location`/`max-width` still override these.
+    VTooltip: { location: "bottom", maxWidth: 280 },
     VBtn: { variant: "tonal", rounded: "lg" },
     VCard: { variant: "flat", rounded: "lg" },
     VAlert: { variant: "tonal", rounded: "lg" },

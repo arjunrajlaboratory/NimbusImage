@@ -74,10 +74,9 @@
           :min="3"
           :max="100"
           :title="'Track window size'"
+          class="track-window-slider"
         />
       </div>
-      <!-- TODO: Only display if there is more than one large image -->
-      <large-image-dropdown />
       <div v-if="timelapseMode" class="d-flex align-center">
         <tag-picker
           id="timelapse-tags-tourstep"
@@ -93,19 +92,19 @@
           v-model="showTimelapseLabels"
           label="Show labels"
         />
-      </div>
-      <div v-if="timelapseMode" class="d-flex align-center">
         <v-btn
-          class="ml-3"
+          class="ml-3 timelapse-delete-btn"
           variant="text"
           color="error"
           size="small"
           @click="annotationStore.deleteAllTimelapseConnections"
         >
-          <v-icon start>mdi-delete</v-icon>
+          <v-icon start size="small">mdi-delete</v-icon>
           Delete all timelapse connections
         </v-btn>
       </div>
+      <!-- TODO: Only display if there is more than one large image -->
+      <large-image-dropdown />
     </div>
   </div>
 </template>
@@ -122,6 +121,24 @@
 }
 .v-input--selection-controls {
   margin-top: 0;
+}
+
+/* "Track window" is a longer label than the XY/Z/Time sliders, so its fixed
+   3em column wraps and renders at the 16px body size. Match the 13px label
+   convention and let it size to its content on one line. */
+.track-window-slider :deep(.label-column) {
+  width: auto;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  padding-right: 4px;
+}
+
+/* The delete button inherits the 16px body size; pin it to 13px to match the
+   surrounding controls. */
+.timelapse-delete-btn {
+  font-size: 13px;
+  letter-spacing: 0;
 }
 </style>
 

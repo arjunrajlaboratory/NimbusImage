@@ -17,7 +17,7 @@
               class="make-group-btn"
               :disabled="ungroupedLayers.length < 1"
             >
-              Make group…
+              Make layer group…
             </v-btn>
           </template>
           <v-card min-width="220">
@@ -188,7 +188,7 @@ const groupsArrayWithSpacers = computed({
   },
 });
 
-// "Make group…" dropdown: pick one or more ungrouped layers to form a new
+// "Make layer group…" dropdown: pick one or more ungrouped layers to form a new
 // group. Dragging layers in/out of an existing group still works too.
 const ungroupedLayers = computed(() =>
   store.layers.filter((layer) => !layer.layerGroup),
@@ -409,7 +409,7 @@ defineExpose({
   color: var(--nimbus-text-muted, #8a8f98);
 }
 
-/* Column-label row (Z max-merge / Channel on/off) plus the "Make group…"
+/* Column-label row (Z max-merge / Channel on/off) plus the "Make layer group…"
    trigger. The padding-right reserves the per-layer expansion chevron's
    footprint so the labels line up over the switch columns. */
 .layer-header-row {

@@ -23,37 +23,23 @@
         <tool-type-selection @selected="handleToolTypeSelected" />
       </v-dialog>
     </div>
-    <!-- List toolset tools -->
-    <v-list v-if="toolsetTools.length" density="compact" class="tight-list">
-      <template v-for="(tool, index) in toolsetTools" :key="index">
-        <v-tooltip location="end" transition="none" z-index="100" v-if="tool">
+    <!-- List toolset tools, grouped by behavior: canvas tools you use directly
+         on the image vs. worker tools that open a configuration panel. -->
+    <v-list v-if="toolGroups.length" density="compact" class="tight-list">
+      <template v-for="group in toolGroups" :key="group.label">
+        <v-list-subheader class="tool-group-header">
+          {{ group.label }}
+        </v-list-subheader>
+        <v-tooltip
+          v-for="tool in group.tools"
+          :key="tool.id"
+          location="end"
+          transition="none"
+          z-index="100"
+        >
           <template v-slot:activator="{ props: activatorProps }">
-            <!-- If type === segmentation, add an annotation worker menu -->
-            <template v-if="tool.type === 'segmentation'">
-              <v-menu
-                :ref="setAnnotationMenuRef"
-                :closeOnClick="false"
-                :closeOnContentClick="false"
-                :model-value="!!selectedTool && selectedTool.id === tool.id"
-                z-index="2100"
-                location="end"
-              >
-                <template #activator="{ props: menuActivatorProps }">
-                  <tool-item
-                    :tool="tool"
-                    :disabled="!isLoggedIn"
-                    v-bind="mergeProps(activatorProps, menuActivatorProps)"
-                  />
-                </template>
-                <annotation-worker-menu
-                  :tool="tool"
-                  @loaded="onWorkerMenuLoaded"
-                  @close="store.setSelectedToolId(null)"
-                />
-              </v-menu>
-            </template>
-            <!-- When the tool is a SAM tool, show options in an expansion panel -->
-            <template v-else-if="tool.type === 'samAnnotation'">
+            <!-- SAM tools expose their options in an inline panel -->
+            <template v-if="tool.type === 'samAnnotation'">
               <div>
                 <tool-item
                   :tool="tool"
@@ -65,7 +51,6 @@
                 </template>
               </div>
             </template>
-            <!-- Otherwiser, only tool item -->
             <template v-else>
               <tool-item
                 :tool="tool"
@@ -100,6 +85,24 @@
     <v-list-subheader v-if="!toolsetTools.length">
       No tools in the current toolset.
     </v-list-subheader>
+
+    <!-- Worker tools open their configuration in a centered, scrim-less dialog
+         so the image (and any worker preview overlays) stay visible behind it.
+         A single dialog tracks whichever worker tool is currently selected. -->
+    <v-dialog
+      :model-value="!!selectedWorkerTool"
+      :scrim="false"
+      persistent
+      width="680"
+      class="worker-dialog"
+      @update:model-value="onWorkerDialogToggle"
+    >
+      <annotation-worker-menu
+        v-if="selectedWorkerTool"
+        :tool="selectedWorkerTool"
+        @close="store.setSelectedToolId(null)"
+      />
+    </v-dialog>
     <!-- Tool creation dialog -->
     <v-dialog
       v-model="toolCreationDialogOpen"
@@ -119,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, mergeProps } from "vue";
+import { ref, computed, mergeProps } from "vue";
 import store from "@/store";
 import {
   AnnotationNames,
@@ -136,12 +139,10 @@ import ToolItem from "./ToolItem.vue";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
 
-const annotationMenuRefs = ref<any[]>([]);
-function setAnnotationMenuRef(el: any) {
-  if (el && !annotationMenuRefs.value.includes(el)) {
-    annotationMenuRefs.value.push(el);
-  }
-}
+// Worker tools (type "segmentation") open a configuration dialog; everything
+// else is used directly on the canvas. Group them so the distinction is
+// obvious — see the two-section list and the worker dialog in the template.
+const WORKER_TOOL_TYPE = "segmentation";
 
 const selectedToolId = computed({
   get: () => store.selectedTool?.configuration.id || null,
@@ -156,6 +157,30 @@ const toolsetTools = computed(() => configuration.value?.tools || []);
 
 const selectedTool = computed<IToolConfiguration | null>(
   () => store.selectedTool?.configuration ?? null,
+);
+
+const toolGroups = computed(() => {
+  const canvasTools: IToolConfiguration[] = [];
+  const workerTools: IToolConfiguration[] = [];
+  for (const tool of toolsetTools.value) {
+    if (!tool) {
+      continue;
+    }
+    (tool.type === WORKER_TOOL_TYPE ? workerTools : canvasTools).push(tool);
+  }
+  const groups: { label: string; tools: IToolConfiguration[] }[] = [];
+  if (canvasTools.length) {
+    groups.push({ label: "Annotation tools", tools: canvasTools });
+  }
+  if (workerTools.length) {
+    groups.push({ label: "Analysis tools", tools: workerTools });
+  }
+  return groups;
+});
+
+// The single worker dialog tracks whichever worker tool is selected (if any).
+const selectedWorkerTool = computed<IToolConfiguration | null>(() =>
+  selectedTool.value?.type === WORKER_TOOL_TYPE ? selectedTool.value : null,
 );
 
 const isLoggedIn = computed(() => store.isLoggedIn);
@@ -225,20 +250,18 @@ function getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
   return propDesc;
 }
 
-function onWorkerMenuLoaded() {
-  nextTick(() => {
-    for (const menuItem of annotationMenuRefs.value) {
-      if (menuItem && typeof menuItem.updateDimensions === "function") {
-        menuItem.updateDimensions();
-      }
-    }
-  });
+function onWorkerDialogToggle(open: boolean) {
+  if (!open) {
+    store.setSelectedToolId(null);
+  }
 }
 
 defineExpose({
   selectedToolId,
   tools,
   toolsetTools,
+  toolGroups,
+  selectedWorkerTool,
   configuration,
   selectedTool,
   isLoggedIn,
@@ -250,7 +273,7 @@ defineExpose({
   onToolCreationDialogInput,
   handleToolTypeSelected,
   getToolPropertiesDescription,
-  onWorkerMenuLoaded,
+  onWorkerDialogToggle,
 });
 </script>
 <style scoped>
@@ -265,6 +288,19 @@ defineExpose({
 
 .tight-list {
   padding: 4px 0;
+}
+
+.tool-group-header {
+  min-height: 24px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.tool-group-header:not(:first-child) {
+  margin-top: 4px;
 }
 
 .tight-list :deep(.v-list-item) {

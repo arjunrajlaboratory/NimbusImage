@@ -679,15 +679,20 @@ defineExpose({
 }
 
 .menu {
-  background: rgb(var(--v-theme-surface-bright)) !important;
-  border: 1px solid var(--nimbus-border-strong) !important;
+  background: rgba(var(--v-theme-surface-bright), 0.85);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid var(--nimbus-border-strong);
+  border-radius: var(--nimbus-radius-lg);
   box-shadow:
-    0 12px 24px rgba(0, 0, 0, 0.5),
-    0 4px 8px rgba(0, 0, 0, 0.3);
+    0 20px 40px -16px rgba(0, 0, 0, 0.7),
+    0 8px 16px -8px rgba(0, 0, 0, 0.5);
+  // Reserve height while the interface loads so the dialog doesn't flash from a
+  // tiny spinner box to full size; .loaded releases it once content is ready.
   min-height: 600px;
 
   :deep(.v-card__text) {
-    max-height: 600px;
+    max-height: min(600px, calc(85vh - 96px));
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
