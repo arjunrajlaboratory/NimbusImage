@@ -5,6 +5,7 @@
     :class="{
       'datasetview-mode': isDatasetView,
       'left-palettes-open': isDatasetView && allLeftPalettesOpen,
+      'any-left-palette-open': isDatasetView && anyLeftPaletteOpen,
     }"
   >
     <v-dialog
@@ -513,6 +514,14 @@ const layersPanel = ref(true);
 // them right while this is true (see `.left-palettes-open` in ImageViewer).
 const allLeftPalettesOpen = computed(
   () => navigatorPanel.value && layersPanel.value && toolsPanel.value,
+);
+
+// Looser variant: any single left palette covers the left edge of the canvas
+// enough to obscure floating UI rooted at a click point (e.g. the annotation
+// right-click context menu). Surfaces that need to dodge ANY open left palette
+// (not just the whole stack) read `.any-left-palette-open`.
+const anyLeftPaletteOpen = computed(
+  () => navigatorPanel.value || layersPanel.value || toolsPanel.value,
 );
 
 // The Measure dialog is mounted once here but can be opened from several

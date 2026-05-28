@@ -1,9 +1,9 @@
 <template>
   <v-card :class="{ menu: true, loaded: !fetchingWorkerInterface }" v-if="tool">
-    <v-card-title class="subtitle-1 d-flex align-start">
+    <v-card-title class="d-flex align-start">
       <span class="flex-grow-1">{{ tool.name || "Worker menu" }}</span>
-      <div class="d-flex ml-2 ga-1">
-        <v-tooltip text="Reset all values to defaults">
+      <div class="d-flex ml-2 ga-2">
+        <v-tooltip text="Reset all parameter values to their defaults">
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
@@ -12,12 +12,12 @@
               class="worker-action-btn"
               @click="resetInterfaceValues()"
             >
-              <v-icon size="x-small" start>mdi-refresh</v-icon>
-              Reset
+              <v-icon start>mdi-refresh</v-icon>
+              Reset parameters
             </v-btn>
           </template>
         </v-tooltip>
-        <v-tooltip text="Refresh worker interface from the server">
+        <v-tooltip text="Reload worker information from server">
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
@@ -26,8 +26,8 @@
               class="worker-action-btn"
               @click="updateInterface(true)"
             >
-              <v-icon size="x-small" start>mdi-sync</v-icon>
-              Reload
+              <v-icon start>mdi-sync</v-icon>
+              Reload worker
             </v-btn>
           </template>
         </v-tooltip>
@@ -80,61 +80,8 @@
             tooltipPosition="right"
           />
         </v-row>
-        <v-row>
-          <v-btn
-            v-if="hasPreview"
-            variant="outlined"
-            color="primary"
-            size="small"
-            @click="preview"
-            >Preview</v-btn
-          >
-          <v-btn variant="text" size="small" @click="emit('close')"
-            >Close</v-btn
-          >
-          <v-spacer></v-spacer>
-          <v-btn
-            v-if="localJobLog"
-            variant="text"
-            color="info"
-            size="small"
-            class="mr-2"
-            @click="showLogDialog = true"
-          >
-            <v-icon start>mdi-text-box-outline</v-icon>
-            Log
-          </v-btn>
-          <v-btn
-            v-if="!running"
-            variant="flat"
-            color="primary"
-            size="small"
-            @click="compute"
-          >
-            <v-icon v-if="previousRunStatus === false" start>mdi-close</v-icon>
-            <v-icon v-if="previousRunStatus === true" start>mdi-check</v-icon>
-            Compute
-          </v-btn>
-          <v-btn
-            v-else
-            variant="text"
-            color="warning"
-            size="small"
-            :disabled="!currentJob && !batchCancelFunction"
-            @click="cancel"
-          >
-            <v-progress-circular size="16" indeterminate class="mr-2" />
-            Cancel{{ batchCancelFunction ? " All" : "" }}
-          </v-btn>
-        </v-row>
-        <v-row>
-          <v-checkbox
-            v-if="hasPreview"
-            v-model="displayWorkerPreview"
-            label="Display Previews"
-          ></v-checkbox>
-        </v-row>
-        <!-- Batch processing checkbox -->
+        <!-- Batch processing checkbox — sits above the action row so the
+             user picks the scope before hitting Compute. -->
         <v-row v-if="canApplyToAllDatasets || batchDisabledReason">
           <v-tooltip location="bottom" :disabled="!batchDisabledReason">
             <template v-slot:activator="{ props: activatorProps }">
@@ -149,6 +96,62 @@
             </template>
             <span>{{ batchDisabledReason }}</span>
           </v-tooltip>
+        </v-row>
+        <v-row>
+          <v-btn
+            v-if="hasPreview"
+            variant="outlined"
+            color="primary"
+            size="small"
+            @click="preview"
+            >Preview</v-btn
+          >
+          <v-btn
+            v-if="localJobLog"
+            variant="text"
+            color="info"
+            size="small"
+            class="ml-2"
+            @click="showLogDialog = true"
+          >
+            <v-icon start>mdi-text-box-outline</v-icon>
+            Log
+          </v-btn>
+          <v-spacer></v-spacer>
+          <v-btn variant="outlined" size="small" @click="emit('close')"
+            >Close</v-btn
+          >
+          <v-btn
+            v-if="!running"
+            variant="flat"
+            color="primary"
+            size="small"
+            class="ml-2"
+            @click="compute"
+          >
+            <v-icon v-if="previousRunStatus === false" start>mdi-close</v-icon>
+            <v-icon v-if="previousRunStatus === true" start>mdi-check</v-icon>
+            Compute
+          </v-btn>
+          <v-btn
+            v-else
+            variant="text"
+            color="warning"
+            size="small"
+            class="ml-2"
+            :disabled="!currentJob && !batchCancelFunction"
+            @click="cancel"
+          >
+            <v-progress-circular size="16" indeterminate class="mr-2" />
+            Cancel{{ batchCancelFunction ? " All" : "" }}
+          </v-btn>
+        </v-row>
+        <v-row>
+          <v-checkbox
+            v-if="hasPreview"
+            v-model="displayWorkerPreview"
+            label="Display Previews"
+          ></v-checkbox>
         </v-row>
         <!-- Batch progress display -->
         <v-row v-if="batchProgress">
@@ -189,7 +192,7 @@
     <!-- Log Dialog -->
     <v-dialog v-model="showLogDialog" max-width="800px">
       <v-card>
-        <v-card-title class="headline">
+        <v-card-title class="d-flex align-center">
           Job Log
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
@@ -674,7 +677,6 @@ defineExpose({
 
 <style lang="scss" scoped>
 .worker-action-btn {
-  font-size: 11px !important;
   letter-spacing: 0;
 }
 
@@ -739,7 +741,7 @@ defineExpose({
   min-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
-  font-family: monospace;
+  font-family: var(--nimbus-font-mono, monospace);
   font-size: 12px;
   background-color: rgba(0, 0, 0, 0.05);
   padding: 12px;
