@@ -434,11 +434,15 @@ body {
   background-color: #ffffff !important;
 }
 
-/* Dialogs and menus: elevated surface */
+/* Dialogs and menus: glass surface matching the floating palettes. The
+   !important on background is required because Vuetify's layered defaults
+   otherwise win for the v-card inside an overlay. */
 .v-overlay__content > .v-card,
 .v-menu > .v-overlay__content > .v-card,
 .v-dialog > .v-overlay__content > .v-card {
-  background: rgb(var(--v-theme-surface-bright)) !important;
+  background: var(--nimbus-glass-bg) !important;
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
   border: 1px solid var(--nimbus-border) !important;
   border-radius: var(--nimbus-radius-lg) !important;
 }
