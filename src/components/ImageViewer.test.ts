@@ -23,7 +23,10 @@ const mockMap = () => {
     zoom: vi.fn().mockReturnThis(),
     rotation: vi.fn().mockReturnValue(0),
     size: vi.fn().mockReturnValue({ width: 800, height: 600 }),
-    maxBounds: vi.fn().mockReturnValue({ right: 1000, bottom: 800 }),
+    maxBounds: vi
+      .fn()
+      .mockReturnValue({ left: 0, top: 0, right: 1000, bottom: 800 }),
+    bounds: vi.fn().mockReturnThis(),
     zoomRange: vi.fn().mockReturnThis(),
     draw: vi.fn().mockReturnThis(),
     exit: vi.fn(),
