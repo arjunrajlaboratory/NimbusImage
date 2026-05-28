@@ -2,7 +2,10 @@
   <v-app
     id="inspire"
     v-mousetrap="appHotkeys"
-    :class="{ 'datasetview-mode': isDatasetView }"
+    :class="{
+      'datasetview-mode': isDatasetView,
+      'left-palettes-open': isDatasetView && allLeftPalettesOpen,
+    }"
   >
     <v-dialog
       v-model="helpPanelIsOpen"
@@ -504,6 +507,13 @@ const chatbotOpen = ref(false);
 const navigatorPanel = ref(true);
 const toolsPanel = ref(true);
 const layersPanel = ref(true);
+
+// When the whole left stack is open it reaches the bottom-left corner and
+// would cover the canvas's palette/lock/reset buttons; ImageViewer shifts
+// them right while this is true (see `.left-palettes-open` in ImageViewer).
+const allLeftPalettesOpen = computed(
+  () => navigatorPanel.value && layersPanel.value && toolsPanel.value,
+);
 
 // The Measure dialog is mounted once here but can be opened from several
 // places (app-bar ruler, Object Browser), so its open state lives in the

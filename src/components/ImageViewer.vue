@@ -166,6 +166,22 @@
       }}</v-icon>
     </v-btn>
     <v-btn
+      id="reset-view-tourstep"
+      variant="text"
+      icon
+      size="small"
+      class="reset-view-btn"
+      color="primary"
+      @click="resetView"
+      v-description="{
+        section: 'View',
+        title: 'Reset view',
+        description: 'Recenter and fit the image to the window',
+      }"
+    >
+      <v-icon size="24">mdi-fit-to-page-outline</v-icon>
+    </v-btn>
+    <v-btn
       id="reset-rotation-tourstep"
       variant="text"
       icon
@@ -637,6 +653,18 @@ function resetRotation() {
     return;
   }
   map.rotation(0);
+}
+
+// Recenter the image and fit it to the viewport by setting the view bounds to
+// the full image bounds. Mirrors setCenter/setCorners: change map 0, then sync
+// so unrolled (multi-map) views follow.
+function resetView() {
+  const map = maps.value[0]?.map;
+  if (!map) {
+    return;
+  }
+  map.bounds(map.maxBounds(undefined, null), null);
+  synchroniseCameraFromMap(map);
 }
 
 function setCorners(evt: any) {
@@ -1549,6 +1577,7 @@ defineExpose({
   mouseUp,
   setCenter,
   resetRotation,
+  resetView,
   setCorners,
   draw,
   toggleViewLock,
@@ -1714,6 +1743,15 @@ defineExpose({
   bottom: 10px;
   z-index: 1000;
 }
+/* The bottom-left cluster slides right of the open left-palette column (widest
+   is Layers: left 16 + width 420 ≈ 436px) so it isn't covered. Kept in sync
+   with the left palette widths in App.vue. */
+.left-palettes-open .layer-info-btn,
+.left-palettes-open .lock-view-btn,
+.left-palettes-open .reset-view-btn,
+.left-palettes-open .reset-rotation-btn {
+  transform: translateX(436px);
+}
 .layer-info-container {
   position: absolute;
   left: 10px;
@@ -1732,10 +1770,23 @@ defineExpose({
   bottom: 10px;
   z-index: 1001;
 }
-.reset-rotation-btn {
+.reset-view-btn {
   position: absolute;
   left: 94px;
   bottom: 10px;
   z-index: 1001;
+}
+.reset-rotation-btn {
+  position: absolute;
+  left: 136px;
+  bottom: 10px;
+  z-index: 1001;
+}
+/* Smoothly slide the cluster when the left palettes open/close. */
+.layer-info-btn,
+.lock-view-btn,
+.reset-view-btn,
+.reset-rotation-btn {
+  transition: transform 0.2s ease;
 }
 </style>
