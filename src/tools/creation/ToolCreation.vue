@@ -321,6 +321,16 @@ defineExpose({
   flex-direction: column;
   max-height: 80vh;
   width: 100%;
+  background: var(--nimbus-glass-bg);
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
+  border: 1px solid var(--nimbus-border-strong);
+  border-radius: var(--nimbus-radius-lg);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 0.5px rgba(255, 255, 255, 0.06),
+    0 20px 40px -16px rgba(0, 0, 0, 0.7),
+    0 8px 16px -8px rgba(0, 0, 0, 0.5);
 }
 
 .tool-creation-header {

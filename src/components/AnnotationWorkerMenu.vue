@@ -681,9 +681,9 @@ defineExpose({
 }
 
 .menu {
-  background: rgba(var(--v-theme-surface-bright), 0.85);
-  backdrop-filter: blur(24px) saturate(140%);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  background: var(--nimbus-glass-bg);
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
   border: 1px solid var(--nimbus-border-strong);
   border-radius: var(--nimbus-radius-lg);
   box-shadow:
