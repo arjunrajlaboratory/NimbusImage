@@ -297,6 +297,29 @@ const DISPLAY_CHAR_LIMIT = 10000;
 // so this client-side preview matches the server-generated CSV exactly.
 const UNSAFE_CSV_COLUMN_CHARS = /[^A-Za-z0-9_]+/g;
 
+interface CsvColumn {
+  name: string;
+  // isQuoted controls value quoting, not just header quoting: Tags joins
+  // multiple tags with ", " and Name is freeform user text, so these stay
+  // quoted regardless of sanitization. Keeping the flag on the column
+  // (rather than a separate parallel array) means it cannot drift out of
+  // alignment with the name when fixed columns are added/moved/removed.
+  isQuoted: boolean;
+}
+
+// Fixed columns for CSV export. Mirrors CSV_FIXED_COLUMNS in
+// devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py.
+const CSV_FIXED_COLUMNS: readonly CsvColumn[] = [
+  { name: "Id", isQuoted: true },
+  { name: "Channel", isQuoted: false },
+  { name: "XY", isQuoted: false },
+  { name: "Z", isQuoted: false },
+  { name: "Time", isQuoted: false },
+  { name: "Tags", isQuoted: true },
+  { name: "Shape", isQuoted: true },
+  { name: "Name", isQuoted: true },
+];
+
 const props = defineProps<{
   annotations: IAnnotation[];
   propertyPaths: string[][];
@@ -461,21 +484,12 @@ async function generateCSVStringForAnnotations() {
   processingProgress.value = 0;
 
   try {
-    // Fields
-    // Fixed-column quote flags control value quoting too (Tags joins
-    // multiple tags with ", ", Name is freeform user text), so preserve
-    // them regardless of sanitization.
-    const fields = [
-      "Id",
-      "Channel",
-      "XY",
-      "Z",
-      "Time",
-      "Tags",
-      "Shape",
-      "Name",
-    ].map(getCsvColumnName);
-    const quotes = [true, false, false, false, false, true, true, true];
+    // Build columns as {name, isQuoted} so the quote flag travels with its
+    // column. Fixed columns first, then one column per included property.
+    const columns: CsvColumn[] = CSV_FIXED_COLUMNS.map((col) => ({
+      name: getCsvColumnName(col.name),
+      isQuoted: col.isQuoted,
+    }));
     const usedPaths: string[][] = [];
 
     // Pre-compute included paths to avoid repeated checks
@@ -487,15 +501,20 @@ async function generateCSVStringForAnnotations() {
     includedPaths.forEach((path) => {
       const name = propertyStore.getFullNameFromPath(path)!;
       const columnName = getCsvColumnName(name);
-      fields.push(columnName);
-      quotes.push(columnName.includes(","));
+      columns.push({ name: columnName, isQuoted: columnName.includes(",") });
       usedPaths.push(path);
     });
 
     if (sanitizeColumnNames.value) {
-      const uniqueFields = deduplicateColumnNames(fields);
-      fields.splice(0, fields.length, ...uniqueFields);
+      // Dedup operates on names only; re-attach to the existing columns so
+      // each name keeps its isQuoted flag.
+      const uniqueNames = deduplicateColumnNames(columns.map((c) => c.name));
+      uniqueNames.forEach((name, i) => (columns[i].name = name));
     }
+
+    // Papa.unparse takes parallel fields/quotes arrays, so split only here.
+    const fields = columns.map((c) => c.name);
+    const quotes = columns.map((c) => c.isQuoted);
 
     // Process annotations in chunks
     const CHUNK_SIZE = 100;

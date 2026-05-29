@@ -384,12 +384,16 @@ describe("AnnotationCSVDialog", () => {
     expect(csv).not.toContain("cell, fibroblast/Blob Metrics (%)");
   });
 
-  it("generateCSVStringForAnnotations preserves fixed-column quoting under sanitization", async () => {
-    // Regression: fixed-column is_quoted controls VALUE quoting too.
-    // Tags is rendered as ", ".join(tags); without quoting on the Tags
-    // column, a multi-tag value would split the row across columns when
-    // parsed. Verify the `quotes` array passed to Papa.unparse keeps
-    // Id/Tags/Shape/Name force-quoted even when sanitization is on.
+  it("generateCSVStringForAnnotations keeps fixed-column quote flags aligned by column identity", async () => {
+    // Regression: fixed-column isQuoted controls VALUE quoting too. Tags is
+    // rendered as ", ".join(tags); without quoting on the Tags column, a
+    // multi-tag value would split the row across columns when parsed.
+    //
+    // Look up each flag by the column's NAME rather than a hardcoded index.
+    // The quotes array is derived from the same {name, isQuoted} column
+    // objects as fields, so each name must carry its own flag regardless of
+    // ordering. This fails if a hand-maintained parallel `quotes` array is
+    // reintroduced and drifts out of alignment with `fields`.
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.propertyExportMode = "all";
@@ -399,11 +403,17 @@ describe("AnnotationCSVDialog", () => {
     const fields = lastCall[0].fields as string[];
     const quotes = lastCall[1].quotes as boolean[];
     expect(quotes.length).toBe(fields.length);
-    // Fixed-column quote flags: Id, Tags, Shape, Name (indices 0, 5, 6, 7).
-    expect(quotes[0]).toBe(true);
-    expect(quotes[5]).toBe(true);
-    expect(quotes[6]).toBe(true);
-    expect(quotes[7]).toBe(true);
+    const quoteFor = (name: string) => quotes[fields.indexOf(name)];
+    // Force-quoted fixed columns.
+    expect(quoteFor("Id")).toBe(true);
+    expect(quoteFor("Tags")).toBe(true);
+    expect(quoteFor("Shape")).toBe(true);
+    expect(quoteFor("Name")).toBe(true);
+    // Unquoted fixed columns.
+    expect(quoteFor("Channel")).toBe(false);
+    expect(quoteFor("XY")).toBe(false);
+    expect(quoteFor("Z")).toBe(false);
+    expect(quoteFor("Time")).toBe(false);
   });
 
   it("generateCSVStringForAnnotations deduplicates colliding sanitized headers", async () => {
