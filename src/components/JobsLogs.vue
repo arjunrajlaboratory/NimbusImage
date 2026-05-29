@@ -319,7 +319,7 @@ async function viewJobLog(job: IJob): Promise<void> {
       `Duration: ${duration}\n` +
       `Status: ${getStatusText(jobWithLog.status)}\n` +
       `Type: ${jobWithLog.type}\n\n` +
-      `Arguments:\n${jobWithLog.args.join("\n")}\n\n` +
+      `Arguments:\n${(jobWithLog.args ?? []).join("\n")}\n\n` +
       `${getJobState(jobWithLog.status)}\n\n`;
 
     currentJobLog.value =

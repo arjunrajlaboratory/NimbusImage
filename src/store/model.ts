@@ -1554,7 +1554,7 @@ export interface IJobTimestamp {
 export interface IJob {
   _id: string;
   _modelType: string;
-  args: string[];
+  args?: string[];
   created: string;
   status: number;
   timestamps: IJobTimestamp[];
