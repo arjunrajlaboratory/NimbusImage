@@ -4,7 +4,7 @@
       class="d-flex align-center px-4 py-2"
       id="create-property-header-tourstep"
     >
-      <span class="text-subtitle-1">Create new property</span>
+      <span class="panel-section-title">Create new property</span>
     </div>
     <v-card-text>
       <v-container class="pa-2">

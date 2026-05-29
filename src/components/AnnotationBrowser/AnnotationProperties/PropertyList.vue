@@ -2,7 +2,7 @@
   <v-card class="d-flex flex-column property-list">
     <div class="property-header">
       <div class="d-flex align-center px-4 py-2">
-        <span class="text-subtitle-1">Object Properties</span>
+        <span class="panel-section-title">Object Properties</span>
         <v-spacer></v-spacer>
         <template v-if="uncomputedProperties.length <= 0">
           <span class="text-none px-2 text-success">

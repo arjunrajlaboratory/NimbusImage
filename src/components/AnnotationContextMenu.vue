@@ -1,10 +1,10 @@
 <template>
   <v-menu v-model="showMenu" :target="[x, y]">
     <v-card min-width="300" @click.stop :ripple="false">
-      <v-card-title class="text-subtitle-1">Edit Annotation</v-card-title>
+      <v-card-title>Edit Annotation</v-card-title>
       <v-card-text>
         <div class="mb-4">
-          <div class="text-subtitle-2 mb-2">Color Options</div>
+          <div class="panel-section-title mb-2">Color Options</div>
           <v-radio-group v-model="colorOption" class="mt-0">
             <v-radio value="layer" label="Default to color of layer"></v-radio>
             <v-radio value="random" label="Random color"></v-radio>
@@ -18,7 +18,7 @@
         </div>
         <v-divider class="my-3"></v-divider>
         <div>
-          <div class="text-subtitle-2 mb-2">Change Tags</div>
+          <div class="panel-section-title mb-2">Change Tags</div>
           <tag-picker v-model="selectedTags" />
         </div>
         <v-divider class="my-3"></v-divider>

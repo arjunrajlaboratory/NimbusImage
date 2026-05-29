@@ -1,5 +1,13 @@
 <template>
-  <v-app id="inspire" v-mousetrap="appHotkeys">
+  <v-app
+    id="inspire"
+    v-mousetrap="appHotkeys"
+    :class="{
+      'datasetview-mode': isDatasetView,
+      'left-palettes-open': isDatasetView && allLeftPalettesOpen,
+      'any-left-palette-open': isDatasetView && anyLeftPaletteOpen,
+    }"
+  >
     <v-dialog
       v-model="helpPanelIsOpen"
       fullscreen
@@ -89,6 +97,52 @@
         NimbusImage
       </h1>
       <bread-crumbs />
+      <template v-if="store.dataset && routeName === 'datasetview'">
+        <div class="palette-cluster">
+          <v-tooltip text="Navigator: XY / Z / Time and timelapse controls">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: navigatorPanel }"
+                aria-label="Navigator"
+                @click.stop="togglePalette('navigatorPanel')"
+              >
+                <v-icon size="18">mdi-axis-arrow</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip text="Layers: channels, blending and layer mode">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: layersPanel }"
+                aria-label="Layers"
+                @click.stop="togglePalette('layersPanel')"
+              >
+                <v-icon size="18">mdi-layers</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip text="Tools: create and configure annotation tools">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: toolsPanel }"
+                aria-label="Tools"
+                @click.stop="togglePalette('toolsPanel')"
+              >
+                <v-icon size="18">mdi-tools</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+        </div>
+      </template>
       <v-spacer />
       <v-tooltip text="Upload a new dataset">
         <template v-slot:activator="{ props: activatorProps }">
@@ -108,59 +162,99 @@
       </v-tooltip>
       <v-divider class="ml-1" vertical />
       <template v-if="store.dataset && routeName === 'datasetview'">
+        <undo-redo-buttons class="mr-1" />
+        <div class="palette-cluster">
+          <v-tooltip
+            text="List of all objects in the dataset, including their properties, and various actions on them"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                id="object-list-button-tourstep"
+                v-tour-trigger="'object-list-button-tourtrigger'"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: annotationPanel }"
+                aria-label="Object list"
+                @click.stop="togglePalette('annotationPanel')"
+              >
+                <v-icon size="18">mdi-format-list-bulleted-square</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip
+            text="Filter objects by tags, scope, properties, ID and region"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                id="filters-button-tourstep"
+                v-tour-trigger="'filters-button-tourtrigger'"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: filtersPanel }"
+                aria-label="Filters"
+                @click.stop="togglePalette('filtersPanel')"
+              >
+                <v-icon size="18">mdi-filter-variant</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip
+            text="Snapshots for bookmarking and downloading cropped regions in your dataset"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                id="snapshots-button-tourstep"
+                v-tour-trigger="'snapshots-button-tourtrigger'"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: snapshotPanel }"
+                aria-label="Snapshots"
+                @click.stop="togglePalette('snapshotPanel')"
+              >
+                <v-icon size="18">mdi-camera-outline</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip text="Image and object display settings">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                id="settings-button-tourstep"
+                v-tour-trigger="'settings-button-tourtrigger'"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: settingsPanel }"
+                aria-label="Settings"
+                @click.stop="togglePalette('settingsPanel')"
+              >
+                <v-icon size="18">mdi-tune</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+        </div>
         <v-tooltip
-          text="List of all objects in the dataset, including their properties, and various actions on them"
+          text="Measure objects: configure and run property computations"
         >
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              id="object-list-button-tourstep"
-              v-tour-trigger="'object-list-button-tourtrigger'"
-              :variant="annotationPanel ? 'outlined' : 'text'"
-              :color="annotationPanel ? 'primary' : undefined"
+              id="analyze-button-tourstep"
+              v-tour-trigger="'analyze-button-tourtrigger'"
+              variant="text"
+              icon
               size="small"
-              class="ml-4"
-              @click.stop="toggleRightPanel('annotationPanel')"
+              class="ml-1"
+              aria-label="Measure objects"
+              @click="analyzeDialogOpen = true"
             >
-              Object list
+              <v-icon>mdi-ruler-square</v-icon>
             </v-btn>
           </template>
         </v-tooltip>
-        <v-divider class="ml-4" vertical />
-        <v-tooltip
-          text="Snapshots for bookmarking and downloading cropped regions in your dataset"
-        >
-          <template v-slot:activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              id="snapshots-button-tourstep"
-              v-tour-trigger="'snapshots-button-tourtrigger'"
-              :variant="snapshotPanel ? 'outlined' : 'text'"
-              :color="snapshotPanel ? 'primary' : undefined"
-              size="small"
-              class="ml-4"
-              @click.stop="toggleRightPanel('snapshotPanel')"
-            >
-              Snapshots
-            </v-btn>
-          </template>
-        </v-tooltip>
-        <v-tooltip text="Image and object display settings">
-          <template v-slot:activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              id="settings-button-tourstep"
-              v-tour-trigger="'settings-button-tourtrigger'"
-              :variant="settingsPanel ? 'outlined' : 'text'"
-              :color="settingsPanel ? 'primary' : undefined"
-              size="small"
-              class="ml-4"
-              @click.stop="toggleRightPanel('settingsPanel')"
-            >
-              Settings
-            </v-btn>
-          </template>
-        </v-tooltip>
+        <data-io-menu class="ml-1" />
       </template>
       <div class="mx-4 d-flex align-center">
         <v-menu>
@@ -273,41 +367,84 @@
       <analyze-annotations />
     </v-navigation-drawer>
 
-    <v-navigation-drawer
-      v-model="settingsPanel"
-      location="right"
-      :scrim="false"
-      :width="480"
-      :mobile="false"
-    >
+    <floating-palette v-model="settingsPanel" title="Settings" :width="480">
       <annotations-settings />
-    </v-navigation-drawer>
+    </floating-palette>
 
-    <v-navigation-drawer
-      v-model="snapshotPanel"
-      location="right"
-      :scrim="false"
-      :width="480"
-      :mobile="false"
-      @transitionend="snapshotPanelFull = snapshotPanel"
-    >
-      <snapshots :snapshotVisible="snapshotPanel && snapshotPanelFull" />
-    </v-navigation-drawer>
+    <floating-palette v-model="snapshotPanel" title="Snapshots" :width="480">
+      <snapshots :snapshotVisible="snapshotPanel" />
+    </floating-palette>
 
-    <v-navigation-drawer
+    <floating-palette
       v-model="annotationPanel"
-      location="right"
-      :scrim="false"
-      :width="640"
-      :mobile="false"
+      title="Object Browser"
+      :width="512"
+      :top="annotationBrowserTop"
+      :max-height="annotationBrowserMaxHeight"
     >
       <annotation-browser></annotation-browser>
-    </v-navigation-drawer>
+    </floating-palette>
+
+    <floating-palette
+      ref="filtersPaletteRef"
+      v-model="filtersPanel"
+      title="Filters"
+      :width="480"
+      :max-height="filtersMaxHeight"
+    >
+      <filters-panel />
+    </floating-palette>
+
+    <template v-if="store.dataset && routeName === 'datasetview'">
+      <floating-palette
+        ref="navigatorPaletteRef"
+        v-model="navigatorPanel"
+        title="Navigator"
+        :left="16"
+        :width="380"
+      >
+        <navigator-panel />
+      </floating-palette>
+
+      <floating-palette
+        ref="layersPaletteRef"
+        v-model="layersPanel"
+        title="Layers"
+        :left="16"
+        :width="420"
+        :top="layersPanelTop"
+        :max-height="layersPanelMaxHeight"
+      >
+        <layers-panel />
+      </floating-palette>
+
+      <floating-palette
+        v-model="toolsPanel"
+        title="Tools"
+        :left="16"
+        :width="380"
+        :top="toolsPanelTop"
+        :max-height="toolsPanelMaxHeight"
+      >
+        <toolset />
+      </floating-palette>
+    </template>
+
+    <analyze-dialog v-model="analyzeDialogOpen" @show-in-list="onShowInList" />
   </v-app>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, Ref } from "vue";
+import {
+  ref,
+  computed,
+  watch,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+  Ref,
+  ComponentPublicInstance,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 import axios from "axios";
 import UserMenu from "./layout/UserMenu.vue";
@@ -316,6 +453,13 @@ import AnalyzeAnnotations from "./components/AnalyzePanel.vue";
 import AnnotationsSettings from "./components/SettingsPanel.vue";
 import Snapshots from "./components/Snapshots.vue";
 import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.vue";
+import DataIoMenu from "@/components/DataIOMenu.vue";
+import FiltersPanel from "@/components/FiltersPanel.vue";
+import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
+import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
+import NavigatorPanel from "@/components/NavigatorPanel.vue";
+import LayersPanel from "@/components/LayersPanel.vue";
+import Toolset from "@/tools/toolsets/Toolset.vue";
 import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
@@ -323,6 +467,7 @@ import propertyStore from "@/store/properties";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
+import FloatingPalette from "@/components/FloatingPalette.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
@@ -334,6 +479,12 @@ void AnalyzeAnnotations;
 void AnnotationsSettings;
 void Snapshots;
 void AnnotationBrowser;
+void FiltersPanel;
+void AnalyzeDialog;
+void UndoRedoButtons;
+void NavigatorPanel;
+void LayersPanel;
+void Toolset;
 void HelpPanel;
 void BreadCrumbs;
 void ChatComponent;
@@ -349,20 +500,260 @@ const snapshotPanel = ref(false);
 const snapshotPanelFull = ref(false);
 const annotationPanel = ref(false);
 const settingsPanel = ref(false);
+const filtersPanel = ref(false);
 const analyzePanel = ref(false);
 const chatbotOpen = ref(false);
 
-const lastModifiedRightPanel = ref<string | null>(null);
+// Left-zone palettes (dissolved left sidebar). Open by default.
+const navigatorPanel = ref(true);
+const toolsPanel = ref(true);
+const layersPanel = ref(true);
+
+// When the whole left stack is open it reaches the bottom-left corner and
+// would cover the canvas's palette/lock/reset buttons; ImageViewer shifts
+// them right while this is true (see `.left-palettes-open` in ImageViewer).
+const allLeftPalettesOpen = computed(
+  () => navigatorPanel.value && layersPanel.value && toolsPanel.value,
+);
+
+// Looser variant: any single left palette covers the left edge of the canvas
+// enough to obscure floating UI rooted at a click point (e.g. the annotation
+// right-click context menu). Surfaces that need to dodge ANY open left palette
+// (not just the whole stack) read `.any-left-palette-open`.
+const anyLeftPaletteOpen = computed(
+  () => navigatorPanel.value || layersPanel.value || toolsPanel.value,
+);
+
+// The Measure dialog is mounted once here but can be opened from several
+// places (app-bar ruler, Object Browser), so its open state lives in the
+// store rather than a local ref.
+const analyzeDialogOpen = computed({
+  get: () => store.isAnalyzeDialogOpen,
+  set: (value: boolean) => store.setIsAnalyzeDialogOpen(value),
+});
+
 const isUploadLoading = ref(false);
 const helpPanelIsOpen = ref(false);
 
-const panelRefs: Record<string, Ref<boolean>> = {
-  snapshotPanel,
+// --- Palette layout ---------------------------------------------------------
+//
+// The dataset view hosts palettes on two edges. Each declares a `zone` (which
+// edge it lives on) and a `role`.
+//
+// Right zone behaves as a mutually-exclusive column:
+//   * "primary" palettes (Object Browser / Snapshots / Settings) own the
+//     column — opening one closes the others.
+//   * the "companion" (Filters) may share the column, but only alongside its
+//     host primary (the Object Browser); any other primary evicts it.
+//
+// Left zone (dissolved sidebar: Navigator / Layers / Tools) is an independent
+// vertical stack — all three can be open at once and flow top-to-bottom in a
+// fixed order, each positioned beneath the open palettes above it.
+//
+// The two zones are independent, so a left palette and a right palette can be
+// open simultaneously.
+type PaletteId =
+  | "annotationPanel"
+  | "filtersPanel"
+  | "snapshotPanel"
+  | "settingsPanel"
+  | "navigatorPanel"
+  | "toolsPanel"
+  | "layersPanel";
+
+type PaletteZone = "left" | "right";
+
+interface PaletteRole {
+  role: "primary" | "companion";
+  zone: PaletteZone;
+  host?: PaletteId;
+}
+
+const paletteOpen: Record<PaletteId, Ref<boolean>> = {
   annotationPanel,
+  filtersPanel,
+  snapshotPanel,
   settingsPanel,
-  analyzePanel,
-  chatbotOpen,
+  navigatorPanel,
+  toolsPanel,
+  layersPanel,
 };
+
+const paletteRoles: Record<PaletteId, PaletteRole> = {
+  annotationPanel: { role: "primary", zone: "right" },
+  snapshotPanel: { role: "primary", zone: "right" },
+  settingsPanel: { role: "primary", zone: "right" },
+  filtersPanel: { role: "companion", zone: "right", host: "annotationPanel" },
+  navigatorPanel: { role: "primary", zone: "left" },
+  toolsPanel: { role: "primary", zone: "left" },
+  layersPanel: { role: "primary", zone: "left" },
+};
+
+const paletteIds = Object.keys(paletteRoles) as PaletteId[];
+
+function openPalette(id: PaletteId) {
+  const def = paletteRoles[id];
+  // Only the right zone has mutex/companion relationships; left-zone palettes
+  // stack independently and never evict each other.
+  if (def.zone === "right") {
+    for (const other of paletteIds) {
+      if (other === id || paletteRoles[other].zone !== "right") {
+        continue;
+      }
+      const otherDef = paletteRoles[other];
+      if (def.role === "primary") {
+        // A new primary clears every other primary, plus any companion that
+        // isn't hosted by it.
+        if (otherDef.role === "primary" || otherDef.host !== id) {
+          paletteOpen[other].value = false;
+        }
+      } else if (otherDef.role === "primary" && other !== def.host) {
+        // A companion evicts any primary that isn't its host.
+        paletteOpen[other].value = false;
+      }
+    }
+  }
+  paletteOpen[id].value = true;
+}
+
+function togglePalette(id: PaletteId) {
+  if (paletteOpen[id].value) {
+    paletteOpen[id].value = false;
+  } else {
+    openPalette(id);
+  }
+}
+
+function closeAllPalettes() {
+  for (const id of paletteIds) {
+    paletteOpen[id].value = false;
+  }
+}
+
+// --- Stacked positioning ----------------------------------------------------
+//
+// Palettes that share a column flow vertically: each measures the rendered
+// height of the palette(s) above it (via ResizeObserver) so the next one sits
+// flush beneath with no dead gap. Used by both the right-zone Filters/Browser
+// pair and the left-zone Navigator/Layers/Tools stack.
+const PALETTE_TOP = 72; // clears the floating app bar
+const COLUMN_BOTTOM_INSET = 16;
+const STACK_GAP = 8;
+const MIN_BROWSER_HEIGHT = 260; // keep the Browser usable when stacked
+
+type PaletteRefEl = ComponentPublicInstance & { rootEl?: HTMLElement };
+
+// Observe a FloatingPalette's rendered height into `heightRef`. Guarded for
+// non-DOM test environments. Returns a disconnect-able observer (or null).
+function observePaletteHeight(
+  paletteRef: Ref<PaletteRefEl | undefined>,
+  heightRef: Ref<number>,
+): ResizeObserver | null {
+  if (typeof ResizeObserver === "undefined") {
+    return null;
+  }
+  const el = paletteRef.value?.rootEl;
+  if (!el) {
+    return null;
+  }
+  const observer = new ResizeObserver(() => {
+    // Don't write height (and trigger a re-layout / re-render) while a layer
+    // drag is underway — that re-renders the draggable mid-drag and corrupts
+    // its vnode tree. The final size is re-measured when the drag ends.
+    if (store.isLayerDragging) {
+      return;
+    }
+    heightRef.value = el.offsetHeight;
+  });
+  observer.observe(el);
+  return observer;
+}
+
+// Right zone: Filters stacks above the Object Browser.
+const filtersPaletteRef = ref<PaletteRefEl>();
+const filtersHeight = ref(0);
+let filtersResizeObserver: ResizeObserver | null = null;
+
+const filtersStacked = computed(
+  () => filtersPanel.value && annotationPanel.value,
+);
+
+const annotationBrowserTop = computed(() =>
+  filtersStacked.value
+    ? PALETTE_TOP + filtersHeight.value + STACK_GAP
+    : PALETTE_TOP,
+);
+
+const annotationBrowserMaxHeight = computed(
+  () => `calc(100vh - ${annotationBrowserTop.value + COLUMN_BOTTOM_INSET}px)`,
+);
+
+// When stacked, cap Filters so the Browser always keeps a minimum height.
+const filtersMaxHeight = computed(() =>
+  filtersStacked.value
+    ? `calc(100vh - ${
+        PALETTE_TOP + COLUMN_BOTTOM_INSET + MIN_BROWSER_HEIGHT + STACK_GAP
+      }px)`
+    : `calc(100vh - ${PALETTE_TOP + COLUMN_BOTTOM_INSET}px)`,
+);
+
+// Left zone: Navigator (top) -> Layers -> Tools stack, each flowing beneath
+// the open palettes above it. Navigator uses FloatingPalette defaults.
+const navigatorPaletteRef = ref<PaletteRefEl>();
+const layersPaletteRef = ref<PaletteRefEl>();
+const navigatorHeight = ref(0);
+const layersHeight = ref(0);
+let navigatorResizeObserver: ResizeObserver | null = null;
+let layersResizeObserver: ResizeObserver | null = null;
+
+const layersPanelTop = computed(
+  () =>
+    PALETTE_TOP +
+    (navigatorPanel.value && navigatorHeight.value
+      ? navigatorHeight.value + STACK_GAP
+      : 0),
+);
+
+const toolsPanelTop = computed(
+  () =>
+    layersPanelTop.value +
+    (layersPanel.value && layersHeight.value
+      ? layersHeight.value + STACK_GAP
+      : 0),
+);
+
+const layersPanelMaxHeight = computed(
+  () => `calc(100vh - ${layersPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
+);
+
+const toolsPanelMaxHeight = computed(
+  () => `calc(100vh - ${toolsPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
+);
+
+// The left palettes live inside a v-if, so attach their observers once they
+// mount (and tear down when leaving the dataset view).
+const leftPalettesMounted = computed(
+  () => !!store.dataset && routeName.value === "datasetview",
+);
+
+function setupLeftPaletteObservers() {
+  navigatorResizeObserver?.disconnect();
+  layersResizeObserver?.disconnect();
+  navigatorResizeObserver = observePaletteHeight(
+    navigatorPaletteRef,
+    navigatorHeight,
+  );
+  layersResizeObserver = observePaletteHeight(layersPaletteRef, layersHeight);
+}
+
+function teardownLeftPaletteObservers() {
+  navigatorResizeObserver?.disconnect();
+  layersResizeObserver?.disconnect();
+  navigatorResizeObserver = null;
+  layersResizeObserver = null;
+  navigatorHeight.value = 0;
+  layersHeight.value = 0;
+}
 
 function toggleHelpDialogUsingHotkey() {
   helpPanelIsOpen.value = !helpPanelIsOpen.value;
@@ -397,20 +788,14 @@ function goHome() {
   router.push({ name: "root" });
 }
 
-function toggleRightPanel(panel: string | null) {
-  if (panel !== null) {
-    panelRefs[panel].value = !panelRefs[panel].value;
+function onShowInList() {
+  if (!annotationPanel.value) {
+    openPalette("annotationPanel");
   }
-  if (
-    lastModifiedRightPanel.value !== null &&
-    lastModifiedRightPanel.value !== panel
-  ) {
-    panelRefs[lastModifiedRightPanel.value].value = false;
-  }
-  lastModifiedRightPanel.value = panel;
 }
 
 const routeName = computed(() => route.name);
+const isDatasetView = computed(() => routeName.value === "datasetview");
 
 const hasUncomputedProperties = computed(() => {
   const uncomputed = propertyStore.uncomputedAnnotationsPerProperty;
@@ -494,16 +879,67 @@ function annotationPanelChanged() {
 
 function datasetChanged() {
   if (routeName.value !== "datasetview") {
-    toggleRightPanel(null);
+    closeAllPalettes();
+  } else {
+    // Left palettes (Navigator / Tools / Layers) open by default on each entry.
+    navigatorPanel.value = true;
+    toolsPanel.value = true;
+    layersPanel.value = true;
   }
 }
 
 watch(annotationPanel, () => annotationPanelChanged());
 watch(routeName, () => datasetChanged());
 
+// Left palettes mount/unmount with the dataset view, so (re)attach their
+// height observers whenever they appear.
+watch(
+  leftPalettesMounted,
+  async (mounted) => {
+    if (mounted) {
+      await nextTick();
+      setupLeftPaletteObservers();
+    } else {
+      teardownLeftPaletteObservers();
+    }
+  },
+  { immediate: true },
+);
+
+// Height observers are paused during a layer drag (see observePaletteHeight),
+// so re-measure once it ends to settle the stack at the final heights.
+watch(
+  () => store.isLayerDragging,
+  async (dragging) => {
+    if (dragging) {
+      return;
+    }
+    await nextTick();
+    const navEl = navigatorPaletteRef.value?.rootEl;
+    const layEl = layersPaletteRef.value?.rootEl;
+    if (navEl) {
+      navigatorHeight.value = navEl.offsetHeight;
+    }
+    if (layEl) {
+      layersHeight.value = layEl.offsetHeight;
+    }
+  },
+);
+
 onMounted(() => {
   fetchConfig();
   loadAllTours();
+
+  // The Filters palette is always mounted, so observe it directly.
+  filtersResizeObserver = observePaletteHeight(
+    filtersPaletteRef,
+    filtersHeight,
+  );
+});
+
+onBeforeUnmount(() => {
+  filtersResizeObserver?.disconnect();
+  teardownLeftPaletteObservers();
 });
 
 defineExpose({
@@ -513,19 +949,26 @@ defineExpose({
   snapshotPanelFull,
   annotationPanel,
   settingsPanel,
+  filtersPanel,
+  navigatorPanel,
+  toolsPanel,
+  layersPanel,
   analyzePanel,
   chatbotOpen,
-  lastModifiedRightPanel,
   isUploadLoading,
   helpPanelIsOpen,
   appHotkeys,
   routeName,
   hasUncomputedProperties,
   filteredToursByCategory,
+  filtersStacked,
+  annotationBrowserTop,
   fetchConfig,
   loadAllTours,
   goHome,
-  toggleRightPanel,
+  togglePalette,
+  openPalette,
+  closeAllPalettes,
   toggleHelpDialogUsingHotkey,
   handleTourStart,
   goToNewDataset,
@@ -537,6 +980,61 @@ defineExpose({
   text-overflow: unset;
   overflow: unset;
   flex: 0 0 auto;
+}
+
+/* Cluster of palette-toggle icon buttons in the app bar.
+   Pill-shaped group with hairline border; each button is a 32px circle. */
+.palette-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  margin-left: 12px;
+  border-radius: 100px;
+  background: rgba(15, 18, 23, 0.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
+}
+
+.palette-ibtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--nimbus-text-secondary, #d0d6e0);
+  border: none;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  position: relative;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--nimbus-text-secondary, #f3f5f7);
+  }
+
+  &.active {
+    background: rgba(var(--v-theme-primary), 0.18);
+    color: rgb(var(--v-theme-primary));
+    box-shadow: 0 0 0 1px rgba(var(--v-theme-primary), 0.25);
+  }
+
+  &.active::after {
+    content: "";
+    position: absolute;
+    bottom: -7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: rgb(var(--v-theme-primary));
+    box-shadow: 0 0 6px rgba(var(--v-theme-primary), 0.6);
+  }
 }
 </style>
 <style lang="scss">

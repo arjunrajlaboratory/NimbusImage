@@ -323,7 +323,7 @@ defineExpose({
   width: 520px;
   height: 680px;
   max-height: 680px;
-  z-index: 1000;
+  z-index: 2000;
   background-color: rgba(var(--v-theme-surface-bright), 0.88);
   backdrop-filter: blur(12px);
   display: flex;

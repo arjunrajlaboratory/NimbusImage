@@ -1,21 +1,23 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="{ props: activatorProps }">
-      <v-btn
-        variant="outlined"
-        color="primary"
-        size="small"
-        v-bind="{ ...activatorProps, ...$attrs }"
-        v-description="{
-          section: 'Object list actions',
-          title: 'Export to JSON',
-          description:
-            'Export annotations, connections, properties, and property values to a JSON file',
-        }"
-      >
-        <v-icon>mdi-export</v-icon>
-        Export to JSON
-      </v-btn>
+    <template v-slot:activator="activatorBinding">
+      <slot name="activator" v-bind="activatorBinding">
+        <v-btn
+          variant="outlined"
+          color="primary"
+          size="small"
+          v-bind="{ ...activatorBinding.props, ...$attrs }"
+          v-description="{
+            section: 'Object list actions',
+            title: 'Export to JSON',
+            description:
+              'Export annotations, connections, properties, and property values to a JSON file',
+          }"
+        >
+          <v-icon>mdi-export</v-icon>
+          Export to JSON
+        </v-btn>
+      </slot>
     </template>
     <v-card class="pa-2" :disabled="!canExport">
       <v-card-title>Export to JSON</v-card-title>

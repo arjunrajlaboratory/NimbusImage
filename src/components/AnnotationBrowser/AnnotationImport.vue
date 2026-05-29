@@ -1,34 +1,36 @@
 <template>
   <v-dialog v-model="importDialog">
-    <template v-slot:activator="{ props: activatorProps }">
-      <v-btn
-        v-bind="{ ...activatorProps, ...$attrs }"
-        variant="outlined"
-        size="small"
-        :disabled="!isLoggedIn"
-        :color="showSuccess ? 'success' : 'primary'"
-        v-description="{
-          section: 'Object list actions',
-          title: 'Import from JSON',
-          description:
-            'Import a set of annotations and connections from a JSON file',
-        }"
-      >
-        <v-fade-transition leave-absolute>
-          <span
-            v-if="showSuccess"
-            key="success"
-            class="d-inline-flex align-center"
-          >
-            <v-icon class="mr-1">mdi-check-circle</v-icon>
-            Imported
-          </span>
-          <span v-else key="default" class="d-inline-flex align-center">
-            <v-icon class="mr-1">mdi-import</v-icon>
-            Import from JSON
-          </span>
-        </v-fade-transition>
-      </v-btn>
+    <template v-slot:activator="activatorBinding">
+      <slot name="activator" v-bind="activatorBinding">
+        <v-btn
+          v-bind="{ ...activatorBinding.props, ...$attrs }"
+          variant="outlined"
+          size="small"
+          :disabled="!isLoggedIn"
+          :color="showSuccess ? 'success' : 'primary'"
+          v-description="{
+            section: 'Object list actions',
+            title: 'Import from JSON',
+            description:
+              'Import a set of annotations and connections from a JSON file',
+          }"
+        >
+          <v-fade-transition leave-absolute>
+            <span
+              v-if="showSuccess"
+              key="success"
+              class="d-inline-flex align-center"
+            >
+              <v-icon class="mr-1">mdi-check-circle</v-icon>
+              Imported
+            </span>
+            <span v-else key="default" class="d-inline-flex align-center">
+              <v-icon class="mr-1">mdi-import</v-icon>
+              Import from JSON
+            </span>
+          </v-fade-transition>
+        </v-btn>
+      </slot>
     </template>
     <v-card class="pa-2" :disabled="!canImport">
       <v-card-title> Import </v-card-title>

@@ -1,28 +1,67 @@
-/* ── Linear-inspired theme tokens ────────────────────────────── */
-
-/* Inter Variable font setup */
+/* ── Type tokens ──────────────────────────────────────────────
+   Three families establish the visual voice of the app:
+   - sans:    Geist (UI, body, headings)
+   - mono:    Geist Mono (data, measurements, code)
+   - display: Instrument Serif (italic display moments — dataset
+              titles, section labels — used sparingly)
+   ───────────────────────────────────────────────────────────── */
 :root {
-  --nimbus-font: "Inter", "Inter Variable", "SF Pro Display", -apple-system,
-    system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
-    "Helvetica Neue", sans-serif;
+  --nimbus-font: "Geist", "SF Pro Display", -apple-system, system-ui, "Segoe UI",
+    Roboto, "Helvetica Neue", sans-serif;
+  --nimbus-font-mono: "Geist Mono", "SF Mono", "JetBrains Mono", "Fira Code",
+    Consolas, "Roboto Mono", monospace;
+  --nimbus-font-display: "Instrument Serif", "Iowan Old Style", Georgia,
+    "Times New Roman", serif;
   --nimbus-radius: 8px;
   --nimbus-radius-sm: 6px;
   --nimbus-radius-lg: 12px;
+
+  /* Glass treatment for floating chrome (FloatingPalette, the bulk-action
+     panel, etc.). Hardcoded dark for now — matches the app's default theme. */
+  --nimbus-glass-bg: rgba(18, 22, 30, 0.78);
+  --nimbus-glass-filter: blur(28px) saturate(140%);
+
+  /* Right edge of the open left-palette column plus a 10 px gap. Surfaces
+     anchored to the canvas's left edge (bottom-left button cluster, the
+     selection action panel, future bottom-dock items) use this as their
+     "safe left" when any left palette is open. Derived from FloatingPalette
+     anchors in App.vue: left 16 + Layers palette width 420 (widest of the
+     three) + 10 px gap = 446. Update together if palette geometry changes. */
+  --nimbus-left-palette-clear-x: 446px;
 }
 
-/* Apply Inter globally with OpenType features */
+/* Apply Geist globally */
 body,
 .v-application {
   font-family: var(--nimbus-font) !important;
-  font-feature-settings: "cv01", "ss03";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Tabular numbers + slashed zero for the mono family so data columns
+   align and 0 can't be confused with O. */
+code,
+kbd,
+samp,
+pre,
+.font-mono {
+  font-family: var(--nimbus-font-mono);
+  font-feature-settings: "zero", "ss01";
+  font-variant-numeric: tabular-nums;
+}
+
+/* Display class for editorial moments — apply sparingly to dataset
+   names, section headers, or marketing-style copy. */
+.font-display {
+  font-family: var(--nimbus-font-display);
+  font-style: italic;
+  letter-spacing: -0.01em;
+}
+
 /* Form elements have their own UA font by default; make sure they inherit.
    Without this, a v-btn rendered as <button> uses the browser's default font
-   while a v-btn with :to (rendered as <a>) inherits Inter — causing visual
-   inconsistency between otherwise identical v-btns. */
+   while a v-btn with :to (rendered as <a>) inherits the app font — causing
+   visual inconsistency between otherwise identical v-btns. */
 button,
 input,
 select,
@@ -33,7 +72,7 @@ textarea {
 /* Dark theme tokens */
 .v-theme--dark {
   --nimbus-border: rgba(255, 255, 255, 0.06);
-  --nimbus-border-strong: rgba(255, 255, 255, 0.10);
+  --nimbus-border-strong: rgba(255, 255, 255, 0.1);
   --nimbus-glass: rgba(255, 255, 255, 0.02);
   --nimbus-glass-hover: rgba(255, 255, 255, 0.05);
   --nimbus-shadow: none;
@@ -93,8 +132,13 @@ body {
 // We keep the .long bar (which carries the primary color) but replace
 // its sweep animation with a full-width pulse. The .short bar is hidden.
 @keyframes progress-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 // Make the .long bar fill 100% and pulse instead of sweeping
@@ -117,6 +161,26 @@ body {
   background: rgb(var(--v-theme-surface)) !important;
   border-bottom: 1px solid var(--nimbus-border) !important;
   box-shadow: none !important;
+}
+
+/* ── Dataset view: fully transparent app bar ───────────────────
+   The bar is invisible — only its buttons remain, floating directly
+   over the image. No background, no blur, no border. The image
+   extends to y=0 behind the buttons; the left side panel is offset
+   down so its content stays clear. */
+.datasetview-mode {
+  .v-app-bar {
+    background: transparent !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  /* Zero the v-main top offset so the canvas fills behind the bar. */
+  .v-main {
+    --v-layout-top: 0px !important;
+    padding-top: 0 !important;
+  }
 }
 
 /* Navigation drawers: match panel surface */
@@ -188,7 +252,107 @@ body {
 }
 
 .v-field--focused .v-field__outline {
-  --v-field-border-opacity: 0.10;
+  --v-field-border-opacity: 0.1;
+}
+
+/* ── Global form-control sizing ──────────────────────────────
+   Selection controls, inputs, sliders, and menu items all share
+   one type scale so the interface reads as a single system. The
+   Vuetify defaults (density="compact") provide the row heights;
+   these rules pin down typography and visual sizing. */
+
+/* Labels for checkbox / switch / radio / slider — all 13px. */
+.v-selection-control .v-label,
+.v-switch .v-label,
+.v-checkbox .v-label,
+.v-radio .v-label,
+.v-slider .v-label {
+  font-size: 13px !important;
+  letter-spacing: 0;
+  line-height: 1.4;
+  opacity: 1;
+}
+
+/* Field labels (the floating label on outlined inputs/selects). */
+.v-field-label {
+  font-size: 13px !important;
+}
+
+/* Field text (the value inside inputs/selects). */
+.v-field__input,
+.v-field input,
+.v-field textarea {
+  font-size: 13px !important;
+}
+
+/* The selected-value display inside a v-select. */
+.v-select__selection,
+.v-autocomplete__selection {
+  font-size: 13px;
+}
+
+/* Selection-control row height: compact density default is ~36px;
+   tighten further so multi-toggle palettes don't feel like a survey. */
+.v-selection-control--density-compact {
+  --v-selection-control-size: 28px;
+  min-height: 28px;
+}
+
+/* Tighter thumb + slimmer track for the slider. */
+.v-slider {
+  --v-slider-track-size: 3px;
+
+  .v-slider-thumb__surface {
+    width: 12px !important;
+    height: 12px !important;
+  }
+  .v-slider-thumb__ripple {
+    width: 24px !important;
+    height: 24px !important;
+    left: -12px !important;
+    top: -12px !important;
+  }
+}
+
+/* Menu items (dropdown options like Add/Toggle/Remove): 13px label,
+   tighter rows. v-list-item title is the bigger element by default. */
+.v-overlay__content .v-list-item-title {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+.v-overlay__content .v-list-item--density-compact {
+  --v-list-item-min-height: 32px;
+  padding-block: 2px;
+}
+
+/* Dialog / card titles. Default Vuetify is 20px which feels loud against the
+   13px label system; pull them down to 14px medium-weight (not uppercase, so
+   user content like tool names still reads naturally). */
+.v-card-title {
+  font-size: 14px !important;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+
+/* Small uppercase section header for inner panel sections (e.g. "Color
+   Options" inside a card). Mirrors the FloatingPalette / settings-section
+   aesthetic; canonical replacement for `text-subtitle-1` / `text-subtitle-2`
+   used as section labels (not for user-content headers like names). */
+.panel-section-title {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--nimbus-text-secondary, rgba(var(--v-theme-on-surface), 0.85));
+  line-height: 1.4;
+}
+
+/* Outlined fields: more compact internal padding. */
+.v-input--density-compact .v-field {
+  --v-input-control-height: 36px;
 }
 
 /* Expansion panels: inherit parent bg with subtle dividers */
@@ -234,7 +398,10 @@ body {
   color: rgb(var(--v-theme-on-surface)) !important;
 }
 
-.v-theme--dark .v-chip:not([style*="background-color"]):not(.bg-primary):not(.bg-success):not(.bg-error):not(.bg-warning):not(.bg-info) {
+.v-theme--dark
+  .v-chip:not([style*="background-color"]):not(.bg-primary):not(
+    .bg-success
+  ):not(.bg-error):not(.bg-warning):not(.bg-info) {
   background: rgba(255, 255, 255, 0.15) !important;
   border: 1px solid rgba(255, 255, 255, 0.15) !important;
 
@@ -245,7 +412,7 @@ body {
 
 /* Colored chips: add subtle border */
 .v-theme--dark .v-chip[style*="background-color"] {
-  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Switches: boost inactive track and thumb visibility */
@@ -267,11 +434,15 @@ body {
   background-color: #ffffff !important;
 }
 
-/* Dialogs and menus: elevated surface */
+/* Dialogs and menus: glass surface matching the floating palettes. The
+   !important on background is required because Vuetify's layered defaults
+   otherwise win for the v-card inside an overlay. */
 .v-overlay__content > .v-card,
 .v-menu > .v-overlay__content > .v-card,
 .v-dialog > .v-overlay__content > .v-card {
-  background: rgb(var(--v-theme-surface-bright)) !important;
+  background: var(--nimbus-glass-bg) !important;
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
   border: 1px solid var(--nimbus-border) !important;
   border-radius: var(--nimbus-radius-lg) !important;
 }

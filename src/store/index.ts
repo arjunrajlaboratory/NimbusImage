@@ -20,6 +20,7 @@ import {
   VuexModule,
 } from "vuex-module-decorators";
 import { markRaw } from "vue";
+import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
 import PropertiesAPI from "./PropertiesAPI";
@@ -284,6 +285,10 @@ export class Main extends VuexModule {
   isAnnotationPanelOpen: boolean = false;
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
+  isAnalyzeDialogOpen: boolean = false;
+  // True while a layer is being dragged (reordered/grouped). Used to suppress
+  // palette re-layout that would otherwise re-render the draggable mid-drag.
+  isLayerDragging: boolean = false;
 
   toolTemplateList: any[] = [];
   selectedTool: IActiveTool | null = null;
@@ -1070,6 +1075,16 @@ export class Main extends VuexModule {
   @Mutation
   public setIsHelpPanelOpen(value: boolean) {
     this.isHelpPanelOpen = value;
+  }
+
+  @Mutation
+  public setIsAnalyzeDialogOpen(value: boolean) {
+    this.isAnalyzeDialogOpen = value;
+  }
+
+  @Mutation
+  public setIsLayerDragging(value: boolean) {
+    this.isLayerDragging = value;
   }
 
   @Action
@@ -2185,6 +2200,37 @@ export class Main extends VuexModule {
   async removeLayer(layerId: string) {
     this.removeLayerImpl(layerId);
     await this.syncConfiguration("layers");
+  }
+
+  // Put the given layers into a brand-new group (one backend sync, not one
+  // per layer).
+  @Action
+  async groupLayers(layerIds: string[]) {
+    if (layerIds.length === 0) {
+      return;
+    }
+    const groupId = uuidv4();
+    for (const layerId of layerIds) {
+      this.changeLayerImpl({ layerId, delta: { layerGroup: groupId } });
+    }
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
+  }
+
+  // Remove the given layers from whatever group they're in (used to dissolve
+  // a group). One backend sync for all of them.
+  @Action
+  async ungroupLayers(layerIds: string[]) {
+    if (layerIds.length === 0) {
+      return;
+    }
+    for (const layerId of layerIds) {
+      this.changeLayerImpl({ layerId, delta: { layerGroup: null } });
+    }
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
   }
 
   get getImagesFromLayer() {

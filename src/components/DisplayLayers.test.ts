@@ -30,6 +30,7 @@ const mockStore = vi.hoisted(() => ({
   getLayerIndexFromId: vi.fn((id: string) => (id === "l1" ? 0 : 1)),
   setConfigurationLayers: vi.fn(),
   changeLayer: vi.fn(),
+  groupLayers: vi.fn(),
   addLayer: vi.fn(),
   toggleGlobalZMaxMerge: vi.fn(),
   toggleGlobalLayerVisibility: vi.fn(),
@@ -120,20 +121,23 @@ describe("DisplayLayers", () => {
     expect(arr[3][1]).toBeTruthy();
   });
 
-  it("createGroupFromLayer calls store.changeLayer with a new layerGroup", () => {
-    mockStore.changeLayer.mockClear();
+  it("ungroupedLayers lists layers without a layerGroup", () => {
     const wrapper = mountComponent();
-    const combinedLayer = {
-      layer: { id: "l1", name: "DAPI", layerGroup: null },
-      configurationLayer: { id: "l1", name: "DAPI", layerGroup: null },
-    };
-    (wrapper.vm as any).createGroupFromLayer(combinedLayer);
-    expect(mockStore.changeLayer).toHaveBeenCalledOnce();
-    const call = mockStore.changeLayer.mock.calls[0][0];
-    expect(call.layerId).toBe("l1");
-    expect(call.delta.layerGroup).toBeTruthy();
-    // layerGroup should be a UUID string
-    expect(typeof call.delta.layerGroup).toBe("string");
+    const ids = (wrapper.vm as any).ungroupedLayers.map((l: any) => l.id);
+    expect(ids).toEqual(["l1", "l2"]);
+  });
+
+  it("createGroupFromSelection groups the selected layers via the store", async () => {
+    mockStore.groupLayers.mockClear();
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.toggleGroupSelection("l1");
+    vm.toggleGroupSelection("l2");
+    await vm.createGroupFromSelection();
+    expect(mockStore.groupLayers).toHaveBeenCalledOnce();
+    expect(mockStore.groupLayers.mock.calls[0][0]).toEqual(["l1", "l2"]);
+    // selection clears afterward
+    expect(vm.groupSelection).toEqual([]);
   });
 
   it("changeGroupsInWrapper resets isDragging and sets configuration layers", () => {

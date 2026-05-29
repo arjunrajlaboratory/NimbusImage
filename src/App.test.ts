@@ -123,32 +123,84 @@ describe("App", () => {
     expect(vm.routeName).toBe("root");
   });
 
-  // -- Method: toggleRightPanel --
-  it("toggleRightPanel opens a panel", () => {
+  // -- Method: togglePalette --
+  it("togglePalette opens a palette", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.annotationPanel).toBe(false);
-    vm.toggleRightPanel("annotationPanel");
+    vm.togglePalette("annotationPanel");
     expect(vm.annotationPanel).toBe(true);
   });
 
-  it("toggleRightPanel closes a panel that is already open", () => {
+  it("togglePalette closes a palette that is already open", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.annotationPanel = true;
-    vm.lastModifiedRightPanel = "annotationPanel";
-    vm.toggleRightPanel("annotationPanel");
+    vm.togglePalette("annotationPanel");
+    expect(vm.annotationPanel).toBe(true);
+    vm.togglePalette("annotationPanel");
     expect(vm.annotationPanel).toBe(false);
   });
 
-  it("toggleRightPanel closes previous panel when switching", () => {
+  it("opening a primary palette closes other primaries", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.toggleRightPanel("annotationPanel");
+    vm.togglePalette("annotationPanel");
     expect(vm.annotationPanel).toBe(true);
-    vm.toggleRightPanel("settingsPanel");
+    vm.togglePalette("settingsPanel");
     expect(vm.settingsPanel).toBe(true);
     expect(vm.annotationPanel).toBe(false);
+  });
+
+  it("Filters and the Object Browser can be open together", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.togglePalette("annotationPanel");
+    vm.togglePalette("filtersPanel");
+    expect(vm.annotationPanel).toBe(true);
+    expect(vm.filtersPanel).toBe(true);
+  });
+
+  it("Filters stays open when the Object Browser is closed", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.togglePalette("annotationPanel");
+    vm.togglePalette("filtersPanel");
+    vm.togglePalette("annotationPanel"); // close the host directly
+    expect(vm.annotationPanel).toBe(false);
+    expect(vm.filtersPanel).toBe(true);
+  });
+
+  it("opening Settings closes both the Object Browser and Filters", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.togglePalette("annotationPanel");
+    vm.togglePalette("filtersPanel");
+    vm.togglePalette("settingsPanel");
+    expect(vm.settingsPanel).toBe(true);
+    expect(vm.annotationPanel).toBe(false);
+    expect(vm.filtersPanel).toBe(false);
+  });
+
+  it("opening Filters alongside a non-host primary evicts that primary", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.togglePalette("settingsPanel");
+    vm.togglePalette("filtersPanel");
+    expect(vm.filtersPanel).toBe(true);
+    expect(vm.settingsPanel).toBe(false);
+  });
+
+  // -- Method: closeAllPalettes --
+  it("closeAllPalettes closes every palette", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.togglePalette("annotationPanel");
+    vm.togglePalette("filtersPanel");
+    vm.closeAllPalettes();
+    expect(vm.annotationPanel).toBe(false);
+    expect(vm.filtersPanel).toBe(false);
+    expect(vm.snapshotPanel).toBe(false);
+    expect(vm.settingsPanel).toBe(false);
   });
 
   // -- Method: toggleHelpDialogUsingHotkey --
@@ -347,20 +399,13 @@ describe("App", () => {
   });
 
   // -- Watcher: routeName --
-  it("watcher on routeName closes panels when not on datasetview", async () => {
+  it("closeAllPalettes clears open palettes (run when leaving datasetview)", () => {
     const wrapper = mountComponent({ name: "datasetview" });
     const vm = wrapper.vm as any;
-    // Open a panel while on datasetview
-    vm.toggleRightPanel("annotationPanel");
+    vm.togglePalette("annotationPanel");
     expect(vm.annotationPanel).toBe(true);
-
-    // Simulate route change away from datasetview by setting the mock
-    // Since routeName is computed from $route.name, we change via the wrapper
-    // We can directly trigger the behavior by calling datasetChanged logic
-    // through setting lastModifiedRightPanel and calling toggleRightPanel(null)
-    vm.lastModifiedRightPanel = "annotationPanel";
-    // The watcher calls toggleRightPanel(null) which closes panels
-    // Simulate what the watcher does when route != datasetview
-    // We cannot easily change $route in shallowMount, so test the logic directly
+    // datasetChanged() calls closeAllPalettes when the route is not datasetview.
+    vm.closeAllPalettes();
+    expect(vm.annotationPanel).toBe(false);
   });
 });

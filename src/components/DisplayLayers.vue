@@ -1,46 +1,80 @@
 <template>
   <div
     id="layer-controls-tourstep"
-    class="d-block mt-2"
+    class="d-block"
     v-mousetrap="mousetrapGlobalToggles"
   >
-    <v-expansion-panels class="layer-header-panels">
-      <v-expansion-panel :disabled="true">
-        <v-expansion-panel-title class="layer-header-title" hide-actions>
-          <div class="layer-title-row" style="padding-right: 20px">
-            <div class="layer-name-cell">
-              <draggable
-                v-model="dropZoneArray"
-                group="layerZoneElement"
-                class="ma-1 pa-1 drop"
-                :class="{ dragging: isDragging, 'not-dragging': !isDragging }"
-                :item-key="(el: any) => el.layer?.id || String(el)"
+    <div class="layer-title-row layer-header-row">
+      <div class="layer-name-cell">
+        <v-menu v-model="groupMenuOpen" :close-on-content-click="false">
+          <template v-slot:activator="{ props: menuProps }">
+            <v-btn
+              v-bind="menuProps"
+              variant="text"
+              size="x-small"
+              color="primary"
+              prepend-icon="mdi-group"
+              class="make-group-btn"
+              :disabled="ungroupedLayers.length < 1"
+            >
+              Make layer group…
+            </v-btn>
+          </template>
+          <v-card min-width="220">
+            <v-list density="compact" class="py-1">
+              <v-list-subheader>Group these layers</v-list-subheader>
+              <v-list-item
+                v-for="layer in ungroupedLayers"
+                :key="layer.id"
+                @click="toggleGroupSelection(layer.id)"
               >
-                <template #item="{ element }">
-                  <div>{{ element }}</div>
+                <template v-slot:prepend>
+                  <v-icon size="18" class="mr-1">
+                    {{
+                      groupSelection.includes(layer.id)
+                        ? "mdi-checkbox-marked"
+                        : "mdi-checkbox-blank-outline"
+                    }}
+                  </v-icon>
+                  <v-icon :color="layer.color" size="12" class="mr-2">
+                    mdi-circle
+                  </v-icon>
                 </template>
-                <template #footer>
-                  <span>Drag layer here to create group</span>
-                </template>
-              </draggable>
+                <v-list-item-title>{{ layer.name }}</v-list-item-title>
+              </v-list-item>
+              <v-list-item v-if="ungroupedLayers.length === 0">
+                <v-list-item-title class="text-medium-emphasis">
+                  No ungrouped layers
+                </v-list-item-title>
+              </v-list-item>
+            </v-list>
+            <v-divider />
+            <div class="d-flex align-center pa-2">
+              <v-spacer />
+              <v-btn
+                size="small"
+                variant="flat"
+                color="primary"
+                :disabled="groupSelection.length < 1"
+                @click="createGroupFromSelection"
+              >
+                Create group
+              </v-btn>
             </div>
-            <div
-              class="text-caption header-col layer-switch-cell"
-              title="hotkey Z"
-              v-show="hasMultipleZ"
-            >
-              Z max-merge
-            </div>
-            <div
-              class="text-caption header-col layer-switch-cell"
-              title="hotkey 0"
-            >
-              Channel on/off
-            </div>
-          </div>
-        </v-expansion-panel-title>
-      </v-expansion-panel>
-    </v-expansion-panels>
+          </v-card>
+        </v-menu>
+      </div>
+      <div
+        class="text-caption header-col layer-switch-cell"
+        title="hotkey Z"
+        v-show="hasMultipleZ"
+      >
+        Z max-merge
+      </div>
+      <div class="text-caption header-col layer-switch-cell" title="hotkey 0">
+        Channel on/off
+      </div>
+    </div>
     <v-divider />
     <draggable
       v-model="groupsArrayWithSpacers"
@@ -48,6 +82,8 @@
       :fallbackOnBody="true"
       :swapThreshold="0.65"
       :item-key="(el: any) => el[0]"
+      @start="isDragging = true"
+      @end="isDragging = false"
     >
       <template #item="{ element }">
         <display-layer-group
@@ -76,9 +112,8 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { IDisplayLayer, ICombinedLayer } from "@/store/model";
-import { v4 as uuidv4 } from "uuid";
 import DisplayLayerGroup from "./DisplayLayerGroup.vue";
 import draggable from "vuedraggable";
 import store from "@/store";
@@ -105,6 +140,11 @@ function groupIdAfterSpacer(spacerId: string) {
 }
 
 const isDragging = ref(false);
+
+// Mirror drag state to the store so palette layout (which observes this
+// palette's height) can pause its reactive updates while a drag is in
+// progress — a mid-drag re-render corrupts vuedraggable's vnode tree.
+watch(isDragging, (dragging) => store.setIsLayerDragging(dragging));
 
 const hasMultipleZ = computed(() => {
   return store.dataset && store.dataset.z.length > 1;
@@ -148,18 +188,28 @@ const groupsArrayWithSpacers = computed({
   },
 });
 
-const dropZoneArray = computed({
-  get() {
-    return [] as ICombinedLayer[];
-  },
-  // Create a group from the layer dropped in the zone
-  set(value: ICombinedLayer[]) {
-    if (value.length <= 0) {
-      return;
-    }
-    createGroupFromLayer(value[0]);
-  },
-});
+// "Make layer group…" dropdown: pick one or more ungrouped layers to form a new
+// group. Dragging layers in/out of an existing group still works too.
+const ungroupedLayers = computed(() =>
+  store.layers.filter((layer) => !layer.layerGroup),
+);
+const groupMenuOpen = ref(false);
+const groupSelection = ref<string[]>([]);
+
+function toggleGroupSelection(layerId: string) {
+  const index = groupSelection.value.indexOf(layerId);
+  if (index >= 0) {
+    groupSelection.value.splice(index, 1);
+  } else {
+    groupSelection.value.push(layerId);
+  }
+}
+
+async function createGroupFromSelection() {
+  await store.groupLayers([...groupSelection.value]);
+  groupSelection.value = [];
+  groupMenuOpen.value = false;
+}
 
 // Change the order of the groups
 function changeGroupsInWrapper(groups: [string, ICombinedLayer[] | null][]) {
@@ -292,16 +342,6 @@ function changeLayersInGroup(
   ]);
 }
 
-function createGroupFromLayer(combinedLayer: ICombinedLayer) {
-  const newGroupId = uuidv4();
-  store.changeLayer({
-    layerId: combinedLayer.layer.id,
-    delta: {
-      layerGroup: newGroupId,
-    },
-  });
-}
-
 // Mousetrap bindings
 const mousetrapGlobalToggles: IHotkey[] = [
   {
@@ -327,11 +367,14 @@ defineExpose({
   hasMultipleZ,
   groupsMap,
   groupsArrayWithSpacers,
-  dropZoneArray,
+  ungroupedLayers,
+  groupMenuOpen,
+  groupSelection,
+  toggleGroupSelection,
+  createGroupFromSelection,
   changeGroupsInWrapper,
   spacerUpdate,
   changeLayersInGroup,
-  createGroupFromLayer,
   mousetrapGlobalToggles,
   singleLayerPrefix,
 });
@@ -361,42 +404,23 @@ defineExpose({
   text-align: center;
   padding: 0 4px;
   max-width: 60px;
+  font-size: 11px;
+  line-height: 1.15;
+  color: var(--nimbus-text-muted, #8a8f98);
 }
 
-/* Header uses a real expansion panel title for pixel-perfect alignment
-   with layer rows, but is non-interactive */
-.layer-header-panels {
-  pointer-events: none;
+/* Column-label row (Z max-merge / Channel on/off) plus the "Make layer group…"
+   trigger. The padding-right reserves the per-layer expansion chevron's
+   footprint so the labels line up over the switch columns. */
+.layer-header-row {
+  padding-right: 33px;
+  min-height: 26px;
 }
 
-.layer-header-panels
-  :deep(.v-expansion-panel--disabled .v-expansion-panel-title) {
-  color: rgb(var(--v-theme-on-surface)) !important;
-}
-
-.layer-header-panels
-  :deep(.v-expansion-panel--disabled .v-expansion-panel-title__overlay) {
-  opacity: 0 !important;
-}
-
-.layer-header-title {
-  min-height: 32px !important;
-  cursor: default !important;
-  font-size: 0.75rem !important;
-}
-
-.drop {
-  border: dashed;
-  text-align: center;
-  pointer-events: auto;
-}
-
-.dragging {
-  opacity: 0.5;
-}
-
-.not-dragging {
-  opacity: 0;
+.make-group-btn {
+  text-transform: none;
+  letter-spacing: normal;
+  padding-inline: 4px;
 }
 
 .group-spacer {

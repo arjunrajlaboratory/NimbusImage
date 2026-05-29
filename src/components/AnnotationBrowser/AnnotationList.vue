@@ -1,66 +1,99 @@
 <template>
-  <v-expansion-panel>
-    <v-expansion-panel-title class="py-1">
-      Annotation List
+  <div class="annotation-list-panel">
+    <div class="annotation-list-toolbar">
+      <v-tooltip
+        text="Measure objects: configure and run property computations"
+      >
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            variant="text"
+            icon
+            size="small"
+            class="mr-1"
+            aria-label="Measure objects"
+            @click="store.setIsAnalyzeDialogOpen(true)"
+          >
+            <v-icon>mdi-ruler-square</v-icon>
+          </v-btn>
+        </template>
+      </v-tooltip>
+      <property-picker>
+        <template v-slot:activator="{ props: pickerProps }">
+          <v-btn
+            v-bind="pickerProps"
+            variant="flat"
+            color="primary"
+            size="small"
+            prepend-icon="mdi-plus"
+          >
+            Add property
+          </v-btn>
+        </template>
+      </property-picker>
       <v-spacer />
-      <v-container style="width: auto">
-        <v-row>
-          <v-col class="pa-0 mx-1">
-            <v-btn
-              variant="text"
-              color="error"
-              size="small"
-              :loading="isDeletingAnnotations"
-              :disabled="!isLoggedIn || isDeletingAnnotations"
-              @click.stop="deleteSelected"
-            >
-              <v-icon start>mdi-delete</v-icon>
-              Delete Selected
-            </v-btn>
-          </v-col>
-          <v-col class="pa-0 mx-1">
-            <v-menu>
-              <template v-slot:activator="{ props: activatorProps }">
-                <v-btn
-                  variant="outlined"
-                  color="primary"
-                  size="small"
-                  v-bind="activatorProps"
-                >
-                  More Actions
-                  <v-icon size="small" end>mdi-chevron-down</v-icon>
-                </v-btn>
-              </template>
-              <v-list>
-                <v-list-item
-                  @click="deleteUnselected"
-                  :disabled="!isLoggedIn || isDeletingAnnotations"
-                >
-                  <v-icon>mdi-delete-outline</v-icon>
-                  <v-list-item-title>Delete Unselected</v-list-item-title>
-                </v-list-item>
+      <v-btn
+        variant="text"
+        color="error"
+        size="small"
+        :loading="isDeletingAnnotations"
+        :disabled="!isLoggedIn || isDeletingAnnotations"
+        @click.stop="deleteSelected"
+      >
+        <v-icon start>mdi-delete</v-icon>
+        Delete Selected
+      </v-btn>
+      <v-menu>
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            variant="outlined"
+            color="primary"
+            size="small"
+            v-bind="activatorProps"
+            class="ml-2"
+          >
+            More Actions
+            <v-icon size="small" end>mdi-chevron-down</v-icon>
+          </v-btn>
+        </template>
+        <v-list density="compact">
+          <v-list-item
+            prepend-icon="mdi-delete-outline"
+            title="Delete Unselected"
+            @click="deleteUnselected"
+            :disabled="!isLoggedIn || isDeletingAnnotations"
+          />
 
-                <v-list-item
-                  @click="showTagDialog = true"
-                  :disabled="!isLoggedIn"
-                >
-                  <v-icon>mdi-tag</v-icon>
-                  <v-list-item-title>Tag Selected</v-list-item-title>
-                </v-list-item>
+          <v-list-item
+            prepend-icon="mdi-tag"
+            title="Tag Selected"
+            @click="showTagDialog = true"
+            :disabled="!isLoggedIn"
+          />
 
-                <v-list-item
-                  @click="showColorDialog = true"
-                  :disabled="!isLoggedIn"
-                >
-                  <v-icon>mdi-palette</v-icon>
-                  <v-list-item-title>Color Selected</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
-          </v-col>
-        </v-row>
-      </v-container>
-    </v-expansion-panel-title>
+          <v-list-item
+            prepend-icon="mdi-palette"
+            title="Color Selected"
+            @click="showColorDialog = true"
+            :disabled="!isLoggedIn"
+          />
+
+          <v-divider class="my-1" />
+
+          <delete-connections>
+            <template v-slot:activator="{ props }">
+              <v-list-item
+                v-bind="props"
+                prepend-icon="mdi-link-variant-off"
+                title="Delete Connections…"
+                :disabled="!isLoggedIn"
+                base-color="error"
+              />
+            </template>
+          </delete-connections>
+        </v-list>
+      </v-menu>
+    </div>
 
     <tag-selection-dialog
       v-model:show="showTagDialog"
@@ -72,7 +105,7 @@
       @submit="handleColorSubmit"
     />
 
-    <v-expansion-panel-text id="annotation-list-content-tourstep">
+    <div id="annotation-list-content-tourstep" class="annotation-list-content">
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>
@@ -130,6 +163,7 @@
         :items="filteredItems"
         :headers="headers"
         show-select
+        density="compact"
         item-value="annotation.id"
         v-model="selectedIds"
         :page="page"
@@ -140,6 +174,7 @@
         @update:sort-by="sortBy = $event"
         @update:group-by="groupBy = $event"
         ref="dataTable"
+        class="compact-table"
       >
         <template v-slot:header.data-table-select>
           <v-checkbox
@@ -148,6 +183,24 @@
             @click="selectAllCallback"
             hide-details
           />
+        </template>
+        <template
+          v-for="header in propertyHeaders"
+          :key="header.key"
+          v-slot:[`header.${header.key}`]="{ column }"
+        >
+          <span class="property-header-label">{{ column.title }}</span>
+          <v-btn
+            variant="text"
+            size="x-small"
+            density="compact"
+            icon
+            class="property-header-remove ml-1"
+            :title="`Remove '${column.title}' from list`"
+            @click.stop="removePropertyColumn(header.path)"
+          >
+            <v-icon size="14">mdi-close</v-icon>
+          </v-btn>
         </template>
         <template v-slot:item="{ item }">
           <tr
@@ -237,8 +290,8 @@
           </tr>
         </template>
       </v-data-table>
-    </v-expansion-panel-text>
-  </v-expansion-panel>
+    </div>
+  </div>
 </template>
 
 <script lang="ts" setup>
@@ -252,6 +305,8 @@ import { simpleCentroid } from "@/utils/annotation";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
+import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
+import PropertyPicker from "@/components/PropertyPicker.vue";
 
 import {
   AnnotationNames,
@@ -428,10 +483,16 @@ const propertyHeaders = computed(() => {
     result.push({
       title: fullName ?? "",
       key: "properties." + path.join("."),
+      path,
+      minWidth: 140,
     });
   }
   return result;
 });
+
+function removePropertyColumn(path: string[]) {
+  propertyStore.togglePropertyPathVisibility(path);
+}
 
 function goToAnnotationIdLocation(annotationId: string) {
   const annotation = annotationStore.getAnnotationFromId(annotationId);
@@ -620,6 +681,7 @@ defineExpose({
   deleteSelected,
   deleteUnselected,
   getStringFromPropertiesAndPath,
+  removePropertyColumn,
 });
 </script>
 <style>
@@ -664,5 +726,81 @@ td span {
 
 .user-select-text {
   user-select: text;
+}
+
+.annotation-list-panel {
+  padding: 6px 10px 10px;
+}
+
+.annotation-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0 8px;
+}
+
+.add-property-btn {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.property-header-label {
+  vertical-align: middle;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.property-header-remove {
+  vertical-align: middle;
+  opacity: 0.6;
+}
+.property-header-remove:hover {
+  opacity: 1;
+}
+
+/* Compact data-table typography — headers + cells slightly smaller and
+   tighter than Vuetify's default 14px / 48px so the palette feels dense
+   without sacrificing legibility. */
+.compact-table th,
+.compact-table td {
+  font-size: 12px;
+  padding-inline: 8px;
+}
+.compact-table th {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  vertical-align: middle;
+  white-space: normal;
+}
+.compact-table tbody tr {
+  height: 32px;
+}
+.compact-table .v-data-table-footer {
+  font-size: 12px;
+}
+
+/* Let the palette's frosted-glass surface show through the table — the
+   default Vuetify backgrounds are opaque and look stamped against the
+   translucent container. */
+.compact-table,
+.compact-table.v-table,
+.compact-table .v-table__wrapper,
+.compact-table table,
+.compact-table thead,
+.compact-table tbody,
+.compact-table tfoot,
+.compact-table tr,
+.compact-table th,
+.compact-table td,
+.compact-table .v-data-table-footer,
+.compact-table .v-data-table__td {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+.compact-table tbody tr td {
+  border-bottom: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
 }
 </style>

@@ -1,11 +1,6 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
   <div class="viewer">
-    <aside class="side">
-      <viewer-toolbar class="toolbar" @image-changed="handleImageChanged">
-        <display-layers />
-      </viewer-toolbar>
-    </aside>
     <image-viewer
       class="main"
       :should-reset-maps="shouldResetMaps"
@@ -16,8 +11,6 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
-import ViewerToolbar from "@/components/ViewerToolbar.vue";
-import DisplayLayers from "@/components/DisplayLayers.vue";
 import ImageViewer from "@/components/ImageViewer.vue";
 
 import store from "@/store";
@@ -50,10 +43,6 @@ function fetchAnnotationData() {
   }
 }
 
-function handleImageChanged() {
-  shouldResetMaps.value = true;
-}
-
 function handleResetComplete() {
   shouldResetMaps.value = false;
 }
@@ -72,7 +61,6 @@ defineExpose({
   shouldResetMaps,
   dataset,
   configuration,
-  handleImageChanged,
   handleResetComplete,
 });
 </script>
@@ -80,30 +68,13 @@ defineExpose({
 <style lang="scss" scoped>
 .viewer {
   width: 100%;
-  height: calc(100vh - 64px);
+  /* Fill the viewport — the glass app bar floats over the full-bleed image
+     canvas; the tool palettes float over it rather than pushing it. */
+  height: 100vh;
   display: flex;
-}
-
-.side {
-  width: 20em;
-}
-
-.toolbar {
-  padding: 0.5em;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding-bottom: 0;
 }
 
 .main {
   flex: 1 1 0;
-}
-</style>
-<style>
-.toolbar .v-expansion-panel-text__wrapper,
-.toolbar .v-expansion-panel-title {
-  padding-left: 1px;
-  padding-right: 5px;
 }
 </style>
