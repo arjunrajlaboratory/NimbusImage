@@ -105,7 +105,7 @@ export default class ExportAPI {
 
     // Add auth token for authenticated downloads
     const token = (this.client as any).token;
-    if (token && token !== "#/") {
+    if (token) {
       params.set("token", token);
     }
 
@@ -139,7 +139,7 @@ export default class ExportAPI {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token && token !== "#/") {
+    if (token) {
       headers["Girder-Token"] = token;
     }
 

@@ -9,7 +9,7 @@ import {
   IGirderLargeImage,
   DEFAULT_LARGE_IMAGE_SOURCE,
 } from "@/girder";
-import type { AxiosError } from "axios";
+import type { AxiosError, AxiosInstance } from "axios";
 import pLimit from "p-limit";
 import pRetry from "p-retry";
 import {
@@ -101,6 +101,104 @@ function apiRootFromGirderUrl(girderUrl: string) {
   return girderUrl + apiRootSuffix;
 }
 
+// Persist the Girder auth token in localStorage. @girder/components v4
+// tries to use a JS-set `girderToken` cookie for this, but on Girder 5+
+// the backend sets the same-named cookie as HttpOnly, and browsers reject
+// the JS set on cookie-hygiene grounds. So the token vanishes on reload,
+// the RestClient constructor falls back to parsing `window.location.hash`,
+// the fallback returns the entire route hash as the "token" when there's
+// no OAuth marker, and the bogus value goes out as `Girder-Token: #/...`
+// on every request → 401s that look like spurious logouts. localStorage
+// is the simplest fix: same XSS exposure as the JS-set cookie this code
+// is replacing (i.e., none added), and Girder's `Girder-Token` header path
+// continues to work normally.
+//
+// Cookie-based auth is not a viable substitute even though Girder 5 sets a
+// cookie: Girder's API endpoints reject cookies unless they carry the
+// `@access.cookie` decorator (a CSRF measure), which most don't.
+// See: https://github.com/girder/girder_web_components/issues/364
+//
+// Key is namespaced to avoid collision if @girder/components ever adopts
+// its own localStorage strategy under the bare name `girderToken` (Girder's
+// own legacy web client does, per girder/girder#3484). Stored value is
+// `{ apiRoot, token }` JSON so a token issued by one Girder server is never
+// replayed to a different one when the user switches domains.
+const TOKEN_STORAGE_KEY = "nimbus.girderToken";
+
+interface StoredAuth {
+  apiRoot: string;
+  token: string;
+}
+
+function loadStoredToken(apiRoot: string): string | null {
+  const raw = localStorage.getItem(TOKEN_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredAuth;
+    if (parsed.apiRoot !== apiRoot || !parsed.token) {
+      return null;
+    }
+    return parsed.token;
+  } catch {
+    // Legacy or corrupted payload — drop it and force a fresh login.
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    return null;
+  }
+}
+
+function storeToken(apiRoot: string, token: string) {
+  const value: StoredAuth = { apiRoot, token };
+  localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(value));
+}
+
+function clearStoredToken() {
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
+function createGirderRestClient(options: {
+  apiRoot: string;
+}): RestClientInstance {
+  const client = new RestClient(options);
+  const stored = loadStoredToken(client.apiRoot);
+  if (stored) {
+    client.token = stored;
+  } else if (client.token && client.token.startsWith("#")) {
+    client.token = "";
+  }
+  client.on("userLoggedIn", () => {
+    if (client.token) {
+      storeToken(client.apiRoot, client.token);
+    }
+  });
+  client.on("userLoggedOut", clearStoredToken);
+  client.on("userFetched", () => {
+    if (!client.user) {
+      // fetchUser clears this.token when /user/me returns null, but doesn't
+      // emit userLoggedOut. Keying off `user` rather than `token` survives a
+      // hypothetical upstream change where v4 stops zeroing the token on
+      // anonymous /user/me. If user is null, the session is dead regardless.
+      clearStoredToken();
+    }
+  });
+  // Belt-and-suspenders: any 401 anywhere indicates the persisted token is
+  // no longer accepted (revoked, server-side cookie_lifetime hit, instance
+  // wiped, etc.). Drop the storage so the next reload starts clean rather
+  // than re-sending the dead token on every request. Reaches into `_axios`
+  // because the v4 RestClient's `.get`/`.post`/etc. forward to an internal
+  // axios instance and don't expose interceptors on the RestClient itself.
+  const axios = (client as unknown as { _axios: AxiosInstance })._axios;
+  axios.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error?.response?.status === 401) {
+        clearStoredToken();
+      }
+      return Promise.reject(error);
+    },
+  );
+  return client;
+}
+
 // Tracks the most recently issued fetchRecentDatasetViews call so older
 // in-flight requests can detect they are stale and skip the state write.
 // Without this, a slower request with a different filter can land last and
@@ -109,7 +207,7 @@ let recentDatasetViewsRequestId = 0;
 
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
-  girderRest = new RestClient({
+  girderRest = createGirderRestClient({
     apiRoot: apiRootFromGirderUrl(persister.get("girderUrl", defaultGirderUrl)),
   });
 
@@ -1153,9 +1251,7 @@ export class Main extends VuexModule {
 
   @Action
   async initialize() {
-    // The Girder client may set the token to the path of the API, but this actually means that we
-    // have no token, hence we are disconnected.
-    if (!this.girderRest.token || this.girderRest.token === "#/") {
+    if (!this.girderRest.token) {
       return;
     }
     try {
@@ -1213,7 +1309,7 @@ export class Main extends VuexModule {
     username: string;
     password: string;
   }) {
-    const restClient = new RestClient({
+    const restClient = createGirderRestClient({
       apiRoot: apiRootFromGirderUrl(domain),
     });
 
@@ -1254,7 +1350,7 @@ export class Main extends VuexModule {
     password: string;
     admin: boolean;
   }): Promise<void> {
-    const restClient = new RestClient({
+    const restClient = createGirderRestClient({
       apiRoot: apiRootFromGirderUrl(domain),
     });
 
