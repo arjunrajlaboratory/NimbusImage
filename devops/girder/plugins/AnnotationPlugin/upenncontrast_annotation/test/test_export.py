@@ -12,7 +12,11 @@ from upenncontrast_annotation.server.models.collection import Collection
 from upenncontrast_annotation.server.models.datasetView import (
     DatasetView as DatasetViewModel
 )
-from upenncontrast_annotation.server.api.export import Export
+from upenncontrast_annotation.server.api.export import (
+    Export,
+    _deduplicateColumnNames,
+    sanitizeCsvColumnName,
+)
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -663,6 +667,88 @@ class TestCSVExport:
         # Test empty path
         assert export._getPropertyColumnName([], propertyNameMap) is None
 
+    def testSanitizeCsvColumnName(self, admin):
+        """Column names can be normalized for R-friendly CSV headers."""
+        assert sanitizeCsvColumnName(
+            "cell, fibroblast/Blob Metrics (%) / Mean Area (um^2)"
+        ) == "cell_fibroblast_Blob_Metrics_Mean_Area_um_2"
+        assert sanitizeCsvColumnName("already_ok_123") == "already_ok_123"
+        assert sanitizeCsvColumnName("///") == "_"
+
+    def testDeduplicateColumnNames(self, admin):
+        """Repeated column names are suffixed _2, _3, ... in order."""
+        assert _deduplicateColumnNames(["A", "B", "A"]) == ["A", "B", "A_2"]
+        assert _deduplicateColumnNames(["A", "A", "A"]) == ["A", "A_2", "A_3"]
+        assert _deduplicateColumnNames(["A", "B"]) == ["A", "B"]
+        assert _deduplicateColumnNames([]) == []
+
+    def testDeduplicateColumnNamesSkipsExistingSuffixCollisions(
+        self, admin
+    ):
+        """Suffixed candidate that already exists is skipped."""
+        # Naive count-based suffixing would emit two "Area_2"s here.
+        assert _deduplicateColumnNames(
+            ["Area", "Area_2", "Area"]
+        ) == ["Area", "Area_2", "Area_3"]
+        assert _deduplicateColumnNames(
+            ["A", "A_2", "A_3", "A"]
+        ) == ["A", "A_2", "A_3", "A_4"]
+        # Pre-existing _2 that isn't tied to a collision is left alone;
+        # subsequent "X" collision walks past the taken _2.
+        assert _deduplicateColumnNames(
+            ["X_2", "X", "X"]
+        ) == ["X_2", "X", "X_3"]
+
+    def testBuildCsvColumnsDeduplicatesAfterSanitization(self, admin):
+        """Collisions from sanitization get unique suffixes."""
+        export = Export()
+        propertyNameMap = {
+            "p1": "Mean Area (um^2)",
+            "p2": "Mean/Area/um/2",
+        }
+        columns, includedPaths = export._buildCsvColumns(
+            [["p1"], ["p2"]],
+            propertyNameMap,
+            sanitizeColumnNames=True,
+        )
+        names = [c.name for c in columns]
+        # Two property columns sanitize to the same token; the second
+        # must be suffixed to keep header names unique.
+        assert "Mean_Area_um_2" in names
+        assert "Mean_Area_um_2_2" in names
+        assert len(names) == len(set(names))
+
+    def testBuildCsvColumnsPreservesFixedColumnQuotingWhenSanitized(
+        self, admin
+    ):
+        """Fixed-column quoting is preserved through sanitization.
+
+        Fixed-column is_quoted controls value quoting too (Tags joins
+        multiple tags with ', ', Name is freeform user text), so it must
+        not change just because the column NAME no longer has commas.
+        """
+        export = Export()
+        columns, _ = export._buildCsvColumns(
+            [], {}, sanitizeColumnNames=True
+        )
+        fixed = {c.name: c.is_quoted for c in columns}
+        assert fixed["Id"] is True
+        assert fixed["Tags"] is True
+        assert fixed["Shape"] is True
+        assert fixed["Name"] is True
+        assert fixed["Channel"] is False
+
+    def testGetPropertyColumnNameSanitized(self, admin):
+        """Sanitized property columns replace delimiters and punctuation."""
+        export = Export()
+        propertyNameMap = {"prop123": "cell, fibroblast/Blob Metrics (%)"}
+
+        assert export._getPropertyColumnName(
+            ["prop123", "Mean Area (um^2)"],
+            propertyNameMap,
+            sanitizeColumnNames=True,
+        ) == "cell_fibroblast_Blob_Metrics_Mean_Area_um_2"
+
     def testPropertyColumnQuotedWhenNameContainsComma(self, admin):
         """Property columns with commas in name are quoted in CSV."""
         dataset, annotations, _ = createDatasetWithData(admin)
@@ -701,6 +787,92 @@ class TestCSVExport:
         # Verify a column without comma is not quoted
         col_no_comma = CsvColumn("Area", is_quoted=',' in "Area")
         assert col_no_comma.is_quoted is False
+
+    def testExportCsvGeneratedHeaderSanitizesColumnNames(self, admin):
+        """CSV generation applies sanitized column names when requested."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        prop = AnnotationProperty().save({
+            "name": "cell, fibroblast/Blob Metrics (%)",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        PropertyValuesModel = AnnotationPropertyValues()
+        PropertyValuesModel.appendValues(
+            {propId: {"Mean Area (um^2)": 100}},
+            annotations[0]["_id"],
+            dataset["_id"]
+        )
+
+        export = Export()
+        lines = list(export._generateCsvLines(
+            dataset["_id"],
+            [[propId, "Mean Area (um^2)"]],
+            sanitizeColumnNames=True,
+        ))
+
+        header = lines[0].strip()
+        assert "cell_fibroblast_Blob_Metrics_Mean_Area_um_2" in header
+        assert "cell, fibroblast" not in header
+        assert "/" not in header
+        assert "(" not in header
+
+    def testExportCsvSanitizedQuotesMultiTagValues(self, admin):
+        """Tags with multiple values keep CSV quoting under sanitization.
+
+        Tags render as ', '.join(tags). Without quoting, a multi-tag
+        value like 'red, blue' would split the row across columns when a
+        real CSV parser reads it. Parse the output with csv.reader to
+        verify the round-trip rather than just substring-matching.
+        """
+        import csv as csv_module
+        import io
+
+        dataset = utilities.createFolder(
+            admin, "multi_tag_dataset", upenn_utilities.datasetMetadata
+        )
+        ann_data = upenn_utilities.getSampleAnnotation(dataset["_id"])
+        ann_data["tags"] = ["red", "blue"]
+        Annotation().create(ann_data)
+
+        export = Export()
+        csv_output = "".join(export._generateCsvLines(
+            dataset["_id"], [], sanitizeColumnNames=True,
+        ))
+
+        rows = list(csv_module.reader(io.StringIO(csv_output)))
+        assert len(rows) == 2
+        header, data_row = rows
+        assert len(data_row) == len(header)
+        tags_idx = header.index("Tags")
+        assert data_row[tags_idx] == "red, blue"
+
+    def testExportCsvGeneratedHeaderKeepsColumnNamesByDefault(self, admin):
+        """CSV generation preserves existing header format by default."""
+        dataset, _, _ = createDatasetWithData(admin)
+
+        prop = AnnotationProperty().save({
+            "name": "cell, fibroblast/Blob Metrics (%)",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        export = Export()
+        lines = list(export._generateCsvLines(
+            dataset["_id"],
+            [[propId, "Mean Area (um^2)"]],
+        ))
+
+        header = lines[0].strip()
+        assert '"cell, fibroblast/Blob Metrics (%) / Mean Area (um^2)"' \
+            in header
 
     def testPropertyColumnNotQuotedWhenNoComma(self, admin):
         """Property columns without commas are not quoted."""

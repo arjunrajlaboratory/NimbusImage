@@ -101,7 +101,7 @@
         </v-radio-group>
 
         <v-alert
-          v-if="hasCommasInPropertyNames"
+          v-if="hasCommasInPropertyNames && !sanitizeColumnNames"
           :type="fileFormat === 'csv' ? 'warning' : 'info'"
           variant="tonal"
           class="mb-4"
@@ -125,6 +125,13 @@
             value="selected"
           ></v-radio>
         </v-radio-group>
+
+        <v-checkbox
+          v-model="sanitizeColumnNames"
+          label="Replace special characters in column names"
+          class="mb-4"
+          hide-details
+        />
 
         <v-list-subheader>Undefined Value Handling</v-list-subheader>
         <v-radio-group v-model="undefinedHandling" class="mb-4">
@@ -297,6 +304,33 @@ const UNDEFINED_VALUE_MAP = {
 
 const PREVIEW_ANNOTATION_LIMIT = 1000;
 const DISPLAY_CHAR_LIMIT = 10000;
+// Must stay in sync with CSV_UNSAFE_COLUMN_CHARS in
+// devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py
+// so this client-side preview matches the server-generated CSV exactly.
+const UNSAFE_CSV_COLUMN_CHARS = /[^A-Za-z0-9_]+/g;
+
+interface CsvColumn {
+  name: string;
+  // isQuoted controls value quoting, not just header quoting: Tags joins
+  // multiple tags with ", " and Name is freeform user text, so these stay
+  // quoted regardless of sanitization. Keeping the flag on the column
+  // (rather than a separate parallel array) means it cannot drift out of
+  // alignment with the name when fixed columns are added/moved/removed.
+  isQuoted: boolean;
+}
+
+// Fixed columns for CSV export. Mirrors CSV_FIXED_COLUMNS in
+// devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py.
+const CSV_FIXED_COLUMNS: readonly CsvColumn[] = [
+  { name: "Id", isQuoted: true },
+  { name: "Channel", isQuoted: false },
+  { name: "XY", isQuoted: false },
+  { name: "Z", isQuoted: false },
+  { name: "Time", isQuoted: false },
+  { name: "Tags", isQuoted: true },
+  { name: "Shape", isQuoted: true },
+  { name: "Name", isQuoted: true },
+];
 
 const props = defineProps<{
   annotations: IAnnotation[];
@@ -314,6 +348,7 @@ const displayText = ref("");
 const propertyExportMode = ref<"all" | "selected" | "listed">("all");
 const propertyFilter = ref("");
 const selectedPropertyPaths = ref<string[]>([]);
+const sanitizeColumnNames = ref(false);
 
 const fileFormat = ref<"csv" | "tsv">("csv");
 const fileDelimiter = computed(() => (fileFormat.value === "tsv" ? "\t" : ","));
@@ -427,23 +462,46 @@ function copyCSVText() {
   }
 }
 
+function sanitizeCsvColumnName(name: string): string {
+  return (
+    name.replace(UNSAFE_CSV_COLUMN_CHARS, "_").replace(/^_+|_+$/g, "") || "_"
+  );
+}
+
+function getCsvColumnName(name: string): string {
+  return sanitizeColumnNames.value ? sanitizeCsvColumnName(name) : name;
+}
+
+// Sanitization can collapse distinct names to the same token, which would
+// break R imports that rely on unique header names. Suffix repeats with
+// _2, _3, ... in order of appearance, checking each candidate against the
+// used set so ["Area", "Area_2", "Area"] becomes ["Area", "Area_2",
+// "Area_3"] rather than two "Area_2"s. Matches the backend dedup logic.
+function deduplicateColumnNames(names: string[]): string[] {
+  const used = new Set<string>();
+  return names.map((name) => {
+    let candidate = name;
+    let counter = 1;
+    while (used.has(candidate)) {
+      counter += 1;
+      candidate = `${name}_${counter}`;
+    }
+    used.add(candidate);
+    return candidate;
+  });
+}
+
 async function generateCSVStringForAnnotations() {
   isProcessing.value = true;
   processingProgress.value = 0;
 
   try {
-    // Fields
-    const fields = [
-      "Id",
-      "Channel",
-      "XY",
-      "Z",
-      "Time",
-      "Tags",
-      "Shape",
-      "Name",
-    ];
-    const quotes = [true, false, false, false, false, true, true, true];
+    // Build columns as {name, isQuoted} so the quote flag travels with its
+    // column. Fixed columns first, then one column per included property.
+    const columns: CsvColumn[] = CSV_FIXED_COLUMNS.map((col) => ({
+      name: getCsvColumnName(col.name),
+      isQuoted: col.isQuoted,
+    }));
     const usedPaths: string[][] = [];
 
     // Pre-compute included paths to avoid repeated checks
@@ -454,10 +512,21 @@ async function generateCSVStringForAnnotations() {
 
     includedPaths.forEach((path) => {
       const name = propertyStore.getFullNameFromPath(path)!;
-      fields.push(name);
-      quotes.push(name.includes(","));
+      const columnName = getCsvColumnName(name);
+      columns.push({ name: columnName, isQuoted: columnName.includes(",") });
       usedPaths.push(path);
     });
+
+    if (sanitizeColumnNames.value) {
+      // Dedup operates on names only; re-attach to the existing columns so
+      // each name keeps its isQuoted flag.
+      const uniqueNames = deduplicateColumnNames(columns.map((c) => c.name));
+      uniqueNames.forEach((name, i) => (columns[i].name = name));
+    }
+
+    // Papa.unparse takes parallel fields/quotes arrays, so split only here.
+    const fields = columns.map((c) => c.name);
+    const quotes = columns.map((c) => c.isQuoted);
 
     // Process annotations in chunks
     const CHUNK_SIZE = 100;
@@ -572,6 +641,7 @@ async function downloadSingleDataset() {
         : {}),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
+      sanitizeColumnNames: sanitizeColumnNames.value,
       filename:
         filename.value || `upenn_annotation_export${fileExtension.value}`,
     });
@@ -593,6 +663,7 @@ async function downloadAllDatasets() {
       propertyPaths: getIncludedPropertyPaths(),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
+      sanitizeColumnNames: sanitizeColumnNames.value,
       onProgress: (completed) => {
         bulkExportProgress.value = completed;
       },
@@ -628,6 +699,7 @@ watch(
     propertyExportMode,
     selectedPropertyPaths,
     undefinedHandling,
+    sanitizeColumnNames,
     fileFormat,
     dialog,
     annotationScope,
@@ -647,6 +719,7 @@ defineExpose({
   propertyExportMode,
   fileFormat,
   undefinedHandling,
+  sanitizeColumnNames,
   processingProgress,
   isProcessing,
   isTooLargeForPreview,
@@ -655,6 +728,7 @@ defineExpose({
   propertyNamesWithCommas,
   hasCommasInPropertyNames,
   resetFilename,
+  sanitizeCsvColumnName,
   generateCSVStringForAnnotations,
   updateText,
   getIncludedPropertyPaths,

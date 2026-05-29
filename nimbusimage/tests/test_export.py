@@ -23,6 +23,18 @@ class TestExportAccessor:
         assert isinstance(result, bytes)
         assert b"Id,Channel" in result
 
+    def test_to_csv_can_request_sanitized_column_names(self, mock_gc):
+        mock_response = MagicMock()
+        mock_response.content = b"Id,Channel\nann1,0"
+        mock_gc.sendRestRequest.return_value = mock_response
+        accessor = ExportAccessor(mock_gc, "ds_001")
+        accessor.to_csv(
+            property_paths=[["prop1", "Area"]],
+            sanitize_column_names=True,
+        )
+        body = mock_gc.sendRestRequest.call_args.kwargs["data"]
+        assert '"sanitizeColumnNames": true' in body
+
     def test_to_csv_with_path(self, mock_gc, tmp_path):
         mock_response = MagicMock()
         mock_response.content = b"Id,Channel\nann1,0"
