@@ -126,7 +126,7 @@ Projects are a way to group related datasets and collections together, designed 
 **What Projects Are For**:
 - Group datasets and collections that belong together (e.g., all data for a paper)
 - Add publication metadata (title, description, authors, license, keywords, DOI)
-- Prepare data for future export to repositories like Zenodo
+- Publish data directly to open repositories like Zenodo to mint a permanent, citable DOI (see "Publishing Projects to Zenodo" below)
 - Organize your work beyond the folder-based file system
 - Share an entire body of work with collaborators at once
 
@@ -149,7 +149,7 @@ Projects are a way to group related datasets and collections together, designed 
 - Add authors with names and affiliations
 - Include keywords for discoverability
 - Add a DOI if already assigned
-- This metadata will be used when exporting to repositories (coming soon)
+- This metadata is used when publishing the project to Zenodo (see "Publishing Projects to Zenodo" below)
 
 **Project Sharing**:
 - Share an entire project with other users, giving them access to all datasets and collections in the project
@@ -166,6 +166,18 @@ Projects are a way to group related datasets and collections together, designed 
 - View dataset statistics (number of datasets, total size)
 
 Projects provide a logical grouping layer that sits above the file system, making it easier to organize and eventually share complete research outputs. They are the recommended way to organize data for a publication or study.
+
+## Publishing Projects to Zenodo (data archiving & sharing compliance)
+NimbusImage can archive an entire project directly to Zenodo (zenodo.org), a free open repository that mints permanent, citable DOIs. This is the feature to point users to when they ask about data-sharing policies, journal/funder archiving requirements, getting a DOI for their data, or making their imaging data publicly available and reproducible.
+
+- Zenodo publishing is a PROJECT-level feature. Users must first gather their datasets and collections into a project and fill in its publication metadata (title, description, license, keywords, authors) before publishing.
+- What gets uploaded: the original image files (OME-TIFF, .nd2, etc.), every dataset's annotations (exported as JSON), the collection configurations, and a project manifest. The result is a complete, reproducible snapshot of the data and the analysis layered on it.
+- Workflow: (1) create a Zenodo personal access token (scopes: deposit:write, deposit:actions, user:email — or "all"; Zenodo shows the token only once); (2) paste it into the "Configure Zenodo Token" dialog on the project's "Zenodo Publication" card (the token is stored encrypted server-side); (3) click "Upload to Zenodo" to create a draft deposition; (4) review the draft on Zenodo, then click "Publish (Mint DOI)".
+- Publishing is IRREVERSIBLE: it mints a permanent DOI and the record can no longer be deleted — only new versions can be added. Users can "Discard Draft" before publishing.
+- To update published data, use "Upload New Version"; each version gets its own DOI while a single concept DOI always points at the latest version, so citations stay valid.
+- A "Use Zenodo Sandbox" toggle (sandbox.zenodo.org) lets users rehearse the full workflow with test DOIs before publishing for real. The sandbox uses a separate account and token.
+- Limits: 50 GB and 100 files per record (quota increase to 200 GB available on request from Zenodo).
+- Full docs: the "Publishing to Zenodo" page under "Images, datasets, and collections".
 
 # 3. Getting Started
 
