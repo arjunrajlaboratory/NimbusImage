@@ -133,7 +133,7 @@
     <v-menu location="top" :close-on-content-click="false">
       <template #activator="{ props: activatorProps }">
         <v-btn
-          id="layer-info-tourstep"
+          data-tour="layer-info"
           variant="text"
           icon
           size="small"
@@ -148,7 +148,7 @@
       <layer-info-grid :layers="store.layers" />
     </v-menu>
     <v-btn
-      id="lock-view-tourstep"
+      data-tour="lock-view"
       variant="text"
       icon
       size="small"
@@ -166,7 +166,7 @@
       }}</v-icon>
     </v-btn>
     <v-btn
-      id="reset-view-tourstep"
+      data-tour="reset-view"
       variant="text"
       icon
       size="small"
@@ -182,7 +182,7 @@
       <v-icon size="24">mdi-fit-to-page-outline</v-icon>
     </v-btn>
     <v-btn
-      id="reset-rotation-tourstep"
+      data-tour="reset-rotation"
       variant="text"
       icon
       size="small"
