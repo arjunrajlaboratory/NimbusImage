@@ -1,7 +1,5 @@
 import { IGirderItem, IGirderFolder, IUPennCollection } from "@/girder";
 import type { ITileHistogram } from "./images";
-import Shepherd from "shepherd.js";
-
 interface IObject<Values = any> {
   [key: string]: Values;
 }
@@ -1599,21 +1597,23 @@ export interface ITourStep {
   position?: "top" | "bottom" | "left" | "right";
   waitForElement?: number;
   modalOverlay?: boolean;
-  beforeShow?: string;
-  onNext?: string;
   showNextButton?: boolean;
   onTriggerEvent?: string;
 }
 
-export interface IExtendedShepherdStep extends Shepherd.Step {
-  options: Shepherd.Step.StepOptions & {
-    route?: string;
-    beforeShow?: () => void;
-    onNext?: () => void;
-    hasModalOverlay?: boolean;
-    waitForElement?: number;
-    onTriggerEvent?: string;
-  };
+// Internal representation the TourManager builds from an ITourStep.
+// Engine-neutral: holds everything the controller needs to render and advance.
+export interface ITourStepRuntime {
+  id: string;
+  route: string;
+  element?: string;
+  title: string;
+  text: string;
+  position: "top" | "bottom" | "left" | "right";
+  waitForElement: number;
+  hasModalOverlay: boolean;
+  showNextButton: boolean;
+  onTriggerEvent?: string;
 }
 
 export interface ITourMetadata {
