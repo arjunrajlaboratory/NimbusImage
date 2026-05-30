@@ -2,7 +2,7 @@
   <v-card class="property-creation-card">
     <div
       class="d-flex align-center px-4 py-2"
-      id="create-property-header-tourstep"
+      data-tour="create-property-header"
     >
       <span class="panel-section-title">Create new property</span>
     </div>
@@ -16,8 +16,8 @@
             <tag-picker
               v-model="filteringTags"
               dense
-              id="property-tag-picker-tourstep"
-              v-tour-trigger="'property-tag-picker-tourtrigger'"
+              data-tour="property-tag-picker"
+              v-tour-trigger="TOUR_TRIGGERS.propertyTagPicker"
             />
           </v-col>
           <v-col cols="3">
@@ -31,7 +31,7 @@
         </v-row>
         <v-row align="center" density="comfortable">
           <v-col cols="4">
-            <v-list-subheader dense id="shape-selection-tourstep">{{
+            <v-list-subheader dense data-tour="shape-selection">{{
               shapeSelectionString
             }}</v-list-subheader>
           </v-col>
@@ -57,8 +57,8 @@
               dense
               v-model="dockerImage"
               :imageFilter="propertyImageFilter"
-              id="property-algorithm-select-tourstep"
-              v-tour-trigger="'property-algorithm-select-tourtrigger'"
+              data-tour="property-algorithm-select"
+              v-tour-trigger="TOUR_TRIGGERS.propertyAlgorithmSelect"
             />
           </v-col>
         </v-row>
@@ -103,8 +103,8 @@
           color="primary"
           size="small"
           @click="createProperty"
-          id="create-property-button-tourstep"
-          v-tour-trigger="'create-property-button-tourtrigger'"
+          data-tour="create-property-button"
+          v-tour-trigger="TOUR_TRIGGERS.createPropertyButton"
         >
           Create Property
         </v-btn>
@@ -129,6 +129,7 @@ import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import PropertyWorkerMenu from "@/components/PropertyWorkerMenu.vue";
 import { tagFilterFunction } from "@/utils/annotation";
+import { TOUR_TRIGGERS } from "@/tours/anchors";
 
 // Function to remove repeated words
 function removeRepeatedWords(input: string): string {
