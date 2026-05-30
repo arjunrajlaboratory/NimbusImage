@@ -32,8 +32,8 @@
               @click="goToDefaultView"
               :disabled="!dataset"
               class="pulse-btn"
-              id="view-dataset-button-tourstep"
-              v-tour-trigger="'view-dataset-button-tourtrigger'"
+              data-tour="view-dataset-button"
+              v-tour-trigger="TOUR_TRIGGERS.viewDatasetButton"
             >
               <v-icon start>mdi-eye</v-icon>
               View
@@ -415,6 +415,7 @@ import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
 import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
 import ShareDataset from "@/components/ShareDataset.vue";
 import CopyLinkButton from "@/components/CopyLinkButton.vue";
+import { TOUR_TRIGGERS } from "@/tours/anchors";
 
 // Suppress unused import warnings — auto-registered in <script setup>
 void GirderLocationChooser;
