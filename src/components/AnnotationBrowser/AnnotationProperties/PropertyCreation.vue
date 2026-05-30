@@ -31,7 +31,7 @@
         </v-row>
         <v-row align="center" density="comfortable">
           <v-col cols="4">
-            <v-list-subheader dense :data-tour="TOUR_ANCHORS.shapeSelection">{{
+            <v-list-subheader dense>{{
               shapeSelectionString
             }}</v-list-subheader>
           </v-col>
@@ -45,6 +45,7 @@
               hide-details
               density="compact"
               :disabled="filteringTags.length > 0"
+              :data-tour="TOUR_ANCHORS.shapeSelection"
             ></v-select>
           </v-col>
         </v-row>

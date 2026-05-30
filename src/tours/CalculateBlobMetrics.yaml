@@ -55,9 +55,11 @@ steps:
 
   - id: property-shape-select-tourstep
     route: datasetview
-    title: "Shape of the objects"
-    text: "Just an FYI: Nimbus will automatically detect the shape you want to measure. But if you don't select a tag, it will process all objects of this shape."
-    waitForElement: 1000
+    element: '[data-tour="shape-selection"]'
+    title: "Choose a shape"
+    text: "Select a shape to measure (for example, a polygon), then click Next."
+    position: "right"
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true
 
@@ -67,7 +69,7 @@ steps:
     title: "What you want to measure"
     text: "Pick the algorithm you want to use to calculate the property. Let's try 'Blob metrics' for now."
     position: "right"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true
 

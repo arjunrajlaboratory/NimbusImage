@@ -47,9 +47,10 @@ steps:
   - id: rotation-instruction-tourstep
     route: datasetview
     title: "Rotation"
-    text: "Use a two-finger pinch gesture on your trackpad to rotate the image."
+    text: "Use a two-finger pinch gesture on your trackpad (or drag with the rotate handle) to rotate the image, then click Next."
     position: "left"
     modalOverlay: false
+    showNextButton: true
 
   - id: reset-rotation-tourstep
     route: datasetview
@@ -57,7 +58,7 @@ steps:
     title: "Reset Rotation"
     text: "Click here to reset the image rotation back to 0 degrees."
     position: "top"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
 
   - id: lock-view-tourstep

@@ -166,13 +166,23 @@ steps:
     modalOverlay: false
     showNextButton: true
 
+  - id: property-shape-select-tourstep
+    route: datasetview
+    element: '[data-tour="shape-selection"]'
+    title: "Choose a shape"
+    text: "Select a shape to measure (for example, a polygon), then click Next."
+    position: "right"
+    waitForElement: 5000
+    modalOverlay: false
+    showNextButton: true
+
   - id: property-algorithm-select-tourstep
     route: datasetview
     element: '[data-tour="property-algorithm-select"]'
     title: "What you want to measure"
     text: "Let's measure the 'Blob metrics' for now—things like area and perimeter."
     position: "right"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true
 
