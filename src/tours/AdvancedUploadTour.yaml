@@ -13,7 +13,7 @@ steps:
     waitForElement: 1000  # 1 second timeout
   - id: upload-files
     route: root
-    element: "#upload-files-tourstep"
+    element: '[data-tour="upload-files"]'
     title: "Upload Files"
     text: "Drag and drop files here or click to browse. After selecting files, you'll be able to choose between accepting defaults for a quick upload or configuring advanced options. Let's click on this box to continue."
     position: "bottom"
@@ -21,7 +21,7 @@ steps:
     waitForElement: 1000
   - id: accept-defaults
     route: root
-    element: "#accept-defaults-button-tourstep"
+    element: '[data-tour="accept-defaults-button"]'
     title: "Accept Defaults"
     text: "Click 'Accept defaults' to quickly upload with automatic settings and go straight to the image viewer. This is best for quickly looking at your data."
     modalOverlay: true
@@ -29,39 +29,39 @@ steps:
     waitForElement: 1000
   - id: configure-dataset
     route: root
-    element: "#configure-dataset-button-tourstep"
+    element: '[data-tour="configure-dataset-button"]'
     title: "Configure Dataset"
     text: "Click 'Configure dataset' to customize variable assignments, composite tiles, and other options before uploading. We'll use this option for the tour. Click this button to continue."
     position: "bottom"
     modalOverlay: true
-    onTriggerEvent: "configure-dataset-tourtrigger"
+    onTriggerEvent: "configure-dataset"
     waitForElement: 1000
   - id: dataset-name
     route: newdataset
-    element: "#dataset-name-input-tourstep"
+    element: '[data-tour="dataset-name-input"]'
     title: "Name Your Dataset"
     text: "Give your dataset a descriptive name. This will help you identify it later. This name needs to be unique."
     position: "top"
     waitForElement: 1000
   - id: dataset-description
     route: newdataset
-    element: "#dataset-description-input-tourstep"
+    element: '[data-tour="dataset-description-input"]'
     title: "Describe Your Dataset"
     text: "Optionally, you can provide a brief description of your dataset. This metadata can be useful later."
     position: "bottom"
     waitForElement: 1000
   - id: upload-button
     route: newdataset
-    element: "#upload-button-tourstep"
+    element: '[data-tour="upload-button"]'
     title: "Upload Your Dataset"
     text: "Click the 'Upload' button to upload your dataset. I'll meet you on the other side."
     position: "bottom"
     waitForElement: 1000
     showNextButton: false
-    onTriggerEvent: "upload-button-tourtrigger"
+    onTriggerEvent: "upload-button"
   - id: variables
     route: multi
-    element: "#variables-tourstep"
+    element: '[data-tour="variables"]'
     title: "Variables"
     text: "Variables are automatically detected from your files and filenames. NimbusImage will make the best guess as to what the filenames mean."
     position: "bottom"
@@ -69,7 +69,7 @@ steps:
     waitForElement: 1000
   - id: assignments
     route: multi
-    element: "#assignments-tourstep"
+    element: '[data-tour="assignments"]'
     title: "Assignments"
     text: "If you want to override automatic assignments (like, assign Z to Time), you can do so here. Click Clear to remove a variable assignment and then use the dropdown to reassign it."
     position: "bottom"
@@ -77,29 +77,29 @@ steps:
     waitForElement: 1000
   - id: transcode
     route: multi
-    element: "#transcode-checkbox-tourstep"
+    element: '[data-tour="transcode-checkbox"]'
     title: "Transcode"
     text: "If you want to transcode the files, check this box. This will convert the files to a more optimized format. Most files will benefit from this, but not Nikon ND2 files, which are already pretty good."
     position: "bottom"
     waitForElement: 1000
   - id: submit-button
     route: multi
-    element: "#submit-button-tourstep"
+    element: '[data-tour="submit-button"]'
     title: "Submit"
     text: "Click the 'Submit' button to submit your dataset. I'll meet you on the other side."
     position: "bottom"
     waitForElement: 1000
     showNextButton: false
-    onTriggerEvent: "submit-button-tourtrigger"
+    onTriggerEvent: "submit-button"
   - id: view-dataset
     route: dataset
-    element: "#view-dataset-button-tourstep"
+    element: '[data-tour="view-dataset-button"]'
     title: "View Dataset"
     text: "Click the 'View Dataset' button to view your dataset in the image viewer. I'll meet you on the other side."
     position: "bottom"
     waitForElement: 1000
     showNextButton: false
-    onTriggerEvent: "view-dataset-button-tourtrigger"
+    onTriggerEvent: "view-dataset-button"
   - id: view-dataset-button
     route: datasetview
     title: "Made it!"

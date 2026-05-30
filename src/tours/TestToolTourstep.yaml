@@ -5,7 +5,7 @@ category: Tools
 steps:
   - id: add-tool-tourstep
     route: datasetview
-    element: "#add-tool-tourstep"
+    element: '[data-tour="add-tool"]'
     title: "Add Tool"
     text: "Click here to add a tool to the toolset."
     position: "right"
@@ -14,7 +14,7 @@ steps:
 
   - id: gaussian-blur
     route: datasetview
-    element: "#gaussian-blur-tourstep"
+    element: '[data-tour="gaussian-blur"]'
     title: "Click here to activate tool"
     text: "This tool will perform a Gaussian blur on the image."
     position: "right"
@@ -23,7 +23,7 @@ steps:
 
   - id: sigma-tourstep
     route: datasetview
-    element: "#sigma-tourstep"
+    element: '[data-tour="sigma"]'
     title: "Sigma"
     text: "Sigma is a parameter for how much to blur the image."
     position: "bottom"
@@ -33,7 +33,7 @@ steps:
 
   - id: parent-tourstep
     route: datasetview
-    element: "#parent-tag-tourstep"
+    element: '[data-tour="parent-tag"]'
     title: "Parent tag"
     text: "Parent tag let's you set which annotations are the parents of other annotations."
     position: "bottom"

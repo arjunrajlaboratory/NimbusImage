@@ -5,29 +5,29 @@ category: Tools
 steps:
   - id: add-tool-tourstep
     route: datasetview
-    element: "#add-tool-tourstep"
+    element: '[data-tour="add-tool"]'
     title: "Add Tool"
     text: "Click here to add a tool to the toolset."
     position: "right"
     waitForElement: 1000
     modalOverlay: true
     showNextButton: false
-    onTriggerEvent: "add-tool-tourtrigger"
+    onTriggerEvent: "add-tool"
 
   - id: blob-tool-tourstep
     route: datasetview
-    element: "#blob-tourstep"
+    element: '[data-tour="blob"]'
     title: "Blob tool"
     text: "Blob tool is a tool for creating blobs."
     position: "right"
     waitForElement: 1000
-    onTriggerEvent: "blob-tourtrigger"
+    onTriggerEvent: "blob"
     showNextButton: false
     modalOverlay: true
 
   - id: layer-select-tourstep
     route: datasetview
-    element: "#tool-creation-layer-select-tourstep"
+    element: '[data-tour="tool-creation-layer-select"]'
     title: "Layer"
     text: "Pick the layer you want to create the blob objects on."
     position: "right"
@@ -37,7 +37,7 @@ steps:
 
   - id: tag-picker-tourstep
     route: datasetview
-    element: "#tool-creation-tag-picker-tourstep"
+    element: '[data-tour="tool-creation-tag-picker"]'
     title: "Tags"
     text: "Tags are critical for organizing and manipulating your annotations. The more descriptive the name, the better."
     position: "right"
@@ -47,7 +47,7 @@ steps:
 
   - id: tool-name-tourstep
     route: datasetview
-    element: "#tool-name-tourstep"
+    element: '[data-tour="tool-name"]'
     title: "Tool Name"
     text: "The name of the tool is used to identify it in the toolset. Let's use 'DAPI blob' here."
     position: "right"
@@ -57,25 +57,25 @@ steps:
 
   - id: add-tool-to-toolset-tourstep
     route: datasetview
-    element: "#tool-creation-add-tool-button-tourstep"
+    element: '[data-tour="tool-creation-add-tool-button"]'
     title: "Add Tool to Toolset"
     text: "Click here to add the tool to the toolset."
     position: "right"
     waitForElement: 1000
     modalOverlay: true
     showNextButton: false
-    onTriggerEvent: "tool-creation-add-tool-button-tourtrigger"
+    onTriggerEvent: "tool-creation-add-tool-button"
 
   - id: dapi-blob
     route: datasetview
-    element: "#dapi-blob-tourstep"
+    element: '[data-tour="dapi-blob"]'
     title: "Click here to activate the DAPI blob tool"
     text: "This tool will create DAPI blobs on the image."
     position: "right"
     waitForElement: 1000
     modalOverlay: true
     showNextButton: false
-    onTriggerEvent: "dapi-blob-tourtrigger"
+    onTriggerEvent: "dapi-blob"
 
   - id: add-manual-blob-tour-complete-tourstep
     route: datasetview
