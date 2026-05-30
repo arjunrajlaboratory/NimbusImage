@@ -1357,7 +1357,7 @@ describe("ImageViewer", () => {
 
     it("renders lock view button", () => {
       wrapper = mountComponent();
-      expect(wrapper.find("#lock-view-tourstep").exists()).toBe(true);
+      expect(wrapper.find('[data-tour="lock-view"]').exists()).toBe(true);
     });
 
     it("renders layer info button", () => {
@@ -1365,7 +1365,7 @@ describe("ImageViewer", () => {
       // The button is inside a v-menu which may not render the activator in shallow mount
       // Check the wrapper HTML for the button or the menu
       const html = wrapper.html();
-      expect(html).toContain("lock-view-tourstep");
+      expect(html).toContain("lock-view");
     });
 
     it("does not render reset rotation button when rotation is 0", () => {
@@ -1376,7 +1376,7 @@ describe("ImageViewer", () => {
         gcsBounds: [],
       } as any;
       wrapper = mountComponent();
-      expect(wrapper.find("#reset-rotation-tourstep").exists()).toBe(false);
+      expect(wrapper.find('[data-tour="reset-rotation"]').exists()).toBe(false);
     });
 
     it("overview computed reflects store.overview", () => {

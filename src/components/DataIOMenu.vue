@@ -5,8 +5,8 @@
         <template v-slot:activator="{ props: tooltipProps }">
           <v-btn
             v-bind="{ ...menuProps, ...tooltipProps }"
-            id="data-io-button-tourstep"
-            v-tour-trigger="'data-io-button-tourtrigger'"
+            :data-tour="TOUR_ANCHORS.dataIoButton"
+            v-tour-trigger="TOUR_TRIGGERS.dataIoButton"
             variant="text"
             icon
             size="small"
@@ -76,6 +76,7 @@ import AnnotationImport from "@/components/AnnotationBrowser/AnnotationImport.vu
 import AnnotationExport from "@/components/AnnotationBrowser/AnnotationExport.vue";
 import AnnotationCsvDialog from "@/components/AnnotationBrowser/AnnotationCSVDialog.vue";
 import IndexConversionDialog from "@/components/AnnotationBrowser/IndexConversionDialog.vue";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 const filteredAnnotations = computed(() => filterStore.filteredAnnotations);
 const propertyPaths = computed(() => propertyStore.computedPropertyPaths);

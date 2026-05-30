@@ -11,7 +11,7 @@
       <v-card-title
         v-if="!embedded"
         class="d-flex justify-space-between align-center"
-        id="zenodo-community-display-tourstep"
+        :data-tour="TOUR_ANCHORS.zenodoCommunityDisplay"
       >
         Sample Datasets
         <v-btn variant="text" icon size="small" @click="$emit('close')">
@@ -62,8 +62,8 @@
             hover
             class="sample-dataset-card mb-3"
             @click="selectDataset(dataset)"
-            :id="getTourStepId(dataset.title)"
-            v-tour-trigger="getTourTriggerId(dataset.title)"
+            :data-tour="getTourAnchorId(dataset.title)"
+            v-tour-trigger="getTourAnchorId(dataset.title)"
           >
             <v-card-title class="pb-2">{{ dataset.title }}</v-card-title>
             <v-card-subtitle class="pb-2">
@@ -119,7 +119,8 @@ import ZenodoAPI, {
   IZenodoCommunity,
 } from "@/store/ZenodoAPI";
 import { logError } from "@/utils/log";
-import { getTourStepId, getTourTriggerId } from "@/utils/strings";
+import { TOUR_ANCHORS } from "@/tours/anchors";
+import { getTourAnchorId } from "@/utils/strings";
 
 const props = withDefaults(
   defineProps<{
@@ -226,8 +227,7 @@ defineExpose({
   formatDate,
   formatSize,
   getTotalSize,
-  getTourStepId,
-  getTourTriggerId,
+  getTourAnchorId,
 });
 </script>
 

@@ -1,83 +1,200 @@
-.shepherd-theme-custom {
-  background: rgb(var(--v-theme-surface-bright, 25, 26, 27)) !important;
-  border-radius: var(--nimbus-radius, 8px);
-  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+// Tour popover — "refined instrument panel" aesthetic for NimbusImage.
+// A dark glass card with a hairline border, layered depth, a thin teal accent
+// edge, and tabular-numeral progress. driver.js base CSS is imported in
+// tour.ts; this file is theme/override styling layered on top.
+
+@keyframes tour-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.driver-popover.tour-popover {
+  // Layered dark surface with a faint top sheen for depth.
+  background: linear-gradient(
+    180deg,
+    rgba(34, 37, 42, 0.97),
+    rgba(22, 24, 28, 0.97)
+  );
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
+    0 18px 40px -12px rgba(0, 0, 0, 0.62),
+    0 6px 14px -6px rgba(0, 0, 0, 0.45);
   color: rgb(var(--v-theme-on-surface, 247, 248, 248));
-  max-width: 320px;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
-  overflow: visible;
-  z-index: 100000 !important;
-  font-family: var(--nimbus-font, Geist, sans-serif);
+  font-family: var(--nimbus-font, Geist, "SF Pro Display", system-ui, sans-serif);
+  max-width: 384px;
+  padding: 20px 20px 16px;
+  // NOTE: do NOT set `position` here — driver.js positions the popover with
+  // `position: fixed`; overriding it drops the popover into normal flow (bottom
+  // of page).
+  // NOTE: do NOT set `overflow: hidden` — it clips the arrow, which is
+  // positioned outside the popover's box (it sticks out toward the target).
+  animation: tour-popover-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 
-  .shepherd-header {
-    padding: 16px 16px 0;
-    background: transparent !important;
-    border-radius: var(--nimbus-radius, 8px) var(--nimbus-radius, 8px) 0 0;
+  .driver-popover-title {
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.015em;
+    color: rgb(var(--v-theme-on-surface, 247, 248, 248));
+    word-wrap: break-word;
+    padding-right: 24px;
+    margin: 0 0 6px;
+  }
+
+  .driver-popover-description {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--nimbus-text-secondary, #c2c8d2);
+    margin: 0;
+  }
+
+  // Clear driver.js's default white "emboss" text-shadow on all buttons.
+  button {
+    text-shadow: none;
+  }
+
+  .driver-popover-close-btn {
+    top: 12px;
+    right: 12px;
+    width: 22px;
+    height: 22px;
+    line-height: 22px;
+    color: var(--nimbus-text-muted, #8a8f98);
+    transition:
+      color 140ms ease,
+      transform 140ms ease;
+
+    &:hover {
+      color: rgb(var(--v-theme-on-surface, 247, 248, 248));
+      transform: rotate(90deg);
+    }
+  }
+
+  .driver-popover-footer {
+    margin-top: 16px;
+    padding-top: 12px;
     display: flex;
+    align-items: center;
+    gap: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
 
-    .shepherd-title {
-      font-size: 20px;
+    // "1 of 23" — quiet, tabular numerals so the width doesn't jitter.
+    .tour-progress {
+      margin-right: auto;
+      font-size: 11.5px;
       font-weight: 500;
-      margin: 0;
-      color: rgb(var(--v-theme-on-surface, 247, 248, 248)) !important;
-      background: transparent !important;
-      flex: 1;
-      word-wrap: break-word;
-      padding-right: 16px;
-      line-height: 1.3;
-      letter-spacing: -0.02em;
+      letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
+      color: var(--nimbus-text-muted, #8a8f98);
+    }
+  }
+
+  .driver-popover-navigation-btns {
+    display: flex;
+    gap: 8px;
+
+    button {
+      border-radius: 7px;
+      font-family: var(--nimbus-font, Geist, sans-serif);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      text-transform: none;
+      padding: 7px 18px;
+      cursor: pointer;
+      transition:
+        background-color 140ms ease,
+        box-shadow 160ms ease,
+        transform 120ms ease;
     }
 
-    .shepherd-cancel-icon {
-      color: var(--nimbus-text-muted, #8a8f98);
-      padding: 4px;
-      margin: -4px;
-      font-size: 18px;
+    .driver-popover-next-btn {
+      background: rgb(var(--v-theme-primary, 38, 166, 154));
+      color: rgb(var(--v-theme-on-primary, 255, 255, 255));
+      border: none;
+      box-shadow: 0 2px 10px -2px rgba(var(--v-theme-primary, 38, 166, 154), 0.6);
 
       &:hover {
-        color: rgb(var(--v-theme-on-surface, 247, 248, 248));
+        background: rgb(var(--v-theme-primary, 38, 166, 154));
+        filter: brightness(1.08);
+        box-shadow: 0 4px 16px -2px rgba(var(--v-theme-primary, 38, 166, 154), 0.7);
+        transform: translateY(-1px);
+      }
+
+      &:active {
+        transform: translateY(0);
       }
     }
   }
 
-  .shepherd-text {
-    padding: 16px;
-    font-size: 14px;
-    line-height: 1.5;
-    color: var(--nimbus-text-secondary, #d0d6e0);
-    background: transparent !important;
+  // Arrow connecting the popover to the target — a bold TEAL pointer. driver.js
+  // makes a CSS-triangle by coloring all 4 borders then setting 3 transparent
+  // per side, so recolor ONLY the visible (pointing) border per side to teal (a
+  // blanket border-color flattens it into a square; a dark color is invisible
+  // against the dark page). Enlarged for a clear pointer.
+  .driver-popover-arrow {
+    border-width: 9px;
   }
-
-  .shepherd-footer {
-    padding: 8px 16px;
-    border-top: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
-    background: transparent !important;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-
-    .v-btn {
-      text-transform: none;
-      letter-spacing: -0.01em;
-      font-weight: 500;
-      font-size: 14px;
-    }
-
-    .shepherd-progress {
-      font-size: 12px;
-      color: var(--nimbus-text-muted, #8a8f98);
-      margin-right: 16px;
-    }
+  .driver-popover-arrow-side-left {
+    border-left-color: rgb(38, 166, 154);
+  }
+  .driver-popover-arrow-side-right {
+    border-right-color: rgb(38, 166, 154);
+  }
+  .driver-popover-arrow-side-top {
+    border-top-color: rgb(38, 166, 154);
+  }
+  .driver-popover-arrow-side-bottom {
+    border-bottom-color: rgb(38, 166, 154);
   }
 }
 
-.shepherd-modal-overlay-container {
-  z-index: 99999 !important;
-  background: rgba(0, 0, 0, 0.6);
+// Non-modal (interactive) steps: hide the dimming overlay AND let the user
+// interact with the whole page — e.g. mouse-wheel zoom / drag-pan the image
+// viewer. driver.js disables the page with `.driver-active * { pointer-events:
+// none }` and only re-enables the highlighted element + popover; element-less
+// instruction steps have no highlighted element, so without this the canvas
+// stays inert. The overlay itself stays click-through via the !important rule.
+// Mark the highlighted element with a clean teal outline (driver.js adds
+// `.driver-active-element` to the target). The teal popover arrow does the
+// "pointing"; this outline just marks the exact element. Outline (not a
+// box-shadow glow) so it's never clipped by overflow:hidden ancestors and
+// doesn't show on only part of the element.
+.driver-active-element {
+  outline: 2px solid rgb(38, 166, 154) !important;
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
-.shepherd-target {
-  box-shadow: 0 0 0 2px rgb(var(--v-theme-primary, 38, 166, 154));
-  border-radius: 3px;
-  z-index: 99998 !important;
+// Remove the dimming overlay entirely (the SVG and its full-viewport <path>)
+// so it can't intercept wheel/clicks.
+body.tour-no-overlay .driver-overlay {
+  display: none !important;
+}
+
+// driver.js disables the whole page with `.driver-active * { pointer-events:
+// none }`. For interactive (non-modal) steps we must re-enable the things the
+// user needs to touch: the GeoJS map (wheel-zoom / drag-pan) and Vuetify
+// overlay CONTENT — dialogs (the measure panel) and dropdown menus (tag /
+// shape / algorithm selects, which are teleported into the overlay layer).
+//
+// Scope to `.v-overlay__content`, NOT the full-viewport `.v-overlay-container`
+// or `.v-overlay__scrim`: re-enabling those would let an invisible layer
+// swallow every wheel/click across the page. The popover itself stays clickable
+// via driver's own `.driver-popover { pointer-events: auto }` rule.
+body.tour-no-overlay .geojs-map,
+body.tour-no-overlay .geojs-map *,
+body.tour-no-overlay .v-overlay__content,
+body.tour-no-overlay .v-overlay__content * {
+  pointer-events: auto;
 }

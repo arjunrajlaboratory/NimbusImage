@@ -133,7 +133,7 @@
     <v-menu location="top" :close-on-content-click="false">
       <template #activator="{ props: activatorProps }">
         <v-btn
-          id="layer-info-tourstep"
+          :data-tour="TOUR_ANCHORS.layerInfo"
           variant="text"
           icon
           size="small"
@@ -148,7 +148,7 @@
       <layer-info-grid :layers="store.layers" />
     </v-menu>
     <v-btn
-      id="lock-view-tourstep"
+      :data-tour="TOUR_ANCHORS.lockView"
       variant="text"
       icon
       size="small"
@@ -166,7 +166,7 @@
       }}</v-icon>
     </v-btn>
     <v-btn
-      id="reset-view-tourstep"
+      :data-tour="TOUR_ANCHORS.resetView"
       variant="text"
       icon
       size="small"
@@ -182,7 +182,7 @@
       <v-icon size="24">mdi-fit-to-page-outline</v-icon>
     </v-btn>
     <v-btn
-      id="reset-rotation-tourstep"
+      :data-tour="TOUR_ANCHORS.resetRotation"
       variant="text"
       icon
       size="small"
@@ -209,6 +209,7 @@ import {
   markRaw,
 } from "vue";
 import annotationStore from "@/store/annotation";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 import progressStore from "@/store/progress";
 import store from "@/store";
 import sync from "@/store/sync";

@@ -23,8 +23,7 @@ vi.mock("@/utils/log", () => ({
 }));
 
 vi.mock("@/utils/strings", () => ({
-  getTourStepId: vi.fn().mockReturnValue("test-tourstep"),
-  getTourTriggerId: vi.fn().mockReturnValue("test-tourtrigger"),
+  getTourAnchorId: vi.fn().mockReturnValue("test"),
 }));
 
 import ZenodoCommunityDisplay from "./ZenodoCommunityDisplay.vue";

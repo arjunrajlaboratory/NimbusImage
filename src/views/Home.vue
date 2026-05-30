@@ -28,7 +28,7 @@
             <section class="mb-4 home-section">
               <!-- Upload Files -->
               <v-card
-                id="upload-files-tourstep"
+                :data-tour="TOUR_ANCHORS.uploadFiles"
                 class="upload-card fill-height"
                 :class="{ 'drag-active': isDragging }"
                 @click="openFileSelector"
@@ -84,8 +84,8 @@
                   <v-tab>Recent Projects</v-tab>
                   <v-tab
                     v-if="Boolean(zenodoCommunityId)"
-                    id="try-sample-dataset-tourstep"
-                    v-tour-trigger="'try-sample-dataset-tourtrigger'"
+                    :data-tour="TOUR_ANCHORS.trySampleDataset"
+                    v-tour-trigger="TOUR_TRIGGERS.trySampleDataset"
                   >
                     Sample Datasets
                   </v-tab>
@@ -384,11 +384,11 @@
             </v-btn>
             <v-spacer></v-spacer>
             <v-btn
-              id="configure-dataset-button-tourstep"
+              :data-tour="TOUR_ANCHORS.configureDatasetButton"
               variant="outlined"
               color="primary"
               size="small"
-              v-tour-trigger="'configure-dataset-tourtrigger'"
+              v-tour-trigger="TOUR_TRIGGERS.configureDataset"
               :disabled="!isFormValid"
               @click="handleConfigureDataset"
               class="mr-2"
@@ -396,11 +396,11 @@
               Advanced Import
             </v-btn>
             <v-btn
-              id="accept-defaults-button-tourstep"
+              :data-tour="TOUR_ANCHORS.acceptDefaultsButton"
               variant="flat"
               color="primary"
               size="small"
-              v-tour-trigger="'accept-defaults-tourtrigger'"
+              v-tour-trigger="TOUR_TRIGGERS.acceptDefaults"
               :disabled="!isFormValid"
               @click="handleAcceptDefaults"
             >
@@ -490,6 +490,7 @@ import {
   IUPennCollection,
 } from "@/girder";
 import girderResources from "@/store/girderResources";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import {
   IDatasetView,
   IRecentDatasetViewItem,
@@ -1157,7 +1158,7 @@ async function initializeWelcomeTour() {
 
   // If it was the default value of NOT_YET_RUN, then update the status and start tour
   if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
-    // Collapse expanded file browser so tour anchors (#upload-files-tourstep, etc.) are mounted
+    // Collapse expanded file browser so tour anchors ([data-tour="upload-files"], etc.) are mounted
     if (fileBrowserExpanded.value) {
       fileBrowserExpanded.value = false;
       Persister.set("fileBrowserExpanded", false);

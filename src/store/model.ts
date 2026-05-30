@@ -1,7 +1,5 @@
 import { IGirderItem, IGirderFolder, IUPennCollection } from "@/girder";
 import type { ITileHistogram } from "./images";
-import Shepherd from "shepherd.js";
-
 interface IObject<Values = any> {
   [key: string]: Values;
 }
@@ -1599,21 +1597,23 @@ export interface ITourStep {
   position?: "top" | "bottom" | "left" | "right";
   waitForElement?: number;
   modalOverlay?: boolean;
-  beforeShow?: string;
-  onNext?: string;
   showNextButton?: boolean;
   onTriggerEvent?: string;
 }
 
-export interface IExtendedShepherdStep extends Shepherd.Step {
-  options: Shepherd.Step.StepOptions & {
-    route?: string;
-    beforeShow?: () => void;
-    onNext?: () => void;
-    hasModalOverlay?: boolean;
-    waitForElement?: number;
-    onTriggerEvent?: string;
-  };
+// Internal representation the TourManager builds from an ITourStep.
+// Engine-neutral: holds everything the controller needs to render and advance.
+export interface ITourStepRuntime {
+  id: string;
+  route: string;
+  element?: string;
+  title: string;
+  text: string;
+  position: "top" | "bottom" | "left" | "right";
+  waitForElement: number;
+  hasModalOverlay: boolean;
+  showNextButton: boolean;
+  onTriggerEvent?: string;
 }
 
 export interface ITourMetadata {
@@ -1628,14 +1628,6 @@ export interface ITourConfig extends ITourMetadata {
   options?: {
     modalOverlay?: boolean;
   };
-}
-
-declare module "vue" {
-  interface ComponentCustomProperties {
-    $startTour: (tourName: string) => Promise<void>;
-    $nextStep: (targetElementId?: string) => Promise<void>;
-    $loadAllTours: () => Promise<Record<string, ITourMetadata>>;
-  }
 }
 
 export enum WelcomeTourTypes {
@@ -1653,8 +1645,8 @@ export enum WelcomeTourStatus {
 
 export const WelcomeTourNames = {
   [WelcomeTourTypes.HOME]: "WelcomeTourHome",
-  [WelcomeTourTypes.VIEWER]: "WelcomeTourViewer",
-  [WelcomeTourTypes.ADVANCED_UPLOAD]: "WelcomeTourAdvancedUpload",
+  [WelcomeTourTypes.VIEWER]: "IntroViewerTour",
+  [WelcomeTourTypes.ADVANCED_UPLOAD]: "AdvancedUploadTour",
   [WelcomeTourTypes.WORKING_WITH_TAGS]: "WorkingWithTags",
 };
 

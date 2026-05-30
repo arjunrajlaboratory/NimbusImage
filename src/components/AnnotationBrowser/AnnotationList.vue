@@ -12,6 +12,8 @@
             size="small"
             class="mr-1"
             aria-label="Measure objects"
+            :data-tour="TOUR_ANCHORS.measureObjects"
+            v-tour-trigger="TOUR_TRIGGERS.measureObjects"
             @click="store.setIsAnalyzeDialogOpen(true)"
           >
             <v-icon>mdi-ruler-square</v-icon>
@@ -105,7 +107,10 @@
       @submit="handleColorSubmit"
     />
 
-    <div id="annotation-list-content-tourstep" class="annotation-list-content">
+    <div
+      :data-tour="TOUR_ANCHORS.annotationListContent"
+      class="annotation-list-content"
+    >
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>
@@ -298,6 +303,7 @@
 import { ref, computed, watch } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";

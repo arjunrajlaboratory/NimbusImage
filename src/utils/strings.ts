@@ -5,14 +5,6 @@ export function toKebabCase(str: string): string {
     .toLowerCase();
 }
 
-export function getTourStepId(id: string): string {
-  return `${toKebabCase(id)}-tourstep`;
-}
-
-export function getTourTriggerId(id: string): string {
-  return `${toKebabCase(id)}-tourtrigger`;
-}
-
 export function stripHtml(html: string): string {
   const tmp = document.createElement("div");
   tmp.innerHTML = html;
@@ -40,6 +32,12 @@ export interface TranscodeProgress {
   transcodeProgress: number | undefined;
   currentFrame?: number;
   totalFrames?: number;
+}
+
+// data-tour value for a runtime-named entity (tool/tag/param/title).
+// Data-dependent — NOT in the static registry, exempt from the static guard.
+export function getTourAnchorId(name: string): string {
+  return toKebabCase(name);
 }
 
 /**

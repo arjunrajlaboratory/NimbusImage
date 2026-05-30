@@ -41,7 +41,7 @@
                 density="compact"
                 hide-details
                 class="tool-name-field"
-                id="tool-name-tourstep"
+                :data-tour="TOUR_ANCHORS.toolName"
               />
             </div>
             <div class="hotkey-row">
@@ -60,8 +60,8 @@
               size="small"
               @click="createTool"
               :disabled="!selectedTemplate"
-              id="tool-creation-add-tool-button-tourstep"
-              v-tour-trigger="`tool-creation-add-tool-button-tourtrigger`"
+              :data-tour="TOUR_ANCHORS.toolCreationAddToolButton"
+              v-tour-trigger="TOUR_TRIGGERS.toolCreationAddToolButton"
             >
               Add tool to toolset
             </v-btn>
@@ -97,6 +97,7 @@ import { ref, watch, computed } from "vue";
 import store from "@/store";
 import propertiesStore from "@/store/properties";
 import { IToolConfiguration, IToolTemplate } from "@/store/model";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 import ToolConfiguration from "@/tools/creation/ToolConfiguration.vue";
 import ToolConfigurationItem from "@/tools/creation/ToolConfigurationItem.vue";

@@ -81,8 +81,8 @@
           size="small"
           :disabled="!canImport || importing"
           @click="importSelectedDataset"
-          id="zenodo-importer-import-dataset-tourstep"
-          v-tour-trigger="'zenodo-importer-import-dataset-tourtrigger'"
+          :data-tour="TOUR_ANCHORS.zenodoImporterImportDataset"
+          v-tour-trigger="TOUR_TRIGGERS.zenodoImporterImportDataset"
         >
           Import Dataset
         </v-btn>
@@ -101,6 +101,7 @@ import { IGirderLocation } from "@/girder";
 import { logError } from "@/utils/log";
 import ZenodoAPI, { IZenodoRecord, IZenodoFile } from "@/store/ZenodoAPI";
 import { stripHtml } from "@/utils/strings";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 const props = withDefaults(
   defineProps<{
