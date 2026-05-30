@@ -34,6 +34,10 @@ steps:
     text: "Click 'Configure dataset' to customize variable assignments, composite tiles, and other options before uploading. We'll use this option for the tour. Click this button to continue."
     position: "bottom"
     modalOverlay: true
+    # Trigger-only: hide Next so the user must click the highlighted button,
+    # which runs handleConfigureDataset() to initialize the upload. Advancing
+    # via Next would skip that and break the subsequent upload steps.
+    showNextButton: false
     onTriggerEvent: "configure-dataset"
     waitForElement: 1000
   - id: dataset-name
