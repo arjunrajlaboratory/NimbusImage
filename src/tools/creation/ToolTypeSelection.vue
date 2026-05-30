@@ -20,8 +20,8 @@
           <div
             v-for="item in featuredItems"
             :key="'featured-' + item.key"
-            :id="getTourStepId(item.text)"
-            v-tour-trigger="getTourTriggerId(item.text)"
+            :data-tour="getTourAnchorId(item.text)"
+            v-tour-trigger="getTourAnchorId(item.text)"
             class="tool-card"
             @click="selectItem(item)"
           >
@@ -55,8 +55,8 @@
           <div
             v-for="item in submenu.items"
             :key="item.key"
-            :id="getTourStepId(item.text)"
-            v-tour-trigger="getTourTriggerId(item.text)"
+            :data-tour="getTourAnchorId(item.text)"
+            v-tour-trigger="getTourAnchorId(item.text)"
             class="tool-card"
             @click="selectItem({ ...item, submenu })"
           >
@@ -106,7 +106,7 @@ import { ref, computed, onMounted, nextTick } from "vue";
 import propertiesStore from "@/store/properties";
 import store from "@/store";
 import { AnnotationShape } from "@/store/model";
-import { getTourStepId, getTourTriggerId } from "@/utils/strings";
+import { getTourAnchorId } from "@/utils/strings";
 import { logWarning } from "@/utils/log";
 import { IAnnotationSetup } from "./templates/AnnotationConfiguration.vue";
 
@@ -401,8 +401,7 @@ defineExpose({
   selectItem,
   reset,
   getCategoryClass,
-  getTourStepId,
-  getTourTriggerId,
+  getTourAnchorId,
 });
 </script>
 
