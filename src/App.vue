@@ -170,8 +170,8 @@
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
-                id="object-list-button-tourstep"
-                v-tour-trigger="'object-list-button-tourtrigger'"
+                data-tour="object-list-button"
+                v-tour-trigger="TOUR_TRIGGERS.objectListButton"
                 type="button"
                 class="palette-ibtn"
                 :class="{ active: annotationPanel }"
@@ -188,8 +188,8 @@
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
-                id="filters-button-tourstep"
-                v-tour-trigger="'filters-button-tourtrigger'"
+                data-tour="filters-button"
+                v-tour-trigger="TOUR_TRIGGERS.filtersButton"
                 type="button"
                 class="palette-ibtn"
                 :class="{ active: filtersPanel }"
@@ -206,8 +206,8 @@
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
-                id="snapshots-button-tourstep"
-                v-tour-trigger="'snapshots-button-tourtrigger'"
+                data-tour="snapshots-button"
+                v-tour-trigger="TOUR_TRIGGERS.snapshotsButton"
                 type="button"
                 class="palette-ibtn"
                 :class="{ active: snapshotPanel }"
@@ -222,8 +222,8 @@
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
-                id="settings-button-tourstep"
-                v-tour-trigger="'settings-button-tourtrigger'"
+                data-tour="settings-button"
+                v-tour-trigger="TOUR_TRIGGERS.settingsButton"
                 type="button"
                 class="palette-ibtn"
                 :class="{ active: settingsPanel }"
@@ -241,8 +241,8 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              id="analyze-button-tourstep"
-              v-tour-trigger="'analyze-button-tourtrigger'"
+              data-tour="analyze-button"
+              v-tour-trigger="TOUR_TRIGGERS.analyzeButton"
               variant="text"
               icon
               size="small"
@@ -261,8 +261,8 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              id="help-button-tourstep"
-              v-tour-trigger="'help-button-tourtrigger'"
+              data-tour="help-button"
+              v-tour-trigger="TOUR_TRIGGERS.helpButton"
               variant="text"
               icon
               size="small"
@@ -337,8 +337,8 @@
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              id="chat-button-tourstep"
-              v-tour-trigger="'chat-button-tourtrigger'"
+              data-tour="chat-button"
+              v-tour-trigger="TOUR_TRIGGERS.chatButton"
               variant="text"
               icon
               size="small"
@@ -471,6 +471,7 @@ import FloatingPalette from "@/components/FloatingPalette.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
+import { TOUR_TRIGGERS } from "@/tours/anchors";
 
 // Suppress unused import warnings for template-only components
 void UserMenu;
