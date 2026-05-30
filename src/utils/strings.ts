@@ -5,14 +5,6 @@ export function toKebabCase(str: string): string {
     .toLowerCase();
 }
 
-export function getTourStepId(id: string): string {
-  return `${toKebabCase(id)}-tourstep`;
-}
-
-export function getTourTriggerId(id: string): string {
-  return `${toKebabCase(id)}-tourtrigger`;
-}
-
 export function stripHtml(html: string): string {
   const tmp = document.createElement("div");
   tmp.innerHTML = html;
