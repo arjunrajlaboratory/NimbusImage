@@ -148,12 +148,12 @@ steps:
     showNextButton: false
     onTriggerEvent: "measure-objects"
 
+  # Overview of the whole (large, centered) measure dialog — a centered modal
+  # popover reads better here than an arrow pointing at one corner of it.
   - id: create-property-header-tourstep
     route: datasetview
-    element: '[data-tour="create-property-header"]'
     title: "The measurement panel"
     text: "This is where you define a property to calculate. Let's set one up."
-    position: "right"
     waitForElement: 5000
     modalOverlay: true
     showNextButton: true
