@@ -41,7 +41,7 @@
                 density="compact"
                 hide-details
                 class="tool-name-field"
-                id="tool-name-tourstep"
+                data-tour="tool-name"
               />
             </div>
             <div class="hotkey-row">
@@ -60,8 +60,8 @@
               size="small"
               @click="createTool"
               :disabled="!selectedTemplate"
-              id="tool-creation-add-tool-button-tourstep"
-              v-tour-trigger="`tool-creation-add-tool-button-tourtrigger`"
+              data-tour="tool-creation-add-tool-button"
+              v-tour-trigger="'tool-creation-add-tool-button'"
             >
               Add tool to toolset
             </v-btn>
