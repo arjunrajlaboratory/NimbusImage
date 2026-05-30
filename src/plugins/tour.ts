@@ -62,7 +62,11 @@ export class TourManager {
 
     this.driverObj = driver({
       stagePadding: 8,
+      stageRadius: 8,
       popoverClass: "tour-popover",
+      // Lighter, slightly blue-black scrim so the UI behind stays legible.
+      overlayColor: "#0a0d12",
+      overlayOpacity: 0.45,
       allowClose: true,
       overlayClickBehavior: "close",
       onCloseClick: () => this.stopTour(),
@@ -121,9 +125,16 @@ export class TourManager {
       return;
     }
     const isLast = this.currentStepIndex === this.steps.length - 1;
+    // Element-less steps render as a CENTERED modal popover. We must omit the
+    // `element` key entirely — passing `element: "body"` anchors the popover to
+    // the page edge (bottom). We also do NOT set `disableActiveInteraction`:
+    // driver.js implements it by adding `.driver-no-interaction` to <body>,
+    // whose `* { pointer-events: none !important }` rule also disables the
+    // popover's own buttons (and the highlighted element on trigger steps),
+    // making the tour unclickable. The overlay already blocks non-highlighted
+    // page elements, so modal focus is preserved without it.
     this.driverObj.highlight({
-      element: step.element ?? "body",
-      disableActiveInteraction: step.hasModalOverlay,
+      ...(step.element ? { element: step.element } : {}),
       popover: {
         title: step.title,
         description: step.text,
@@ -169,7 +180,6 @@ export class TourManager {
     const isLast = this.currentStepIndex === this.steps.length - 1;
     document.body.classList.add("tour-no-overlay");
     this.driverObj.highlight({
-      element: "body",
       popover: {
         title: "This step isn't available",
         description:

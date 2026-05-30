@@ -1,72 +1,160 @@
-// driver.js popover, themed to match Vuetify / Nimbus design tokens.
-// driver.js base CSS is imported separately in tour.ts; this file is
-// theme/override styling layered on top.
+// Tour popover — "refined instrument panel" aesthetic for NimbusImage.
+// A dark glass card with a hairline border, layered depth, a thin teal accent
+// edge, and tabular-numeral progress. driver.js base CSS is imported in
+// tour.ts; this file is theme/override styling layered on top.
+
+@keyframes tour-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .driver-popover.tour-popover {
-  background: rgb(var(--v-theme-surface-bright, 25, 26, 27));
-  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
-  border-radius: var(--nimbus-radius, 8px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+  // Layered dark surface with a faint top sheen for depth.
+  background: linear-gradient(
+    180deg,
+    rgba(34, 37, 42, 0.97),
+    rgba(22, 24, 28, 0.97)
+  );
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
+    0 18px 40px -12px rgba(0, 0, 0, 0.62),
+    0 6px 14px -6px rgba(0, 0, 0, 0.45);
   color: rgb(var(--v-theme-on-surface, 247, 248, 248));
-  font-family: var(--nimbus-font, Geist, sans-serif);
-  max-width: 420px;
+  font-family: var(--nimbus-font, Geist, "SF Pro Display", system-ui, sans-serif);
+  max-width: 384px;
+  padding: 20px 20px 16px;
+  // NOTE: do NOT set `position` here — driver.js positions the popover with
+  // `position: fixed`; overriding it drops the popover into normal flow (bottom
+  // of page). The fixed popover already establishes a containing block for the
+  // absolute `::before` accent edge below.
+  overflow: hidden;
+  animation: tour-popover-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+
+  // Thin teal accent edge along the top of the card.
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--v-theme-primary, 38, 166, 154)),
+      transparent
+    );
+    opacity: 0.85;
+  }
 
   .driver-popover-title {
-    font-size: 20px;
-    font-weight: 500;
+    font-size: 17px;
+    font-weight: 600;
     line-height: 1.3;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.015em;
     color: rgb(var(--v-theme-on-surface, 247, 248, 248));
     word-wrap: break-word;
-    padding-right: 16px;
-    margin: 0;
+    padding-right: 24px;
+    margin: 0 0 6px;
   }
 
   .driver-popover-description {
-    font-size: 14px;
-    line-height: 1.5;
-    color: var(--nimbus-text-secondary, #d0d6e0);
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--nimbus-text-secondary, #c2c8d2);
+    margin: 0;
+  }
+
+  // Clear driver.js's default white "emboss" text-shadow on all buttons.
+  button {
+    text-shadow: none;
   }
 
   .driver-popover-close-btn {
+    top: 12px;
+    right: 12px;
+    width: 22px;
+    height: 22px;
+    line-height: 22px;
     color: var(--nimbus-text-muted, #8a8f98);
+    transition:
+      color 140ms ease,
+      transform 140ms ease;
 
     &:hover {
       color: rgb(var(--v-theme-on-surface, 247, 248, 248));
+      transform: rotate(90deg);
     }
   }
 
   .driver-popover-footer {
+    margin-top: 16px;
+    padding-top: 12px;
     display: flex;
     align-items: center;
-    gap: 8px;
-    border-top: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+    gap: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
 
+    // "1 of 23" — quiet, tabular numerals so the width doesn't jitter.
     .tour-progress {
       margin-right: auto;
-      font-size: 12px;
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
       color: var(--nimbus-text-muted, #8a8f98);
-      opacity: 0.85;
     }
   }
 
   .driver-popover-navigation-btns {
+    display: flex;
+    gap: 8px;
+
+    button {
+      border-radius: 7px;
+      font-family: var(--nimbus-font, Geist, sans-serif);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      text-transform: none;
+      padding: 7px 18px;
+      cursor: pointer;
+      transition:
+        background-color 140ms ease,
+        box-shadow 160ms ease,
+        transform 120ms ease;
+    }
+
     .driver-popover-next-btn {
-      background-color: rgb(var(--v-theme-primary, 38, 166, 154));
+      background: rgb(var(--v-theme-primary, 38, 166, 154));
       color: rgb(var(--v-theme-on-primary, 255, 255, 255));
       border: none;
-      border-radius: 4px;
-      font-family: var(--nimbus-font, Geist, sans-serif);
-      font-size: 14px;
-      font-weight: 500;
-      letter-spacing: -0.01em;
-      text-transform: none;
-      padding: 6px 16px;
-      cursor: pointer;
+      box-shadow: 0 2px 10px -2px rgba(var(--v-theme-primary, 38, 166, 154), 0.6);
 
       &:hover {
-        opacity: 0.9;
+        background: rgb(var(--v-theme-primary, 38, 166, 154));
+        filter: brightness(1.08);
+        box-shadow: 0 4px 16px -2px rgba(var(--v-theme-primary, 38, 166, 154), 0.7);
+        transform: translateY(-1px);
+      }
+
+      &:active {
+        transform: translateY(0);
       }
     }
+  }
+
+  // Arrow points at the highlighted element — match the card surface + border.
+  .driver-popover-arrow {
+    border-color: rgba(28, 30, 35, 0.97);
   }
 }
 
