@@ -158,7 +158,16 @@
   }
 }
 
-// Non-modal steps: hide the dimming overlay but keep the popover/stage.
+// Non-modal (interactive) steps: hide the dimming overlay AND let the user
+// interact with the whole page — e.g. mouse-wheel zoom / drag-pan the image
+// viewer. driver.js disables the page with `.driver-active * { pointer-events:
+// none }` and only re-enables the highlighted element + popover; element-less
+// instruction steps have no highlighted element, so without this the canvas
+// stays inert. The overlay itself stays click-through via the !important rule.
+body.tour-no-overlay.driver-active * {
+  pointer-events: auto;
+}
+
 body.tour-no-overlay .driver-overlay {
   opacity: 0 !important;
   pointer-events: none !important;
