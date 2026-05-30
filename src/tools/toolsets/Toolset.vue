@@ -11,8 +11,8 @@
                 color="primary"
                 size="small"
                 v-bind="mergeProps(dialogProps, tooltipProps)"
-                id="add-tool-tourstep"
-                v-tour-trigger="'add-tool-tourtrigger'"
+                data-tour="add-tool"
+                v-tour-trigger="TOUR_TRIGGERS.addTool"
                 :disabled="!isLoggedIn"
               >
                 Add new tool
@@ -136,6 +136,7 @@ import CircleToDotMenu from "@/components/CircleToDotMenu.vue";
 import ToolCreation from "@/tools/creation/ToolCreation.vue";
 import ToolTypeSelection from "@/tools/creation/ToolTypeSelection.vue";
 import ToolItem from "./ToolItem.vue";
+import { TOUR_TRIGGERS } from "@/tours/anchors";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
 
