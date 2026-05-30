@@ -41,6 +41,7 @@ export const TOUR_ANCHORS = {
   dataIoButton: "data-io-button",
   // AnnotationList.vue
   annotationListContent: "annotation-list-content",
+  measureObjects: "measure-objects",
   // PropertyList.vue
   propertiesHeader: "properties-header",
   propertiesContent: "properties-content",
@@ -81,6 +82,7 @@ export const TOUR_TRIGGERS = {
   timelapseMode: "timelapse-mode",
   zenodoImporterImportDataset: "zenodo-importer-import-dataset",
   dataIoButton: "data-io-button",
+  measureObjects: "measure-objects",
   propertyTagPicker: "property-tag-picker",
   propertyAlgorithmSelect: "property-algorithm-select",
   createPropertyButton: "create-property-button",

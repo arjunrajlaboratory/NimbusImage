@@ -134,35 +134,37 @@ steps:
     showNextButton: false
     onTriggerEvent: "object-list-button"
 
-  - id: properties-header-tourstep
+  # Measure flow: each step is gated on the relevant UI actually appearing.
+  # The property-creation controls live inside the "measure" dialog, so we first
+  # have the user open it (interactive trigger), then walk the dialog's controls.
+  - id: measure-objects-tourstep
     route: datasetview
-    element: '[data-tour="properties-header"]'
-    title: "Properties"
-    text: "Properties are what we call various measurements of the objects in the image. For instance, the area of a blob is a property. After you compute properties, they will appear here."
-    position: "left"
-    waitForElement: 1000
-    showNextButton: true
+    element: '[data-tour="measure-objects"]'
+    title: "Measure your objects"
+    text: "Properties are measurements of objects — like the area or perimeter of a nucleus. Click the ruler to open the measurement panel."
+    position: "bottom"
+    waitForElement: 2000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "measure-objects"
 
-  - id: measure-objects-button-tourstep
+  - id: create-property-header-tourstep
     route: datasetview
     element: '[data-tour="create-property-header"]'
-    title: "Measure Objects"
-    text: "This is the measure objects panel. That's where we will define the properties we want to calculate."
-    position: "left"
-    waitForElement: 1000
+    title: "The measurement panel"
+    text: "This is where you define a property to calculate. Let's set one up."
+    position: "right"
+    waitForElement: 5000
     modalOverlay: true
     showNextButton: true
 
   - id: property-tag-picker-tourstep
     route: datasetview
-    # NOTE (AR): I commented out the element selector because for whatever reason,
-    # some of these elements do not have the right coordinates and so the tour
-    # step is not positioned correctly. Despite many attempts at portals and so on,
-    # I was not able to get it to work, but I'm leaving it here because it is the
-    # desired functionality.
+    element: '[data-tour="property-tag-picker"]'
     title: "Choose objects to measure"
-    text: "Pick the tag selecting the objects you want to calculate the property for. For now, choose 'nucleus'."
-    waitForElement: 1000
+    text: "Pick the tag selecting the objects to measure. For now, choose 'nucleus', then click Next."
+    position: "right"
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true
 
@@ -179,8 +181,8 @@ steps:
   - id: property-algorithm-select-tourstep
     route: datasetview
     element: '[data-tour="property-algorithm-select"]'
-    title: "What you want to measure"
-    text: "Let's measure the 'Blob metrics' for now—things like area and perimeter."
+    title: "What to measure"
+    text: "Choose 'Blob metrics' — things like area and perimeter."
     position: "right"
     waitForElement: 5000
     modalOverlay: false
@@ -188,10 +190,11 @@ steps:
 
   - id: create-property-button-tourstep
     route: datasetview
-    title: "Click on 'Create Property' to create the property"
-    text: "By default, the computation will start automatically."
+    element: '[data-tour="create-property-button"]'
+    title: "Create the property"
+    text: "Click 'Create Property'. The computation starts automatically."
     position: "right"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: false
     onTriggerEvent: "create-property-button"
@@ -199,20 +202,10 @@ steps:
   - id: properties-content-tourstep
     route: datasetview
     element: '[data-tour="properties-content"]'
-    title: "List of computed properties"
-    text: "The property you just created will appear here once it's done computing. Click and find the blob metrics and then you will see properties like area, perimeter, and eccentricity. Select the ones you want to see, then click next."
+    title: "Your computed properties"
+    text: "The property you just created appears here once it's done computing — expand it to see values like area, perimeter, and eccentricity."
     position: "left"
-    waitForElement: 1000
-    modalOverlay: false
-    showNextButton: true
-
-  - id: annotation-list-content-tourstep
-    route: datasetview
-    element: '[data-tour="annotation-list-content"]'
-    title: "List of values"
-    text: "The values you computed are now visible in this list. You can sort and filter by these values or visualize them in the image by hitting 't'."
-    position: "left"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true
 
