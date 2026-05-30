@@ -145,14 +145,13 @@ steps:
 
   - id: measure-objects-button-tourstep
     route: datasetview
-    element: '[data-tour="measure-objects-button"]'
+    element: '[data-tour="create-property-header"]'
     title: "Measure Objects"
-    text: "Click here to open the measure objects panel. That's where we will define the properties we want to calculate."
+    text: "This is the measure objects panel. That's where we will define the properties we want to calculate."
     position: "left"
     waitForElement: 1000
     modalOverlay: true
-    showNextButton: false
-    onTriggerEvent: "measure-objects-button"
+    showNextButton: true
 
   - id: property-tag-picker-tourstep
     route: datasetview
@@ -186,17 +185,6 @@ steps:
     modalOverlay: false
     showNextButton: false
     onTriggerEvent: "create-property-button"
-
-  - id: measure-objects-close-button-tourstep
-    route: datasetview
-    element: '[data-tour="measure-objects-close-button"]'
-    title: "All done!"
-    text: "Click here to close the measure objects panel. You can close it even while it's still calculating."
-    position: "right"
-    waitForElement: 1000
-    modalOverlay: true
-    showNextButton: false
-    onTriggerEvent: "measure-objects-close-button"
 
   - id: properties-content-tourstep
     route: datasetview

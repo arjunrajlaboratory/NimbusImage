@@ -41,6 +41,9 @@ export const TOUR_ANCHORS = {
   dataIoButton: "data-io-button",
   // AnnotationList.vue
   annotationListContent: "annotation-list-content",
+  // PropertyList.vue
+  propertiesHeader: "properties-header",
+  propertiesContent: "properties-content",
   // PropertyCreation.vue
   createPropertyHeader: "create-property-header",
   propertyTagPicker: "property-tag-picker",

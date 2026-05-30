@@ -1,6 +1,6 @@
 <template>
   <v-card class="d-flex flex-column property-list">
-    <div class="property-header">
+    <div class="property-header" :data-tour="TOUR_ANCHORS.propertiesHeader">
       <div class="d-flex align-center px-4 py-2">
         <span class="panel-section-title">Object Properties</span>
         <v-spacer></v-spacer>
@@ -39,7 +39,7 @@
       </div>
       <v-divider></v-divider>
     </div>
-    <div class="property-content">
+    <div class="property-content" :data-tour="TOUR_ANCHORS.propertiesContent">
       <v-expansion-panels>
         <v-expansion-panel
           v-for="(property, index) in properties"
@@ -67,6 +67,7 @@ import propertyStore from "@/store/properties";
 import AnnotationProperty from "@/components/AnnotationBrowser/AnnotationProperties/Property.vue";
 import AnnotationPropertyBody from "@/components/AnnotationBrowser/AnnotationProperties/PropertyBody.vue";
 import { IAnnotationProperty } from "@/store/model";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 
 const props = withDefaults(
   defineProps<{
