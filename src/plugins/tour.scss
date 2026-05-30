@@ -165,15 +165,29 @@
 // instruction steps have no highlighted element, so without this the canvas
 // stays inert. The overlay itself stays click-through via the !important rule.
 // Ring the highlighted element so it's unmistakable which UI the popover points
-// at. driver.js adds `.driver-active-element` to the target; on modal steps the
-// dim already isolates it, but on non-modal steps (no dim) this ring is the
-// primary indicator. Outline (not box-shadow alone) so it isn't clipped by
-// overflow:hidden ancestors.
+// at. driver.js adds `.driver-active-element` to the target. A static ring read
+// as too subtle against the dark theme, so use a pulsing teal glow that draws
+// the eye. Outline (not box-shadow alone) so it isn't clipped by
+// overflow:hidden ancestors; the animated box-shadow provides the glow.
+@keyframes tour-target-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 3px rgba(38, 166, 154, 0.55),
+      0 0 16px 4px rgba(38, 166, 154, 0.45);
+  }
+  50% {
+    box-shadow:
+      0 0 0 7px rgba(38, 166, 154, 0.28),
+      0 0 34px 12px rgba(38, 166, 154, 0.7);
+  }
+}
+
 .driver-active-element {
-  outline: 2px solid rgb(var(--v-theme-primary, 38, 166, 154)) !important;
+  outline: 3px solid rgb(38, 166, 154) !important;
   outline-offset: 3px;
-  border-radius: 6px;
-  box-shadow: 0 0 0 6px rgba(var(--v-theme-primary, 38, 166, 154), 0.22) !important;
+  border-radius: 8px;
+  animation: tour-target-pulse 1.5s ease-in-out infinite;
 }
 
 // Remove the dimming overlay entirely (the SVG and its full-viewport <path>)
