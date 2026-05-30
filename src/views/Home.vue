@@ -28,7 +28,7 @@
             <section class="mb-4 home-section">
               <!-- Upload Files -->
               <v-card
-                data-tour="upload-files"
+                :data-tour="TOUR_ANCHORS.uploadFiles"
                 class="upload-card fill-height"
                 :class="{ 'drag-active': isDragging }"
                 @click="openFileSelector"
@@ -84,7 +84,7 @@
                   <v-tab>Recent Projects</v-tab>
                   <v-tab
                     v-if="Boolean(zenodoCommunityId)"
-                    data-tour="try-sample-dataset"
+                    :data-tour="TOUR_ANCHORS.trySampleDataset"
                     v-tour-trigger="TOUR_TRIGGERS.trySampleDataset"
                   >
                     Sample Datasets
@@ -384,7 +384,7 @@
             </v-btn>
             <v-spacer></v-spacer>
             <v-btn
-              data-tour="configure-dataset-button"
+              :data-tour="TOUR_ANCHORS.configureDatasetButton"
               variant="outlined"
               color="primary"
               size="small"
@@ -396,7 +396,7 @@
               Advanced Import
             </v-btn>
             <v-btn
-              data-tour="accept-defaults-button"
+              :data-tour="TOUR_ANCHORS.acceptDefaultsButton"
               variant="flat"
               color="primary"
               size="small"
@@ -490,7 +490,7 @@ import {
   IUPennCollection,
 } from "@/girder";
 import girderResources from "@/store/girderResources";
-import { TOUR_TRIGGERS } from "@/tours/anchors";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import {
   IDatasetView,
   IRecentDatasetViewItem,

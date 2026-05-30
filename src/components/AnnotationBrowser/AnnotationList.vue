@@ -105,7 +105,10 @@
       @submit="handleColorSubmit"
     />
 
-    <div data-tour="annotation-list-content" class="annotation-list-content">
+    <div
+      :data-tour="TOUR_ANCHORS.annotationListContent"
+      class="annotation-list-content"
+    >
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>
@@ -298,6 +301,7 @@
 import { ref, computed, watch } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";

@@ -2,7 +2,7 @@
   <v-card class="property-creation-card">
     <div
       class="d-flex align-center px-4 py-2"
-      data-tour="create-property-header"
+      :data-tour="TOUR_ANCHORS.createPropertyHeader"
     >
       <span class="panel-section-title">Create new property</span>
     </div>
@@ -16,7 +16,7 @@
             <tag-picker
               v-model="filteringTags"
               dense
-              data-tour="property-tag-picker"
+              :data-tour="TOUR_ANCHORS.propertyTagPicker"
               v-tour-trigger="TOUR_TRIGGERS.propertyTagPicker"
             />
           </v-col>
@@ -31,7 +31,7 @@
         </v-row>
         <v-row align="center" density="comfortable">
           <v-col cols="4">
-            <v-list-subheader dense data-tour="shape-selection">{{
+            <v-list-subheader dense :data-tour="TOUR_ANCHORS.shapeSelection">{{
               shapeSelectionString
             }}</v-list-subheader>
           </v-col>
@@ -57,7 +57,7 @@
               dense
               v-model="dockerImage"
               :imageFilter="propertyImageFilter"
-              data-tour="property-algorithm-select"
+              :data-tour="TOUR_ANCHORS.propertyAlgorithmSelect"
               v-tour-trigger="TOUR_TRIGGERS.propertyAlgorithmSelect"
             />
           </v-col>
@@ -103,7 +103,7 @@
           color="primary"
           size="small"
           @click="createProperty"
-          data-tour="create-property-button"
+          :data-tour="TOUR_ANCHORS.createPropertyButton"
           v-tour-trigger="TOUR_TRIGGERS.createPropertyButton"
         >
           Create Property
@@ -129,7 +129,7 @@ import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import PropertyWorkerMenu from "@/components/PropertyWorkerMenu.vue";
 import { tagFilterFunction } from "@/utils/annotation";
-import { TOUR_TRIGGERS } from "@/tours/anchors";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 // Function to remove repeated words
 function removeRepeatedWords(input: string): string {

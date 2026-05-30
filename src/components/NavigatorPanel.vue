@@ -1,6 +1,6 @@
 <template>
   <div class="navigator-panel">
-    <div v-mousetrap="mousetrapSliders" data-tour="viewer-toolbar">
+    <div v-mousetrap="mousetrapSliders" :data-tour="TOUR_ANCHORS.viewerToolbar">
       <div class="d-flex align-center">
         <value-slider
           v-model="xy"
@@ -60,7 +60,7 @@
       </div>
       <div v-if="maxTime > 0 && !unrollT" class="d-flex align-center">
         <v-checkbox
-          data-tour="timelapse-mode"
+          :data-tour="TOUR_ANCHORS.timelapseMode"
           v-tour-trigger="TOUR_TRIGGERS.timelapseMode"
           class="ml-3 my-checkbox"
           v-model="timelapseMode"
@@ -79,7 +79,7 @@
       </div>
       <div v-if="timelapseMode" class="d-flex align-center">
         <tag-picker
-          data-tour="timelapse-tags"
+          :data-tour="TOUR_ANCHORS.timelapseTags"
           class="ml-3"
           v-model="timelapseTags"
           style="max-width: 300px"
@@ -87,7 +87,7 @@
       </div>
       <div v-if="timelapseMode" class="d-flex align-center">
         <v-checkbox
-          data-tour="timelapse-labels"
+          :data-tour="TOUR_ANCHORS.timelapseLabels"
           class="ml-3 my-checkbox"
           v-model="showTimelapseLabels"
           label="Show labels"
@@ -151,7 +151,7 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { logError } from "@/utils/log";
-import { TOUR_TRIGGERS } from "@/tours/anchors";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 const dimensionLabels = ref<{
   xy: string[] | null;

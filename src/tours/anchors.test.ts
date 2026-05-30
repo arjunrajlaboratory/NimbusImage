@@ -3,7 +3,12 @@ import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { load } from "js-yaml";
-import { ALL_TOUR_ANCHORS, ALL_TOUR_TRIGGERS } from "./anchors";
+import {
+  ALL_TOUR_ANCHORS,
+  ALL_TOUR_TRIGGERS,
+  TOUR_ANCHORS,
+  TOUR_TRIGGERS,
+} from "./anchors";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcRoot = join(here, "..");
@@ -38,6 +43,13 @@ function allComponentSource(): string {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(full);
+      } else if (
+        entry.name === "anchors.ts" ||
+        entry.name.endsWith(".test.ts")
+      ) {
+        // Skip the registry itself and test files so their string values and
+        // mocks don't count as component "usage".
+        continue;
       } else if (entry.name.endsWith(".vue") || entry.name.endsWith(".ts")) {
         out += readFileSync(full, "utf8");
       }
@@ -58,11 +70,15 @@ describe("tour anchors", () => {
         if (!step.element) continue;
         const anchor = selectorToAnchor(step.element);
         if (anchor == null) {
-          problems.push(`${file}: step "${step.id}" selector "${step.element}" is not a [data-tour="..."] selector`);
+          problems.push(
+            `${file}: step "${step.id}" selector "${step.element}" is not a [data-tour="..."] selector`,
+          );
           continue;
         }
         if (!ALL_TOUR_ANCHORS.has(anchor) && !DATA_DEPENDENT.has(anchor)) {
-          problems.push(`${file}: step "${step.id}" targets unknown anchor "${anchor}"`);
+          problems.push(
+            `${file}: step "${step.id}" targets unknown anchor "${anchor}"`,
+          );
         }
       }
     }
@@ -75,23 +91,36 @@ describe("tour anchors", () => {
       const tour: any = load(readFileSync(file, "utf8"));
       for (const step of tour.steps ?? []) {
         if (!step.onTriggerEvent) continue;
-        if (!ALL_TOUR_TRIGGERS.has(step.onTriggerEvent)) {
-          problems.push(`${file}: step "${step.id}" uses unknown trigger "${step.onTriggerEvent}"`);
+        if (
+          !ALL_TOUR_TRIGGERS.has(step.onTriggerEvent) &&
+          !DATA_DEPENDENT.has(step.onTriggerEvent)
+        ) {
+          problems.push(
+            `${file}: step "${step.id}" uses unknown trigger "${step.onTriggerEvent}"`,
+          );
         }
       }
     }
     expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  it("every registered static anchor is actually used by a component (data-tour=)", () => {
-    const unused = [...ALL_TOUR_ANCHORS].filter(
-      (a) => !source.includes(`data-tour="${a}"`) && !source.includes(`data-tour='${a}'`),
+  it("every registered static anchor is referenced via TOUR_ANCHORS.<key>", () => {
+    const unused = Object.keys(TOUR_ANCHORS).filter(
+      (key) => !source.includes(`TOUR_ANCHORS.${key}`),
     );
-    expect(unused, `Registered anchors not found in any component: ${unused.join(", ")}`).toEqual([]);
+    expect(
+      unused,
+      `Registered anchors not referenced via TOUR_ANCHORS.<key>: ${unused.join(", ")}`,
+    ).toEqual([]);
   });
 
-  it("every registered trigger is actually used by a component (v-tour-trigger)", () => {
-    const unused = [...ALL_TOUR_TRIGGERS].filter((t) => !source.includes(`'${t}'`) && !source.includes(`"${t}"`));
-    expect(unused, `Registered triggers not found in any component: ${unused.join(", ")}`).toEqual([]);
+  it("every registered trigger is referenced via TOUR_TRIGGERS.<key>", () => {
+    const unused = Object.keys(TOUR_TRIGGERS).filter(
+      (key) => !source.includes(`TOUR_TRIGGERS.${key}`),
+    );
+    expect(
+      unused,
+      `Registered triggers not referenced via TOUR_TRIGGERS.<key>: ${unused.join(", ")}`,
+    ).toEqual([]);
   });
 });

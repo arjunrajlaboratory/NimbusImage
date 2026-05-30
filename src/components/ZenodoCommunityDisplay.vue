@@ -11,7 +11,7 @@
       <v-card-title
         v-if="!embedded"
         class="d-flex justify-space-between align-center"
-        data-tour="zenodo-community-display"
+        :data-tour="TOUR_ANCHORS.zenodoCommunityDisplay"
       >
         Sample Datasets
         <v-btn variant="text" icon size="small" @click="$emit('close')">
@@ -119,6 +119,7 @@ import ZenodoAPI, {
   IZenodoCommunity,
 } from "@/store/ZenodoAPI";
 import { logError } from "@/utils/log";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 import { getTourAnchorId } from "@/utils/strings";
 
 const props = withDefaults(

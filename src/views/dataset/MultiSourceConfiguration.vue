@@ -1,7 +1,7 @@
 <template>
   <v-container>
     <v-card class="pa-4 my-4">
-      <v-list-subheader data-tour="variables" class="headline"
+      <v-list-subheader :data-tour="TOUR_ANCHORS.variables" class="headline"
         >Variables</v-list-subheader
       >
       <v-divider class="my-2" />
@@ -205,7 +205,7 @@
     </v-card>
     <v-card class="pa-4 my-4" v-else>
       <div class="d-flex">
-        <v-list-subheader data-tour="assignments" class="headline"
+        <v-list-subheader :data-tour="TOUR_ANCHORS.assignments" class="headline"
           >Assignments</v-list-subheader
         >
         <v-spacer />
@@ -360,7 +360,7 @@
       </v-col>
       <v-col class="d-flex justify-end">
         <v-checkbox
-          data-tour="transcode-checkbox"
+          :data-tour="TOUR_ANCHORS.transcodeCheckbox"
           density="compact"
           hide-details
           class="mr-8"
@@ -368,7 +368,7 @@
           label="Transcode into optimized TIFF file"
         />
         <v-btn
-          data-tour="submit-button"
+          :data-tour="TOUR_ANCHORS.submitButton"
           v-tour-trigger="TOUR_TRIGGERS.submitButton"
           variant="flat"
           color="success"
@@ -477,7 +477,7 @@ import {
   TDimensions,
 } from "@/utils/parsing";
 import { IGirderItem } from "@/girder";
-import { TOUR_TRIGGERS } from "@/tours/anchors";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import { ITileMeta } from "@/store/GirderAPI";
 import {
   IGeoJSPositionWithTransform,

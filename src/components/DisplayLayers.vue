@@ -1,6 +1,6 @@
 <template>
   <div
-    data-tour="layer-controls"
+    :data-tour="TOUR_ANCHORS.layerControls"
     class="d-block"
     v-mousetrap="mousetrapGlobalToggles"
   >
@@ -117,6 +117,7 @@ import { IDisplayLayer, ICombinedLayer } from "@/store/model";
 import DisplayLayerGroup from "./DisplayLayerGroup.vue";
 import draggable from "vuedraggable";
 import store from "@/store";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 import { IHotkey } from "@/utils/v-mousetrap";
 
 const singleLayerPrefix = "single-layer-group_";
