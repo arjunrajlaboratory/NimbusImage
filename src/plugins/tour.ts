@@ -43,6 +43,8 @@ export class TourManager {
       return;
     }
 
+    this.stopTour();
+
     this.steps = tour.steps.map((step) => ({
       id: step.id,
       route: step.route,
@@ -62,8 +64,13 @@ export class TourManager {
       stagePadding: 8,
       popoverClass: "tour-popover",
       allowClose: true,
-      overlayClickBehavior: "nextStep",
+      overlayClickBehavior: "close",
       onCloseClick: () => this.stopTour(),
+      onDestroyed: () => {
+        if (this.isActive) {
+          this.stopTour();
+        }
+      },
     });
 
     await this.showCurrentStep();
@@ -105,7 +112,7 @@ export class TourManager {
 
     if (step.onTriggerEvent) {
       this.activeTriggerEvent = step.onTriggerEvent;
-      tourBus.on(step.onTriggerEvent, this.handleTriggerAdvance);
+      tourBus.on(step.onTriggerEvent, this.advance);
     }
   }
 
@@ -181,13 +188,9 @@ export class TourManager {
     this.showCurrentStep();
   };
 
-  private handleTriggerAdvance = () => {
-    this.advance();
-  };
-
   private clearTriggerListener() {
     if (this.activeTriggerEvent) {
-      tourBus.off(this.activeTriggerEvent, this.handleTriggerAdvance);
+      tourBus.off(this.activeTriggerEvent, this.advance);
       this.activeTriggerEvent = null;
     }
   }
@@ -223,8 +226,9 @@ export class TourManager {
     document.body.classList.remove("tour-no-overlay");
     this.isActive = false;
     if (this.driverObj) {
-      this.driverObj.destroy();
+      const obj = this.driverObj;
       this.driverObj = null;
+      obj.destroy();
     }
   }
 
@@ -243,7 +247,6 @@ export class TourManager {
     } else {
       this.currentStepIndex++;
     }
-    this.clearTriggerListener();
     await this.showCurrentStep();
   }
 
