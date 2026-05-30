@@ -176,11 +176,13 @@ For detailed query recipes: read `references/mongo-recipes.md`
 
 | Container | Service | Purpose |
 |-----------|---------|---------|
-| `girder` | Girder API server | Backend REST API |
-| `upenncontrast-mongodb-1` | MongoDB | Database |
+| `girder` | Girder API server (Girder 5, uvicorn/ASGI) | Backend REST API + notification WebSocket |
+| `nimbusimage-mongodb-1` | MongoDB | Database |
 | `worker` | Girder Worker | Background computation |
-| `upenncontrast-broker-1` | RabbitMQ | Message broker for workers |
-| `upenncontrast-memcached-1` | Memcached | Caching layer |
+| `nimbusimage-broker-1` | RabbitMQ | Message broker for workers |
+| `nimbusimage-redis-1` | Redis | Notification pub/sub + large_image tile cache |
+
+**Note:** `girder` and `worker` have fixed `container_name`s, but `mongodb`, `redis`, and `broker` are prefixed with the Docker Compose project name (`nimbusimage`, derived from the repo directory). If your prefix differs, run `docker ps` to get the real names. Girder 5 replaced the old `memcached` caching container with `redis`.
 
 ### Common Commands
 
@@ -223,6 +225,62 @@ docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.job.find({}, {titl
 ```
 
 Job status codes: 0=inactive, 1=queued, 2=running, 3=success, 4=error, 5=cancelled
+
+### Notifications / Progress (Girder 5 WebSocket + Redis pub/sub)
+
+Girder 5 replaced the old SSE notification stream with a WebSocket plus Redis
+pub/sub. The chain for job progress / completion is:
+
+1. Worker `PUT /api/v1/job/<id>` updates the job.
+2. Girder's job model publishes `job_created` / `job_status` / `job_log` /
+   progress notifications to the Redis channel `user_<userId>` via
+   `girder.notification.Notification.flush()`.
+3. The browser opens a WebSocket at `ws://localhost:8080/notifications/me?token=<token>`.
+   Server side (`girder/notification.py` `UserNotificationsSocket`) subscribes to
+   `user_<userId>` and forwards each Redis message to the socket.
+4. Frontend `src/store/jobs.ts` parses frames (`data.data._id`, `.status`, `.text`)
+   and resolves the job / updates the progress bar.
+
+The frontend token now lives in `localStorage['nimbus.girderToken']` (not a cookie).
+
+**Symptom: a job runs forever in the UI with no progress, but the job actually
+completes.** That means the job/publish side works but forwarding to the browser
+is broken. Bisect publish vs. forward:
+
+```bash
+# 1. Watch what Girder publishes to Redis (run while triggering a job in the UI)
+docker exec nimbusimage-redis-1 redis-cli PSUBSCRIBE 'user_*'
+#    -> if job_created/job_status/job_log lines appear, PUBLISH works.
+
+# 2. Check whether the WebSocket actually subscribed on the server side.
+#    With a dataset open (notification WS OPEN in the browser), this should be >=1:
+docker exec nimbusimage-redis-1 redis-cli PUBSUB NUMSUB user_<userId>
+docker exec nimbusimage-redis-1 redis-cli PUBSUB CHANNELS
+#    -> 0 subscribers / empty channels while a socket is open == forwarding is broken
+#       (server subscribed to nobody, so published events go nowhere).
+```
+
+In-browser checks (DevTools console): the app's socket is
+`$store.state.jobs.notificationSource` (check `.readyState`; 1 == OPEN). A socket
+can be client-side OPEN while the server has silently stopped forwarding — the
+frontend gets no `onerror`/`onclose`, so it waits forever.
+
+**Confirmed bug (girder 5.0.9 + redis-py 8.0.0):** `girder/notification.py`
+`UserNotificationsSocket.listen_and_forward` iterates `self.pubsub.listen()`.
+redis-py 8.0.0 changed the async `Connection` default `socket_timeout` from
+`None` to **5 seconds** (verify: `Connection().socket_timeout == 5`), so an idle
+pubsub read raises `redis.exceptions.TimeoutError: Timeout reading from redis:6379`
+~5s after the last message. That exception is **not** `asyncio.CancelledError`,
+so it bypasses the loop's only `except` and falls into the `finally`, which calls
+`unsubscribe()`/`close()` — permanently tearing down the subscription. The
+WebSocket stays client-side OPEN (the frontend gets no error/close event), now
+subscribed to nothing, so every later notification is silently dropped → jobs
+appear to run forever. Each connection works only until its first >5s idle gap,
+which in practice is right after opening a dataset (before any job is run).
+`docker compose restart girder` only buys ~5s for the next fresh connection.
+Fix belongs upstream in girder (tolerate the timeout / re-subscribe instead of
+tearing down); it also calls the deprecated `pubsub.close()` (redis-py wants
+`aclose()`).
 
 ### Common Issues
 
