@@ -63,6 +63,7 @@ export class TourManager {
     this.driverObj = driver({
       stagePadding: 8,
       stageRadius: 8,
+      popoverOffset: 12,
       popoverClass: "tour-popover",
       // Lighter, slightly blue-black scrim so the UI behind stays legible.
       overlayColor: "#0a0d12",

@@ -35,25 +35,10 @@
   padding: 20px 20px 16px;
   // NOTE: do NOT set `position` here — driver.js positions the popover with
   // `position: fixed`; overriding it drops the popover into normal flow (bottom
-  // of page). The fixed popover already establishes a containing block for the
-  // absolute `::before` accent edge below.
-  overflow: hidden;
+  // of page).
+  // NOTE: do NOT set `overflow: hidden` — it clips the arrow, which is
+  // positioned outside the popover's box (it sticks out toward the target).
   animation: tour-popover-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
-
-  // Thin teal accent edge along the top of the card.
-  &::before {
-    content: "";
-    position: absolute;
-    inset: 0 0 auto 0;
-    height: 2px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      rgb(var(--v-theme-primary, 38, 166, 154)),
-      transparent
-    );
-    opacity: 0.85;
-  }
 
   .driver-popover-title {
     font-size: 17px;
@@ -152,9 +137,25 @@
     }
   }
 
-  // Arrow points at the highlighted element — match the card surface + border.
+  // Arrow connecting the popover to the target — a bold TEAL pointer. driver.js
+  // makes a CSS-triangle by coloring all 4 borders then setting 3 transparent
+  // per side, so recolor ONLY the visible (pointing) border per side to teal (a
+  // blanket border-color flattens it into a square; a dark color is invisible
+  // against the dark page). Enlarged for a clear pointer.
   .driver-popover-arrow {
-    border-color: rgba(28, 30, 35, 0.97);
+    border-width: 9px;
+  }
+  .driver-popover-arrow-side-left {
+    border-left-color: rgb(38, 166, 154);
+  }
+  .driver-popover-arrow-side-right {
+    border-right-color: rgb(38, 166, 154);
+  }
+  .driver-popover-arrow-side-top {
+    border-top-color: rgb(38, 166, 154);
+  }
+  .driver-popover-arrow-side-bottom {
+    border-bottom-color: rgb(38, 166, 154);
   }
 }
 
@@ -164,30 +165,15 @@
 // none }` and only re-enables the highlighted element + popover; element-less
 // instruction steps have no highlighted element, so without this the canvas
 // stays inert. The overlay itself stays click-through via the !important rule.
-// Ring the highlighted element so it's unmistakable which UI the popover points
-// at. driver.js adds `.driver-active-element` to the target. A static ring read
-// as too subtle against the dark theme, so use a pulsing teal glow that draws
-// the eye. Outline (not box-shadow alone) so it isn't clipped by
-// overflow:hidden ancestors; the animated box-shadow provides the glow.
-@keyframes tour-target-pulse {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 3px rgba(38, 166, 154, 0.55),
-      0 0 16px 4px rgba(38, 166, 154, 0.45);
-  }
-  50% {
-    box-shadow:
-      0 0 0 7px rgba(38, 166, 154, 0.28),
-      0 0 34px 12px rgba(38, 166, 154, 0.7);
-  }
-}
-
+// Mark the highlighted element with a clean teal outline (driver.js adds
+// `.driver-active-element` to the target). The teal popover arrow does the
+// "pointing"; this outline just marks the exact element. Outline (not a
+// box-shadow glow) so it's never clipped by overflow:hidden ancestors and
+// doesn't show on only part of the element.
 .driver-active-element {
-  outline: 3px solid rgb(38, 166, 154) !important;
-  outline-offset: 3px;
-  border-radius: 8px;
-  animation: tour-target-pulse 1.5s ease-in-out infinite;
+  outline: 2px solid rgb(38, 166, 154) !important;
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 // Remove the dimming overlay entirely (the SVG and its full-viewport <path>)
