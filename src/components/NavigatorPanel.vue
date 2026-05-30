@@ -1,6 +1,6 @@
 <template>
   <div class="navigator-panel">
-    <div v-mousetrap="mousetrapSliders" id="viewer-toolbar-tourstep">
+    <div v-mousetrap="mousetrapSliders" data-tour="viewer-toolbar">
       <div class="d-flex align-center">
         <value-slider
           v-model="xy"
@@ -60,8 +60,8 @@
       </div>
       <div v-if="maxTime > 0 && !unrollT" class="d-flex align-center">
         <v-checkbox
-          id="timelapse-mode-tourstep"
-          v-tour-trigger="'timelapse-mode-tourtrigger'"
+          data-tour="timelapse-mode"
+          v-tour-trigger="TOUR_TRIGGERS.timelapseMode"
           class="ml-3 my-checkbox"
           v-model="timelapseMode"
           label="Time lapse mode"
@@ -79,7 +79,7 @@
       </div>
       <div v-if="timelapseMode" class="d-flex align-center">
         <tag-picker
-          id="timelapse-tags-tourstep"
+          data-tour="timelapse-tags"
           class="ml-3"
           v-model="timelapseTags"
           style="max-width: 300px"
@@ -87,7 +87,7 @@
       </div>
       <div v-if="timelapseMode" class="d-flex align-center">
         <v-checkbox
-          id="timelapse-labels-tourstep"
+          data-tour="timelapse-labels"
           class="ml-3 my-checkbox"
           v-model="showTimelapseLabels"
           label="Show labels"
@@ -151,6 +151,7 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { logError } from "@/utils/log";
+import { TOUR_TRIGGERS } from "@/tours/anchors";
 
 const dimensionLabels = ref<{
   xy: string[] | null;
