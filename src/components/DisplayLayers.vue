@@ -1,6 +1,6 @@
 <template>
   <div
-    id="layer-controls-tourstep"
+    data-tour="layer-controls"
     class="d-block"
     v-mousetrap="mousetrapGlobalToggles"
   >
