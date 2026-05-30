@@ -42,6 +42,12 @@ export interface TranscodeProgress {
   totalFrames?: number;
 }
 
+// data-tour value for a runtime-named entity (tool/tag/param/title).
+// Data-dependent — NOT in the static registry, exempt from the static guard.
+export function getTourAnchorId(name: string): string {
+  return toKebabCase(name);
+}
+
 /**
  * Parse transcoding output to extract progress information
  */
