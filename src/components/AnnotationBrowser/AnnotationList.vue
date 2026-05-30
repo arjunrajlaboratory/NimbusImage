@@ -105,7 +105,7 @@
       @submit="handleColorSubmit"
     />
 
-    <div id="annotation-list-content-tourstep" class="annotation-list-content">
+    <div data-tour="annotation-list-content" class="annotation-list-content">
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>
