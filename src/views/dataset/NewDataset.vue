@@ -76,7 +76,7 @@
       </file-dropzone>
 
       <v-text-field
-        id="dataset-name-input-tourstep"
+        data-tour="dataset-name-input"
         v-model="name"
         label="Name"
         required
@@ -85,7 +85,7 @@
       />
 
       <v-textarea
-        id="dataset-description-input-tourstep"
+        data-tour="dataset-description-input"
         v-model="description"
         label="Description"
         :readonly="pageTwo"
@@ -141,8 +141,8 @@
         </div>
         <div>
           <v-btn
-            id="upload-button-tourstep"
-            v-tour-trigger="'upload-button-tourtrigger'"
+            data-tour="upload-button"
+            v-tour-trigger="TOUR_TRIGGERS.uploadButton"
             variant="flat"
             color="success"
             size="small"
@@ -389,6 +389,7 @@ import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
+import { TOUR_TRIGGERS } from "@/tours/anchors";
 import { logError, logWarning } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
