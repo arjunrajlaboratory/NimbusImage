@@ -183,13 +183,18 @@ body.tour-no-overlay .driver-overlay {
 }
 
 // driver.js disables the whole page with `.driver-active * { pointer-events:
-// none }`. For interactive instruction steps ("use your wheel to zoom / drag
-// to pan") we must re-enable the image viewer. Scope this to the GeoJS map ONLY
-// — a blanket `* { pointer-events: auto }` wrongly re-enables Vuetify's
-// full-viewport `.v-overlay-container` (and driver's overlay <path>), which
-// then swallow every wheel/click. The popover stays clickable via driver's own
-// `.driver-popover { pointer-events: auto }` rule.
+// none }`. For interactive (non-modal) steps we must re-enable the things the
+// user needs to touch: the GeoJS map (wheel-zoom / drag-pan) and Vuetify
+// overlay CONTENT — dialogs (the measure panel) and dropdown menus (tag /
+// shape / algorithm selects, which are teleported into the overlay layer).
+//
+// Scope to `.v-overlay__content`, NOT the full-viewport `.v-overlay-container`
+// or `.v-overlay__scrim`: re-enabling those would let an invisible layer
+// swallow every wheel/click across the page. The popover itself stays clickable
+// via driver's own `.driver-popover { pointer-events: auto }` rule.
 body.tour-no-overlay .geojs-map,
-body.tour-no-overlay .geojs-map * {
+body.tour-no-overlay .geojs-map *,
+body.tour-no-overlay .v-overlay__content,
+body.tour-no-overlay .v-overlay__content * {
   pointer-events: auto;
 }

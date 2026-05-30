@@ -4,7 +4,7 @@ import { driver, type Driver, type PopoverDOM } from "driver.js";
 import "driver.js/dist/driver.css";
 import "./tour.scss";
 import { tourBus } from "./tourBus";
-import { logError, logWarning } from "@/utils/log";
+import { logWarning } from "@/utils/log";
 import { ITourConfig, ITourMetadata, ITourStepRuntime } from "@/store/model";
 
 const DEFAULT_WAIT_MS = 8000; // datasetview loads images; give async UI room
@@ -68,8 +68,11 @@ export class TourManager {
       // Lighter, slightly blue-black scrim so the UI behind stays legible.
       overlayColor: "#0a0d12",
       overlayOpacity: 0.45,
-      allowClose: true,
-      overlayClickBehavior: "close",
+      // Don't dismiss on background/overlay click or Escape — accidental
+      // clicks while interacting (opening dropdowns, etc.) would strand the
+      // user mid-tour. Exit is only via the explicit Close (X) button, whose
+      // onCloseClick hook is honored regardless of allowClose.
+      allowClose: false,
       onCloseClick: () => this.stopTour(),
       onDestroyed: () => {
         if (this.isActive) {
@@ -97,23 +100,33 @@ export class TourManager {
       try {
         await this.router.push({ name: step.route });
       } catch (error) {
-        logError(`[Tour] Failed to navigate to route "${step.route}":`, error);
+        // Some routes need params we don't have (e.g. `datasetview` needs a
+        // datasetViewId). We can't navigate there by name — but the app will
+        // get there via the user's action (e.g. once a dataset import
+        // finishes). WAIT for the route to settle rather than rendering the
+        // step on the wrong screen (which showed "Welcome to your new dataset"
+        // mid-import). afterEach re-invokes this once the route changes.
+        logWarning(
+          `[Tour] Waiting for the app to reach route "${step.route}":`,
+          error,
+        );
       }
-      // afterEach will re-invoke showCurrentStep once the route settles.
+      // Either way, wait for afterEach to re-invoke once the route settles.
       return;
     }
 
     this.clearTriggerListener();
 
+    let target: Element | null = null;
     if (step.element) {
       try {
-        await this.waitForElement(step.element, step.waitForElement);
+        target = await this.waitForElement(step.element, step.waitForElement);
       } catch {
         return this.showMissingTargetPopover(step);
       }
     }
 
-    this.renderStep(step);
+    this.renderStep(step, target);
 
     if (step.onTriggerEvent) {
       this.activeTriggerEvent = step.onTriggerEvent;
@@ -121,7 +134,7 @@ export class TourManager {
     }
   }
 
-  private renderStep(step: ITourStepRuntime) {
+  private renderStep(step: ITourStepRuntime, target: Element | null) {
     if (!this.driverObj) {
       return;
     }
@@ -135,13 +148,15 @@ export class TourManager {
     // making the tour unclickable. The overlay already blocks non-highlighted
     // page elements, so modal focus is preserved without it.
     this.driverObj.highlight({
-      ...(step.element ? { element: step.element } : {}),
+      ...(target ? { element: target } : {}),
       popover: {
         title: step.title,
         description: step.text,
         side: step.position,
         align: "center",
-        showButtons: step.showNextButton ? ["next"] : [],
+        // Always include "close" so there's a visible exit (X) — overlay/Escape
+        // dismissal is disabled to prevent accidental exits.
+        showButtons: step.showNextButton ? ["next", "close"] : ["close"],
         nextBtnText: isLast ? "Done" : "Next",
         onNextClick: () => this.advance(),
         onPopoverRender: (popover) => {
@@ -186,7 +201,7 @@ export class TourManager {
         description:
           "The screen for this step couldn't be found. You can skip it or " +
           "end the tour.",
-        showButtons: ["next"],
+        showButtons: ["next", "close"],
         nextBtnText: isLast ? "End tour" : "Skip",
         onNextClick: () => this.advance(),
       },
@@ -206,14 +221,37 @@ export class TourManager {
     }
   }
 
+  // Resolve a selector to the best target. Some anchors exist in more than one
+  // place (e.g. PropertyCreation renders both inline off-screen and inside the
+  // measure dialog), so prefer a VISIBLE, in-viewport match over the first one
+  // in the DOM — otherwise the popover anchors to the hidden/off-screen copy.
+  private resolveTarget(selector: string): Element | null {
+    const all = Array.from(document.querySelectorAll(selector));
+    if (all.length <= 1) {
+      return all[0] ?? null;
+    }
+    const visible = all.find((el) => {
+      const r = el.getBoundingClientRect();
+      return (
+        r.width > 0 &&
+        r.height > 0 &&
+        r.bottom > 0 &&
+        r.right > 0 &&
+        r.top < window.innerHeight &&
+        r.left < window.innerWidth
+      );
+    });
+    return visible ?? all[0];
+  }
+
   private waitForElement(selector: string, timeout: number): Promise<Element> {
     return new Promise((resolve, reject) => {
-      const existing = document.querySelector(selector);
+      const existing = this.resolveTarget(selector);
       if (existing) {
         return resolve(existing);
       }
       const observer = new MutationObserver(() => {
-        const el = document.querySelector(selector);
+        const el = this.resolveTarget(selector);
         if (el) {
           observer.disconnect();
           resolve(el);
