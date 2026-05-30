@@ -74,6 +74,7 @@ export const TOUR_TRIGGERS = {
   helpButton: "help-button",
   chatButton: "chat-button",
   addTool: "add-tool",
+  toolCreationAddToolButton: "tool-creation-add-tool-button",
   timelapseMode: "timelapse-mode",
   zenodoImporterImportDataset: "zenodo-importer-import-dataset",
   dataIoButton: "data-io-button",
