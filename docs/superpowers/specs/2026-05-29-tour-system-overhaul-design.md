@@ -144,15 +144,26 @@ event bus. Replace the **rendering engine**, harden the **glue**, and make the
 
 ### G. Sequencing (phased; each independently verifiable)
 
-1. **Registry + `data-tour` migration** — mechanical; add the static guard
-   alongside so it goes green as anchors are converted.
-2. **Glue hardening** — silent-skip removal, auto-navigation, waits, drop eval;
-   verified while still on Shepherd.
-3. **Engine swap** to driver.js behind the unchanged YAML/controller interface.
-4. **Re-anchor + re-target** broken and content-coupled tours; wire content
-   tours to the Zenodo sample dataset.
-5. **Manual browser walkthrough** of all tours; capture evidence; fix
-   stragglers.
+**Rationale for engine-first:** the controller's render/advance path is
+rewritten for driver.js regardless, and the glue hardening lives in that same
+path — so doing the swap and the hardening together avoids writing throwaway
+Shepherd-specific code, and the moment failures become loud it surfaces every
+broken anchor *before* the declarative model is re-anchored.
+
+1. **Engine swap + glue hardening** — replace Shepherd with driver.js in
+   `tour.ts` and, in the same pass, remove silent-skip (loud "target
+   unavailable — Skip / End tour" state), add route auto-navigation, raise the
+   default wait, and delete the stringified-JS hooks. Existing `#x-tourstep` id
+   selectors are kept for this phase (driver.js targets them directly), so no
+   anchor changes are needed yet. Outcome: a modern engine that loudly surfaces
+   every broken anchor when tours are run.
+2. **Anchor system + re-anchoring** — introduce the typed `data-tour` registry
+   and the static guard; migrate all anchors from `id="x-tourstep"` to
+   `data-tour="x"`; in the same pass re-target the hard-removed/broken anchors
+   to stable current UI and wire content-coupled tours to the existing Zenodo
+   sample dataset. The static guard goes green as conversion completes.
+3. **Manual browser walkthrough** — drive every tour end-to-end in the browser;
+   capture a screenshot or GIF per tour; fix any stragglers.
 
 ## Risks
 
