@@ -1645,8 +1645,8 @@ export enum WelcomeTourStatus {
 
 export const WelcomeTourNames = {
   [WelcomeTourTypes.HOME]: "WelcomeTourHome",
-  [WelcomeTourTypes.VIEWER]: "WelcomeTourViewer",
-  [WelcomeTourTypes.ADVANCED_UPLOAD]: "WelcomeTourAdvancedUpload",
+  [WelcomeTourTypes.VIEWER]: "IntroViewerTour",
+  [WelcomeTourTypes.ADVANCED_UPLOAD]: "AdvancedUploadTour",
   [WelcomeTourTypes.WORKING_WITH_TAGS]: "WorkingWithTags",
 };
 
