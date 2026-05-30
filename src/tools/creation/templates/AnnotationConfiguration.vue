@@ -27,7 +27,7 @@
         <v-row class="my-0" v-if="!hideLayer">
           <v-col class="py-0">
             <layer-select
-              id="tool-creation-layer-select-tourstep"
+              data-tour="tool-creation-layer-select"
               v-model="layer"
               label="Layer"
             />
@@ -37,7 +37,7 @@
         <v-row class="my-0">
           <v-col class="py-0">
             <tag-picker
-              id="tool-creation-tag-picker-tourstep"
+              data-tour="tool-creation-tag-picker"
               v-model="tags"
               @update:model-value="useAutoTags = false"
             ></tag-picker>
