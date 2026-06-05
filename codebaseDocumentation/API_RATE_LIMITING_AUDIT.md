@@ -14,6 +14,30 @@ This document audits the current state of protections and recommends future work
 | Property values | Client-side auto-batching | 10K entries/request | `nimbusimage/properties.py`, `annotation_client/annotations.py` |
 | MongoDB | Per-document size limit | 16 MB | MongoDB default |
 | Memcached | Max cached tile size | 8 MB | `docker-compose.yaml` |
+| Worker compute (API) | HAProxy per-user rate limit | 1 request / ~5 min | AWSDeploy `templates/startup_haproxy.tftpl` |
+
+### Worker-request rate limiting (HAProxy)
+
+The production load balancer (AWSDeploy repo) rate-limits worker-compute
+submissions from the `nimbusimage` Python client. GPU Celery workers are
+started on demand and take several minutes to spin up, so a script submitting
+jobs in a tight loop can flood the queue faster than workers come online.
+
+- **What is limited:** `POST /upenn_annotation/compute` and
+  `POST /annotation_property/{id}/compute` (the endpoints that spin up GPU
+  workers).
+- **Who is limited:** only the `nimbusimage` Python client, identified by its
+  `User-Agent: nimbusimage-python/<version>` header. The browser front-end
+  (and any `Mozilla/*` agent) is never matched, even though it authenticates
+  with the same `Girder-Token`. There is no HAProxy-level way to tell a
+  token minted from an API key apart from a login token, so the User-Agent is
+  used as the proxy signal for "programmatic API client."
+- **Scope:** keyed by `Girder-Token` (per user) via an HAProxy stick-table.
+- **Window:** configurable via the `WORKER_REQUEST_RATE_LIMIT_SECONDS`
+  Terraform variable (default 300s, ~matching worker spin-up time).
+- **Response:** HTTP 429 with a JSON body and a `Retry-After` header. The
+  client surfaces this as `nimbusimage.WorkerRateLimitError` (with
+  `.retry_after`).
 
 ## What's missing
 
@@ -31,13 +55,17 @@ These backend endpoints accept arbitrarily large arrays with no server-side limi
 
 The backend calls `saveMany()` / `removeWithQuery()` directly on the MongoDB collection with no array size validation.
 
-### No rate limiting
+### Limited rate limiting
 
-There is no rate limiting configured anywhere in the stack:
-- No per-user request throttling
-- No per-endpoint rate limits
+Worker-compute submissions from the Python API are now throttled at HAProxy
+(see "Worker-request rate limiting" above). Beyond that, there is still no
+general rate limiting in the stack:
+- No per-user request throttling on read/write data endpoints
+- No per-endpoint rate limits outside the worker-compute paths
 - No concurrent request limits
 - No nginx rate limiting (no nginx in the current docker-compose setup)
+- Note: the HAProxy worker rate limit lives only in the production deployment
+  (AWSDeploy), not in the local `docker-compose` dev stack.
 
 ### No per-user concurrent job limit
 
@@ -75,6 +103,10 @@ These protect against all clients (Python API, frontend, curl, etc.):
 2. **Add rate limiting** via nginx or a Girder plugin. Suggested starting point:
    - 100 requests/minute per user for write endpoints (POST, PUT, DELETE)
    - 1000 requests/minute per user for read endpoints (GET)
+
+   *Partially done:* worker-compute submissions are now rate-limited at HAProxy
+   in production (see above). Extending this to general read/write endpoints is
+   still open.
 
 3. **Add concurrent job limits** — max N active worker jobs per user (suggested: 5-10).
 

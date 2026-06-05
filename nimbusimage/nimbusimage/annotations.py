@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from nimbusimage._girder import submit_worker_job
 from nimbusimage.jobs import Job
 from nimbusimage.models import Annotation, Location
 
@@ -198,6 +199,14 @@ class AnnotationAccessor:
         Returns:
             A Job object. Call ``job.wait()`` to block until completion.
 
+        Raises:
+            WorkerRateLimitError: If the server rate-limits the request.
+                Worker jobs are throttled per user because GPU workers
+                take minutes to start. Submit one job over a wide
+                ``assignment`` range instead of looping over many small
+                ``compute()`` calls; if you must retry, back off for the
+                error's ``retry_after`` seconds.
+
         Note:
             The worker container uses ``WorkerClient`` from the
             ``worker_client`` package, which requires all of these keys
@@ -235,9 +244,9 @@ class AnnotationAccessor:
             "id": "",
         }
 
-        resp = self._gc.post(
+        job_data = submit_worker_job(
+            self._gc,
             f"/upenn_annotation/compute?datasetId={self._dataset_id}",
-            json=body,
+            body,
         )
-        job_data = resp[0] if isinstance(resp, (list, tuple)) else resp
         return Job(self._gc, job_data)

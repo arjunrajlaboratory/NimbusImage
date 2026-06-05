@@ -8,8 +8,23 @@ and error handling are centralized.
 from __future__ import annotations
 
 import os
+from importlib.metadata import PackageNotFoundError, version
 
 import girder_client
+import requests
+
+from nimbusimage.exceptions import WorkerRateLimitError
+
+try:
+    _VERSION = version("nimbusimage")
+except PackageNotFoundError:  # running from a source tree without install
+    _VERSION = "0+unknown"
+
+# Distinctive User-Agent so the deployment can recognize traffic from the
+# nimbusimage Python client (vs. the browser front-end, which sends a
+# "Mozilla/*" agent). The HAProxy load balancer uses this to scope worker
+# request rate limiting to programmatic API clients only.
+USER_AGENT = f"nimbusimage-python/{_VERSION}"
 
 
 def create_client(
@@ -51,6 +66,12 @@ def create_client(
 
     gc = girder_client.GirderClient(apiUrl=api_url)
 
+    # Attach a persistent session that advertises the nimbusimage client
+    # User-Agent on every request (including the API-key token exchange).
+    session = requests.Session()
+    session.headers["User-Agent"] = USER_AGENT
+    gc._session = session
+
     if token is not None:
         gc.setToken(token)
     elif api_key is not None:
@@ -75,3 +96,38 @@ def create_client(
             )
 
     return gc
+
+
+def _parse_retry_after(response) -> int | None:
+    """Extract the Retry-After header (seconds) from a response, if present."""
+    if response is None:
+        return None
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def submit_worker_job(gc, path: str, body: dict):
+    """POST a worker-compute request, translating rate-limit responses.
+
+    Worker-compute endpoints are rate limited per user by the deployment
+    (GPU workers take minutes to start). On HTTP 429 this raises
+    :class:`~nimbusimage.exceptions.WorkerRateLimitError` carrying the
+    server's ``Retry-After`` hint, instead of a generic ``HttpError``.
+
+    Returns the job document (unwrapped from a single-element list if the
+    backend returns one).
+    """
+    try:
+        resp = gc.post(path, json=body)
+    except girder_client.HttpError as exc:
+        if exc.status == 429:
+            raise WorkerRateLimitError(
+                retry_after=_parse_retry_after(exc.response)
+            ) from exc
+        raise
+    return resp[0] if isinstance(resp, (list, tuple)) else resp
