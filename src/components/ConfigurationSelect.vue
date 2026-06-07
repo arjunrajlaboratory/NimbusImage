@@ -6,6 +6,7 @@
       show-select
       return-object
       v-model="selectedConfigurations"
+      item-value="id"
       :items="compatibleConfigurations"
       :headers="headers"
       :search="search"
