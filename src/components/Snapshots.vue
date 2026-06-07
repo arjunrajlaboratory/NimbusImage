@@ -172,7 +172,7 @@
           :items="snapshotList"
           :headers="tableHeaders"
           :items-per-page="5"
-          item-key="key"
+          item-value="key"
           class="accent-1"
           @click:row="loadSnapshot"
           show-select
