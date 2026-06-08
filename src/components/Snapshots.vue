@@ -643,6 +643,29 @@ interface IScalebarSettings {
   unit: TScalebarUnit;
 }
 
+// Everything needed to draw a scalebar onto a download/export canvas,
+// resolved for a specific bounding box. This is computed per snapshot (and
+// once for the current view) so batch downloads of snapshots with different
+// bounding boxes each get a correctly sized scalebar instead of inheriting the
+// current view's settings.
+interface IScalebarSpec {
+  // Physical length of the scalebar expressed in dataset pixels.
+  lengthInDatasetPixels: number;
+  // Width of the rendered bounding box in dataset pixels. The output canvas
+  // spans this same horizontal extent, so it is the denominator used to convert
+  // dataset pixels into canvas pixels (handles downsampled and display-scaled
+  // canvases alike).
+  datasetPixelWidth: number;
+  // Text label drawn next to the bar, e.g. "50µm".
+  label: string;
+}
+
+// A download URL paired with the scalebar to draw onto its image (null = none).
+interface IDownloadUrlItem {
+  url: URL;
+  scalebarSpec: IScalebarSpec | null;
+}
+
 /**
  * Get the best supported video MIME type for the current browser.
  * Prioritizes MP4 (H.264) for broad compatibility, falls back to WebM for Firefox.
@@ -893,48 +916,38 @@ const pixelSize = computed((): IScalebarSettings => {
   return configurationPixelSize.value;
 });
 
-const idealScalebarLength = computed(() => {
-  const ps = pixelSize.value;
-  if (ps.unit === TScalebarUnit.PX) {
-    return guessIdealScalebar(bboxRight.value - bboxLeft.value, ps.length);
-  }
-  const pixelLengthInMeters = convertLengthToMeters(ps.length, ps.unit);
-  return guessIdealScalebar(
+const currentScalebar = computed(() =>
+  computeScalebarForBbox(
     bboxRight.value - bboxLeft.value,
-    pixelLengthInMeters,
-  );
-});
+    pixelSize.value,
+    scalebarMode.value,
+    manualScalebarSettings.value,
+  ),
+);
 
-const scalebarSettings = computed((): IScalebarSettings => {
-  if (scalebarMode.value === "manual" && manualScalebarSettings.value) {
-    return manualScalebarSettings.value;
-  }
-  const idealScalebar = idealScalebarLength.value;
-  if (!idealScalebar) {
-    return { length: 1.0, unit: TScalebarUnit.PX };
-  } else {
-    if (pixelSize.value.unit === TScalebarUnit.PX) {
-      return { length: idealScalebar, unit: TScalebarUnit.PX };
-    }
-    return convertMetersToLength(idealScalebar);
-  }
-});
+const idealScalebarLength = computed(() =>
+  idealScalebarForBbox(bboxRight.value - bboxLeft.value, pixelSize.value),
+);
 
-const scalebarLengthInPixels = computed((): number => {
-  if (scalebarSettings.value.unit === TScalebarUnit.PX) {
-    return scalebarSettings.value.length;
-  }
-  const ps = pixelSize.value;
-  if (ps.unit === TScalebarUnit.PX) {
-    return scalebarSettings.value.length;
-  }
-  const pixelLengthInMeters = convertLengthToMeters(ps.length, ps.unit);
-  const scalebarLengthInMeters = convertLengthToMeters(
-    scalebarSettings.value.length,
-    scalebarSettings.value.unit,
-  );
-  return scalebarLengthInMeters / pixelLengthInMeters;
-});
+const scalebarSettings = computed(
+  (): IScalebarSettings => currentScalebar.value.settings,
+);
+
+const scalebarLengthInPixels = computed(
+  (): number => currentScalebar.value.lengthInPixels,
+);
+
+// Spec for drawing the scalebar onto the current view's downloads (viewport
+// screenshots and movies always operate on the current bounding box).
+const currentScalebarSpec = computed(
+  (): IScalebarSpec =>
+    buildScalebarSpec({
+      left: bboxLeft.value,
+      top: bboxTop.value,
+      right: bboxRight.value,
+      bottom: bboxBottom.value,
+    }),
+);
 
 const snapshotList = computed(() => {
   const sre = new RegExp(snapshotSearch.value || "", "i");
@@ -1125,6 +1138,83 @@ function guessIdealScalebar(
   }
 
   return roundToSignificant(bestValue);
+}
+
+// Ideal automatic scalebar length for a given bounding-box width and pixel
+// size. Returned in the pixel-size's unit space (dataset pixels when the pixel
+// size is in px, otherwise meters), matching guessIdealScalebar's convention.
+function idealScalebarForBbox(
+  bboxWidthInDatasetPixels: number,
+  pixelSize: IScalebarSettings,
+): number | null {
+  const distancePerPixel =
+    pixelSize.unit === TScalebarUnit.PX
+      ? pixelSize.length
+      : convertLengthToMeters(pixelSize.length, pixelSize.unit);
+  return guessIdealScalebar(bboxWidthInDatasetPixels, distancePerPixel);
+}
+
+// Single source of truth for resolving a scalebar (display settings + length in
+// dataset pixels) from a bounding-box width, pixel size, and the chosen mode.
+// Used both for the current view's reactive computeds and for per-snapshot
+// batch downloads.
+function computeScalebarForBbox(
+  bboxWidthInDatasetPixels: number,
+  pixelSize: IScalebarSettings,
+  mode: ScalebarMode,
+  manualSettings: IScalebarSettings | null,
+): { settings: IScalebarSettings; lengthInPixels: number } {
+  let settings: IScalebarSettings;
+  if (mode === ScalebarMode.MANUAL && manualSettings) {
+    settings = manualSettings;
+  } else {
+    const ideal = idealScalebarForBbox(bboxWidthInDatasetPixels, pixelSize);
+    if (!ideal) {
+      settings = { length: 1.0, unit: TScalebarUnit.PX };
+    } else if (pixelSize.unit === TScalebarUnit.PX) {
+      settings = { length: ideal, unit: TScalebarUnit.PX };
+    } else {
+      settings = convertMetersToLength(ideal);
+    }
+  }
+
+  let lengthInPixels: number;
+  if (
+    settings.unit === TScalebarUnit.PX ||
+    pixelSize.unit === TScalebarUnit.PX
+  ) {
+    lengthInPixels = settings.length;
+  } else {
+    const pixelLengthInMeters = convertLengthToMeters(
+      pixelSize.length,
+      pixelSize.unit,
+    );
+    const scalebarLengthInMeters = convertLengthToMeters(
+      settings.length,
+      settings.unit,
+    );
+    lengthInPixels = scalebarLengthInMeters / pixelLengthInMeters;
+  }
+
+  return { settings, lengthInPixels };
+}
+
+// Build the spec needed to draw a scalebar for a specific bounding box, using
+// the currently selected pixel size and scalebar mode (those are global UI
+// choices that apply to the whole download operation).
+function buildScalebarSpec(bbox: IGeoJSBounds): IScalebarSpec {
+  const datasetPixelWidth = bbox.right - bbox.left;
+  const { settings, lengthInPixels } = computeScalebarForBbox(
+    datasetPixelWidth,
+    pixelSize.value,
+    scalebarMode.value,
+    manualScalebarSettings.value,
+  );
+  return {
+    lengthInDatasetPixels: lengthInPixels,
+    datasetPixelWidth,
+    label: `${settings.length}${settings.unit}`,
+  };
 }
 
 function prettyScalebarSettings(settings: IScalebarSettings): string {
@@ -1630,7 +1720,12 @@ async function snapshotWithAnnotations() {
   ctx.drawImage(img, topLeft.x, topLeft.y, width, height, 0, 0, width, height);
 
   if (addScalebar.value) {
-    drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+    drawScalebarOnCanvas(
+      ctx,
+      canvas.width,
+      canvas.height,
+      currentScalebarSpec.value,
+    );
   }
 
   const croppedScreenshot = canvas.toDataURL("image/png");
@@ -1674,7 +1769,10 @@ async function downloadImagesForCurrentState() {
     if (!urls) {
       return;
     }
-    await downloadUrls(urls, addScalebar.value);
+    const scalebarSpec = addScalebar.value
+      ? buildScalebarSpec(boundingBox)
+      : null;
+    await downloadUrls(urls.map((url) => ({ url, scalebarSpec })));
   } finally {
     downloading.value = false;
   }
@@ -1712,7 +1810,7 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
       return;
     }
 
-    const allUrls: URL[] = [];
+    const allUrls: IDownloadUrlItem[] = [];
     const totalSnapshots = snapshots.length;
 
     for (let i = 0; i < totalSnapshots; i++) {
@@ -1737,7 +1835,12 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
         configuration.name,
       );
       if (currentUrls) {
-        allUrls.push(...currentUrls);
+        // Each snapshot has its own bounding box, so resolve the scalebar per
+        // snapshot rather than reusing the current view's.
+        const scalebarSpec = addScalebar.value
+          ? buildScalebarSpec(snapshot.screenshot.bbox)
+          : null;
+        allUrls.push(...currentUrls.map((url) => ({ url, scalebarSpec })));
       }
     }
 
@@ -1748,7 +1851,7 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
       title: "Downloading files...",
     });
 
-    await downloadUrls(allUrls, addScalebar.value);
+    await downloadUrls(allUrls);
   } finally {
     progress.complete(progressId);
     downloading.value = false;
@@ -1838,6 +1941,7 @@ async function getUrlsForSnapshot(
 
 async function addScalebarToImageBuffer(
   data: ArrayBuffer,
+  spec: IScalebarSpec,
 ): Promise<ArrayBuffer> {
   const blob = new Blob([data], { type: "image/png" });
   const imageUrl = URL.createObjectURL(blob);
@@ -1857,7 +1961,7 @@ async function addScalebarToImageBuffer(
 
   ctx.drawImage(img, 0, 0);
 
-  drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+  drawScalebarOnCanvas(ctx, canvas.width, canvas.height, spec);
 
   URL.revokeObjectURL(imageUrl);
 
@@ -1867,29 +1971,32 @@ async function addScalebarToImageBuffer(
   return await annotatedBlob.arrayBuffer();
 }
 
-async function downloadUrls(urls: URL[], withScalebar: boolean = false) {
+// Each URL carries its own scalebar spec (or null for no scalebar) so that a
+// batch of snapshots with different bounding boxes each gets a correctly sized
+// bar rather than the current view's.
+async function downloadUrls(urls: IDownloadUrlItem[]) {
   if (urls.length <= 0) {
     return;
   }
 
   if (urls.length === 1) {
-    if (withScalebar) {
-      const { data } = await store.girderRest.get(urls[0].href, {
+    const { url, scalebarSpec } = urls[0];
+    if (scalebarSpec) {
+      const { data } = await store.girderRest.get(url.href, {
         responseType: "arraybuffer",
       });
-      const processedData = await addScalebarToImageBuffer(data);
+      const processedData = await addScalebarToImageBuffer(data, scalebarSpec);
       const blob = new Blob([processedData], { type: "image/png" });
-      const url = URL.createObjectURL(blob);
+      const objectUrl = URL.createObjectURL(blob);
       const filename =
-        urls[0].searchParams.get("contentDispositionFilename") ||
-        "snapshot.png";
+        url.searchParams.get("contentDispositionFilename") || "snapshot.png";
       downloadToClient({
-        href: url,
+        href: objectUrl,
         download: filename,
       });
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(objectUrl);
     } else {
-      downloadToClient({ href: urls[0].href });
+      downloadToClient({ href: url.href });
     }
     return;
   }
@@ -1913,13 +2020,13 @@ async function downloadUrls(urls: URL[], withScalebar: boolean = false) {
     level: ["jpeg", "png"].includes(format.value) ? 0 : 9,
   };
   const filenames: Set<string> = new Set();
-  const filesPushed = urls.map(async (url) => {
+  const filesPushed = urls.map(async ({ url, scalebarSpec }) => {
     const { data } = await store.girderRest.get(url.href, {
       responseType: "arraybuffer",
     });
 
-    const finalData = withScalebar
-      ? await addScalebarToImageBuffer(data)
+    const finalData = scalebarSpec
+      ? await addScalebarToImageBuffer(data, scalebarSpec)
       : data;
 
     const baseFullFilename =
@@ -2116,7 +2223,7 @@ async function getUrlsForMovieWithAnnotations(
       );
 
       if (addScalebar.value) {
-        drawScalebarOnCanvas(ctx, width, height);
+        drawScalebarOnCanvas(ctx, width, height, currentScalebarSpec.value);
       }
 
       const dataUrl = canvas.toDataURL("image/png");
@@ -2265,7 +2372,12 @@ async function downloadMovieAsZippedImageSequence(
         ctx.drawImage(img, 0, 0);
 
         if (addScalebar.value) {
-          drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+          drawScalebarOnCanvas(
+            ctx,
+            canvas.width,
+            canvas.height,
+            currentScalebarSpec.value,
+          );
         }
 
         URL.revokeObjectURL(imageUrl);
@@ -2374,7 +2486,12 @@ async function downloadMovieAsGif(
             ctx.drawImage(img, 0, 0);
 
             if (addScalebar.value) {
-              drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+              drawScalebarOnCanvas(
+                ctx,
+                canvas.width,
+                canvas.height,
+                currentScalebarSpec.value,
+              );
             }
 
             if (params.shouldAddTimeStamp) {
@@ -2548,7 +2665,12 @@ async function downloadMovieAsVideo(
       });
 
       if (addScalebar.value) {
-        drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+        drawScalebarOnCanvas(
+          ctx,
+          canvas.width,
+          canvas.height,
+          currentScalebarSpec.value,
+        );
       }
 
       if (params.shouldAddTimeStamp) {
@@ -2615,20 +2737,19 @@ function drawScalebarOnCanvas(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
+  spec: IScalebarSpec,
 ) {
-  // `scalebarLengthInPixels` is expressed in dataset pixels (it is derived from
-  // the bounding-box width `bboxRight - bboxLeft`). The canvas we draw onto is
-  // rarely 1:1 with dataset pixels though: region downloads are downsampled to
-  // stay under `maxPixels`, and screenshot-based canvases are in display
-  // (screen) pixels. Both span the same horizontal extent as the bounding box,
-  // so convert dataset pixels to canvas pixels using that ratio. Without this
-  // the on-screen scalebar (drawn by GeoJS in image coordinates) and the
-  // downloaded scalebar disagree whenever the canvas isn't at native scale.
-  const datasetPixelWidth = bboxRight.value - bboxLeft.value;
+  // The scalebar length in `spec` is in dataset pixels. The canvas we draw onto
+  // is rarely 1:1 with dataset pixels: region downloads are downsampled to stay
+  // under `maxPixels`, and screenshot-based canvases are in display (screen)
+  // pixels. Both span the same horizontal extent as the bounding box, so
+  // convert dataset pixels to canvas pixels using that ratio. Without this the
+  // on-screen scalebar (drawn by GeoJS in image coordinates) and the downloaded
+  // scalebar disagree whenever the canvas isn't at native scale.
   const canvasPixelsPerDatasetPixel =
-    datasetPixelWidth > 0 ? width / datasetPixelWidth : 1;
+    spec.datasetPixelWidth > 0 ? width / spec.datasetPixelWidth : 1;
   const scalebarLength =
-    scalebarLengthInPixels.value * canvasPixelsPerDatasetPixel;
+    spec.lengthInDatasetPixels * canvasPixelsPerDatasetPixel;
   const maxDim = Math.max(width, height);
 
   const padding = Math.max(10, Math.min(40, 0.02 * maxDim));
@@ -2648,11 +2769,7 @@ function drawScalebarOnCanvas(
     ctx.font = `${fontSize}px Arial`;
     ctx.textBaseline = "bottom";
     ctx.textAlign = "right";
-    ctx.fillText(
-      `${scalebarSettings.value.length}${scalebarSettings.value.unit}`,
-      width - padding,
-      height - padding - lineWidth,
-    );
+    ctx.fillText(spec.label, width - padding, height - padding - lineWidth);
   }
 }
 
@@ -2759,6 +2876,7 @@ defineExpose({
   idealScalebarLength,
   scalebarSettings,
   scalebarLengthInPixels,
+  currentScalebarSpec,
   snapshotList,
   currentSnapshot,
   pixelSizeUnitItems,
@@ -2769,6 +2887,9 @@ defineExpose({
   convertLengthToMeters,
   convertMetersToLength,
   guessIdealScalebar,
+  idealScalebarForBbox,
+  computeScalebarForBbox,
+  buildScalebarSpec,
   prettyScalebarSettings,
   handlePixelSizeModeChange,
   handleScalebarModeChange,
