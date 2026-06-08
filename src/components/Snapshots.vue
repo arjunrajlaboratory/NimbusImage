@@ -2616,7 +2616,19 @@ function drawScalebarOnCanvas(
   width: number,
   height: number,
 ) {
-  const scalebarLength = scalebarLengthInPixels.value;
+  // `scalebarLengthInPixels` is expressed in dataset pixels (it is derived from
+  // the bounding-box width `bboxRight - bboxLeft`). The canvas we draw onto is
+  // rarely 1:1 with dataset pixels though: region downloads are downsampled to
+  // stay under `maxPixels`, and screenshot-based canvases are in display
+  // (screen) pixels. Both span the same horizontal extent as the bounding box,
+  // so convert dataset pixels to canvas pixels using that ratio. Without this
+  // the on-screen scalebar (drawn by GeoJS in image coordinates) and the
+  // downloaded scalebar disagree whenever the canvas isn't at native scale.
+  const datasetPixelWidth = bboxRight.value - bboxLeft.value;
+  const canvasPixelsPerDatasetPixel =
+    datasetPixelWidth > 0 ? width / datasetPixelWidth : 1;
+  const scalebarLength =
+    scalebarLengthInPixels.value * canvasPixelsPerDatasetPixel;
   const maxDim = Math.max(width, height);
 
   const padding = Math.max(10, Math.min(40, 0.02 * maxDim));

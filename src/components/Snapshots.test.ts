@@ -1915,4 +1915,79 @@ describe("Snapshots.vue", () => {
       }
     });
   });
+
+  describe("drawScalebarOnCanvas scaling", () => {
+    // Minimal CanvasRenderingContext2D stub that records the horizontal extent
+    // of the scalebar line so we can assert on its length in canvas pixels.
+    function makeMockCtx() {
+      const calls: { moveTo: number[]; lineTo: number[] } = {
+        moveTo: [],
+        lineTo: [],
+      };
+      const ctx = {
+        strokeStyle: "",
+        fillStyle: "",
+        lineWidth: 0,
+        font: "",
+        textBaseline: "",
+        textAlign: "",
+        beginPath: vi.fn(),
+        moveTo: vi.fn((x: number) => calls.moveTo.push(x)),
+        lineTo: vi.fn((x: number) => calls.lineTo.push(x)),
+        stroke: vi.fn(),
+        fillText: vi.fn(),
+      };
+      return { ctx, calls };
+    }
+
+    function scalebarPixelLength(canvasWidth: number, canvasHeight: number) {
+      const vm = wrapper.vm as any;
+      // Manual px scalebar of 100 dataset pixels keeps the math obvious.
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 100, unit: TScalebarUnit.PX };
+      vm.addScalebarText = false;
+      const { ctx, calls } = makeMockCtx();
+      vm.drawScalebarOnCanvas(ctx, canvasWidth, canvasHeight);
+      // The line runs from moveTo.x to lineTo.x; its length is the difference.
+      return calls.moveTo[0] - calls.lineTo[0];
+    }
+
+    beforeEach(() => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+    });
+
+    it("draws scalebar at native length when canvas matches dataset pixels", () => {
+      const vm = wrapper.vm as any;
+      vm.bboxLeft = 0;
+      vm.bboxRight = 1000;
+      // Canvas spans the full 1000 dataset px at 1:1 → 100 dataset px = 100 px.
+      expect(scalebarPixelLength(1000, 800)).toBeCloseTo(100);
+    });
+
+    it("scales scalebar down when the downloaded image is downsampled", () => {
+      const vm = wrapper.vm as any;
+      vm.bboxLeft = 0;
+      vm.bboxRight = 1000;
+      // A 1000-wide region rendered onto a 500-wide canvas (2x downsample, as
+      // happens when the region exceeds maxPixels) → 100 dataset px = 50 px.
+      expect(scalebarPixelLength(500, 400)).toBeCloseTo(50);
+    });
+
+    it("scales scalebar up when the canvas is in zoomed display pixels", () => {
+      const vm = wrapper.vm as any;
+      vm.bboxLeft = 0;
+      vm.bboxRight = 1000;
+      // Screenshot-based canvases are in display px; at 2x zoom a 1000 dataset
+      // px region spans 2000 canvas px → 100 dataset px = 200 px.
+      expect(scalebarPixelLength(2000, 1600)).toBeCloseTo(200);
+    });
+
+    it("falls back to native length when the bounding box has zero width", () => {
+      const vm = wrapper.vm as any;
+      vm.bboxLeft = 50;
+      vm.bboxRight = 50;
+      expect(scalebarPixelLength(800, 600)).toBeCloseTo(100);
+    });
+  });
 });
