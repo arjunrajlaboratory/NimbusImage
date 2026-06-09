@@ -1459,7 +1459,7 @@ describe("Snapshots.vue", () => {
     it("downloadUrls downloads single file directly without scalebar", async () => {
       const url = new URL("http://localhost/api/v1/test");
       url.searchParams.set("contentDispositionFilename", "test.png");
-      await (wrapper.vm as any).downloadUrls([url], false);
+      await (wrapper.vm as any).downloadUrls([{ url, scalebarSpec: null }]);
       expect(mockedDownloadToClient).toHaveBeenCalledWith({
         href: url.href,
       });
@@ -1484,7 +1484,10 @@ describe("Snapshots.vue", () => {
         "snap2 - c_1_3 t_1_145.png",
       );
 
-      await (wrapper.vm as any).downloadUrls([first, second], false);
+      await (wrapper.vm as any).downloadUrls([
+        { url: first, scalebarSpec: null },
+        { url: second, scalebarSpec: null },
+      ]);
 
       expect(mockedZipDeflate).toHaveBeenNthCalledWith(
         1,
@@ -1531,10 +1534,10 @@ describe("Snapshots.vue", () => {
         "snap2 - c_1_3 t_1_145.png",
       );
 
-      const downloadPromise = (wrapper.vm as any).downloadUrls(
-        [first, second],
-        false,
-      );
+      const downloadPromise = (wrapper.vm as any).downloadUrls([
+        { url: first, scalebarSpec: null },
+        { url: second, scalebarSpec: null },
+      ]);
 
       resolveSecond?.({ data: new Uint8Array([2]).buffer });
       await Promise.resolve();
@@ -1563,7 +1566,7 @@ describe("Snapshots.vue", () => {
     });
 
     it("downloadUrls does nothing for empty array", async () => {
-      await (wrapper.vm as any).downloadUrls([], false);
+      await (wrapper.vm as any).downloadUrls([]);
       expect(mockedDownloadToClient).not.toHaveBeenCalled();
     });
 
@@ -2019,6 +2022,163 @@ describe("Snapshots.vue", () => {
         radioGroups[1].vm.$emit("update:modelValue", "manual");
         expect(vm.scalebarMode).toBe("manual");
       }
+    });
+  });
+
+  describe("drawScalebarOnCanvas scaling", () => {
+    // Minimal CanvasRenderingContext2D stub that records the horizontal extent
+    // of the scalebar line so we can assert on its length in canvas pixels.
+    function makeMockCtx() {
+      const calls: { moveTo: number[]; lineTo: number[]; fillText: any[] } = {
+        moveTo: [],
+        lineTo: [],
+        fillText: [],
+      };
+      const ctx = {
+        strokeStyle: "",
+        fillStyle: "",
+        lineWidth: 0,
+        font: "",
+        textBaseline: "",
+        textAlign: "",
+        beginPath: vi.fn(),
+        moveTo: vi.fn((x: number) => calls.moveTo.push(x)),
+        lineTo: vi.fn((x: number) => calls.lineTo.push(x)),
+        stroke: vi.fn(),
+        fillText: vi.fn((...args: any[]) => calls.fillText.push(args)),
+      };
+      return { ctx, calls };
+    }
+
+    function bounds(left: number, right: number) {
+      return { left, top: 0, right, bottom: right - left };
+    }
+
+    // Draws using a spec for the given bbox width on a canvas of the given
+    // width, and returns the rendered scalebar length in canvas pixels.
+    function drawnLength(
+      bboxWidth: number,
+      canvasWidth: number,
+      manualPx = 100,
+    ) {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: manualPx, unit: TScalebarUnit.PX };
+      const spec = vm.buildScalebarSpec(bounds(0, bboxWidth));
+      const { ctx, calls } = makeMockCtx();
+      vm.drawScalebarOnCanvas(ctx, canvasWidth, canvasWidth * 0.8, spec);
+      return calls.moveTo[0] - calls.lineTo[0];
+    }
+
+    beforeEach(() => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+    });
+
+    it("draws scalebar at native length when canvas matches dataset pixels", () => {
+      // Canvas spans the full 1000 dataset px at 1:1 → 100 dataset px = 100 px.
+      expect(drawnLength(1000, 1000)).toBeCloseTo(100);
+    });
+
+    it("scales scalebar down when the downloaded image is downsampled", () => {
+      // A 1000-wide region rendered onto a 500-wide canvas (2x downsample, as
+      // happens when the region exceeds maxPixels) → 100 dataset px = 50 px.
+      expect(drawnLength(1000, 500)).toBeCloseTo(50);
+    });
+
+    it("scales scalebar up when the canvas is in zoomed display pixels", () => {
+      // Screenshot-based canvases are in display px; at 2x zoom a 1000 dataset
+      // px region spans 2000 canvas px → 100 dataset px = 200 px.
+      expect(drawnLength(1000, 2000)).toBeCloseTo(200);
+    });
+
+    it("falls back to native length when the bounding box has zero width", () => {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 100, unit: TScalebarUnit.PX };
+      const spec = vm.buildScalebarSpec(bounds(50, 50));
+      const { ctx, calls } = makeMockCtx();
+      vm.drawScalebarOnCanvas(ctx, 800, 600, spec);
+      expect(calls.moveTo[0] - calls.lineTo[0]).toBeCloseTo(100);
+    });
+
+    it("draws each snapshot's own label from its spec", () => {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 25, unit: TScalebarUnit.UM };
+      vm.addScalebarText = true;
+      const spec = vm.buildScalebarSpec(bounds(0, 1000));
+      const { ctx, calls } = makeMockCtx();
+      vm.drawScalebarOnCanvas(ctx, 1000, 800, spec);
+      expect(calls.fillText[0][0]).toBe("25µm");
+    });
+  });
+
+  describe("per-snapshot scalebar specs (buildScalebarSpec)", () => {
+    beforeEach(() => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+    });
+
+    it("carries each snapshot's bounding-box width independent of the current view", () => {
+      const vm = wrapper.vm as any;
+      // Current view is wide, but the snapshot we build a spec for is narrow.
+      vm.bboxLeft = 0;
+      vm.bboxRight = 4000;
+      const spec = vm.buildScalebarSpec({
+        left: 100,
+        top: 0,
+        right: 700,
+        bottom: 600,
+      });
+      expect(spec.datasetPixelWidth).toBe(600);
+    });
+
+    it("computes different automatic scalebar lengths for different bboxes", () => {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "automatic";
+      // Pixel size in px so the ideal length scales with the bbox width.
+      vm.pixelSizeMode = "manual";
+      vm.manualPixelSize = { length: 1, unit: TScalebarUnit.PX };
+      const small = vm.buildScalebarSpec({
+        left: 0,
+        top: 0,
+        right: 500,
+        bottom: 500,
+      });
+      const large = vm.buildScalebarSpec({
+        left: 0,
+        top: 0,
+        right: 8000,
+        bottom: 8000,
+      });
+      expect(large.lengthInDatasetPixels).toBeGreaterThan(
+        small.lengthInDatasetPixels,
+      );
+    });
+
+    it("keeps a fixed manual length across bboxes but tracks each width", () => {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 100, unit: TScalebarUnit.PX };
+      const a = vm.buildScalebarSpec({
+        left: 0,
+        top: 0,
+        right: 1000,
+        bottom: 1000,
+      });
+      const b = vm.buildScalebarSpec({
+        left: 0,
+        top: 0,
+        right: 2000,
+        bottom: 2000,
+      });
+      // Same physical length...
+      expect(a.lengthInDatasetPixels).toBe(100);
+      expect(b.lengthInDatasetPixels).toBe(100);
+      // ...but different denominators, so the drawn pixel length differs.
+      expect(a.datasetPixelWidth).toBe(1000);
+      expect(b.datasetPixelWidth).toBe(2000);
     });
   });
 });
