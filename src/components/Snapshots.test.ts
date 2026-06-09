@@ -141,11 +141,18 @@ vi.mock("gif.js", () => ({
 }));
 
 vi.mock("fflate", () => ({
-  Zip: vi.fn().mockImplementation(() => ({
-    add: vi.fn(),
-    end: vi.fn(),
-    ondata: null,
-  })),
+  Zip: vi.fn().mockImplementation(() => {
+    const zip = {
+      add: vi.fn(),
+      end: vi.fn(() => {
+        zip.ondata?.(null, new Uint8Array([1]), true);
+      }),
+      ondata: null as
+        | ((err: Error | null, data: Uint8Array, final: boolean) => void)
+        | null,
+    };
+    return zip;
+  }),
   ZipDeflate: vi.fn().mockImplementation(() => ({
     push: vi.fn(),
   })),
@@ -198,6 +205,7 @@ import {
   getLayersDownloadUrls,
 } from "@/utils/screenshot";
 import { downloadToClient } from "@/utils/download";
+import { ZipDeflate } from "fflate";
 import { logError } from "@/utils/log";
 import progress from "@/store/progress";
 import girderResources from "@/store/girderResources";
@@ -213,6 +221,7 @@ const mockedGetDownloadParameters = vi.mocked(getDownloadParameters);
 const mockedGetChannelsDownloadUrls = vi.mocked(getChannelsDownloadUrls);
 const mockedGetLayersDownloadUrls = vi.mocked(getLayersDownloadUrls);
 const mockedDownloadToClient = vi.mocked(downloadToClient);
+const mockedZipDeflate = vi.mocked(ZipDeflate);
 const mockedLogError = vi.mocked(logError);
 const mockedProgress = vi.mocked(progress);
 const mockedGirderResources = vi.mocked(girderResources);
@@ -1453,6 +1462,43 @@ describe("Snapshots.vue", () => {
       await (wrapper.vm as any).downloadUrls([url], false);
       expect(mockedDownloadToClient).toHaveBeenCalledWith({
         href: url.href,
+      });
+    });
+
+    it("downloadUrls sanitizes zip entry filenames", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:snapshot"),
+      });
+      (store.girderRest.get as any)
+        .mockResolvedValueOnce({ data: new ArrayBuffer(1) })
+        .mockResolvedValueOnce({ data: new ArrayBuffer(1) });
+
+      const first = new URL("http://localhost/api/v1/first");
+      first.searchParams.set(
+        "contentDispositionFilename",
+        "snap2 - c:1/3 t:1/145.png",
+      );
+      const second = new URL("http://localhost/api/v1/second");
+      second.searchParams.set(
+        "contentDispositionFilename",
+        "snap2 - c_1_3 t_1_145.png",
+      );
+
+      await (wrapper.vm as any).downloadUrls([first, second], false);
+
+      expect(mockedZipDeflate).toHaveBeenNthCalledWith(
+        1,
+        "snap2 - c_1_3 t_1_145.png",
+        expect.any(Object),
+      );
+      expect(mockedZipDeflate).toHaveBeenNthCalledWith(
+        2,
+        "snap2 - c_1_3 t_1_145 (1).png",
+        expect.any(Object),
+      );
+      expect(mockedDownloadToClient).toHaveBeenCalledWith({
+        href: "blob:snapshot",
+        download: "snapshot.zip",
       });
     });
 
