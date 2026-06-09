@@ -459,9 +459,7 @@
             color="primary"
             size="small"
             @click="downloadImagesForSelectedSnapshots()"
-            :disabled="
-              unroll || downloading || selectedSnapshotItems.length === 0
-            "
+            :disabled="unroll || downloading || selectedSnapshots.length === 0"
           >
             Download images for selected Snapshots
           </v-btn>
@@ -625,6 +623,10 @@ interface ISnapshotItem {
   modified: string;
 }
 
+function snapshotKey(snapshot: ISnapshot) {
+  return `${snapshot.datasetViewId}:${snapshot.name}`;
+}
+
 function intFromString(value: string) {
   const parsedValue = parseInt("0" + value, 10);
   return Number.isNaN(parsedValue) ? 0 : parsedValue;
@@ -716,6 +718,14 @@ const manualPixelSize = ref<IScalebarSettings | null>(null);
 const addAnnotationsToMovie = ref(false);
 const pixelSizeMode = ref<PixelSizeMode>(PixelSizeMode.DATASET);
 const scalebarMode = ref<ScalebarMode>(ScalebarMode.AUTOMATIC);
+
+const snapshotSelectionScope = computed(() =>
+  [
+    store.datasetView?.datasetId || store.dataset?.id || "",
+    store.datasetView?.configurationId || store.configuration?.id || "",
+  ].join(":"),
+);
+const selectedSnapshotItemsScope = ref(snapshotSelectionScope.value);
 
 // --- Constants ---
 
@@ -954,7 +964,7 @@ const snapshotList = computed(() => {
         const item = {
           name: s.name,
           datasetName: "",
-          key: s.name,
+          key: snapshotKey(s),
           record: s,
           modified: formatDate(new Date(s.modified || s.created)),
         };
@@ -986,6 +996,21 @@ const currentSnapshot = computed((): { [key: string]: any } | undefined => {
       .filter((s: ISnapshot) => s.name === newName.value)[0];
   }
   return undefined;
+});
+
+const selectedSnapshots = computed((): ISnapshot[] => {
+  if (selectedSnapshotItemsScope.value !== snapshotSelectionScope.value) {
+    return [];
+  }
+  const currentSnapshotsByKey = new Map(
+    (store.configuration?.snapshots || []).map((snapshot) => [
+      snapshotKey(snapshot),
+      snapshot,
+    ]),
+  );
+  return selectedSnapshotItems.value
+    .map((item) => currentSnapshotsByKey.get(snapshotKey(item.record)))
+    .filter((snapshot): snapshot is ISnapshot => !!snapshot);
 });
 
 const pixelSizeUnitItems = computed(() => {
@@ -1558,6 +1583,10 @@ function resetAndCloseForm() {
   resetFormValidation();
 }
 
+function clearSelectedSnapshotItems() {
+  selectedSnapshotItems.value = [];
+}
+
 function removeSnapshot(name: string): void {
   store.removeSnapshot(name);
 }
@@ -1694,7 +1723,10 @@ async function downloadImagesForSelectedSnapshots() {
   if (!configuration) {
     return;
   }
-  const selected = selectedSnapshotItems.value.map((s) => s.record);
+  const selected = selectedSnapshots.value;
+  if (selected.length === 0) {
+    return;
+  }
   await downloadImagesForSetOfSnapshots(selected);
 }
 
@@ -2683,6 +2715,14 @@ watch(snapshotScalebarColor, () => {
   }
 });
 
+watch(selectedSnapshotItems, () => {
+  selectedSnapshotItemsScope.value = snapshotSelectionScope.value;
+});
+
+watch(snapshotSelectionScope, () => {
+  clearSelectedSnapshotItems();
+});
+
 // --- Expose ---
 
 defineExpose({
@@ -2749,6 +2789,8 @@ defineExpose({
   scalebarLengthInPixels,
   snapshotList,
   currentSnapshot,
+  selectedSnapshots,
+  snapshotSelectionScope,
   pixelSizeUnitItems,
   scalebarSettingsUnitItems,
   // Functions
@@ -2777,6 +2819,7 @@ defineExpose({
   resetFormValidation,
   saveSnapshot,
   resetAndCloseForm,
+  clearSelectedSnapshotItems,
   removeSnapshot,
   screenshotViewport,
   snapshotWithAnnotations,
