@@ -916,6 +916,17 @@ const pixelSize = computed((): IScalebarSettings => {
   return configurationPixelSize.value;
 });
 
+// The current view's bounding box assembled from the bbox refs. Used wherever a
+// download/screenshot/movie operates on the current view rather than a snapshot.
+const currentBbox = computed(
+  (): IGeoJSBounds => ({
+    left: bboxLeft.value,
+    top: bboxTop.value,
+    right: bboxRight.value,
+    bottom: bboxBottom.value,
+  }),
+);
+
 const currentScalebar = computed(() =>
   computeScalebarForBbox(
     bboxRight.value - bboxLeft.value,
@@ -936,13 +947,7 @@ const scalebarLengthInPixels = computed(
 // Spec for drawing the scalebar onto the current view's downloads (viewport
 // screenshots and movies always operate on the current bounding box).
 const currentScalebarSpec = computed(
-  (): IScalebarSpec =>
-    buildScalebarSpec({
-      left: bboxLeft.value,
-      top: bboxTop.value,
-      right: bboxRight.value,
-      bottom: bboxBottom.value,
-    }),
+  (): IScalebarSpec => buildScalebarSpec(currentBbox.value),
 );
 
 const snapshotList = computed(() => {
@@ -1624,12 +1629,7 @@ function saveSnapshot(): void {
     layerMode: store.layerMode,
     layers: store.layers.map(copyLayerWithoutPrivateAttributes),
     screenshot: {
-      bbox: {
-        left: bboxLeft.value,
-        top: bboxTop.value,
-        right: bboxRight.value,
-        bottom: bboxBottom.value,
-      },
+      bbox: { ...currentBbox.value },
     },
   };
   resetAndCloseForm();
@@ -1739,12 +1739,7 @@ async function downloadImagesForCurrentState() {
     return;
   }
   const location = store.currentLocation;
-  const boundingBox = {
-    left: bboxLeft.value,
-    top: bboxTop.value,
-    right: bboxRight.value,
-    bottom: bboxBottom.value,
-  };
+  const boundingBox = currentBbox.value;
 
   downloading.value = true;
 
@@ -1765,9 +1760,7 @@ async function downloadImagesForCurrentState() {
     if (!urls) {
       return;
     }
-    const scalebarSpec = addScalebar.value
-      ? buildScalebarSpec(boundingBox)
-      : null;
+    const scalebarSpec = addScalebar.value ? currentScalebarSpec.value : null;
     await downloadUrls(urls.map((url) => ({ url, scalebarSpec })));
   } finally {
     downloading.value = false;
@@ -2257,12 +2250,7 @@ async function handleMovieDownload(params: any) {
       urls = await getUrlsForMovie(
         timePoints,
         dataset.id,
-        {
-          left: bboxLeft.value,
-          top: bboxTop.value,
-          right: bboxRight.value,
-          bottom: bboxBottom.value,
-        },
+        currentBbox.value,
         store.layers,
         store.currentLocation,
       );
