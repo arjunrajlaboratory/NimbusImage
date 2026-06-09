@@ -771,6 +771,27 @@ const maxPixels = 4_000_000;
 
 const nameRules = [(name: string) => !!name.trim() || "Name is required"];
 
+function sanitizeSnapshotFilename(name: string | null): string {
+  const sanitized = (name || "snapshot")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .trim();
+  return sanitized || "snapshot";
+}
+
+function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
+  const sanitizedName = sanitizeSnapshotFilename(name);
+  const pointIdx = sanitizedName.lastIndexOf(".");
+  const baseName =
+    pointIdx > 0 ? sanitizedName.slice(0, pointIdx) : sanitizedName;
+  const extension = pointIdx > 0 ? sanitizedName.slice(pointIdx) : "";
+  let fileName = sanitizedName;
+  for (let counter = 1; filenames.has(fileName); counter++) {
+    fileName = `${baseName} (${counter})${extension}`;
+  }
+  filenames.add(fileName);
+  return fileName;
+}
+
 // --- Computed properties ---
 
 const isLoggedIn = computed(() => store.isLoggedIn);
@@ -1981,7 +2002,7 @@ async function downloadUrls(urls: IDownloadUrlItem[]) {
         url.searchParams.get("contentDispositionFilename") || "snapshot.png";
       downloadToClient({
         href: objectUrl,
-        download: filename,
+        download: sanitizeSnapshotFilename(filename),
       });
       URL.revokeObjectURL(objectUrl);
     } else {
@@ -2009,29 +2030,29 @@ async function downloadUrls(urls: IDownloadUrlItem[]) {
     level: ["jpeg", "png"].includes(format.value) ? 0 : 9,
   };
   const filenames: Set<string> = new Set();
-  const filesPushed = urls.map(async ({ url, scalebarSpec }) => {
-    const { data } = await store.girderRest.get(url.href, {
-      responseType: "arraybuffer",
-    });
+  const zipEntries = urls.map(({ url, scalebarSpec }) => ({
+    url,
+    scalebarSpec,
+    fileName: getUniqueZipEntryName(
+      url.searchParams.get("contentDispositionFilename") || "snapshot",
+      filenames,
+    ),
+  }));
+  const filesPushed = zipEntries.map(
+    async ({ url, scalebarSpec, fileName }) => {
+      const { data } = await store.girderRest.get(url.href, {
+        responseType: "arraybuffer",
+      });
 
-    const finalData = scalebarSpec
-      ? await addScalebarToImageBuffer(data, scalebarSpec)
-      : data;
+      const finalData = scalebarSpec
+        ? await addScalebarToImageBuffer(data, scalebarSpec)
+        : data;
 
-    const baseFullFilename =
-      url.searchParams.get("contentDispositionFilename") || "snapshot";
-    let fileName = baseFullFilename;
-    let pointIdx = Math.max(baseFullFilename.lastIndexOf("."), 0);
-    const baseName = baseFullFilename.slice(0, pointIdx);
-    const extension = baseFullFilename.slice(pointIdx);
-    for (let counter = 1; filenames.has(fileName); counter++) {
-      fileName = baseName + " (" + counter + ")" + extension;
-    }
-    filenames.add(fileName);
-    const zipFile = new ZipDeflate(fileName, deflateOptions);
-    zip.add(zipFile);
-    zipFile.push(new Uint8Array(finalData), true);
-  });
+      const zipFile = new ZipDeflate(fileName, deflateOptions);
+      zip.add(zipFile);
+      zipFile.push(new Uint8Array(finalData), true);
+    },
+  );
 
   await Promise.all(filesPushed);
   zip.end();
@@ -2865,6 +2886,8 @@ defineExpose({
   pixelSizeUnitItems,
   scalebarSettingsUnitItems,
   // Functions
+  sanitizeSnapshotFilename,
+  getUniqueZipEntryName,
   isRotated,
   unitLengthToScalebarUnit,
   convertLengthToMeters,
