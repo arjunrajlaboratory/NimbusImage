@@ -925,10 +925,6 @@ const currentScalebar = computed(() =>
   ),
 );
 
-const idealScalebarLength = computed(() =>
-  idealScalebarForBbox(bboxRight.value - bboxLeft.value, pixelSize.value),
-);
-
 const scalebarSettings = computed(
   (): IScalebarSettings => currentScalebar.value.settings,
 );
@@ -2873,7 +2869,6 @@ defineExpose({
   formattedConfigurationPixelSize,
   formattedScalebarSettings,
   pixelSize,
-  idealScalebarLength,
   scalebarSettings,
   scalebarLengthInPixels,
   currentScalebarSpec,
