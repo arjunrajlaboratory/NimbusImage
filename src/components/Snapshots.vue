@@ -1934,7 +1934,14 @@ async function downloadUrls(urls: URL[], withScalebar: boolean = false) {
     level: ["jpeg", "png"].includes(format.value) ? 0 : 9,
   };
   const filenames: Set<string> = new Set();
-  const filesPushed = urls.map(async (url) => {
+  const zipEntries = urls.map((url) => ({
+    url,
+    fileName: getUniqueZipEntryName(
+      url.searchParams.get("contentDispositionFilename") || "snapshot",
+      filenames,
+    ),
+  }));
+  const filesPushed = zipEntries.map(async ({ url, fileName }) => {
     const { data } = await store.girderRest.get(url.href, {
       responseType: "arraybuffer",
     });
@@ -1943,9 +1950,6 @@ async function downloadUrls(urls: URL[], withScalebar: boolean = false) {
       ? await addScalebarToImageBuffer(data)
       : data;
 
-    const baseFullFilename =
-      url.searchParams.get("contentDispositionFilename") || "snapshot";
-    const fileName = getUniqueZipEntryName(baseFullFilename, filenames);
     const zipFile = new ZipDeflate(fileName, deflateOptions);
     zip.add(zipFile);
     zipFile.push(new Uint8Array(finalData), true);

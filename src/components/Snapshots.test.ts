@@ -1502,6 +1502,66 @@ describe("Snapshots.vue", () => {
       });
     });
 
+    it("downloadUrls assigns sanitized duplicate zip filenames in input order", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:snapshot"),
+      });
+
+      let resolveFirst: ((value: { data: ArrayBuffer }) => void) | undefined;
+      let resolveSecond: ((value: { data: ArrayBuffer }) => void) | undefined;
+      const firstResponse = new Promise<{ data: ArrayBuffer }>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const secondResponse = new Promise<{ data: ArrayBuffer }>((resolve) => {
+        resolveSecond = resolve;
+      });
+
+      (store.girderRest.get as any).mockImplementation((href: string) =>
+        href.includes("first") ? firstResponse : secondResponse,
+      );
+
+      const first = new URL("http://localhost/api/v1/first");
+      first.searchParams.set(
+        "contentDispositionFilename",
+        "snap2 - c:1/3 t:1/145.png",
+      );
+      const second = new URL("http://localhost/api/v1/second");
+      second.searchParams.set(
+        "contentDispositionFilename",
+        "snap2 - c_1_3 t_1_145.png",
+      );
+
+      const downloadPromise = (wrapper.vm as any).downloadUrls(
+        [first, second],
+        false,
+      );
+
+      resolveSecond?.({ data: new Uint8Array([2]).buffer });
+      await Promise.resolve();
+      resolveFirst?.({ data: new Uint8Array([1]).buffer });
+      await downloadPromise;
+      (store.girderRest.get as any).mockReset();
+
+      const pushedDataByFileName = new Map(
+        mockedZipDeflate.mock.calls.map(([fileName], index) => {
+          const zipFile = mockedZipDeflate.mock.results[index].value as {
+            push: ReturnType<typeof vi.fn>;
+          };
+          return [
+            fileName,
+            Array.from(zipFile.push.mock.calls[0][0] as Uint8Array),
+          ];
+        }),
+      );
+
+      expect(pushedDataByFileName.get("snap2 - c_1_3 t_1_145.png")).toEqual([
+        1,
+      ]);
+      expect(pushedDataByFileName.get("snap2 - c_1_3 t_1_145 (1).png")).toEqual(
+        [2],
+      );
+    });
+
     it("downloadUrls does nothing for empty array", async () => {
       await (wrapper.vm as any).downloadUrls([], false);
       expect(mockedDownloadToClient).not.toHaveBeenCalled();
