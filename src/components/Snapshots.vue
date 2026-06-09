@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <v-card v-if="store.configuration">
+  <div class="snapshots-panel">
+    <v-card v-if="store.configuration" class="snapshots-panel-card">
       <v-dialog v-model="imageTooBigDialog">
         <v-alert class="ma-0" type="error">
           <div class="title">Image can't be downloaded</div>
@@ -173,7 +173,7 @@
           :headers="tableHeaders"
           :items-per-page="5"
           item-key="key"
-          class="accent-1"
+          class="accent-1 snapshots-table"
           @click:row="loadSnapshot"
           show-select
           return-object
@@ -580,6 +580,40 @@ export enum ScalebarMode {
   MANUAL = "manual",
 }
 </script>
+
+<style scoped lang="scss">
+/* Let the palette's frosted-glass surface show through the snapshots panel.
+   The top-level Vuetify card/table backgrounds are opaque by default, while
+   dialog cards remain covered by the global overlay glass rules. */
+.snapshots-panel :deep(.snapshots-panel-card),
+.snapshots-panel :deep(.snapshots-panel-card > .v-card__overlay),
+.snapshots-panel :deep(.snapshots-panel-card > .v-card__underlay) {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.snapshots-table,
+.snapshots-table.v-table,
+.snapshots-table :deep(.v-table),
+.snapshots-table :deep(.v-table__wrapper),
+.snapshots-table :deep(table),
+.snapshots-table :deep(thead),
+.snapshots-table :deep(tbody),
+.snapshots-table :deep(tfoot),
+.snapshots-table :deep(tr),
+.snapshots-table :deep(th),
+.snapshots-table :deep(td),
+.snapshots-table :deep(.v-data-table-footer),
+.snapshots-table :deep(.v-data-table__td) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.snapshots-table :deep(tbody tr td) {
+  border-bottom: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+}
+</style>
 
 <script setup lang="ts">
 import { ref, computed, watch, markRaw } from "vue";
