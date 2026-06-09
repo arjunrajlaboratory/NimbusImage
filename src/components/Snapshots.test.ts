@@ -362,6 +362,14 @@ describe("Snapshots.vue", () => {
       expect((wrapper.vm as any).selectedSnapshotItems).toEqual([]);
     });
 
+    it("clearSelectedSnapshotItems clears the table selection", () => {
+      (wrapper.vm as any).selectedSnapshotItems = [
+        { name: "Snap", datasetName: "", key: "view1:Snap", record: {} },
+      ];
+      (wrapper.vm as any).clearSelectedSnapshotItems();
+      expect((wrapper.vm as any).selectedSnapshotItems).toEqual([]);
+    });
+
     it("has correct maxPixels constant", () => {
       expect((wrapper.vm as any).maxPixels).toBe(4_000_000);
     });
@@ -836,6 +844,7 @@ describe("Snapshots.vue", () => {
       const list = (w.vm as any).snapshotList;
       expect(list).toHaveLength(2);
       expect(list[0].name).toBeDefined();
+      expect(list[0].key).toContain(":");
       expect(list[0].record).toBeDefined();
       expect(list[0].modified).toBeDefined();
     });
@@ -910,6 +919,57 @@ describe("Snapshots.vue", () => {
       (store as any).configuration = null;
       const w = mountComponent();
       expect((w.vm as any).currentSnapshot).toBeUndefined();
+    });
+
+    it("selectedSnapshots ignores stale items from another configuration", () => {
+      const current = makeSnapshot("Current", { datasetViewId: "view1" });
+      const stale = makeSnapshot("Stale", { datasetViewId: "staleView" });
+      (store as any).configuration.snapshots = [current];
+      const w = mountComponent();
+
+      (w.vm as any).selectedSnapshotItems = [
+        {
+          name: stale.name,
+          datasetName: "Old dataset",
+          key: `${stale.datasetViewId}:${stale.name}`,
+          record: stale,
+          modified: "2026-01-01",
+        },
+        {
+          name: current.name,
+          datasetName: "Current dataset",
+          key: `${current.datasetViewId}:${current.name}`,
+          record: current,
+          modified: "2026-01-01",
+        },
+      ];
+
+      expect((w.vm as any).selectedSnapshots).toEqual([current]);
+    });
+
+    it("selectedSnapshots resolves selected rows to current snapshot records", () => {
+      const current = makeSnapshot("SharedName", {
+        datasetViewId: "view1",
+        modified: 3000,
+      });
+      const staleSameKey = makeSnapshot("SharedName", {
+        datasetViewId: "view1",
+        modified: 1000,
+      });
+      (store as any).configuration.snapshots = [current];
+      const w = mountComponent();
+
+      (w.vm as any).selectedSnapshotItems = [
+        {
+          name: staleSameKey.name,
+          datasetName: "Current dataset",
+          key: `${staleSameKey.datasetViewId}:${staleSameKey.name}`,
+          record: staleSameKey,
+          modified: "2026-01-01",
+        },
+      ];
+
+      expect((w.vm as any).selectedSnapshots).toEqual([current]);
     });
 
     it("saveSnapshot calls store.addSnapshot with correct data", () => {
@@ -1617,6 +1677,65 @@ describe("Snapshots.vue", () => {
         layers: [],
         scales: { pixelSize: { value: 0.5, unit: "µm" } },
       };
+    });
+
+    it("downloadImagesForSelectedSnapshots ignores stale selected rows", async () => {
+      const makeDownloadSnapshot = (name: string, datasetViewId: string) => ({
+        name,
+        description: "",
+        tags: [],
+        created: 1000,
+        modified: 2000,
+        datasetViewId,
+        viewport: {
+          tl: { x: 0, y: 0 },
+          tr: { x: 100, y: 0 },
+          bl: { x: 0, y: 100 },
+          br: { x: 100, y: 100 },
+        },
+        rotation: 0,
+        unrollXY: false,
+        unrollZ: false,
+        unrollT: false,
+        xy: 0,
+        z: 0,
+        time: 0,
+        layerMode: "multiple",
+        layers: (store as any).layers,
+        screenshot: { bbox: { left: 0, top: 0, right: 100, bottom: 100 } },
+      });
+      const current = makeDownloadSnapshot("Current", "view1");
+      const stale = makeDownloadSnapshot("Stale", "staleView");
+      (store as any).configuration = {
+        name: "Test Config",
+        snapshots: [current],
+        layers: [],
+        scales: { pixelSize: { value: 0.5, unit: "µm" } },
+      };
+      const w = mountComponent();
+      (w.vm as any).addScalebar = false;
+      (w.vm as any).selectedSnapshotItems = [
+        {
+          name: stale.name,
+          datasetName: "Old dataset",
+          key: `${stale.datasetViewId}:${stale.name}`,
+          record: stale,
+          modified: "2026-01-01",
+        },
+        {
+          name: current.name,
+          datasetName: "Current dataset",
+          key: `${current.datasetViewId}:${current.name}`,
+          record: current,
+          modified: "2026-01-01",
+        },
+      ];
+      (store as any).api.getDatasetView.mockClear();
+
+      await (w.vm as any).downloadImagesForSelectedSnapshots();
+
+      expect((store as any).api.getDatasetView).toHaveBeenCalledTimes(1);
+      expect((store as any).api.getDatasetView).toHaveBeenCalledWith("view1");
     });
 
     it("screenshotViewport returns when no map", async () => {
