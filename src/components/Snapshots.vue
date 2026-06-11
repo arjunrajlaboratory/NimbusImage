@@ -1812,7 +1812,7 @@ async function snapshotWithAnnotations() {
 
   const params = {
     href: croppedScreenshot,
-    download: "viewport_screenshot.png",
+    download: "image_with_annotations.png",
   };
   downloadToClient(params);
 }

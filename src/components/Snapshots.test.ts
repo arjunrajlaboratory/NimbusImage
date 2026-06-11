@@ -1787,6 +1787,53 @@ describe("Snapshots.vue", () => {
 
       (store as any).maps = [];
     });
+
+    it("snapshotWithAnnotations downloads cropped image with distinct filename", async () => {
+      const mockMap = {
+        gcsToDisplay: vi.fn((pt: any) => ({ x: pt.x, y: pt.y })),
+        screenshot: vi.fn().mockResolvedValue("data:image/png;base64,full"),
+        layers: vi.fn(() => []),
+      };
+      (store as any).maps = [{ map: mockMap }];
+
+      // jsdom has no canvas/image backend, so stub the 2D context, the
+      // serialization, and the Image load that snapshotWithAnnotations relies on.
+      const mockCtx = { drawImage: vi.fn() };
+      const getContextSpy = vi
+        .spyOn(HTMLCanvasElement.prototype, "getContext")
+        .mockReturnValue(mockCtx as any);
+      const toDataURLSpy = vi
+        .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+        .mockReturnValue("data:image/png;base64,cropped");
+
+      class MockImage {
+        onload: (() => void) | null = null;
+        set src(_value: string) {
+          // Fire onload on the next tick, after the caller assigns it.
+          setTimeout(() => this.onload?.(), 0);
+        }
+      }
+      vi.stubGlobal("Image", MockImage);
+
+      const w = mountComponent();
+      (w.vm as any).addScalebar = false;
+
+      await (w.vm as any).snapshotWithAnnotations();
+
+      expect(mockMap.screenshot).toHaveBeenCalled();
+      expect(mockedDownloadToClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          href: "data:image/png;base64,cropped",
+          download: "image_with_annotations.png",
+        }),
+      );
+
+      // The suite uses clearAllMocks (not restoreAllMocks), so undo spies/stubs.
+      getContextSpy.mockRestore();
+      toDataURLSpy.mockRestore();
+      vi.unstubAllGlobals();
+      (store as any).maps = [];
+    });
   });
 
   // =========================================================================
