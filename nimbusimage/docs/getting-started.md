@@ -229,6 +229,45 @@ except TimeoutError:
     print("Job timed out")
 ```
 
+### Worker request rate limiting
+
+NimbusImage runs GPU workers that are **started on demand and take several
+minutes to spin up**. To keep the job queue from being flooded, a shared
+deployment may rate-limit worker-compute submissions
+(`ds.annotations.compute()` and `ds.properties.compute()`) on a per-user
+basis. When the limit is hit, the call raises `WorkerRateLimitError`.
+
+Design your scripts to **parcel out worker requests** rather than firing many
+in a loop:
+
+- **Submit one job over a wide range, not many small jobs.** `compute()`
+  already processes a whole `assignment` range in a single job — prefer a
+  single call covering all your tiles/frames over a `for` loop of `compute()`
+  calls.
+- **Let each job finish (or run a few concurrently), then submit the next.**
+- **If you hit the limit, back off** for the `retry_after` interval the server
+  reports rather than retrying immediately.
+
+```python
+import time
+import nimbusimage as ni
+
+try:
+    job = ds.annotations.compute(
+        image="annotations/random_squares:latest",
+        assignment={"XY": "0-99", "Z": 0, "Time": "0-9"},  # one job, wide range
+    )
+    job.wait()
+except ni.WorkerRateLimitError as err:
+    wait = err.retry_after or 300
+    print(f"Rate limited; retrying in {wait}s")
+    time.sleep(wait)
+```
+
+The exact interval is set by the deployment and is not exposed by the API;
+treat any worker request as something that may be throttled and handle
+`WorkerRateLimitError` accordingly.
+
 ## Export
 
 ```python

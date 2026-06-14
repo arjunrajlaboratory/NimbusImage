@@ -19,6 +19,7 @@ from nimbusimage.filters import (
     filter_by_location,
     group_by_location,
 )
+from nimbusimage.exceptions import NimbusError, WorkerRateLimitError
 from nimbusimage.models import (
     Annotation,
     Connection,
@@ -104,4 +105,7 @@ __all__ = [
     "filter_by_tags",
     "filter_by_location",
     "group_by_location",
+    # Exceptions
+    "NimbusError",
+    "WorkerRateLimitError",
 ]

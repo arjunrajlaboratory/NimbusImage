@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from nimbusimage._girder import submit_worker_job
 from nimbusimage.jobs import Job
 from nimbusimage.models import Property
 
@@ -182,6 +183,11 @@ class PropertyAccessor:
 
         Raises:
             ValueError: If the property has no ``id`` or ``image``.
+            WorkerRateLimitError: If the server rate-limits the request.
+                Worker jobs are throttled per user because GPU workers
+                take minutes to start. Submit fewer, larger jobs rather
+                than looping over many ``compute()`` calls; if you must
+                retry, back off for the error's ``retry_after`` seconds.
         """
         if not property.id:
             raise ValueError(
@@ -206,10 +212,10 @@ class PropertyAccessor:
         if scales is not None:
             body["scales"] = scales
 
-        resp = self._gc.post(
+        job_data = submit_worker_job(
+            self._gc,
             f"/annotation_property/{property.id}/compute"
             f"?datasetId={self._dataset_id}",
-            json=body,
+            body,
         )
-        job_data = resp[0] if isinstance(resp, (list, tuple)) else resp
         return Job(self._gc, job_data)
