@@ -1651,6 +1651,66 @@ describe("Snapshots.vue", () => {
       };
     });
 
+    it("downloadImagesForCurrentState builds URLs from store.layers (view contrast), not configuration.layers", async () => {
+      // store.layers is configuration.layers merged with the per-user
+      // datasetView contrast overrides — the contrast actually rendered on
+      // screen, and the same array a saved snapshot captures at save time. The
+      // "current location" download must use it too; passing configuration.layers
+      // drops live contrast overrides, so the downloaded image's contrast
+      // disagrees with both the viewer and snapshot downloads.
+      const originalStoreLayers = (store as any).layers;
+      const originalConfigLayers = (store as any).configuration.layers;
+      const viewLayers = [
+        {
+          id: "layer1",
+          name: "Layer 1",
+          channel: 0,
+          visible: true,
+          color: "#ff0000",
+          contrast: { mode: "percentile", blackPoint: 10, whitePoint: 90 },
+        },
+      ];
+      (store as any).layers = viewLayers;
+      (store as any).configuration.layers = [
+        {
+          id: "layer1",
+          name: "Layer 1",
+          channel: 0,
+          visible: true,
+          color: "#ff0000",
+          contrast: { mode: "percentile", blackPoint: 0, whitePoint: 100 },
+        },
+      ];
+      try {
+        const w = mountComponent();
+        (w.vm as any).addScalebar = false;
+        (w.vm as any).downloadMode = "layers";
+        (w.vm as any).exportLayer = "composite";
+
+        await (w.vm as any).downloadImagesForCurrentState();
+
+        expect(mockedGetLayersDownloadUrls).toHaveBeenCalledWith(
+          expect.anything(), // baseUrl
+          "composite", // exportLayer
+          viewLayers, // effective view layers, NOT configuration.layers
+          expect.anything(), // dataset
+          expect.anything(), // location
+          expect.anything(), // api
+        );
+        expect(mockedGetLayersDownloadUrls).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          (store as any).configuration.layers,
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+        );
+      } finally {
+        (store as any).layers = originalStoreLayers;
+        (store as any).configuration.layers = originalConfigLayers;
+      }
+    });
+
     it("downloadImagesForAllSnapshots returns early with no configuration", async () => {
       (store as any).configuration = null;
       const w = mountComponent();
