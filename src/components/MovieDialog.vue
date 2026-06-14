@@ -132,9 +132,13 @@
 
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="dialog = false"> Cancel </v-btn>
+        <v-btn variant="text" size="small" @click="dialog = false">
+          Cancel
+        </v-btn>
         <v-btn
+          variant="flat"
           color="primary"
+          size="small"
           @click="handleDownload"
           :disabled="!!warningText"
         >

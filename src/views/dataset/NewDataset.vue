@@ -31,6 +31,29 @@
         @error="interruptedUpload"
         @vue:mounted="uploadMounted"
       >
+        <template
+          #dropzone="{
+            files: uploadFiles,
+            dropzoneMessage,
+            multiple,
+            accept,
+            inputFilesChanged,
+          }"
+        >
+          <file-dropzone
+            v-if="!uploadFiles.length"
+            :multiple="multiple"
+            :accept="accept"
+            class="new-dataset-primary-dropzone"
+            @update:model-value="inputFilesChanged"
+          >
+            <template #default>
+              <v-icon size="50px">mdi-file-upload</v-icon>
+              <div class="title mt-3">{{ dropzoneMessage }}</div>
+            </template>
+          </file-dropzone>
+        </template>
+
         <template #files="{ files }" v-if="quickupload && !pipelineError">
           <v-card>
             <v-card-text>
@@ -53,7 +76,7 @@
       </file-dropzone>
 
       <v-text-field
-        id="dataset-name-input-tourstep"
+        :data-tour="TOUR_ANCHORS.datasetNameInput"
         v-model="name"
         label="Name"
         required
@@ -62,7 +85,7 @@
       />
 
       <v-textarea
-        id="dataset-description-input-tourstep"
+        :data-tour="TOUR_ANCHORS.datasetDescriptionInput"
         v-model="description"
         label="Description"
         :readonly="pageTwo"
@@ -118,8 +141,11 @@
         </div>
         <div>
           <v-btn
-            id="upload-button-tourstep"
-            v-tour-trigger="'upload-button-tourtrigger'"
+            :data-tour="TOUR_ANCHORS.uploadButton"
+            v-tour-trigger="TOUR_TRIGGERS.uploadButton"
+            variant="flat"
+            color="success"
+            size="small"
             :disabled="
               !valid ||
               !filesSelected ||
@@ -128,7 +154,6 @@
               invalidLocation ||
               configuring
             "
-            color="success"
             @click="submit"
           >
             Upload
@@ -268,13 +293,24 @@
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
             <template v-slot:activator="{ props: activatorProps }">
-              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
+              <v-btn
+                v-bind="activatorProps"
+                variant="text"
+                icon
+                size="small"
+                @click="copyLogToClipboard"
+              >
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
             <span>Copy to clipboard</span>
           </v-tooltip>
-          <v-btn icon @click="showLogDialog = false">
+          <v-btn
+            variant="text"
+            icon
+            size="small"
+            @click="showLogDialog = false"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-card-title>
@@ -283,7 +319,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" variant="text" @click="showLogDialog = false"
+          <v-btn variant="text" size="small" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -319,12 +355,17 @@
           </p>
         </v-card-text>
         <v-card-actions>
-          <v-btn variant="text" @click="handleStopBatch">
+          <v-btn variant="text" size="small" @click="handleStopBatch">
             <v-icon start>mdi-stop</v-icon>
             Stop and Review
           </v-btn>
           <v-spacer></v-spacer>
-          <v-btn color="primary" @click="handleContinueBatch">
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="handleContinueBatch"
+          >
             <v-icon start>mdi-skip-next</v-icon>
             Skip and Continue
           </v-btn>
@@ -348,6 +389,7 @@ import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import { logError, logWarning } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
@@ -1046,9 +1088,9 @@ async function configureDataset() {
 
 function generationDone(jsonId: string | null) {
   if (isBatchMode.value) {
-    handleCollectionGenerationDone(jsonId);
+    return handleCollectionGenerationDone(jsonId);
   } else if (isQuickImport.value) {
-    createView(jsonId);
+    return createView(jsonId);
   } else {
     return;
   }
@@ -1179,6 +1221,17 @@ onMounted(async () => {
     if (props.initialDescription) description.value = props.initialDescription;
   }
 
+  if (!path.value) {
+    try {
+      const privateFolder = await store.api.getUserPrivateFolder();
+      if (!path.value) {
+        path.value = privateFolder;
+      }
+    } catch (error) {
+      logError(error);
+    }
+  }
+
   maxApiKeyFileSize.value = await getMaxUploadSize();
 });
 
@@ -1266,6 +1319,10 @@ defineExpose({
 <style lang="scss">
 .new-dataset-upload .files-list {
   max-height: 260px;
+}
+
+.new-dataset-primary-dropzone {
+  height: 100%;
 }
 
 .job-log {

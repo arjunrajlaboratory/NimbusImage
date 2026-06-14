@@ -47,6 +47,7 @@ import { AxiosRequestConfig, AxiosResponse, isAxiosError } from "axios";
 import { fetchAllPages } from "@/utils/fetch";
 import { stringify } from "qs";
 import { logError, logWarning } from "@/utils/log";
+import { markRaw } from "vue";
 
 // Modern browsers limit concurrency to a single domain at 6 requests (though
 // using HTML 2 might improve that slightly).  For a single layer, if we set
@@ -77,15 +78,30 @@ function itemsToResourceObject(items: IGirderSelectAble[]) {
 export default class GirderAPI {
   client: RestClientInstance;
 
-  private readonly imageCache = new Map<string, HTMLImageElement>();
-  private readonly histogramCache = new Map<string, Promise<ITileHistogram>>();
-  private readonly resolvedHistogramCache = new Map<string, ITileHistogram>();
+  // markRaw on each cache so Vue's reactive() doesn't intercept Map.get/set
+  // with track/trigger calls. Lookups happen on every tile fetch — the
+  // overhead adds up. The GirderAPI instance itself stays reactive so
+  // `histogramsLoaded` (and any future reactive fields) still work.
+  private readonly imageCache = markRaw(new Map<string, HTMLImageElement>());
+  private readonly histogramCache = markRaw(
+    new Map<string, Promise<ITileHistogram>>(),
+  );
+  private readonly resolvedHistogramCache = markRaw(
+    new Map<string, ITileHistogram>(),
+  );
 
   constructor(client: RestClientInstance) {
     this.client = client;
   }
 
+  // Reactive counters used by viewer getters. `histogramsLoaded` is bumped
+  // both when a histogram resolves and when caches are invalidated, so
+  // computed tile URLs re-evaluate. `histogramCacheRevision` is bumped only
+  // on cache invalidation and is recorded on each layer's `_histogram` so
+  // `getLayerHistogram` can force a refetch when the revision no longer
+  // matches.
   histogramsLoaded = 0;
+  histogramCacheRevision = 0;
 
   baseHistogramOptions: IHistogramOptions = {
     frame: 0,
@@ -479,13 +495,18 @@ export default class GirderAPI {
     }
   }
 
-  async getRecentDatasetViews(limit: number, offset: number = 0) {
+  async getRecentDatasetViews(
+    limit: number,
+    offset: number = 0,
+    currentUserOnly: boolean = false,
+  ) {
     const formData: AxiosRequestConfig = {
       params: {
         limit,
         offset,
         sort: "lastViewed",
         sortdir: -1,
+        ...(currentUserOnly ? { currentUserOnly: true } : {}),
       },
     };
     const response = await this.client.get("dataset_view", formData);
@@ -869,6 +890,17 @@ export default class GirderAPI {
     this.imageCache.clear();
     this.histogramCache.clear();
     this.resolvedHistogramCache.clear();
+    this.histogramCacheRevision = this.histogramCacheRevision + 1;
+    this.histogramsLoaded = this.histogramsLoaded + 1;
+  }
+
+  // Read-only snapshot of cache sizes for memory diagnostics.
+  getCacheSizes() {
+    return {
+      imageCache: this.imageCache.size,
+      histogramCache: this.histogramCache.size,
+      resolvedHistogramCache: this.resolvedHistogramCache.size,
+    };
   }
 
   scheduleTileFramesComputation(datasetId: string) {

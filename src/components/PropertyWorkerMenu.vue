@@ -3,7 +3,7 @@
     <div
       v-if="image"
       class="text-caption ml-1 mb-0 mt-0 py-0"
-      style="font-size: 8px; letter-spacing: 1px; opacity: 0.7; line-height: 1"
+      style="opacity: 0.7; line-height: 1.2"
     >
       Image: {{ image }}
     </div>

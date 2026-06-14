@@ -91,9 +91,11 @@
 
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" @click="cancel">Cancel</v-btn>
+        <v-btn variant="text" size="small" @click="cancel">Cancel</v-btn>
         <v-btn
+          variant="flat"
           color="primary"
+          size="small"
           :disabled="!canAdd"
           :loading="adding"
           @click="addToProject"

@@ -11,7 +11,14 @@
       />
 
       <div class="button-bar">
-        <v-btn :disabled="!valid" color="success" class="mr-4" @click="submit">
+        <v-btn
+          :disabled="!valid"
+          variant="flat"
+          color="success"
+          size="small"
+          class="mr-4"
+          @click="submit"
+        >
           Create
         </v-btn>
       </div>

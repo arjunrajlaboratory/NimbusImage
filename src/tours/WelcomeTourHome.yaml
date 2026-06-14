@@ -14,34 +14,34 @@ steps:
 
   - id: try-sample-dataset
     route: root
-    element: "#try-sample-dataset-tourstep"
+    element: '[data-tour="try-sample-dataset"]'
     title: "Try a Sample Dataset"
     text: "Let's use a sample dataset. Click here to pull up some samples."
     position: "bottom"
-    onTriggerEvent: "try-sample-dataset-tourtrigger"
+    onTriggerEvent: "try-sample-dataset"
     waitForElement: 3000
     showNextButton: false
 
   - id: my-first-dataset
     route: root
-    element: "#my-first-nimbus-dataset-tourstep"
+    element: '[data-tour="my-first-nimbus-dataset"]'
     title: "Import sample dataset"
     text: "This is a sample dataset that you can use to get started."
     position: "bottom"
     modalOverlay: true
     showNextButton: false
-    onTriggerEvent: "my-first-nimbus-dataset-tourtrigger"
+    onTriggerEvent: "my-first-nimbus-dataset"
     waitForElement: 3000
 
   - id: zenodo-importer-import-dataset
     route: root
-    element: "#zenodo-importer-import-dataset-tourstep"
+    element: '[data-tour="zenodo-importer-import-dataset"]'
     title: "Start the import"
     text: "Click the 'Import Dataset' button to start the import. Then hold tight while the dataset is imported and set up for you."
     position: "top"
     waitForElement: 1000
     showNextButton: false
-    onTriggerEvent: "zenodo-importer-import-dataset-tourtrigger"
+    onTriggerEvent: "zenodo-importer-import-dataset"
 
   - id: welcome-tourstep
     route: datasetview
@@ -51,14 +51,14 @@ steps:
     waitForElement: 5000
     modalOverlay: true
     showNextButton: true
-  
+
   - id: zoom-instruction-tourstep
     route: datasetview
     title: "Zooming"
     text: "Use your mouse wheel or trackpad to zoom in and out of the image."
     position: "left"
     modalOverlay: false
-    
+
   - id: pan-instruction-tourstep
     route: datasetview
     title: "Panning the Image"
@@ -69,7 +69,7 @@ steps:
 
   - id: contrast-palette-tourstep
     route: datasetview
-    element: "#layer-info-tourstep"
+    element: '[data-tour="layer-info"]'
     title: "Contrast settings"
     text: "Click here to adjust contrast settings for each layer."
     position: "left"
@@ -78,7 +78,7 @@ steps:
 
   - id: help-button-tourstep
     route: datasetview
-    element: "#help-button-tourstep"
+    element: '[data-tour="help-button"]'
     title: "Help"
     text: "Click here for documentation and tours."
     position: "bottom"
@@ -87,12 +87,12 @@ steps:
 
   - id: chat-button-tourstep
     route: datasetview
-    element: "#chat-button-tourstep"
+    element: '[data-tour="chat-button"]'
     title: "Chatbot"
     text: "Click here for the NimbusImage chatbot. It uses AI to 'see' the image and help guide you through the analysis."
     position: "bottom"
     modalOverlay: true
-    waitForElement: 1000  
+    waitForElement: 1000
 
   - id: analysis-tourstep
     route: datasetview
@@ -105,14 +105,14 @@ steps:
 
   - id: nucleus
     route: datasetview
-    element: "#nucleus-tourstep"
+    element: '[data-tour="nucleus"]'
     title: "Click here to activate the nucleus tool"
     text: "Using this tool, you can manually draw nuclei on the image for further analysis. There are many other automated tools available for making objects as well."
     position: "right"
     waitForElement: 5000
     modalOverlay: true
     showNextButton: false
-    onTriggerEvent: "nucleus-tourtrigger"
+    onTriggerEvent: "nucleus"
 
   - id: draw-nuclei-tourstep
     route: datasetview
@@ -125,99 +125,87 @@ steps:
 
   - id: object-list-button-tourstep
     route: datasetview
-    element: "#object-list-button-tourstep"
+    element: '[data-tour="object-list-button"]'
     title: "Object List"
     text: "Click here to open the object list."
     position: "right"
     waitForElement: 1000
     modalOverlay: true
     showNextButton: false
-    onTriggerEvent: "object-list-button-tourtrigger"
+    onTriggerEvent: "object-list-button"
 
-  - id: properties-header-tourstep
+  # Measure flow: each step is gated on the relevant UI actually appearing.
+  # The property-creation controls live inside the "measure" dialog, so we first
+  # have the user open it (interactive trigger), then walk the dialog's controls.
+  - id: measure-objects-tourstep
     route: datasetview
-    element: "#properties-header-tourstep"
-    title: "Properties"
-    text: "Properties are what we call various measurements of the objects in the image. For instance, the area of a blob is a property. After you compute properties, they will appear here."
-    position: "left"
-    waitForElement: 1000
-    showNextButton: true
-
-  - id: measure-objects-button-tourstep
-    route: datasetview
-    element: "#measure-objects-button-tourstep"
-    title: "Measure Objects"
-    text: "Click here to open the measure objects panel. That's where we will define the properties we want to calculate."
-    position: "left"
-    waitForElement: 1000
+    element: '[data-tour="measure-objects"]'
+    title: "Measure your objects"
+    text: "Properties are measurements of objects — like the area or perimeter of a nucleus. Click the ruler to open the measurement panel."
+    position: "bottom"
+    waitForElement: 2000
     modalOverlay: true
     showNextButton: false
-    onTriggerEvent: "measure-objects-button-tourtrigger"
+    onTriggerEvent: "measure-objects"
+
+  # Overview of the whole (large, centered) measure dialog — a centered modal
+  # popover reads better here than an arrow pointing at one corner of it.
+  - id: create-property-header-tourstep
+    route: datasetview
+    title: "The measurement panel"
+    text: "This is where you define a property to calculate. Let's set one up."
+    waitForElement: 5000
+    modalOverlay: true
+    showNextButton: true
 
   - id: property-tag-picker-tourstep
     route: datasetview
-    # NOTE (AR): I commented out the element selector because for whatever reason,
-    # some of these elements do not have the right coordinates and so the tour
-    # step is not positioned correctly. Despite many attempts at portals and so on,
-    # I was not able to get it to work, but I'm leaving it here because it is the
-    # desired functionality.
-    # element: "#property-tag-picker-tourstep"
+    element: '[data-tour="property-tag-picker"]'
     title: "Choose objects to measure"
-    text: "Pick the tag selecting the objects you want to calculate the property for. For now, choose 'nucleus'."
-    # position: "right"
-    waitForElement: 1000
+    text: "Pick the tag selecting the objects to measure. For now, choose 'nucleus', then click Next."
+    position: "right"
+    waitForElement: 5000
+    modalOverlay: false
+    showNextButton: true
+
+  - id: property-shape-select-tourstep
+    route: datasetview
+    element: '[data-tour="shape-selection"]'
+    title: "Choose a shape"
+    text: "Select a shape to measure (for example, a polygon), then click Next."
+    position: "right"
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true
 
   - id: property-algorithm-select-tourstep
     route: datasetview
-    element: "#property-algorithm-select-tourstep"
-    title: "What you want to measure"
-    text: "Let's measure the 'Blob metrics' for now—things like area and perimeter."
+    element: '[data-tour="property-algorithm-select"]'
+    title: "What to measure"
+    text: "Choose 'Blob metrics' — things like area and perimeter."
     position: "right"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true
 
   - id: create-property-button-tourstep
     route: datasetview
-    # element: "#create-property-button-tourstep"
-    title: "Click on 'Create Property' to create the property"
-    text: "By default, the computation will start automatically."
+    element: '[data-tour="create-property-button"]'
+    title: "Create the property"
+    text: "Click 'Create Property'. The computation starts automatically."
     position: "right"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: false
-    onTriggerEvent: "create-property-button-tourtrigger"
-
-  - id: measure-objects-close-button-tourstep
-    route: datasetview
-    element: "#measure-objects-close-button-tourstep"
-    title: "All done!"
-    text: "Click here to close the measure objects panel. You can close it even while it's still calculating."
-    position: "right"
-    waitForElement: 1000
-    modalOverlay: true
-    showNextButton: false
-    onTriggerEvent: "measure-objects-close-button-tourtrigger"
+    onTriggerEvent: "create-property-button"
 
   - id: properties-content-tourstep
     route: datasetview
-    element: "#properties-content-tourstep"
-    title: "List of computed properties"
-    text: "The property you just created will appear here once it's done computing. Click and find the blob metrics and then you will see properties like area, perimeter, and eccentricity. Select the ones you want to see, then click next."
+    element: '[data-tour="properties-content"]'
+    title: "Your computed properties"
+    text: "The property you just created appears here once it's done computing — expand it to see values like area, perimeter, and eccentricity."
     position: "left"
-    waitForElement: 1000
-    modalOverlay: false
-    showNextButton: true
-
-  - id: annotation-list-content-tourstep
-    route: datasetview
-    element: "#annotation-list-content-tourstep"
-    title: "List of values"
-    text: "The values you computed are now visible in this list. You can sort and filter by these values or visualize them in the image by hitting 't'."
-    position: "left"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true
 

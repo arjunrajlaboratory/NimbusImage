@@ -38,6 +38,7 @@
                     ? displayColors[channel]
                     : '#FFFFFF'
                 "
+                variant="flat"
                 block
                 size="small"
                 @click="openColorPicker(String(channel))"
@@ -48,6 +49,7 @@
             <v-col cols="1">
               <v-btn
                 v-if="!isCustomChannel(String(channel))"
+                variant="text"
                 icon
                 size="small"
                 @click="resetColor(String(channel))"
@@ -57,6 +59,7 @@
               </v-btn>
               <v-btn
                 v-else
+                variant="text"
                 icon
                 size="small"
                 @click="resetColor(String(channel))"
@@ -73,7 +76,8 @@
         <v-col>
           <v-btn
             variant="outlined"
-            color="secondary"
+            color="primary"
+            size="small"
             @click="showAddChannelDialog = true"
             class="mb-2"
           >
@@ -85,11 +89,30 @@
 
       <v-row class="mt-2">
         <v-col>
-          <v-btn color="primary" @click="saveAndClose" :loading="saving">
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="saveAndClose"
+            :loading="saving"
+          >
             Save Preferences
           </v-btn>
-          <v-btn class="ml-2" @click="resetAllColors"> Reset All </v-btn>
-          <v-btn class="ml-2" variant="text" @click="cancelChanges">
+          <v-btn
+            variant="outlined"
+            color="primary"
+            size="small"
+            class="ml-2"
+            @click="resetAllColors"
+          >
+            Reset All
+          </v-btn>
+          <v-btn
+            class="ml-2"
+            variant="text"
+            size="small"
+            @click="cancelChanges"
+          >
             Cancel
           </v-btn>
         </v-col>
@@ -109,10 +132,16 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="colorPickerDialog = false"
+          <v-btn variant="text" size="small" @click="colorPickerDialog = false"
             >Cancel</v-btn
           >
-          <v-btn color="primary" @click="applyPickerColor">Apply</v-btn>
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="applyPickerColor"
+            >Apply</v-btn
+          >
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -138,7 +167,12 @@
             @keyup.enter="addNewChannel"
           >
             <template #append>
-              <v-btn icon size="small" @click="openNewChannelColorPicker">
+              <v-btn
+                variant="text"
+                icon
+                size="small"
+                @click="openNewChannelColorPicker"
+              >
                 <v-icon :color="newChannelColor">mdi-palette</v-icon>
               </v-btn>
             </template>
@@ -146,9 +180,13 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="cancelAddChannel">Cancel</v-btn>
+          <v-btn variant="text" size="small" @click="cancelAddChannel"
+            >Cancel</v-btn
+          >
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="addNewChannel"
             :disabled="!isNewChannelValid"
           >
@@ -167,10 +205,19 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="newChannelColorPickerDialog = false"
+          <v-btn
+            variant="text"
+            size="small"
+            @click="newChannelColorPickerDialog = false"
             >Cancel</v-btn
           >
-          <v-btn color="primary" @click="applyNewChannelColor">Apply</v-btn>
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="applyNewChannelColor"
+            >Apply</v-btn
+          >
         </v-card-actions>
       </v-card>
     </v-dialog>

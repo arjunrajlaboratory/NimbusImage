@@ -108,9 +108,15 @@
                 :offset="1"
               />
               <div class="buttons">
-                <v-btn color="warning" size="small" @click="removeLayer"
-                  >Delete layer</v-btn
+                <v-btn
+                  variant="text"
+                  color="error"
+                  size="small"
+                  @click="removeLayer"
                 >
+                  <v-icon start>mdi-delete</v-icon>
+                  Delete layer
+                </v-btn>
               </div>
             </v-expansion-panel-text>
           </v-expansion-panel>
@@ -326,6 +332,14 @@ defineExpose({
 <style lang="scss" scoped>
 .notVisible {
   opacity: 0.5;
+}
+
+/* Tighten the collapsed layer row — Vuetify's default expansion-panel-title
+   min-height leaves a lot of dead vertical space per layer. */
+.displayLayerHeader {
+  min-height: 36px;
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
 .layer-title-row {

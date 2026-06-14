@@ -1,7 +1,5 @@
-import { IGirderItem } from "@/girder";
+import { IGirderItem, IGirderFolder, IUPennCollection } from "@/girder";
 import type { ITileHistogram } from "./images";
-import Shepherd from "shepherd.js";
-
 interface IObject<Values = any> {
   [key: string]: Values;
 }
@@ -429,6 +427,15 @@ export interface IDatasetView extends IDatasetViewBase {
   readonly _accessLevel?: number;
 }
 
+// Resolved view tile shown in the Recent Datasets list.
+// Built in Home.vue by joining a datasetView with the corresponding
+// resolved Girder folder (dataset) and configuration documents.
+export interface IRecentDatasetViewItem {
+  datasetView: IDatasetView;
+  datasetInfo: IGirderFolder;
+  configInfo: IUPennCollection;
+}
+
 // Access control types for sharing datasets
 export interface IDatasetAccessUser {
   id: string;
@@ -584,6 +591,7 @@ export interface IDisplayLayer {
     lastImages: IImage[] | null;
     nextImages: IImage[] | null;
     lock: boolean;
+    cacheRevision: number;
   };
 }
 
@@ -1574,7 +1582,7 @@ export interface IJobTimestamp {
 export interface IJob {
   _id: string;
   _modelType: string;
-  args: string[];
+  args?: string[];
   created: string;
   status: number;
   timestamps: IJobTimestamp[];
@@ -1619,21 +1627,23 @@ export interface ITourStep {
   position?: "top" | "bottom" | "left" | "right";
   waitForElement?: number;
   modalOverlay?: boolean;
-  beforeShow?: string;
-  onNext?: string;
   showNextButton?: boolean;
   onTriggerEvent?: string;
 }
 
-export interface IExtendedShepherdStep extends Shepherd.Step {
-  options: Shepherd.Step.StepOptions & {
-    route?: string;
-    beforeShow?: () => void;
-    onNext?: () => void;
-    hasModalOverlay?: boolean;
-    waitForElement?: number;
-    onTriggerEvent?: string;
-  };
+// Internal representation the TourManager builds from an ITourStep.
+// Engine-neutral: holds everything the controller needs to render and advance.
+export interface ITourStepRuntime {
+  id: string;
+  route: string;
+  element?: string;
+  title: string;
+  text: string;
+  position: "top" | "bottom" | "left" | "right";
+  waitForElement: number;
+  hasModalOverlay: boolean;
+  showNextButton: boolean;
+  onTriggerEvent?: string;
 }
 
 export interface ITourMetadata {
@@ -1648,14 +1658,6 @@ export interface ITourConfig extends ITourMetadata {
   options?: {
     modalOverlay?: boolean;
   };
-}
-
-declare module "vue" {
-  interface ComponentCustomProperties {
-    $startTour: (tourName: string) => Promise<void>;
-    $nextStep: (targetElementId?: string) => Promise<void>;
-    $loadAllTours: () => Promise<Record<string, ITourMetadata>>;
-  }
 }
 
 export enum WelcomeTourTypes {
@@ -1673,8 +1675,8 @@ export enum WelcomeTourStatus {
 
 export const WelcomeTourNames = {
   [WelcomeTourTypes.HOME]: "WelcomeTourHome",
-  [WelcomeTourTypes.VIEWER]: "WelcomeTourViewer",
-  [WelcomeTourTypes.ADVANCED_UPLOAD]: "WelcomeTourAdvancedUpload",
+  [WelcomeTourTypes.VIEWER]: "IntroViewerTour",
+  [WelcomeTourTypes.ADVANCED_UPLOAD]: "AdvancedUploadTour",
   [WelcomeTourTypes.WORKING_WITH_TAGS]: "WorkingWithTags",
 };
 

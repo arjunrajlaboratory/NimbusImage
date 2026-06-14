@@ -57,7 +57,9 @@
         <v-card-actions class="ma-2">
           <v-spacer />
           <v-btn
-            color="green"
+            variant="flat"
+            color="success"
+            size="small"
             :disabled="!canAddDatasetToCollection"
             @click="addDatasetToCollection"
           >

@@ -1,0 +1,2555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NimbusImage — UI Refresh</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap"
+  rel="stylesheet"
+/>
+<style>
+  /* ---------------------------------------------------------------
+     TOKENS
+  --------------------------------------------------------------- */
+  :root {
+    --bg-deep: #05070a;
+    --bg-page: #0a0d12;
+    --bg-elev-1: #0f1217;
+    --bg-elev-2: #14181f;
+
+    --glass: rgba(14, 17, 23, 0.58);
+    --glass-strong: rgba(18, 22, 30, 0.78);
+    --glass-edge: rgba(255, 255, 255, 0.08);
+    --glass-edge-strong: rgba(255, 255, 255, 0.16);
+    --glass-highlight: rgba(255, 255, 255, 0.04);
+
+    --ink-1: #f3f5f7;
+    --ink-2: #b4bcc6;
+    --ink-3: #7a838e;
+    --ink-4: #4a5159;
+
+    --accent: #1bd0a3;
+    --accent-2: #0fb98e;
+    --accent-soft: rgba(27, 208, 163, 0.14);
+    --accent-glow: rgba(27, 208, 163, 0.35);
+
+    --c-dapi: #4a90ff;
+    --c-fitc: #5dd87a;
+    --c-tritc: #f5cf3c;
+    --c-cy5: #ff5454;
+
+    --shadow-palette:
+      0 1px 0 rgba(255, 255, 255, 0.04) inset,
+      0 0 0 0.5px rgba(255, 255, 255, 0.06),
+      0 20px 40px -16px rgba(0, 0, 0, 0.7),
+      0 8px 16px -8px rgba(0, 0, 0, 0.5);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg-deep);
+    color: var(--ink-1);
+    font-family: 'Geist', system-ui, sans-serif;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.5;
+  }
+
+  body {
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(27, 208, 163, 0.06), transparent 60%),
+      radial-gradient(900px 500px at 10% 30%, rgba(74, 144, 255, 0.05), transparent 60%),
+      var(--bg-deep);
+    min-height: 100vh;
+    padding-bottom: 120px;
+  }
+
+  ::selection { background: var(--accent-soft); color: var(--accent); }
+
+  /* ---------------------------------------------------------------
+     LAYOUT
+  --------------------------------------------------------------- */
+  .wrap {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 40px;
+  }
+
+  /* ---------------------------------------------------------------
+     HEADER
+  --------------------------------------------------------------- */
+  .doc-head {
+    padding: 96px 0 64px;
+    border-bottom: 1px solid var(--glass-edge);
+    margin-bottom: 80px;
+  }
+  .eyebrow {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .eyebrow::before {
+    content: '';
+    width: 24px;
+    height: 1px;
+    background: var(--accent);
+  }
+  .doc-head h1 {
+    font-family: 'Geist', sans-serif;
+    font-weight: 300;
+    font-size: clamp(48px, 6vw, 88px);
+    line-height: 0.98;
+    letter-spacing: -0.035em;
+    color: var(--ink-1);
+    margin-bottom: 32px;
+    max-width: 1100px;
+  }
+  .doc-head h1 em {
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    font-weight: 400;
+    color: var(--accent);
+  }
+  .doc-head p.lede {
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 720px;
+    font-weight: 400;
+  }
+  .meta-row {
+    margin-top: 56px;
+    display: flex;
+    gap: 64px;
+    flex-wrap: wrap;
+  }
+  .meta-row .item {
+    font-family: 'Geist Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+  }
+  .meta-row .item .k {
+    color: var(--ink-4);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 10px;
+    margin-bottom: 8px;
+    display: block;
+  }
+  .meta-row .item .v {
+    color: var(--ink-1);
+    font-size: 14px;
+  }
+
+  /* ---------------------------------------------------------------
+     SECTION
+  --------------------------------------------------------------- */
+  section { margin-bottom: 128px; }
+
+  .sec-head {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 64px;
+    margin-bottom: 48px;
+    align-items: baseline;
+  }
+  .sec-num {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    color: var(--ink-4);
+    text-transform: uppercase;
+    padding-top: 12px;
+  }
+  .sec-num span { color: var(--accent); }
+  .sec-title {
+    font-family: 'Geist', sans-serif;
+    font-weight: 400;
+    font-size: 40px;
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    color: var(--ink-1);
+  }
+  .sec-title em {
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    font-weight: 400;
+    color: var(--ink-2);
+  }
+  .sec-body {
+    grid-column: 2;
+    color: var(--ink-2);
+    font-size: 16px;
+    max-width: 720px;
+    line-height: 1.6;
+    margin-top: 16px;
+  }
+
+  /* ---------------------------------------------------------------
+     PRINCIPLES
+  --------------------------------------------------------------- */
+  .principles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--glass-edge);
+    border: 1px solid var(--glass-edge);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .principle {
+    background: var(--bg-elev-1);
+    padding: 32px 28px;
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .principle .icn {
+    width: 32px;
+    height: 32px;
+    color: var(--accent);
+    margin-bottom: 24px;
+  }
+  .principle h3 {
+    font-family: 'Geist', sans-serif;
+    font-weight: 500;
+    font-size: 17px;
+    letter-spacing: -0.01em;
+    margin-bottom: 8px;
+    color: var(--ink-1);
+  }
+  .principle p {
+    color: var(--ink-3);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .principle .num {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--ink-4);
+    text-transform: uppercase;
+    margin-top: 24px;
+  }
+
+  /* ---------------------------------------------------------------
+     MOCKUP FRAME
+  --------------------------------------------------------------- */
+  .mockup {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #000;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 40px 80px -32px rgba(0, 0, 0, 0.8),
+      0 16px 32px -16px rgba(0, 0, 0, 0.5);
+    isolation: isolate;
+  }
+  .mockup .chrome {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  /* synthetic microscopy image */
+  .scene {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 50% 55%, rgba(60, 200, 100, 0.22), transparent 65%),
+      radial-gradient(ellipse 40% 30% at 50% 50%, rgba(100, 230, 130, 0.15), transparent 70%),
+      radial-gradient(circle at 30% 40%, rgba(20, 40, 80, 0.6), transparent 50%),
+      linear-gradient(180deg, #050912 0%, #07101b 100%);
+  }
+  .scene svg.cells {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .scene .grain {
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2' /><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.04 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    mix-blend-mode: overlay;
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .scene .scalebar {
+    position: absolute;
+    bottom: 28px;
+    right: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-end;
+    color: white;
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  }
+  .scene .scalebar .bar {
+    width: 100px;
+    height: 2px;
+    background: white;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  }
+
+  /* ---------------------------------------------------------------
+     APP BAR
+  --------------------------------------------------------------- */
+  .appbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    z-index: 20;
+
+    background: linear-gradient(180deg, rgba(5,7,10,0.55) 0%, rgba(5,7,10,0.0) 100%);
+    backdrop-filter: blur(20px) saturate(120%);
+    -webkit-backdrop-filter: blur(20px) saturate(120%);
+  }
+  .appbar::after {
+    content: '';
+    position: absolute;
+    left: 16px; right: 16px; bottom: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  }
+
+  .logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), #5dd87a);
+    display: grid;
+    place-items: center;
+    color: #061a14;
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 18px;
+    line-height: 1;
+    box-shadow: 0 0 12px rgba(27, 208, 163, 0.3);
+  }
+
+  .dataset-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px 6px 8px;
+    border-radius: 100px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--glass-edge);
+    font-size: 12px;
+    color: var(--ink-1);
+    font-family: 'Geist Mono', monospace;
+    letter-spacing: 0.02em;
+  }
+  .dataset-pill .label {
+    color: var(--ink-3);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+  }
+  .dataset-pill .name { color: var(--ink-1); }
+  .dataset-pill .chev {
+    color: var(--ink-3);
+    width: 12px;
+    height: 12px;
+  }
+
+  .spacer { flex: 1; }
+
+  .btn-primary {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 100px;
+    background: var(--accent);
+    color: #051912;
+    font-family: 'Geist', sans-serif;
+    font-weight: 500;
+    font-size: 12.5px;
+    letter-spacing: 0.01em;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    box-shadow: 0 0 16px rgba(27, 208, 163, 0.25);
+  }
+
+  /* ---------------------------------------------------------------
+     CIRCULAR ICON BUTTON
+  --------------------------------------------------------------- */
+  .icon-cluster {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 100px;
+    background: rgba(15, 18, 23, 0.55);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-edge);
+  }
+  .ibtn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: transparent;
+    color: var(--ink-2);
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    position: relative;
+  }
+  .ibtn svg { width: 16px; height: 16px; }
+  .ibtn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ink-1);
+  }
+  .ibtn.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(27, 208, 163, 0.25);
+  }
+  .ibtn.active::after {
+    content: '';
+    position: absolute;
+    bottom: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+  .ibtn .dot {
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ff8a4c, #ff5454);
+    display: grid;
+    place-items: center;
+    color: white;
+    font-weight: 500;
+    font-size: 12px;
+    font-family: 'Geist', sans-serif;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  /* ---------------------------------------------------------------
+     PALETTE (floating panel)
+  --------------------------------------------------------------- */
+  .palette {
+    position: absolute;
+    background: var(--glass-strong);
+    backdrop-filter: blur(28px) saturate(140%);
+    -webkit-backdrop-filter: blur(28px) saturate(140%);
+    border-radius: 12px;
+    border: 1px solid var(--glass-edge);
+    box-shadow: var(--shadow-palette);
+    z-index: 10;
+    overflow: hidden;
+  }
+  .palette .p-head {
+    padding: 10px 12px 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--glass-edge);
+    cursor: grab;
+  }
+  .palette .p-head .grip {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-right: 2px;
+  }
+  .palette .p-head .grip i {
+    width: 14px;
+    height: 1.5px;
+    background: var(--ink-4);
+    border-radius: 2px;
+    display: block;
+  }
+  .palette .p-head h4 {
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--ink-2);
+    flex: 1;
+  }
+  .palette .p-head .actions {
+    display: flex;
+    gap: 2px;
+  }
+  .palette .p-head .actions button {
+    width: 22px; height: 22px;
+    background: transparent;
+    border: none;
+    color: var(--ink-3);
+    cursor: pointer;
+    border-radius: 4px;
+    display: grid;
+    place-items: center;
+  }
+  .palette .p-head .actions button:hover {
+    background: rgba(255,255,255,0.06);
+    color: var(--ink-1);
+  }
+  .palette .p-head .actions button svg { width: 12px; height: 12px; }
+  .palette .p-body { padding: 14px; }
+
+  /* ---------------------------------------------------------------
+     CHANNEL LIST (inside Layers palette)
+  --------------------------------------------------------------- */
+  .channel-row {
+    display: grid;
+    grid-template-columns: 14px 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 9px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .channel-row:last-child { border-bottom: none; }
+  .channel-row .swatch {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .channel-row .swatch.dapi { background: var(--c-dapi); color: var(--c-dapi); }
+  .channel-row .swatch.fitc { background: var(--c-fitc); color: var(--c-fitc); }
+  .channel-row .swatch.tritc { background: var(--c-tritc); color: var(--c-tritc); }
+  .channel-row .swatch.cy5 { background: var(--c-cy5); color: var(--c-cy5); }
+  .channel-row .name {
+    font-size: 13px;
+    color: var(--ink-1);
+    font-weight: 500;
+  }
+  .channel-row .count {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-3);
+  }
+  .toggle {
+    width: 26px;
+    height: 14px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 100px;
+    position: relative;
+    cursor: pointer;
+  }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--ink-2);
+    top: 2px; left: 2px;
+    transition: 0.15s;
+  }
+  .toggle.on { background: var(--accent); }
+  .toggle.on::after { left: 14px; background: white; }
+
+  /* ---------------------------------------------------------------
+     LAYER MODE TOGGLE
+  --------------------------------------------------------------- */
+  .seg-control {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    padding: 2px;
+    margin: 12px 0;
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .seg-control button {
+    padding: 5px;
+    border: none;
+    background: transparent;
+    color: var(--ink-3);
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .seg-control button.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  /* ---------------------------------------------------------------
+     TOOL DOCK (left side)
+  --------------------------------------------------------------- */
+  .tooldock {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 100px;
+    background: var(--glass-strong);
+    backdrop-filter: blur(28px) saturate(140%);
+    border: 1px solid var(--glass-edge);
+    box-shadow: var(--shadow-palette);
+    z-index: 12;
+  }
+  .tooldock .ibtn { width: 34px; height: 34px; }
+  .tooldock .ibtn svg { width: 17px; height: 17px; }
+  .tooldock .sep {
+    width: 16px;
+    height: 1px;
+    background: var(--glass-edge);
+    margin: 4px auto;
+  }
+
+  /* ---------------------------------------------------------------
+     BOTTOM DOCK
+  --------------------------------------------------------------- */
+  .bottomdock {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    border-radius: 100px;
+    background: var(--glass-strong);
+    backdrop-filter: blur(28px) saturate(140%);
+    border: 1px solid var(--glass-edge);
+    box-shadow: var(--shadow-palette);
+    z-index: 12;
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-2);
+  }
+  .bottomdock .ibtn { width: 28px; height: 28px; }
+  .bottomdock .z-label { color: var(--ink-3); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+  .bottomdock .z-value {
+    color: var(--ink-1);
+    font-variant-numeric: tabular-nums;
+  }
+  .bottomdock .slider {
+    width: 120px; height: 4px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 100px;
+    position: relative;
+  }
+  .bottomdock .slider::before {
+    content:'';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 40%;
+    background: var(--accent);
+    border-radius: 100px;
+  }
+  .bottomdock .slider::after {
+    content:'';
+    position: absolute;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: white;
+    left: 40%;
+    top: -4px;
+    transform: translateX(-50%);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 8px rgba(27,208,163,0.4);
+  }
+  .bottomdock .sep {
+    width: 1px;
+    height: 16px;
+    background: var(--glass-edge);
+  }
+
+  /* ---------------------------------------------------------------
+     MINIMAP
+  --------------------------------------------------------------- */
+  .minimap {
+    position: absolute;
+    top: 76px;
+    right: 20px;
+    width: 144px;
+    height: 100px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--glass-edge);
+    box-shadow: var(--shadow-palette);
+    backdrop-filter: blur(10px);
+    z-index: 8;
+  }
+  .minimap .mini-scene {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 50% 50% at 50% 55%, rgba(60, 200, 100, 0.4), transparent 65%),
+      radial-gradient(circle at 30% 40%, rgba(20, 50, 100, 0.6), transparent 60%),
+      #07101b;
+    filter: blur(0.5px);
+  }
+  .minimap .viewbox {
+    position: absolute;
+    border: 1.5px solid var(--accent);
+    width: 56%;
+    height: 70%;
+    top: 14%;
+    left: 22%;
+    border-radius: 2px;
+    box-shadow: 0 0 8px rgba(27,208,163,0.4);
+  }
+
+  /* ---------------------------------------------------------------
+     ANNOTATION POLYGONS (blue blobs)
+  --------------------------------------------------------------- */
+  .annotations {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  /* ---------------------------------------------------------------
+     RIGHT PALETTE (object browser) specifics
+  --------------------------------------------------------------- */
+  .obj-row {
+    display: grid;
+    grid-template-columns: 14px 24px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 12px;
+  }
+  .obj-row .check {
+    width: 12px; height: 12px;
+    border: 1px solid var(--ink-4);
+    border-radius: 3px;
+  }
+  .obj-row .check.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    position: relative;
+  }
+  .obj-row .check.on::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-right: 1.5px solid #051912;
+    border-bottom: 1.5px solid #051912;
+    transform: rotate(45deg) translate(-1px, -1px);
+    width: 3px;
+    height: 6px;
+  }
+  .obj-row .ix {
+    font-family: 'Geist Mono', monospace;
+    color: var(--ink-3);
+    font-size: 11px;
+  }
+  .obj-row .tag {
+    font-size: 10px;
+    padding: 2px 6px;
+    background: rgba(74, 144, 255, 0.15);
+    border: 1px solid rgba(74, 144, 255, 0.25);
+    border-radius: 100px;
+    color: #8fb6ff;
+  }
+  .obj-row .metric {
+    font-family: 'Geist Mono', monospace;
+    color: var(--ink-1);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------------------------------------------------------------
+     CALLOUTS (annotations on the mockup)
+  --------------------------------------------------------------- */
+  .callout-box {
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1px;
+    background: var(--glass-edge);
+    border: 1px solid var(--glass-edge);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .callout {
+    background: var(--bg-elev-1);
+    padding: 20px;
+  }
+  .callout .marker {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    text-align: center;
+    line-height: 22px;
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    margin-bottom: 12px;
+    border: 1px solid var(--accent);
+  }
+  .callout h4 {
+    font-family: 'Geist', sans-serif;
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--ink-1);
+    margin-bottom: 6px;
+  }
+  .callout p {
+    font-size: 13px;
+    color: var(--ink-3);
+    line-height: 1.55;
+  }
+
+  /* ---------------------------------------------------------------
+     ROADMAP
+  --------------------------------------------------------------- */
+  .phases {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  .phase {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 48px;
+    padding: 32px;
+    background: var(--bg-elev-1);
+    border: 1px solid var(--glass-edge);
+    border-radius: 8px;
+    align-items: start;
+  }
+  .phase .ph-meta .label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .phase .ph-meta h3 {
+    font-family: 'Geist', sans-serif;
+    font-weight: 400;
+    font-size: 28px;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    color: var(--ink-1);
+    margin-bottom: 12px;
+  }
+  .phase .ph-meta h3 em {
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    color: var(--ink-2);
+  }
+  .phase .ph-meta .desc {
+    color: var(--ink-3);
+    font-size: 14px;
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+  .phase .ph-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--glass-edge);
+  }
+  .phase .ph-stats .stat .k {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-4);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .phase .ph-stats .stat .v {
+    color: var(--ink-1);
+    font-size: 14px;
+    font-family: 'Geist', sans-serif;
+  }
+  .phase .ph-tasks {
+    list-style: none;
+  }
+  .phase .ph-tasks li {
+    position: relative;
+    padding: 10px 0 10px 26px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 13.5px;
+    color: var(--ink-2);
+    line-height: 1.55;
+  }
+  .phase .ph-tasks li:last-child { border-bottom: none; }
+  .phase .ph-tasks li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 14px;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--ink-4);
+    border-radius: 3px;
+  }
+  .phase .ph-tasks li code {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11.5px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 1px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  /* mini mockup for each phase */
+  .mini-mock {
+    margin-top: 24px;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid var(--glass-edge);
+    position: relative;
+    background: #050912;
+  }
+
+  /* ---------------------------------------------------------------
+     NOTES / FOOTER
+  --------------------------------------------------------------- */
+  .notes {
+    background: var(--bg-elev-1);
+    border: 1px solid var(--glass-edge);
+    border-radius: 8px;
+    padding: 40px 48px;
+  }
+  .notes h3 {
+    font-family: 'Geist', sans-serif;
+    font-weight: 500;
+    font-size: 16px;
+    color: var(--ink-1);
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--glass-edge);
+  }
+  .notes ul {
+    list-style: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px 48px;
+  }
+  .notes ul li {
+    font-size: 14px;
+    color: var(--ink-2);
+    line-height: 1.6;
+    padding-left: 24px;
+    position: relative;
+  }
+  .notes ul li::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 9px;
+    width: 8px; height: 1px;
+    background: var(--accent);
+  }
+  .notes ul li strong {
+    color: var(--ink-1);
+    font-weight: 500;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  /* footer */
+  footer {
+    margin-top: 96px;
+    padding-top: 32px;
+    border-top: 1px solid var(--glass-edge);
+    display: flex;
+    justify-content: space-between;
+    color: var(--ink-4);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  /* ---------------------------------------------------------------
+     SURFACES (taxonomy section)
+  --------------------------------------------------------------- */
+  .surfaces-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--glass-edge);
+    border: 1px solid var(--glass-edge);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 64px;
+  }
+  .surface {
+    background: var(--bg-elev-1);
+    padding: 28px 24px 24px;
+    display: flex;
+    flex-direction: column;
+    min-height: 480px;
+  }
+  .surface .s-tag {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 16px;
+  }
+  .surface .s-glyph {
+    height: 80px;
+    margin: 8px 0 20px;
+    position: relative;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px dashed rgba(255,255,255,0.06);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  .surface h3 {
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 26px;
+    color: var(--ink-1);
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+  }
+  .surface .s-desc {
+    font-size: 13px;
+    color: var(--ink-3);
+    line-height: 1.55;
+    margin-bottom: 18px;
+  }
+  .surface .s-mapping {
+    list-style: none;
+    margin-bottom: 18px;
+  }
+  .surface .s-mapping li {
+    font-size: 12px;
+    padding: 5px 0;
+    color: var(--ink-2);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .surface .s-mapping li:last-child { border-bottom: none; }
+  .surface .s-mapping li::before {
+    content: '';
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--ink-4);
+    flex-shrink: 0;
+  }
+  .surface .s-rule {
+    margin-top: auto;
+    padding-top: 14px;
+    border-top: 1px solid var(--glass-edge);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-4);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .surface .s-rule-text {
+    font-size: 12px;
+    color: var(--ink-2);
+    line-height: 1.55;
+    font-style: italic;
+  }
+
+  /* surface glyphs */
+  .glyph-dock {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 100px;
+    background: var(--glass);
+    border: 1px solid var(--glass-edge);
+  }
+  .glyph-dock div {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+  }
+  .glyph-dock div.on {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+  }
+
+  .glyph-palette {
+    width: 140px;
+    height: 60px;
+    background: var(--glass-strong);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-edge);
+    border-radius: 8px;
+    box-shadow: var(--shadow-palette);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .glyph-palette .ph-stripe {
+    height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+  }
+  .glyph-palette .ph-stripe.short { width: 60%; }
+  .glyph-palette .ph-stripe.accent { background: var(--accent-soft); width: 30%; }
+
+  .glyph-popover {
+    width: 110px;
+    background: var(--glass-strong);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-edge);
+    border-radius: 6px;
+    box-shadow: var(--shadow-palette);
+    padding: 4px;
+  }
+  .glyph-popover .pop-item {
+    padding: 4px 6px;
+    font-size: 9px;
+    color: var(--ink-2);
+    border-radius: 3px;
+  }
+  .glyph-popover .pop-item.on {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .glyph-drawer {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: stretch;
+  }
+  .glyph-drawer .canvas-dim {
+    flex: 1;
+    background:
+      radial-gradient(ellipse 60% 50% at 40% 50%, rgba(60, 200, 100, 0.15), transparent 65%),
+      #050912;
+    opacity: 0.6;
+  }
+  .glyph-drawer .sheet {
+    width: 50%;
+    background: var(--glass-strong);
+    backdrop-filter: blur(24px);
+    border-left: 1px solid var(--glass-edge);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .glyph-drawer .sheet div {
+    height: 5px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+  }
+  .glyph-drawer .sheet div.short { width: 60%; }
+
+  /* layout map */
+  .layout-map {
+    background: var(--bg-elev-1);
+    border: 1px solid var(--glass-edge);
+    border-radius: 8px;
+    padding: 40px;
+    margin-bottom: 64px;
+  }
+  .layout-map h3 {
+    font-family: 'Geist', sans-serif;
+    font-weight: 500;
+    font-size: 16px;
+    color: var(--ink-1);
+    margin-bottom: 8px;
+  }
+  .layout-map .map-sub {
+    color: var(--ink-3);
+    font-size: 14px;
+    margin-bottom: 32px;
+    max-width: 640px;
+  }
+  .map-mockup {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background:
+      radial-gradient(ellipse 50% 40% at 50% 55%, rgba(60, 200, 100, 0.1), transparent 65%),
+      #050912;
+    border: 1px solid var(--glass-edge);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .map-mockup .zone {
+    position: absolute;
+    border: 1.5px dashed rgba(27, 208, 163, 0.45);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(27, 208, 163, 0.04);
+  }
+  .map-mockup .zone .zone-label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    text-align: center;
+    padding: 6px 12px;
+    background: var(--bg-deep);
+    border-radius: 4px;
+  }
+  .map-mockup .zone .zone-label small {
+    display: block;
+    font-size: 9px;
+    color: var(--ink-3);
+    letter-spacing: 0.12em;
+    margin-top: 4px;
+  }
+
+  /* tool inspector pattern */
+  .tool-pattern h3 {
+    font-family: 'Geist', sans-serif;
+    font-weight: 400;
+    font-size: 28px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: var(--ink-1);
+    margin-bottom: 12px;
+    max-width: 720px;
+  }
+  .tool-pattern h3 em {
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    color: var(--accent);
+  }
+  .tool-pattern p.tp-body {
+    color: var(--ink-2);
+    font-size: 15px;
+    max-width: 720px;
+    line-height: 1.6;
+    margin-bottom: 32px;
+  }
+  .tool-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 40px;
+    align-items: start;
+  }
+  .tool-bullets {
+    list-style: none;
+  }
+  .tool-bullets li {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--glass-edge);
+    color: var(--ink-2);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .tool-bullets li:last-child { border-bottom: none; }
+  .tool-bullets li strong {
+    display: block;
+    color: var(--ink-1);
+    font-weight: 500;
+    margin-bottom: 4px;
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  /* tool inspector palette specifics */
+  .insp-field {
+    margin-bottom: 14px;
+  }
+  .insp-field .insp-label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-4);
+    margin-bottom: 6px;
+  }
+  .insp-field .insp-input {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--glass-edge);
+    border-radius: 4px;
+    padding: 7px 9px;
+    font-size: 12px;
+    color: var(--ink-1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .insp-field .insp-input .chev {
+    width: 10px; height: 10px;
+    color: var(--ink-3);
+  }
+  .insp-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .insp-chips .chip {
+    padding: 4px 8px;
+    border-radius: 100px;
+    background: rgba(74, 144, 255, 0.12);
+    border: 1px solid rgba(74, 144, 255, 0.3);
+    color: #a3c4ff;
+    font-size: 11px;
+  }
+  .insp-chips .chip.add {
+    background: transparent;
+    border: 1px dashed var(--glass-edge);
+    color: var(--ink-3);
+  }
+
+  /* responsive */
+  @media (max-width: 1100px) {
+    .principles { grid-template-columns: 1fr 1fr; }
+    .sec-head { grid-template-columns: 1fr; gap: 16px; }
+    .sec-body { grid-column: 1; }
+    .phase { grid-template-columns: 1fr; }
+    .notes ul { grid-template-columns: 1fr; }
+    .callout-box { grid-template-columns: 1fr; }
+    .surfaces-grid { grid-template-columns: 1fr 1fr; }
+    .tool-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- ============================================================
+       HEADER
+  ============================================================= -->
+  <header class="doc-head">
+    <div class="eyebrow">NimbusImage · UI Refresh · v0.2</div>
+    <h1>
+      Let the <em>image</em> breathe.<br />
+      Let the chrome dissolve.
+    </h1>
+    <p class="lede">
+      A staged refresh that retires the heavy side panels in favour of a
+      modular workspace of floating glass palettes. The app bar goes
+      transparent. Tools and channels live on circular icon clusters that
+      hover above the image. The interface is something you reach for —
+      not something you wade through.
+    </p>
+    <div class="meta-row">
+      <div class="item">
+        <span class="k">Direction</span>
+        <span class="v">Modular Workspace</span>
+      </div>
+      <div class="item">
+        <span class="k">References</span>
+        <span class="v">Lightroom · Figma · DaVinci Resolve</span>
+      </div>
+      <div class="item">
+        <span class="k">Stack</span>
+        <span class="v">Vue 3 + Vuetify 4</span>
+      </div>
+      <div class="item">
+        <span class="k">Phases</span>
+        <span class="v">4 + polish</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============================================================
+       SECTION 01 — PRINCIPLES
+  ============================================================= -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num"><span>01</span> · Direction</div>
+      <div>
+        <h2 class="sec-title">Four ideas that <em>guide every decision</em>.</h2>
+        <p class="sec-body">
+          Before any pixel moves, agreement on principles. Every component in
+          the refresh should defend at least one of these. If it defends none,
+          it shouldn't ship.
+        </p>
+      </div>
+    </div>
+
+    <div class="principles">
+      <div class="principle">
+        <div>
+          <svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="9" />
+            <circle cx="12" cy="12" r="4" />
+          </svg>
+          <h3>Image is the hero</h3>
+          <p>Chrome retreats. Translucency, blur, and edge-only borders ensure pixels are never wasted on opaque panels covering the sample.</p>
+        </div>
+        <div class="num">P · 01</div>
+      </div>
+      <div class="principle">
+        <div>
+          <svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <rect x="14" y="14" width="7" height="7" rx="1" />
+          </svg>
+          <h3>Recombinant by default</h3>
+          <p>Each panel becomes a palette: draggable, dockable, dismissible. The scientist chooses which tools are visible at a given moment.</p>
+        </div>
+        <div class="num">P · 02</div>
+      </div>
+      <div class="principle">
+        <div>
+          <svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+          </svg>
+          <h3>Single accent, used quietly</h3>
+          <p>Teal stays as the one true accent — but only for state. Selection. Active. Confirmation. Everything else is greyscale and typography.</p>
+        </div>
+        <div class="num">P · 03</div>
+      </div>
+      <div class="principle">
+        <div>
+          <svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M5 12h14M12 5v14" />
+          </svg>
+          <h3>Nothing is lost</h3>
+          <p>Every existing feature has a place. The refresh is composition, not amputation. Power users keep their density; new users see less at once.</p>
+        </div>
+        <div class="num">P · 04</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 02 — VISION MOCKUP
+  ============================================================= -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num"><span>02</span> · North Star</div>
+      <div>
+        <h2 class="sec-title">The <em>final state</em> — everything floats.</h2>
+        <p class="sec-body">
+          A vertical tool dock on the left. A bottom dock for navigation. Three
+          icon-button clusters in the app bar, each opening a glass palette
+          that hovers exactly where you summoned it. The image runs edge to
+          edge. The chrome is there when you reach for it, gone when you don't.
+        </p>
+      </div>
+    </div>
+
+    <!-- ============== MOCKUP ============== -->
+    <div class="mockup" id="mockup-main">
+      <div class="scene">
+        <svg class="cells" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <filter id="cellBlur"><feGaussianBlur stdDeviation="2.5" /></filter>
+            <filter id="cellBlurStrong"><feGaussianBlur stdDeviation="6" /></filter>
+            <radialGradient id="greenCloud" cx="50%" cy="55%" r="50%">
+              <stop offset="0%" stop-color="rgba(120, 230, 130, 0.45)" />
+              <stop offset="100%" stop-color="rgba(40, 100, 60, 0)" />
+            </radialGradient>
+          </defs>
+          <ellipse cx="800" cy="550" rx="520" ry="380" fill="url(#greenCloud)" filter="url(#cellBlurStrong)" />
+          <g id="nuclei" filter="url(#cellBlur)"></g>
+          <g id="spots"></g>
+        </svg>
+        <svg class="annotations" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+          <g fill="rgba(80, 150, 240, 0.32)" stroke="rgba(120, 180, 255, 0.7)" stroke-width="1.4">
+            <path d="M 540 380 Q 600 360 640 400 Q 680 460 640 510 Q 580 530 540 490 Q 510 440 540 380 Z" />
+            <path d="M 760 360 Q 820 340 870 380 Q 920 440 880 500 Q 820 520 770 480 Q 740 420 760 360 Z" />
+            <path d="M 600 600 Q 660 580 710 620 Q 750 680 700 730 Q 640 750 600 700 Q 570 650 600 600 Z" />
+            <path d="M 880 580 Q 940 560 990 600 Q 1020 660 980 710 Q 920 730 880 680 Q 850 630 880 580 Z" />
+            <path d="M 1020 460 Q 1080 440 1130 480 Q 1160 540 1120 590 Q 1060 610 1020 560 Q 990 510 1020 460 Z" />
+          </g>
+        </svg>
+        <div class="grain"></div>
+        <div class="scalebar">
+          <span>100 px</span>
+          <div class="bar"></div>
+        </div>
+      </div>
+
+      <!-- APP BAR -->
+      <div class="appbar">
+        <div class="logo">N</div>
+        <div class="dataset-pill">
+          <span class="label">Dataset</span>
+          <span class="name">HCR — 2026-05-14 08:25</span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" /></svg>
+        </div>
+
+        <div class="spacer"></div>
+
+        <button class="btn-primary">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14" /></svg>
+          Upload data
+        </button>
+
+        <!-- circular icon cluster — palette toggles -->
+        <div class="icon-cluster">
+          <button class="ibtn active" title="Object browser">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M3 12h18M3 18h18" /></svg>
+          </button>
+          <button class="ibtn" title="Snapshots">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7h4l2-3h6l2 3h4v12H3z" /><circle cx="12" cy="13" r="4" /></svg>
+          </button>
+          <button class="ibtn" title="Chat / AI">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12a8 8 0 0 1-12.6 6.6L3 20l1.4-5.4A8 8 0 1 1 21 12Z" /></svg>
+            <span class="dot"></span>
+          </button>
+          <button class="ibtn" title="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" /></svg>
+          </button>
+          <button class="ibtn" title="Help">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" /><circle cx="12" cy="17" r="0.5" fill="currentColor" /></svg>
+          </button>
+        </div>
+
+        <div class="avatar">A</div>
+      </div>
+
+      <!-- TOOL DOCK (left) -->
+      <div class="tooldock">
+        <button class="ibtn active" title="Pointer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3l6 18 3-8 8-3z" /></svg>
+        </button>
+        <button class="ibtn" title="Blob (DAPI)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3c4 0 8 3 8 7s-2 5-2 8-3 3-6 3-7-1-7-5 0-5-2-7 5-6 9-6Z" /></svg>
+        </button>
+        <button class="ibtn" title="Point">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3" fill="currentColor" /><circle cx="12" cy="12" r="8" /></svg>
+        </button>
+        <button class="ibtn" title="Polygon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12L12 4l9 5-4 11H7z" /></svg>
+        </button>
+        <div class="sep"></div>
+        <button class="ibtn" title="Connect">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5" /><circle cx="18" cy="18" r="2.5" /><path d="M8 8l8 8" /></svg>
+        </button>
+        <button class="ibtn" title="SAM">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12c0-5 4-9 9-9 4 0 7 2 8 6s-1 7-5 8-9 0-12-5z" /><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>
+        </button>
+        <button class="ibtn" title="Worker">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 6V4h8v2M3 13h18"/></svg>
+        </button>
+        <div class="sep"></div>
+        <button class="ibtn active" title="Layers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l9 5-9 5-9-5z" /><path d="M3 13l9 5 9-5M3 17l9 5 9-5" /></svg>
+        </button>
+        <button class="ibtn" title="Add tool">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </div>
+
+      <!-- LAYERS PALETTE (floating top-left) -->
+      <div class="palette" style="top: 76px; left: 76px; width: 280px;">
+        <div class="p-head">
+          <div class="grip"><i></i><i></i><i></i></div>
+          <h4>Layers · Channels</h4>
+          <div class="actions">
+            <button title="Pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 17v5M9 17h6M7 3h10v6l3 3v2H4v-2l3-3z" /></svg></button>
+            <button title="Collapse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6" /></svg></button>
+          </div>
+        </div>
+        <div class="p-body">
+          <div class="seg-control">
+            <button>Single</button>
+            <button class="active">Multiple</button>
+            <button>Unroll</button>
+          </div>
+          <div class="channel-row">
+            <div class="swatch dapi"></div>
+            <div class="name">DAPI</div>
+            <div class="count">1,468</div>
+            <div class="toggle on"></div>
+          </div>
+          <div class="channel-row">
+            <div class="swatch fitc"></div>
+            <div class="name">FITC</div>
+            <div class="count">87</div>
+            <div class="toggle on"></div>
+          </div>
+          <div class="channel-row">
+            <div class="swatch tritc"></div>
+            <div class="name">TRITC</div>
+            <div class="count">141</div>
+            <div class="toggle on"></div>
+          </div>
+          <div class="channel-row">
+            <div class="swatch cy5"></div>
+            <div class="name">Cy5</div>
+            <div class="count">144</div>
+            <div class="toggle"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OBJECT BROWSER PALETTE (right) -->
+      <div class="palette" style="top: 192px; right: 20px; width: 360px;">
+        <div class="p-head">
+          <div class="grip"><i></i><i></i><i></i></div>
+          <h4>Object Browser · DAPI blob</h4>
+          <div class="actions">
+            <button title="Filter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h18l-7 9v6l-4-2v-4z" /></svg></button>
+            <button title="Pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 17v5M9 17h6M7 3h10v6l3 3v2H4v-2l3-3z" /></svg></button>
+            <button title="Collapse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6" /></svg></button>
+          </div>
+        </div>
+        <div class="p-body">
+          <div style="display:flex; gap:6px; margin-bottom: 10px; flex-wrap: wrap;">
+            <span class="tag" style="font-family:'Geist Mono',monospace;">Index</span>
+            <span class="tag" style="background:rgba(255,255,255,0.04); border-color:var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace;">Tags</span>
+            <span class="tag" style="background:rgba(255,255,255,0.04); border-color:var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace;">Shape</span>
+            <span class="tag" style="background:rgba(255,255,255,0.04); border-color:var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace;">Area</span>
+          </div>
+          <div style="display:grid; grid-template-columns: 14px 24px 1fr 70px; gap:8px; padding-bottom:8px; border-bottom: 1px solid var(--glass-edge); font-family:'Geist Mono',monospace; font-size:10px; text-transform:uppercase; color: var(--ink-4); letter-spacing:0.14em;">
+            <span></span>
+            <span>#</span>
+            <span>Tag</span>
+            <span style="text-align:right;">Area</span>
+          </div>
+          <div class="obj-row">
+            <div class="check on"></div>
+            <div class="ix">0</div>
+            <div><span class="tag">DAPI blob</span></div>
+            <div class="metric">3,422</div>
+          </div>
+          <div class="obj-row">
+            <div class="check on"></div>
+            <div class="ix">1</div>
+            <div><span class="tag">DAPI blob</span></div>
+            <div class="metric">7,482.5</div>
+          </div>
+          <div class="obj-row">
+            <div class="check"></div>
+            <div class="ix">2</div>
+            <div><span class="tag">DAPI blob</span></div>
+            <div class="metric">9,413</div>
+          </div>
+          <div class="obj-row">
+            <div class="check"></div>
+            <div class="ix">3</div>
+            <div><span class="tag">DAPI blob</span></div>
+            <div class="metric">10,717</div>
+          </div>
+          <div class="obj-row">
+            <div class="check"></div>
+            <div class="ix">4</div>
+            <div><span class="tag">DAPI blob</span></div>
+            <div class="metric">10,055</div>
+          </div>
+          <div style="display:flex; align-items:center; justify-content: space-between; margin-top: 12px; font-family:'Geist Mono',monospace; font-size:10px; color:var(--ink-3); letter-spacing:0.1em;">
+            <span>5 OF 5</span>
+            <div style="display:flex; gap:4px;">
+              <button class="ibtn" style="width:22px;height:22px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" /></svg></button>
+              <button class="ibtn" style="width:22px;height:22px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" /></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MINIMAP -->
+      <div class="minimap">
+        <div class="mini-scene"></div>
+        <div class="viewbox"></div>
+      </div>
+
+      <!-- BOTTOM DOCK -->
+      <div class="bottomdock">
+        <span class="z-label">Z</span>
+        <span class="z-value">3 / 7</span>
+        <div class="slider"></div>
+        <span class="z-value" style="color:var(--ink-3);">0 nm</span>
+        <div class="sep"></div>
+        <button class="ibtn" title="Palette">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="9" r="1.2" fill="currentColor"/><circle cx="12" cy="7" r="1.2" fill="currentColor"/><circle cx="16" cy="9" r="1.2" fill="currentColor"/><circle cx="17" cy="13" r="1.2" fill="currentColor"/></svg>
+        </button>
+        <button class="ibtn" title="Lock view">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 1 1 8 0v4"/></svg>
+        </button>
+        <button class="ibtn" title="Camera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7h4l2-3h6l2 3h4v12H3z" /><circle cx="12" cy="13" r="4" /></svg>
+        </button>
+      </div>
+    </div>
+    <!-- /mockup -->
+
+    <div class="callout-box">
+      <div class="callout">
+        <span class="marker">A</span>
+        <h4>Transparent app bar</h4>
+        <p>56 px high. Backdrop blur + linear gradient mask. The bar exists, but the image visibly continues underneath it. The chrome is felt, not seen.</p>
+      </div>
+      <div class="callout">
+        <span class="marker">B</span>
+        <h4>Circular icon cluster</h4>
+        <p>Snapshots, Chat, Settings, Help collapse into a unified pill on the right. Active state is a soft teal tint with a small dot beneath. Notifications surface as a single accent dot.</p>
+      </div>
+      <div class="callout">
+        <span class="marker">C</span>
+        <h4>Vertical tool dock</h4>
+        <p>Left-edge pill. Pointer + shape tools at top, action tools in the middle, "add tool" at the bottom. Replaces the entire "Toolset" section of the current left panel.</p>
+      </div>
+      <div class="callout">
+        <span class="marker">D</span>
+        <h4>Layers palette</h4>
+        <p>Drag-handle, pin, collapse. Single/Multiple/Unroll as a segmented control. Channels with swatch, name, count, on/off. The expand chevrons become contextual gear icons.</p>
+      </div>
+      <div class="callout">
+        <span class="marker">E</span>
+        <h4>Object browser palette</h4>
+        <p>The current right-side panel reduced to a focused glass surface. Filter chips at top. Annotation rows below. Pagination compressed. Action buttons live in the palette header.</p>
+      </div>
+      <div class="callout">
+        <span class="marker">F</span>
+        <h4>Bottom navigation dock</h4>
+        <p>Z-slider + frame indicator + secondary actions (lock, palette swatch, camera) in a single floating pill. Mirrors the tool dock visually so the workspace feels balanced.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 02b — SURFACES TAXONOMY
+  ============================================================= -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num"><span>02b</span> · Surfaces</div>
+      <div>
+        <h2 class="sec-title">Four surfaces. Each with <em>one job</em>.</h2>
+        <p class="sec-body">
+          Not every panel deserves the same surface. The refresh introduces
+          four distinct surface types. When a feature lands on the wrong
+          surface the workspace feels noisy; when the surface matches the
+          intent the interaction disappears. The job of design here is
+          matchmaking.
+        </p>
+      </div>
+    </div>
+
+    <div class="surfaces-grid">
+
+      <!-- A. DOCK -->
+      <article class="surface">
+        <div class="s-tag">A · Dock</div>
+        <div class="s-glyph">
+          <div class="glyph-dock">
+            <div class="on"></div><div></div><div></div><div></div>
+          </div>
+        </div>
+        <h3>The dock</h3>
+        <p class="s-desc">Always-visible icon strip pinned to an edge. Single-select. Long-press reveals sub-options.</p>
+        <ul class="s-mapping">
+          <li>Drawing tools — pointer, blob, polygon, point, line</li>
+          <li>Interaction tools — connect, SAM, worker</li>
+          <li>Z navigation + view controls (bottom)</li>
+        </ul>
+        <div class="s-rule">Rule</div>
+        <p class="s-rule-text">Use a dock when the user switches between modes constantly. Muscle memory is the win.</p>
+      </article>
+
+      <!-- B. PALETTE -->
+      <article class="surface">
+        <div class="s-tag">B · Palette</div>
+        <div class="s-glyph">
+          <div class="glyph-palette">
+            <div class="ph-stripe short"></div>
+            <div class="ph-stripe"></div>
+            <div class="ph-stripe accent"></div>
+            <div class="ph-stripe short"></div>
+          </div>
+        </div>
+        <h3>The palette</h3>
+        <p class="s-desc">Floating glass panel. Toggleable, draggable, dismissible. Stays open while the user works.</p>
+        <ul class="s-mapping">
+          <li>Layers / Channels</li>
+          <li>Object Browser · Properties</li>
+          <li><strong style="color:var(--accent); font-weight:500;">Tool Inspector</strong> · contextual</li>
+          <li>Chat / AI · Snapshots (jump-to)</li>
+        </ul>
+        <div class="s-rule">Rule</div>
+        <p class="s-rule-text">Use a palette when the user wants to keep it open while doing other work on the canvas.</p>
+      </article>
+
+      <!-- C. POPOVER -->
+      <article class="surface">
+        <div class="s-tag">C · Popover</div>
+        <div class="s-glyph">
+          <div class="glyph-popover">
+            <div class="pop-item on">HCR — 2026-05-14</div>
+            <div class="pop-item">HCR — 2026-05-07</div>
+            <div class="pop-item">IF — 2026-04-30</div>
+          </div>
+        </div>
+        <h3>The popover</h3>
+        <p class="s-desc">Small transient menu near its trigger. Opens, user picks, closes. No persistent UI footprint.</p>
+        <ul class="s-mapping">
+          <li>Dataset switcher</li>
+          <li>Tool sub-options (long-press dock)</li>
+          <li>Account menu · storage status</li>
+          <li>"More actions" overflow menus</li>
+        </ul>
+        <div class="s-rule">Rule</div>
+        <p class="s-rule-text">Use a popover when the choice is brief and ephemeral. No commitment, no canvas overlap.</p>
+      </article>
+
+      <!-- D. DRAWER -->
+      <article class="surface">
+        <div class="s-tag">D · Drawer</div>
+        <div class="s-glyph">
+          <div class="glyph-drawer">
+            <div class="canvas-dim"></div>
+            <div class="sheet">
+              <div></div>
+              <div class="short"></div>
+              <div></div>
+              <div class="short"></div>
+              <div></div>
+            </div>
+          </div>
+        </div>
+        <h3>The drawer</h3>
+        <p class="s-desc">Large overlay sheet from the right edge. The user commits to this task; the canvas dims behind blur.</p>
+        <ul class="s-mapping">
+          <li>Upload data · Add new tool</li>
+          <li>Settings · Help docs</li>
+          <li>Export · Project management</li>
+          <li>Snapshots (manage view)</li>
+        </ul>
+        <div class="s-rule">Rule</div>
+        <p class="s-rule-text">Use a drawer when the task IS the workflow — not a side activity that runs alongside the canvas.</p>
+      </article>
+
+    </div>
+
+    <!-- =========== LAYOUT MAP =========== -->
+    <div class="layout-map">
+      <h3>Where each surface lives</h3>
+      <p class="map-sub">
+        Each surface gets its own zone in the chrome. The user can tell what
+        type of action a button represents <em>from where it lives</em>:
+        left edge = tool · right edge = panel · top corners = app-level.
+      </p>
+      <div class="map-mockup">
+        <!-- top bar -->
+        <div class="zone" style="top: 12px; left: 12px; width: 260px; height: 36px;">
+          <div class="zone-label">Identity<small>logo · dataset (popover)</small></div>
+        </div>
+        <div class="zone" style="top: 12px; right: 12px; width: 320px; height: 36px;">
+          <div class="zone-label">Drawer launchers<small>+ avatar · top-right cluster</small></div>
+        </div>
+
+        <!-- left dock -->
+        <div class="zone" style="top: 80px; left: 12px; bottom: 80px; width: 56px;">
+          <div class="zone-label" style="writing-mode: vertical-rl; transform: rotate(180deg); padding: 12px 6px;">
+            Tool dock<small>drawing · interaction</small>
+          </div>
+        </div>
+
+        <!-- right rail -->
+        <div class="zone" style="top: 80px; right: 12px; bottom: 80px; width: 56px;">
+          <div class="zone-label" style="writing-mode: vertical-rl; transform: rotate(180deg); padding: 12px 6px;">
+            Panel rail<small>palette toggles</small>
+          </div>
+        </div>
+
+        <!-- center: palettes -->
+        <div class="zone" style="top: 80px; left: 84px; right: 84px; bottom: 80px; background: transparent; border: none;">
+          <div class="zone-label" style="border: 1.5px dashed rgba(255,255,255,0.15); padding: 10px 16px; background: rgba(255,255,255,0.02); color: var(--ink-3);">
+            Canvas + floating palettes<small style="color:var(--ink-4);">layers · objects · inspector</small>
+          </div>
+        </div>
+
+        <!-- bottom dock -->
+        <div class="zone" style="bottom: 12px; left: 50%; transform: translateX(-50%); width: 320px; height: 44px;">
+          <div class="zone-label">Bottom dock<small>Z · view controls</small></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =========== TOOL INSPECTOR PATTERN =========== -->
+    <div class="tool-pattern">
+      <h3>Complex tools get a <em>contextual inspector</em>.</h3>
+      <p class="tp-body">
+        The dock just <em>selects</em> the tool. Selecting opens (or updates)
+        a Tool Inspector palette next to it. The inspector adapts to the
+        active tool — one palette, many configurations. This is the same
+        relationship Figma has between its top-bar tools and its right-side
+        properties panel.
+      </p>
+
+      <div class="tool-grid">
+
+        <!-- mini mockup -->
+        <div class="mockup" style="aspect-ratio: 16 / 8;">
+          <div class="scene">
+            <svg viewBox="0 0 1600 800" preserveAspectRatio="xMidYMid slice" style="position:absolute; inset:0; width:100%; height:100%;">
+              <defs>
+                <filter id="b3"><feGaussianBlur stdDeviation="2.5" /></filter>
+                <radialGradient id="cloud2" cx="50%" cy="55%" r="50%">
+                  <stop offset="0%" stop-color="rgba(120, 230, 130, 0.4)" />
+                  <stop offset="100%" stop-color="rgba(40, 100, 60, 0)" />
+                </radialGradient>
+              </defs>
+              <ellipse cx="800" cy="430" rx="500" ry="320" fill="url(#cloud2)" />
+              <g filter="url(#b3)" id="nuclei2"></g>
+            </svg>
+            <svg class="annotations" viewBox="0 0 1600 800" preserveAspectRatio="xMidYMid slice">
+              <g fill="rgba(80, 150, 240, 0.32)" stroke="rgba(120, 180, 255, 0.7)" stroke-width="1.4">
+                <path d="M 700 300 Q 760 280 800 320 Q 840 380 800 430 Q 740 450 700 410 Q 670 360 700 300 Z" />
+                <path d="M 880 400 Q 940 380 990 420 Q 1020 480 980 530 Q 920 550 880 500 Q 850 450 880 400 Z" />
+              </g>
+            </svg>
+            <div class="grain"></div>
+          </div>
+
+          <!-- mini app bar -->
+          <div class="appbar">
+            <div class="logo">N</div>
+            <div class="dataset-pill">
+              <span class="label">Dataset</span>
+              <span class="name">HCR — 2026-05-14</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" /></svg>
+            </div>
+            <div class="spacer"></div>
+            <div class="icon-cluster">
+              <button class="ibtn" title="Upload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M5 11l7-7 7 7M5 20h14"/></svg></button>
+              <button class="ibtn" title="Snapshots"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7h4l2-3h6l2 3h4v12H3z" /><circle cx="12" cy="13" r="4" /></svg></button>
+              <button class="ibtn" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3" /></svg></button>
+            </div>
+            <div class="avatar">A</div>
+          </div>
+
+          <!-- tool dock (with one selected) -->
+          <div class="tooldock">
+            <button class="ibtn" title="Pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3l6 18 3-8 8-3z" /></svg></button>
+            <button class="ibtn active" title="Blob (DAPI)" style="position: relative;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3c4 0 8 3 8 7s-2 5-2 8-3 3-6 3-7-1-7-5 0-5-2-7 5-6 9-6Z" /></svg>
+            </button>
+            <button class="ibtn" title="Point"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3" fill="currentColor" /><circle cx="12" cy="12" r="8" /></svg></button>
+            <button class="ibtn" title="Polygon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12L12 4l9 5-4 11H7z" /></svg></button>
+          </div>
+
+          <!-- arrow from dock to inspector -->
+          <svg style="position:absolute; left:64px; top: 220px; width: 100px; height: 30px; pointer-events:none;" viewBox="0 0 100 30">
+            <path d="M 0 15 Q 30 15 60 15" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="3 3" fill="none"/>
+            <path d="M 56 10 L 64 15 L 56 20" stroke="var(--accent)" stroke-width="1.5" fill="none"/>
+          </svg>
+
+          <!-- TOOL INSPECTOR palette -->
+          <div class="palette" style="top: 80px; left: 110px; width: 250px;">
+            <div class="p-head">
+              <div class="grip"><i></i><i></i><i></i></div>
+              <h4 style="color: var(--accent);">Inspector · DAPI Blob</h4>
+              <div class="actions">
+                <button title="Pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 17v5M9 17h6M7 3h10v6l3 3v2H4v-2l3-3z" /></svg></button>
+              </div>
+            </div>
+            <div class="p-body">
+              <div class="insp-field">
+                <div class="insp-label">Channel</div>
+                <div class="insp-input">
+                  <span style="display:flex; align-items:center; gap:8px;">
+                    <span style="width:8px; height:8px; border-radius:50%; background: var(--c-dapi); box-shadow: 0 0 6px var(--c-dapi);"></span>
+                    DAPI
+                  </span>
+                  <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                </div>
+              </div>
+              <div class="insp-field">
+                <div class="insp-label">Tags</div>
+                <div class="insp-chips">
+                  <span class="chip">DAPI blob</span>
+                  <span class="chip add">+ Add</span>
+                </div>
+              </div>
+              <div class="insp-field">
+                <div class="insp-label">Worker</div>
+                <div class="insp-input">
+                  <span>cellpose:cyto2</span>
+                  <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                </div>
+              </div>
+              <div class="insp-field">
+                <div class="insp-label">Threshold</div>
+                <div style="display: flex; align-items: center; gap: 10px; padding: 4px 0;">
+                  <div style="flex: 1; height: 3px; background: rgba(255,255,255,0.08); border-radius: 100px; position: relative;">
+                    <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 55%; background: var(--accent); border-radius: 100px;"></div>
+                    <div style="position: absolute; width: 10px; height: 10px; border-radius: 50%; background: white; left: 55%; top: -4px; transform: translateX(-50%); box-shadow: 0 0 0 1px var(--accent);"></div>
+                  </div>
+                  <span style="font-family: 'Geist Mono', monospace; font-size: 11px; color: var(--ink-1); width: 32px; text-align: right;">0.55</span>
+                </div>
+              </div>
+              <button style="width:100%; padding: 8px; border-radius: 4px; background: var(--accent); color: #051912; border: none; font-weight: 500; font-size: 12px; cursor: pointer; margin-top: 6px;">Run on current frame</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- bullets -->
+        <ul class="tool-bullets">
+          <li><strong>One inspector, many tools</strong>The palette is a shell. Its contents render from the tool's template — exactly the JSON schema you already have in <code style="font-family:'Geist Mono',monospace; color:var(--accent); font-size:11.5px;">templates.json</code>.</li>
+          <li><strong>Selection-driven</strong>Click a tool in the dock → inspector updates. If the inspector palette is closed, the first selection opens it. After that it stays open and just re-skins.</li>
+          <li><strong>Closes never destroys state</strong>The user can dismiss the inspector. Re-opening returns the same configuration. Per-user, persisted in <code style="font-family:'Geist Mono',monospace; color:var(--accent); font-size:11.5px;">DatasetView</code>.</li>
+          <li><strong>"Add tool" is a drawer</strong>Creating a new tool is a multi-step workflow. It deserves focus and the full drawer surface, not a palette.</li>
+        </ul>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 03 — PALETTE ANATOMY
+  ============================================================= -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num"><span>03</span> · Anatomy</div>
+      <div>
+        <h2 class="sec-title">One palette, every detail <em>resolved</em>.</h2>
+        <p class="sec-body">
+          Every palette is one component with one set of behaviours. Three
+          actions on the header. Drag to move. Pin to lock to an edge.
+          Collapse to a 28-px header strip. The visual recipe below ships once
+          and everything else inherits it.
+        </p>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 360px; gap: 64px; align-items: start;">
+
+      <!-- visual recipe -->
+      <div style="position: relative; aspect-ratio: 16 / 11; border-radius: 8px; overflow: hidden; background: #050912; box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 40px 80px -32px rgba(0,0,0,0.8);">
+        <div class="scene" style="opacity: 0.4;">
+          <svg viewBox="0 0 800 550" preserveAspectRatio="xMidYMid slice" style="position:absolute; inset:0; width:100%; height:100%;">
+            <defs>
+              <filter id="b2"><feGaussianBlur stdDeviation="2"/></filter>
+            </defs>
+            <g filter="url(#b2)">
+              <circle cx="120" cy="100" r="10" fill="rgba(80,140,230,0.6)"/>
+              <circle cx="180" cy="150" r="14" fill="rgba(80,140,230,0.55)"/>
+              <circle cx="250" cy="80" r="11" fill="rgba(80,140,230,0.5)"/>
+              <circle cx="400" cy="200" r="13" fill="rgba(80,140,230,0.55)"/>
+              <circle cx="550" cy="120" r="9" fill="rgba(80,140,230,0.5)"/>
+              <circle cx="650" cy="200" r="12" fill="rgba(80,140,230,0.55)"/>
+              <circle cx="700" cy="350" r="11" fill="rgba(80,140,230,0.5)"/>
+              <circle cx="550" cy="400" r="13" fill="rgba(80,140,230,0.55)"/>
+              <circle cx="350" cy="450" r="14" fill="rgba(80,140,230,0.6)"/>
+              <circle cx="200" cy="380" r="11" fill="rgba(80,140,230,0.5)"/>
+            </g>
+          </svg>
+        </div>
+
+        <!-- exploded palette -->
+        <div class="palette" style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 320px;">
+          <div class="p-head">
+            <div class="grip"><i></i><i></i><i></i></div>
+            <h4>Layers · Channels</h4>
+            <div class="actions">
+              <button title="Pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 17v5M9 17h6M7 3h10v6l3 3v2H4v-2l3-3z" /></svg></button>
+              <button title="Collapse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6" /></svg></button>
+            </div>
+          </div>
+          <div class="p-body">
+            <div class="seg-control">
+              <button>Single</button>
+              <button class="active">Multiple</button>
+              <button>Unroll</button>
+            </div>
+            <div class="channel-row">
+              <div class="swatch dapi"></div>
+              <div class="name">DAPI</div>
+              <div class="count">1,468</div>
+              <div class="toggle on"></div>
+            </div>
+            <div class="channel-row">
+              <div class="swatch fitc"></div>
+              <div class="name">FITC</div>
+              <div class="count">87</div>
+              <div class="toggle on"></div>
+            </div>
+            <div class="channel-row">
+              <div class="swatch tritc"></div>
+              <div class="name">TRITC</div>
+              <div class="count">141</div>
+              <div class="toggle on"></div>
+            </div>
+            <div class="channel-row">
+              <div class="swatch cy5"></div>
+              <div class="name">Cy5</div>
+              <div class="count">144</div>
+              <div class="toggle"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- guides -->
+        <svg style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;" viewBox="0 0 800 550" preserveAspectRatio="none">
+          <g stroke="rgba(27, 208, 163, 0.4)" stroke-dasharray="2 4" stroke-width="1" fill="none">
+            <line x1="240" y1="190" x2="160" y2="160" />
+            <line x1="240" y1="200" x2="160" y2="220" />
+            <line x1="240" y1="220" x2="160" y2="280" />
+            <line x1="560" y1="220" x2="650" y2="200" />
+            <line x1="560" y1="260" x2="650" y2="270" />
+            <line x1="560" y1="300" x2="650" y2="340" />
+          </g>
+        </svg>
+
+        <!-- labels -->
+        <div style="position:absolute; top: 140px; left: 32px; font-family:'Geist Mono',monospace; font-size:10px; color:var(--accent); letter-spacing:0.15em; text-transform:uppercase;">Header · 38 px</div>
+        <div style="position:absolute; top: 200px; left: 32px; font-family:'Geist Mono',monospace; font-size:10px; color:var(--accent); letter-spacing:0.15em; text-transform:uppercase;">Grip · drag</div>
+        <div style="position:absolute; top: 260px; left: 32px; font-family:'Geist Mono',monospace; font-size:10px; color:var(--accent); letter-spacing:0.15em; text-transform:uppercase;">Title · 11px / 0.14em</div>
+
+        <div style="position:absolute; top: 190px; right: 32px; font-family:'Geist Mono',monospace; font-size:10px; color:var(--accent); letter-spacing:0.15em; text-transform:uppercase; text-align: right;">Backdrop · 28px blur</div>
+        <div style="position:absolute; top: 250px; right: 32px; font-family:'Geist Mono',monospace; font-size:10px; color:var(--accent); letter-spacing:0.15em; text-transform:uppercase; text-align: right;">Edge · 0.5px / 8% white</div>
+        <div style="position:absolute; top: 320px; right: 32px; font-family:'Geist Mono',monospace; font-size:10px; color:var(--accent); letter-spacing:0.15em; text-transform:uppercase; text-align: right;">Shadow · 4 layers</div>
+
+      </div>
+
+      <!-- spec table -->
+      <div>
+        <h3 style="font-family:'Geist',sans-serif; font-weight:500; font-size:17px; margin-bottom:24px; color:var(--ink-1);">Specification</h3>
+        <table style="width:100%; border-collapse: collapse; font-size:13px;">
+          <tbody style="color:var(--ink-2);">
+            <tr><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">Background</td><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">rgba(18,22,30,.78)</td></tr>
+            <tr><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">Backdrop-filter</td><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">blur(28px) sat(140%)</td></tr>
+            <tr><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">Border</td><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">1px rgba(255,255,255,.08)</td></tr>
+            <tr><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">Radius</td><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">12 px</td></tr>
+            <tr><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">Header height</td><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">38 px</td></tr>
+            <tr><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">Body padding</td><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">14 px</td></tr>
+            <tr><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">Title font</td><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">Geist 500 · 11 / 0.14em</td></tr>
+            <tr><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">Drag handle</td><td style="padding:10px 0; border-bottom: 1px solid var(--glass-edge); text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">Full header</td></tr>
+            <tr><td style="padding:10px 0; color:var(--ink-3); font-family:'Geist Mono',monospace; font-size:11px;">States</td><td style="padding:10px 0; text-align:right; font-family:'Geist Mono',monospace; font-size:11px;">expanded · collapsed · pinned</td></tr>
+          </tbody>
+        </table>
+
+        <h3 style="font-family:'Geist',sans-serif; font-weight:500; font-size:17px; margin: 32px 0 16px; color:var(--ink-1);">Where it appears</h3>
+        <ul style="list-style: none;">
+          <li style="font-size:13px; color:var(--ink-2); line-height:1.6; padding: 6px 0; padding-left: 16px; position: relative;">
+            <span style="position:absolute; left:0; top:8px; width:6px; height:6px; border-radius:50%; background: var(--c-dapi);"></span>
+            Layers · Channels
+          </li>
+          <li style="font-size:13px; color:var(--ink-2); line-height:1.6; padding: 6px 0; padding-left: 16px; position: relative;">
+            <span style="position:absolute; left:0; top:8px; width:6px; height:6px; border-radius:50%; background: var(--c-fitc);"></span>
+            Object Browser
+          </li>
+          <li style="font-size:13px; color:var(--ink-2); line-height:1.6; padding: 6px 0; padding-left: 16px; position: relative;">
+            <span style="position:absolute; left:0; top:8px; width:6px; height:6px; border-radius:50%; background: var(--c-tritc);"></span>
+            Snapshots
+          </li>
+          <li style="font-size:13px; color:var(--ink-2); line-height:1.6; padding: 6px 0; padding-left: 16px; position: relative;">
+            <span style="position:absolute; left:0; top:8px; width:6px; height:6px; border-radius:50%; background: var(--c-cy5);"></span>
+            Settings
+          </li>
+          <li style="font-size:13px; color:var(--ink-2); line-height:1.6; padding: 6px 0; padding-left: 16px; position: relative;">
+            <span style="position:absolute; left:0; top:8px; width:6px; height:6px; border-radius:50%; background: var(--accent);"></span>
+            Chat / AI
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 04 — ROADMAP
+  ============================================================= -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num"><span>04</span> · Roadmap</div>
+      <div>
+        <h2 class="sec-title">Four phases. Each <em>shippable on its own</em>.</h2>
+        <p class="sec-body">
+          The refresh is large, but the steps aren't. Each phase delivers a
+          self-contained, mergeable improvement. If we stop after phase 2, the
+          app is already lighter and more modern. If we go all the way, we
+          have a fully modular workspace.
+        </p>
+      </div>
+    </div>
+
+    <div class="phases">
+
+      <!-- ====================================================
+           PHASE 01
+      ===================================================== -->
+      <article class="phase">
+        <div class="ph-meta">
+          <div class="label">Phase 01 · Visual</div>
+          <h3>The bar goes <em>transparent</em>.</h3>
+          <p class="desc">
+            Lowest-risk, highest-impact starter. The app bar gets a glass
+            background — backdrop-filter blur + linear gradient — and the
+            image starts immediately at top: 0. Buttons keep their current
+            behaviour; only their container changes.
+          </p>
+          <div class="ph-stats">
+            <div class="stat">
+              <span class="k">Effort</span>
+              <span class="v">~ 1 day</span>
+            </div>
+            <div class="stat">
+              <span class="k">Risk</span>
+              <span class="v">Low</span>
+            </div>
+            <div class="stat">
+              <span class="k">Scope</span>
+              <span class="v">CSS only</span>
+            </div>
+            <div class="stat">
+              <span class="k">Reversible</span>
+              <span class="v">Trivially</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <ul class="ph-tasks">
+            <li>Change <code>.v-app-bar</code> background to glass with backdrop-filter</li>
+            <li>Make ImageViewer fill viewport edge-to-edge — adjust z-index stack</li>
+            <li>Add subtle bottom border gradient (1px) so the bar still reads as a region</li>
+            <li>Verify legibility against worst-case bright fluorescence images — add text-shadow fallback if needed</li>
+            <li>Audit overflow + tooltip behaviour now that bar is over image content</li>
+            <li>QA on Safari (backdrop-filter quirks) and on systems without GPU compositing</li>
+          </ul>
+          <div class="mini-mock">
+            <div class="scene" style="opacity: 0.9;"></div>
+            <div class="appbar" style="background: linear-gradient(180deg, rgba(5,7,10,0.4), rgba(5,7,10,0));">
+              <div class="logo" style="transform: scale(0.8);">N</div>
+              <div class="dataset-pill" style="transform: scale(0.85); transform-origin: left;">
+                <span class="label">Set</span>
+                <span class="name">HCR</span>
+              </div>
+              <div class="spacer"></div>
+              <button class="btn-primary" style="transform: scale(0.85);">Upload</button>
+              <span style="color:var(--ink-2); font-size:11px; padding: 0 8px;">Snapshots</span>
+              <span style="color:var(--ink-2); font-size:11px; padding: 0 8px;">Settings</span>
+              <div class="avatar" style="transform: scale(0.8);">A</div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- ====================================================
+           PHASE 02
+      ===================================================== -->
+      <article class="phase">
+        <div class="ph-meta">
+          <div class="label">Phase 02 · Topology</div>
+          <h3>Buttons become <em>circles</em>. Side panels become palettes.</h3>
+          <p class="desc">
+            Snapshots, Chat, Settings, Help, Account collapse into a circular
+            icon cluster on the right of the bar. Each opens a glass palette
+            anchored beneath the bar. This is the first time a palette ships;
+            it's a chance to establish the shared component.
+          </p>
+          <div class="ph-stats">
+            <div class="stat">
+              <span class="k">Effort</span>
+              <span class="v">~ 1 week</span>
+            </div>
+            <div class="stat">
+              <span class="k">Risk</span>
+              <span class="v">Medium</span>
+            </div>
+            <div class="stat">
+              <span class="k">Scope</span>
+              <span class="v">New shared component</span>
+            </div>
+            <div class="stat">
+              <span class="k">Unblocks</span>
+              <span class="v">Phases 3 & 4</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <ul class="ph-tasks">
+            <li>Build a shared <code>FloatingPalette.vue</code> — slots for header / body, props for anchor, drag, pin, collapse</li>
+            <li>Replace Snapshots, Settings, Help, Chat with circular icon buttons</li>
+            <li>Wire each circular button to open its existing component inside the palette shell</li>
+            <li>Persist palette positions per user in <code>DatasetView</code> (or a new <code>userWorkspace</code> store)</li>
+            <li>Keyboard shortcuts: <code>1</code>–<code>5</code> to toggle each palette; <code>esc</code> to dismiss</li>
+            <li>Establish the "active dot" indicator under each icon when its palette is open</li>
+          </ul>
+          <div class="mini-mock">
+            <div class="scene" style="opacity: 0.85;"></div>
+            <div class="appbar" style="background: linear-gradient(180deg, rgba(5,7,10,0.5), rgba(5,7,10,0));">
+              <div class="logo" style="transform: scale(0.8);">N</div>
+              <div class="dataset-pill" style="transform: scale(0.85); transform-origin: left;">
+                <span class="label">Set</span>
+                <span class="name">HCR</span>
+              </div>
+              <div class="spacer"></div>
+              <button class="btn-primary" style="transform: scale(0.85);">Upload</button>
+              <div class="icon-cluster">
+                <button class="ibtn active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7h4l2-3h6l2 3h4v12H3z" /><circle cx="12" cy="13" r="4" /></svg></button>
+                <button class="ibtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12a8 8 0 0 1-12.6 6.6L3 20l1.4-5.4A8 8 0 1 1 21 12Z" /></svg></button>
+                <button class="ibtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3" /></svg></button>
+              </div>
+              <div class="avatar" style="transform: scale(0.8);">A</div>
+            </div>
+            <div class="palette" style="top: 60px; right: 90px; width: 200px;">
+              <div class="p-head" style="padding: 6px 8px;">
+                <div class="grip"><i></i><i></i><i></i></div>
+                <h4 style="font-size:10px;">Snapshots</h4>
+              </div>
+              <div class="p-body" style="padding:8px; font-size:11px; color:var(--ink-3);">3 snapshots</div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- ====================================================
+           PHASE 03
+      ===================================================== -->
+      <article class="phase">
+        <div class="ph-meta">
+          <div class="label">Phase 03 · Migration</div>
+          <h3>The side panels <em>dissolve</em>.</h3>
+          <p class="desc">
+            The big move. Left "Toolset / Layers" and right "Object Browser"
+            become palettes. The left panel splits into two: a vertical tool
+            dock (always visible, like Figma) and a Layers palette
+            (toggleable). The right panel becomes a single Object Browser
+            palette with everything its current incarnation has.
+          </p>
+          <div class="ph-stats">
+            <div class="stat">
+              <span class="k">Effort</span>
+              <span class="v">~ 2–3 weeks</span>
+            </div>
+            <div class="stat">
+              <span class="k">Risk</span>
+              <span class="v">Medium-high</span>
+            </div>
+            <div class="stat">
+              <span class="k">Scope</span>
+              <span class="v">Layout + state</span>
+            </div>
+            <div class="stat">
+              <span class="k">Behind flag</span>
+              <span class="v">Yes (recommend)</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <ul class="ph-tasks">
+            <li>Extract the Toolset selector into a vertical <code>ToolDock.vue</code> docked to the left edge</li>
+            <li>Move the Layers / Channels block into a palette opened via a dock button</li>
+            <li>Move the Object Browser (filters + annotation list + properties) into a right-side palette</li>
+            <li>Decide: pinned palettes still push the canvas, or always float above it? — recommend always-float; viewport stays full-bleed</li>
+            <li>Migrate <code>store/index.ts</code> panel-collapsed flags to a new <code>workspace</code> module that tracks palette open/closed/pinned/position</li>
+            <li>Migration UX: ship behind a toggle in Settings; offer a "classic mode" for 1–2 releases</li>
+            <li>Keyboard: tab to cycle palettes, hold space to peek the canvas (hide all palettes temporarily)</li>
+            <li>Accessibility audit: focus trap inside palettes, ARIA roles, restore-focus on close</li>
+          </ul>
+        </div>
+      </article>
+
+      <!-- ====================================================
+           PHASE 04
+      ===================================================== -->
+      <article class="phase">
+        <div class="ph-meta">
+          <div class="label">Phase 04 · Polish</div>
+          <h3>Density, motion, and the <em>bottom dock</em>.</h3>
+          <p class="desc">
+            With the architecture in place, the final phase is craft. A bottom
+            dock for Z-navigation and view controls. Spring-eased open/close
+            motion for palettes. Workspace presets (Annotate, Review,
+            Measure). Polished hover states and consistent micro-typography.
+          </p>
+          <div class="ph-stats">
+            <div class="stat">
+              <span class="k">Effort</span>
+              <span class="v">~ 1 week</span>
+            </div>
+            <div class="stat">
+              <span class="k">Risk</span>
+              <span class="v">Low</span>
+            </div>
+            <div class="stat">
+              <span class="k">Scope</span>
+              <span class="v">Motion + presets</span>
+            </div>
+            <div class="stat">
+              <span class="k">Optional</span>
+              <span class="v">Yes — ship if time</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <ul class="ph-tasks">
+            <li>Build the bottom dock — Z slider + frame indicator + view actions</li>
+            <li>Move the bottom-left palette/lock icons into the bottom dock</li>
+            <li>Workspace presets: save/load palette arrangements per user — "Annotate", "Review", "Measure"</li>
+            <li>Subtle spring motion on palette open/close (scale + fade + slight slide from origin button)</li>
+            <li>Add a "peek" gesture: hold space → palettes fade to 12% opacity</li>
+            <li>Replace the current font with <code>Geist</code> + <code>Geist Mono</code>; restrict <code>Instrument Serif</code> to dataset titles and section headers</li>
+            <li>Audit every spacing token, hover state, and focus ring</li>
+          </ul>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 05 — NOTES & QUESTIONS
+  ============================================================= -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num"><span>05</span> · Notes</div>
+      <div>
+        <h2 class="sec-title">Risks, decisions, and <em>open questions</em>.</h2>
+      </div>
+    </div>
+
+    <div class="notes">
+      <h3>Technical considerations</h3>
+      <ul>
+        <li><strong>Backdrop-filter performance.</strong> Stacking many blurred surfaces (bar + tooldock + 2 palettes + bottomdock) can tax low-end GPUs. We should profile early. Mitigation: limit to ~5 concurrent blurred elements; pin Safari behind a feature query.</li>
+        <li><strong>Vuetify 4 fit.</strong> v-app-bar's <code>flat</code> + <code>color="transparent"</code> + <code>border="b"</code> won't quite get us there. Likely we shadow the bar with a custom layout component and skip <code>v-app-bar</code>'s scroll-behaviour logic.</li>
+        <li><strong>Workspace persistence.</strong> Palette positions are personal, not shared — they belong in <code>IDatasetView</code> or a new <code>userWorkspace</code> resource, not <code>IDatasetConfiguration</code>.</li>
+        <li><strong>Legibility over bright images.</strong> Some fluorescence samples are dominated by bright greens or saturated reds. The bar's tint may need to adapt — consider luminance-aware backdrop tinting or a fixed minimum 40% dark gradient on the bar's top edge.</li>
+        <li><strong>Migration path.</strong> Recommend shipping Phase 3 behind a "New workspace" toggle in Settings. Keep the classic layout for ~2 releases. This gives the field time and protects power-user muscle memory.</li>
+        <li><strong>Image viewer z-index.</strong> Today the canvas is bounded by panels. When palettes float, the canvas must extend behind them. GeoJS handles this fine, but mouse-event hit-testing for the canvas needs to be confirmed when palettes are over it (pointer-events: none on palette gaps).</li>
+        <li><strong>Tooltip strategy.</strong> Circular icons need consistent tooltips with shortcuts. Standardize on a single tooltip component now to avoid drift later.</li>
+        <li><strong>Accessibility floor.</strong> All palette behaviour must work via keyboard. Focus must return to the originating icon button on close. Pin/collapse must be reachable without a mouse.</li>
+      </ul>
+
+      <h3 style="margin-top:48px;">Open questions for you</h3>
+      <ul>
+        <li><strong>Always-float, or pin-pushes-canvas?</strong> Lightroom pins panels and shrinks the image. Figma floats panels above the canvas. I'm leaning Figma — does that match your instinct?</li>
+        <li><strong>Tool dock: always visible, or summonable?</strong> If always visible, scientists never lose their drawing tool. If summonable, the image is fully unobstructed. Recommend always-visible for the dock, summonable for everything else.</li>
+        <li><strong>Workspace presets in v1 or v2?</strong> Worth the effort, but might be deferrable to a follow-up. Your call.</li>
+        <li><strong>Type direction.</strong> Geist + Instrument Serif is one option. If you'd rather stay closer to the current Roboto/system, we can keep that and only refresh weights and sizes.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>NimbusImage · UI Refresh Plan</span>
+    <span>Modular Workspace · Geist · Instrument Serif</span>
+  </footer>
+
+</div>
+
+<script>
+  // Procedurally generate the synthetic microscopy "cells" so the mockup
+  // looks like a real fluorescence image rather than a placeholder.
+  (function () {
+    const ns = 'http://www.w3.org/2000/svg';
+    const seed = (function () {
+      // Tiny seeded PRNG so the layout is stable between reloads.
+      let s = 12345;
+      return function () {
+        s = (s * 9301 + 49297) % 233280;
+        return s / 233280;
+      };
+    })();
+
+    function fillNuclei(el, W, H, count) {
+      for (let i = 0; i < count; i++) {
+        const c = document.createElementNS(ns, 'circle');
+        c.setAttribute('cx', seed() * W);
+        c.setAttribute('cy', seed() * H);
+        c.setAttribute('r', 6 + seed() * 9);
+        const alpha = 0.35 + seed() * 0.45;
+        const isFaint = seed() > 0.85;
+        c.setAttribute('fill',
+          isFaint
+            ? `rgba(60, 100, 180, ${alpha * 0.5})`
+            : `rgba(80, 140, 230, ${alpha})`);
+        el.appendChild(c);
+      }
+    }
+    const nuclei = document.getElementById('nuclei');
+    if (nuclei) fillNuclei(nuclei, 1600, 1000, 320);
+    const nuclei2 = document.getElementById('nuclei2');
+    if (nuclei2) fillNuclei(nuclei2, 1600, 800, 240);
+
+    // small green/yellow spots
+    const spots = document.getElementById('spots');
+    if (spots) {
+      const W = 1600, H = 1000;
+      // FITC bright green dots clustered in the cloud
+      for (let i = 0; i < 200; i++) {
+        const cx = 400 + seed() * 800;
+        const cy = 350 + seed() * 400;
+        const c = document.createElementNS(ns, 'circle');
+        c.setAttribute('cx', cx);
+        c.setAttribute('cy', cy);
+        c.setAttribute('r', 1 + seed() * 1.5);
+        c.setAttribute('fill', `rgba(160, 255, 130, ${0.5 + seed() * 0.4})`);
+        spots.appendChild(c);
+      }
+      // TRITC yellow dots scattered
+      for (let i = 0; i < 80; i++) {
+        const c = document.createElementNS(ns, 'circle');
+        c.setAttribute('cx', seed() * W);
+        c.setAttribute('cy', seed() * H);
+        c.setAttribute('r', 1 + seed() * 1.2);
+        c.setAttribute('fill', `rgba(250, 220, 60, ${0.4 + seed() * 0.4})`);
+        spots.appendChild(c);
+      }
+      // Cy5 red dots — fewer
+      for (let i = 0; i < 30; i++) {
+        const c = document.createElementNS(ns, 'circle');
+        c.setAttribute('cx', seed() * W);
+        c.setAttribute('cy', seed() * H);
+        c.setAttribute('r', 1 + seed() * 1);
+        c.setAttribute('fill', `rgba(255, 80, 80, ${0.4 + seed() * 0.3})`);
+        spots.appendChild(c);
+      }
+    }
+  })();
+</script>
+
+</body>
+</html>

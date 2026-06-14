@@ -66,11 +66,24 @@ Codebase-specific review guidelines are in `CLAUDE.md` - read them before review
 
 ### Step 5: Provide Actionable Feedback
 
-For each issue:
-1. Quote the specific code location (`file:line`)
-2. Explain why it's an issue
-3. Provide a concrete suggestion or code example
-4. Note the severity (must fix vs. nice to have)
+Produce a single, numbered list of findings — do not split issues into separate "major" and "minor" sections. Use a Severity column instead (High / Medium / Low / Nit). For each finding, include:
+
+1. A numeric ID (Finding 1, Finding 2, …)
+2. A short title
+3. The specific code location (`file:line`)
+4. The severity (High / Medium / Low / Nit) and one category from the **Issue Categories** table
+5. Current code, suggested code, and a brief rationale
+
+Then produce two numbered tables (see **Example Output Format** below):
+- A **Findings Summary** table whose rows correspond 1-to-1 with the findings list, in the same order, sharing the same numeric IDs.
+- A **Checklist Coverage** table that lists each review category as a row and marks it pass / warn / n/a; warn rows cite the finding number(s) that caused the warning.
+
+Routing rules — do not invent new top-level sections:
+- Positive confirmations or "nothing wrong here" notes → fold into **Overall Assessment**, not into findings.
+- Actionable nits / stylistic suggestions → make them a finding with **Severity: Nit**.
+- Open questions that need user input (and aren't actionable as-is) → **Questions for Clarification**.
+
+This keeps every actionable item discoverable from the Findings Summary table by number, and the Checklist Coverage table answers "what was checked vs. what was flagged" without overlapping content.
 
 ## Issue Categories
 
@@ -87,6 +100,10 @@ For each issue:
 | **Security / Access Control** | Missing permission checks, bypassed access control |
 | **Raw PyMongo** | Using `Model().collection.find()` instead of `Model().find()` |
 | **Redundant Validation** | Checks that duplicate framework behavior |
+| **API calls in Vue components** | Direct `this.girderRest.get(...)` / `this.girderRest.post(...)` in components instead of an API file (`GirderAPI.ts`, `AnnotationsAPI.ts`, etc.) |
+| **Frontend compensating for backend** | Frontend fallback logic that masks backend issues or duplicates backend access control |
+| **Store Organization** | New state added to `src/store/index.ts` instead of a focused store module |
+| **Naming** | Generic variable names or function names that no longer match their behavior |
 
 ## Backend-Specific Checks
 
@@ -145,24 +162,31 @@ New state for distinct feature areas should go in a new store module, not `src/s
 
 ## Example Output Format
 
+The output has exactly four sections, in this order: **Overall Assessment**, **Findings**, **Findings Summary**, **Checklist Coverage**. **Questions for Clarification** is optional and appears only if there are open questions. There is no separate "Minor Observations" section — small items become findings with Severity Nit.
+
+The two tables are numbered and serve different purposes:
+- **Findings Summary** — one row per finding, sharing IDs with the Findings list above.
+- **Checklist Coverage** — one row per review category, showing what was checked. Cite finding numbers in the row(s) that warn so the reader can jump from "this category warned" → "because of finding #N".
+
 ```markdown
 ## Code Review: [branch-name]
 
 ### Overall Assessment
-[Brief summary of code quality and main concerns]
+[1–3 sentences: scope of the diff, overall quality, and anything notable that is NOT a finding — e.g. positive confirmations such as "backend access control is intact" or "no looped DB calls introduced". Do not list issues here.]
 
-### Issues to Address
+### Findings
 
-#### 1. [Issue Title]
-**File:** `src/store/example.ts:42`
-**Severity:** High/Medium/Low
+#### Finding 1: [Short title]
+- **File:** `src/store/example.ts:42`
+- **Severity:** High | Medium | Low | Nit
+- **Category:** [one of the Issue Categories rows, e.g. Pattern Consistency]
 
-**Current code:**
+**Current:**
 \`\`\`typescript
 // problematic code
 \`\`\`
 
-**Suggestion:**
+**Suggested:**
 \`\`\`typescript
 // improved code
 \`\`\`
@@ -171,19 +195,49 @@ New state for distinct feature areas should go in a new store module, not `src/s
 
 ---
 
-### Minor Observations
-- [Small improvements that aren't blocking]
+#### Finding 2: [Short title]
+- **File:** `…`
+- **Severity:** …
+- **Category:** …
+
+**Current:** … **Suggested:** … **Rationale:** …
+
+---
+
+### Findings Summary
+| # | Severity | Category | Location | Summary |
+|---|----------|----------|----------|---------|
+| 1 | Low | Pattern Consistency | `src/store/example.ts:42` | one-line restatement of Finding 1 |
+| 2 | Nit | Code Duplication | `src/components/Foo.vue:17` | one-line restatement of Finding 2 |
+
+### Checklist Coverage
+| Category | Status | Findings |
+|----------|--------|----------|
+| Pattern Consistency | warn | #1 |
+| Code Duplication | warn | #2 |
+| Unnecessary Variables | pass | — |
+| Missing Abstractions | pass | — |
+| Performance Issues (looped DB/API) | pass | — |
+| Type Safety | pass | — |
+| Error Handling | pass | — |
+| Layer Violation (API vs model) | n/a | — |
+| Security / Access Control | pass | — |
+| Raw PyMongo | n/a | — |
+| Redundant Validation | pass | — |
+| API calls in Vue components | pass | — |
+| Frontend compensating for backend | pass | — |
+| Store Organization | pass | — |
+| Naming | pass | — |
 
 ### Questions for Clarification
-- [Anything that needs discussion]
-
-### Summary Table
-| Category | Status |
-|----------|--------|
-| Pattern Consistency | pass/warn |
-| Code Duplication | pass/warn |
-| ...etc |
+[Only include this section if there are open questions. Otherwise omit it.]
+- [Question that needs the author's input]
 ```
+
+Notes on the tables:
+- Use `n/a` for categories that don't apply to the diff (e.g. backend-only checks on a frontend-only PR).
+- Sort the Findings list and Findings Summary by descending severity (High → Nit). Tie-break by file path.
+- Keep the **Summary** column in the Findings Summary to one line. The detailed reasoning belongs in the Findings entry above.
 
 ## References
 

@@ -13,7 +13,9 @@
           <h3>Girder domain:</h3>
           <p>{{ girderUrlFromApiRoot(store.girderRest.apiRoot) }}</p>
         </div>
-        <v-btn color="error" dark @click="logout"> Logout </v-btn>
+        <v-btn variant="flat" color="error" size="small" @click="logout">
+          Logout
+        </v-btn>
       </v-container>
     </v-card-text>
   </v-card>

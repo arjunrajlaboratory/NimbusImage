@@ -475,3 +475,157 @@ class TestBulkFind:
         ))
         assert len(views) == 1
         assert views[0]["_id"] == datasetView["_id"]
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestFindCurrentUserOnly:
+    """Tests for the currentUserOnly filter on the find endpoint."""
+
+    def testReturnsOnlyUserOwnedViews(self, admin, user, server):
+        """currentUserOnly=true returns only views the user owns.
+
+        A view shared at READ level should NOT appear, even though it is
+        readable.
+        """
+        # User creates one view they own
+        ownDataset, ownConfig, ownView = createDatasetWithView(user)
+
+        # Admin creates a separate view and shares it with user at READ
+        sharedDataset, sharedConfig, sharedView = createDatasetWithView(
+            admin
+        )
+        DatasetViewModel().setUserAccess(
+            sharedView, user, AccessType.READ, save=True
+        )
+        Folder().setUserAccess(
+            sharedDataset, user, AccessType.READ, save=True
+        )
+        Collection().setUserAccess(
+            sharedConfig, user, AccessType.READ, save=True
+        )
+
+        # Without the filter: user sees both (their own + shared)
+        resp = server.request(
+            path="/dataset_view",
+            method="GET",
+            user=user,
+        )
+        assertStatusOk(resp)
+        ids = {v["_id"] for v in resp.json}
+        assert str(ownView["_id"]) in ids
+        assert str(sharedView["_id"]) in ids
+
+        # With the filter: user sees only the view they own
+        resp = server.request(
+            path="/dataset_view",
+            method="GET",
+            params={"currentUserOnly": "true"},
+            user=user,
+        )
+        assertStatusOk(resp)
+        ids = {v["_id"] for v in resp.json}
+        assert str(ownView["_id"]) in ids
+        assert str(sharedView["_id"]) not in ids
+
+    def testFalsyValuesAreIgnored(self, admin, user, server):
+        """currentUserOnly with a falsy value behaves like the default."""
+        ownDataset, ownConfig, ownView = createDatasetWithView(user)
+        sharedDataset, sharedConfig, sharedView = createDatasetWithView(
+            admin
+        )
+        DatasetViewModel().setUserAccess(
+            sharedView, user, AccessType.READ, save=True
+        )
+        Folder().setUserAccess(
+            sharedDataset, user, AccessType.READ, save=True
+        )
+        Collection().setUserAccess(
+            sharedConfig, user, AccessType.READ, save=True
+        )
+
+        for value in ("false", "0", "no", ""):
+            resp = server.request(
+                path="/dataset_view",
+                method="GET",
+                params={"currentUserOnly": value},
+                user=user,
+            )
+            assertStatusOk(resp)
+            ids = {v["_id"] for v in resp.json}
+            assert str(ownView["_id"]) in ids, value
+            assert str(sharedView["_id"]) in ids, value
+
+    def testTruthyAliases(self, admin, user, server):
+        """Multiple truthy spellings all activate the filter."""
+        ownDataset, ownConfig, ownView = createDatasetWithView(user)
+        sharedDataset, sharedConfig, sharedView = createDatasetWithView(
+            admin
+        )
+        DatasetViewModel().setUserAccess(
+            sharedView, user, AccessType.READ, save=True
+        )
+        Folder().setUserAccess(
+            sharedDataset, user, AccessType.READ, save=True
+        )
+        Collection().setUserAccess(
+            sharedConfig, user, AccessType.READ, save=True
+        )
+
+        for value in ("true", "True", "TRUE", "1", "yes", "on"):
+            resp = server.request(
+                path="/dataset_view",
+                method="GET",
+                params={"currentUserOnly": value},
+                user=user,
+            )
+            assertStatusOk(resp)
+            ids = {v["_id"] for v in resp.json}
+            assert str(ownView["_id"]) in ids, value
+            assert str(sharedView["_id"]) not in ids, value
+
+    def testAdminWithFilterOnlySeesOwnViews(self, admin, user, server):
+        """Site admin with currentUserOnly=true sees only what they own.
+
+        Site admins normally see everything via findWithPermissions, but
+        the filter narrows that to views where their _id appears with
+        ADMIN access — i.e. things they created.
+        """
+        # Other user owns a view
+        otherDataset, otherConfig, otherView = createDatasetWithView(user)
+
+        # Admin owns a view
+        adminDataset, adminConfig, adminView = createDatasetWithView(admin)
+
+        resp = server.request(
+            path="/dataset_view",
+            method="GET",
+            params={"currentUserOnly": "true"},
+            user=admin,
+        )
+        assertStatusOk(resp)
+        ids = {v["_id"] for v in resp.json}
+        assert str(adminView["_id"]) in ids
+        assert str(otherView["_id"]) not in ids
+
+    def testAnonymousIgnoresFilter(self, admin, server):
+        """Anonymous users have no _id; filter is skipped, returns
+        whatever READ permissions allow (typically only public views).
+        """
+        dataset, config, datasetView = createDatasetWithView(admin)
+        # Make public so anonymous can read
+        Folder().setPublic(dataset, True, save=True)
+        DatasetViewModel().setPublic(datasetView, True, save=True)
+        Collection().setPublic(config, True, save=True)
+
+        resp = server.request(
+            path="/dataset_view",
+            method="GET",
+            params={"currentUserOnly": "true"},
+            user=None,
+        )
+        assertStatusOk(resp)
+        # Should not crash; returns the public view since filter is
+        # skipped when no current user.
+        ids = {v["_id"] for v in resp.json}
+        assert str(datasetView["_id"]) in ids

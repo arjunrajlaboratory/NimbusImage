@@ -26,11 +26,77 @@ import chat from "./store/chat";
 import { installTour } from "./plugins/tour";
 import { tourTriggerDirective } from "./plugins/tour-trigger.directive";
 
+// Registers `window.__nimbusMem` for browser-console memory diagnostics.
+// Auto-tracking is opt-in via `__nimbusMem.enable()` and adds no overhead
+// otherwise.
+import { memDiag } from "@/utils/memoryDiagnostics";
+import { logWarning } from "@/utils/log";
+import annotationStore from "./store/annotation";
+import propertiesStore from "./store/properties";
+import girderResourcesStore from "./store/girderResources";
+
 main.initialize();
 main.setupWatchers();
 chat.initializeChatDatabase();
 
+// Wire up live store/cache counts now that all store modules have finished
+// initializing. memDiag does not import these stores itself to avoid a
+// load-order cycle with index.ts.
+memDiag.register(() => {
+  const apiSizes = main.api.getCacheSizes();
+  return {
+    resourcesCache: Object.keys(girderResourcesStore.resources).length,
+    resourcesLocks: Object.keys(girderResourcesStore.resourcesLocks).length,
+    imageCache: apiSizes.imageCache,
+    histogramCache: apiSizes.histogramCache,
+    resolvedHistogramCache: apiSizes.resolvedHistogramCache,
+    annotations: annotationStore.annotations.length,
+    annotationConnections: annotationStore.annotationConnections.length,
+    annotationCentroids: Object.keys(annotationStore.annotationCentroids)
+      .length,
+    selectedAnnotationIds: annotationStore.selectedAnnotationIds.size,
+    activeAnnotationIds: annotationStore.activeAnnotationIds.length,
+    copiedAnnotations: annotationStore.copiedAnnotations.length,
+    pendingAnnotation: annotationStore.pendingAnnotation ? 1 : 0,
+    submitPendingAnnotation: annotationStore.submitPendingAnnotation ? 1 : 0,
+    propertyValues: Object.keys(propertiesStore.propertyValues).length,
+    propertyStatuses: Object.keys(propertiesStore.propertyStatuses).length,
+    workerImageList: Object.keys(propertiesStore.workerImageList).length,
+    workerInterfaces: Object.keys(propertiesStore.workerInterfaces).length,
+    workerPreviews: Object.keys(propertiesStore.workerPreviews).length,
+    pendingWorkerPreviewTimeouts:
+      propertiesStore.pendingWorkerPreviewTimeouts.size,
+  };
+});
+
 const app = createApp(App);
+
+// Optional Sentry error/perf reporting. Only loaded and initialized when a DSN
+// is provided at build time, so local installs and OSS users pay zero cost.
+// Sentry DSNs are not secrets — they're rate-limited project ingest URLs and
+// are designed to ship in client bundles.
+if (import.meta.env.VITE_SENTRY_DSN) {
+  try {
+    const Sentry = await import("@sentry/vue");
+    Sentry.init({
+      app,
+      dsn: import.meta.env.VITE_SENTRY_DSN,
+      environment: import.meta.env.VITE_SENTRY_ENV || "production",
+      release: import.meta.env.VITE_SENTRY_RELEASE || undefined,
+      sendDefaultPii: true,
+      integrations: [Sentry.browserTracingIntegration({ router })],
+      // Free tier has a finite span quota — sample tracing conservatively.
+      // Override via VITE_SENTRY_TRACES_SAMPLE_RATE (0.0 to 1.0).
+      tracesSampleRate: Number(
+        import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? 0.1,
+      ),
+    });
+  } catch (err) {
+    // Never let telemetry initialization break the app (e.g. stale chunk
+    // after deploy, blocked sentry.io domain, ad-blocker).
+    logWarning("Sentry initialization failed:", err);
+  }
+}
 
 app.use(router);
 app.use(store);

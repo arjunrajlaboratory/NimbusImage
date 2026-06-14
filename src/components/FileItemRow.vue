@@ -23,8 +23,9 @@
         <v-btn
           v-bind="activatorProps"
           v-if="debouncedChipsPerItemId[item._id]?.type === 'dataset'"
-          size="x-small"
+          variant="text"
           icon
+          size="x-small"
           class="ml-1"
           @click.stop="shareDialogVisible = true"
         >

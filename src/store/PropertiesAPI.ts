@@ -29,8 +29,6 @@ export default class PropertiesAPI {
     this.client = client;
   }
 
-  histogramsLoaded = 0;
-
   async createProperty(
     property: IAnnotationPropertyConfiguration,
   ): Promise<IAnnotationProperty> {

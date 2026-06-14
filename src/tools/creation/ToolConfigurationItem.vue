@@ -1,5 +1,5 @@
 <template>
-  <v-card variant="flat" class="pa-0 ma-0">
+  <v-card variant="flat" class="pa-0 ma-0 tool-config-item-card">
     <v-card-title v-if="item.name && item.name.length" class="px-4 py-2 ma-0">
       {{ item.name }}
     </v-card-title>
@@ -11,7 +11,7 @@
             <component
               :is="typeToComponentName[item.type]"
               :advanced="advanced"
-              v-bind="item.meta"
+              v-bind="boundMeta"
               v-model="componentValue"
               ref="innerComponent"
               return-object
@@ -87,6 +87,17 @@ const componentValue = computed({
   },
 });
 
+// `meta.value` is the default-value seed consumed by ToolConfiguration's
+// setDefaultValues — it must not fall through to the rendered component.
+// On VCheckbox (VSelectionControl), a `value` prop redefines trueValue/falseValue
+// and breaks the checked-state toggle.
+const boundMeta = computed(() => {
+  if (!props.item.meta) return {};
+  return Object.fromEntries(
+    Object.entries(props.item.meta).filter(([key]) => key !== "value"),
+  );
+});
+
 const innerComponent = ref<any>(null);
 
 function changed() {
@@ -95,3 +106,13 @@ function changed() {
 
 defineExpose({ componentValue, typeToComponentName, changed, innerComponent });
 </script>
+
+<style lang="scss" scoped>
+/* Inner section card inside the glass-treated tool-creation dialog. Let the
+   parent glass show through with a faint inset tint + border, instead of
+   Vuetify's opaque surface background. */
+.tool-config-item-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+}
+</style>

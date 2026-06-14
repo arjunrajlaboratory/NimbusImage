@@ -7,36 +7,36 @@ function mountComponent() {
 }
 
 describe("SelectAllNoneChips", () => {
-  it("renders two chips", () => {
+  it("renders two buttons", () => {
     const wrapper = mountComponent();
-    const chips = wrapper.findAll(".v-chip");
-    expect(chips).toHaveLength(2);
+    const btns = wrapper.findAll(".v-btn");
+    expect(btns).toHaveLength(2);
   });
 
-  it("renders Select All and Select None text", () => {
+  it("renders Select all and Select none text", () => {
     const wrapper = mountComponent();
-    expect(wrapper.text()).toContain("Select All");
-    expect(wrapper.text()).toContain("Select None");
+    expect(wrapper.text()).toContain("Select all");
+    expect(wrapper.text()).toContain("Select none");
   });
 
-  it("emits selectAll when first chip is clicked", async () => {
+  it("emits selectAll when first button is clicked", async () => {
     const wrapper = mountComponent();
-    const chips = wrapper.findAll(".v-chip");
-    await chips.at(0)!.trigger("click");
+    const btns = wrapper.findAll(".v-btn");
+    await btns.at(0)!.trigger("click");
     expect(wrapper.emitted("selectAll")).toHaveLength(1);
   });
 
-  it("emits selectNone when second chip is clicked", async () => {
+  it("emits selectNone when second button is clicked", async () => {
     const wrapper = mountComponent();
-    const chips = wrapper.findAll(".v-chip");
-    await chips.at(1)!.trigger("click");
+    const btns = wrapper.findAll(".v-btn");
+    await btns.at(1)!.trigger("click");
     expect(wrapper.emitted("selectNone")).toHaveLength(1);
   });
 
   it("does not emit selectNone when selectAll is clicked", async () => {
     const wrapper = mountComponent();
-    const chips = wrapper.findAll(".v-chip");
-    await chips.at(0)!.trigger("click");
+    const btns = wrapper.findAll(".v-btn");
+    await btns.at(0)!.trigger("click");
     expect(wrapper.emitted("selectNone")).toBeUndefined();
   });
 });

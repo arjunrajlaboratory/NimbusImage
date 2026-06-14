@@ -41,7 +41,15 @@ declare module "@girder/components" {
       admin?: boolean,
     ): Promise<any>;
 
-    fetchUser(): Promise<Readonly<IGirderUser>>;
+    fetchUser(): Promise<Readonly<IGirderUser> | null>;
+
+    // RestClient exposes a mitt event emitter for auth lifecycle events
+    // (userLoggedIn / userLoggedOut / userFetched / userRegistered /
+    // apiRootUpdated). Declared here so callers can subscribe in TS without
+    // an `any` cast.
+    on(event: string, handler: (payload?: unknown) => void): void;
+    off(event: string, handler: (payload?: unknown) => void): void;
+    emit(event: string, payload?: unknown): void;
   }
 
   export interface RestClientStatic extends RestClientInstance {

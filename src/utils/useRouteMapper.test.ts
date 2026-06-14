@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { defineComponent, nextTick } from "vue";
+import { defineComponent, nextTick, reactive, ref } from "vue";
 import { shallowMount } from "@vue/test-utils";
+import { routeLocationKey } from "vue-router";
 
 // Mock dependencies before any imports
 vi.mock("@/utils/log", () => ({
@@ -156,5 +157,96 @@ describe("useRouteMapper", () => {
     );
     expect(paramSetter).toHaveBeenCalledWith("c1");
     expect(querySetter).toHaveBeenCalledWith("d1");
+  });
+
+  it("replays a syncFromRoute that was skipped while store→URL writes were draining", async () => {
+    // Regression: when a router.replace from a store→URL write is in flight,
+    // syncFromRoute returns early to avoid clobbering the store with the
+    // stale (mid-transition) URL value. Without a follow-up replay, a real
+    // external URL change (browser back, manual edit) that fires its
+    // fullPath watcher during that drain window is silently dropped — the
+    // store stays out of sync with the URL until some unrelated future
+    // route change happens.
+    const setter = vi.fn().mockResolvedValue(undefined);
+    const storeValue = ref<string | null>("v1");
+    const mapper = {
+      parse: String,
+      get: () => storeValue.value,
+      set: setter,
+    };
+
+    // Make router.replace controllable so we can hold the drain open.
+    let resolveReplace: () => void = () => {};
+    mockRouter.replace = vi.fn(
+      () =>
+        new Promise<void>((r) => {
+          resolveReplace = r;
+        }),
+    );
+
+    const route = reactive({
+      name: "root",
+      params: {},
+      query: { q: "v1" } as Record<string, string>,
+      path: "/",
+      hash: "",
+      fullPath: "/?q=v1",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper({}, { q: mapper });
+      },
+    });
+
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+
+    await nextTick();
+    await nextTick();
+
+    // 1. Store → URL: store changes from v1 to v2. Watcher fires
+    //    setUrlParamsOrQuery → router.replace (held pending).
+    storeValue.value = "v2";
+    await nextTick();
+    await nextTick();
+    expect(mockRouter.replace).toHaveBeenCalledTimes(1);
+
+    // Clear setter mock so we only count post-mount calls.
+    setter.mockClear();
+
+    // 2. While the replace is pending: simulate an external URL change
+    //    (e.g., browser back) to v3. The fullPath watcher fires
+    //    syncFromRoute, which is blocked by pendingUrlWrites > 0.
+    route.query.q = "v3";
+    route.fullPath = "/?q=v3";
+    await nextTick();
+    await nextTick();
+
+    // Confirm the skip happened: setter has not yet been called with v3.
+    expect(setter).not.toHaveBeenCalled();
+
+    // 3. Drain: resolve the in-flight replace so pendingUrlWrites returns
+    //    to 0. The drain replay is debounced (DRAIN_DEBOUNCE_MS = 100ms) so
+    //    that fast-scrub cascades don't fire syncFromRoute between every
+    //    queued router.replace — wait past the debounce window.
+    resolveReplace();
+    await new Promise((r) => setTimeout(r, 150));
+    await nextTick();
+    await nextTick();
+
+    // The skipped sync should have been replayed and the store updated to
+    // match the current URL value.
+    expect(setter).toHaveBeenCalledWith("v3");
   });
 });

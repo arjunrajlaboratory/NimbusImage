@@ -4,10 +4,19 @@ import { shallowMount } from "@vue/test-utils";
 
 // --- Top-level mock fn handles ---
 const mockGetUserApiKeys = vi.fn().mockResolvedValue([]);
+const mockGetUserPrivateFolder = vi.fn().mockResolvedValue({
+  _id: "private-folder",
+  _modelType: "folder",
+});
 const mockCreateDataset = vi.fn().mockResolvedValue(null);
 const mockSetSelectedDataset = vi.fn().mockResolvedValue(undefined);
 const mockCreateDatasetView = vi.fn().mockResolvedValue(null);
 const mockSetDatasetViewId = vi.fn();
+const mockCreateDefaultView = vi.fn().mockResolvedValue({ id: "view-1" });
+const mockDatasetInfoToRoute = vi.fn().mockReturnValue({
+  name: "dataset",
+  params: { datasetId: "ds-1" },
+});
 const mockSetSelectedConfiguration = vi.fn();
 const mockCreateUploadCollection = vi.fn().mockResolvedValue(null);
 const mockAddUploadedDataset = vi.fn();
@@ -69,6 +78,8 @@ vi.mock("@/store", () => ({
     },
     api: {
       getUserApiKeys: (...args: any[]) => mockGetUserApiKeys(...args),
+      getUserPrivateFolder: (...args: any[]) =>
+        mockGetUserPrivateFolder(...args),
     },
     createDataset: (...args: any[]) => mockCreateDataset(...args),
     setSelectedDataset: (...args: any[]) => mockSetSelectedDataset(...args),
@@ -145,13 +156,41 @@ vi.mock("@girder/components", () => ({
 vi.mock("@/girder/components", () => ({
   Upload: {
     name: "GirderUpload",
-    template: "<div><slot name='files' :files='[]' /></div>",
-    props: ["dest", "uploadCls", "hideStartButton", "hideHeadline"],
+    template: `
+      <div>
+        <slot
+          name="dropzone"
+          :files="files"
+          :dropzoneMessage="dropzoneMessage"
+          :multiple="multiple"
+          :accept="accept"
+          :inputFilesChanged="inputFilesChanged"
+        />
+        <slot name="files" :files="files" />
+      </div>
+    `,
+    props: {
+      dest: { type: Object, required: true },
+      uploadCls: { type: Function, default: undefined },
+      hideStartButton: { type: Boolean, default: false },
+      hideHeadline: { type: Boolean, default: false },
+      multiple: { type: Boolean, default: true },
+      accept: { type: String, default: undefined },
+    },
     methods: {
-      inputFilesChanged: vi.fn(),
+      inputFilesChanged(this: any, files: File[]) {
+        this.files = files;
+        if (files.length > 0) {
+          this.$emit("filesChanged", files);
+        }
+      },
       startUpload: vi.fn(),
     },
-    data: () => ({ totalProgressPercent: 0 }),
+    data: () => ({
+      files: [],
+      dropzoneMessage: "Drag files here or click to select them",
+      totalProgressPercent: 0,
+    }),
   },
 }));
 
@@ -161,12 +200,48 @@ import { parseTranscodeOutput } from "@/utils/strings";
 
 const GirderUploadStub = {
   name: "GirderUpload",
-  template: "<div><slot name='files' :files='[]' /></div>",
-  props: ["dest", "uploadCls", "hideStartButton", "hideHeadline"],
-  data: () => ({ totalProgressPercent: 0 }),
+  template: `
+    <div>
+      <slot
+        name="dropzone"
+        :files="files"
+        :dropzoneMessage="dropzoneMessage"
+        :multiple="multiple"
+        :accept="accept"
+        :inputFilesChanged="inputFilesChanged"
+      />
+      <slot name="files" :files="files" />
+    </div>
+  `,
+  props: {
+    dest: { type: Object, required: true },
+    uploadCls: { type: Function, default: undefined },
+    hideStartButton: { type: Boolean, default: false },
+    hideHeadline: { type: Boolean, default: false },
+    multiple: { type: Boolean, default: true },
+    accept: { type: String, default: undefined },
+  },
+  data: () => ({
+    files: [],
+    dropzoneMessage: "Drag files here or click to select them",
+    totalProgressPercent: 0,
+  }),
   methods: {
-    inputFilesChanged: vi.fn(),
+    inputFilesChanged(this: any, files: File[]) {
+      this.files = files;
+      if (files.length > 0) {
+        this.$emit("filesChanged", files);
+      }
+    },
     startUpload: vi.fn(),
+  },
+};
+
+const DatasetInfoStub = {
+  template: "<div />",
+  methods: {
+    createDefaultView: (...args: any[]) => mockCreateDefaultView(...args),
+    toRoute: (...args: any[]) => mockDatasetInfoToRoute(...args),
   },
 };
 
@@ -189,7 +264,7 @@ function mountComponent(props: Record<string, any> = {}, options: any = {}) {
         GirderLocationChooser: true,
         FileDropzone: true,
         MultiSourceConfiguration: true,
-        DatasetInfo: true,
+        DatasetInfo: DatasetInfoStub,
         GirderUpload: GirderUploadStub,
         // Vuetify 3 layout stubs need to render slot content for DOM tests
         VContainer: { template: "<div><slot /></div>" },
@@ -237,7 +312,16 @@ describe("NewDataset", () => {
     mockRouter.push = vi.fn();
     resetUploadWorkflow();
     mockGetUserApiKeys.mockResolvedValue([]);
+    mockGetUserPrivateFolder.mockResolvedValue({
+      _id: "private-folder",
+      _modelType: "folder",
+    });
     mockCreateDataset.mockResolvedValue(null);
+    mockCreateDefaultView.mockResolvedValue({ id: "view-1" });
+    mockDatasetInfoToRoute.mockReturnValue({
+      name: "dataset",
+      params: { datasetId: "ds-1" },
+    });
     mockGetFolder.mockResolvedValue({
       _id: "folder1",
       _modelType: "folder",
@@ -757,6 +841,16 @@ describe("NewDataset", () => {
       expect(vm.description).toBe("Prop Desc");
     });
 
+    it("falls back to the user private folder when no initial location exists", async () => {
+      mockUploadWorkflow.active = false;
+      const wrapper = mountComponent({ initialUploadLocation: null });
+      await nextTick();
+      await nextTick();
+      const vm = wrapper.vm as any;
+      expect(mockGetUserPrivateFolder).toHaveBeenCalled();
+      expect(vm.path).toEqual({ _id: "private-folder", _modelType: "folder" });
+    });
+
     it("calls getMaxUploadSize on mount", async () => {
       mockGetUserApiKeys.mockResolvedValue([]);
       mountComponent();
@@ -837,6 +931,34 @@ describe("NewDataset", () => {
       const vm = wrapper.vm as any;
       const result = await vm.getMaxUploadSize();
       expect(result).toBeNull();
+    });
+  });
+
+  describe("primary upload dropzone", () => {
+    it("renders the app FileDropzone in GirderUpload's dropzone slot", async () => {
+      const wrapper = mountComponent();
+      await nextTick();
+
+      const dropzone = wrapper.findComponent({ name: "FileDropzone" });
+
+      expect(dropzone.exists()).toBe(true);
+      expect(dropzone.props("multiple")).toBe(true);
+      expect(dropzone.props("accept")).toBeUndefined();
+    });
+
+    it("updates selected files when the primary dropzone emits files", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      await nextTick();
+
+      const file = createFile("dropped-image.tif", 50);
+      const dropzone = wrapper.findComponent({ name: "FileDropzone" });
+
+      await dropzone.vm.$emit("update:modelValue", [file]);
+
+      expect(vm.uploadedFiles).toEqual([file]);
+      expect(vm.files).toEqual([file]);
+      expect(vm.name).toBe("dropped-image");
     });
   });
 
@@ -1261,10 +1383,14 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.dataset = { id: "ds-1" };
-      // createView will fail without refs but we verify it's called path
       await vm.generationDone("json-id");
-      // setSelectedDataset should be called in createView path
       expect(mockSetSelectedDataset).toHaveBeenCalledWith("ds-1");
+      expect(mockCreateDefaultView).toHaveBeenCalled();
+      expect(mockSetDatasetViewId).toHaveBeenCalledWith({ id: "view-1" });
+      expect(mockRouter.push).toHaveBeenCalledWith({
+        name: "dataset",
+        params: { datasetId: "ds-1" },
+      });
     });
 
     it("returns for non-quick non-batch mode", () => {

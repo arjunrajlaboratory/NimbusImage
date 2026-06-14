@@ -11,11 +11,17 @@ from bson.objectid import ObjectId
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
+from girder.constants import AccessType
+from girder.models.folder import Folder
+
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.connections import (
     AnnotationConnection,
 )
 from upenncontrast_annotation.server.models.collection import Collection
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -425,6 +431,111 @@ class TestUserAssetstoreAccessControl:
         """Non-admin user cannot list assetstores."""
         resp = server.request(
             path="/user_assetstore",
+            method="GET",
+            user=user,
+        )
+        assertStatus(resp, 403)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestInheritedAccessLoad:
+    """Regression tests for the MRO that lets @loadmodel work on models
+    using AccessControlMixin (Annotation, AnnotationConnection,
+    AnnotationPropertyValues). These models inherit permissions from
+    their parent dataset folder via resourceColl/resourceParent. If the
+    MRO puts AccessControlledModel's load/hasAccess ahead of
+    AccessControlMixin's, non-admin users always get 403 because those
+    docs have no access/public fields of their own.
+    """
+
+    def testAnnotationLoadWithInheritedReadAccess(self, admin, user):
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        Folder().setUserAccess(folder, user, AccessType.READ, save=True)
+        ann = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        loaded = Annotation().load(
+            ann["_id"], user=user, level=AccessType.READ, exc=True
+        )
+        assert loaded is not None
+        assert loaded["_id"] == ann["_id"]
+
+    def testConnectionLoadWithInheritedWriteAccess(self, admin, user):
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        Folder().setUserAccess(folder, user, AccessType.WRITE, save=True)
+        ann1 = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        ann2 = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        conn = AnnotationConnection().create(
+            upenn_utilities.getSampleConnection(
+                ann1["_id"], ann2["_id"], folder["_id"]
+            )
+        )
+        loaded = AnnotationConnection().load(
+            conn["_id"], user=user, level=AccessType.WRITE, exc=True
+        )
+        assert loaded is not None
+        assert loaded["_id"] == conn["_id"]
+
+    def testPropertyValuesLoadWithInheritedReadAccess(self, admin, user):
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        Folder().setUserAccess(folder, user, AccessType.READ, save=True)
+        ann = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        values_doc = AnnotationPropertyValues().appendValues(
+            {"testProp": 42},
+            ann["_id"],
+            folder["_id"],
+        )
+        loaded = AnnotationPropertyValues().load(
+            values_doc["_id"], user=user, level=AccessType.READ, exc=True
+        )
+        assert loaded is not None
+        assert loaded["_id"] == values_doc["_id"]
+
+    def testAnnotationGetEndpointWithSharedAccess(
+        self, admin, user, server
+    ):
+        """End-to-end: GET /upenn_annotation/{id} via @loadmodel for a
+        non-admin user with inherited READ access."""
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        Folder().setUserAccess(folder, user, AccessType.READ, save=True)
+        ann = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        resp = server.request(
+            path="/upenn_annotation/%s" % str(ann["_id"]),
+            method="GET",
+            user=user,
+        )
+        assertStatusOk(resp)
+        assert resp.json["_id"] == str(ann["_id"])
+
+    def testAnnotationGetEndpointDeniedWithoutAccess(
+        self, admin, user, server
+    ):
+        """A user without access still gets 403 on the get endpoint."""
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        resp = server.request(
+            path="/upenn_annotation/%s" % str(ann["_id"]),
             method="GET",
             user=user,
         )

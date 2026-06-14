@@ -1,7 +1,6 @@
 <template>
-  <div>
-    <v-card v-if="store.configuration">
-      <v-card-title class="headline"> Snapshots </v-card-title>
+  <div class="snapshots-panel">
+    <v-card v-if="store.configuration" class="snapshots-panel-card">
       <v-dialog v-model="imageTooBigDialog">
         <v-alert class="ma-0" type="error">
           <div class="title">Image can't be downloaded</div>
@@ -13,7 +12,13 @@
           </div>
           <div class="d-flex">
             <v-spacer />
-            <v-btn @click="imageTooBigDialog = false">OK</v-btn>
+            <v-btn
+              variant="flat"
+              color="primary"
+              size="small"
+              @click="imageTooBigDialog = false"
+              >OK</v-btn
+            >
           </div>
         </v-alert>
       </v-dialog>
@@ -66,6 +71,8 @@
         </v-row>
         <v-row class="pl-3">
           <v-btn
+            variant="outlined"
+            color="primary"
             size="small"
             class="my-2"
             @click="setArea('viewport')"
@@ -73,7 +80,13 @@
           >
             Set frame to current view
           </v-btn>
-          <v-btn size="small" class="my-2" @click="setArea('full')">
+          <v-btn
+            variant="outlined"
+            color="primary"
+            size="small"
+            class="my-2"
+            @click="setArea('full')"
+          >
             Set frame to maximum view size
           </v-btn>
         </v-row>
@@ -81,7 +94,9 @@
           <v-dialog v-model="createDialog">
             <template v-slot:activator="{ props: activatorProps }">
               <v-btn
+                variant="flat"
                 color="primary"
+                size="small"
                 v-bind="activatorProps"
                 :disabled="!isLoggedIn"
                 v-description="{
@@ -135,7 +150,9 @@
                 <v-card-actions>
                   <v-spacer />
                   <v-btn
+                    variant="flat"
                     color="primary"
+                    size="small"
                     :disabled="!isSaveSnapshotValid"
                     type="submit"
                   >
@@ -156,7 +173,7 @@
           :headers="tableHeaders"
           :items-per-page="5"
           item-key="key"
-          class="accent-1"
+          class="accent-1 snapshots-table"
           @click:row="loadSnapshot"
           show-select
           return-object
@@ -191,9 +208,10 @@
           <!-- Delete icon -->
           <template v-slot:item.delete="{ item }">
             <v-btn
+              variant="text"
               icon
               size="small"
-              color="red"
+              color="error"
               @click.stop="removeSnapshot(item.name)"
             >
               <v-icon>mdi-trash-can</v-icon>
@@ -401,7 +419,10 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn variant="text" @click="scalebarSettingsDialog = false"
+              <v-btn
+                variant="text"
+                size="small"
+                @click="scalebarSettingsDialog = false"
                 >Close</v-btn
               >
             </v-card-actions>
@@ -412,7 +433,9 @@
 
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="downloadImagesForCurrentState()"
             :disabled="unroll || downloading"
           >
@@ -421,7 +444,9 @@
         </div>
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="downloadImagesForAllSnapshots()"
             :disabled="unroll || downloading"
           >
@@ -430,18 +455,20 @@
         </div>
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="downloadImagesForSelectedSnapshots()"
-            :disabled="
-              unroll || downloading || selectedSnapshotItems.length === 0
-            "
+            :disabled="unroll || downloading || selectedSnapshots.length === 0"
           >
             Download images for selected Snapshots
           </v-btn>
         </div>
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="snapshotWithAnnotations()"
             :disabled="unroll || downloading"
           >
@@ -450,7 +477,9 @@
         </div>
         <div class="mb-2">
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             @click="movieDialog = true"
             :disabled="unroll || downloading"
           >
@@ -469,7 +498,12 @@
       <v-divider />
 
       <div class="d-flex pa-2">
-        <v-btn color="primary" @click="screenshotViewport()">
+        <v-btn
+          variant="flat"
+          color="primary"
+          size="small"
+          @click="screenshotViewport()"
+        >
           Download Screenshot of Current Viewport
         </v-btn>
       </div>
@@ -484,13 +518,27 @@
             removed or because layer channels have changed.
           </v-card-text>
           <v-card-actions class="d-flex justify-end">
-            <v-btn @click="overwriteConfigurationLayers" color="red">
+            <v-btn
+              variant="flat"
+              color="error"
+              size="small"
+              @click="overwriteConfigurationLayers"
+            >
               Overwrite configuration layers
             </v-btn>
-            <v-btn @click="changeDatasetViewContrasts" color="secondary">
+            <v-btn
+              variant="outlined"
+              color="primary"
+              size="small"
+              @click="changeDatasetViewContrasts"
+            >
               Try to apply contrasts anyway
             </v-btn>
-            <v-btn @click="layersOverwritePanel = false" color="primary">
+            <v-btn
+              variant="text"
+              size="small"
+              @click="layersOverwritePanel = false"
+            >
               Do not change layers
             </v-btn>
           </v-card-actions>
@@ -532,6 +580,40 @@ export enum ScalebarMode {
   MANUAL = "manual",
 }
 </script>
+
+<style scoped lang="scss">
+/* Let the palette's frosted-glass surface show through the snapshots panel.
+   The top-level Vuetify card/table backgrounds are opaque by default, while
+   dialog cards remain covered by the global overlay glass rules. */
+.snapshots-panel :deep(.snapshots-panel-card),
+.snapshots-panel :deep(.snapshots-panel-card > .v-card__overlay),
+.snapshots-panel :deep(.snapshots-panel-card > .v-card__underlay) {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.snapshots-table,
+.snapshots-table.v-table,
+.snapshots-table :deep(.v-table),
+.snapshots-table :deep(.v-table__wrapper),
+.snapshots-table :deep(table),
+.snapshots-table :deep(thead),
+.snapshots-table :deep(tbody),
+.snapshots-table :deep(tfoot),
+.snapshots-table :deep(tr),
+.snapshots-table :deep(th),
+.snapshots-table :deep(td),
+.snapshots-table :deep(.v-data-table-footer),
+.snapshots-table :deep(.v-data-table__td) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.snapshots-table :deep(tbody tr td) {
+  border-bottom: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+}
+</style>
 
 <script setup lang="ts">
 import { ref, computed, watch, markRaw } from "vue";
@@ -575,6 +657,10 @@ interface ISnapshotItem {
   modified: string;
 }
 
+function snapshotKey(snapshot: ISnapshot) {
+  return `${snapshot.datasetViewId}:${snapshot.name}`;
+}
+
 function intFromString(value: string) {
   const parsedValue = parseInt("0" + value, 10);
   return Number.isNaN(parsedValue) ? 0 : parsedValue;
@@ -591,6 +677,29 @@ interface IGifOptions extends GIF.Options {
 interface IScalebarSettings {
   length: number;
   unit: TScalebarUnit;
+}
+
+// Everything needed to draw a scalebar onto a download/export canvas,
+// resolved for a specific bounding box. This is computed per snapshot (and
+// once for the current view) so batch downloads of snapshots with different
+// bounding boxes each get a correctly sized scalebar instead of inheriting the
+// current view's settings.
+interface IScalebarSpec {
+  // Physical length of the scalebar expressed in dataset pixels.
+  lengthInDatasetPixels: number;
+  // Width of the rendered bounding box in dataset pixels. The output canvas
+  // spans this same horizontal extent, so it is the denominator used to convert
+  // dataset pixels into canvas pixels (handles downsampled and display-scaled
+  // canvases alike).
+  datasetPixelWidth: number;
+  // Text label drawn next to the bar, e.g. "50µm".
+  label: string;
+}
+
+// A download URL paired with the scalebar to draw onto its image (null = none).
+interface IDownloadUrlItem {
+  url: URL;
+  scalebarSpec: IScalebarSpec | null;
 }
 
 /**
@@ -667,6 +776,14 @@ const addAnnotationsToMovie = ref(false);
 const pixelSizeMode = ref<PixelSizeMode>(PixelSizeMode.DATASET);
 const scalebarMode = ref<ScalebarMode>(ScalebarMode.AUTOMATIC);
 
+const snapshotSelectionScope = computed(() =>
+  [
+    store.datasetView?.datasetId || store.dataset?.id || "",
+    store.datasetView?.configurationId || store.configuration?.id || "",
+  ].join(":"),
+);
+const selectedSnapshotItemsScope = ref(snapshotSelectionScope.value);
+
 // --- Constants ---
 
 const tableHeaders: {
@@ -697,6 +814,27 @@ const tableHeaders: {
 const maxPixels = 4_000_000;
 
 const nameRules = [(name: string) => !!name.trim() || "Name is required"];
+
+function sanitizeSnapshotFilename(name: string | null): string {
+  const sanitized = (name || "snapshot")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .trim();
+  return sanitized || "snapshot";
+}
+
+function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
+  const sanitizedName = sanitizeSnapshotFilename(name);
+  const pointIdx = sanitizedName.lastIndexOf(".");
+  const baseName =
+    pointIdx > 0 ? sanitizedName.slice(0, pointIdx) : sanitizedName;
+  const extension = pointIdx > 0 ? sanitizedName.slice(pointIdx) : "";
+  let fileName = sanitizedName;
+  for (let counter = 1; filenames.has(fileName); counter++) {
+    fileName = `${baseName} (${counter})${extension}`;
+  }
+  filenames.add(fileName);
+  return fileName;
+}
 
 // --- Computed properties ---
 
@@ -843,48 +981,39 @@ const pixelSize = computed((): IScalebarSettings => {
   return configurationPixelSize.value;
 });
 
-const idealScalebarLength = computed(() => {
-  const ps = pixelSize.value;
-  if (ps.unit === TScalebarUnit.PX) {
-    return guessIdealScalebar(bboxRight.value - bboxLeft.value, ps.length);
-  }
-  const pixelLengthInMeters = convertLengthToMeters(ps.length, ps.unit);
-  return guessIdealScalebar(
+// The current view's bounding box assembled from the bbox refs. Used wherever a
+// download/screenshot/movie operates on the current view rather than a snapshot.
+const currentBbox = computed(
+  (): IGeoJSBounds => ({
+    left: bboxLeft.value,
+    top: bboxTop.value,
+    right: bboxRight.value,
+    bottom: bboxBottom.value,
+  }),
+);
+
+const currentScalebar = computed(() =>
+  computeScalebarForBbox(
     bboxRight.value - bboxLeft.value,
-    pixelLengthInMeters,
-  );
-});
+    pixelSize.value,
+    scalebarMode.value,
+    manualScalebarSettings.value,
+  ),
+);
 
-const scalebarSettings = computed((): IScalebarSettings => {
-  if (scalebarMode.value === "manual" && manualScalebarSettings.value) {
-    return manualScalebarSettings.value;
-  }
-  const idealScalebar = idealScalebarLength.value;
-  if (!idealScalebar) {
-    return { length: 1.0, unit: TScalebarUnit.PX };
-  } else {
-    if (pixelSize.value.unit === TScalebarUnit.PX) {
-      return { length: idealScalebar, unit: TScalebarUnit.PX };
-    }
-    return convertMetersToLength(idealScalebar);
-  }
-});
+const scalebarSettings = computed(
+  (): IScalebarSettings => currentScalebar.value.settings,
+);
 
-const scalebarLengthInPixels = computed((): number => {
-  if (scalebarSettings.value.unit === TScalebarUnit.PX) {
-    return scalebarSettings.value.length;
-  }
-  const ps = pixelSize.value;
-  if (ps.unit === TScalebarUnit.PX) {
-    return scalebarSettings.value.length;
-  }
-  const pixelLengthInMeters = convertLengthToMeters(ps.length, ps.unit);
-  const scalebarLengthInMeters = convertLengthToMeters(
-    scalebarSettings.value.length,
-    scalebarSettings.value.unit,
-  );
-  return scalebarLengthInMeters / pixelLengthInMeters;
-});
+const scalebarLengthInPixels = computed(
+  (): number => currentScalebar.value.lengthInPixels,
+);
+
+// Spec for drawing the scalebar onto the current view's downloads (viewport
+// screenshots and movies always operate on the current bounding box).
+const currentScalebarSpec = computed(
+  (): IScalebarSpec => buildScalebarSpec(currentBbox.value),
+);
 
 const snapshotList = computed(() => {
   const sre = new RegExp(snapshotSearch.value || "", "i");
@@ -904,7 +1033,7 @@ const snapshotList = computed(() => {
         const item = {
           name: s.name,
           datasetName: "",
-          key: s.name,
+          key: snapshotKey(s),
           record: s,
           modified: formatDate(new Date(s.modified || s.created)),
         };
@@ -936,6 +1065,21 @@ const currentSnapshot = computed((): { [key: string]: any } | undefined => {
       .filter((s: ISnapshot) => s.name === newName.value)[0];
   }
   return undefined;
+});
+
+const selectedSnapshots = computed((): ISnapshot[] => {
+  if (selectedSnapshotItemsScope.value !== snapshotSelectionScope.value) {
+    return [];
+  }
+  const currentSnapshotsByKey = new Map(
+    (store.configuration?.snapshots || []).map((snapshot) => [
+      snapshotKey(snapshot),
+      snapshot,
+    ]),
+  );
+  return selectedSnapshotItems.value
+    .map((item) => currentSnapshotsByKey.get(snapshotKey(item.record)))
+    .filter((snapshot): snapshot is ISnapshot => !!snapshot);
 });
 
 const pixelSizeUnitItems = computed(() => {
@@ -1075,6 +1219,83 @@ function guessIdealScalebar(
   }
 
   return roundToSignificant(bestValue);
+}
+
+// Ideal automatic scalebar length for a given bounding-box width and pixel
+// size. Returned in the pixel-size's unit space (dataset pixels when the pixel
+// size is in px, otherwise meters), matching guessIdealScalebar's convention.
+function idealScalebarForBbox(
+  bboxWidthInDatasetPixels: number,
+  pixelSize: IScalebarSettings,
+): number | null {
+  const distancePerPixel =
+    pixelSize.unit === TScalebarUnit.PX
+      ? pixelSize.length
+      : convertLengthToMeters(pixelSize.length, pixelSize.unit);
+  return guessIdealScalebar(bboxWidthInDatasetPixels, distancePerPixel);
+}
+
+// Single source of truth for resolving a scalebar (display settings + length in
+// dataset pixels) from a bounding-box width, pixel size, and the chosen mode.
+// Used both for the current view's reactive computeds and for per-snapshot
+// batch downloads.
+function computeScalebarForBbox(
+  bboxWidthInDatasetPixels: number,
+  pixelSize: IScalebarSettings,
+  mode: ScalebarMode,
+  manualSettings: IScalebarSettings | null,
+): { settings: IScalebarSettings; lengthInPixels: number } {
+  let settings: IScalebarSettings;
+  if (mode === ScalebarMode.MANUAL && manualSettings) {
+    settings = manualSettings;
+  } else {
+    const ideal = idealScalebarForBbox(bboxWidthInDatasetPixels, pixelSize);
+    if (!ideal) {
+      settings = { length: 1.0, unit: TScalebarUnit.PX };
+    } else if (pixelSize.unit === TScalebarUnit.PX) {
+      settings = { length: ideal, unit: TScalebarUnit.PX };
+    } else {
+      settings = convertMetersToLength(ideal);
+    }
+  }
+
+  let lengthInPixels: number;
+  if (
+    settings.unit === TScalebarUnit.PX ||
+    pixelSize.unit === TScalebarUnit.PX
+  ) {
+    lengthInPixels = settings.length;
+  } else {
+    const pixelLengthInMeters = convertLengthToMeters(
+      pixelSize.length,
+      pixelSize.unit,
+    );
+    const scalebarLengthInMeters = convertLengthToMeters(
+      settings.length,
+      settings.unit,
+    );
+    lengthInPixels = scalebarLengthInMeters / pixelLengthInMeters;
+  }
+
+  return { settings, lengthInPixels };
+}
+
+// Build the spec needed to draw a scalebar for a specific bounding box, using
+// the currently selected pixel size and scalebar mode (those are global UI
+// choices that apply to the whole download operation).
+function buildScalebarSpec(bbox: IGeoJSBounds): IScalebarSpec {
+  const datasetPixelWidth = bbox.right - bbox.left;
+  const { settings, lengthInPixels } = computeScalebarForBbox(
+    datasetPixelWidth,
+    pixelSize.value,
+    scalebarMode.value,
+    manualScalebarSettings.value,
+  );
+  return {
+    lengthInDatasetPixels: lengthInPixels,
+    datasetPixelWidth,
+    label: `${settings.length}${settings.unit}`,
+  };
 }
 
 function prettyScalebarSettings(settings: IScalebarSettings): string {
@@ -1488,12 +1709,7 @@ function saveSnapshot(): void {
     layerMode: store.layerMode,
     layers: store.layers.map(copyLayerWithoutPrivateAttributes),
     screenshot: {
-      bbox: {
-        left: bboxLeft.value,
-        top: bboxTop.value,
-        right: bboxRight.value,
-        bottom: bboxBottom.value,
-      },
+      bbox: { ...currentBbox.value },
     },
   };
   resetAndCloseForm();
@@ -1506,6 +1722,10 @@ function resetAndCloseForm() {
   newDescription.value = "";
   newTags.value = [];
   resetFormValidation();
+}
+
+function clearSelectedSnapshotItems() {
+  selectedSnapshotItems.value = [];
 }
 
 function removeSnapshot(name: string): void {
@@ -1580,14 +1800,19 @@ async function snapshotWithAnnotations() {
   ctx.drawImage(img, topLeft.x, topLeft.y, width, height, 0, 0, width, height);
 
   if (addScalebar.value) {
-    drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+    drawScalebarOnCanvas(
+      ctx,
+      canvas.width,
+      canvas.height,
+      currentScalebarSpec.value,
+    );
   }
 
   const croppedScreenshot = canvas.toDataURL("image/png");
 
   const params = {
     href: croppedScreenshot,
-    download: "viewport_screenshot.png",
+    download: "image_with_annotations.png",
   };
   downloadToClient(params);
 }
@@ -1598,12 +1823,7 @@ async function downloadImagesForCurrentState() {
     return;
   }
   const location = store.currentLocation;
-  const boundingBox = {
-    left: bboxLeft.value,
-    top: bboxTop.value,
-    right: bboxRight.value,
-    bottom: bboxBottom.value,
-  };
+  const boundingBox = currentBbox.value;
 
   downloading.value = true;
 
@@ -1624,7 +1844,8 @@ async function downloadImagesForCurrentState() {
     if (!urls) {
       return;
     }
-    await downloadUrls(urls, addScalebar.value);
+    const scalebarSpec = addScalebar.value ? currentScalebarSpec.value : null;
+    await downloadUrls(urls.map((url) => ({ url, scalebarSpec })));
   } finally {
     downloading.value = false;
   }
@@ -1644,7 +1865,10 @@ async function downloadImagesForSelectedSnapshots() {
   if (!configuration) {
     return;
   }
-  const selected = selectedSnapshotItems.value.map((s) => s.record);
+  const selected = selectedSnapshots.value;
+  if (selected.length === 0) {
+    return;
+  }
   await downloadImagesForSetOfSnapshots(selected);
 }
 
@@ -1662,7 +1886,7 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
       return;
     }
 
-    const allUrls: URL[] = [];
+    const allUrls: IDownloadUrlItem[] = [];
     const totalSnapshots = snapshots.length;
 
     for (let i = 0; i < totalSnapshots; i++) {
@@ -1687,7 +1911,12 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
         configuration.name,
       );
       if (currentUrls) {
-        allUrls.push(...currentUrls);
+        // Each snapshot has its own bounding box, so resolve the scalebar per
+        // snapshot rather than reusing the current view's.
+        const scalebarSpec = addScalebar.value
+          ? buildScalebarSpec(snapshot.screenshot.bbox)
+          : null;
+        allUrls.push(...currentUrls.map((url) => ({ url, scalebarSpec })));
       }
     }
 
@@ -1698,7 +1927,7 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
       title: "Downloading files...",
     });
 
-    await downloadUrls(allUrls, addScalebar.value);
+    await downloadUrls(allUrls);
   } finally {
     progress.complete(progressId);
     downloading.value = false;
@@ -1788,6 +2017,7 @@ async function getUrlsForSnapshot(
 
 async function addScalebarToImageBuffer(
   data: ArrayBuffer,
+  spec: IScalebarSpec,
 ): Promise<ArrayBuffer> {
   const blob = new Blob([data], { type: "image/png" });
   const imageUrl = URL.createObjectURL(blob);
@@ -1807,7 +2037,7 @@ async function addScalebarToImageBuffer(
 
   ctx.drawImage(img, 0, 0);
 
-  drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+  drawScalebarOnCanvas(ctx, canvas.width, canvas.height, spec);
 
   URL.revokeObjectURL(imageUrl);
 
@@ -1817,29 +2047,32 @@ async function addScalebarToImageBuffer(
   return await annotatedBlob.arrayBuffer();
 }
 
-async function downloadUrls(urls: URL[], withScalebar: boolean = false) {
+// Each URL carries its own scalebar spec (or null for no scalebar) so that a
+// batch of snapshots with different bounding boxes each gets a correctly sized
+// bar rather than the current view's.
+async function downloadUrls(urls: IDownloadUrlItem[]) {
   if (urls.length <= 0) {
     return;
   }
 
   if (urls.length === 1) {
-    if (withScalebar) {
-      const { data } = await store.girderRest.get(urls[0].href, {
+    const { url, scalebarSpec } = urls[0];
+    if (scalebarSpec) {
+      const { data } = await store.girderRest.get(url.href, {
         responseType: "arraybuffer",
       });
-      const processedData = await addScalebarToImageBuffer(data);
+      const processedData = await addScalebarToImageBuffer(data, scalebarSpec);
       const blob = new Blob([processedData], { type: "image/png" });
-      const url = URL.createObjectURL(blob);
+      const objectUrl = URL.createObjectURL(blob);
       const filename =
-        urls[0].searchParams.get("contentDispositionFilename") ||
-        "snapshot.png";
+        url.searchParams.get("contentDispositionFilename") || "snapshot.png";
       downloadToClient({
-        href: url,
-        download: filename,
+        href: objectUrl,
+        download: sanitizeSnapshotFilename(filename),
       });
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(objectUrl);
     } else {
-      downloadToClient({ href: urls[0].href });
+      downloadToClient({ href: url.href });
     }
     return;
   }
@@ -1863,29 +2096,29 @@ async function downloadUrls(urls: URL[], withScalebar: boolean = false) {
     level: ["jpeg", "png"].includes(format.value) ? 0 : 9,
   };
   const filenames: Set<string> = new Set();
-  const filesPushed = urls.map(async (url) => {
-    const { data } = await store.girderRest.get(url.href, {
-      responseType: "arraybuffer",
-    });
+  const zipEntries = urls.map(({ url, scalebarSpec }) => ({
+    url,
+    scalebarSpec,
+    fileName: getUniqueZipEntryName(
+      url.searchParams.get("contentDispositionFilename") || "snapshot",
+      filenames,
+    ),
+  }));
+  const filesPushed = zipEntries.map(
+    async ({ url, scalebarSpec, fileName }) => {
+      const { data } = await store.girderRest.get(url.href, {
+        responseType: "arraybuffer",
+      });
 
-    const finalData = withScalebar
-      ? await addScalebarToImageBuffer(data)
-      : data;
+      const finalData = scalebarSpec
+        ? await addScalebarToImageBuffer(data, scalebarSpec)
+        : data;
 
-    const baseFullFilename =
-      url.searchParams.get("contentDispositionFilename") || "snapshot";
-    let fileName = baseFullFilename;
-    let pointIdx = Math.max(baseFullFilename.lastIndexOf("."), 0);
-    const baseName = baseFullFilename.slice(0, pointIdx);
-    const extension = baseFullFilename.slice(pointIdx);
-    for (let counter = 1; filenames.has(fileName); counter++) {
-      fileName = baseName + " (" + counter + ")" + extension;
-    }
-    filenames.add(fileName);
-    const zipFile = new ZipDeflate(fileName, deflateOptions);
-    zip.add(zipFile);
-    zipFile.push(new Uint8Array(finalData), true);
-  });
+      const zipFile = new ZipDeflate(fileName, deflateOptions);
+      zip.add(zipFile);
+      zipFile.push(new Uint8Array(finalData), true);
+    },
+  );
 
   await Promise.all(filesPushed);
   zip.end();
@@ -2066,7 +2299,7 @@ async function getUrlsForMovieWithAnnotations(
       );
 
       if (addScalebar.value) {
-        drawScalebarOnCanvas(ctx, width, height);
+        drawScalebarOnCanvas(ctx, width, height, currentScalebarSpec.value);
       }
 
       const dataUrl = canvas.toDataURL("image/png");
@@ -2104,12 +2337,7 @@ async function handleMovieDownload(params: any) {
       urls = await getUrlsForMovie(
         timePoints,
         dataset.id,
-        {
-          left: bboxLeft.value,
-          top: bboxTop.value,
-          right: bboxRight.value,
-          bottom: bboxBottom.value,
-        },
+        currentBbox.value,
         store.layers,
         store.currentLocation,
       );
@@ -2215,7 +2443,12 @@ async function downloadMovieAsZippedImageSequence(
         ctx.drawImage(img, 0, 0);
 
         if (addScalebar.value) {
-          drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+          drawScalebarOnCanvas(
+            ctx,
+            canvas.width,
+            canvas.height,
+            currentScalebarSpec.value,
+          );
         }
 
         URL.revokeObjectURL(imageUrl);
@@ -2324,7 +2557,12 @@ async function downloadMovieAsGif(
             ctx.drawImage(img, 0, 0);
 
             if (addScalebar.value) {
-              drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+              drawScalebarOnCanvas(
+                ctx,
+                canvas.width,
+                canvas.height,
+                currentScalebarSpec.value,
+              );
             }
 
             if (params.shouldAddTimeStamp) {
@@ -2498,7 +2736,12 @@ async function downloadMovieAsVideo(
       });
 
       if (addScalebar.value) {
-        drawScalebarOnCanvas(ctx, canvas.width, canvas.height);
+        drawScalebarOnCanvas(
+          ctx,
+          canvas.width,
+          canvas.height,
+          currentScalebarSpec.value,
+        );
       }
 
       if (params.shouldAddTimeStamp) {
@@ -2565,8 +2808,19 @@ function drawScalebarOnCanvas(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
+  spec: IScalebarSpec,
 ) {
-  const scalebarLength = scalebarLengthInPixels.value;
+  // The scalebar length in `spec` is in dataset pixels. The canvas we draw onto
+  // is rarely 1:1 with dataset pixels: region downloads are downsampled to stay
+  // under `maxPixels`, and screenshot-based canvases are in display (screen)
+  // pixels. Both span the same horizontal extent as the bounding box, so
+  // convert dataset pixels to canvas pixels using that ratio. Without this the
+  // on-screen scalebar (drawn by GeoJS in image coordinates) and the downloaded
+  // scalebar disagree whenever the canvas isn't at native scale.
+  const canvasPixelsPerDatasetPixel =
+    spec.datasetPixelWidth > 0 ? width / spec.datasetPixelWidth : 1;
+  const scalebarLength =
+    spec.lengthInDatasetPixels * canvasPixelsPerDatasetPixel;
   const maxDim = Math.max(width, height);
 
   const padding = Math.max(10, Math.min(40, 0.02 * maxDim));
@@ -2586,11 +2840,7 @@ function drawScalebarOnCanvas(
     ctx.font = `${fontSize}px Arial`;
     ctx.textBaseline = "bottom";
     ctx.textAlign = "right";
-    ctx.fillText(
-      `${scalebarSettings.value.length}${scalebarSettings.value.unit}`,
-      width - padding,
-      height - padding - lineWidth,
-    );
+    ctx.fillText(spec.label, width - padding, height - padding - lineWidth);
   }
 }
 
@@ -2631,6 +2881,14 @@ watch(snapshotScalebarColor, () => {
     });
     bboxLayer.value?.draw();
   }
+});
+
+watch(selectedSnapshotItems, () => {
+  selectedSnapshotItemsScope.value = snapshotSelectionScope.value;
+});
+
+watch(snapshotSelectionScope, () => {
+  clearSelectedSnapshotItems();
 });
 
 // --- Expose ---
@@ -2694,19 +2952,26 @@ defineExpose({
   formattedConfigurationPixelSize,
   formattedScalebarSettings,
   pixelSize,
-  idealScalebarLength,
   scalebarSettings,
   scalebarLengthInPixels,
+  currentScalebarSpec,
   snapshotList,
   currentSnapshot,
+  selectedSnapshots,
+  snapshotSelectionScope,
   pixelSizeUnitItems,
   scalebarSettingsUnitItems,
   // Functions
+  sanitizeSnapshotFilename,
+  getUniqueZipEntryName,
   isRotated,
   unitLengthToScalebarUnit,
   convertLengthToMeters,
   convertMetersToLength,
   guessIdealScalebar,
+  idealScalebarForBbox,
+  computeScalebarForBbox,
+  buildScalebarSpec,
   prettyScalebarSettings,
   handlePixelSizeModeChange,
   handleScalebarModeChange,
@@ -2727,6 +2992,7 @@ defineExpose({
   resetFormValidation,
   saveSnapshot,
   resetAndCloseForm,
+  clearSelectedSnapshotItems,
   removeSnapshot,
   screenshotViewport,
   snapshotWithAnnotations,

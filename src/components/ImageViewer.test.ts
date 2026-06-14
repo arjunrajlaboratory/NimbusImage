@@ -23,7 +23,10 @@ const mockMap = () => {
     zoom: vi.fn().mockReturnThis(),
     rotation: vi.fn().mockReturnValue(0),
     size: vi.fn().mockReturnValue({ width: 800, height: 600 }),
-    maxBounds: vi.fn().mockReturnValue({ right: 1000, bottom: 800 }),
+    maxBounds: vi
+      .fn()
+      .mockReturnValue({ left: 0, top: 0, right: 1000, bottom: 800 }),
+    bounds: vi.fn().mockReturnThis(),
     zoomRange: vi.fn().mockReturnThis(),
     draw: vi.fn().mockReturnThis(),
     exit: vi.fn(),
@@ -112,9 +115,13 @@ vi.mock("@/store", () => {
       drawAnnotations: true,
       showTooltips: false,
       setMaps: vi.fn(),
+      setMapAt: vi.fn(),
+      popMap: vi.fn(),
+      clearMaps: vi.fn(),
       setCameraInfo: vi.fn(),
       setDrawAnnotations: vi.fn(),
       setShowTooltips: vi.fn(),
+      getLayerHistogram: vi.fn().mockResolvedValue(null),
     }),
   };
 });
@@ -208,6 +215,7 @@ const mockedAnnotationStore = vi.mocked(annotationStore);
 const mockedProgressStore = vi.mocked(progressStore);
 
 function createLayerStackImage(overrides: any = {}): any {
+  const { layer: layerOverride, image: imageOverride, ...rest } = overrides;
   return {
     layer: {
       id: "layer1",
@@ -215,7 +223,7 @@ function createLayerStackImage(overrides: any = {}): any {
       color: "#ff0000",
       contrast: { whitePoint: 100, blackPoint: 0, mode: "percentile" },
       layerGroup: null,
-      ...overrides.layer,
+      ...layerOverride,
     },
     images: [
       {
@@ -227,7 +235,7 @@ function createLayerStackImage(overrides: any = {}): any {
         tileWidth: 256,
         tileHeight: 256,
         tileinfo: {},
-        ...overrides.image,
+        ...imageOverride,
       },
     ],
     urls: ["http://localhost/api/v1/tile/{z}/{x}/{y}"],
@@ -235,7 +243,7 @@ function createLayerStackImage(overrides: any = {}): any {
     hist: { min: 0, max: 255 },
     singleFrame: 0,
     baseQuadOptions: {},
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -296,10 +304,24 @@ describe("ImageViewer", () => {
     mockedStore.showPixelScalebar = false;
     mockedStore.scalebarColor = "#ffffff";
     mockedAnnotationStore.submitPendingAnnotation = null;
+    (mockedStore as any).getLayerHistogram = vi.fn().mockResolvedValue(null);
     vi.clearAllMocks();
     // Make setMaps/setCameraInfo actually update the reactive store
     (mockedStore.setMaps as any).mockImplementation((v: any) => {
       mockedStore.maps = v;
+    });
+    (mockedStore.setMapAt as any).mockImplementation(
+      ({ index, mapEntry }: any) => {
+        const maps = [...mockedStore.maps];
+        maps[index] = mapEntry;
+        mockedStore.maps = maps;
+      },
+    );
+    (mockedStore.popMap as any).mockImplementation(() => {
+      mockedStore.maps = mockedStore.maps.slice(0, -1);
+    });
+    (mockedStore.clearMaps as any).mockImplementation(() => {
+      mockedStore.maps = [];
     });
     (mockedStore.setCameraInfo as any).mockImplementation((v: any) => {
       mockedStore.cameraInfo = v;
@@ -336,12 +358,12 @@ describe("ImageViewer", () => {
       // Clear any calls from mount
       map1.exit.mockClear();
       map2.exit.mockClear();
-      (mockedStore.setMaps as any).mockClear();
+      (mockedStore.clearMaps as any).mockClear();
       // Trigger onBeforeUnmount
       wrapper.unmount();
       expect(map1.exit).toHaveBeenCalled();
       expect(map2.exit).toHaveBeenCalled();
-      expect(mockedStore.setMaps).toHaveBeenCalledWith([]);
+      expect(mockedStore.clearMaps).toHaveBeenCalledOnce();
     });
 
     it("calls draw on mount when dataset and layers exist", () => {
@@ -1085,7 +1107,80 @@ describe("ImageViewer", () => {
     });
   });
 
-  // ---- 13. draw() ----
+  // ---- 13. _setTileUrls ----
+
+  describe("_setTileUrls", () => {
+    it("assigns unrolled tile URLs and skips histogram fetch when hist is ready", () => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+
+      const fullLayer = mockLayer();
+      const adjLayer = mockLayer();
+      mockedStore.maps = [
+        {
+          map: mockMap(),
+          imageLayers: [fullLayer, adjLayer],
+          params: {},
+        } as any,
+      ];
+
+      const baseImage = createLayerStackImage().images[0];
+      const lsi = createLayerStackImage({
+        images: [baseImage, { ...baseImage, frameIndex: 1 }],
+        urls: [
+          "http://localhost/api/v1/tile/0/{z}/{x}/{y}",
+          "http://localhost/api/v1/tile/1/{z}/{x}/{y}",
+        ],
+        fullUrls: [
+          "http://localhost/api/v1/tile/0/{z}/{x}/{y}?full=true",
+          "http://localhost/api/v1/tile/1/{z}/{x}/{y}?full=true",
+        ],
+        singleFrame: null,
+        baseQuadOptions: {},
+      });
+
+      (wrapper.vm as any)._setTileUrls([lsi], 0, lsi.images[0], 0);
+
+      expect(fullLayer._imageUrls).toEqual(lsi.fullUrls);
+      expect(adjLayer._imageUrls).toEqual(lsi.urls);
+      expect(fullLayer.visible).toHaveBeenCalledWith(true);
+      expect(adjLayer.visible).toHaveBeenCalledWith(true);
+      expect(fullLayer.visible).not.toHaveBeenCalledWith(false);
+      expect(mockedStore.getLayerHistogram).not.toHaveBeenCalled();
+    });
+
+    it("requests a histogram fetch when tile URLs are not ready", async () => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+
+      const fullLayer = mockLayer();
+      const adjLayer = mockLayer();
+      mockedStore.maps = [
+        {
+          map: mockMap(),
+          imageLayers: [fullLayer, adjLayer],
+          params: {},
+        } as any,
+      ];
+
+      const lsi = createLayerStackImage({
+        urls: [],
+        fullUrls: [],
+        hist: null,
+        singleFrame: null,
+        baseQuadOptions: undefined,
+      });
+
+      (wrapper.vm as any)._setTileUrls([lsi], 0, lsi.images[0], 0);
+      await Promise.resolve();
+
+      expect(mockedStore.getLayerHistogram).toHaveBeenCalledWith(lsi.layer);
+      expect(fullLayer.visible).toHaveBeenCalledWith(false);
+      expect(adjLayer.visible).toHaveBeenCalledWith(false);
+    });
+  });
+
+  // ---- 14. draw() ----
 
   describe("draw", () => {
     it("returns early when width equals height equals 1", () => {
@@ -1122,6 +1217,28 @@ describe("ImageViewer", () => {
       // draw runs on mount
       expect((wrapper.vm as any).tileWidth).toBe(256);
       expect((wrapper.vm as any).tileHeight).toBe(256);
+    });
+
+    it("shrinks excess maps through the store", () => {
+      const map1 = mockMap();
+      const map2 = mockMap();
+      const removedMaps: any[] = [];
+      (mockedStore.popMap as any).mockImplementation(() => {
+        removedMaps.push(mockedStore.maps[mockedStore.maps.length - 1]);
+        mockedStore.maps = mockedStore.maps.slice(0, -1);
+      });
+      mockedStore.maps = [
+        { map: map1, imageLayers: [], params: {} } as any,
+        { map: map2, imageLayers: [], params: {} } as any,
+      ];
+      mockedStore.layerStackImages = [createLayerStackImage()];
+
+      wrapper = mountComponent();
+
+      expect(map2.exit).toHaveBeenCalled();
+      expect(mockedStore.popMap).toHaveBeenCalledOnce();
+      expect(removedMaps[0].map.exit).toBe(map2.exit);
+      expect(mockedStore.maps).toHaveLength(1);
     });
   });
 
@@ -1240,7 +1357,7 @@ describe("ImageViewer", () => {
 
     it("renders lock view button", () => {
       wrapper = mountComponent();
-      expect(wrapper.find("#lock-view-tourstep").exists()).toBe(true);
+      expect(wrapper.find('[data-tour="lock-view"]').exists()).toBe(true);
     });
 
     it("renders layer info button", () => {
@@ -1248,7 +1365,7 @@ describe("ImageViewer", () => {
       // The button is inside a v-menu which may not render the activator in shallow mount
       // Check the wrapper HTML for the button or the menu
       const html = wrapper.html();
-      expect(html).toContain("lock-view-tourstep");
+      expect(html).toContain("lock-view");
     });
 
     it("does not render reset rotation button when rotation is 0", () => {
@@ -1259,7 +1376,7 @@ describe("ImageViewer", () => {
         gcsBounds: [],
       } as any;
       wrapper = mountComponent();
-      expect(wrapper.find("#reset-rotation-tourstep").exists()).toBe(false);
+      expect(wrapper.find('[data-tour="reset-rotation"]').exists()).toBe(false);
     });
 
     it("overview computed reflects store.overview", () => {

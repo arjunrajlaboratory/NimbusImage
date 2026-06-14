@@ -126,27 +126,23 @@ class AnnotationAccessor:
 
     def update_many(
         self, updates: list[tuple[str, dict]]
-    ) -> list[Annotation]:
-        """Update multiple annotations.
+    ) -> None:
+        """Update multiple annotations in a single HTTP request.
 
         Args:
             updates: List of (annotation_id, updates_dict) tuples.
-                Each updates_dict must include 'datasetId'.
+                Each updates_dict may include 'datasetId' (required
+                only if moving the annotation to a different dataset).
 
         Note:
-            The bulk PUT endpoint has a known bug (#780) — it expects
-            'id' (not '_id') and may return internal server errors.
-            Prefer using update() in a loop until this is fixed.
-
-        TODO: Once #780 is fixed, verify this works correctly and
-        remove the warning. The payload format may need to change
-        from '_id' to 'id' depending on the fix.
+            The bulk PUT endpoint returns no body, so this method
+            does not return the updated annotations. Call ``get()``
+            on individual IDs if you need their fresh state.
         """
         payload = [
             {"id": aid, **upd} for aid, upd in updates
         ]
-        data = self._gc.put("/upenn_annotation/multiple", json=payload)
-        return [Annotation.from_dict(d) for d in (data or [])]
+        self._gc.put("/upenn_annotation/multiple", json=payload)
 
     def delete(self, annotation_id: str) -> None:
         """Delete a single annotation."""

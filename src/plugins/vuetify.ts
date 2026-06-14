@@ -4,14 +4,49 @@ import Persister from "@/store/Persister";
 
 const vuetify = createVuetify({
   defaults: {
+    // Tooltips below their trigger and wrapped to a sane width, rather than
+    // Vuetify's default of growing sideways off "end". Tooltips that set an
+    // explicit `location`/`max-width` still override these.
+    VTooltip: { location: "bottom", maxWidth: 280 },
     VBtn: { variant: "tonal", rounded: "lg" },
     VCard: { variant: "flat", rounded: "lg" },
     VAlert: { variant: "tonal", rounded: "lg" },
-    VSwitch: { color: "primary" },
-    VCheckbox: { color: "primary", density: "comfortable" },
-    VCheckboxBtn: { density: "comfortable" },
-    VList: { density: "comfortable" },
-    VListItem: { density: "comfortable" },
+    VSwitch: { color: "primary", density: "compact", hideDetails: "auto" },
+    VCheckbox: { color: "primary", density: "compact", hideDetails: "auto" },
+    VCheckboxBtn: { density: "compact" },
+    VRadio: { color: "primary", density: "compact" },
+    VRadioGroup: { density: "compact" },
+    VSlider: { color: "primary", density: "compact", hideDetails: "auto" },
+    VSelect: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+      menuProps: { density: "compact" },
+    },
+    VAutocomplete: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+      menuProps: { density: "compact" },
+    },
+    VCombobox: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+      menuProps: { density: "compact" },
+    },
+    VTextField: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+    },
+    VTextarea: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+    },
+    VList: { density: "compact" },
+    VListItem: { density: "compact" },
     VChip: { rounded: "pill" },
   },
   theme: {

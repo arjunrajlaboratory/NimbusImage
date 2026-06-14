@@ -30,6 +30,28 @@ For Docker worker development (includes `large_image` for writing TIFF files):
 pip install nimbusimage[worker]
 ```
 
+### Install troubleshooting
+
+Two snags come up often enough that they belong here:
+
+- **`error: externally-managed-environment` (PEP 668).** Homebrew Python on macOS and most distro Pythons on Linux refuse `pip install` into the system interpreter. Use a venv:
+
+  ```bash
+  python3 -m venv ~/venvs/ni
+  source ~/venvs/ni/bin/activate
+  pip install nimbusimage
+  ```
+
+- **Phantom namespace package in the NimbusImage source repo.** The repo at `arjunrajlaboratory/NimbusImage` contains a top-level `nimbusimage/` directory (the source of the package). If you run Python from the repo root, PEP 420 namespace-package resolution will let `import nimbusimage` "succeed" with an empty module **even when nothing is installed**, so the usual `python -c "import nimbusimage"` smoke test is misleading. Verify with `__file__`:
+
+  ```python
+  import nimbusimage
+  assert nimbusimage.__file__, "nimbusimage is shadowed by a local directory"
+  print(nimbusimage.__file__)  # should point inside a site-packages dir
+  ```
+
+  If `__file__` is `None`, either `pip install nimbusimage` into a venv, or `cd` out of the NimbusImage repo before running your script.
+
 ## Connecting
 
 **Before writing any connection code, check whether the user already has credentials configured.** Follow this sequence:
@@ -189,3 +211,10 @@ For deeper operations, route to the appropriate skill:
 - **`/nimbus-skills:analyze`** — properties, export, connections, sharing
 
 For the full API reference for any accessor, read the corresponding reference file in the `references/` directory.
+
+## Safety: stay on the accessor layer
+
+The accessors (`ds.images`, `ds.annotations`, `ds.sharing`, etc.) are the supported surface. `client._gc` is the raw `girder-client` and exposes every Girder endpoint, including ones that can do irreversible damage if used wrong. Specifically:
+
+- **Never** call `client._gc.put(f"folder/{ds.id}/access", ...)` to change a dataset's ACL. Use `ds.sharing.share()` / `ds.sharing.set_public()` — they call the incremental `dataset_view/share` endpoint and can't accidentally lock the owner out. The raw endpoint replaces the whole ACL and has been the source of an in-the-wild lockout. See `references/gotchas.md` for the full list of `_gc` footguns.
+- If an accessor doesn't expose what you need, ask the user before reaching for `_gc`. The accessor surface is curated for a reason; adding to it is preferable to bypassing it.

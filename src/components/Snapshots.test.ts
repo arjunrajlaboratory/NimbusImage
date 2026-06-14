@@ -141,11 +141,18 @@ vi.mock("gif.js", () => ({
 }));
 
 vi.mock("fflate", () => ({
-  Zip: vi.fn().mockImplementation(() => ({
-    add: vi.fn(),
-    end: vi.fn(),
-    ondata: null,
-  })),
+  Zip: vi.fn().mockImplementation(() => {
+    const zip = {
+      add: vi.fn(),
+      end: vi.fn(() => {
+        zip.ondata?.(null, new Uint8Array([1]), true);
+      }),
+      ondata: null as
+        | ((err: Error | null, data: Uint8Array, final: boolean) => void)
+        | null,
+    };
+    return zip;
+  }),
   ZipDeflate: vi.fn().mockImplementation(() => ({
     push: vi.fn(),
   })),
@@ -198,6 +205,7 @@ import {
   getLayersDownloadUrls,
 } from "@/utils/screenshot";
 import { downloadToClient } from "@/utils/download";
+import { ZipDeflate } from "fflate";
 import { logError } from "@/utils/log";
 import progress from "@/store/progress";
 import girderResources from "@/store/girderResources";
@@ -213,6 +221,7 @@ const mockedGetDownloadParameters = vi.mocked(getDownloadParameters);
 const mockedGetChannelsDownloadUrls = vi.mocked(getChannelsDownloadUrls);
 const mockedGetLayersDownloadUrls = vi.mocked(getLayersDownloadUrls);
 const mockedDownloadToClient = vi.mocked(downloadToClient);
+const mockedZipDeflate = vi.mocked(ZipDeflate);
 const mockedLogError = vi.mocked(logError);
 const mockedProgress = vi.mocked(progress);
 const mockedGirderResources = vi.mocked(girderResources);
@@ -350,6 +359,14 @@ describe("Snapshots.vue", () => {
     });
 
     it("has default selectedSnapshotItems as empty array", () => {
+      expect((wrapper.vm as any).selectedSnapshotItems).toEqual([]);
+    });
+
+    it("clearSelectedSnapshotItems clears the table selection", () => {
+      (wrapper.vm as any).selectedSnapshotItems = [
+        { name: "Snap", datasetName: "", key: "view1:Snap", record: {} },
+      ];
+      (wrapper.vm as any).clearSelectedSnapshotItems();
       expect((wrapper.vm as any).selectedSnapshotItems).toEqual([]);
     });
 
@@ -827,6 +844,7 @@ describe("Snapshots.vue", () => {
       const list = (w.vm as any).snapshotList;
       expect(list).toHaveLength(2);
       expect(list[0].name).toBeDefined();
+      expect(list[0].key).toContain(":");
       expect(list[0].record).toBeDefined();
       expect(list[0].modified).toBeDefined();
     });
@@ -901,6 +919,57 @@ describe("Snapshots.vue", () => {
       (store as any).configuration = null;
       const w = mountComponent();
       expect((w.vm as any).currentSnapshot).toBeUndefined();
+    });
+
+    it("selectedSnapshots ignores stale items from another configuration", () => {
+      const current = makeSnapshot("Current", { datasetViewId: "view1" });
+      const stale = makeSnapshot("Stale", { datasetViewId: "staleView" });
+      (store as any).configuration.snapshots = [current];
+      const w = mountComponent();
+
+      (w.vm as any).selectedSnapshotItems = [
+        {
+          name: stale.name,
+          datasetName: "Old dataset",
+          key: `${stale.datasetViewId}:${stale.name}`,
+          record: stale,
+          modified: "2026-01-01",
+        },
+        {
+          name: current.name,
+          datasetName: "Current dataset",
+          key: `${current.datasetViewId}:${current.name}`,
+          record: current,
+          modified: "2026-01-01",
+        },
+      ];
+
+      expect((w.vm as any).selectedSnapshots).toEqual([current]);
+    });
+
+    it("selectedSnapshots resolves selected rows to current snapshot records", () => {
+      const current = makeSnapshot("SharedName", {
+        datasetViewId: "view1",
+        modified: 3000,
+      });
+      const staleSameKey = makeSnapshot("SharedName", {
+        datasetViewId: "view1",
+        modified: 1000,
+      });
+      (store as any).configuration.snapshots = [current];
+      const w = mountComponent();
+
+      (w.vm as any).selectedSnapshotItems = [
+        {
+          name: staleSameKey.name,
+          datasetName: "Current dataset",
+          key: `${staleSameKey.datasetViewId}:${staleSameKey.name}`,
+          record: staleSameKey,
+          modified: "2026-01-01",
+        },
+      ];
+
+      expect((w.vm as any).selectedSnapshots).toEqual([current]);
     });
 
     it("saveSnapshot calls store.addSnapshot with correct data", () => {
@@ -1450,14 +1519,114 @@ describe("Snapshots.vue", () => {
     it("downloadUrls downloads single file directly without scalebar", async () => {
       const url = new URL("http://localhost/api/v1/test");
       url.searchParams.set("contentDispositionFilename", "test.png");
-      await (wrapper.vm as any).downloadUrls([url], false);
+      await (wrapper.vm as any).downloadUrls([{ url, scalebarSpec: null }]);
       expect(mockedDownloadToClient).toHaveBeenCalledWith({
         href: url.href,
       });
     });
 
+    it("downloadUrls sanitizes zip entry filenames", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:snapshot"),
+      });
+      (store.girderRest.get as any)
+        .mockResolvedValueOnce({ data: new ArrayBuffer(1) })
+        .mockResolvedValueOnce({ data: new ArrayBuffer(1) });
+
+      const first = new URL("http://localhost/api/v1/first");
+      first.searchParams.set(
+        "contentDispositionFilename",
+        "snap2 - c:1/3 t:1/145.png",
+      );
+      const second = new URL("http://localhost/api/v1/second");
+      second.searchParams.set(
+        "contentDispositionFilename",
+        "snap2 - c_1_3 t_1_145.png",
+      );
+
+      await (wrapper.vm as any).downloadUrls([
+        { url: first, scalebarSpec: null },
+        { url: second, scalebarSpec: null },
+      ]);
+
+      expect(mockedZipDeflate).toHaveBeenNthCalledWith(
+        1,
+        "snap2 - c_1_3 t_1_145.png",
+        expect.any(Object),
+      );
+      expect(mockedZipDeflate).toHaveBeenNthCalledWith(
+        2,
+        "snap2 - c_1_3 t_1_145 (1).png",
+        expect.any(Object),
+      );
+      expect(mockedDownloadToClient).toHaveBeenCalledWith({
+        href: "blob:snapshot",
+        download: "snapshot.zip",
+      });
+    });
+
+    it("downloadUrls assigns sanitized duplicate zip filenames in input order", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:snapshot"),
+      });
+
+      let resolveFirst: ((value: { data: ArrayBuffer }) => void) | undefined;
+      let resolveSecond: ((value: { data: ArrayBuffer }) => void) | undefined;
+      const firstResponse = new Promise<{ data: ArrayBuffer }>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const secondResponse = new Promise<{ data: ArrayBuffer }>((resolve) => {
+        resolveSecond = resolve;
+      });
+
+      (store.girderRest.get as any).mockImplementation((href: string) =>
+        href.includes("first") ? firstResponse : secondResponse,
+      );
+
+      const first = new URL("http://localhost/api/v1/first");
+      first.searchParams.set(
+        "contentDispositionFilename",
+        "snap2 - c:1/3 t:1/145.png",
+      );
+      const second = new URL("http://localhost/api/v1/second");
+      second.searchParams.set(
+        "contentDispositionFilename",
+        "snap2 - c_1_3 t_1_145.png",
+      );
+
+      const downloadPromise = (wrapper.vm as any).downloadUrls([
+        { url: first, scalebarSpec: null },
+        { url: second, scalebarSpec: null },
+      ]);
+
+      resolveSecond?.({ data: new Uint8Array([2]).buffer });
+      await Promise.resolve();
+      resolveFirst?.({ data: new Uint8Array([1]).buffer });
+      await downloadPromise;
+      (store.girderRest.get as any).mockReset();
+
+      const pushedDataByFileName = new Map(
+        mockedZipDeflate.mock.calls.map(([fileName], index) => {
+          const zipFile = mockedZipDeflate.mock.results[index].value as {
+            push: ReturnType<typeof vi.fn>;
+          };
+          return [
+            fileName,
+            Array.from(zipFile.push.mock.calls[0][0] as Uint8Array),
+          ];
+        }),
+      );
+
+      expect(pushedDataByFileName.get("snap2 - c_1_3 t_1_145.png")).toEqual([
+        1,
+      ]);
+      expect(pushedDataByFileName.get("snap2 - c_1_3 t_1_145 (1).png")).toEqual(
+        [2],
+      );
+    });
+
     it("downloadUrls does nothing for empty array", async () => {
-      await (wrapper.vm as any).downloadUrls([], false);
+      await (wrapper.vm as any).downloadUrls([]);
       expect(mockedDownloadToClient).not.toHaveBeenCalled();
     });
 
@@ -1510,6 +1679,65 @@ describe("Snapshots.vue", () => {
       };
     });
 
+    it("downloadImagesForSelectedSnapshots ignores stale selected rows", async () => {
+      const makeDownloadSnapshot = (name: string, datasetViewId: string) => ({
+        name,
+        description: "",
+        tags: [],
+        created: 1000,
+        modified: 2000,
+        datasetViewId,
+        viewport: {
+          tl: { x: 0, y: 0 },
+          tr: { x: 100, y: 0 },
+          bl: { x: 0, y: 100 },
+          br: { x: 100, y: 100 },
+        },
+        rotation: 0,
+        unrollXY: false,
+        unrollZ: false,
+        unrollT: false,
+        xy: 0,
+        z: 0,
+        time: 0,
+        layerMode: "multiple",
+        layers: (store as any).layers,
+        screenshot: { bbox: { left: 0, top: 0, right: 100, bottom: 100 } },
+      });
+      const current = makeDownloadSnapshot("Current", "view1");
+      const stale = makeDownloadSnapshot("Stale", "staleView");
+      (store as any).configuration = {
+        name: "Test Config",
+        snapshots: [current],
+        layers: [],
+        scales: { pixelSize: { value: 0.5, unit: "µm" } },
+      };
+      const w = mountComponent();
+      (w.vm as any).addScalebar = false;
+      (w.vm as any).selectedSnapshotItems = [
+        {
+          name: stale.name,
+          datasetName: "Old dataset",
+          key: `${stale.datasetViewId}:${stale.name}`,
+          record: stale,
+          modified: "2026-01-01",
+        },
+        {
+          name: current.name,
+          datasetName: "Current dataset",
+          key: `${current.datasetViewId}:${current.name}`,
+          record: current,
+          modified: "2026-01-01",
+        },
+      ];
+      (store as any).api.getDatasetView.mockClear();
+
+      await (w.vm as any).downloadImagesForSelectedSnapshots();
+
+      expect((store as any).api.getDatasetView).toHaveBeenCalledTimes(1);
+      expect((store as any).api.getDatasetView).toHaveBeenCalledWith("view1");
+    });
+
     it("screenshotViewport returns when no map", async () => {
       (store as any).maps = [];
       const w = mountComponent();
@@ -1557,6 +1785,53 @@ describe("Snapshots.vue", () => {
         }),
       );
 
+      (store as any).maps = [];
+    });
+
+    it("snapshotWithAnnotations downloads cropped image with distinct filename", async () => {
+      const mockMap = {
+        gcsToDisplay: vi.fn((pt: any) => ({ x: pt.x, y: pt.y })),
+        screenshot: vi.fn().mockResolvedValue("data:image/png;base64,full"),
+        layers: vi.fn(() => []),
+      };
+      (store as any).maps = [{ map: mockMap }];
+
+      // jsdom has no canvas/image backend, so stub the 2D context, the
+      // serialization, and the Image load that snapshotWithAnnotations relies on.
+      const mockCtx = { drawImage: vi.fn() };
+      const getContextSpy = vi
+        .spyOn(HTMLCanvasElement.prototype, "getContext")
+        .mockReturnValue(mockCtx as any);
+      const toDataURLSpy = vi
+        .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+        .mockReturnValue("data:image/png;base64,cropped");
+
+      class MockImage {
+        onload: (() => void) | null = null;
+        set src(_value: string) {
+          // Fire onload on the next tick, after the caller assigns it.
+          setTimeout(() => this.onload?.(), 0);
+        }
+      }
+      vi.stubGlobal("Image", MockImage);
+
+      const w = mountComponent();
+      (w.vm as any).addScalebar = false;
+
+      await (w.vm as any).snapshotWithAnnotations();
+
+      expect(mockMap.screenshot).toHaveBeenCalled();
+      expect(mockedDownloadToClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          href: "data:image/png;base64,cropped",
+          download: "image_with_annotations.png",
+        }),
+      );
+
+      // The suite uses clearAllMocks (not restoreAllMocks), so undo spies/stubs.
+      getContextSpy.mockRestore();
+      toDataURLSpy.mockRestore();
+      vi.unstubAllGlobals();
       (store as any).maps = [];
     });
   });
@@ -1913,6 +2188,163 @@ describe("Snapshots.vue", () => {
         radioGroups[1].vm.$emit("update:modelValue", "manual");
         expect(vm.scalebarMode).toBe("manual");
       }
+    });
+  });
+
+  describe("drawScalebarOnCanvas scaling", () => {
+    // Minimal CanvasRenderingContext2D stub that records the horizontal extent
+    // of the scalebar line so we can assert on its length in canvas pixels.
+    function makeMockCtx() {
+      const calls: { moveTo: number[]; lineTo: number[]; fillText: any[] } = {
+        moveTo: [],
+        lineTo: [],
+        fillText: [],
+      };
+      const ctx = {
+        strokeStyle: "",
+        fillStyle: "",
+        lineWidth: 0,
+        font: "",
+        textBaseline: "",
+        textAlign: "",
+        beginPath: vi.fn(),
+        moveTo: vi.fn((x: number) => calls.moveTo.push(x)),
+        lineTo: vi.fn((x: number) => calls.lineTo.push(x)),
+        stroke: vi.fn(),
+        fillText: vi.fn((...args: any[]) => calls.fillText.push(args)),
+      };
+      return { ctx, calls };
+    }
+
+    function bounds(left: number, right: number) {
+      return { left, top: 0, right, bottom: right - left };
+    }
+
+    // Draws using a spec for the given bbox width on a canvas of the given
+    // width, and returns the rendered scalebar length in canvas pixels.
+    function drawnLength(
+      bboxWidth: number,
+      canvasWidth: number,
+      manualPx = 100,
+    ) {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: manualPx, unit: TScalebarUnit.PX };
+      const spec = vm.buildScalebarSpec(bounds(0, bboxWidth));
+      const { ctx, calls } = makeMockCtx();
+      vm.drawScalebarOnCanvas(ctx, canvasWidth, canvasWidth * 0.8, spec);
+      return calls.moveTo[0] - calls.lineTo[0];
+    }
+
+    beforeEach(() => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+    });
+
+    it("draws scalebar at native length when canvas matches dataset pixels", () => {
+      // Canvas spans the full 1000 dataset px at 1:1 → 100 dataset px = 100 px.
+      expect(drawnLength(1000, 1000)).toBeCloseTo(100);
+    });
+
+    it("scales scalebar down when the downloaded image is downsampled", () => {
+      // A 1000-wide region rendered onto a 500-wide canvas (2x downsample, as
+      // happens when the region exceeds maxPixels) → 100 dataset px = 50 px.
+      expect(drawnLength(1000, 500)).toBeCloseTo(50);
+    });
+
+    it("scales scalebar up when the canvas is in zoomed display pixels", () => {
+      // Screenshot-based canvases are in display px; at 2x zoom a 1000 dataset
+      // px region spans 2000 canvas px → 100 dataset px = 200 px.
+      expect(drawnLength(1000, 2000)).toBeCloseTo(200);
+    });
+
+    it("falls back to native length when the bounding box has zero width", () => {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 100, unit: TScalebarUnit.PX };
+      const spec = vm.buildScalebarSpec(bounds(50, 50));
+      const { ctx, calls } = makeMockCtx();
+      vm.drawScalebarOnCanvas(ctx, 800, 600, spec);
+      expect(calls.moveTo[0] - calls.lineTo[0]).toBeCloseTo(100);
+    });
+
+    it("draws each snapshot's own label from its spec", () => {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 25, unit: TScalebarUnit.UM };
+      vm.addScalebarText = true;
+      const spec = vm.buildScalebarSpec(bounds(0, 1000));
+      const { ctx, calls } = makeMockCtx();
+      vm.drawScalebarOnCanvas(ctx, 1000, 800, spec);
+      expect(calls.fillText[0][0]).toBe("25µm");
+    });
+  });
+
+  describe("per-snapshot scalebar specs (buildScalebarSpec)", () => {
+    beforeEach(() => {
+      wrapper = mountComponent();
+      vi.clearAllMocks();
+    });
+
+    it("carries each snapshot's bounding-box width independent of the current view", () => {
+      const vm = wrapper.vm as any;
+      // Current view is wide, but the snapshot we build a spec for is narrow.
+      vm.bboxLeft = 0;
+      vm.bboxRight = 4000;
+      const spec = vm.buildScalebarSpec({
+        left: 100,
+        top: 0,
+        right: 700,
+        bottom: 600,
+      });
+      expect(spec.datasetPixelWidth).toBe(600);
+    });
+
+    it("computes different automatic scalebar lengths for different bboxes", () => {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "automatic";
+      // Pixel size in px so the ideal length scales with the bbox width.
+      vm.pixelSizeMode = "manual";
+      vm.manualPixelSize = { length: 1, unit: TScalebarUnit.PX };
+      const small = vm.buildScalebarSpec({
+        left: 0,
+        top: 0,
+        right: 500,
+        bottom: 500,
+      });
+      const large = vm.buildScalebarSpec({
+        left: 0,
+        top: 0,
+        right: 8000,
+        bottom: 8000,
+      });
+      expect(large.lengthInDatasetPixels).toBeGreaterThan(
+        small.lengthInDatasetPixels,
+      );
+    });
+
+    it("keeps a fixed manual length across bboxes but tracks each width", () => {
+      const vm = wrapper.vm as any;
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 100, unit: TScalebarUnit.PX };
+      const a = vm.buildScalebarSpec({
+        left: 0,
+        top: 0,
+        right: 1000,
+        bottom: 1000,
+      });
+      const b = vm.buildScalebarSpec({
+        left: 0,
+        top: 0,
+        right: 2000,
+        bottom: 2000,
+      });
+      // Same physical length...
+      expect(a.lengthInDatasetPixels).toBe(100);
+      expect(b.lengthInDatasetPixels).toBe(100);
+      // ...but different denominators, so the drawn pixel length differs.
+      expect(a.datasetPixelWidth).toBe(1000);
+      expect(b.datasetPixelWidth).toBe(2000);
     });
   });
 });

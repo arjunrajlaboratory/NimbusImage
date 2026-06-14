@@ -1,154 +1,163 @@
 <template>
-  <v-expansion-panel>
-    <v-expansion-panel-title>Jobs and Logs</v-expansion-panel-title>
-    <v-expansion-panel-text>
-      <v-container>
-        <v-btn
-          color="primary"
-          @click="showJobs"
-          v-description="{
-            section: 'Jobs and Logs',
-            title: 'Show Jobs and Logs',
-            description: 'View recent job history and logs',
-          }"
-        >
-          Show Jobs and Logs
-        </v-btn>
+  <section class="settings-section">
+    <h4 class="settings-section-title">Jobs & Logs</h4>
+    <div class="settings-section-body">
+      <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
+        @click="showJobs"
+        v-description="{
+          section: 'Jobs and Logs',
+          title: 'Show Jobs and Logs',
+          description: 'View recent job history and logs',
+        }"
+      >
+        Show jobs and logs
+      </v-btn>
 
-        <v-dialog
-          v-model="showJobsDialog"
-          min-width="800px"
-          max-width="1200px"
-          width="90%"
-        >
-          <v-card>
-            <v-card-title class="headline">
-              Recent Jobs
-              <v-spacer></v-spacer>
-              <v-tooltip location="bottom">
-                <template #activator="{ props: activatorProps }">
-                  <v-btn
-                    icon
-                    v-bind="activatorProps"
-                    @click="fetchJobs"
-                    :loading="loading"
-                  >
-                    <v-icon>mdi-refresh</v-icon>
-                  </v-btn>
-                </template>
-                <span>Refresh jobs</span>
-              </v-tooltip>
-              <v-btn icon @click="showJobsDialog = false">
-                <v-icon>mdi-close</v-icon>
-              </v-btn>
-            </v-card-title>
-            <v-card-text>
-              <v-data-table
-                :headers="headers"
-                :items="jobs"
-                :items-per-page="10"
-                class="elevation-1"
-                :loading="loading"
-              >
-                <template #[`item.status`]="{ item }">
-                  <v-chip
-                    :color="getStatusColor(item.status)"
-                    text-color="white"
-                    size="small"
-                  >
-                    {{ getStatusText(item.status) }}
-                  </v-chip>
-                </template>
-                <template #[`item.created`]="{ item }">
-                  {{ formatDateString(item.created) }}
-                </template>
-                <template #[`item.firstArg`]="{ item }">
-                  {{ getFirstArg(item) }}
-                </template>
-                <template #[`item.endTime`]="{ item }">
-                  {{ getEndTime(item) }}
-                </template>
-                <template #[`item.duration`]="{ item }">
-                  {{ getDuration(item) }}
-                </template>
-                <template #[`item.actions`]="{ item }">
-                  <v-btn
-                    size="small"
-                    variant="text"
-                    color="info"
-                    @click="viewJobLog(item)"
-                  >
-                    <v-icon size="small" start>mdi-text-box-outline</v-icon>
-                    Log
-                  </v-btn>
-                </template>
-              </v-data-table>
-            </v-card-text>
-          </v-card>
-        </v-dialog>
+      <v-dialog
+        v-model="showJobsDialog"
+        width="90vw"
+        max-width="1400px"
+        class="wide-dialog"
+      >
+        <v-card>
+          <v-toolbar density="compact" color="transparent">
+            <v-toolbar-title>Recent Jobs</v-toolbar-title>
+            <v-spacer></v-spacer>
+            <v-tooltip location="bottom">
+              <template #activator="{ props: activatorProps }">
+                <v-btn
+                  icon="mdi-refresh"
+                  variant="text"
+                  size="small"
+                  v-bind="activatorProps"
+                  @click="fetchJobs"
+                  :loading="loading"
+                />
+              </template>
+              <span>Refresh jobs</span>
+            </v-tooltip>
+            <v-btn
+              icon="mdi-close"
+              variant="text"
+              size="small"
+              class="mr-2"
+              @click="showJobsDialog = false"
+            />
+          </v-toolbar>
+          <v-card-text>
+            <v-data-table
+              :headers="headers"
+              :items="jobs"
+              :items-per-page="10"
+              class="elevation-1"
+              :loading="loading"
+            >
+              <template #[`item.status`]="{ item }">
+                <v-chip
+                  :color="getStatusColor(item.status)"
+                  text-color="white"
+                  size="small"
+                >
+                  {{ getStatusText(item.status) }}
+                </v-chip>
+              </template>
+              <template #[`item.created`]="{ item }">
+                {{ formatDateString(item.created) }}
+              </template>
+              <template #[`item.endTime`]="{ item }">
+                {{ getEndTime(item) }}
+              </template>
+              <template #[`item.duration`]="{ item }">
+                {{ getDuration(item) }}
+              </template>
+              <template #[`item.actions`]="{ item }">
+                <v-btn
+                  variant="text"
+                  color="info"
+                  size="small"
+                  @click="viewJobLog(item)"
+                >
+                  <v-icon size="small" start>mdi-text-box-outline</v-icon>
+                  Log
+                </v-btn>
+              </template>
+            </v-data-table>
+          </v-card-text>
+        </v-card>
+      </v-dialog>
 
-        <!-- Job Log Dialog -->
-        <v-dialog v-model="showLogDialog" max-width="800px">
-          <v-card>
-            <v-card-title class="headline">
+      <!-- Job Log Dialog -->
+      <v-dialog
+        v-model="showLogDialog"
+        width="80vw"
+        max-width="1000px"
+        class="wide-dialog"
+      >
+        <v-card>
+          <v-toolbar density="compact" color="transparent">
+            <v-toolbar-title>
               Job Log: {{ selectedJob ? selectedJob.title : "" }}
-              <v-spacer></v-spacer>
-              <v-tooltip location="bottom">
-                <template #activator="{ props: activatorProps }">
-                  <v-btn
-                    icon
-                    v-bind="activatorProps"
-                    @click="copyLogToClipboard"
-                  >
-                    <v-icon>mdi-content-copy</v-icon>
-                  </v-btn>
-                </template>
-                <span>Copy to clipboard</span>
-              </v-tooltip>
-              <v-tooltip location="bottom">
-                <template #activator="{ props: activatorProps }">
-                  <v-btn
-                    icon
-                    v-bind="activatorProps"
-                    @click="refreshLog"
-                    :loading="refreshingLog"
-                  >
-                    <v-icon>mdi-refresh</v-icon>
-                  </v-btn>
-                </template>
-                <span>Refresh log</span>
-              </v-tooltip>
-              <v-btn icon @click="showLogDialog = false">
-                <v-icon>mdi-close</v-icon>
-              </v-btn>
-            </v-card-title>
-            <v-card-text>
-              <pre class="job-log">{{ currentJobLog }}</pre>
-            </v-card-text>
-            <v-card-actions>
-              <v-spacer></v-spacer>
-              <v-btn
-                color="primary"
-                variant="text"
-                @click="showLogDialog = false"
-                >Close</v-btn
-              >
-            </v-card-actions>
-          </v-card>
-        </v-dialog>
+            </v-toolbar-title>
+            <v-spacer></v-spacer>
+            <v-tooltip location="bottom">
+              <template #activator="{ props: activatorProps }">
+                <v-btn
+                  icon="mdi-content-copy"
+                  variant="text"
+                  size="small"
+                  v-bind="activatorProps"
+                  @click="copyLogToClipboard"
+                />
+              </template>
+              <span>Copy to clipboard</span>
+            </v-tooltip>
+            <v-tooltip location="bottom">
+              <template #activator="{ props: activatorProps }">
+                <v-btn
+                  icon="mdi-refresh"
+                  variant="text"
+                  size="small"
+                  v-bind="activatorProps"
+                  @click="refreshLog"
+                  :loading="refreshingLog"
+                />
+              </template>
+              <span>Refresh log</span>
+            </v-tooltip>
+            <v-btn
+              icon="mdi-close"
+              variant="text"
+              size="small"
+              class="mr-2"
+              @click="showLogDialog = false"
+            />
+          </v-toolbar>
+          <v-card-text>
+            <pre class="job-log">{{ currentJobLog }}</pre>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn variant="text" size="small" @click="showLogDialog = false"
+              >Close</v-btn
+            >
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
-        <!-- Snackbar for copy notification -->
-        <v-snackbar
-          v-model="showCopySnackbar"
-          :timeout="2000"
-          color="success"
-          top
-        >
-          Log copied to clipboard
-        </v-snackbar>
-      </v-container>
-    </v-expansion-panel-text>
-  </v-expansion-panel>
+      <!-- Snackbar for copy notification -->
+      <v-snackbar
+        v-model="showCopySnackbar"
+        :timeout="2000"
+        color="success"
+        top
+      >
+        Log copied to clipboard
+      </v-snackbar>
+    </div>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -205,7 +214,6 @@ const refreshingLog = ref(false);
 
 const headers = [
   { title: "Title", key: "title" },
-  { title: "Image", key: "firstArg" },
   { title: "Type", key: "type" },
   { title: "Status", key: "status" },
   { title: "Started", key: "created" },
@@ -249,10 +257,6 @@ function getJobState(status: number): string {
     return jobLogStatus[status].stateText;
   }
   return "Job status: " + getStatusText(status);
-}
-
-function getFirstArg(job: IJob): string {
-  return job.args && job.args.length > 0 ? job.args[0] : "";
 }
 
 function getEndTime(job: any): string {
@@ -315,7 +319,7 @@ async function viewJobLog(job: IJob): Promise<void> {
       `Duration: ${duration}\n` +
       `Status: ${getStatusText(jobWithLog.status)}\n` +
       `Type: ${jobWithLog.type}\n\n` +
-      `Arguments:\n${jobWithLog.args.join("\n")}\n\n` +
+      `Arguments:\n${(jobWithLog.args ?? []).join("\n")}\n\n` +
       `${getJobState(jobWithLog.status)}\n\n`;
 
     currentJobLog.value =
@@ -376,7 +380,6 @@ defineExpose({
   showJobsDialog,
   getStatusColor,
   getStatusText,
-  getFirstArg,
   getDuration,
   headers,
 });
@@ -388,7 +391,7 @@ defineExpose({
   min-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
-  font-family: monospace;
+  font-family: var(--nimbus-font-mono, monospace);
   font-size: 12px;
   background-color: rgba(0, 0, 0, 0.05);
   padding: 12px;

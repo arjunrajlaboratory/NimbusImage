@@ -27,7 +27,7 @@
         <v-row class="my-0" v-if="!hideLayer">
           <v-col class="py-0">
             <layer-select
-              id="tool-creation-layer-select-tourstep"
+              :data-tour="TOUR_ANCHORS.toolCreationLayerSelect"
               v-model="layer"
               label="Layer"
             />
@@ -37,7 +37,7 @@
         <v-row class="my-0">
           <v-col class="py-0">
             <tag-picker
-              id="tool-creation-tag-picker-tourstep"
+              :data-tour="TOUR_ANCHORS.toolCreationTagPicker"
               v-model="tags"
               @update:model-value="useAutoTags = false"
             ></tag-picker>
@@ -132,6 +132,7 @@ export interface IAnnotationSetup {
 import { ref, computed, watch, onMounted, nextTick } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import store from "@/store";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 import LayerSelect from "@/components/LayerSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import Persister from "@/store/Persister";

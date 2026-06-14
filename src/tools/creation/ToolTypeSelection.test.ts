@@ -53,8 +53,7 @@ vi.mock("@/store/properties", () => ({
 }));
 
 vi.mock("@/utils/strings", () => ({
-  getTourStepId: vi.fn((x: string) => x),
-  getTourTriggerId: vi.fn((x: string) => x),
+  getTourAnchorId: vi.fn((x: string) => x),
 }));
 
 vi.mock("@/utils/log", () => ({

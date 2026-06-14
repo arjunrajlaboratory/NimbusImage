@@ -11,7 +11,13 @@
     >
       <div class="d-flex">
         <slot name="activator" v-bind="{ props: activatorProps }">
-          <v-btn v-bind="activatorProps" :disabled="disabled">
+          <v-btn
+            v-bind="activatorProps"
+            :disabled="disabled"
+            variant="outlined"
+            color="primary"
+            size="small"
+          >
             Choose...
           </v-btn>
         </slot>
@@ -33,19 +39,24 @@
           :items-per-page="-1"
           :items-per-page-options="[-1]"
           :menu-enabled="false"
-          :more-chips="false"
           :clickable-chips="false"
         />
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn @click.prevent="dialogInternal = false" color="warning">
+        <v-btn
+          @click.prevent="dialogInternal = false"
+          variant="text"
+          size="small"
+        >
           Cancel
         </v-btn>
         <v-btn
           @click.prevent="select"
           :disabled="!isFolderSelected"
+          variant="flat"
           color="primary"
+          size="small"
         >
           Select
         </v-btn>
@@ -127,14 +138,3 @@ function select() {
 
 defineExpose({ dialogInternal, selectedName, select, selected });
 </script>
-
-<style lang="scss">
-// Override Vuetify 3's default .v-dialog { width: 50% } on outer overlay element.
-// Without this, width="70vw" on v-dialog only applies to the inner .v-overlay__content,
-// making the actual dialog 70vw of 50% = 35vw. (See VUE3_STEPS.md P14)
-// Note: same rule exists in ProjectInfo.vue — both are needed since unscoped
-// styles are only emitted when the component is mounted.
-.wide-dialog.v-dialog {
-  width: auto;
-}
-</style>

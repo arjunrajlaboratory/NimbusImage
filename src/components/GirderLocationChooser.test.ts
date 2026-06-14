@@ -15,8 +15,29 @@ function mountComponent(props = {}) {
     },
     global: {
       stubs: {
-        CustomFileManager: true,
+        CustomFileManager: {
+          name: "CustomFileManager",
+          props: [
+            "location",
+            "itemsPerPage",
+            "itemsPerPageOptions",
+            "menuEnabled",
+            "moreChips",
+            "clickableChips",
+          ],
+          template: "<div />",
+        },
         GirderBreadcrumb: true,
+        VDialog: {
+          props: ["modelValue"],
+          template: "<div><slot name='activator' :props='{}' /><slot /></div>",
+        },
+        VCard: { template: "<div><slot /></div>" },
+        VCardTitle: { template: "<div><slot /></div>" },
+        VCardText: { template: "<div><slot /></div>" },
+        VCardActions: { template: "<div><slot /></div>" },
+        VSpacer: { template: "<div />" },
+        VBtn: { template: "<button><slot /></button>" },
       },
     },
   });
@@ -74,5 +95,15 @@ describe("GirderLocationChooser", () => {
     const newVal = { name: "New Folder", _modelType: "folder" };
     await wrapper.setProps({ modelValue: newVal as any });
     expect(wrapper.vm.selected).toEqual(newVal);
+  });
+
+  it("keeps collection relation chips enabled but not clickable", () => {
+    const wrapper = mountComponent();
+    const fileManager = wrapper.findComponent({ name: "CustomFileManager" });
+
+    // moreChips should fall back to CustomFileManager's default (true).
+    // clickableChips stays explicitly false so chips do not navigate.
+    expect(fileManager.props("moreChips") ?? true).toBe(true);
+    expect(fileManager.props("clickableChips")).toBe(false);
   });
 });

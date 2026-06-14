@@ -73,6 +73,7 @@ vi.mock("@/utils/paths", () => ({
   }),
 }));
 
+import Papa from "papaparse";
 import AnnotationCSVDialog from "./AnnotationCSVDialog.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
@@ -235,6 +236,22 @@ describe("AnnotationCSVDialog", () => {
     expect(vm.getUndefinedValueString()).toBe("NaN");
   });
 
+  it("sanitizeColumnNames defaults to false", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.sanitizeColumnNames).toBe(false);
+  });
+
+  it("sanitizeCsvColumnName replaces special characters", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(
+      vm.sanitizeCsvColumnName(
+        "cell, fibroblast/Blob Metrics (%) / Mean Area (um^2)",
+      ),
+    ).toBe("cell_fibroblast_Blob_Metrics_Mean_Area_um_2");
+  });
+
   it("getIncludedPropertyPaths filters based on mode", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
@@ -318,6 +335,7 @@ describe("AnnotationCSVDialog", () => {
     expect(arg.datasetId).toBe("ds1");
     expect(arg.filename).toBe("export.csv");
     expect(arg.undefinedValue).toBe("");
+    expect(arg.sanitizeColumnNames).toBe(false);
     // When exporting all annotations (not a subset), annotationIds is omitted
     // to avoid exceeding MongoDB's BSON size limit
     expect(arg.annotationIds).toBeUndefined();
@@ -346,6 +364,102 @@ describe("AnnotationCSVDialog", () => {
     vm.undefinedHandling = "na";
     const csv = await vm.generateCSVStringForAnnotations();
     expect(csv).toContain("NA");
+  });
+
+  it("generateCSVStringForAnnotations sanitizes headers when enabled", async () => {
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
+      const map: Record<string, string> = {
+        "propA.sub1": "cell, fibroblast/Blob Metrics (%)",
+        "propB.sub2": "Property B > Sub2",
+        "propC.sub3": "Property C > Sub3",
+      };
+      return map[path.join(".")] || null;
+    });
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    const csv = await vm.generateCSVStringForAnnotations();
+    expect(csv).toContain("cell_fibroblast_Blob_Metrics");
+    expect(csv).not.toContain("cell, fibroblast/Blob Metrics (%)");
+  });
+
+  it("generateCSVStringForAnnotations keeps fixed-column quote flags aligned by column identity", async () => {
+    // Regression: fixed-column isQuoted controls VALUE quoting too. Tags is
+    // rendered as ", ".join(tags); without quoting on the Tags column, a
+    // multi-tag value would split the row across columns when parsed.
+    //
+    // Look up each flag by the column's NAME rather than a hardcoded index.
+    // The quotes array is derived from the same {name, isQuoted} column
+    // objects as fields, so each name must carry its own flag regardless of
+    // ordering. This fails if a hand-maintained parallel `quotes` array is
+    // reintroduced and drifts out of alignment with `fields`.
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    await vm.generateCSVStringForAnnotations();
+    const lastCall = (Papa.unparse as any).mock.calls.at(-1);
+    const fields = lastCall[0].fields as string[];
+    const quotes = lastCall[1].quotes as boolean[];
+    expect(quotes.length).toBe(fields.length);
+    const quoteFor = (name: string) => quotes[fields.indexOf(name)];
+    // Force-quoted fixed columns.
+    expect(quoteFor("Id")).toBe(true);
+    expect(quoteFor("Tags")).toBe(true);
+    expect(quoteFor("Shape")).toBe(true);
+    expect(quoteFor("Name")).toBe(true);
+    // Unquoted fixed columns.
+    expect(quoteFor("Channel")).toBe(false);
+    expect(quoteFor("XY")).toBe(false);
+    expect(quoteFor("Z")).toBe(false);
+    expect(quoteFor("Time")).toBe(false);
+  });
+
+  it("generateCSVStringForAnnotations deduplicates colliding sanitized headers", async () => {
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
+      const map: Record<string, string> = {
+        "propA.sub1": "Mean Area (um^2)",
+        "propB.sub2": "Mean/Area/um/2",
+        "propC.sub3": "Property C",
+      };
+      return map[path.join(".")] || null;
+    });
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    const csv = await vm.generateCSVStringForAnnotations();
+    const header = csv.split("\n")[0];
+    expect(header).toContain("Mean_Area_um_2");
+    expect(header).toContain("Mean_Area_um_2_2");
+    const columns = header.split(",");
+    expect(new Set(columns).size).toBe(columns.length);
+  });
+
+  it("generateCSVStringForAnnotations dedup walks past existing suffixed names", async () => {
+    // Naive count-based suffixing would emit two "Area_2" headers if a
+    // sanitized name happens to already match the would-be suffix; the
+    // dedup must check candidates against the used set.
+    (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
+      const map: Record<string, string> = {
+        "propA.sub1": "Area",
+        "propB.sub2": "Area_2",
+        "propC.sub3": "Area",
+      };
+      return map[path.join(".")] || null;
+    });
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    const csv = await vm.generateCSVStringForAnnotations();
+    const header = csv.split("\n")[0];
+    const columns = header.split(",");
+    expect(columns).toContain("Area");
+    expect(columns).toContain("Area_2");
+    expect(columns).toContain("Area_3");
+    expect(new Set(columns).size).toBe(columns.length);
   });
 
   it("watcher on propertyExportMode causes text regeneration when dialog open", async () => {
@@ -478,6 +592,17 @@ describe("AnnotationCSVDialog", () => {
     await vm.download();
     const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
     expect(arg.delimiter).toBe(",");
+  });
+
+  it("download passes sanitizeColumnNames when enabled", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.sanitizeColumnNames = true;
+    vm.filename = "export.csv";
+    vm.propertyExportMode = "all";
+    await vm.download();
+    const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+    expect(arg.sanitizeColumnNames).toBe(true);
   });
 
   it("hasCommasInPropertyNames detects commas in property names", () => {
@@ -626,6 +751,7 @@ describe("AnnotationCSVDialog", () => {
         ],
         undefinedValue: "NA",
         delimiter: ",",
+        sanitizeColumnNames: false,
       }),
     );
   });
@@ -649,6 +775,19 @@ describe("AnnotationCSVDialog", () => {
     await vm.downloadAllDatasets();
     expect(store.exportAPI.exportBulkCsv).toHaveBeenCalledWith(
       expect.objectContaining({ delimiter: "\t" }),
+    );
+  });
+
+  it("downloadAllDatasets passes sanitizeColumnNames when enabled", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.exportScope = "all";
+    vm.collectionDatasets = [{ datasetId: "ds1", datasetName: "DS1" }];
+    vm.propertyExportMode = "all";
+    vm.sanitizeColumnNames = true;
+    await vm.downloadAllDatasets();
+    expect(store.exportAPI.exportBulkCsv).toHaveBeenCalledWith(
+      expect.objectContaining({ sanitizeColumnNames: true }),
     );
   });
 

@@ -8,6 +8,7 @@ const mockSetCameraInfo = vi.fn();
 
 vi.mock("@/store", () => ({
   default: {
+    isLoggedIn: true,
     setXY: (...args: any[]) => mockSetXY(...args),
     setZ: (...args: any[]) => mockSetZ(...args),
     setTime: (...args: any[]) => mockSetTime(...args),

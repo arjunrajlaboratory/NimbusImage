@@ -9,7 +9,7 @@ import {
   IGirderLargeImage,
   DEFAULT_LARGE_IMAGE_SOURCE,
 } from "@/girder";
-import type { AxiosError } from "axios";
+import type { AxiosError, AxiosInstance } from "axios";
 import pLimit from "p-limit";
 import pRetry from "p-retry";
 import {
@@ -19,6 +19,8 @@ import {
   Mutation,
   VuexModule,
 } from "vuex-module-decorators";
+import { markRaw } from "vue";
+import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
 import PropertiesAPI from "./PropertiesAPI";
@@ -78,6 +80,7 @@ export { default as store } from "./root";
 // NOTE: router is imported lazily where needed to avoid circular dependency with main.ts
 
 import { Debounce } from "@/utils/debounce";
+import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
 import { createSamToolStateFromToolConfiguration } from "@/pipelines/samPipeline";
 import { isEqual } from "lodash";
@@ -98,9 +101,113 @@ function apiRootFromGirderUrl(girderUrl: string) {
   return girderUrl + apiRootSuffix;
 }
 
+// Persist the Girder auth token in localStorage. @girder/components v4
+// tries to use a JS-set `girderToken` cookie for this, but on Girder 5+
+// the backend sets the same-named cookie as HttpOnly, and browsers reject
+// the JS set on cookie-hygiene grounds. So the token vanishes on reload,
+// the RestClient constructor falls back to parsing `window.location.hash`,
+// the fallback returns the entire route hash as the "token" when there's
+// no OAuth marker, and the bogus value goes out as `Girder-Token: #/...`
+// on every request → 401s that look like spurious logouts. localStorage
+// is the simplest fix: same XSS exposure as the JS-set cookie this code
+// is replacing (i.e., none added), and Girder's `Girder-Token` header path
+// continues to work normally.
+//
+// Cookie-based auth is not a viable substitute even though Girder 5 sets a
+// cookie: Girder's API endpoints reject cookies unless they carry the
+// `@access.cookie` decorator (a CSRF measure), which most don't.
+// See: https://github.com/girder/girder_web_components/issues/364
+//
+// Key is namespaced to avoid collision if @girder/components ever adopts
+// its own localStorage strategy under the bare name `girderToken` (Girder's
+// own legacy web client does, per girder/girder#3484). Stored value is
+// `{ apiRoot, token }` JSON so a token issued by one Girder server is never
+// replayed to a different one when the user switches domains.
+const TOKEN_STORAGE_KEY = "nimbus.girderToken";
+
+interface StoredAuth {
+  apiRoot: string;
+  token: string;
+}
+
+function loadStoredToken(apiRoot: string): string | null {
+  const raw = localStorage.getItem(TOKEN_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredAuth;
+    if (parsed.apiRoot !== apiRoot || !parsed.token) {
+      return null;
+    }
+    return parsed.token;
+  } catch {
+    // Legacy or corrupted payload — drop it and force a fresh login.
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    return null;
+  }
+}
+
+function storeToken(apiRoot: string, token: string) {
+  const value: StoredAuth = { apiRoot, token };
+  localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(value));
+}
+
+function clearStoredToken() {
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
+function createGirderRestClient(options: {
+  apiRoot: string;
+}): RestClientInstance {
+  const client = new RestClient(options);
+  const stored = loadStoredToken(client.apiRoot);
+  if (stored) {
+    client.token = stored;
+  } else if (client.token && client.token.startsWith("#")) {
+    client.token = "";
+  }
+  client.on("userLoggedIn", () => {
+    if (client.token) {
+      storeToken(client.apiRoot, client.token);
+    }
+  });
+  client.on("userLoggedOut", clearStoredToken);
+  client.on("userFetched", () => {
+    if (!client.user) {
+      // fetchUser clears this.token when /user/me returns null, but doesn't
+      // emit userLoggedOut. Keying off `user` rather than `token` survives a
+      // hypothetical upstream change where v4 stops zeroing the token on
+      // anonymous /user/me. If user is null, the session is dead regardless.
+      clearStoredToken();
+    }
+  });
+  // Belt-and-suspenders: any 401 anywhere indicates the persisted token is
+  // no longer accepted (revoked, server-side cookie_lifetime hit, instance
+  // wiped, etc.). Drop the storage so the next reload starts clean rather
+  // than re-sending the dead token on every request. Reaches into `_axios`
+  // because the v4 RestClient's `.get`/`.post`/etc. forward to an internal
+  // axios instance and don't expose interceptors on the RestClient itself.
+  const axios = (client as unknown as { _axios: AxiosInstance })._axios;
+  axios.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error?.response?.status === 401) {
+        clearStoredToken();
+      }
+      return Promise.reject(error);
+    },
+  );
+  return client;
+}
+
+// Tracks the most recently issued fetchRecentDatasetViews call so older
+// in-flight requests can detect they are stale and skip the state write.
+// Without this, a slower request with a different filter can land last and
+// overwrite the result of a newer request.
+let recentDatasetViewsRequestId = 0;
+
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
-  girderRest = new RestClient({
+  girderRest = createGirderRestClient({
     apiRoot: apiRootFromGirderUrl(persister.get("girderUrl", defaultGirderUrl)),
   });
 
@@ -118,6 +225,13 @@ export class Main extends VuexModule {
     },
   }) as unknown as RestClientInstance;
 
+  // The API instances stay reactive: GirderAPI exposes `histogramsLoaded`
+  // that `layerStackImages` depends on; the others may grow similar
+  // reactive fields. The actual Proxy-overhead concern from the diagnostic
+  // was the heavy Maps inside GirderAPI (imageCache, histogramCache,
+  // resolvedHistogramCache) — those are markRaw'd at their declaration in
+  // GirderAPI.ts, which keeps Map.get/set out of Vue's reactive interceptor
+  // without breaking field-level reactivity on the API instance itself.
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
@@ -269,6 +383,10 @@ export class Main extends VuexModule {
   isAnnotationPanelOpen: boolean = false;
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
+  isAnalyzeDialogOpen: boolean = false;
+  // True while a layer is being dragged (reordered/grouped). Used to suppress
+  // palette re-layout that would otherwise re-render the draggable mid-drag.
+  isLayerDragging: boolean = false;
 
   toolTemplateList: any[] = [];
   selectedTool: IActiveTool | null = null;
@@ -514,7 +632,33 @@ export class Main extends VuexModule {
 
   @Mutation
   public setMaps(maps: IMapEntry[]) {
+    // Each entry already markRaws its inner GeoJS layers, but the IMapEntry
+    // wrapper itself would still be Proxy-wrapped on assignment. Skip that —
+    // every map-access in the canvas hot path is a Proxy.get otherwise.
+    // The outer array stays reactive so mutation handlers and replacements
+    // still trigger watchers.
+    //
+    // Note: markRaw(m) tags `m` itself by setting `__v_skip` — i.e., it
+    // mutates the elements of the input array. In-practice unobservable
+    // since callers should not rely on entries staying unmarked.
+    this.maps = maps.map((m) => markRaw(m));
+  }
+
+  @Mutation
+  public setMapAt(payload: { index: number; mapEntry: IMapEntry }) {
+    const maps = [...this.maps];
+    maps[payload.index] = markRaw(payload.mapEntry);
     this.maps = maps;
+  }
+
+  @Mutation
+  public popMap() {
+    this.maps = this.maps.slice(0, -1);
+  }
+
+  @Mutation
+  public clearMaps() {
+    this.maps = [];
   }
 
   @Mutation
@@ -794,7 +938,7 @@ export class Main extends VuexModule {
     promises.push(
       this.setSelectedConfiguration(this.selectedConfigurationId),
       this.setSelectedDataset(this.selectedDatasetId),
-      this.fetchRecentDatasetViews(),
+      this.fetchRecentDatasetViews(!this.isAdmin),
     );
     // Initialize notification websocket as soon as the user has logged in because
     // any notification sent without would be lost.
@@ -1031,6 +1175,16 @@ export class Main extends VuexModule {
     this.isHelpPanelOpen = value;
   }
 
+  @Mutation
+  public setIsAnalyzeDialogOpen(value: boolean) {
+    this.isAnalyzeDialogOpen = value;
+  }
+
+  @Mutation
+  public setIsLayerDragging(value: boolean) {
+    this.isLayerDragging = value;
+  }
+
   @Action
   async logout() {
     sync.setSaving(true);
@@ -1075,22 +1229,29 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async fetchRecentDatasetViews() {
+  async fetchRecentDatasetViews(currentUserOnly: boolean = false) {
+    const requestId = ++recentDatasetViewsRequestId;
     try {
       const recentDatasetViews = await this.api.getRecentDatasetViews(
         MAX_NUMBER_OF_RECENT_DATASET_VIEWS,
+        0,
+        currentUserOnly,
       );
+      if (requestId !== recentDatasetViewsRequestId) {
+        return;
+      }
       this.setRecentDatasetViewsImpl(recentDatasetViews);
     } catch {
+      if (requestId !== recentDatasetViewsRequestId) {
+        return;
+      }
       this.setRecentDatasetViewsImpl([]);
     }
   }
 
   @Action
   async initialize() {
-    // The Girder client may set the token to the path of the API, but this actually means that we
-    // have no token, hence we are disconnected.
-    if (!this.girderRest.token || this.girderRest.token === "#/") {
+    if (!this.girderRest.token) {
       return;
     }
     try {
@@ -1148,7 +1309,7 @@ export class Main extends VuexModule {
     username: string;
     password: string;
   }) {
-    const restClient = new RestClient({
+    const restClient = createGirderRestClient({
       apiRoot: apiRootFromGirderUrl(domain),
     });
 
@@ -1189,7 +1350,7 @@ export class Main extends VuexModule {
     password: string;
     admin: boolean;
   }): Promise<void> {
-    const restClient = new RestClient({
+    const restClient = createGirderRestClient({
       apiRoot: apiRootFromGirderUrl(domain),
     });
 
@@ -1231,9 +1392,13 @@ export class Main extends VuexModule {
 
   @Action
   async setSelectedDataset(id: string | null) {
+    memDiag.autoSnapshot(`setSelectedDataset:enter id=${id ?? "null"}`);
     this.api.flushCaches();
+    this.context.dispatch("resetAnnotationState");
+    this.context.dispatch("resetPropertyState");
     if (!id) {
       this.setDataset({ id, data: null });
+      memDiag.autoSnapshot("setSelectedDataset:exit (null)");
       return;
     }
     try {
@@ -1253,6 +1418,7 @@ export class Main extends VuexModule {
       sync.setLoading(error as Error);
       sync.setDatasetLoading(false);
     }
+    memDiag.autoSnapshot(`setSelectedDataset:exit id=${id}`);
   }
 
   @Action
@@ -2132,6 +2298,37 @@ export class Main extends VuexModule {
     await this.syncConfiguration("layers");
   }
 
+  // Put the given layers into a brand-new group (one backend sync, not one
+  // per layer).
+  @Action
+  async groupLayers(layerIds: string[]) {
+    if (layerIds.length === 0) {
+      return;
+    }
+    const groupId = uuidv4();
+    for (const layerId of layerIds) {
+      this.changeLayerImpl({ layerId, delta: { layerGroup: groupId } });
+    }
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
+  }
+
+  // Remove the given layers from whatever group they're in (used to dissolve
+  // a group). One backend sync for all of them.
+  @Action
+  async ungroupLayers(layerIds: string[]) {
+    if (layerIds.length === 0) {
+      return;
+    }
+    for (const layerId of layerIds) {
+      this.changeLayerImpl({ layerId, delta: { layerGroup: null } });
+    }
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
+  }
+
   get getImagesFromLayer() {
     return (layer: IDisplayLayer) => {
       if (!this.dataset) {
@@ -2322,6 +2519,7 @@ export class Main extends VuexModule {
           lastImages: null,
           nextImages: null,
           lock: false,
+          cacheRevision: this.api.histogramCacheRevision,
         };
       }
 
@@ -2334,6 +2532,7 @@ export class Main extends VuexModule {
         ) {
           const histogramObj = layer._histogram;
           const images = layer._histogram.nextImages;
+          const cacheRevision = this.api.histogramCacheRevision;
           histogramObj.nextImages = null;
           histogramObj.lock = true;
           histogramObj.promise = this.api.getLayerHistogram(images);
@@ -2345,6 +2544,7 @@ export class Main extends VuexModule {
           });
           histogramObj.promise.finally(() => {
             histogramObj.lastImages = images;
+            histogramObj.cacheRevision = cacheRevision;
             histogramObj.lock = false;
             nextHistogram();
           });
@@ -2363,6 +2563,7 @@ export class Main extends VuexModule {
 
       if (
         lastImages === null ||
+        layer._histogram.cacheRevision !== this.api.histogramCacheRevision ||
         nextImages.length !== lastImages.length ||
         nextImages.some((image, idx) => image !== lastImages[idx])
       ) {

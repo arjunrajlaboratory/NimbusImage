@@ -1,6 +1,6 @@
 ---
 name: nimbus-frontend
-description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button loading states, @girder/components compatibility, and style guidelines."
+description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, @girder/components compatibility, and style guidelines."
 ---
 
 # Nimbus Frontend Development
@@ -243,6 +243,27 @@ Persister wraps `localStorage` with JSON serialization. It's already used for th
 </v-dialog>
 ```
 
+### Wide dialogs: `class="wide-dialog"` when using percentage or `vw` widths
+
+Vuetify ships `.v-dialog { width: 50% }` on the outer overlay wrapper. The `width` / `max-width` props on `<v-dialog>` only size the inner `.v-overlay__content` — so `width="60%"` actually renders at 60% of that 50% box (= 30% of viewport), and `width="70vw"` is silently clamped to 50vw.
+
+Whenever a dialog needs a percentage or `vw` width, opt in with `class="wide-dialog"`. The shared rule lives in `src/style.scss` (look for `.wide-dialog.v-dialog { width: auto }`) and lets the prop size against the viewport directly.
+
+```vue
+<!-- Bad: width prop silently shrinks to 30% of viewport -->
+<v-dialog v-model="open" width="60%">…</v-dialog>
+
+<!-- Good: class lets the 60% prop apply to the viewport -->
+<v-dialog v-model="open" width="60%" class="wide-dialog">…</v-dialog>
+```
+
+When **not** to add the class:
+- `max-width` in pixels (e.g. `max-width="500px"`) — works correctly without the class on any reasonable screen.
+- `max-width="33vw"` and similar — `vw` max-widths smaller than 50vw fit inside the default wrapper, so the class is unnecessary.
+- Dialogs with no width prop — they rely on the implicit 50% wrapper as a sane default; adding the class would let them shrink to content width, which is usually not what's wanted for confirmation-style dialogs.
+
+If you see a dialog with a `width="N%"` or `width="Nvw"` prop and no `wide-dialog` class, it's almost certainly rendering narrower than intended — add the class.
+
 ## API Calls
 
 Use the API classes from store — never put `girderRest.get(...)` in components:
@@ -263,18 +284,78 @@ logWarning("Something unexpected happened");
 logError("An error occurred", error);
 ```
 
-## Button Loading States
+## Error Reporting (Sentry)
+
+`@sentry/vue` is wired in `src/main.ts`, gated on `VITE_SENTRY_DSN` at build time. When the DSN is unset, no Sentry code is loaded — local installs and OSS users pay zero runtime cost. Uncaught Vue errors and async exceptions (`window.onerror`/`unhandledrejection`) are reported automatically via the Vue integration installed at init; you don't need to wrap component code in try/catch just to report errors.
+
+To capture an error or message manually from a component, dynamic-import the package so the no-DSN path stays free of any Sentry reference:
+
+```typescript
+if (import.meta.env.VITE_SENTRY_DSN) {
+  const Sentry = await import("@sentry/vue");
+  Sentry.captureException(err, { tags: { feature: "my-feature" } });
+}
+```
+
+In practice almost no component should need this — let the global handler do its job. Local testing: see `CLAUDE.md` § "Error Reporting (Sentry)" for `.env.local` setup and the `setTimeout` test recipe.
+
+## Buttons — five-role taxonomy
+
+Every `<v-btn>` should declare an explicit **`variant`** and **`size`**. Omitting them falls back to Vuetify's `elevated` default at default size, which looks generic and out of place against the Linear-inspired theme.
+
+| Role | Props | Use |
+|---|---|---|
+| Primary | `variant="flat" color="primary" size="small"` | The one main action of a view or dialog |
+| Primary positive | `variant="flat" color="success" size="small"` | View / Go / Start CTAs |
+| Secondary | `variant="outlined" color="primary" size="small"` | Supporting actions |
+| Tertiary / text | `variant="text" size="small"` | Cancel, low-emphasis, inline |
+| Destructive (confirmed) | `variant="flat" color="error" size="small"` | The irreversible button in a confirm dialog |
+| Destructive (inline) | `variant="text" color="error" size="small"` | The trigger that opens a confirm dialog (use `mdi-delete`, not `mdi-close`) |
+| Informational | `variant="text" color="info" size="small"` | View log / inspect detail / open help — actions that read rather than mutate |
+| Icon-only | `variant="text" icon size="small"` | Toolbar / row actions; wrap in `v-tooltip` if ambiguous |
+
+**Color tokens — never use literals.** Use `error`/`success`/`warning`/`secondary`, not `red`/`green`/`orange`/`grey`. Semantic tokens are theme-aware.
+
+**Dialog action bar pattern:**
+```vue
+<v-card-actions class="button-bar">
+  <v-btn variant="text" size="small" @click="close">Cancel</v-btn>
+  <v-btn variant="flat" color="primary" size="small" @click="save">Save</v-btn>
+</v-card-actions>
+```
+Never two filled buttons. For destructive confirms, swap `color="primary"` → `color="error"` on the right button.
+
+**`:to` vs `@click`:** a `v-btn` with `:to` renders as `<a>`, one with `@click` renders as `<button>`. `src/style.scss` makes form elements inherit `font-family` so they match; for groups of buttons that must look identical, use the same action type across all of them so they share the underlying tag.
+
+Full guide: `codebaseDocumentation/BUTTON_CONVENTIONS.md`
+
+### Loading state
 
 ```vue
-<v-btn :loading="isLoading" :disabled="isLoading" @click="doAction">
+<v-btn
+  variant="flat"
+  color="primary"
+  size="small"
+  :loading="isLoading"
+  :disabled="isLoading"
+  @click="doAction"
+>
   <template v-slot:loader>
     <v-progress-circular indeterminate size="18" width="2" class="mr-2" />
     Loading...
   </template>
-  <v-icon>mdi-check</v-icon>
+  <v-icon start>mdi-check</v-icon>
   Submit
 </v-btn>
 ```
+
+## Memory Diagnostics
+
+`window.__nimbusMem` is registered globally for browser-console memory monitoring (zero overhead unless enabled via `__nimbusMem.enable()`). Useful when investigating memory leaks, comparing memory pressure across changes, or sanity-checking a new cache.
+
+Quick API: `__nimbusMem.enable()`, `snapshot('label')`, `print()`, `compare('a','b')`, `export()`.
+
+For the full API, recorded fields, the load-order constraint (don't import stores at top level — register from `main.ts`), instructions for adding new counters or auto-snapshot points, and the cherry-pick procedure for cross-branch comparison: read `codebaseDocumentation/MEMORY_DEBUGGING.md`.
 
 ## Style Guidelines
 
@@ -286,6 +367,7 @@ logError("An error occurred", error);
 ## Codebase Documentation References
 
 - Vuetify 4 migration details: read `codebaseDocumentation/VUETIFY4_MIGRATION.md`
+- Button taxonomy and patterns: read `codebaseDocumentation/BUTTON_CONVENTIONS.md`
 - When working on batch processing: read `references/batch-processing-patterns.md`
 - When working on projects feature: read `codebaseDocumentation/PROJECTS.md`
 - When working on sharing UI: read `codebaseDocumentation/SHARING.md`

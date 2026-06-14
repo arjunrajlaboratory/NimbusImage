@@ -5,16 +5,6 @@
       @selectNone="selectNone"
       class="ma-1"
     />
-    <v-text-field
-      v-model="tagSearchFilter"
-      style="min-width: 75px; max-width: 150px"
-      placeholder="Filter"
-      class="ma-1"
-      density="compact"
-      variant="underlined"
-      hide-details
-      single-line
-    />
     <v-chip-group
       @update:model-value="setTagsFromUserInput($event)"
       :model-value="tags"
@@ -72,7 +62,11 @@
             </v-card-text>
             <v-card-actions>
               <v-spacer></v-spacer>
-              <v-btn color="primary" @click="applyColorToTag(tag)"
+              <v-btn
+                variant="flat"
+                color="primary"
+                size="small"
+                @click="applyColorToTag(tag)"
                 >Apply Color</v-btn
               >
             </v-card-actions>
@@ -95,9 +89,11 @@ const props = withDefaults(
   defineProps<{
     modelValue: string[];
     allSelected: boolean;
+    searchText?: string;
   }>(),
   {
     modelValue: () => [],
+    searchText: "",
   },
 );
 
@@ -116,7 +112,6 @@ const tags = computed({
 });
 
 const allSelectedInternal = ref(false);
-const tagSearchFilter = ref("");
 const tagColor = ref("#FFFFFF");
 const colorOption = ref("defined");
 
@@ -138,10 +133,10 @@ const availableTags = computed((): string[] => {
 });
 
 const displayedTags = computed((): string[] => {
-  if (!tagSearchFilter.value) {
+  if (!props.searchText) {
     return availableTags.value;
   }
-  const lowerCaseFilter = tagSearchFilter.value.toLowerCase();
+  const lowerCaseFilter = props.searchText.toLowerCase();
   return availableTags.value.filter((tag) =>
     tag.toLowerCase().includes(lowerCaseFilter),
   );
@@ -201,7 +196,6 @@ onMounted(() => {
 defineExpose({
   tags,
   allSelectedInternal,
-  tagSearchFilter,
   tagColor,
   colorOption,
   availableTags,

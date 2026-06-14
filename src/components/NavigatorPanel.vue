@@ -1,6 +1,6 @@
 <template>
-  <div style="overflow-y: auto; scrollbar-width: none">
-    <div v-mousetrap="mousetrapSliders" id="viewer-toolbar-tourstep">
+  <div class="navigator-panel">
+    <div v-mousetrap="mousetrapSliders" :data-tour="TOUR_ANCHORS.viewerToolbar">
       <div class="d-flex align-center">
         <value-slider
           v-model="xy"
@@ -60,8 +60,8 @@
       </div>
       <div v-if="maxTime > 0 && !unrollT" class="d-flex align-center">
         <v-checkbox
-          id="timelapse-mode-tourstep"
-          v-tour-trigger="'timelapse-mode-tourtrigger'"
+          :data-tour="TOUR_ANCHORS.timelapseMode"
+          v-tour-trigger="TOUR_TRIGGERS.timelapseMode"
           class="ml-3 my-checkbox"
           v-model="timelapseMode"
           label="Time lapse mode"
@@ -74,13 +74,12 @@
           :min="3"
           :max="100"
           :title="'Track window size'"
+          class="track-window-slider"
         />
       </div>
-      <!-- TODO: Only display if there is more than one large image -->
-      <large-image-dropdown />
       <div v-if="timelapseMode" class="d-flex align-center">
         <tag-picker
-          id="timelapse-tags-tourstep"
+          :data-tour="TOUR_ANCHORS.timelapseTags"
           class="ml-3"
           v-model="timelapseTags"
           style="max-width: 300px"
@@ -88,44 +87,32 @@
       </div>
       <div v-if="timelapseMode" class="d-flex align-center">
         <v-checkbox
-          id="timelapse-labels-tourstep"
+          :data-tour="TOUR_ANCHORS.timelapseLabels"
           class="ml-3 my-checkbox"
           v-model="showTimelapseLabels"
           label="Show labels"
         />
-      </div>
-      <div v-if="timelapseMode" class="d-flex align-center">
         <v-btn
-          class="ml-3"
+          class="ml-3 timelapse-delete-btn"
+          variant="text"
+          color="error"
           size="small"
           @click="annotationStore.deleteAllTimelapseConnections"
         >
+          <v-icon start size="small">mdi-delete</v-icon>
           Delete all timelapse connections
         </v-btn>
       </div>
+      <!-- TODO: Only display if there is more than one large image -->
+      <large-image-dropdown />
     </div>
-    <toolset></toolset>
-    <v-radio-group
-      v-model="layerMode"
-      label="Layers: "
-      mandatory
-      density="compact"
-      inline
-      hide-details
-      class="layer-mode-controls"
-    >
-      <v-radio value="single" label="Single" class="smaller" />
-      <v-radio value="multiple" label="Multiple" class="smaller" />
-      <v-radio value="unroll" label="Unroll" class="smaller" />
-    </v-radio-group>
-    <div>
-      <slot></slot>
-    </div>
-    <tag-filter-editor class="filter-element" v-model="tagFilter" />
   </div>
 </template>
 
 <style lang="scss" scoped>
+.navigator-panel {
+  padding: 8px 12px 12px;
+}
 .my-checkbox {
   flex-shrink: 0;
 }
@@ -135,34 +122,36 @@
 .v-input--selection-controls {
   margin-top: 0;
 }
-.lowertools {
-  flex: 1;
-  overflow-x: hidden;
-  overflow-y: auto;
+
+/* "Track window" is a longer label than the XY/Z/Time sliders, so its fixed
+   3em column wraps and renders at the 16px body size. Match the 13px label
+   convention and let it size to its content on one line. */
+.track-window-slider :deep(.label-column) {
+  width: auto;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  padding-right: 4px;
 }
-.layer-mode-controls {
-  margin: 10px 0;
-  :deep(.v-radio) {
-    margin-right: 10px;
-    > .v-input--selection-controls__input {
-      margin-right: 0;
-    }
-  }
+
+/* The delete button inherits the 16px body size; pin it to 13px to match the
+   surrounding controls. */
+.timelapse-delete-btn {
+  font-size: 13px;
+  letter-spacing: 0;
 }
 </style>
+
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import ValueSlider from "./ValueSlider.vue";
-import Toolset from "@/tools/toolsets/Toolset.vue";
 import LargeImageDropdown from "./LargeImageDropdown.vue";
 import TagPicker from "./TagPicker.vue";
-import TagFilterEditor from "./AnnotationBrowser/TagFilterEditor.vue";
 import store from "@/store";
-import filterStore from "@/store/filters";
 import annotationStore from "@/store/annotation";
-import { ITagAnnotationFilter, TLayerMode } from "@/store/model";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { logError } from "@/utils/log";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 const dimensionLabels = ref<{
   xy: string[] | null;
@@ -275,17 +264,6 @@ const showTimelapseLabels = computed({
   set: (value: boolean) => store.setShowTimelapseLabels(value),
 });
 
-const layerMode = computed({
-  get: () => store.layerMode,
-  set: (value: TLayerMode) => store.setLayerMode(value),
-});
-
-const tagFilter = computed({
-  get: () => filterStore.tagFilter,
-  set: (filter: ITagAnnotationFilter) => filterStore.setTagFilter(filter),
-});
-
-// Mousetrap bindings
 const mousetrapSliders: IHotkey[] = [
   {
     bind: "w",
@@ -356,29 +334,5 @@ watch(
 
 onMounted(async () => {
   await loadDimensionLabels();
-});
-
-defineExpose({
-  dimensionLabels,
-  xy,
-  z,
-  time,
-  unrollXY,
-  unrollZ,
-  unrollT,
-  maxXY,
-  maxZ,
-  maxTime,
-  xyLabel,
-  zLabel,
-  timeLabel,
-  timelapseMode,
-  timelapseModeWindow,
-  timelapseTags,
-  showTimelapseLabels,
-  layerMode,
-  tagFilter,
-  mousetrapSliders,
-  loadDimensionLabels,
 });
 </script>

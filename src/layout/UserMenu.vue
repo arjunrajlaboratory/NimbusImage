@@ -2,7 +2,12 @@
   <div>
     <v-dialog v-model="userMenu" v-if="!store.isLoggedIn" max-width="400px">
       <template #activator="{ props: activatorProps }">
-        <v-btn v-if="!store.isLoggedIn" v-bind="activatorProps" color="primary"
+        <v-btn
+          v-if="!store.isLoggedIn"
+          v-bind="activatorProps"
+          variant="flat"
+          color="primary"
+          size="small"
           >Login</v-btn
         >
       </template>
@@ -51,7 +56,7 @@
       :close-on-content-click="false"
     >
       <template #activator="{ props: activatorProps }">
-        <v-btn icon v-bind="activatorProps">
+        <v-btn variant="text" icon size="small" v-bind="activatorProps">
           <v-icon>mdi-account-circle</v-icon>
         </v-btn>
       </template>

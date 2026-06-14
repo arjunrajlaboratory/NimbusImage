@@ -28,7 +28,7 @@
             <section class="mb-4 home-section">
               <!-- Upload Files -->
               <v-card
-                id="upload-files-tourstep"
+                :data-tour="TOUR_ANCHORS.uploadFiles"
                 class="upload-card fill-height"
                 :class="{ 'drag-active': isDragging }"
                 @click="openFileSelector"
@@ -78,22 +78,35 @@
           </v-col>
           <v-col class="fill-height recent-dataset">
             <section class="mb-4 home-section">
-              <v-tabs v-model="datasetsTab" color="primary">
-                <v-tab>Recent Datasets</v-tab>
-                <v-tab>Recent Projects</v-tab>
-                <v-tab
-                  v-if="Boolean(zenodoCommunityId)"
-                  id="try-sample-dataset-tourstep"
-                  v-tour-trigger="'try-sample-dataset-tourtrigger'"
+              <div class="d-flex align-center">
+                <v-tabs v-model="datasetsTab" color="primary">
+                  <v-tab>Recent Datasets</v-tab>
+                  <v-tab>Recent Projects</v-tab>
+                  <v-tab
+                    v-if="Boolean(zenodoCommunityId)"
+                    :data-tour="TOUR_ANCHORS.trySampleDataset"
+                    v-tour-trigger="TOUR_TRIGGERS.trySampleDataset"
+                  >
+                    Sample Datasets
+                  </v-tab>
+                </v-tabs>
+                <v-chip
+                  v-if="datasetsTab === 0"
+                  size="small"
+                  variant="tonal"
+                  :color="recentsShowMineOnly ? 'primary' : undefined"
+                  class="ml-2"
+                  @click="recentsShowMineOnly = !recentsShowMineOnly"
                 >
-                  Sample Datasets
-                </v-tab>
-              </v-tabs>
+                  Mine only
+                </v-chip>
+              </div>
               <v-window v-model="datasetsTab" class="fill-height">
                 <v-window-item class="fill-height">
                   <recent-datasets
                     :dataset-view-items="datasetViewItems"
                     :get-user-display-name="getUserDisplayName"
+                    :get-user-short-name="getUserShortName"
                     :format-date-number="formatDateNumber"
                     @dataset-clicked="navigateToDatasetView"
                     class="fill-height"
@@ -229,6 +242,7 @@
           <v-card-title class="headline d-flex align-center">
             Create dataset
             <v-btn
+              variant="text"
               icon
               size="small"
               class="ml-2"
@@ -365,13 +379,16 @@
             </v-card>
           </v-card-text>
           <v-card-actions>
-            <v-btn variant="text" @click="closeUploadDialog">Cancel</v-btn>
+            <v-btn variant="text" size="small" @click="closeUploadDialog">
+              Cancel
+            </v-btn>
             <v-spacer></v-spacer>
             <v-btn
-              id="configure-dataset-button-tourstep"
+              :data-tour="TOUR_ANCHORS.configureDatasetButton"
               variant="outlined"
               color="primary"
-              v-tour-trigger="'configure-dataset-tourtrigger'"
+              size="small"
+              v-tour-trigger="TOUR_TRIGGERS.configureDataset"
               :disabled="!isFormValid"
               @click="handleConfigureDataset"
               class="mr-2"
@@ -379,9 +396,11 @@
               Advanced Import
             </v-btn>
             <v-btn
-              id="accept-defaults-button-tourstep"
+              :data-tour="TOUR_ANCHORS.acceptDefaultsButton"
+              variant="flat"
               color="primary"
-              v-tour-trigger="'accept-defaults-tourtrigger'"
+              size="small"
+              v-tour-trigger="TOUR_TRIGGERS.acceptDefaults"
               :disabled="!isFormValid"
               @click="handleAcceptDefaults"
             >
@@ -471,8 +490,10 @@ import {
   IUPennCollection,
 } from "@/girder";
 import girderResources from "@/store/girderResources";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import {
   IDatasetView,
+  IRecentDatasetViewItem,
   WelcomeTourNames,
   WelcomeTourTypes,
   WelcomeTourStatus,
@@ -538,6 +559,7 @@ const browseMode = ref<"files" | "collections" | "projects">("files");
 const fileBrowserExpanded = ref(Persister.get("fileBrowserExpanded", false));
 const datasetsTab = ref(0);
 const loadingProjects = ref(false);
+const recentsShowMineOnly = ref(!store.isAdmin);
 
 const pendingFiles = ref<File[]>([]);
 const datasetName = ref("");
@@ -553,7 +575,11 @@ const nameConflicts = ref<number[]>([]);
 const validatingNames = ref(false);
 let validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-const userDisplayNames = ref<Record<string, string>>({});
+interface IUserDisplayInfo {
+  full: string; // "Name (email)" — used in tooltips and project list
+  short: string; // "Name" only — used in dense recents row
+}
+const userDisplayNames = ref<Record<string, IUserDisplayInfo>>({});
 
 const selectedZenodoDataset = ref<any>(null);
 
@@ -672,8 +698,8 @@ const configInfo = computed(() => {
   return infos;
 });
 
-const datasetViewItems = computed(() => {
-  const items = [];
+const datasetViewItems = computed<IRecentDatasetViewItem[]>(() => {
+  const items: IRecentDatasetViewItem[] = [];
   for (const datasetView of datasetViews.value) {
     const configI = configInfo.value[datasetView.configurationId];
     const datasetI = datasetInfo.value[datasetView.datasetId];
@@ -801,20 +827,31 @@ async function getUsernameFromId(
   };
 }
 
-function getUserDisplayName(creatorId: string): string {
+function ensureUserDisplayInfo(creatorId: string) {
   if (!userDisplayNames.value[creatorId]) {
     userDisplayNames.value = {
       ...userDisplayNames.value,
-      [creatorId]: "Loading...",
+      [creatorId]: { full: "Loading...", short: "Loading..." },
     };
     getUsernameFromId(creatorId).then((user) => {
       userDisplayNames.value = {
         ...userDisplayNames.value,
-        [creatorId]: `${user.fullname} (${user.username})`,
+        [creatorId]: {
+          full: `${user.fullname} (${user.username})`,
+          short: user.fullname,
+        },
       };
     });
   }
   return userDisplayNames.value[creatorId];
+}
+
+function getUserDisplayName(creatorId: string): string {
+  return ensureUserDisplayInfo(creatorId).full;
+}
+
+function getUserShortName(creatorId: string): string {
+  return ensureUserDisplayInfo(creatorId).short;
 }
 
 async function fetchUsersForDatasets() {
@@ -832,12 +869,16 @@ async function fetchUsersForDatasets() {
     });
 
     // Update display names using object spread for reactivity
-    const updates: Record<string, string> = {};
+    const updates: Record<string, IUserDisplayInfo> = {};
     for (const userId of userIds) {
       const user = girderResources.watchUser(userId);
       if (user) {
-        const fullname = `${user.firstName} ${user.lastName}`.trim();
-        updates[userId] = `${fullname || user.email} (${user.email})`;
+        const fullname =
+          `${user.firstName} ${user.lastName}`.trim() || user.email;
+        updates[userId] = {
+          full: `${fullname} (${user.email})`,
+          short: fullname,
+        };
       }
     }
     if (Object.keys(updates).length > 0) {
@@ -878,7 +919,7 @@ async function fetchDatasetsAndConfigurations() {
 
 async function initializeRecentViews() {
   try {
-    await store.fetchRecentDatasetViews();
+    await store.fetchRecentDatasetViews(recentsShowMineOnly.value);
   } catch (error) {
     logError("Failed to initialize recent views:", error);
   }
@@ -1117,7 +1158,7 @@ async function initializeWelcomeTour() {
 
   // If it was the default value of NOT_YET_RUN, then update the status and start tour
   if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
-    // Collapse expanded file browser so tour anchors (#upload-files-tourstep, etc.) are mounted
+    // Collapse expanded file browser so tour anchors ([data-tour="upload-files"], etc.) are mounted
     if (fileBrowserExpanded.value) {
       fileBrowserExpanded.value = false;
       Persister.set("fileBrowserExpanded", false);
@@ -1129,6 +1170,7 @@ async function initializeWelcomeTour() {
 
 // Watchers
 watch(datasetViews, () => fetchDatasetsAndConfigurations());
+watch(recentsShowMineOnly, () => initializeRecentViews());
 watch(
   () => girderResources.resources,
   () => fetchDatasetsAndConfigurations(),
@@ -1139,6 +1181,11 @@ watch(
   () => store.isLoggedIn,
   (val) => {
     if (val) {
+      // Auth has resolved — set the mine-only default based on the now-known
+      // admin status. Without this, an admin who reloads the page sees the
+      // chip stuck on "Mine only" because Home's setup ran before
+      // store.isAdmin was populated.
+      recentsShowMineOnly.value = !store.isAdmin;
       initializeWelcomeTour();
       fetchRecentProjects();
     }
@@ -1238,6 +1285,7 @@ defineExpose({
   fileBrowserExpanded,
   datasetsTab,
   loadingProjects,
+  recentsShowMineOnly,
   pendingFiles,
   datasetName,
   selectedLocation,
@@ -1268,6 +1316,7 @@ defineExpose({
   validateDatasetNames,
   getNameError,
   getUserDisplayName,
+  getUserShortName,
   setLocation,
   onLocationUpdate,
   handleDrop,

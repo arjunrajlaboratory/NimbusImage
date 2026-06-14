@@ -108,10 +108,6 @@ class UPennContrastAnnotationClient:
         Create an annotation with the specified metadata.
         The annotation data should match the standard UPennContrast annotation
         schema
-        Note: you can add an additional 'properties' field to the annotation
-        to directly specify property values.
-        The 'properties' field will be extracted and added to the property
-        values in the database.
 
         :param dict annotation: The annotation metadata
         :return: The created annotation object (Note: will contain the _id
@@ -125,10 +121,6 @@ class UPennContrastAnnotationClient:
         Create multiple annotations with the specified metadata.
         The annotations data should match the standard UPennContrast
         annotation schema
-        Note: you can add an additional 'properties' field to the annotation
-        to directly specify property values.
-        The 'properties' field will be extracted and added to the property
-        values in the database.
 
         :param list annotations: The list of annotations metadata
         :return: The created annotation object (Note: will contain the _id
@@ -181,10 +173,6 @@ class UPennContrastAnnotationClient:
         Update an annotation with the specified metadata.
         The annotation data should match the standard UPennContrast annotation
         schema
-        Note: you can add an additional 'properties' field to the annotation
-        to directly specify property values.
-        The 'properties' field will be extracted and added to the property
-        values in the database.
 
         :param str annotationId: The annotation id
         :param dict annotation: The annotation metadata

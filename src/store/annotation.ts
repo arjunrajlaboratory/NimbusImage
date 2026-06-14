@@ -37,17 +37,37 @@ import type {
   IVisibilityConfig,
 } from "./model";
 
-import { markRaw } from "vue";
+import { markRaw, toRaw } from "vue";
 import {
   simpleCentroid,
   selectRandomSubset,
   estimateAnnotationRadius,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
+import {
+  getAnnotationUpdatePatch,
+  type AnnotationUpdatePatch,
+} from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
 import { stubPerf } from "@/utils/stubPerf";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
+
+type IndexedAnnotationUpdate = {
+  annotation: IAnnotation;
+  index: number;
+  updateCentroid?: boolean;
+};
+
+function cloneAnnotation(annotation: IAnnotation): IAnnotation {
+  const rawAnnotation = toRaw(annotation);
+  return markRaw({
+    ...rawAnnotation,
+    tags: [...rawAnnotation.tags],
+    location: { ...rawAnnotation.location },
+    coordinates: toRaw(rawAnnotation.coordinates),
+  });
+}
 
 @Module({ dynamic: true, store, name: "annotation" })
 export class Annotations extends VuexModule {
@@ -220,9 +240,7 @@ export class Annotations extends VuexModule {
 
       // Add the new annotations to the store
       if (newAnnotations && newAnnotations.length > 0) {
-        newAnnotations.forEach((annotation) => {
-          this.addAnnotationImpl(annotation);
-        });
+        this.addAnnotationsImpl(newAnnotations);
       }
 
       return newAnnotations || [];
@@ -311,6 +329,42 @@ export class Annotations extends VuexModule {
   @Mutation
   public setHoveredAnnotationId(id: string | null) {
     this.hoveredAnnotationId = id;
+  }
+
+  @Mutation
+  protected resetAnnotationStateImpl() {
+    this.selectedAnnotationIds = markRaw(new Set());
+    this.activeAnnotationIds = [];
+    this.copiedAnnotations = [];
+    this.hoveredAnnotationId = null;
+    this.pendingAnnotation = null;
+    this.submitPendingAnnotation = null;
+    // Drop the previous dataset's annotations and connections. Without this,
+    // navigating away from a viewer (e.g. on logout, or to a non-viewer
+    // route) leaves the full array pinned on the heap until the next viewer
+    // entry calls fetchAnnotations.
+    this.annotations = [];
+    this.annotationConnections = [];
+    this.annotationCentroids = markRaw({});
+    this.annotationIdToIdx = markRaw({});
+  }
+
+  // Clear per-dataset annotation state. Call when switching datasets so
+  // stale references (selection, active set, copied annotations, hover,
+  // pending) don't pin objects from the previous view.
+  @Action
+  public resetAnnotationState() {
+    // If a submission is pending, cancel it so the awaiting Promise inside
+    // getAnnotationSubmission resolves (with `false`) and its timer is
+    // cleared. Otherwise nulling submitPendingAnnotation in the mutation
+    // below would orphan the Promise — the timer's
+    // `submitPendingAnnotation?.(true)` would no-op, and createAnnotation
+    // would await indefinitely. The callback itself nulls
+    // submitPendingAnnotation and pendingAnnotation via their setters.
+    if (this.submitPendingAnnotation) {
+      this.submitPendingAnnotation(false);
+    }
+    this.resetAnnotationStateImpl();
   }
 
   @Mutation
@@ -552,9 +606,10 @@ export class Annotations extends VuexModule {
 
   @Mutation
   private addAnnotationImpl(value: IAnnotation) {
-    this.annotations.push(value);
-    this.annotationCentroids[value.id] = markRaw(
-      simpleCentroid(value.coordinates),
+    const annotation = markRaw(value);
+    this.annotations = [...this.annotations, annotation];
+    this.annotationCentroids[annotation.id] = markRaw(
+      simpleCentroid(annotation.coordinates),
     );
     this.annotationIdToIdx[value.id] = this.annotations.length - 1;
 
@@ -582,6 +637,42 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
+  private addAnnotationsImpl(values: IAnnotation[]) {
+    const startIndex = this.annotations.length;
+    const annotations = values.map((annotation) => markRaw(annotation));
+    this.annotations = [...this.annotations, ...annotations];
+
+    const newStubs = new Map(this.annotationStubs);
+    const newHydrated = new Map(this.hydratedAnnotations);
+    for (let offset = 0; offset < annotations.length; ++offset) {
+      const annotation = annotations[offset];
+      const index = startIndex + offset;
+      const centroid = markRaw(simpleCentroid(annotation.coordinates));
+      this.annotationCentroids[annotation.id] = centroid;
+      this.annotationIdToIdx[annotation.id] = index;
+
+      newStubs.set(annotation.id, {
+        id: annotation.id,
+        centroid,
+        location: annotation.location,
+        shape: annotation.shape,
+        channel: annotation.channel,
+        tags: annotation.tags,
+        color: annotation.color,
+        estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
+      });
+
+      // New annotations are always hydrated
+      newHydrated.set(annotation.id, annotation);
+
+      // Spatial index
+      annotationSpatialIndex.insert(annotation.id, centroid.x, centroid.y);
+    }
+    this.annotationStubs = markRaw(newStubs);
+    this.hydratedAnnotations = markRaw(newHydrated);
+  }
+
+  @Mutation
   private setAnnotation({
     annotation,
     index,
@@ -595,7 +686,9 @@ export class Annotations extends VuexModule {
       annotationSpatialIndex.remove(annotation.id);
     }
 
-    this.annotations.splice(index, 1, annotation);
+    const nextAnnotations = [...this.annotations];
+    nextAnnotations[index] = markRaw(annotation);
+    this.annotations = nextAnnotations;
     this.annotationCentroids[annotation.id] = markRaw(
       simpleCentroid(annotation.coordinates),
     );
@@ -627,22 +720,28 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
-  public setAnnotations(values: IAnnotation[]) {
-    const nAnnotations = values.length;
-    // Check if annotations are the same
-    if (nAnnotations === this.annotations.length) {
-      let equals = true;
-      for (let i = 0; i < nAnnotations; ++i) {
-        if (values[i].id !== this.annotations[i].id) {
-          equals = false;
-          break;
-        }
-      }
-      if (equals) {
-        return;
-      }
+  private setAnnotationsAtIndices(values: IndexedAnnotationUpdate[]) {
+    if (!values.length) {
+      return;
     }
-    this.annotations = values;
+
+    const nextAnnotations = [...this.annotations];
+    for (const { annotation: value, index, updateCentroid = true } of values) {
+      const annotation = markRaw(value);
+      nextAnnotations[index] = annotation;
+      if (updateCentroid) {
+        this.annotationCentroids[annotation.id] = markRaw(
+          simpleCentroid(annotation.coordinates),
+        );
+      }
+      this.annotationIdToIdx[annotation.id] = index;
+    }
+    this.annotations = nextAnnotations;
+  }
+
+  @Mutation
+  public setAnnotations(values: IAnnotation[]) {
+    this.annotations = values.map((annotation) => markRaw(annotation));
     this.annotationCentroids = markRaw({});
     this.annotationIdToIdx = markRaw({});
     for (let idx = 0; idx < this.annotations.length; ++idx) {
@@ -1075,6 +1174,13 @@ export class Annotations extends VuexModule {
     await this.deleteAnnotations(unselectedIds);
   }
 
+  /**
+   * editFunction must reassign fields (e.g. `ann.coordinates = newArray`)
+   * rather than mutate them in place. cloneAnnotation shares the original
+   * `coordinates` array reference for performance, so an in-place mutation
+   * would corrupt the stored annotation, defeat patch diffing in
+   * getAnnotationUpdatePatch, and prevent rollback on error.
+   */
   @Action
   public async updateAnnotationsPerId({
     annotationIds,
@@ -1087,25 +1193,45 @@ export class Annotations extends VuexModule {
       return;
     }
     sync.setSaving(true);
-    const newAnnotations = [];
-    for (const annotationId of annotationIds) {
-      const annotationIndex = this.annotationIdToIdx[annotationId];
-      if (annotationIndex === undefined) {
-        continue;
+    const originalAnnotations: IndexedAnnotationUpdate[] = [];
+    const localUpdates: IndexedAnnotationUpdate[] = [];
+    const annotationUpdates: AnnotationUpdatePatch[] = [];
+    try {
+      for (const annotationId of annotationIds) {
+        const annotationIndex = this.annotationIdToIdx[annotationId];
+        if (annotationIndex === undefined) {
+          continue;
+        }
+        const oldAnnotation = this.annotations[annotationIndex];
+        const newAnnotation = cloneAnnotation(oldAnnotation);
+        editFunction(newAnnotation);
+        const update = getAnnotationUpdatePatch(oldAnnotation, newAnnotation);
+        if (update) {
+          const coordinatesChanged = update.coordinates !== undefined;
+          originalAnnotations.push({
+            annotation: oldAnnotation,
+            index: annotationIndex,
+            updateCentroid: coordinatesChanged,
+          });
+          localUpdates.push({
+            annotation: newAnnotation,
+            index: annotationIndex,
+            updateCentroid: coordinatesChanged,
+          });
+          annotationUpdates.push(update);
+        }
       }
-      const oldAnnotation = this.annotations[annotationIndex];
-      const newAnnotation = markRaw(structuredClone(oldAnnotation));
-      editFunction(newAnnotation);
-      this.setAnnotation({
-        annotation: newAnnotation,
-        index: annotationIndex,
-      });
-      newAnnotations.push(newAnnotation);
+      this.setAnnotationsAtIndices(localUpdates);
+      if (annotationUpdates.length) {
+        await this.annotationsAPI.updateAnnotations(annotationUpdates);
+      }
+      sync.setSaving(false);
+    } catch (error) {
+      this.setAnnotationsAtIndices(originalAnnotations);
+      logError(`Failed to update annotations: ${(error as Error).message}`);
+      sync.setSaving(error as Error);
+      throw error;
     }
-    if (newAnnotations.length) {
-      await this.annotationsAPI.updateAnnotations(newAnnotations);
-    }
-    sync.setSaving(false);
   }
 
   @Action
@@ -1125,7 +1251,7 @@ export class Annotations extends VuexModule {
       }, annotation.tags);
       annotation.tags = newTags;
     };
-    this.updateAnnotationsPerId({ annotationIds, editFunction });
+    await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
@@ -1139,7 +1265,7 @@ export class Annotations extends VuexModule {
     const editFunction = (annotation: IAnnotation): void => {
       annotation.tags = [...tags];
     };
-    this.updateAnnotationsPerId({ annotationIds, editFunction });
+    await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
@@ -1153,11 +1279,11 @@ export class Annotations extends VuexModule {
     const editFunction = (annotation: IAnnotation): void => {
       annotation.tags = annotation.tags.filter((tag) => !tags.includes(tag));
     };
-    this.updateAnnotationsPerId({ annotationIds, editFunction });
+    await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
-  public tagSelectedAnnotations({
+  public async tagSelectedAnnotations({
     tags,
     replace,
   }: {
@@ -1165,12 +1291,12 @@ export class Annotations extends VuexModule {
     replace: boolean;
   }) {
     if (replace) {
-      this.replaceTagsByAnnotationIds({
+      await this.replaceTagsByAnnotationIds({
         annotationIds: [...this.selectedAnnotationIds],
         tags,
       });
     } else {
-      this.addTagsByAnnotationIds({
+      await this.addTagsByAnnotationIds({
         annotationIds: [...this.selectedAnnotationIds],
         tags,
       });
@@ -1178,8 +1304,8 @@ export class Annotations extends VuexModule {
   }
 
   @Action
-  public removeTagsFromSelectedAnnotations(tags: string[]) {
-    this.removeTagsByAnnotationIds({
+  public async removeTagsFromSelectedAnnotations(tags: string[]) {
+    await this.removeTagsByAnnotationIds({
       annotationIds: [...this.selectedAnnotationIds],
       tags,
     });
@@ -1202,7 +1328,7 @@ export class Annotations extends VuexModule {
   }
 
   @Action
-  public colorAnnotationIds({
+  public async colorAnnotationIds({
     color,
     annotationIds,
     randomize = false,
@@ -1221,18 +1347,18 @@ export class Annotations extends VuexModule {
         annotation.color = color;
       }
     };
-    this.updateAnnotationsPerId({ annotationIds, editFunction });
+    await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
   @Action
-  public colorSelectedAnnotations({
+  public async colorSelectedAnnotations({
     color,
     randomize = false,
   }: {
     color: string | null;
     randomize?: boolean;
   }) {
-    this.colorAnnotationIds({
+    await this.colorAnnotationIds({
       annotationIds: [...this.selectedAnnotationIds],
       color,
       randomize,
@@ -1240,11 +1366,17 @@ export class Annotations extends VuexModule {
   }
 
   @Action
-  public updateAnnotationName({ name, id }: { name: string; id: string }) {
+  public async updateAnnotationName({
+    name,
+    id,
+  }: {
+    name: string;
+    id: string;
+  }) {
     const editFunction = (annotation: IAnnotation): void => {
       annotation.name = name;
     };
-    this.updateAnnotationsPerId({ annotationIds: [id], editFunction });
+    await this.updateAnnotationsPerId({ annotationIds: [id], editFunction });
   }
 
   /**

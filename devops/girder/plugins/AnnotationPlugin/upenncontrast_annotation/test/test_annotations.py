@@ -1,3 +1,4 @@
+import inspect
 import json
 
 import pytest
@@ -6,7 +7,11 @@ from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models import annotation
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
 
+from girder.constants import AccessType
 from girder.models.folder import Folder
 
 from girder.exceptions import ValidationException
@@ -145,6 +150,93 @@ class TestUpdateMultiple:
         assert "updated" in loaded1["tags"]
         loaded2 = Annotation().load(a2["_id"], user=admin)
         assert "updated2" in loaded2["tags"]
+
+    def testUpdateMultipleOwnerPersists(self, user, server):
+        """Dataset owners can bulk-update annotation geometry."""
+        folder = utilities.createFolder(
+            user, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, user)
+        coordinates = [
+            {"x": 3, "y": 4},
+            {"x": 5, "y": 6},
+        ]
+        updates = [
+            {
+                "id": str(ann["_id"]),
+                "coordinates": coordinates,
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=user,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        loaded = Annotation().load(ann["_id"], user=user)
+        assert loaded["coordinates"] == coordinates
+
+    def testUpdateMultipleDeniedWithoutAccess(
+        self, admin, user, server
+    ):
+        """Bulk updates must not silently skip inaccessible annotations."""
+        folder = utilities.createPrivateFolder(
+            admin, "private_ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, admin)
+        originalTags = list(ann["tags"])
+        updates = [
+            {
+                "id": str(ann["_id"]),
+                "tags": ["should-not-save"],
+            },
+        ]
+        resp = server.request(
+            path="/upenn_annotation/multiple",
+            method="PUT",
+            user=user,
+            body=json.dumps(updates),
+            type="application/json",
+        )
+        assertStatus(resp, 403)
+
+        loaded = Annotation().load(ann["_id"], user=admin)
+        assert loaded["tags"] == originalTags
+
+    def testFindWithPermissionsUsesDatasetAccess(self, admin, user):
+        """Annotation access is inherited from the parent dataset."""
+        # Owner sees their own annotation.
+        folder = utilities.createFolder(
+            user, "ds", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, user)
+
+        docs = list(Annotation().findWithPermissions(
+            {"_id": ann["_id"]},
+            user=user,
+            level=AccessType.WRITE,
+        ))
+
+        assert len(docs) == 1
+        assert docs[0]["_id"] == ann["_id"]
+
+        # A user without access to the parent dataset gets an empty cursor
+        # — guards against MRO regressions that bypass AccessControlMixin.
+        privateFolder = utilities.createPrivateFolder(
+            admin, "private_ds", upenn_utilities.datasetMetadata
+        )
+        privateAnn = self._createAnnotation(privateFolder, admin)
+
+        deniedDocs = list(Annotation().findWithPermissions(
+            {"_id": privateAnn["_id"]},
+            user=user,
+            level=AccessType.WRITE,
+        ))
+
+        assert deniedDocs == []
 
     def testUpdateMultipleAcceptsUnderscoreId(self, admin, server):
         """_id field should be accepted as an alias for id."""
@@ -399,3 +491,73 @@ class TestUpdateMultiple:
         assert "single-update" in loaded["tags"]
         assert "_internalField" not in loaded
         assert "accessLevel" not in loaded
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestInlinePropertiesField:
+    """Regression tests for the removed inline-properties extraction.
+
+    Annotation.validateMultiple previously tried to pop a "properties"
+    field off submitted annotations and forward it to
+    PropertiesModel.appendMultipleValues(None, [...]) — a two-argument
+    call into a single-argument method. The branch was unreachable in
+    practice but would have raised TypeError if hit. These tests guard
+    against re-introducing either side of that contract.
+    """
+
+    def testAppendMultipleValuesTakesOnePositionalArg(self):
+        """The model API the removed branch tried to call has not grown
+        a second positional parameter."""
+        sig = inspect.signature(
+            AnnotationPropertyValues.appendMultipleValues
+        )
+        positional = [
+            p for p in sig.parameters.values()
+            if p.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        # self + list_of_property_values
+        assert len(positional) == 2
+
+    def testAppendMultipleValuesRejectsExtraPositionalArg(self):
+        """Calling with the legacy (None, list) shape still TypeErrors —
+        proves the original removed code would never have worked."""
+        with pytest.raises(TypeError):
+            AnnotationPropertyValues().appendMultipleValues(
+                None, []
+            )
+
+    def testValidateAcceptsInlinePropertiesField(self, admin):
+        """Annotations carrying an inline 'properties' field validate
+        and persist without raising."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        sample = upenn_utilities.getSampleAnnotation(folder["_id"])
+        sample["properties"] = {"some-prop-id": 1.23}
+
+        # Must not raise (previously would have TypeError'd if the dead
+        # branch had actually fired).
+        result = Annotation().create(sample)
+        assert "_id" in result
+
+    def testInlinePropertiesDoNotCreatePropertyValues(self, admin):
+        """Submitting an inline 'properties' payload no longer creates
+        AnnotationPropertyValues records. The legacy docstring claim is
+        gone; this pins current behavior so a future reviver of the
+        feature has to update the test deliberately."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        sample = upenn_utilities.getSampleAnnotation(folder["_id"])
+        sample["properties"] = {"some-prop-id": 1.23}
+
+        result = Annotation().create(sample)
+
+        values = list(AnnotationPropertyValues().find(
+            {"annotationId": result["_id"]}
+        ))
+        assert values == []

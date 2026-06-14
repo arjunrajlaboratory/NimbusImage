@@ -68,18 +68,6 @@ describe("JobsLogs", () => {
     expect((wrapper.vm as any).getStatusText(999)).toBe("Unknown");
   });
 
-  it("getFirstArg returns first arg", () => {
-    const wrapper = mountComponent();
-    expect((wrapper.vm as any).getFirstArg({ args: ["image1", "arg2"] })).toBe(
-      "image1",
-    );
-  });
-
-  it("getFirstArg returns empty for no args", () => {
-    const wrapper = mountComponent();
-    expect((wrapper.vm as any).getFirstArg({ args: [] })).toBe("");
-  });
-
   it("getDuration calculates from timestamps", () => {
     const wrapper = mountComponent();
     const result = (wrapper.vm as any).getDuration({
@@ -102,7 +90,7 @@ describe("JobsLogs", () => {
 
   it("headers has expected columns", () => {
     const wrapper = mountComponent();
-    expect((wrapper.vm as any).headers).toHaveLength(8);
+    expect((wrapper.vm as any).headers).toHaveLength(7);
     expect((wrapper.vm as any).headers[0].title).toBe("Title");
   });
 });

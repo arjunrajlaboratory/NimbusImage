@@ -3,8 +3,8 @@ import { IGirderFolder, IGirderItem, IGirderSelectAble } from "@/girder";
 export function isConfigurationItem(selectable: IGirderSelectAble): boolean {
   return (
     selectable._modelType === "upenn_collection" &&
-    selectable.meta.subtype === "contrastConfiguration" &&
-    selectable.meta.compatibility
+    selectable.meta?.subtype === "contrastConfiguration" &&
+    selectable.meta?.compatibility
   );
 }
 
@@ -17,7 +17,7 @@ export function toConfigurationItem(
 export function isDatasetFolder(selectable: IGirderSelectAble): boolean {
   return (
     selectable._modelType === "folder" &&
-    selectable.meta.subtype === "contrastDataset"
+    selectable.meta?.subtype === "contrastDataset"
   );
 }
 
