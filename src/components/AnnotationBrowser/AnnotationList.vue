@@ -1005,11 +1005,34 @@ function handleColorSubmit({
   });
 }
 
-function deleteSelected() {
+async function deleteSelected() {
+  if (isServerMode.value) {
+    // In server mode the client annotation set is empty, so the store action
+    // would delete nothing. Delete the currently-selected ids directly, clear
+    // the selection, and refresh the server page so the deleted rows drop out.
+    await annotationStore.deleteAnnotations([
+      ...annotationStore.selectedAnnotationIds,
+    ]);
+    annotationStore.setSelected([]);
+    await annotationListServer.fetchPage();
+    return;
+  }
   annotationStore.deleteSelectedAnnotations();
 }
 
-function deleteUnselected() {
+async function deleteUnselected() {
+  if (isServerMode.value) {
+    // In server mode "unselected" means everything matching the current
+    // filters except the selected ids — fetch all matching ids from the
+    // backend and subtract the selection, then refresh the server page.
+    const allMatching = await annotationListServer.fetchMatchingIds();
+    const selected = new Set(annotationStore.selectedAnnotationIds);
+    await annotationStore.deleteAnnotations(
+      allMatching.filter((id) => !selected.has(id)),
+    );
+    await annotationListServer.fetchPage();
+    return;
+  }
   annotationStore.deleteUnselectedAnnotations();
 }
 

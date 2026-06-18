@@ -22,6 +22,7 @@ const mockSetSelected = vi.fn();
 const mockSetHoveredAnnotationId = vi.fn();
 const mockDeleteSelectedAnnotations = vi.fn();
 const mockDeleteUnselectedAnnotations = vi.fn();
+const mockDeleteAnnotations = vi.fn();
 const mockTagSelectedAnnotations = vi.fn();
 const mockRemoveTagsFromSelectedAnnotations = vi.fn();
 const mockColorSelectedAnnotations = vi.fn();
@@ -40,6 +41,8 @@ vi.mock("@/store/annotation", () => {
       mockDeleteSelectedAnnotations(...args),
     deleteUnselectedAnnotations: (...args: any[]) =>
       mockDeleteUnselectedAnnotations(...args),
+    deleteAnnotations: (...args: any[]) => mockDeleteAnnotations(...args),
+    stubOnlyMode: false,
     tagSelectedAnnotations: (...args: any[]) =>
       mockTagSelectedAnnotations(...args),
     removeTagsFromSelectedAnnotations: (...args: any[]) =>
@@ -166,6 +169,11 @@ describe("AnnotationList", () => {
       mockDeleteSelectedAnnotations(...args);
     (annotationStore as any).deleteUnselectedAnnotations = (...args: any[]) =>
       mockDeleteUnselectedAnnotations(...args);
+    (annotationStore as any).deleteAnnotations = (...args: any[]) =>
+      mockDeleteAnnotations(...args);
+    mockDeleteAnnotations.mockClear();
+    mockDeleteSelectedAnnotations.mockClear();
+    mockDeleteUnselectedAnnotations.mockClear();
     (annotationStore as any).tagSelectedAnnotations = (...args: any[]) =>
       mockTagSelectedAnnotations(...args);
     (annotationStore as any).removeTagsFromSelectedAnnotations = (
@@ -210,6 +218,10 @@ describe("AnnotationList", () => {
     (annotationListServer as any).page = 1;
     (annotationListServer as any).pageSize = 50;
     (annotationListServer as any).sort = null;
+    // Reset to a controllable resolved-empty default; per-test overrides set
+    // their own resolved value. restoreAllMocks would otherwise clear the
+    // inline module-mock implementation.
+    (annotationListServer as any).fetchMatchingIds = vi.fn(async () => []);
     mockFetchPage.mockClear();
     mockSetOptions.mockClear();
     mockSetIdSubstring.mockClear();
@@ -623,20 +635,69 @@ describe("AnnotationList", () => {
   });
 
   describe("deleteSelected", () => {
-    it("calls annotationStore.deleteSelectedAnnotations", () => {
+    it("calls annotationStore.deleteSelectedAnnotations in client mode", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.deleteSelected();
+      await vm.deleteSelected();
       expect(mockDeleteSelectedAnnotations).toHaveBeenCalled();
+      // Client mode must not use the server-mode delete path.
+      expect(mockDeleteAnnotations).not.toHaveBeenCalled();
+    });
+
+    it("deletes the selected ids and refreshes the page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).selectedAnnotationIds = new Set(["a", "b"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+
+      await vm.deleteSelected();
+
+      expect(mockDeleteAnnotations).toHaveBeenCalledTimes(1);
+      // Order-insensitive: deletes exactly the selected ids.
+      expect([...mockDeleteAnnotations.mock.calls[0][0]].sort()).toEqual([
+        "a",
+        "b",
+      ]);
+      expect(mockSetSelected).toHaveBeenCalledWith([]);
+      expect(mockFetchPage).toHaveBeenCalled();
+      // The client store action must not be used in server mode.
+      expect(mockDeleteSelectedAnnotations).not.toHaveBeenCalled();
     });
   });
 
   describe("deleteUnselected", () => {
-    it("calls annotationStore.deleteUnselectedAnnotations", () => {
+    it("calls annotationStore.deleteUnselectedAnnotations in client mode", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.deleteUnselected();
+      await vm.deleteUnselected();
       expect(mockDeleteUnselectedAnnotations).toHaveBeenCalled();
+      // Client mode must not use the server-mode matching-ids path.
+      expect(mockDeleteAnnotations).not.toHaveBeenCalled();
+      expect(annotationListServer.fetchMatchingIds).not.toHaveBeenCalled();
+    });
+
+    it("deletes matching-minus-selected and refreshes the page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).fetchMatchingIds = vi.fn(async () => [
+        "a",
+        "b",
+        "c",
+        "d",
+      ]);
+      (annotationStore as any).selectedAnnotationIds = new Set(["b", "d"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+
+      await vm.deleteUnselected();
+
+      expect(mockDeleteAnnotations).toHaveBeenCalledTimes(1);
+      // The unselected matching ids (all matching minus the selected).
+      expect(mockDeleteAnnotations.mock.calls[0][0]).toEqual(["a", "c"]);
+      expect(mockFetchPage).toHaveBeenCalled();
+      // The client store action must not be used in server mode.
+      expect(mockDeleteUnselectedAnnotations).not.toHaveBeenCalled();
     });
   });
 
