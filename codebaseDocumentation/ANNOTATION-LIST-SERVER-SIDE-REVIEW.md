@@ -13,6 +13,29 @@ Quality is high: API/model layer separation intact (model raises `ValueError`, n
 
 > **Note:** `file:line` references are as of 2026-06-18 and will drift — search by symbol. Verify each root cause against current code before fixing (per memory: review notes are point-in-time).
 
+## Resolution (2026-06-18) — ALL findings #1–#11 fixed (TDD)
+
+All eleven findings are resolved on `feature/stub-annotations`. The deferred perf pass (spec §8) and the other documented-deferred items below remain out of scope. Commits:
+
+| Commit | Findings |
+|---|---|
+| `05ad5cad` fix(backend): harden server-side annotation list | #2, #5, #6, #7, #10 |
+| `ffaa3b56` fix(frontend): tag/color/name edits in server mode | #1 (High) |
+| `f29518a2` fix(frontend): index unsortable + list-guard comment | #8, #9 |
+| `92fbbd88` fix(frontend): fetchPage stale-response guard | #3 |
+| `05e5f68e` refactor(frontend): extract AnnotationListRow | #4 |
+
+Per-finding notes:
+- **#1** — `updateAnnotationsPerId` is now stub-aware: in `stubOnlyMode` it builds patches from stubs via the new pure `buildStubUpdates` helper, persists them with the batch endpoint, and patches tags/color back onto local stubs (`applyStubFieldUpdates`). The Tag/Color/Name handlers refresh the server list afterward. `name` is threaded through the server rows so renames are visible.
+- **#2 / #7 / #10** — `_validateListInputs` now rejects invalid-ObjectId `idConstraints`, non-string `idSubstring`, and non-list `values` / non-numeric range bounds with `RestException(400)` (was uncaught 500). `idSubstring` is `re.escape()`d in the model → literal substring match matching the client's `String.includes` (this also closes the **#11** alignment note — no separate change needed).
+- **#3** — `fetchPage` captures a monotonic `requestSeq` and drops out-of-order responses.
+- **#4** — row `<tr>` extracted to `AnnotationListRow.vue`, used by both tables (single source of truth). The two `<v-data-table>` / `<v-data-table-server>` elements and their header slots remain (Vuetify can't switch component type reactively; the header slots are small and low-divergence-risk — left as-is).
+- **#5** — the page cursor is built before the count, so an invalid sort field 400s without paying for a full count aggregation.
+- **#6** — the orjson streaming generator is now the shared `_streamJsonArray` helper across find/stubs/hydrate/list/list-ids.
+- **#8 / #9** — `index` is non-sortable server-side (header + `mapSort`); the `LIST_ITEM_LIMIT` comment now documents it as a defensive net superseded by `stubOnlyMode`.
+
+Tests: backend `test_server_list.py` (malformed inputs → 400 on both endpoints, idSubstring escaping, invalid-sort-skips-count); frontend `buildStubUpdates`, `AnnotationListRow`, `annotationListServerFetch` (stale guard), and server-mode handler/sort tests. Full suites green (backend 227, frontend 2219); `tsc` + targeted `eslint` clean.
+
 ---
 
 ## Findings
