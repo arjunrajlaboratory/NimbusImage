@@ -229,11 +229,12 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
         # Each id constraint is an _id $in set; the annotation must match
         # ALL of them (AND of $in's). Mirrors the client selectionFilter
-        # and annotationIdFilters membership semantics.
+        # and annotationIdFilters membership semantics. Ids are already
+        # ObjectId-converted at the API boundary (_validateListInputs).
         idConstraints = filters.get("idConstraints")
         if idConstraints:
             match["$and"] = [
-                {"_id": {"$in": [ObjectId(i) for i in ids]}}
+                {"_id": {"$in": list(ids)}}
                 for ids in idConstraints
             ]
 

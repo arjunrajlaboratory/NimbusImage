@@ -83,19 +83,18 @@ def _validateListInputs(filters, sort=None, propertyPaths=None):
                 "idConstraints must be a list of lists of id strings",
                 code=400,
             )
-        # Each id must be a valid ObjectId; the model converts them when
-        # building the match stage, where an InvalidId would otherwise
-        # surface as an uncaught 500 on this public endpoint.
-        for constraint in idConstraints:
-            for annotationId in constraint:
-                try:
-                    ObjectId(annotationId)
-                except InvalidId:
-                    raise RestException(
-                        "idConstraints contains an invalid id: %s"
-                        % annotationId,
-                        code=400,
-                    )
+        # Convert ids to ObjectId once here (the model consumes them
+        # directly); an invalid id would otherwise raise bson.InvalidId deep
+        # in the aggregation as an uncaught 500 on this public endpoint.
+        try:
+            filters["idConstraints"] = [
+                [ObjectId(i) for i in constraint]
+                for constraint in idConstraints
+            ]
+        except InvalidId:
+            raise RestException(
+                "idConstraints contains an invalid id", code=400
+            )
     if sort is not None:
         if not isinstance(sort, dict) or sort.get("type") not in (
             "field", "property"
