@@ -27,6 +27,7 @@ const mockRemoveTagsFromSelectedAnnotations = vi.fn();
 const mockColorSelectedAnnotations = vi.fn();
 const mockUpdateAnnotationName = vi.fn();
 const mockGetAnnotationFromId = vi.fn();
+const mockGetStub = vi.fn();
 
 vi.mock("@/store/annotation", () => {
   const state = {
@@ -50,6 +51,8 @@ vi.mock("@/store/annotation", () => {
     setHoveredAnnotationId: (...args: any[]) =>
       mockSetHoveredAnnotationId(...args),
     getAnnotationFromId: (...args: any[]) => mockGetAnnotationFromId(...args),
+    getStub: (...args: any[]) => mockGetStub(...args),
+    annotationCentroids: {} as Record<string, any>,
     annotations: [],
     annotationIdToIdx: {} as Record<string, number>,
   };
@@ -152,6 +155,8 @@ describe("AnnotationList", () => {
       mockSetHoveredAnnotationId(...args);
     (annotationStore as any).getAnnotationFromId = (...args: any[]) =>
       mockGetAnnotationFromId(...args);
+    (annotationStore as any).getStub = (...args: any[]) => mockGetStub(...args);
+    (annotationStore as any).annotationCentroids = {};
     (annotationStore as any).annotations = [];
     (annotationStore as any).annotationIdToIdx = {};
 
@@ -383,12 +388,67 @@ describe("AnnotationList", () => {
 
     it("does nothing when annotation not found", () => {
       mockGetAnnotationFromId.mockReturnValue(null);
+      mockGetStub.mockReturnValue(undefined);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.goToAnnotationIdLocation("nonexistent");
       expect(mockSetXY).not.toHaveBeenCalled();
     });
+
+    it("navigates using the stub when the annotation has no coordinates (stub-only mode)", () => {
+      // Non-hydrated stub: getAnnotationFromId returns undefined (annotations[]
+      // is empty in stub-only mode), but the stub carries location + centroid.
+      mockGetAnnotationFromId.mockReturnValue(undefined);
+      mockGetStub.mockReturnValue({
+        id: "stub1",
+        location: { XY: 5, Z: 6, Time: 7 },
+        centroid: { x: 55, y: 66 },
+        shape: "point",
+        channel: 0,
+        tags: [],
+        color: null,
+      });
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.goToAnnotationIdLocation("stub1");
+
+      expect(mockSetXY).toHaveBeenCalledWith(5);
+      expect(mockSetZ).toHaveBeenCalledWith(6);
+      expect(mockSetTime).toHaveBeenCalledWith(7);
+      expect(mockSetCameraInfo).toHaveBeenCalledWith(
+        expect.objectContaining({ center: { x: 55, y: 66 } }),
+      );
+      expect(mockSetHoveredAnnotationId).toHaveBeenCalledWith("stub1");
+    });
   });
+
+  describe("list size guard", () => {
+    it("tooManyToList is false and items build normally under the limit", () => {
+      const ann = makeAnnotation({ id: "ann1" });
+      (filterStore as any).filteredAnnotations = [ann];
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.tooManyToList).toBe(false);
+      expect(vm.filteredItems).toHaveLength(1);
+    });
+
+    it("tooManyToList is true and filteredItems is empty over the limit", () => {
+      const many = Array.from({ length: vm_listItemLimit() + 1 }, (_, i) =>
+        makeAnnotation({ id: "a" + i }),
+      );
+      (filterStore as any).filteredAnnotations = many;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.tooManyToList).toBe(true);
+      // The expensive per-annotation item mapping is skipped entirely.
+      expect(vm.filteredItems).toHaveLength(0);
+    });
+  });
+
+  function vm_listItemLimit() {
+    const wrapper = mountComponent();
+    return (wrapper.vm as any).LIST_ITEM_LIMIT as number;
+  }
 
   describe("hover", () => {
     it("sets hoveredAnnotationId when annotations < 5000", () => {

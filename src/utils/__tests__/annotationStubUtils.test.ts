@@ -4,6 +4,7 @@ import {
   selectRandomSubset,
   estimateAnnotationRadius,
   getStubStyleFromBaseStyle,
+  annotationTestPoints,
 } from "../annotation";
 
 vi.mock("geojs", () => ({
@@ -111,5 +112,33 @@ describe("getStubStyleFromBaseStyle", () => {
   it("applies annotation color when provided", () => {
     const style = getStubStyleFromBaseStyle("red");
     expect(style.fillColor).toBe("red");
+  });
+});
+
+describe("annotationTestPoints", () => {
+  it("returns the annotation coordinates when present", () => {
+    const coords = [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ];
+    expect(annotationTestPoints({ coordinates: coords }, undefined)).toBe(
+      coords,
+    );
+  });
+
+  it("falls back to the centroid when coordinates are absent (stub)", () => {
+    const centroid = { x: 5, y: 6 };
+    expect(annotationTestPoints({}, centroid)).toEqual([centroid]);
+  });
+
+  it("falls back to the centroid when coordinates is an empty array", () => {
+    const centroid = { x: 7, y: 8 };
+    expect(annotationTestPoints({ coordinates: [] }, centroid)).toEqual([
+      centroid,
+    ]);
+  });
+
+  it("returns an empty array when neither coordinates nor centroid exist", () => {
+    expect(annotationTestPoints({}, undefined)).toEqual([]);
   });
 });

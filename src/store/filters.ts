@@ -11,7 +11,10 @@ import main from "./index";
 import annotation from "./annotation";
 import properties from "./properties";
 
-import { tagCloudFilterFunction } from "@/utils/annotation";
+import {
+  tagCloudFilterFunction,
+  annotationTestPoints,
+} from "@/utils/annotation";
 
 import {
   IAnnotation,
@@ -210,6 +213,10 @@ export class Filters extends VuexModule {
     const enabledAnnotationIdFilters = this.annotationIdFilters.filter(
       (filter: IIdAnnotationFilter) => filter.enabled,
     );
+    // Captured before the callback shadows `annotation` with the item. Stubs
+    // carry no coordinates, so ROI filtering falls back to the centroid map
+    // (populated for every annotation id in both full and stub-only modes).
+    const centroidsById = annotation.annotationCentroids;
     return annotation.annotationsForIteration.filter((annotation: IAnnotation) => {
       // Location filter
       if (
@@ -281,10 +288,14 @@ export class Filters extends VuexModule {
       }
 
       // ROI filters
+      const roiTestPoints = annotationTestPoints(
+        annotation,
+        centroidsById[annotation.id],
+      );
       const isInROI =
         enabledRoiFilters.length === 0 ||
         enabledRoiFilters.some((filter: IROIAnnotationFilter) =>
-          annotation.coordinates.some((point: IGeoJSPosition) =>
+          roiTestPoints.some((point: IGeoJSPosition) =>
             geo.util.pointInPolygon(point, filter.roi),
           ),
         );

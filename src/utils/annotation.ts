@@ -135,6 +135,20 @@ export function simpleCentroid(coordinates: IGeoJSPosition[]): IGeoJSPosition {
   return centroid;
 }
 
+// Points to use for spatial containment tests (e.g. ROI polygon filtering).
+// Hydrated annotations expose their full coordinate list; stubs have no
+// coordinates, so we fall back to the centroid (matching how stub-based
+// drag-select hit-tests against the centroid index).
+export function annotationTestPoints(
+  annotation: { coordinates?: IGeoJSPosition[] },
+  centroid: IGeoJSPosition | undefined,
+): IGeoJSPosition[] {
+  if (annotation.coordinates && annotation.coordinates.length > 0) {
+    return annotation.coordinates;
+  }
+  return centroid ? [centroid] : [];
+}
+
 export function pointDistance(a: IGeoJSPosition, b: IGeoJSPosition) {
   return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
 }

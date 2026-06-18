@@ -164,7 +164,19 @@
           ></v-text-field>
         </v-col>
       </v-row>
+      <div v-if="tooManyToList" class="list-too-many">
+        <v-icon size="32" class="mb-2">mdi-alert-circle-outline</v-icon>
+        <div class="text-subtitle-1">
+          {{ listedAnnotations.length.toLocaleString() }} annotations
+        </div>
+        <div class="text-body-2">
+          Too many to list. Narrow with tag, property, or ROI filters (or the
+          annotation ID filter above) to under
+          {{ LIST_ITEM_LIMIT.toLocaleString() }} to browse them here.
+        </div>
+      </div>
       <v-data-table
+        v-else
         :items="filteredItems"
         :headers="headers"
         show-select
@@ -432,7 +444,20 @@ const listedAnnotations = computed(() => {
   return annotations;
 });
 
+// Interim scale guard: the list materializes one item object per filtered
+// annotation and sorts client-side, so above this many it would hang the tab.
+// Server-side sort/filter/paginate is the planned replacement (see
+// ANNOTATION-STUBS.md). Until then, ask the user to narrow with filters.
+const LIST_ITEM_LIMIT = 20000;
+
+const tooManyToList = computed(
+  () => listedAnnotations.value.length > LIST_ITEM_LIMIT,
+);
+
 const filteredItems = computed(() => {
+  if (tooManyToList.value) {
+    return [];
+  }
   return listedAnnotations.value.map(annotationToItem.value);
 });
 
@@ -501,17 +526,28 @@ function removePropertyColumn(path: string[]) {
 }
 
 function goToAnnotationIdLocation(annotationId: string) {
+  // In stub-only mode getAnnotationFromId returns undefined for non-hydrated
+  // annotations, so fall back to the stub (which carries location + centroid).
   const annotation = annotationStore.getAnnotationFromId(annotationId);
-  if (!annotation) {
+  const stub = annotationStore.getStub(annotationId);
+  const location = annotation?.location ?? stub?.location;
+  if (!location) {
     return;
   }
-  store.setXY(annotation.location.XY);
-  store.setZ(annotation.location.Z);
-  store.setTime(annotation.location.Time);
-  store.setCameraInfo({
-    ...store.cameraInfo,
-    center: simpleCentroid(annotation.coordinates),
-  });
+  store.setXY(location.XY);
+  store.setZ(location.Z);
+  store.setTime(location.Time);
+  // Stubs have no coordinates — recenter on the stub centroid (or the centroid
+  // map); full annotations use their actual coordinate centroid.
+  const center = annotation?.coordinates
+    ? simpleCentroid(annotation.coordinates)
+    : stub?.centroid ?? annotationStore.annotationCentroids[annotationId];
+  if (center) {
+    store.setCameraInfo({
+      ...store.cameraInfo,
+      center,
+    });
+  }
   annotationStore.setHoveredAnnotationId(annotationId);
 }
 
@@ -654,6 +690,8 @@ defineExpose({
   tableItemClass,
   annotationFilteredDialog,
   localIdFilter,
+  LIST_ITEM_LIMIT,
+  tooManyToList,
   addOrRemove,
   page,
   itemsPerPage,
@@ -736,6 +774,12 @@ td span {
 
 .annotation-list-panel {
   padding: 6px 10px 10px;
+}
+
+.list-too-many {
+  text-align: center;
+  padding: 32px 16px;
+  opacity: 0.8;
 }
 
 .annotation-list-toolbar {
