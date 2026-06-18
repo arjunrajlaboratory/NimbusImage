@@ -180,7 +180,7 @@ class TestServerListProperties:
         # $ifNull/$$REMOVE drops the leaf; the `p` wrapper may remain
         # as {}).
         last = result["rows"][-1]
-        assert last["id"] == str(noval["_id"])
+        assert str(last["_id"]) == str(noval["_id"])
         assert "Area" not in last.get("values", {}).get("p", {})
 
     def testSortByPropertyDescMissingStillLast(self, admin, server):
@@ -196,7 +196,7 @@ class TestServerListProperties:
         result = parseStreaming(resp)
         vals = [r["values"]["p"]["Area"] for r in result["rows"][:3]]
         assert vals == [30, 20, 10]
-        assert result["rows"][-1]["id"] == str(noval["_id"])
+        assert str(result["rows"][-1]["_id"]) == str(noval["_id"])
 
     def testPropertyRangeFilterAffectsCountAndRows(self, admin, server):
         folder, anns, noval = self._setup(admin)

@@ -299,8 +299,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
     def _projectStage(self, propertyPaths):
         project = {"coordinates": 0, "_pv": 0, "_sortValue": 0,
                    "_hasSortValue": 0}
-        # Expose a string `id` alongside the raw `_id` for client use.
-        addFields = {"id": {"$toString": "$_id"}}
+        stages = []
         if propertyPaths:
             valuesExpr = {}
             for path in propertyPaths:
@@ -309,11 +308,9 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 for key in path[:-1]:
                     node = node.setdefault(key, {})
                 node[path[-1]] = {"$ifNull": [ref, "$$REMOVE"]}
-            addFields["values"] = valuesExpr
-        return [
-            {"$addFields": addFields},
-            {"$project": project},
-        ]
+            stages.append({"$addFields": {"values": valuesExpr}})
+        stages.append({"$project": project})
+        return stages
 
     def _propertySortAddFields(self, sort):
         if sort and sort.get("type") == "property":
