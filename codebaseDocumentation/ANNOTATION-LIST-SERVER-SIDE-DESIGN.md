@@ -162,9 +162,32 @@ A focused module (e.g. `src/store/annotationListServer.ts`) owns server-mode lis
 
 ## 8. Limitations & future work
 
+### Performance at very large scale — measured, DEFERRED (2026-06-18)
+
+Real-data testing on two live datasets confirmed **correctness** (HCR 26K: 16/16 checks; Xenium 708K: all functional checks pass) but revealed a **serious latency problem at 708K** that is deferred to a dedicated perf pass:
+
+| Call (708K dataset) | Latency |
+|---|---|
+| `/list/ids` (708K ids) | ~1.5 s |
+| page 1 — no property column, no sort | ~3.6 s |
+| page 1 — field sort (location.XY) | ~3.7 s |
+| page 1 — with a property column | ~13.4 s |
+| property sort | ~13.9 s |
+| range filter | ~21.1 s |
+| deep page + property sort | ~25.0 s |
+
+**Root cause:** the pipeline computes the centroid `$addFields`, does the property `$lookup`+`$unwind`, and `$sort`s over the **entire matched set** before `$skip`/`$limit`, so the per-row cost is paid on all 708K rows for every page. Two compounding culprits: centroid+sort over the full set (~3.6 s floor) and the lookup over the full set (+~10 s).
+
+**Planned fix (deferred), two tiers:**
+1. **Cheap, high-impact reorder:** for the default browse + field-sort case (no property sort/filter), defer the centroid `$addFields` and the `$lookup` until *after* `$skip`/`$limit` — `match → (indexed sort) → skip → limit → centroid + lookup on just the page`. Turns 3.6–13 s into ~tens of ms at any scale. Covers the most common UI interactions.
+2. **Property sort/filter at scale needs an index — but indexing is non-trivial here and needs design thought (the reason this is deferred, not done now):** property values are stored **nested** (`values.<propertyId>.<subField>`) and the `<propertyId>`s **differ per dataset**, so a naive per-property compound index doesn't generalize — you'd need a wildcard index, a flattened/reshaped property-values collection, an index created at property-compute time, or the bidirectional query (drive from `annotation_property_values`). Pick a strategy deliberately later.
+
+Decision (2026-06-18): proceed with the frontend now; do the perf pass as a follow-up. The architecture is correct; large datasets are just slow until then.
+
+### Other deferred items
+
 - **Pagination → infinite scroll:** iteration 1 is page numbers + total. Deep-page jumps (`$skip` at large offsets) are slow and are a common access mode, so a later iteration should move to cursor-based infinite scroll (encode sort key + `_id`). This is meaningfully more work; functional page-numbers first.
 - **Server-side ROI filtering:** deferred (Mongo geo / centroid-bounds).
-- **Per-property indexes + bidirectional query:** deferred perf lever (§5.4).
 - **Other `propertyValues` consumers** (plots, properties panels) still load values wholesale; separate future work.
 
 ## 9. Testing plan
