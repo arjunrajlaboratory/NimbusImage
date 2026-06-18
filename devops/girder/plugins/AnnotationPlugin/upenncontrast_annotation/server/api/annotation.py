@@ -662,7 +662,7 @@ class Annotation(Resource):
         sort = body.get("sort")
         propertyPaths = body.get("propertyPaths") or []
         offset = int(body.get("offset", 0))
-        limit = int(body.get("limit", 50))
+        limit = max(1, int(body.get("limit", 50)))
 
         total = self._annotationModel.listCount(datasetId, filters)
         try:

@@ -237,7 +237,9 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def listIds(self, datasetId, filters):
         """All annotation _ids (as strings) matching the filters."""
-        pipeline = self._buildListMatchStages(datasetId, filters)
+        pipeline = self._composePipeline(
+            datasetId, filters, None, [], include_sort=False,
+        )
         pipeline.append({"$project": {"_id": 1}})
         cursor = self.collection.aggregate(
             pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
@@ -254,10 +256,84 @@ class Annotation(AccessControlMixin, ProxiedModel):
             "y": {"$avg": "$coordinates.y"},
         }}}
 
+    PROPERTY_VALUES_COLLECTION = "annotation_property_values"
+
+    def _needsLookup(self, filters, sort, propertyPaths):
+        if propertyPaths:
+            return True
+        if sort and sort.get("type") == "property":
+            return True
+        return bool(filters.get("propertyFilters"))
+
+    def _lookupStages(self):
+        return [
+            {"$lookup": {
+                "from": self.PROPERTY_VALUES_COLLECTION,
+                "localField": "_id",
+                "foreignField": "annotationId",
+                "as": "_pv",
+            }},
+            {"$unwind": {
+                "path": "$_pv", "preserveNullAndEmptyArrays": True,
+            }},
+        ]
+
+    def _propertyFilterStages(self, filters):
+        stages = []
+        for pf in filters.get("propertyFilters") or []:
+            valueKey = "_pv.values." + ".".join(pf["path"])
+            if pf.get("mode") == "values":
+                values = pf.get("values") or []
+                if values:
+                    stages.append({"$match": {valueKey: {"$in": values}}})
+            else:  # range
+                cond = {}
+                if pf.get("min") is not None:
+                    cond["$gte"] = pf["min"]
+                if pf.get("max") is not None:
+                    cond["$lte"] = pf["max"]
+                if cond:
+                    stages.append({"$match": {valueKey: cond}})
+        return stages
+
+    def _projectStage(self, propertyPaths):
+        project = {"coordinates": 0, "_pv": 0, "_sortValue": 0,
+                   "_hasSortValue": 0}
+        # Expose a string `id` alongside the raw `_id` for client use.
+        addFields = {"id": {"$toString": "$_id"}}
+        if propertyPaths:
+            valuesExpr = {}
+            for path in propertyPaths:
+                ref = "$_pv.values." + ".".join(path)
+                node = valuesExpr
+                for key in path[:-1]:
+                    node = node.setdefault(key, {})
+                node[path[-1]] = {"$ifNull": [ref, "$$REMOVE"]}
+            addFields["values"] = valuesExpr
+        return [
+            {"$addFields": addFields},
+            {"$project": project},
+        ]
+
+    def _propertySortAddFields(self, sort):
+        if sort and sort.get("type") == "property":
+            ref = "$_pv.values." + ".".join(sort["key"])
+            return [{"$addFields": {
+                "_sortValue": ref,
+                "_hasSortValue": {"$cond": [
+                    {"$ne": [{"$ifNull": [ref, None]}, None]}, 1, 0,
+                ]},
+            }}]
+        return []
+
     def _sortStage(self, sort):
-        """$sort stage for a field-type sort (property sort added in a
-        later task). Always tie-break on _id for stable paging."""
         direction = -1 if (sort or {}).get("order") == "desc" else 1
+        if sort and sort.get("type") == "property":
+            # _hasSortValue desc puts present-values first (so missing
+            # always lands last regardless of direction).
+            return {"$sort": {
+                "_hasSortValue": -1, "_sortValue": direction, "_id": 1,
+            }}
         if sort and sort.get("type") == "field":
             key = sort.get("key")
             if key not in self._SORTABLE_FIELDS:
@@ -267,8 +343,25 @@ class Annotation(AccessControlMixin, ProxiedModel):
             return {"$sort": {key: direction, "_id": 1}}
         return {"$sort": {"_id": 1}}
 
-    def listCount(self, datasetId, filters):
+    def _composePipeline(self, datasetId, filters, sort, propertyPaths,
+                         include_sort):
         pipeline = self._buildListMatchStages(datasetId, filters)
+        if self._needsLookup(filters, sort, propertyPaths):
+            pipeline += self._lookupStages()
+            pipeline += self._propertyFilterStages(filters)
+        if include_sort:
+            pipeline += self._propertySortAddFields(sort)
+            pipeline.append(self._centroidAddFields())
+            pipeline.append(self._sortStage(sort))
+        return pipeline
+
+    def listCount(self, datasetId, filters):
+        # Count only needs the lookup when a property FILTER is active
+        # (sorting never changes the count).
+        pipeline = self._buildListMatchStages(datasetId, filters)
+        if filters.get("propertyFilters"):
+            pipeline += self._lookupStages()
+            pipeline += self._propertyFilterStages(filters)
         pipeline.append({"$count": "n"})
         result = list(self.collection.aggregate(
             pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
@@ -277,12 +370,12 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def listPage(self, datasetId, filters, sort, propertyPaths,
                  offset, limit):
-        pipeline = self._buildListMatchStages(datasetId, filters)
-        pipeline.append(self._centroidAddFields())
-        pipeline.append(self._sortStage(sort))
+        pipeline = self._composePipeline(
+            datasetId, filters, sort, propertyPaths, include_sort=True,
+        )
         pipeline.append({"$skip": max(0, offset)})
         pipeline.append({"$limit": limit})
-        pipeline.append({"$project": {"coordinates": 0}})
+        pipeline += self._projectStage(propertyPaths)
         return self.collection.aggregate(
             pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
         )

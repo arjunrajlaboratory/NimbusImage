@@ -4,6 +4,9 @@ import pytest
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -128,3 +131,92 @@ class TestServerListPage:
         result = parseStreaming(resp)
         xys = [r["location"]["XY"] for r in result["rows"]]
         assert xys == [2, 1, 0]
+
+    def testInvalidFieldSortReturns400(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        makeAnnotation(folder["_id"])
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "evil; drop", "order": "asc"},
+            "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListProperties:
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        anns = []
+        for val in (30, 10, 20):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": val}}, a["_id"], folder["_id"])
+            anns.append(a)
+        noval = makeAnnotation(folder["_id"])
+        return folder, anns, noval
+
+    def testSortByPropertyAscMissingLast(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 10,
+        })
+        result = parseStreaming(resp)
+        vals = [r["values"]["p"]["Area"] for r in result["rows"][:3]]
+        assert vals == [10, 20, 30]
+        # Annotation with no value sorts to the end regardless of
+        # direction. Its projected `values` has no Area (the
+        # $ifNull/$$REMOVE drops the leaf; the `p` wrapper may remain
+        # as {}).
+        last = result["rows"][-1]
+        assert last["id"] == str(noval["_id"])
+        assert "Area" not in last.get("values", {}).get("p", {})
+
+    def testSortByPropertyDescMissingStillLast(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "desc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 10,
+        })
+        result = parseStreaming(resp)
+        vals = [r["values"]["p"]["Area"] for r in result["rows"][:3]]
+        assert vals == [30, 20, 10]
+        assert result["rows"][-1]["id"] == str(noval["_id"])
+
+    def testPropertyRangeFilterAffectsCountAndRows(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        body = {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [
+                {"path": ["p", "Area"], "mode": "range",
+                 "min": 15, "max": 100}
+            ]},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]], "offset": 0, "limit": 10,
+        }
+        resp = postList(server, admin, "/upenn_annotation/list", body)
+        result = parseStreaming(resp)
+        assert result["total"] == 2  # 20 and 30
+        rowVals = [r["values"]["p"]["Area"] for r in result["rows"]]
+        assert rowVals == [20, 30]
+
+        resp2 = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]), "filters": body["filters"],
+        })
+        assert parseStreaming(resp2)["total"] == 2
