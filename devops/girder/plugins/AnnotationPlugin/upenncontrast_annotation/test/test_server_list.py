@@ -220,3 +220,52 @@ class TestServerListProperties:
             "datasetId": str(folder["_id"]), "filters": body["filters"],
         })
         assert parseStreaming(resp2)["total"] == 2
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListValidation:
+    def _folder(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        makeAnnotation(folder["_id"])
+        return folder
+
+    def testPropertyFilterMissingPathReturns400(self, admin, server):
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [{"mode": "range", "min": 1}]},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testPropertySortKeyNotListReturns400(self, admin, server):
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": "p.Area", "order": "asc"},
+            "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testPropertyPathWithDollarReturns400(self, admin, server):
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {}, "sort": None,
+            "propertyPaths": [["$where"]], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testListIdsBadPropertyFilterPathReturns400(self, admin, server):
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [
+                {"path": "notalist", "mode": "values", "values": [1]}
+            ]},
+        })
+        assertStatus(resp, 400)

@@ -20,6 +20,59 @@ from ..helpers.serialization import orJsonDefaults
 # Helper functions to get dataset ID for recordable endpoints
 
 
+def _isValidPropertyPath(path):
+    return (
+        isinstance(path, list)
+        and len(path) > 0
+        and all(
+            isinstance(p, str) and p and "." not in p and "$" not in p
+            for p in path
+        )
+    )
+
+
+def _validateListInputs(filters, sort=None, propertyPaths=None):
+    """Validate client-supplied filter/sort/path shape. Raises
+    RestException(400) on malformed input (avoids uncaught 500s on a
+    public endpoint)."""
+    propertyFilters = filters.get("propertyFilters")
+    if propertyFilters is not None:
+        if not isinstance(propertyFilters, list):
+            raise RestException("propertyFilters must be a list", code=400)
+        for pf in propertyFilters:
+            if not isinstance(pf, dict) or not _isValidPropertyPath(
+                pf.get("path")
+            ):
+                raise RestException(
+                    "Each property filter needs a valid 'path'", code=400
+                )
+            if pf.get("mode") not in ("range", "values"):
+                raise RestException(
+                    "property filter 'mode' must be 'range' or 'values'",
+                    code=400,
+                )
+    if sort is not None:
+        if not isinstance(sort, dict) or sort.get("type") not in (
+            "field", "property"
+        ):
+            raise RestException(
+                "sort.type must be 'field' or 'property'", code=400
+            )
+        if sort["type"] == "property" and not _isValidPropertyPath(
+            sort.get("key")
+        ):
+            raise RestException(
+                "property sort needs a valid 'key' path", code=400
+            )
+    if propertyPaths is not None:
+        if not isinstance(propertyPaths, list) or not all(
+            _isValidPropertyPath(p) for p in propertyPaths
+        ):
+            raise RestException(
+                "propertyPaths must be a list of valid paths", code=400
+            )
+
+
 def getDatasetIdFromAnnotationInBody(self: "Annotation", *args, **kwargs):
     annotation = kwargs["memoizedBodyJson"]
     return annotation["datasetId"]
@@ -623,6 +676,7 @@ class Annotation(Resource):
             level=AccessType.READ, exc=True,
         )
         filters = body.get("filters") or {}
+        _validateListInputs(filters)
         ids = self._annotationModel.listIds(datasetId, filters)
 
         def generateResult():
@@ -663,6 +717,8 @@ class Annotation(Resource):
         propertyPaths = body.get("propertyPaths") or []
         offset = int(body.get("offset", 0))
         limit = max(1, int(body.get("limit", 50)))
+
+        _validateListInputs(filters, sort, propertyPaths)
 
         total = self._annotationModel.listCount(datasetId, filters)
         try:
