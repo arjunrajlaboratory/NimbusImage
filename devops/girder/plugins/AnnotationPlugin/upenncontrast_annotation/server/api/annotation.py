@@ -643,7 +643,48 @@ class Annotation(Resource):
         return generateResult
 
     @access.public(scope=TokenScope.DATA_READ)
-    @describeRoute(Description("List annotations (page)"))
+    @describeRoute(
+        Description("List annotations (paged), stub-shaped + property values")
+        .param("body", "JSON: {datasetId, filters, sort, propertyPaths, "
+                       "offset, limit}", paramType="body")
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
     @memoizeBodyJson
     def listAnnotations(self, params, *args, **kwargs):
-        return []
+        body = kwargs["memoizedBodyJson"]
+        datasetId = ObjectId(body["datasetId"])
+        Folder().load(
+            datasetId, user=self.getCurrentUser(),
+            level=AccessType.READ, exc=True,
+        )
+        filters = body.get("filters") or {}
+        sort = body.get("sort")
+        propertyPaths = body.get("propertyPaths") or []
+        offset = int(body.get("offset", 0))
+        limit = int(body.get("limit", 50))
+
+        total = self._annotationModel.listCount(datasetId, filters)
+        try:
+            cursor = self._annotationModel.listPage(
+                datasetId, filters, sort, propertyPaths, offset, limit
+            )
+        except ValueError as e:
+            raise RestException(str(e), code=400)
+
+        def generateResult():
+            chunk = [b'{"total":', str(total).encode(), b',"rows":[']
+            first = True
+            for row in cursor:
+                if not first:
+                    chunk.append(b",")
+                chunk.append(orjson.dumps(row, default=orJsonDefaults))
+                first = False
+                if len(chunk) > 1000:
+                    yield b"".join(chunk)
+                    chunk = []
+            chunk.append(b"]}")
+            yield b"".join(chunk)
+
+        setResponseHeader("Content-Type", "application/json")
+        return generateResult

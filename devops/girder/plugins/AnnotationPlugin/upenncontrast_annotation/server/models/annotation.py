@@ -218,9 +218,12 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
         location = filters.get("location")
         if location:
-            match["location.XY"] = location["XY"]
-            match["location.Z"] = location["Z"]
-            match["location.Time"] = location["Time"]
+            if location.get("XY") is not None:
+                match["location.XY"] = location["XY"]
+            if location.get("Z") is not None:
+                match["location.Z"] = location["Z"]
+            if location.get("Time") is not None:
+                match["location.Time"] = location["Time"]
 
         stages = [{"$match": match}]
 
@@ -240,6 +243,49 @@ class Annotation(AccessControlMixin, ProxiedModel):
             pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
         )
         return [str(doc["_id"]) for doc in cursor]
+
+    # Annotation fields allowed as a sort key (field-type sort).
+    _SORTABLE_FIELDS = {"location.XY", "location.Z", "location.Time",
+                        "name", "channel", "_id"}
+
+    def _centroidAddFields(self):
+        return {"$addFields": {"centroid": {
+            "x": {"$avg": "$coordinates.x"},
+            "y": {"$avg": "$coordinates.y"},
+        }}}
+
+    def _sortStage(self, sort):
+        """$sort stage for a field-type sort (property sort added in a
+        later task). Always tie-break on _id for stable paging."""
+        direction = -1 if (sort or {}).get("order") == "desc" else 1
+        if sort and sort.get("type") == "field":
+            key = sort.get("key")
+            if key not in self._SORTABLE_FIELDS:
+                raise ValueError("Invalid sort field: %s" % key)
+            if key == "_id":
+                return {"$sort": {"_id": direction}}
+            return {"$sort": {key: direction, "_id": 1}}
+        return {"$sort": {"_id": 1}}
+
+    def listCount(self, datasetId, filters):
+        pipeline = self._buildListMatchStages(datasetId, filters)
+        pipeline.append({"$count": "n"})
+        result = list(self.collection.aggregate(
+            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
+        ))
+        return result[0]["n"] if result else 0
+
+    def listPage(self, datasetId, filters, sort, propertyPaths,
+                 offset, limit):
+        pipeline = self._buildListMatchStages(datasetId, filters)
+        pipeline.append(self._centroidAddFields())
+        pipeline.append(self._sortStage(sort))
+        pipeline.append({"$skip": max(0, offset)})
+        pipeline.append({"$limit": limit})
+        pipeline.append({"$project": {"coordinates": 0}})
+        return self.collection.aggregate(
+            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
+        )
 
     def getAnnotationById(self, id, user=None):
         return self.load(id, user=user, level=AccessType.READ)

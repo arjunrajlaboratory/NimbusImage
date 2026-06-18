@@ -81,3 +81,50 @@ class TestServerListIds:
             "filters": {},
         })
         assertStatus(resp, 403)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListPage:
+    def testListPaginatesAndCounts(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        for i in range(5):
+            makeAnnotation(
+                folder["_id"], location={"XY": i, "Z": 0, "Time": 0}
+            )
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY", "order": "asc"},
+            "propertyPaths": [],
+            "offset": 0, "limit": 2,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 5
+        assert len(result["rows"]) == 2
+        assert result["rows"][0]["location"]["XY"] == 0
+        assert result["rows"][1]["location"]["XY"] == 1
+        assert "centroid" in result["rows"][0]
+        assert "coordinates" not in result["rows"][0]
+
+    def testListFieldSortDescending(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        for i in range(3):
+            makeAnnotation(
+                folder["_id"], location={"XY": i, "Z": 0, "Time": 0}
+            )
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY", "order": "desc"},
+            "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        result = parseStreaming(resp)
+        xys = [r["location"]["XY"] for r in result["rows"]]
+        assert xys == [2, 1, 0]
