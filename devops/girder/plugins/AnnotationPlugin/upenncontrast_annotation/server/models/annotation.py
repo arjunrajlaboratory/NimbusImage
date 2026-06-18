@@ -1,3 +1,5 @@
+import re
+
 import fastjsonschema
 
 from bson.objectid import ObjectId
@@ -239,9 +241,12 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
         idSubstring = filters.get("idSubstring")
         if idSubstring:
+            # Literal substring match (mirrors the client's String.includes);
+            # escape so user-supplied regex metacharacters are matched
+            # literally rather than interpreted.
             stages.append({"$match": {"$expr": {"$regexMatch": {
                 "input": {"$toString": "$_id"},
-                "regex": idSubstring,
+                "regex": re.escape(idSubstring),
             }}}})
         return stages
 

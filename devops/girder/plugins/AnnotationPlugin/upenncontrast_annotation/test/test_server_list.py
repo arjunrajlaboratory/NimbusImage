@@ -145,6 +145,27 @@ class TestServerListPage:
         })
         assertStatus(resp, 400)
 
+    def testInvalidFieldSortSkipsCount(self, admin, server, monkeypatch):
+        # Finding #5: an invalid sort field must be rejected (400) BEFORE the
+        # expensive count aggregation runs. Make listCount blow up to prove it
+        # is never reached on the invalid-sort path.
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        makeAnnotation(folder["_id"])
+
+        def boom(*args, **kwargs):
+            raise AssertionError("listCount ran before sort validation")
+
+        monkeypatch.setattr(Annotation, "listCount", boom)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "evil; drop", "order": "asc"},
+            "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
@@ -270,6 +291,51 @@ class TestServerListValidation:
         })
         assertStatus(resp, 400)
 
+    def testPropertyFilterValuesNotListReturns400(self, admin, server):
+        # Finding #10: a non-list `values` would become `{"$in": "x"}` and
+        # raise a 500 in the aggregation; reject it at the boundary.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [
+                {"path": ["p", "Area"], "mode": "values",
+                 "values": "notalist"}
+            ]},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testPropertyFilterRangeNonNumericReturns400(self, admin, server):
+        # Finding #10: range bounds must be numbers.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [
+                {"path": ["p", "Area"], "mode": "range", "min": "x"}
+            ]},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testNonStringIdSubstringReturns400(self, admin, server):
+        # Finding #7: a non-string idSubstring would reach the $regexMatch
+        # regex unchecked and raise a 500.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idSubstring": 123},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testNonStringIdSubstringReturns400OnIds(self, admin, server):
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idSubstring": 123},
+        })
+        assertStatus(resp, 400)
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
@@ -362,3 +428,58 @@ class TestServerListIdConstraints:
             "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
         })
         assertStatus(resp, 400)
+
+    def testInvalidObjectIdInConstraintsReturns400(self, admin, server):
+        # Finding #2: well-formed shape (list of lists of strings) but the
+        # string is not a valid ObjectId. The model's ObjectId() conversion
+        # would raise bson.InvalidId -> uncaught 500 on this public endpoint.
+        # It must be rejected at the API boundary as 400.
+        folder, a, b, c, d = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idConstraints": [["notanobjectid"]]},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testInvalidObjectIdInConstraintsReturns400OnIds(self, admin, server):
+        folder, a, b, c, d = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idConstraints": [["notanobjectid"]]},
+        })
+        assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListIdSubstring:
+    def testIdSubstringMatchesById(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        a = makeAnnotation(folder["_id"])
+        makeAnnotation(folder["_id"])
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idSubstring": str(a["_id"])},
+        })
+        assertStatusOk(resp)
+        assert parseStreaming(resp)["ids"] == [str(a["_id"])]
+
+    def testIdSubstringIsEscapedNotRegex(self, admin, server):
+        # Finding #7/#11: idSubstring is a literal substring match (matching
+        # the client's String.includes), so regex metacharacters are escaped.
+        # "." is regex "any char"; hex object ids contain no literal dot, so
+        # an escaped "." matches nothing (an unescaped regex would match all).
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        makeAnnotation(folder["_id"])
+        makeAnnotation(folder["_id"])
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idSubstring": "."},
+        })
+        assertStatusOk(resp)
+        assert parseStreaming(resp)["ids"] == []

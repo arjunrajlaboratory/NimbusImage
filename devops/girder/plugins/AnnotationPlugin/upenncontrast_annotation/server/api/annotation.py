@@ -46,11 +46,32 @@ def _validateListInputs(filters, sort=None, propertyPaths=None):
                 raise RestException(
                     "Each property filter needs a valid 'path'", code=400
                 )
-            if pf.get("mode") not in ("range", "values"):
+            mode = pf.get("mode")
+            if mode not in ("range", "values"):
                 raise RestException(
                     "property filter 'mode' must be 'range' or 'values'",
                     code=400,
                 )
+            if mode == "values":
+                values = pf.get("values")
+                if values is not None and not isinstance(values, list):
+                    raise RestException(
+                        "property filter 'values' must be a list", code=400
+                    )
+            else:  # range: bounds are comparison operands, must be numeric
+                for bound in ("min", "max"):
+                    value = pf.get(bound)
+                    if value is not None and (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                    ):
+                        raise RestException(
+                            "property filter '%s' must be a number" % bound,
+                            code=400,
+                        )
+    idSubstring = filters.get("idSubstring")
+    if idSubstring is not None and not isinstance(idSubstring, str):
+        raise RestException("idSubstring must be a string", code=400)
     idConstraints = filters.get("idConstraints")
     if idConstraints is not None:
         if not isinstance(idConstraints, list) or not all(
@@ -62,6 +83,19 @@ def _validateListInputs(filters, sort=None, propertyPaths=None):
                 "idConstraints must be a list of lists of id strings",
                 code=400,
             )
+        # Each id must be a valid ObjectId; the model converts them when
+        # building the match stage, where an InvalidId would otherwise
+        # surface as an uncaught 500 on this public endpoint.
+        for constraint in idConstraints:
+            for annotationId in constraint:
+                try:
+                    ObjectId(annotationId)
+                except InvalidId:
+                    raise RestException(
+                        "idConstraints contains an invalid id: %s"
+                        % annotationId,
+                        code=400,
+                    )
     if sort is not None:
         if not isinstance(sort, dict) or sort.get("type") not in (
             "field", "property"
@@ -82,6 +116,27 @@ def _validateListInputs(filters, sort=None, propertyPaths=None):
             raise RestException(
                 "propertyPaths must be a list of valid paths", code=400
             )
+
+
+def _streamJsonArray(items, prefix=b"[", suffix=b"]", default=None):
+    """Stream `items` as a JSON array, orjson-encoding each element and
+    wrapping them in `prefix`/`suffix` (so callers can embed the array inside
+    an enclosing object, e.g. {"total": N, "rows": [...]}). Returns a
+    generator suitable for a streamed response body."""
+    def generate():
+        chunk = [prefix]
+        first = True
+        for item in items:
+            if not first:
+                chunk.append(b",")
+            chunk.append(orjson.dumps(item, default=default))
+            first = False
+            if len(chunk) > 1000:
+                yield b"".join(chunk)
+                chunk = []
+        chunk.append(suffix)
+        yield b"".join(chunk)
+    return generate
 
 
 def getDatasetIdFromAnnotationInBody(self: "Annotation", *args, **kwargs):
@@ -409,30 +464,10 @@ class Annotation(Resource):
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
 
-        def generateResult():
-            chunk = [b"["]
-            first = True
-            for annotation in cursor:
-                if not first:
-                    chunk.append(b",")
-                # Otherwise, we can use json
-                # chunk.append(json.dumps(annotation, allow_nan=False,
-                #             cls=JsonEncoder, separators=(",", ":")).encode())
-                # If we got rid of ObjectIds, using the json defaults is faster
-                # chunk.append(json.dumps(annotation).encode())
-                # But orjson is faster yet
-                chunk.append(orjson.dumps(annotation, default=orJsonDefaults))
-                first = False
-                if len(chunk) > 1000:
-                    yield b"".join(chunk)
-                    chunk = []
-            chunk.append(b"]")
-            yield b"".join(chunk)
-
         setResponseHeader("Content-Type", "application/json")
         if callable(getattr(cursor, 'count', None)):
             cherrypy.response.headers['Girder-Total-Count'] = cursor.count()
-        return generateResult
+        return _streamJsonArray(cursor, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -584,24 +619,8 @@ class Annotation(Resource):
             hint={"datasetId": 1, "_id": 1},
         )
 
-        def generateResult():
-            chunk = [b"["]
-            first = True
-            for stub in cursor:
-                if not first:
-                    chunk.append(b",")
-                chunk.append(
-                    orjson.dumps(stub, default=orJsonDefaults)
-                )
-                first = False
-                if len(chunk) > 1000:
-                    yield b"".join(chunk)
-                    chunk = []
-            chunk.append(b"]")
-            yield b"".join(chunk)
-
         setResponseHeader("Content-Type", "application/json")
-        return generateResult
+        return _streamJsonArray(cursor, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -650,26 +669,8 @@ class Annotation(Resource):
             {"_id": {"$in": objectIds}}
         )
 
-        def generateResult():
-            chunk = [b"["]
-            first = True
-            for annotation in cursor:
-                if not first:
-                    chunk.append(b",")
-                chunk.append(
-                    orjson.dumps(
-                        annotation, default=orJsonDefaults
-                    )
-                )
-                first = False
-                if len(chunk) > 1000:
-                    yield b"".join(chunk)
-                    chunk = []
-            chunk.append(b"]")
-            yield b"".join(chunk)
-
         setResponseHeader("Content-Type", "application/json")
-        return generateResult
+        return _streamJsonArray(cursor, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -690,22 +691,9 @@ class Annotation(Resource):
         _validateListInputs(filters)
         ids = self._annotationModel.listIds(datasetId, filters)
 
-        def generateResult():
-            chunk = [b'{"total":', str(len(ids)).encode(), b',"ids":[']
-            first = True
-            for sid in ids:
-                if not first:
-                    chunk.append(b",")
-                chunk.append(orjson.dumps(sid))
-                first = False
-                if len(chunk) > 1000:
-                    yield b"".join(chunk)
-                    chunk = []
-            chunk.append(b"]}")
-            yield b"".join(chunk)
-
+        prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
         setResponseHeader("Content-Type", "application/json")
-        return generateResult
+        return _streamJsonArray(ids, prefix=prefix, suffix=b"]}")
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -731,27 +719,19 @@ class Annotation(Resource):
 
         _validateListInputs(filters, sort, propertyPaths)
 
-        total = self._annotationModel.listCount(datasetId, filters)
+        # Build the page first: its pipeline construction validates the sort
+        # field (ValueError -> 400) before the expensive count aggregation
+        # runs, so a bad sort key doesn't pay for a full count (Finding #5).
         try:
             cursor = self._annotationModel.listPage(
                 datasetId, filters, sort, propertyPaths, offset, limit
             )
         except ValueError as e:
             raise RestException(str(e), code=400)
+        total = self._annotationModel.listCount(datasetId, filters)
 
-        def generateResult():
-            chunk = [b'{"total":', str(total).encode(), b',"rows":[']
-            first = True
-            for row in cursor:
-                if not first:
-                    chunk.append(b",")
-                chunk.append(orjson.dumps(row, default=orJsonDefaults))
-                first = False
-                if len(chunk) > 1000:
-                    yield b"".join(chunk)
-                    chunk = []
-            chunk.append(b"]}")
-            yield b"".join(chunk)
-
+        prefix = b'{"total":' + str(total).encode() + b',"rows":['
         setResponseHeader("Content-Type", "application/json")
-        return generateResult
+        return _streamJsonArray(
+            cursor, prefix=prefix, suffix=b"]}", default=orJsonDefaults
+        )
