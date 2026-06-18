@@ -83,7 +83,11 @@ What the **backend already supports**: `annotation_property_values/histogram` co
 - Both coordinate bugs above are **fixed** (TDD, full suite green).
 - **List scale guard added** — `AnnotationList.vue` `LIST_ITEM_LIMIT = 20000`; when the filtered count exceeds it, `tooManyToList` short-circuits `filteredItems` to `[]` and the table is replaced with a "Too many to list — narrow with filters" message (the annotation ID filter stays available to narrow down). Tests: `AnnotationList.test.ts` "list size guard". This prevents the tab hanging on large stub-only datasets; it is *not* a partial-sort — it's an honest block until B ships.
 
-**B (next, not started):** server-side sort/filter/paginate endpoint + lazy property values + Vuetify server-items list rewrite. This is the real scaling fix; the 20k guard is the interim stopgap. Property values remain the dominant memory cost (loaded wholesale) and are the main thing B must solve.
+**B (designed; implementation pending):** server-side sort/filter/paginate endpoint + lazy per-page property values + Vuetify server-items list (dual-mode, mirroring the stub under/over-threshold pattern). This is the real scaling fix; the 20k guard is the interim stopgap. Property values remain the dominant memory cost (loaded wholesale) and are the main thing B solves. **Full design spec: [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md).**
+
+Key B decisions: Core scope (sort/filter/paginate server-side); `Select All`/`Delete Unselected` via a matching-IDs endpoint; tag/location/ID filters move server-side too (pagination must reflect all filters); ROI server-side deferred; per-property indexes deferred.
+
+**Future (post-B-v1): infinite scroll.** B v1 keeps page numbers + total (offset/limit + count). Deep-page jumps (`$skip` at large offsets) are slow and are likely a common access mode, so a later iteration should migrate to cursor-based infinite scroll (encode sort key + `_id`). Deferred because it's meaningfully more work — get functional page-numbers up first.
 
 ---
 
