@@ -707,7 +707,10 @@ describe("AnnotationList", () => {
       expect(vm.serverItemsLength).toBe(1234);
       expect(vm.serverRowItems).toHaveLength(1);
       expect(vm.serverRowItems[0].annotation.id).toBe("srv1");
-      expect(mockFetchPage).toHaveBeenCalled();
+      // Exactly one fetch on mount. The table is stubbed in tests so it never
+      // emits update:options; this also locks the Fix-2 mount dedup (the real
+      // immediate-on-mount emit must not produce a second identical request).
+      expect(mockFetchPage).toHaveBeenCalledTimes(1);
     });
 
     it("computes absolute index for server rows across pages", () => {
@@ -823,6 +826,60 @@ describe("AnnotationList", () => {
         sort: { type: "field", key: "location.XY", order: "asc" },
       });
       expect(mockFetchPage).toHaveBeenCalled();
+    });
+
+    it("onServerOptions is a no-op when options match the store state (mount dedup)", () => {
+      // Store is at page:1, pageSize:50, sort:null (default mock state). The
+      // immediate-on-mount emit from Vuetify carries these same values, so it
+      // must not produce a second setOptions/fetchPage on top of onMounted.
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+      vm.onServerOptions({ page: 1, itemsPerPage: 50, sortBy: [] });
+      expect(mockSetOptions).not.toHaveBeenCalled();
+      expect(mockFetchPage).not.toHaveBeenCalled();
+    });
+
+    it("onServerOptions fetches when options differ from the store state", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+      vm.onServerOptions({ page: 2, itemsPerPage: 50, sortBy: [] });
+      expect(mockSetOptions).toHaveBeenCalledWith({
+        page: 2,
+        pageSize: 50,
+        sort: null,
+      });
+      expect(mockFetchPage).toHaveBeenCalledTimes(1);
+    });
+
+    it("debounces the server refetch when localIdFilter changes", async () => {
+      vi.useFakeTimers();
+      try {
+        (annotationStore as any).stubOnlyMode = true;
+        const wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        // onMounted fetched once; isolate the watch-driven refetch.
+        mockFetchPage.mockClear();
+        mockSetIdSubstring.mockClear();
+
+        vm.localIdFilter = "abc";
+        await wrapper.vm.$nextTick();
+
+        // State updates synchronously, but the fetch is deferred.
+        expect(mockSetIdSubstring).toHaveBeenCalledWith("abc");
+        expect(mockFetchPage).not.toHaveBeenCalled();
+
+        // After the debounce window, exactly one fetch fires.
+        vi.advanceTimersByTime(300);
+        expect(mockFetchPage).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

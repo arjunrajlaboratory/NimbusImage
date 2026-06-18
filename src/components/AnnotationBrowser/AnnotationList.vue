@@ -453,7 +453,8 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import annotationListServer from "@/store/annotationListServer";
@@ -622,10 +623,22 @@ function onServerOptions(opts: {
   sortBy?: { key: string; order: "asc" | "desc" }[];
 }) {
   const entry = opts.sortBy?.[0];
+  const newSort = entry ? mapSort(entry) : null;
+  // Vuetify's options composable watches {immediate:true} and emits
+  // update:options on mount, which would duplicate the onMounted fetchPage().
+  // No-op when the incoming options already match the store state so the
+  // mount-time emit doesn't trigger a second identical request.
+  if (
+    opts.page === annotationListServer.page &&
+    opts.itemsPerPage === annotationListServer.pageSize &&
+    JSON.stringify(newSort) === JSON.stringify(annotationListServer.sort)
+  ) {
+    return;
+  }
   annotationListServer.setOptions({
     page: opts.page,
     pageSize: opts.itemsPerPage,
-    sort: entry ? mapSort(entry) : null,
+    sort: newSort,
   });
   annotationListServer.fetchPage();
 }
@@ -725,9 +738,9 @@ const selectAllValue = computed(() => {
 
 function selectAllCallback() {
   if (isServerMode.value) {
-    // Selecting "all" in server mode would require materializing every
-    // matching id; defer that to the dedicated select-all-matching action.
-    // Here we only support clearing the current selection.
+    // In server mode: if anything is currently selected, clear the selection;
+    // otherwise select all matching annotations by fetching their ids from the
+    // backend (selectAllMatchingInServerMode → fetchMatchingIds).
     if (annotationStore.selectedAnnotationIds.size > 0) {
       selectedIds.value = [];
     } else {
@@ -898,13 +911,22 @@ watch([hoveredId, itemsPerPage], () => {
 // own). In server mode, a change to any query input resets to page 1 and
 // refetches. The annotation-ID text filter is wired through the store's
 // idSubstring so it folds into the backend query.
+//
+// The refetch is debounced (trailing, 300ms): typing in the ID filter or
+// rapid filter/frame changes would otherwise fire one slow /list request per
+// keystroke. State (idSubstring, page reset) is updated synchronously so the
+// store is always consistent; only the network fetch is deferred.
+const debouncedServerRefetch = debounce(() => {
+  annotationListServer.fetchPage();
+}, 300);
+
 watch(localIdFilter, (value) => {
   if (!isServerMode.value) {
     return;
   }
   annotationListServer.setIdSubstring(value?.trim() ?? "");
   annotationListServer.setOptions({ page: 1 });
-  annotationListServer.fetchPage();
+  debouncedServerRefetch();
 });
 
 watch(
@@ -922,10 +944,14 @@ watch(
       return;
     }
     annotationListServer.setOptions({ page: 1 });
-    annotationListServer.fetchPage();
+    debouncedServerRefetch();
   },
   { deep: true },
 );
+
+onBeforeUnmount(() => {
+  debouncedServerRefetch.cancel();
+});
 
 onMounted(() => {
   if (isServerMode.value) {
