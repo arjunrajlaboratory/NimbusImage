@@ -220,91 +220,19 @@
           </v-btn>
         </template>
         <template v-slot:item="{ item }">
-          <tr
-            @mouseover="hover(item.annotation.id)"
-            @mouseleave="hover(null)"
-            @click="goToAnnotationIdLocation(item.annotation.id)"
-            title="Go to annotation location"
-            :class="item.annotation.id === hoveredId ? 'is-hovered' : ''"
+          <annotation-list-row
+            :item="item"
+            :selected-columns="selectedColumns"
+            :displayed-property-paths="displayedPropertyPaths"
+            :hovered-id="hoveredId"
+            :table-item-class="tableItemClass"
             :ref="(el) => setAnnotationRef(item.annotation.id, el)"
-          >
-            <td :class="tableItemClass">
-              <v-checkbox
-                hide-details
-                title
-                :model-value="item.isSelected"
-                @click.stop="() => toggleAnnotationSelection(item.annotation)"
-              />
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.id')"
-            >
-              <span class="user-select-text">{{ item.annotation.id }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('index')"
-            >
-              <span>{{ item.index }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('shapeName')"
-            >
-              <span>{{ item.shapeName }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.tags')"
-            >
-              <span>
-                <v-chip
-                  v-for="tag in item.annotation.tags"
-                  :key="tag"
-                  size="x-small"
-                  @click="clickedTag(tag)"
-                  >{{ tag }}</v-chip
-                >
-              </span>
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.XY')">
-              {{ item.annotation.location.XY + 1 }}
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.Z')">
-              {{ item.annotation.location.Z + 1 }}
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.Time')">
-              {{ item.annotation.location.Time + 1 }}
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.name')"
-            >
-              <v-text-field
-                hide-details
-                :model-value="item.annotation.name || ''"
-                density="compact"
-                flat
-                variant="outlined"
-                @change="
-                  updateAnnotationName($event.target.value, item.annotation.id)
-                "
-                @click.capture.stop
-                title
-              ></v-text-field>
-            </td>
-            <td
-              v-for="(propertyPath, idx) in displayedPropertyPaths"
-              :key="item.annotation.id + ' property ' + idx"
-              :class="tableItemClass"
-            >
-              <span>{{
-                getStringFromPropertiesAndPath(item.properties, propertyPath) ??
-                "-"
-              }}</span>
-            </td>
-          </tr>
+            @hover="hover"
+            @navigate="goToAnnotationIdLocation"
+            @toggle-select="toggleAnnotationSelection"
+            @clicked-tag="clickedTag"
+            @update-name="updateAnnotationName($event.name, $event.id)"
+          />
         </template>
       </v-data-table>
       <!-- Client mode, over the size limit: ask the user to narrow filters. -->
@@ -361,91 +289,19 @@
           </v-btn>
         </template>
         <template v-slot:item="{ item }">
-          <tr
-            @mouseover="hover(item.annotation.id)"
-            @mouseleave="hover(null)"
-            @click="goToAnnotationIdLocation(item.annotation.id)"
-            title="Go to annotation location"
-            :class="item.annotation.id === hoveredId ? 'is-hovered' : ''"
+          <annotation-list-row
+            :item="item"
+            :selected-columns="selectedColumns"
+            :displayed-property-paths="displayedPropertyPaths"
+            :hovered-id="hoveredId"
+            :table-item-class="tableItemClass"
             :ref="(el) => setAnnotationRef(item.annotation.id, el)"
-          >
-            <td :class="tableItemClass">
-              <v-checkbox
-                hide-details
-                title
-                :model-value="item.isSelected"
-                @click.stop="() => toggleAnnotationSelection(item.annotation)"
-              />
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.id')"
-            >
-              <span class="user-select-text">{{ item.annotation.id }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('index')"
-            >
-              <span>{{ item.index }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('shapeName')"
-            >
-              <span>{{ item.shapeName }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.tags')"
-            >
-              <span>
-                <v-chip
-                  v-for="tag in item.annotation.tags"
-                  :key="tag"
-                  size="x-small"
-                  @click="clickedTag(tag)"
-                  >{{ tag }}</v-chip
-                >
-              </span>
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.XY')">
-              {{ item.annotation.location.XY + 1 }}
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.Z')">
-              {{ item.annotation.location.Z + 1 }}
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.Time')">
-              {{ item.annotation.location.Time + 1 }}
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.name')"
-            >
-              <v-text-field
-                hide-details
-                :model-value="item.annotation.name || ''"
-                density="compact"
-                flat
-                variant="outlined"
-                @change="
-                  updateAnnotationName($event.target.value, item.annotation.id)
-                "
-                @click.capture.stop
-                title
-              ></v-text-field>
-            </td>
-            <td
-              v-for="(propertyPath, idx) in displayedPropertyPaths"
-              :key="item.annotation.id + ' property ' + idx"
-              :class="tableItemClass"
-            >
-              <span>{{
-                getStringFromPropertiesAndPath(item.properties, propertyPath) ??
-                "-"
-              }}</span>
-            </td>
-          </tr>
+            @hover="hover"
+            @navigate="goToAnnotationIdLocation"
+            @toggle-select="toggleAnnotationSelection"
+            @clicked-tag="clickedTag"
+            @update-name="updateAnnotationName($event.name, $event.id)"
+          />
         </template>
       </v-data-table-server>
     </div>
@@ -461,13 +317,13 @@ import annotationListServer from "@/store/annotationListServer";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
-import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import { simpleCentroid } from "@/utils/annotation";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
+import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
 
 import {
   AnnotationNames,
@@ -1104,7 +960,6 @@ defineExpose({
   handleColorSubmit,
   deleteSelected,
   deleteUnselected,
-  getStringFromPropertiesAndPath,
   removePropertyColumn,
 });
 </script>
