@@ -718,6 +718,59 @@ git commit -m "feat(backend): property lookup for list (sort, filter, projected 
 
 ---
 
+## Task 3.5: Backend real-data verification (CHECKPOINT — requires user input)
+
+The pytest/tox tests above use synthetic data. Before building the frontend on these endpoints, validate them against **real datasets and database objects** on the running local backend.
+
+**STOP and ask the user** to point to: (a) a real `datasetId` (ideally a large one, > the 20k guard), (b) a known property path + expected sort order or value range, and (c) known tag/location facts — so results can be checked against ground truth.
+
+- [ ] **Step 1: Ask the user for real objects** (dataset ID, a property path, expected facts to assert against).
+
+- [ ] **Step 2: Exercise the endpoints against the running local Girder.**
+
+Use the `nimbusimage` low-level client (preferred over raw curl — see CLAUDE.md "NimbusImage Python API" + the `nimbus-local-ops` skill). Example:
+
+```python
+import os
+from dotenv import load_dotenv
+from nimbusimage._girder import create_client
+load_dotenv()
+gc = create_client(
+    api_url=os.environ["GIRDER_API_URL"],
+    username=os.environ["GIRDER_USERNAME"],
+    password=os.environ["GIRDER_PASSWORD"],
+)
+DATASET_ID = "<<user-provided>>"
+
+# Page 1, sort by a real property, descending
+page = gc.post("/upenn_annotation/list", json={
+    "datasetId": DATASET_ID,
+    "filters": {},
+    "sort": {"type": "property", "key": ["<<propId>>", "<<sub>>"],
+             "order": "desc"},
+    "propertyPaths": [["<<propId>>", "<<sub>>"]],
+    "offset": 0, "limit": 50,
+})
+print(page["total"], len(page["rows"]), page["rows"][0]["values"])
+
+ids = gc.post("/upenn_annotation/list/ids", json={
+    "datasetId": DATASET_ID, "filters": {},
+})
+assert ids["total"] == page["total"]  # ids count must equal page total
+```
+
+- [ ] **Step 3: Validate against ground truth** (with the user's expected facts):
+  - `total` matches the dataset's annotation count (and the count endpoint) for empty filters.
+  - `/list/ids` total == `/list` total for identical filters.
+  - Property sort order is correct on real values; missing-value rows land last.
+  - A tag filter (inclusive and exclusive) returns the counts the user expects (this is the parity risk — confirm against the client's current list behavior on the same dataset).
+  - A property range filter narrows `total` as expected.
+  - Spot-check latency on the large dataset (note deep-offset behavior).
+
+- [ ] **Step 4: Record findings** in the PR/commit notes; fix any discrepancies before proceeding to the frontend.
+
+---
+
 ## Task 4: Frontend — API client methods + types
 
 **Files:** Modify `src/store/model.ts`, `src/store/AnnotationsAPI.ts`; Test `src/store/AnnotationsAPI.test.ts` (create if absent).
