@@ -1,4 +1,4 @@
-import { IAnnotation } from "@/store/model";
+import { IAnnotation, IAnnotationStub } from "@/store/model";
 
 type AnnotationUpdateField = keyof Omit<IAnnotation, "id">;
 
@@ -41,4 +41,65 @@ export function getAnnotationUpdatePatch(
   }
 
   return Object.keys(patch).length > 1 ? patch : null;
+}
+
+// The tag/color fields that a stub carries and that can therefore be patched
+// locally after a stub-only-mode edit (see buildStubUpdates).
+export interface IStubFieldUpdate {
+  id: string;
+  tags?: string[];
+  color?: string | null;
+}
+
+/**
+ * Build backend update patches for stub-only mode, where `annotations[]` is
+ * empty so the full-annotation update path produces no patches. The same
+ * `editFunction` used for full annotations is applied to each stub (treated as
+ * a partial annotation — stubs carry tags/color but not name/coordinates), and
+ * the diff is taken against the stub.
+ *
+ * Returns both the patches to send to the backend and the subset of changes
+ * (tags/color) to apply to local stubs so the canvas stays in sync. Fields the
+ * stub does not track (e.g. name) are still persisted via `patches` but produce
+ * no `stubFieldUpdates` entry.
+ */
+export function buildStubUpdates(
+  ids: string[],
+  getStub: (id: string) => IAnnotationStub | undefined,
+  editFunction: (annotation: IAnnotation) => void,
+): { patches: AnnotationUpdatePatch[]; stubFieldUpdates: IStubFieldUpdate[] } {
+  const patches: AnnotationUpdatePatch[] = [];
+  const stubFieldUpdates: IStubFieldUpdate[] = [];
+
+  for (const id of ids) {
+    const stub = getStub(id);
+    if (!stub) {
+      continue;
+    }
+    const before = { ...stub, tags: [...stub.tags] } as unknown as IAnnotation;
+    const after = { ...stub, tags: [...stub.tags] } as unknown as IAnnotation;
+    editFunction(after);
+
+    const patch = getAnnotationUpdatePatch(before, after);
+    if (!patch) {
+      continue;
+    }
+    patches.push(patch);
+
+    const fieldUpdate: IStubFieldUpdate = { id };
+    let hasStubField = false;
+    if (patch.tags !== undefined) {
+      fieldUpdate.tags = patch.tags;
+      hasStubField = true;
+    }
+    if (patch.color !== undefined) {
+      fieldUpdate.color = patch.color;
+      hasStubField = true;
+    }
+    if (hasStubField) {
+      stubFieldUpdates.push(fieldUpdate);
+    }
+  }
+
+  return { patches, stubFieldUpdates };
 }

@@ -590,6 +590,35 @@ describe("AnnotationList", () => {
         "tag1",
       ]);
     });
+
+    it("does not refresh the server page in client mode", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+      await vm.handleTagSubmit({
+        tags: ["tag1"],
+        addOrRemove: "add",
+        replaceExisting: false,
+      });
+      expect(mockFetchPage).not.toHaveBeenCalled();
+    });
+
+    it("tags then refreshes the server page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+      await vm.handleTagSubmit({
+        tags: ["tag1"],
+        addOrRemove: "add",
+        replaceExisting: false,
+      });
+      expect(mockTagSelectedAnnotations).toHaveBeenCalledWith({
+        tags: ["tag1"],
+        replace: false,
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
   });
 
   describe("handleColorSubmit", () => {
@@ -631,6 +660,22 @@ describe("AnnotationList", () => {
         color: "#00ff00",
         randomize: true,
       });
+    });
+
+    it("colors then refreshes the server page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+      await vm.handleColorSubmit({
+        useColorFromLayer: false,
+        color: "#ff0000",
+      });
+      expect(mockColorSelectedAnnotations).toHaveBeenCalledWith({
+        color: "#ff0000",
+        randomize: undefined,
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
     });
   });
 
@@ -710,6 +755,19 @@ describe("AnnotationList", () => {
         name: "New Name",
         id: "ann1",
       });
+    });
+
+    it("renames then refreshes the server page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+      await vm.updateAnnotationName("New Name", "ann1");
+      expect(mockUpdateAnnotationName).toHaveBeenCalledWith({
+        name: "New Name",
+        id: "ann1",
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
     });
   });
 

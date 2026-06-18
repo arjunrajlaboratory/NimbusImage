@@ -112,7 +112,11 @@ export default class AnnotationsAPI {
 
   toListRow = (item: any): IAnnotationListRow => {
     const stub = this.toStub(item);
-    return markRaw({ ...stub, values: item.values || {} });
+    return markRaw({
+      ...stub,
+      name: item.name ?? null,
+      values: item.values || {},
+    });
   };
 
   async fetchAnnotationListPage(

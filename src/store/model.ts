@@ -1439,6 +1439,7 @@ export interface IAnnotationListQuery {
 
 // A server list row: stub fields + the requested property values.
 export interface IAnnotationListRow extends IAnnotationStub {
+  name: string | null;
   values: IAnnotationPropertyValues[string]; // {[propId]: value | nested}
 }
 

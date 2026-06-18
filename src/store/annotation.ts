@@ -45,8 +45,10 @@ import {
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import {
+  buildStubUpdates,
   getAnnotationUpdatePatch,
   type AnnotationUpdatePatch,
+  type IStubFieldUpdate,
 } from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
 import { stubPerf } from "@/utils/stubPerf";
@@ -827,6 +829,40 @@ export class Annotations extends VuexModule {
     this.stubOnlyMode = mode;
   }
 
+  // Patch tags/color on existing stubs (and any hydrated copies) after a
+  // stub-only-mode edit, so the canvas reflects the change without a reload.
+  @Mutation
+  public applyStubFieldUpdates(updates: IStubFieldUpdate[]) {
+    if (!updates.length) {
+      return;
+    }
+    const newStubs = new Map(this.annotationStubs);
+    const newHydrated = new Map(this.hydratedAnnotations);
+    for (const update of updates) {
+      const stub = newStubs.get(update.id);
+      if (stub) {
+        newStubs.set(update.id, {
+          ...stub,
+          ...(update.tags !== undefined ? { tags: update.tags } : {}),
+          ...(update.color !== undefined ? { color: update.color } : {}),
+        });
+      }
+      const hydrated = newHydrated.get(update.id);
+      if (hydrated) {
+        newHydrated.set(
+          update.id,
+          markRaw({
+            ...hydrated,
+            ...(update.tags !== undefined ? { tags: update.tags } : {}),
+            ...(update.color !== undefined ? { color: update.color } : {}),
+          }),
+        );
+      }
+    }
+    this.annotationStubs = markRaw(newStubs);
+    this.hydratedAnnotations = markRaw(newHydrated);
+  }
+
   @Action
   public async createConnections({
     annotationsIds,
@@ -1190,6 +1226,34 @@ export class Annotations extends VuexModule {
     editFunction: (annotation: IAnnotation) => void;
   }) {
     if (!main.isLoggedIn) {
+      return;
+    }
+    if (this.stubOnlyMode) {
+      // In stub-only mode annotations[] is empty, so the patch-from-full-
+      // annotation path below would look up annotationIdToIdx[id] (undefined)
+      // and skip every id — silently never calling the backend. Build patches
+      // from the stubs instead, persist them, and sync tags/color back onto
+      // local stubs so the canvas stays consistent.
+      if (!annotationIds.length) {
+        return;
+      }
+      sync.setSaving(true);
+      try {
+        const { patches, stubFieldUpdates } = buildStubUpdates(
+          annotationIds,
+          (id) => this.annotationStubs.get(id),
+          editFunction,
+        );
+        if (patches.length) {
+          await this.annotationsAPI.updateAnnotations(patches);
+          this.applyStubFieldUpdates(stubFieldUpdates);
+        }
+        sync.setSaving(false);
+      } catch (error) {
+        logError(`Failed to update annotations: ${(error as Error).message}`);
+        sync.setSaving(error as Error);
+        throw error;
+      }
       return;
     }
     sync.setSaving(true);

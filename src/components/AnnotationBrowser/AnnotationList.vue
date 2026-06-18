@@ -571,7 +571,7 @@ const serverLoading = computed(() => annotationListServer.loading);
 // shared item markup reads so it renders identically to the client table.
 const serverRowItems = computed(() =>
   annotationListServer.rows.map((row, i) => ({
-    annotation: { ...row, name: null },
+    annotation: { ...row, name: row.name ?? null },
     index: (annotationListServer.page - 1) * annotationListServer.pageSize + i,
     shapeName: AnnotationNames[row.shape],
     isSelected: annotationStore.isAnnotationSelected(row.id),
@@ -715,8 +715,9 @@ const annotationIdToIndex = computed(() => {
   return annotationStore.annotationIdToIdx;
 });
 
-function updateAnnotationName(name: string, id: string) {
-  annotationStore.updateAnnotationName({ name, id });
+async function updateAnnotationName(name: string, id: string) {
+  await annotationStore.updateAnnotationName({ name, id });
+  await refreshServerListIfNeeded();
 }
 
 const selectAllIndeterminate = computed(() => {
@@ -972,7 +973,16 @@ function hover(annotationId: string | null) {
   }
 }
 
-function handleTagSubmit({
+// Bulk tag/color/name edits route through annotationStore.updateAnnotationsPerId,
+// which is stub-aware (persists via the batch endpoint in server mode). The
+// server list rows are backend-driven, so refresh the page after the edit.
+async function refreshServerListIfNeeded() {
+  if (isServerMode.value) {
+    await annotationListServer.fetchPage();
+  }
+}
+
+async function handleTagSubmit({
   tags,
   addOrRemove,
   replaceExisting,
@@ -982,16 +992,17 @@ function handleTagSubmit({
   replaceExisting: boolean;
 }) {
   if (addOrRemove === "add") {
-    annotationStore.tagSelectedAnnotations({
+    await annotationStore.tagSelectedAnnotations({
       tags,
       replace: replaceExisting,
     });
   } else {
-    annotationStore.removeTagsFromSelectedAnnotations(tags);
+    await annotationStore.removeTagsFromSelectedAnnotations(tags);
   }
+  await refreshServerListIfNeeded();
 }
 
-function handleColorSubmit({
+async function handleColorSubmit({
   useColorFromLayer,
   color,
   randomize,
@@ -1001,10 +1012,11 @@ function handleColorSubmit({
   randomize?: boolean;
 }) {
   const newColor = useColorFromLayer ? null : color;
-  annotationStore.colorSelectedAnnotations({
+  await annotationStore.colorSelectedAnnotations({
     color: newColor,
     randomize,
   });
+  await refreshServerListIfNeeded();
 }
 
 async function deleteSelected() {

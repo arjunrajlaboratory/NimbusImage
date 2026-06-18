@@ -22,6 +22,7 @@ describe("AnnotationsAPI.fetchAnnotationListPage", () => {
         rows: [
           {
             _id: "a1",
+            name: "Cell 1",
             tags: ["X"],
             shape: "polygon",
             channel: 0,
@@ -47,7 +48,36 @@ describe("AnnotationsAPI.fetchAnnotationListPage", () => {
     );
     expect(page.total).toBe(1);
     expect(page.rows[0].id).toBe("a1");
+    expect(page.rows[0].name).toBe("Cell 1");
     expect((page.rows[0].values as any).p.Area).toBe(9);
+  });
+
+  it("maps a missing name to null", async () => {
+    const { api } = makeApi(async () => ({
+      data: {
+        total: 1,
+        rows: [
+          {
+            _id: "a1",
+            tags: [],
+            shape: "polygon",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+            color: null,
+            centroid: { x: 1, y: 2 },
+          },
+        ],
+      },
+    }));
+    const page = await api.fetchAnnotationListPage({
+      datasetId: "ds",
+      filters: {},
+      sort: null,
+      propertyPaths: [],
+      offset: 0,
+      limit: 50,
+    });
+    expect(page.rows[0].name).toBeNull();
   });
 });
 
