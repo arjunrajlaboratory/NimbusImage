@@ -1,0 +1,62 @@
+import { describe, it, expect, vi } from "vitest";
+
+// Mock @/utils/fetch to break the AnnotationsAPI -> utils/fetch -> store/progress
+// -> store/index circular import that would otherwise instantiate the whole
+// store at module load and resolve AnnotationsAPI as undefined.
+vi.mock("@/utils/fetch", () => ({
+  fetchAllPages: vi.fn(),
+}));
+
+import AnnotationsAPI from "./AnnotationsAPI";
+
+function makeApi(postImpl: any) {
+  const client = { post: vi.fn(postImpl) } as any;
+  return { api: new AnnotationsAPI(client), client };
+}
+
+describe("AnnotationsAPI.fetchAnnotationListPage", () => {
+  it("posts the query and maps rows to stub-shaped objects", async () => {
+    const { api, client } = makeApi(async () => ({
+      data: {
+        total: 1,
+        rows: [
+          {
+            _id: "a1",
+            tags: ["X"],
+            shape: "polygon",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+            color: null,
+            centroid: { x: 1, y: 2 },
+            values: { p: { Area: 9 } },
+          },
+        ],
+      },
+    }));
+    const page = await api.fetchAnnotationListPage({
+      datasetId: "ds",
+      filters: {},
+      sort: null,
+      propertyPaths: [["p", "Area"]],
+      offset: 0,
+      limit: 50,
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "upenn_annotation/list",
+      expect.objectContaining({ datasetId: "ds" }),
+    );
+    expect(page.total).toBe(1);
+    expect(page.rows[0].id).toBe("a1");
+    expect((page.rows[0].values as any).p.Area).toBe(9);
+  });
+});
+
+describe("AnnotationsAPI.fetchAnnotationListIds", () => {
+  it("returns the id array", async () => {
+    const { api } = makeApi(async () => ({
+      data: { total: 2, ids: ["a", "b"] },
+    }));
+    const ids = await api.fetchAnnotationListIds("ds", {});
+    expect(ids).toEqual(["a", "b"]);
+  });
+});

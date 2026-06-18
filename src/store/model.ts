@@ -1401,6 +1401,49 @@ export interface IAnnotationStub {
 
 export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
 
+// --- Server-side annotation list query/response ---
+
+export interface IAnnotationListSort {
+  type: "field" | "property";
+  key: string | string[]; // "location.XY" | "name" | ... | ["propId","sub"]
+  order: "asc" | "desc";
+}
+
+export interface IAnnotationListPropertyFilter {
+  path: string[];
+  mode: "range" | "values";
+  min?: number;
+  max?: number;
+  values?: number[];
+}
+
+export interface IAnnotationListFilters {
+  shape?: string;
+  tags?: { values: string[]; exclusive: boolean };
+  location?: IAnnotationLocation;
+  idSubstring?: string;
+  propertyFilters?: IAnnotationListPropertyFilter[];
+}
+
+export interface IAnnotationListQuery {
+  datasetId: string;
+  filters: IAnnotationListFilters;
+  sort: IAnnotationListSort | null;
+  propertyPaths: string[][];
+  offset: number;
+  limit: number;
+}
+
+// A server list row: stub fields + the requested property values.
+export interface IAnnotationListRow extends IAnnotationStub {
+  values: IAnnotationPropertyValues[string]; // {[propId]: value | nested}
+}
+
+export interface IAnnotationListPage {
+  total: number;
+  rows: IAnnotationListRow[];
+}
+
 export type THydrationMode = "shapes" | "dots";
 
 export interface IVisibilityConfig {

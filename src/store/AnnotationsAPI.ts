@@ -11,6 +11,10 @@ import {
   IDisplayLayer,
   IScales,
   IDataset,
+  IAnnotationListQuery,
+  IAnnotationListPage,
+  IAnnotationListRow,
+  IAnnotationListFilters,
 } from "./model";
 
 import { logError } from "@/utils/log";
@@ -104,6 +108,32 @@ export default class AnnotationsAPI {
       params: { datasetId },
     });
     return (response.data as any[]).map(this.toStub);
+  }
+
+  toListRow = (item: any): IAnnotationListRow => {
+    const stub = this.toStub(item);
+    return markRaw({ ...stub, values: item.values || {} });
+  };
+
+  async fetchAnnotationListPage(
+    query: IAnnotationListQuery,
+  ): Promise<IAnnotationListPage> {
+    const response = await this.client.post("upenn_annotation/list", query);
+    return {
+      total: response.data.total,
+      rows: (response.data.rows as any[]).map(this.toListRow),
+    };
+  }
+
+  async fetchAnnotationListIds(
+    datasetId: string,
+    filters: IAnnotationListFilters,
+  ): Promise<string[]> {
+    const response = await this.client.post("upenn_annotation/list/ids", {
+      datasetId,
+      filters,
+    });
+    return response.data.ids as string[];
   }
 
   async hydrateAnnotations(annotationIds: string[]): Promise<IAnnotation[]> {
