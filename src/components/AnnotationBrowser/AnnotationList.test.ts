@@ -57,7 +57,9 @@ vi.mock("@/store/annotation", () => {
     annotationIdToIdx: {} as Record<string, number>,
   };
   Object.defineProperty(state, "annotationsForIteration", {
-    get() { return state.annotations; },
+    get() {
+      return state.annotations;
+    },
     enumerable: true,
   });
   return { default: state };
@@ -75,6 +77,28 @@ vi.mock("@/store/filters", () => ({
   default: {
     filteredAnnotations: [],
     filteredAnnotationIdToIdx: new Map(),
+    tagFilter: { enabled: false, exclusive: false, tags: [] },
+    propertyFilters: [],
+    onlyCurrentFrame: false,
+    roiFilters: [],
+  },
+}));
+
+const mockFetchPage = vi.fn();
+const mockSetOptions = vi.fn();
+const mockSetIdSubstring = vi.fn();
+vi.mock("@/store/annotationListServer", () => ({
+  default: {
+    rows: [],
+    total: 0,
+    loading: false,
+    page: 1,
+    pageSize: 50,
+    sort: null,
+    setOptions: (...a: any[]) => mockSetOptions(...a),
+    fetchPage: (...a: any[]) => mockFetchPage(...a),
+    fetchMatchingIds: vi.fn(async () => []),
+    setIdSubstring: (...a: any[]) => mockSetIdSubstring(...a),
   },
 }));
 
@@ -90,6 +114,7 @@ import AnnotationList from "./AnnotationList.vue";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
+import annotationListServer from "@/store/annotationListServer";
 
 function makeAnnotation(overrides: any = {}) {
   return {
@@ -159,9 +184,35 @@ describe("AnnotationList", () => {
     (annotationStore as any).annotationCentroids = {};
     (annotationStore as any).annotations = [];
     (annotationStore as any).annotationIdToIdx = {};
+    // Client mode for existing tests; server-mode tests opt in explicitly.
+    (annotationStore as any).stubOnlyMode = false;
 
-    (filterStore as any).filteredAnnotations = [];
+    // Redefine as a normal data property in case a prior test installed a
+    // throwing getter (the server-mode decoupling test does this).
+    Object.defineProperty(filterStore, "filteredAnnotations", {
+      configurable: true,
+      writable: true,
+      value: [],
+    });
     (filterStore as any).filteredAnnotationIdToIdx = new Map();
+    (filterStore as any).tagFilter = {
+      enabled: false,
+      exclusive: false,
+      tags: [],
+    };
+    (filterStore as any).propertyFilters = [];
+    (filterStore as any).onlyCurrentFrame = false;
+    (filterStore as any).roiFilters = [];
+
+    (annotationListServer as any).rows = [];
+    (annotationListServer as any).total = 0;
+    (annotationListServer as any).loading = false;
+    (annotationListServer as any).page = 1;
+    (annotationListServer as any).pageSize = 50;
+    (annotationListServer as any).sort = null;
+    mockFetchPage.mockClear();
+    mockSetOptions.mockClear();
+    mockSetIdSubstring.mockClear();
 
     (propertyStore as any).propertyValues = {};
     (propertyStore as any).displayedPropertyPaths = [];
@@ -631,6 +682,209 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.displayedPropertyPaths).toEqual([["p1", "a"]]);
+    });
+  });
+
+  describe("server mode", () => {
+    it("renders server rows + total and fetches on mount", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).rows = [
+        {
+          id: "srv1",
+          centroid: { x: 1, y: 2 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "point",
+          channel: 0,
+          tags: [],
+          color: null,
+          values: {},
+        },
+      ];
+      (annotationListServer as any).total = 1234;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.isServerMode).toBe(true);
+      expect(vm.serverItemsLength).toBe(1234);
+      expect(vm.serverRowItems).toHaveLength(1);
+      expect(vm.serverRowItems[0].annotation.id).toBe("srv1");
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
+
+    it("computes absolute index for server rows across pages", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).page = 3;
+      (annotationListServer as any).pageSize = 50;
+      (annotationListServer as any).rows = [
+        {
+          id: "srv1",
+          centroid: { x: 1, y: 2 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "point",
+          channel: 0,
+          tags: [],
+          color: null,
+          values: {},
+        },
+      ];
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      // (page-1)*pageSize + i = 2*50 + 0 = 100
+      expect(vm.serverRowItems[0].index).toBe(100);
+    });
+
+    it("does not invoke filterStore.filteredAnnotations in server mode", () => {
+      // A throwing getter proves server mode never reads the client set.
+      Object.defineProperty(filterStore, "filteredAnnotations", {
+        configurable: true,
+        get() {
+          throw new Error(
+            "filteredAnnotations must not be read in server mode",
+          );
+        },
+      });
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).total = 7;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(() => vm.serverItemsLength).not.toThrow();
+      expect(() => vm.selectAllValue).not.toThrow();
+      expect(() => vm.selectAllIndeterminate).not.toThrow();
+      expect(() => vm.selectedIds).not.toThrow();
+      expect(vm.serverItemsLength).toBe(7);
+      // The hover watch must also stay off the client set: simulate an external
+      // hover (e.g. from the image viewer) and let the watcher run.
+      (annotationStore as any).hoveredAnnotationId = "srv1";
+      vm.itemsPerPage = 200;
+      expect(() => wrapper.vm.$nextTick()).not.toThrow();
+      // Restore a plain data property so later tests aren't affected.
+      Object.defineProperty(filterStore, "filteredAnnotations", {
+        configurable: true,
+        writable: true,
+        value: [],
+      });
+    });
+
+    it("selectAllValue uses server total + selectedAnnotationIds in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).total = 2;
+      (annotationStore as any).selectedAnnotationIds = new Set(["a", "b"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.selectAllValue).toBe(true);
+    });
+
+    it("selectAllIndeterminate uses server total in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).total = 3;
+      (annotationStore as any).selectedAnnotationIds = new Set(["a"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.selectAllIndeterminate).toBe(true);
+    });
+
+    it("selectedIds returns selectedAnnotationIds directly in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).selectedAnnotationIds = new Set(["x", "y"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.selectedIds.sort()).toEqual(["x", "y"]);
+    });
+
+    it("roiActiveInServerMode is true when an ROI filter is enabled", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (filterStore as any).roiFilters = [{ enabled: true }];
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.roiActiveInServerMode).toBe(true);
+    });
+
+    it("roiActiveInServerMode is false in client mode", () => {
+      (annotationStore as any).stubOnlyMode = false;
+      (filterStore as any).roiFilters = [{ enabled: true }];
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.roiActiveInServerMode).toBe(false);
+    });
+
+    it("onServerOptions maps options and fetches", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+      vm.onServerOptions({
+        page: 2,
+        itemsPerPage: 50,
+        sortBy: [{ key: "annotation.location.XY", order: "asc" }],
+      });
+      expect(mockSetOptions).toHaveBeenCalledWith({
+        page: 2,
+        pageSize: 50,
+        sort: { type: "field", key: "location.XY", order: "asc" },
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
+  });
+
+  describe("mapSort", () => {
+    it("maps a property column to a property sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "properties.P1.Area", order: "desc" })).toEqual({
+        type: "property",
+        key: ["P1", "Area"],
+        order: "desc",
+      });
+    });
+
+    it("maps a location field column to a field sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(
+        vm.mapSort({ key: "annotation.location.XY", order: "asc" }),
+      ).toEqual({ type: "field", key: "location.XY", order: "asc" });
+    });
+
+    it("maps annotation.name to a name field sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "annotation.name", order: "asc" })).toEqual({
+        type: "field",
+        key: "name",
+        order: "asc",
+      });
+    });
+
+    it("maps index to the _id field sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "index", order: "asc" })).toEqual({
+        type: "field",
+        key: "_id",
+        order: "asc",
+      });
+    });
+
+    it("maps annotation.id to the _id field sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "annotation.id", order: "desc" })).toEqual({
+        type: "field",
+        key: "_id",
+        order: "desc",
+      });
+    });
+
+    it("returns null for unsupported tags column", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "annotation.tags", order: "asc" })).toBeNull();
+    });
+
+    it("returns null for unsupported shapeName column", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "shapeName", order: "asc" })).toBeNull();
     });
   });
 
