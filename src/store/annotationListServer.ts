@@ -103,6 +103,16 @@ export class AnnotationListServer extends VuexModule {
   pageSize = 50;
   sort: IAnnotationListSort | null = null;
   idSubstring = "";
+  // Monotonic token guarding against out-of-order responses: only the latest
+  // fetchPage may apply its result. Debounce reduces overlap but doesn't
+  // eliminate it (e.g. immediate pagination racing a trailing debounced filter
+  // fetch, or a fast page-1 returning after a slow filtered request).
+  requestSeq = 0;
+
+  @Mutation
+  incrementRequestSeq() {
+    this.requestSeq += 1;
+  }
 
   @Mutation
   setPageResult(payload: { rows: IAnnotationListRow[]; total: number }) {
@@ -155,6 +165,8 @@ export class AnnotationListServer extends VuexModule {
     if (!datasetId) {
       return;
     }
+    this.incrementRequestSeq();
+    const seq = this.requestSeq;
     this.setLoading(true);
     try {
       const page = await main.annotationsAPI.fetchAnnotationListPage({
@@ -165,9 +177,14 @@ export class AnnotationListServer extends VuexModule {
         offset: (this.page - 1) * this.pageSize,
         limit: this.pageSize,
       });
-      this.setPageResult(page);
+      // Drop the result if a newer fetchPage started while we were awaiting.
+      if (seq === this.requestSeq) {
+        this.setPageResult(page);
+      }
     } finally {
-      this.setLoading(false);
+      if (seq === this.requestSeq) {
+        this.setLoading(false);
+      }
     }
   }
 
