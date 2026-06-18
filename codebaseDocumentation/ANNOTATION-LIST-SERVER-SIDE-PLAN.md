@@ -1,5 +1,7 @@
 # Server-Side Annotation List Implementation Plan
 
+> **✅ IMPLEMENTED 2026-06-18** on `feature/stub-annotations`. All tasks (1–7, plus the real-data checkpoint and a follow-up `idConstraints` task) are done, two-stage-reviewed, and real-data-validated (HCR 26K 16/16, Xenium 708K functional, idConstraints 7/7). Backend: 18 `test_server_list` tests; frontend: ~70 list-related tests; tsc clean. See `ANNOTATION-LIST-SERVER-SIDE-DESIGN.md` (As-built notes) for deviations from this plan — notably rows carry `_id` (not `id`), `idConstraints` was added for selection/annotation-id filters, the refetch is debounced ~300 ms, and the perf pass is deferred. The task bodies below are kept as the historical implementation record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move the AnnotationList's pagination, sorting, and filtering server-side above a size threshold, loading property values only for the visible page — so large datasets no longer hold all rows or all property values in the browser.

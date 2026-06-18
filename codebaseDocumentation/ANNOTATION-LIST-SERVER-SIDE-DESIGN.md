@@ -2,8 +2,17 @@
 
 **Date:** 2026-06-18
 **Branch:** `feature/stub-annotations`
-**Status:** Design approved; implementation plan pending.
+**Status:** **IMPLEMENTED 2026-06-18** on `feature/stub-annotations`. This began as a design spec; the *As-built notes* box below records where the shipped code differs from the original design. Task-by-task plan: `ANNOTATION-LIST-SERVER-SIDE-PLAN.md`.
 **Related:** `ANNOTATION-STUBS.md` (the stub architecture this builds on; this is its "Option B").
+
+> ### As-built notes (2026-06-18) — read alongside the design below
+> The design below is largely as-shipped, with these deviations:
+> - **Row id field:** `/list` rows carry **`_id`** (not `id`) — stubs-consistent; the frontend `toStub`/`toListRow` maps `_id`→`id`. (§5.1's example was corrected to `_id`.)
+> - **Selection + annotation-id filters ARE applied server-side** via a new `idConstraints` filter (AND of `_id $in` sets) — §5.1/§5.3. **ROI** is the only filter that stays client-side-only (notice shown in server mode).
+> - **Dual-mode threshold:** server mode = `annotationStore.stubOnlyMode` (true when annotation count > `maxVisible` = 10,000). The Option-A `LIST_ITEM_LIMIT = 20000` client guard is therefore **unreachable** in practice (kept as a defensive net).
+> - **Debounce:** the watch-driven server refetch is debounced ~300 ms; explicit pagination/sort is immediate. Vuetify **`v-data-table-server`** is the table component.
+> - **Input validation:** filter/sort/property-path/idConstraints *shape* is validated at the API boundary → 400 (not an uncaught 500).
+> - **Performance:** §8 records the measured 708K latency (3.6–25 s) and why the perf pass is deferred.
 
 ---
 
@@ -68,13 +77,14 @@ POST (not GET) so many property paths / filter values don't hit URL length limit
   "datasetId": "ObjectId",
   "filters": {
     "shape": "polygon",                       // optional
-    "tags": { "values": ["DAPI"], "exclusive": false },  // semantics match tagCloudFilterFunction / existing find $all
+    "tags": { "values": ["DAPI"], "exclusive": false },  // inclusive=$in (has any); exclusive=$all+$size (exactly that set) — matches tagCloudFilterFunction (NOT find's $all superset)
     "location": { "XY": 0, "Z": 0, "Time": 0 },          // optional (onlyCurrentFrame)
     "idSubstring": "abc",                     // optional
     "propertyFilters": [                      // optional
       { "path": ["propId", "sub"], "mode": "range", "min": 0, "max": 10 },
       { "path": ["propId2"], "mode": "values", "values": [1, 2, 3] }
-    ]
+    ],
+    "idConstraints": [ ["id1","id2"], ["id2","id3"] ]    // optional; _id must be in EVERY set (AND of $in). Frontend builds these from the selection filter + annotation-id filters.
   },
   "sort": { "type": "property", "key": ["propId", "sub"], "order": "asc" },
   // sort.type: "property" (key = path array) | "field" (key = "location.XY" | "name" | "channel" | "_id")
@@ -90,7 +100,7 @@ POST (not GET) so many property paths / filter values don't hit URL length limit
   "total": 142318,
   "rows": [
     {
-      "id": "ObjectId",
+      "_id": "ObjectId",                         // rows carry _id (stubs-consistent); frontend toListRow maps _id -> id
       "centroid": { "x": 1.0, "y": 2.0 },
       "location": { "XY": 0, "Z": 0, "Time": 0 },
       "shape": "polygon",
@@ -104,7 +114,7 @@ POST (not GET) so many property paths / filter values don't hit URL length limit
 ```
 
 **Page aggregation pipeline (annotation-driven):**
-1. `$match` — `datasetId` + shape + tags (`$all` / exclusive) + location + `idSubstring` (`$regex` on stringified `_id`, or a dedicated id-prefix match).
+1. `$match` — `datasetId` + shape + tags (inclusive `$in` / exclusive `$all`+`$size`) + location + `idSubstring` (`$regexMatch` on stringified `_id`) + `idConstraints` (`$and` of `_id $in` sets). Built by `Annotation._buildListMatchStages`.
 2. `$lookup` `annotation_property_values` on `_id` ↔ `annotationId` → `pv` (needed only if there are property filters, a property sort, or requested `propertyPaths`; skip otherwise).
 3. `$unwind` `{ path: "$pv", preserveNullAndEmptyArrays: true }` (1:1; null when no values doc).
 4. `$match` property filters (range / values) on `pv.values.<path>` — only if present.
@@ -127,7 +137,8 @@ Same `filters` block; returns all matching IDs (no values, no coordinates) for `
 ### 5.3 Access control & validation
 
 - `@access.public`, load dataset folder with `AccessType.READ` (same as `find`/`stubs`).
-- API layer converts inputs once at the top (datasetId/property ids → `ObjectId`, validate sort/filter shape), passes clean data to a model method (`server/models/annotation.py`); the model raises `ValueError`/`ValidationException`, never `RestException`.
+- API layer converts inputs once at the top (datasetId → `ObjectId`), passes clean data to model methods (`server/models/annotation.py`); the model raises `ValueError` (invalid sort field) → mapped to `RestException(400)`; the model never raises `RestException` itself.
+- **As-built:** `_validateListInputs` (API) shape-validates `propertyFilters`/`sort`/`propertyPaths`/`idConstraints` (e.g. property paths are non-empty string arrays with no `.`/`$`; `idConstraints` is a list of lists of id strings) and raises `RestException(400)` — closing the uncaught-500-on-malformed-input hole on this public endpoint.
 
 ### 5.4 Indexing / performance
 
