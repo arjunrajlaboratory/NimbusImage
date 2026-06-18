@@ -269,3 +269,96 @@ class TestServerListValidation:
             ]},
         })
         assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListIdConstraints:
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        a = makeAnnotation(folder["_id"], tags=["A"])
+        b = makeAnnotation(folder["_id"], tags=["B"])
+        c = makeAnnotation(folder["_id"], tags=["A"])
+        d = makeAnnotation(folder["_id"], tags=["B"])
+        return folder, a, b, c, d
+
+    def testSingleConstraintFiltersListAndIds(self, admin, server):
+        folder, a, b, c, d = self._setup(admin)
+        constraint = [[str(a["_id"]), str(c["_id"])]]
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idConstraints": constraint},
+            "sort": {"type": "field", "key": "_id", "order": "asc"},
+            "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 2
+        assert {str(r["_id"]) for r in result["rows"]} == {
+            str(a["_id"]), str(c["_id"])
+        }
+
+        resp2 = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idConstraints": constraint},
+        })
+        assertStatusOk(resp2)
+        idsResult = parseStreaming(resp2)
+        assert idsResult["total"] == 2
+        assert set(idsResult["ids"]) == {str(a["_id"]), str(c["_id"])}
+
+    def testTwoConstraintsIntersect(self, admin, server):
+        folder, a, b, c, d = self._setup(admin)
+        constraints = [
+            [str(a["_id"]), str(b["_id"]), str(c["_id"])],
+            [str(b["_id"]), str(c["_id"]), str(d["_id"])],
+        ]
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idConstraints": constraints},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 2
+        assert {str(r["_id"]) for r in result["rows"]} == {
+            str(b["_id"]), str(c["_id"])
+        }
+
+    def testIdConstraintsAndedWithTagFilter(self, admin, server):
+        folder, a, b, c, d = self._setup(admin)
+        # idConstraints picks {a, b}; tag filter "A" picks {a, c}.
+        # The AND of the two narrows to {a}.
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {
+                "idConstraints": [[str(a["_id"]), str(b["_id"])]],
+                "tags": {"values": ["A"], "exclusive": False},
+            },
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 1
+        assert str(result["rows"][0]["_id"]) == str(a["_id"])
+
+    def testMalformedIdConstraintsReturns400(self, admin, server):
+        folder, a, b, c, d = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idConstraints": ["notalist"]},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testNonStringIdConstraintsReturns400(self, admin, server):
+        folder, a, b, c, d = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idConstraints": [[123]]},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)

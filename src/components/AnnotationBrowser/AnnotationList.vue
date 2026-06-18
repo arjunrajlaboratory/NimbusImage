@@ -934,6 +934,8 @@ watch(
     () => filterStore.tagFilter,
     () => filterStore.propertyFilters,
     () => filterStore.onlyCurrentFrame,
+    () => filterStore.selectionFilter,
+    () => filterStore.annotationIdFilters,
     () => propertyStore.displayedPropertyPaths,
     () => store.xy,
     () => store.z,

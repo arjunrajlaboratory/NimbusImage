@@ -225,6 +225,16 @@ class Annotation(AccessControlMixin, ProxiedModel):
             if location.get("Time") is not None:
                 match["location.Time"] = location["Time"]
 
+        # Each id constraint is an _id $in set; the annotation must match
+        # ALL of them (AND of $in's). Mirrors the client selectionFilter
+        # and annotationIdFilters membership semantics.
+        idConstraints = filters.get("idConstraints")
+        if idConstraints:
+            match["$and"] = [
+                {"_id": {"$in": [ObjectId(i) for i in ids]}}
+                for ids in idConstraints
+            ]
+
         stages = [{"$match": match}]
 
         idSubstring = filters.get("idSubstring")

@@ -51,6 +51,17 @@ def _validateListInputs(filters, sort=None, propertyPaths=None):
                     "property filter 'mode' must be 'range' or 'values'",
                     code=400,
                 )
+    idConstraints = filters.get("idConstraints")
+    if idConstraints is not None:
+        if not isinstance(idConstraints, list) or not all(
+            isinstance(c, list)
+            and all(isinstance(i, str) and i for i in c)
+            for c in idConstraints
+        ):
+            raise RestException(
+                "idConstraints must be a list of lists of id strings",
+                code=400,
+            )
     if sort is not None:
         if not isinstance(sort, dict) or sort.get("type") not in (
             "field", "property"

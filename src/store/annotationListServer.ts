@@ -17,6 +17,7 @@ import {
   IAnnotationListFilters,
   IAnnotationListPropertyFilter,
   ITagAnnotationFilter,
+  IIdAnnotationFilter,
   IAnnotationLocation,
 } from "./model";
 
@@ -38,6 +39,8 @@ export function buildListFilters(input: {
   currentFrame: IAnnotationLocation;
   idSubstring: string;
   propertyFilters: IListPropertyFilterInput[];
+  selectionFilter: IIdAnnotationFilter;
+  annotationIdFilters: IIdAnnotationFilter[];
 }): IAnnotationListFilters {
   const out: IAnnotationListFilters = {};
   if (input.tagFilter.enabled && input.tagFilter.tags.length > 0) {
@@ -51,6 +54,23 @@ export function buildListFilters(input: {
   }
   if (input.idSubstring) {
     out.idSubstring = input.idSubstring;
+  }
+  // Build the id constraints (AND of membership sets), mirroring the
+  // client filteredAnnotations semantics: the selection filter is one set,
+  // and the enabled annotation-id filters are unioned into a second set.
+  const idConstraints: string[][] = [];
+  if (
+    input.selectionFilter.enabled &&
+    input.selectionFilter.annotationIds.length > 0
+  ) {
+    idConstraints.push(input.selectionFilter.annotationIds);
+  }
+  const enabledIdFilters = input.annotationIdFilters.filter((f) => f.enabled);
+  if (enabledIdFilters.length > 0) {
+    idConstraints.push(enabledIdFilters.flatMap((f) => f.annotationIds));
+  }
+  if (idConstraints.length > 0) {
+    out.idConstraints = idConstraints;
   }
   const pfs: IAnnotationListPropertyFilter[] = input.propertyFilters
     .filter((f) => f.enabled !== false)
@@ -124,6 +144,8 @@ export class AnnotationListServer extends VuexModule {
       currentFrame: { XY: main.xy, Z: main.z, Time: main.time },
       idSubstring: this.idSubstring,
       propertyFilters: filters.propertyFilters,
+      selectionFilter: filters.selectionFilter,
+      annotationIdFilters: filters.annotationIdFilters,
     });
   }
 

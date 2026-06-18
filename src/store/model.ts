@@ -1423,6 +1423,9 @@ export interface IAnnotationListFilters {
   location?: IAnnotationLocation;
   idSubstring?: string;
   propertyFilters?: IAnnotationListPropertyFilter[];
+  // A list of id-sets; an annotation matches iff its _id is in EVERY set
+  // (AND of $in's). Used to apply the selection and annotation-id filters.
+  idConstraints?: string[][];
 }
 
 export interface IAnnotationListQuery {
