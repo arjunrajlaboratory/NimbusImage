@@ -1031,14 +1031,13 @@ describe("AnnotationList", () => {
       });
     });
 
-    it("maps index to the _id field sort", () => {
+    it("treats index as unsortable server-side (returns null)", () => {
+      // The displayed index is just offset+rowIndex; it only matches a true
+      // ordering in the default (_id) order, so position isn't meaningfully
+      // sortable server-side (Finding #8).
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.mapSort({ key: "index", order: "asc" })).toEqual({
-        type: "field",
-        key: "_id",
-        order: "asc",
-      });
+      expect(vm.mapSort({ key: "index", order: "asc" })).toBeNull();
     });
 
     it("maps annotation.id to the _id field sort", () => {
@@ -1061,6 +1060,29 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.mapSort({ key: "shapeName", order: "asc" })).toBeNull();
+    });
+  });
+
+  describe("server-mode unsortable columns", () => {
+    it("marks tags, shapeName, and index non-sortable in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const byKey = Object.fromEntries(
+        vm.headers.map((h: any) => [h.key, h]),
+      );
+      expect(byKey["index"].sortable).toBe(false);
+      expect(byKey["annotation.tags"].sortable).toBe(false);
+      // annotation.id is a real, meaningfully sortable column (= _id order).
+      expect(byKey["annotation.id"]?.sortable).not.toBe(false);
+    });
+
+    it("does not mark index non-sortable in client mode", () => {
+      (annotationStore as any).stubOnlyMode = false;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const indexHeader = vm.headers.find((h: any) => h.key === "index");
+      expect(indexHeader.sortable).not.toBe(false);
     });
   });
 

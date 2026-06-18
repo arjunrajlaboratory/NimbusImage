@@ -609,10 +609,11 @@ function mapSort(entry: {
     case "annotation.name":
       return { type: "field", key: "name", order };
     case "annotation.id":
-    case "index":
       return { type: "field", key: "_id", order };
     default:
-      // annotation.tags, shapeName, and anything else: unsupported server-side.
+      // annotation.tags, shapeName, index, and anything else: unsupported
+      // server-side. (index is offset+rowIndex — only meaningful in default
+      // order — so it is not meaningfully sortable; see serverUnsortableColumns.)
       return null;
   }
 }
@@ -680,10 +681,12 @@ const listedAnnotations = computed(() => {
   return annotations;
 });
 
-// Interim scale guard: the list materializes one item object per filtered
-// annotation and sorts client-side, so above this many it would hang the tab.
-// Server-side sort/filter/paginate is the planned replacement (see
-// ANNOTATION-STUBS.md). Until then, ask the user to narrow with filters.
+// Defensive scale guard, superseded in practice by stubOnlyMode (server mode):
+// server mode activates at maxVisible = 10,000, below this 20,000 threshold, so
+// the client-side `tooManyToList` branch is effectively unreachable now that the
+// server-driven list (Option B) handles large datasets. Kept as a safety net for
+// any client-mode path that materializes one item per filtered annotation and
+// sorts client-side (which would hang the tab above this many).
 const LIST_ITEM_LIMIT = 20000;
 
 const tooManyToList = computed(
@@ -767,6 +770,7 @@ async function selectAllMatchingInServerMode() {
 const serverUnsortableColumns: readonly string[] = [
   "annotation.tags",
   "shapeName",
+  "index",
 ];
 
 const headers = computed(() => {
