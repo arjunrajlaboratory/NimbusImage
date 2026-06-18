@@ -198,6 +198,49 @@ class Annotation(AccessControlMixin, ProxiedModel):
         }
         self.removeWithQuery(query)
 
+    def _buildListMatchStages(self, datasetId, filters):
+        """Pipeline stages matching annotation-document fields.
+
+        Tag semantics mirror the client tagCloudFilterFunction:
+        inclusive -> $in (has any); exclusive -> exactly that set.
+        """
+        match = {"datasetId": datasetId}
+        if filters.get("shape"):
+            match["shape"] = filters["shape"]
+
+        tags = filters.get("tags") or {}
+        tagValues = tags.get("values") or []
+        if tagValues:
+            if tags.get("exclusive"):
+                match["tags"] = {"$all": tagValues, "$size": len(tagValues)}
+            else:
+                match["tags"] = {"$in": tagValues}
+
+        location = filters.get("location")
+        if location:
+            match["location.XY"] = location["XY"]
+            match["location.Z"] = location["Z"]
+            match["location.Time"] = location["Time"]
+
+        stages = [{"$match": match}]
+
+        idSubstring = filters.get("idSubstring")
+        if idSubstring:
+            stages.append({"$match": {"$expr": {"$regexMatch": {
+                "input": {"$toString": "$_id"},
+                "regex": idSubstring,
+            }}}})
+        return stages
+
+    def listIds(self, datasetId, filters):
+        """All annotation _ids (as strings) matching the filters."""
+        pipeline = self._buildListMatchStages(datasetId, filters)
+        pipeline.append({"$project": {"_id": 1}})
+        cursor = self.collection.aggregate(
+            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
+        )
+        return [str(doc["_id"]) for doc in cursor]
+
     def getAnnotationById(self, id, user=None):
         return self.load(id, user=user, level=AccessType.READ)
 

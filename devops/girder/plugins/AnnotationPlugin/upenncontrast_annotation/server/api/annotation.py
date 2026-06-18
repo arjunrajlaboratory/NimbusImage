@@ -87,6 +87,8 @@ class Annotation(Resource):
         self.route("DELETE", ("multiple",), self.deleteMultiple)
         self.route("GET", ("stubs",), self.stubs)
         self.route("POST", ("hydrate",), self.hydrate)
+        self.route("POST", ("list",), self.listAnnotations)
+        self.route("POST", ("list", "ids"), self.listAnnotationIds)
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
@@ -604,3 +606,44 @@ class Annotation(Resource):
 
         setResponseHeader("Content-Type", "application/json")
         return generateResult
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Annotation IDs matching list filters")
+        .param("body", "JSON: {datasetId, filters}", paramType="body")
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
+    @memoizeBodyJson
+    def listAnnotationIds(self, params, *args, **kwargs):
+        body = kwargs["memoizedBodyJson"]
+        datasetId = ObjectId(body["datasetId"])
+        Folder().load(
+            datasetId, user=self.getCurrentUser(),
+            level=AccessType.READ, exc=True,
+        )
+        filters = body.get("filters") or {}
+        ids = self._annotationModel.listIds(datasetId, filters)
+
+        def generateResult():
+            chunk = [b'{"total":', str(len(ids)).encode(), b',"ids":[']
+            first = True
+            for sid in ids:
+                if not first:
+                    chunk.append(b",")
+                chunk.append(orjson.dumps(sid))
+                first = False
+                if len(chunk) > 1000:
+                    yield b"".join(chunk)
+                    chunk = []
+            chunk.append(b"]}")
+            yield b"".join(chunk)
+
+        setResponseHeader("Content-Type", "application/json")
+        return generateResult
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(Description("List annotations (page)"))
+    @memoizeBodyJson
+    def listAnnotations(self, params, *args, **kwargs):
+        return []
