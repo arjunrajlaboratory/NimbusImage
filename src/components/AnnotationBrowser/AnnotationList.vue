@@ -204,20 +204,30 @@
         <template
           v-for="header in propertyHeaders"
           :key="header.key"
-          v-slot:[`header.${header.key}`]="{ column }"
+          v-slot:[`header.${header.key}`]="{ column, getSortIcon }"
         >
-          <span class="property-header-label">{{ column.title }}</span>
-          <v-btn
-            variant="text"
-            size="x-small"
-            density="compact"
-            icon
-            class="property-header-remove ml-1"
-            :title="`Remove '${column.title}' from list`"
-            @click.stop="removePropertyColumn(header.path)"
-          >
-            <v-icon size="14">mdi-close</v-icon>
-          </v-btn>
+          <!-- Custom header slots replace Vuetify's default content, including
+               the sort icon. Reproduce the default structure so property columns
+               still show their sort arrow next to the remove button. -->
+          <div class="v-data-table-header__content">
+            <span class="property-header-label">{{ column.title }}</span>
+            <v-icon
+              v-if="column.sortable"
+              class="v-data-table-header__sort-icon"
+              :icon="getSortIcon(column)"
+            />
+            <v-btn
+              variant="text"
+              size="x-small"
+              density="compact"
+              icon
+              class="property-header-remove ml-1"
+              :title="`Remove '${column.title}' from list`"
+              @click.stop="removePropertyColumn(header.path)"
+            >
+              <v-icon size="14">mdi-close</v-icon>
+            </v-btn>
+          </div>
         </template>
         <template v-slot:item="{ item }">
           <annotation-list-row
@@ -273,20 +283,30 @@
         <template
           v-for="header in propertyHeaders"
           :key="header.key"
-          v-slot:[`header.${header.key}`]="{ column }"
+          v-slot:[`header.${header.key}`]="{ column, getSortIcon }"
         >
-          <span class="property-header-label">{{ column.title }}</span>
-          <v-btn
-            variant="text"
-            size="x-small"
-            density="compact"
-            icon
-            class="property-header-remove ml-1"
-            :title="`Remove '${column.title}' from list`"
-            @click.stop="removePropertyColumn(header.path)"
-          >
-            <v-icon size="14">mdi-close</v-icon>
-          </v-btn>
+          <!-- Custom header slots replace Vuetify's default content, including
+               the sort icon. Reproduce the default structure so property columns
+               still show their sort arrow next to the remove button. -->
+          <div class="v-data-table-header__content">
+            <span class="property-header-label">{{ column.title }}</span>
+            <v-icon
+              v-if="column.sortable"
+              class="v-data-table-header__sort-icon"
+              :icon="getSortIcon(column)"
+            />
+            <v-btn
+              variant="text"
+              size="x-small"
+              density="compact"
+              icon
+              class="property-header-remove ml-1"
+              :title="`Remove '${column.title}' from list`"
+              @click.stop="removePropertyColumn(header.path)"
+            >
+              <v-icon size="14">mdi-close</v-icon>
+            </v-btn>
+          </div>
         </template>
         <template v-slot:item="{ item }">
           <annotation-list-row
