@@ -573,26 +573,55 @@ property-value rework. This section consolidates the scattered "Next Steps",
 "Deferred", and "Property Values Lazy Loading" notes above into one roadmap with
 options. Detailed rationale lives in the linked sections; this is the map.
 
-### A. Performance at large scale (the headline gap)
+### A. Performance at large scale — RESOLVED via PV-driven queries (2026-06-19)
 
-`POST /upenn_annotation/list` is **3.6–25 s at 708K** (see
-[`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md) §8).
-The aggregation runs centroid `$addFields` + property `$lookup`/`$unwind` + `$sort`
-over the **full matched set** before `$skip`/`$limit`, and there is no per-property
-index. Stub fetch + hydration is acceptable; the list query is the bottleneck.
+`POST /upenn_annotation/list` was **3.6–25 s at 708K** (see
+[`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md) §8):
+the aggregation joined property values onto the **whole matched set** (708K
+`$lookup`/`$unwind`), computed the centroid over all rows, and `$sort`ed before
+`$skip`/`$limit`. Measured directly on the 708K Xenium dataset, the fix was the
+**query shape, not an index**.
 
-- **A1 — Property-value index (biggest lever, hardest):** property values are stored
-  nested (`values.<propertyId>.<subField>`) and prop ids differ per dataset, so a
-  naive compound index doesn't generalize. Options: wildcard index; a flattened/
-  reshaped property-values collection; an index created at property-compute time;
-  or the **bidirectional query** (drive the aggregation from `annotation_property_values`
-  when sorting/filtering by a property). Pick deliberately — this needs design.
-- **A2 — Bound the work before sort:** when no property sort/filter is active, the
-  centroid + lookup stages can be skipped or deferred until after pagination. Cheaper,
-  partial win; doesn't help property-sorted pages.
-- **A3 — Infinite scroll (cursor-based):** replace page-numbers + deep `$skip` (slow at
-  large offset) with cursor pagination (encode sort key + `_id`). Improves the common
-  "scroll down" access mode; more frontend work.
+- **A2 — Bound the work before pagination (DONE).** `listPage` sorts on the indexed
+  `{datasetId,_id}` order (or a field), paginates, and only *then* joins display-only
+  property columns and computes the centroid — paying per-row cost on the page, not
+  the full set.
+- **PV-driven query (DONE — the headline fix; this is the "bidirectional" option).**
+  When a property sort/filter is active and there are no annotation-field filters,
+  `listPage`/`listCount`/`listIds` drive from `annotation_property_values` — sort/filter
+  and paginate the lean value docs, then `$lookup` the annotation back for just the
+  page — instead of joining values onto every annotation. Tie-break on `annotationId`
+  reproduces the annotation `_id` order exactly. A pure property sort still surfaces
+  no-value annotations last via a tail query; a property filter excludes them. Falls
+  back to the annotation-driven pipeline when annotation-field filters combine with a
+  property sort/filter. Measured end-to-end on the live endpoint (incl. count + JSON):
+
+  | query | before | after |
+  |---|---|---|
+  | plain page 1 | 3.6 s | 0.08 s |
+  | property sort, page 1 | 10 s | 1.1 s |
+  | range filter + count, page 1 | 21 s | 0.7 s |
+  | deep property sort (offset 700K) | 25 s | 3.4 s |
+
+- **A1 — Property-value index / EAV reshape (DROPPED).** The slowness was the 708K
+  join before the sort, not a missing index — a raw PV-driven sort of 708K scalar
+  values is ~0.7 s with no index. A wildcard index or flattened collection would only
+  shave the already-sub-second residual and isn't worth the index bloat / migration
+  (and the per-property-path indexing problem). Revisit only if profiling ever shows
+  the sort itself dominating.
+- **Prerequisite fix:** bulk annotation delete previously left **orphaned property-value
+  docs** — `annotationsRemovedEvent` matched a string `$in` against the ObjectId
+  `annotationId` field, so nothing matched. Fixed (normalize to `ObjectId`) so PV-driven
+  counts stay consistent with the annotation set. (Pre-existing orphans from before the
+  fix would inflate a PV count; a one-time purge clears them — none in current datasets.)
+- **A3 — Infinite scroll (cursor/keyset) — the remaining direction.** The lone
+  multi-second case left is deep `$skip` (near the last page: 3.4 s at offset 700K;
+  normal browsing ≤~10K deep stays <1 s). Keyset pagination (`value > cursor`, tie-break
+  `annotationId`) is **flat ~0.5 s at any depth with no index** (the lean PV sort prunes
+  as it descends) — the structurally correct end state for a 708K list. It's mostly
+  **frontend** work (page-numbers → scroll-driven cursor; the backend `$skip`→cursor swap
+  is small) and trades away random "jump-to-page". The PV-driven `listPage` is exactly
+  the query keyset builds on, so none of this work is throwaway.
 
 ### B. Progress indicators for long-loading steps (UX, cheap, high value)
 
@@ -641,8 +670,8 @@ stub coordinate savings. The server-side list **already** lazy-loads per-page va
 - **D5 — Cache eviction:** LRU / frame-based eviction so the value map stays bounded when
   switching properties or frames.
 
-**Recommended order:** **B** (cheap, immediate UX win, unblocks testing at scale) →
-**C1/C2** (correctness + redundant-traffic fixes, mostly local to `annotation.ts`) →
-**A1** (the real scaling lever, needs an indexing-strategy decision) → **D1/D2** (the
-property-value rework, the largest piece and the one most coupled to other consumers).
-A and D are independent and can proceed in parallel once their designs are chosen.
+**Recommended order (updated 2026-06-19):** **A is DONE** (A2 + PV-driven queries;
+see A). Remaining: **B** (progress indicators) → **C1/C2** (hydration fixes, local to
+`annotation.ts`) → **A3 / infinite scroll** (removes the deep-page residual; mostly
+frontend) → **D1/D2** (property-value rework, the largest remaining piece). D is
+independent and can proceed in parallel.

@@ -1,5 +1,7 @@
 import fastjsonschema
 
+from bson.objectid import ObjectId
+
 from girder import events
 from girder.constants import SortDir
 from girder.exceptions import ValidationException
@@ -65,10 +67,13 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
     )
 
     def annotationsRemovedEvent(self, event):
-        # Clean property values orphaned by the deletion of the annotations
-        annotationStringIds = event.info
-        query = {"annotationId": {"$in": annotationStringIds}}
-        self.removeWithQuery(query)
+        # Clean property values orphaned by the deletion of the annotations.
+        # Ids arrive as strings from bulk deletes and as ObjectIds from
+        # single deletes; annotationId is stored as an ObjectId, so normalize
+        # before the $in query (a string $in never matches an ObjectId field,
+        # which previously left bulk-deleted annotations' values orphaned).
+        annotationIds = [ObjectId(str(i)) for i in event.info]
+        self.removeWithQuery({"annotationId": {"$in": annotationIds}})
 
     def initialize(self):
         self.name = "annotation_property_values"

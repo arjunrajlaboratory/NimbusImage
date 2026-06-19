@@ -245,6 +245,198 @@ class TestServerListProperties:
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListRefactorCharacterization:
+    """Lock the exact /list behavior that the A2 (pipeline reorder) and C
+    (PV-driven filter path) optimizations must preserve. These pass on the
+    pre-refactor code and act as the safety net for the rewrite."""
+
+    def testDisplayOnlyPropertyColumnWithFieldSortPaginates(
+        self, admin, server
+    ):
+        # propertyPaths requested for DISPLAY only (field sort, no property
+        # sort/filter) -> A2 defers the $lookup until after pagination. The
+        # paged rows must still carry the correct per-row property value.
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        for i in range(4):
+            a = makeAnnotation(
+                folder["_id"], location={"XY": i, "Z": 0, "Time": 0}
+            )
+            pv.appendValues({"p": {"Area": (i + 1) * 10}}, a["_id"],
+                            folder["_id"])
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY", "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 2, "limit": 2,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 4
+        assert [r["location"]["XY"] for r in result["rows"]] == [2, 3]
+        # The display value must be joined to the correct row.
+        assert [r["values"]["p"]["Area"] for r in result["rows"]] == [30, 40]
+        assert "centroid" in result["rows"][0]
+        assert "coordinates" not in result["rows"][0]
+
+    def _taggedWithValues(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        a = makeAnnotation(folder["_id"], tags=["A"])
+        pv.appendValues({"p": {"Area": 30}}, a["_id"], folder["_id"])
+        b = makeAnnotation(folder["_id"], tags=["B"])
+        pv.appendValues({"p": {"Area": 10}}, b["_id"], folder["_id"])
+        c = makeAnnotation(folder["_id"], tags=["A"])
+        pv.appendValues({"p": {"Area": 20}}, c["_id"], folder["_id"])
+        d = makeAnnotation(folder["_id"], tags=["A"])  # tag A, no value
+        return folder, a, b, c, d
+
+    def testPropertySortCombinedWithTagFilter(self, admin, server):
+        # Annotation-field filter (tags) + property sort. The PV collection
+        # does not carry tags, so C must fall back to the annotation-driven
+        # path. Within the tag-filtered set, missing values still sort last.
+        folder, a, b, c, d = self._taggedWithValues(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": {"values": ["A"], "exclusive": False}},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 10,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 3  # a, c, d (tag A); b excluded
+        ids = [str(r["_id"]) for r in result["rows"]]
+        assert ids == [str(c["_id"]), str(a["_id"]), str(d["_id"])]
+        assert "Area" not in result["rows"][-1].get("values", {}).get("p", {})
+
+    def testPropertyRangeFilterCombinedWithTagFilter(self, admin, server):
+        # Combined annotation-field filter + property range filter.
+        folder, a, b, c, d = self._taggedWithValues(admin)
+        body = {
+            "datasetId": str(folder["_id"]),
+            "filters": {
+                "tags": {"values": ["A"], "exclusive": False},
+                "propertyFilters": [
+                    {"path": ["p", "Area"], "mode": "range",
+                     "min": 15, "max": 100}
+                ],
+            },
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]], "offset": 0, "limit": 10,
+        }
+        resp = postList(server, admin, "/upenn_annotation/list", body)
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        # tag A -> {a(30), c(20), d(noval)}; range [15,100] -> {c, a}
+        assert result["total"] == 2
+        assert [r["values"]["p"]["Area"] for r in result["rows"]] == [20, 30]
+
+        resp2 = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]), "filters": body["filters"],
+        })
+        assert parseStreaming(resp2)["total"] == 2
+
+    def testPropertySortEqualValuesTieBreakByAnnotationId(
+        self, admin, server
+    ):
+        # Equal sort values tie-break by annotation _id ascending. The
+        # PV-driven path reproduces this by tie-breaking on annotationId.
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        made = []
+        for _ in range(3):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": 42}}, a["_id"], folder["_id"])
+            made.append(a)
+        expected = [
+            str(a["_id"]) for a in sorted(made, key=lambda x: x["_id"])
+        ]
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]], "offset": 0, "limit": 10,
+        })
+        result = parseStreaming(resp)
+        assert [str(r["_id"]) for r in result["rows"]] == expected
+
+    def testPropertySortTotalIncludesNoValueAndDeepOffsetTail(
+        self, admin, server
+    ):
+        # Pure property sort (no filter): the no-value annotation is part of
+        # the result (sorted last) and counts toward total. A deep offset
+        # must page into that no-value tail rather than dropping it.
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        for val in (30, 10, 20):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": val}}, a["_id"], folder["_id"])
+        noval = makeAnnotation(folder["_id"])
+
+        full = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]], "offset": 0, "limit": 10,
+        })
+        fullResult = parseStreaming(full)
+        assert fullResult["total"] == 4
+        assert len(fullResult["rows"]) == 4
+
+        tail = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]], "offset": 3, "limit": 10,
+        })
+        tailResult = parseStreaming(tail)
+        assert [str(r["_id"]) for r in tailResult["rows"]] == [
+            str(noval["_id"])
+        ]
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestPropertyValueCleanup:
+    """A PV-driven count counts property-value docs directly, so they must
+    not be orphaned when their annotations are deleted."""
+
+    def testBulkDeleteRemovesPropertyValues(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        a = makeAnnotation(folder["_id"])
+        b = makeAnnotation(folder["_id"])
+        pv.appendValues({"p": {"Area": 1}}, a["_id"], folder["_id"])
+        pv.appendValues({"p": {"Area": 2}}, b["_id"], folder["_id"])
+
+        Annotation().deleteMultiple([str(a["_id"]), str(b["_id"])])
+
+        remaining = list(pv.find(
+            {"annotationId": {"$in": [a["_id"], b["_id"]]}}
+        ))
+        assert remaining == []
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
 class TestServerListValidation:
     def _folder(self, admin):
         folder = utilities.createFolder(

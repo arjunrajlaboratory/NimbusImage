@@ -253,9 +253,22 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def listIds(self, datasetId, filters):
         """All annotation _ids (as strings) matching the filters."""
-        pipeline = self._composePipeline(
-            datasetId, filters, None, [], include_sort=False,
-        )
+        if (filters.get("propertyFilters")
+                and not self._hasAnnotationFieldFilters(filters)):
+            # PV-driven: matching property-value docs carry the annotationId.
+            pipeline = [{"$match": {"datasetId": datasetId}}]
+            pipeline += self._propertyFilterStages(
+                filters, valueBase="values.")
+            pipeline.append({"$project": {"annotationId": 1, "_id": 0}})
+            cursor = self._pvModel.collection.aggregate(
+                pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
+            )
+            return [str(doc["annotationId"]) for doc in cursor]
+
+        pipeline = self._buildListMatchStages(datasetId, filters)
+        if filters.get("propertyFilters"):
+            pipeline += self._lookupStages()
+            pipeline += self._propertyFilterStages(filters)
         pipeline.append({"$project": {"_id": 1}})
         cursor = self.collection.aggregate(
             pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
@@ -274,13 +287,6 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     PROPERTY_VALUES_COLLECTION = "annotation_property_values"
 
-    def _needsLookup(self, filters, sort, propertyPaths):
-        if propertyPaths:
-            return True
-        if sort and sort.get("type") == "property":
-            return True
-        return bool(filters.get("propertyFilters"))
-
     def _lookupStages(self):
         return [
             {"$lookup": {
@@ -294,10 +300,22 @@ class Annotation(AccessControlMixin, ProxiedModel):
             }},
         ]
 
-    def _propertyFilterStages(self, filters):
+    def _valuesExpr(self, propertyPaths, valueBase="_pv.values."):
+        """Nested `values` projection expression. $$REMOVE drops a missing
+        leaf so the nested structure is preserved without nulls."""
+        valuesExpr = {}
+        for path in propertyPaths:
+            ref = "$" + valueBase + ".".join(path)
+            node = valuesExpr
+            for key in path[:-1]:
+                node = node.setdefault(key, {})
+            node[path[-1]] = {"$ifNull": [ref, "$$REMOVE"]}
+        return valuesExpr
+
+    def _propertyFilterStages(self, filters, valueBase="_pv.values."):
         stages = []
         for pf in filters.get("propertyFilters") or []:
-            valueKey = "_pv.values." + ".".join(pf["path"])
+            valueKey = valueBase + ".".join(pf["path"])
             if pf.get("mode") == "values":
                 values = pf.get("values") or []
                 if values:
@@ -317,20 +335,15 @@ class Annotation(AccessControlMixin, ProxiedModel):
                    "_hasSortValue": 0}
         stages = []
         if propertyPaths:
-            valuesExpr = {}
-            for path in propertyPaths:
-                ref = "$_pv.values." + ".".join(path)
-                node = valuesExpr
-                for key in path[:-1]:
-                    node = node.setdefault(key, {})
-                node[path[-1]] = {"$ifNull": [ref, "$$REMOVE"]}
-            stages.append({"$addFields": {"values": valuesExpr}})
+            stages.append({"$addFields": {
+                "values": self._valuesExpr(propertyPaths),
+            }})
         stages.append({"$project": project})
         return stages
 
-    def _propertySortAddFields(self, sort):
+    def _propertySortAddFields(self, sort, valueBase="_pv.values."):
         if sort and sort.get("type") == "property":
-            ref = "$_pv.values." + ".".join(sort["key"])
+            ref = "$" + valueBase + ".".join(sort["key"])
             return [{"$addFields": {
                 "_sortValue": ref,
                 "_hasSortValue": {"$cond": [
@@ -356,21 +369,159 @@ class Annotation(AccessControlMixin, ProxiedModel):
             return {"$sort": {key: direction, "_id": 1}}
         return {"$sort": {"_id": 1}}
 
-    def _composePipeline(self, datasetId, filters, sort, propertyPaths,
-                         include_sort):
-        pipeline = self._buildListMatchStages(datasetId, filters)
-        if self._needsLookup(filters, sort, propertyPaths):
-            pipeline += self._lookupStages()
-            pipeline += self._propertyFilterStages(filters)
-        if include_sort:
-            pipeline += self._propertySortAddFields(sort)
-            pipeline.append(self._centroidAddFields())
-            pipeline.append(self._sortStage(sort))
+    @property
+    def _pvModel(self):
+        """The property-values model (lazy, cached) for PV-driven queries."""
+        pv = getattr(self, "_pvModelCache", None)
+        if pv is None:
+            from .propertyValues import AnnotationPropertyValues
+            pv = AnnotationPropertyValues()
+            self._pvModelCache = pv
+        return pv
+
+    def _hasAnnotationFieldFilters(self, filters):
+        """True if any filter constrains annotation-document fields.
+
+        The property-values collection carries only datasetId/annotationId/
+        values, so when such a filter is present the PV-driven path cannot
+        apply and we fall back to the annotation-driven pipeline.
+        """
+        if filters.get("shape"):
+            return True
+        if (filters.get("tags") or {}).get("values"):
+            return True
+        location = filters.get("location") or {}
+        if any(location.get(k) is not None for k in ("XY", "Z", "Time")):
+            return True
+        if filters.get("idConstraints"):
+            return True
+        if filters.get("idSubstring"):
+            return True
+        return False
+
+    def _canDrivePvPage(self, filters, sort):
+        """Whether listPage can be driven from the property-values
+        collection: no annotation-field filters, and not a field sort (which
+        would require ordering by annotation fields the PV docs lack)."""
+        if self._hasAnnotationFieldFilters(filters):
+            return False
+        if sort and sort.get("type") == "field":
+            return False
+        return True
+
+    def _pvSortStage(self, sort):
+        # PV-driven: tie-break on annotationId (== the annotation _id), which
+        # reproduces the annotation-driven _id tie-break exactly.
+        direction = -1 if (sort or {}).get("order") == "desc" else 1
+        if sort and sort.get("type") == "property":
+            return {"$sort": {
+                "_hasSortValue": -1, "_sortValue": direction,
+                "annotationId": 1,
+            }}
+        return {"$sort": {"annotationId": 1}}
+
+    def _pvDrivenPagePipeline(self, datasetId, filters, sort, propertyPaths,
+                              skip, limit):
+        # Sort/paginate the lean property-value docs first, then join the
+        # annotation back for just the page and reshape to the
+        # annotation-driven output (annotation _id + centroid + values).
+        pipeline = [{"$match": {"datasetId": datasetId}}]
+        pipeline += self._propertyFilterStages(filters, valueBase="values.")
+        pipeline += self._propertySortAddFields(sort, valueBase="values.")
+        pipeline.append(self._pvSortStage(sort))
+        pipeline.append({"$skip": skip})
+        pipeline.append({"$limit": limit})
+        pipeline.append({"$lookup": {
+            "from": "upenn_annotation",
+            "localField": "annotationId",
+            "foreignField": "_id",
+            "as": "_ann",
+        }})
+        # Non-preserving unwind drops any property-value doc whose annotation
+        # is gone (matching the annotation-driven path, which never sees them).
+        pipeline.append({"$unwind": "$_ann"})
+        if propertyPaths:
+            pipeline.append({"$addFields": {
+                "_ann.values": self._valuesExpr(propertyPaths,
+                                                valueBase="values."),
+            }})
+        pipeline.append({"$addFields": {"_ann.centroid": {
+            "x": {"$avg": "$_ann.coordinates.x"},
+            "y": {"$avg": "$_ann.coordinates.y"},
+        }}})
+        pipeline.append({"$replaceRoot": {"newRoot": "$_ann"}})
+        pipeline.append({"$project": {"coordinates": 0}})
         return pipeline
 
+    def _pvHasValueCount(self, datasetId, sort):
+        valueKey = "values." + ".".join(sort["key"])
+        pipeline = [
+            {"$match": {"datasetId": datasetId, valueKey: {"$ne": None}}},
+            {"$count": "n"},
+        ]
+        result = list(self._pvModel.collection.aggregate(
+            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
+        ))
+        return result[0]["n"] if result else 0
+
+    def _noValueTail(self, datasetId, sort, propertyPaths,
+                     tailOffset, tailLimit):
+        # Annotations with no value for the sort key (missing PV doc or
+        # missing path) sort last on a pure property sort. {key: None} matches
+        # both missing and null, including when the joined _pv is absent.
+        if tailLimit <= 0:
+            return []
+        sortKey = "_pv.values." + ".".join(sort["key"])
+        pipeline = [{"$match": {"datasetId": datasetId}}]
+        pipeline += self._lookupStages()
+        pipeline.append({"$match": {sortKey: None}})
+        pipeline.append({"$sort": {"_id": 1}})
+        pipeline.append({"$skip": tailOffset})
+        pipeline.append({"$limit": tailLimit})
+        pipeline.append(self._centroidAddFields())
+        pipeline += self._projectStage(propertyPaths)
+        return list(self.collection.aggregate(
+            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
+        ))
+
+    def _pvDrivenPage(self, datasetId, filters, sort, propertyPaths,
+                      skip, limit):
+        rows = list(self._pvModel.collection.aggregate(
+            self._pvDrivenPagePipeline(
+                datasetId, filters, sort, propertyPaths, skip, limit
+            ),
+            hint={"datasetId": 1, "_id": 1}, allowDiskUse=True,
+        ))
+        # A pure property sort (no property filter) must also surface
+        # annotations with no value for the sort key, ordered after the
+        # present ones. A property filter already excludes those rows.
+        isPureSort = (
+            bool(sort and sort.get("type") == "property")
+            and not filters.get("propertyFilters")
+        )
+        if isPureSort and len(rows) < limit:
+            hasCount = self._pvHasValueCount(datasetId, sort)
+            rows += self._noValueTail(
+                datasetId, sort, propertyPaths,
+                max(0, skip - hasCount), limit - len(rows),
+            )
+        return rows
+
     def listCount(self, datasetId, filters):
-        # Count only needs the lookup when a property FILTER is active
-        # (sorting never changes the count).
+        # Sorting never changes the count, so only a property FILTER matters.
+        if (filters.get("propertyFilters")
+                and not self._hasAnnotationFieldFilters(filters)):
+            # PV-driven: count the matching property-value docs directly
+            # rather than joining onto every annotation in the dataset.
+            pipeline = [{"$match": {"datasetId": datasetId}}]
+            pipeline += self._propertyFilterStages(
+                filters, valueBase="values.")
+            pipeline.append({"$count": "n"})
+            result = list(self._pvModel.collection.aggregate(
+                pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
+            ))
+            return result[0]["n"] if result else 0
+
         pipeline = self._buildListMatchStages(datasetId, filters)
         if filters.get("propertyFilters"):
             pipeline += self._lookupStages()
@@ -381,13 +532,59 @@ class Annotation(AccessControlMixin, ProxiedModel):
         ))
         return result[0]["n"] if result else 0
 
+    def _needsPropertyBeforePage(self, filters, sort):
+        """Whether property values must be joined BEFORE pagination.
+
+        Only a property sort (order depends on the value) or a property
+        filter (which rows survive depends on the value) require the join
+        ahead of $skip/$limit. Requesting property columns for display does
+        not -- those values can be joined after the page is selected.
+        """
+        if sort and sort.get("type") == "property":
+            return True
+        return bool(filters.get("propertyFilters"))
+
     def listPage(self, datasetId, filters, sort, propertyPaths,
                  offset, limit):
-        pipeline = self._composePipeline(
-            datasetId, filters, sort, propertyPaths, include_sort=True,
-        )
-        pipeline.append({"$skip": max(0, offset)})
+        skip = max(0, offset)
+        if not self._needsPropertyBeforePage(filters, sort):
+            # Sort by an annotation field (the {datasetId,_id} index orders
+            # the default/_id case, so the page is found without scanning the
+            # whole matched set), paginate, THEN join property values for
+            # display and compute the centroid -- paying that per-row cost on
+            # the page rather than on every matched annotation.
+            pipeline = self._buildListMatchStages(datasetId, filters)
+            pipeline.append(self._sortStage(sort))
+            pipeline.append({"$skip": skip})
+            pipeline.append({"$limit": limit})
+            if propertyPaths:
+                pipeline += self._lookupStages()
+            pipeline.append(self._centroidAddFields())
+            pipeline += self._projectStage(propertyPaths)
+            return self.collection.aggregate(
+                pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
+            )
+
+        if self._canDrivePvPage(filters, sort):
+            # Drive from the property-values collection: sort/filter and
+            # paginate the lean value docs, then join the annotation back for
+            # just the page -- avoiding the join over the whole matched set.
+            return self._pvDrivenPage(
+                datasetId, filters, sort, propertyPaths, skip, limit
+            )
+
+        # Fallback: an annotation-field filter is combined with a property
+        # sort/filter (the PV docs don't carry those fields), or a field sort
+        # accompanies a property filter. Join, filter, sort, then paginate on
+        # the annotation collection.
+        pipeline = self._buildListMatchStages(datasetId, filters)
+        pipeline += self._lookupStages()
+        pipeline += self._propertyFilterStages(filters)
+        pipeline += self._propertySortAddFields(sort)
+        pipeline.append(self._sortStage(sort))
+        pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})
+        pipeline.append(self._centroidAddFields())
         pipeline += self._projectStage(propertyPaths)
         return self.collection.aggregate(
             pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
