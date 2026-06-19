@@ -13,6 +13,7 @@
 > - **Debounce:** the watch-driven server refetch is debounced ~300 ms; explicit pagination/sort is immediate. Vuetify **`v-data-table-server`** is the table component.
 > - **Input validation:** filter/sort/property-path/idConstraints *shape* is validated at the API boundary → 400 (not an uncaught 500).
 > - **Performance:** §8 records the measured 708K latency (3.6–25 s) and why the perf pass is deferred.
+> - **Property-column sort arrow (fixed 2026-06-19):** the custom `header.${key}` slot used for property columns *replaces* Vuetify's default header content, which silently dropped the `.v-data-table-header__sort-icon` — property columns looked unsortable (only the `×` remove button showed). The slot now reproduces Vuetify's `.v-data-table-header__content` structure and renders the sort icon via the `getSortIcon` slot prop, with the remove button after it. Applied to both the client `v-data-table` and the server `v-data-table-server`.
 
 ---
 

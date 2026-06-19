@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status (2026-04-24):** Backend endpoints + frontend incremental migration complete. Stub-only mode renders correctly, hydrates from backend on viewport change, and deletes correctly. Ready for optimization work — see **Next Steps** below.
+**Status (2026-06-19):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below) and the property-column sort arrow. **Still open / next:** large-scale performance (708K `/list` is 3.6–25 s), progress indicators for long loads, hydration debounce + zoom-aware hydration, and the property-value loading rework. See **Next Steps** and the **Remaining work** summary at the very bottom.
 
 ---
 
@@ -302,11 +302,36 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - Camera changes (`cameraInfo` — pan/zoom) trigger it with a **250ms debounce** since they fire rapidly during interaction
 - **Why:** The debounce was originally applied to all sources. But frame changes are discrete events (user clicks a button), not continuous streams, and the 250ms delay was the primary cause of stale visibility state on frame transitions. Camera pan/zoom genuinely benefits from debouncing to avoid thrashing the spatial index query during drag.
 
-### Known issue: stub circles too large for small annotations
-- Stub circles appear ~2× too large for annotations with very small radii (~2 world units)
-- Works correctly for larger annotations (tested on square annotations dataset)
-- Suspected cause: GeoJS may have an internal minimum point feature size, or `baseStyle.radius` (global annotation radius setting, default 4) may interact with the stub point rendering
-- `estimateAnnotationRadius()` returns correct values (verified via console) — the issue is in rendering, not computation
+### RESOLVED (2026-06-19): stub circles too large — world/pixel unit mismatch
+The earlier symptom ("~2× too large for small annotations, fine for large ones")
+was the visible tail of a general bug, not a GeoJS minimum-size quirk.
+
+**Root cause:** `estimateAnnotationRadius()` returns a bbox half-extent in **world
+(image-pixel) units**, but `getStubStyleFromBaseStyle()` fed it into a GeoJS point
+feature with a hardcoded **`scaled: 1`**. GeoJS renders a point radius as
+`radius · 2^(zoom − scaled)` display pixels, so `scaled: 1` only matches the
+annotation's true footprint when the tile pyramid's zoom-0 resolution is
+`unitsPerPixel(0) = 2`. On a whole-slide dataset where `unitsPerPixel(0) = 32`
+(= 2⁵), every stub rendered `2^(5−1) = 16×` too large in radius — ~327 px blobs
+instead of ~9 px cell-sized dots. The "2×" case was simply a `unitsPerPixel(0) = 4`
+dataset (2^(2−1) = 2×); the "works for the square dataset" case was
+`unitsPerPixel(0) = 2` (no error).
+
+**Fix:** world-locked sizing needs `scaled = log2(unitsPerPixel(0))` — the zoom
+level at which one world unit equals one display pixel. `getStubStyleFromBaseStyle()`
+now takes a `scaled` parameter, and `AnnotationViewer` computes it from the live
+map via `getStubScaled()` (= `Math.log2(map.unitsPerPixel(0))`) at all three
+styling sites (initial draw, hover/select restyle, full restyle).
+
+**Verified** on the 708K Xenium dataset: stubs carry `scaled = 5`, and the
+rendered radius exactly equals the world-correct radius (`radius / unitsPerPixel(zoom)`)
+at every zoom (ratio 1.0). Tests: `annotationStubUtils.test.ts` "applies the
+provided scaled value so stubs track world size".
+
+**Implication for the styling setting:** stubs are now always world-locked (they
+scale with zoom to track the real shape's footprint), regardless of the
+`scaleAnnotationsWithZoom` setting that governs literal point-annotation dots.
+This resolves the open "should stubs respect scaleAnnotationsWithZoom" to-do below.
 
 ### Selection includes non-visible annotations
 - `getSelectedAnnotationsFromAnnotation()` queries both the displayed RBush and the global `annotationSpatialIndex`
@@ -328,7 +353,7 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - [ ] Test hydration/dehydration memory churn during rapid pan/zoom
 
 ### Styling Adjustments
-- [ ] Review whether stubs should respect `scaleAnnotationsWithZoom` setting or always use fixed world size
+- [x] Review whether stubs should respect `scaleAnnotationsWithZoom` setting or always use fixed world size — **resolved 2026-06-19:** stubs are always world-locked via `scaled = log2(unitsPerPixel(0))` so the dot tracks the annotation's real footprint at every zoom (see "RESOLVED: stub circles too large" above)
 - [ ] Consider different hover/selection effects for stubs vs full annotations
 - [ ] Fine-tune stub visual distinction (currently thinner stroke + lower opacity)
 
@@ -537,3 +562,87 @@ With uniform-size annotations (all ~7.07 radius), the 2x viewport expansion make
 9. **No plain private methods in Vuex modules**: vuex-module-decorators `@Action` proxy only exposes state, getters, `@Mutation`, and `@Action` methods on `this`. A plain `private` method (no decorator) is invisible to the proxy — calling it silently throws TypeError, swallowed by Vuex without `rawError: true`. All private methods must be decorated or their logic inlined in the action.
 10. **No async/await in `@Action` methods that need state after the await**: The vuex-module-decorators proxy completely breaks after `await` — state reads return undefined, mutation calls silently fail. Solution: extract async work to a module-level function, capture all state before calling it, commit via the exported module instance.
 11. **Vuex getter functions defeat Vue computed dependency tracking**: Getters that return functions (e.g., `get isVisible() { return (id) => this.visibleAnnotationIds.has(id); }`) don't create reactive dependencies on the underlying state when the returned function is called inside a `computed()`. The computed only tracks the getter reference, not what the function reads. Fix: also read the underlying state directly in the computed.
+
+---
+
+## Remaining Work (consolidated 2026-06-19)
+
+Stub-only mode + the server-side list are **functionally correct** on real data
+(HCR 26K, Xenium 708K). What's left is performance, UX feedback, and the
+property-value rework. This section consolidates the scattered "Next Steps",
+"Deferred", and "Property Values Lazy Loading" notes above into one roadmap with
+options. Detailed rationale lives in the linked sections; this is the map.
+
+### A. Performance at large scale (the headline gap)
+
+`POST /upenn_annotation/list` is **3.6–25 s at 708K** (see
+[`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md) §8).
+The aggregation runs centroid `$addFields` + property `$lookup`/`$unwind` + `$sort`
+over the **full matched set** before `$skip`/`$limit`, and there is no per-property
+index. Stub fetch + hydration is acceptable; the list query is the bottleneck.
+
+- **A1 — Property-value index (biggest lever, hardest):** property values are stored
+  nested (`values.<propertyId>.<subField>`) and prop ids differ per dataset, so a
+  naive compound index doesn't generalize. Options: wildcard index; a flattened/
+  reshaped property-values collection; an index created at property-compute time;
+  or the **bidirectional query** (drive the aggregation from `annotation_property_values`
+  when sorting/filtering by a property). Pick deliberately — this needs design.
+- **A2 — Bound the work before sort:** when no property sort/filter is active, the
+  centroid + lookup stages can be skipped or deferred until after pagination. Cheaper,
+  partial win; doesn't help property-sorted pages.
+- **A3 — Infinite scroll (cursor-based):** replace page-numbers + deep `$skip` (slow at
+  large offset) with cursor pagination (encode sort key + `_id`). Improves the common
+  "scroll down" access mode; more frontend work.
+
+### B. Progress indicators for long-loading steps (UX, cheap, high value)
+
+Today several multi-second steps are silent or coarse: the 708K **stub fetch**, the
+**property-values fetch** (the only one that surfaces a bar — `Fetching property
+values (N/total)`), and each **`/list`** query (3.6–25 s with no per-query feedback).
+
+- **B1 — Determinate bars where counts are known** (stub fetch, property-values fetch):
+  reuse the existing progress-bar pattern. Already done for property values; extend to
+  stub fetch.
+- **B2 — Per-query feedback for `/list`:** the table already has Vuetify's `loading`
+  state; add skeleton rows / a clear "querying N annotations…" affordance and disable
+  paging controls while in flight (avoids the "did my click register?" confusion at 20 s).
+- **B3 — Streaming/chunked feedback:** the backend already streams `orjson`; surfacing
+  partial counts is more work and probably not worth it before A.
+
+### C. Hydration refinements (from "Next Steps" 2 & 3 above — partially done)
+
+- **C1 — Debounce the hydration fetch + `AbortController`:** only the camera watcher is
+  debounced (250 ms); the fetch itself fires un-cancelled, so a zoom-then-pan can stack
+  redundant in-flight requests and stale responses can overwrite newer cache state.
+- **C2 — Zoom-aware hydration:** Steps 2–4 use the 2× expanded viewport for *both*
+  visibility and hydration, so zooming in doesn't re-prioritize the newly-visible region.
+  Simplest fix: unexpanded bounds for the hydration split, expanded only for visibility.
+- **C3 — Hydrate-on-selection via backend:** selecting a stub not already in the
+  hydration cache should trigger a one-off hydrate for that id.
+
+### D. Property-value setup rework (the area flagged as "minimally working")
+
+This is the largest remaining structural item. `src/store/properties.ts` loads **all**
+property values for **all** annotations into one `{[annoId]:{[propId]:value}}` map and
+**replaces** it wholesale on each fetch (`TODO(performance): merge instead`). At
+708K × N properties this dominates both memory and load time, and it's orthogonal to the
+stub coordinate savings. The server-side list **already** lazy-loads per-page values, but
+**plots, the properties panels, and the (client-mode) filter UI still load wholesale.**
+
+- **D1 — Lazy per-page values everywhere:** make the server-list pattern the norm — only
+  fetch values for the rows/annotations currently shown. Limits global sort/filter to what
+  the backend computes; this is the direction the architecture already points.
+- **D2 — On-demand per-column loading:** fetch a property's values only when its column is
+  added (`GET /annotation_property_values?propertyId=X&datasetId=Y`).
+- **D3 — Server-side aggregation for stats/histograms:** already used by the filter UI;
+  extend so property summaries never require transferring all values.
+- **D4 — Property-value stubs:** lightweight per-property summary (min/max/mean) loaded
+  upfront; full per-annotation values on demand.
+- **D5 — Cache eviction:** LRU / frame-based eviction so the value map stays bounded when
+  switching properties or frames.
+
+**Recommended order:** **B** (cheap, immediate UX win, unblocks testing at scale) →
+**C1/C2** (correctness + redundant-traffic fixes, mostly local to `annotation.ts`) →
+**A1** (the real scaling lever, needs an indexing-strategy decision) → **D1/D2** (the
+property-value rework, the largest piece and the one most coupled to other consumers).
+A and D are independent and can proceed in parallel once their designs are chosen.
