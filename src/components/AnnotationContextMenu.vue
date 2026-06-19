@@ -130,12 +130,13 @@ function save() {
 
   if (applyToSameTags.value) {
     // Get all annotations with the same original tags
-    const annotationsWithSameTags = annotationStore.annotationsForIteration.filter(
-      (annotation: IAnnotation) =>
-        props.annotation &&
-        annotation.tags.length === props.annotation.tags.length &&
-        annotation.tags.every((tag) => props.annotation!.tags.includes(tag)),
-    );
+    const annotationsWithSameTags =
+      annotationStore.annotationsForIteration.filter(
+        (annotation: IAnnotation) =>
+          props.annotation &&
+          annotation.tags.length === props.annotation.tags.length &&
+          annotation.tags.every((tag) => props.annotation!.tags.includes(tag)),
+      );
     const annotationIds = annotationsWithSameTags.map((a: IAnnotation) => a.id);
 
     // Update colors if changed

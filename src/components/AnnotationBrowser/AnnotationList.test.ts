@@ -1068,9 +1068,7 @@ describe("AnnotationList", () => {
       (annotationStore as any).stubOnlyMode = true;
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      const byKey = Object.fromEntries(
-        vm.headers.map((h: any) => [h.key, h]),
-      );
+      const byKey = Object.fromEntries(vm.headers.map((h: any) => [h.key, h]));
       expect(byKey["index"].sortable).toBe(false);
       expect(byKey["annotation.tags"].sortable).toBe(false);
       // annotation.id is a real, meaningfully sortable column (= _id order).

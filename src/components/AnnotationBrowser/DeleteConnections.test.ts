@@ -25,7 +25,9 @@ vi.mock("@/store/annotation", () => {
     deleteConnections: vi.fn().mockResolvedValue(undefined),
   };
   Object.defineProperty(state, "annotationsForIteration", {
-    get() { return state.annotations; },
+    get() {
+      return state.annotations;
+    },
     enumerable: true,
   });
   return { default: state };

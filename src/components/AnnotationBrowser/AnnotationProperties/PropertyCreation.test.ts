@@ -34,7 +34,9 @@ vi.mock("@/store/annotation", () => {
     annotations: [] as any[],
   };
   Object.defineProperty(state, "annotationsForIteration", {
-    get() { return state.annotations; },
+    get() {
+      return state.annotations;
+    },
     enumerable: true,
   });
   return { default: state };

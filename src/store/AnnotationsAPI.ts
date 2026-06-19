@@ -325,13 +325,14 @@ export default class AnnotationsAPI {
   }
 
   toStub = (item: any): IAnnotationStub => {
+    // datasetId is intentionally excluded from the stub (redundant — see
+    // ANNOTATION-STUBS.md "Resolved Design Decisions" #1).
     const {
       _id,
       tags,
       shape,
       channel,
       location,
-      datasetId,
       color,
       centroid,
       estimatedRadius,

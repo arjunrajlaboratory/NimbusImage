@@ -217,90 +217,92 @@ export class Filters extends VuexModule {
     // carry no coordinates, so ROI filtering falls back to the centroid map
     // (populated for every annotation id in both full and stub-only modes).
     const centroidsById = annotation.annotationCentroids;
-    return annotation.annotationsForIteration.filter((annotation: IAnnotation) => {
-      // Location filter
-      if (
-        onlyCurrentFrame &&
-        (annotation.location.XY !== currentFrameLocation.XY ||
-          annotation.location.Z !== currentFrameLocation.Z ||
-          annotation.location.Time !== currentFrameLocation.Time)
-      ) {
-        return false;
-      }
+    return annotation.annotationsForIteration.filter(
+      (annotation: IAnnotation) => {
+        // Location filter
+        if (
+          onlyCurrentFrame &&
+          (annotation.location.XY !== currentFrameLocation.XY ||
+            annotation.location.Z !== currentFrameLocation.Z ||
+            annotation.location.Time !== currentFrameLocation.Time)
+        ) {
+          return false;
+        }
 
-      // Selection filter
-      if (
-        selectionFilter.enabled &&
-        !selectionFilter.annotationIds.includes(annotation.id)
-      ) {
-        return false;
-      }
+        // Selection filter
+        if (
+          selectionFilter.enabled &&
+          !selectionFilter.annotationIds.includes(annotation.id)
+        ) {
+          return false;
+        }
 
-      // Tag filter
-      if (
-        tagFilter.enabled &&
-        !tagCloudFilterFunction(
-          annotation.tags,
-          tagFilter.tags,
-          tagFilter.exclusive,
-        )
-      ) {
-        return false;
-      }
+        // Tag filter
+        if (
+          tagFilter.enabled &&
+          !tagCloudFilterFunction(
+            annotation.tags,
+            tagFilter.tags,
+            tagFilter.exclusive,
+          )
+        ) {
+          return false;
+        }
 
-      // Property filters
-      const propertyValues = properties.propertyValues[annotation.id] || {};
-      const matchesProperties = enabledPropertyFilters.every(
-        (filter: IPropertyAnnotationFilter) => {
-          const value = getValueFromObjectAndPath(
-            propertyValues,
-            filter.propertyPath,
-          );
-          if (filter.valuesOrRange === "values") {
-            // If no values specified, don't filter
-            if (!filter.values || filter.values.length === 0) {
-              return true;
-            }
-            // Check if the value exists in the set of specified values
-            return typeof value === "number" && filter.values.includes(value);
-          } else {
-            // Default "range" behavior for histograms
-            return (
-              typeof value === "number" &&
-              value >= filter.range.min &&
-              value <= filter.range.max
+        // Property filters
+        const propertyValues = properties.propertyValues[annotation.id] || {};
+        const matchesProperties = enabledPropertyFilters.every(
+          (filter: IPropertyAnnotationFilter) => {
+            const value = getValueFromObjectAndPath(
+              propertyValues,
+              filter.propertyPath,
             );
-          }
-        },
-      );
-      if (!matchesProperties) {
-        return false;
-      }
-
-      // Annotation ID filters
-      const matchesAnnotationIds =
-        enabledAnnotationIdFilters.length === 0 ||
-        enabledAnnotationIdFilters.some((filter) =>
-          filter.annotationIds.includes(annotation.id),
+            if (filter.valuesOrRange === "values") {
+              // If no values specified, don't filter
+              if (!filter.values || filter.values.length === 0) {
+                return true;
+              }
+              // Check if the value exists in the set of specified values
+              return typeof value === "number" && filter.values.includes(value);
+            } else {
+              // Default "range" behavior for histograms
+              return (
+                typeof value === "number" &&
+                value >= filter.range.min &&
+                value <= filter.range.max
+              );
+            }
+          },
         );
-      if (!matchesAnnotationIds) {
-        return false;
-      }
+        if (!matchesProperties) {
+          return false;
+        }
 
-      // ROI filters
-      const roiTestPoints = annotationTestPoints(
-        annotation,
-        centroidsById[annotation.id],
-      );
-      const isInROI =
-        enabledRoiFilters.length === 0 ||
-        enabledRoiFilters.some((filter: IROIAnnotationFilter) =>
-          roiTestPoints.some((point: IGeoJSPosition) =>
-            geo.util.pointInPolygon(point, filter.roi),
-          ),
+        // Annotation ID filters
+        const matchesAnnotationIds =
+          enabledAnnotationIdFilters.length === 0 ||
+          enabledAnnotationIdFilters.some((filter) =>
+            filter.annotationIds.includes(annotation.id),
+          );
+        if (!matchesAnnotationIds) {
+          return false;
+        }
+
+        // ROI filters
+        const roiTestPoints = annotationTestPoints(
+          annotation,
+          centroidsById[annotation.id],
         );
-      return isInROI;
-    });
+        const isInROI =
+          enabledRoiFilters.length === 0 ||
+          enabledRoiFilters.some((filter: IROIAnnotationFilter) =>
+            roiTestPoints.some((point: IGeoJSPosition) =>
+              geo.util.pointInPolygon(point, filter.roi),
+            ),
+          );
+        return isInROI;
+      },
+    );
   }
 
   get filteredAnnotationIdToIdx() {

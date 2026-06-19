@@ -1451,8 +1451,8 @@ export interface IAnnotationListPage {
 export type THydrationMode = "shapes" | "dots";
 
 export interface IVisibilityConfig {
-  maxVisible: number;   // Max annotations to render (stubs or shapes)
-  maxHydrated: number;  // Max annotations to keep hydrated per visibility update
+  maxVisible: number; // Max annotations to render (stubs or shapes)
+  maxHydrated: number; // Max annotations to keep hydrated per visibility update
   hydrationCacheCap: number; // Total cap on the hydration cache (accumulates across updates; LRU-evicts beyond cap, protecting selected)
   globalThreshold: boolean; // If true, threshold applies to total frame annotations across all layers
 }

@@ -134,7 +134,8 @@ class StubPerf {
   report() {
     const s = this.snapshot();
     const totalReq = s.idsFetched + s.idsAlreadyCached;
-    const hitRate = totalReq > 0 ? ((s.idsAlreadyCached / totalReq) * 100).toFixed(1) : "n/a";
+    const hitRate =
+      totalReq > 0 ? ((s.idsAlreadyCached / totalReq) * 100).toFixed(1) : "n/a";
     const latencies = s.hydrateLatencyMs.slice().sort((a, b) => a - b);
     const p50 = latencies[Math.floor(latencies.length * 0.5)] ?? 0;
     const p95 = latencies[Math.floor(latencies.length * 0.95)] ?? 0;
@@ -143,13 +144,17 @@ class StubPerf {
     console.log("=== stubPerf report ===");
     console.log(`dataset: ${s.datasetId ?? "(none)"}`);
     console.log(`elapsed: ${(s.elapsedMs / 1000).toFixed(1)}s`);
-    console.log(`interaction: ${s.cameraUpdates} camera updates, ${s.visibilityUpdates} visibility updates`);
+    console.log(
+      `interaction: ${s.cameraUpdates} camera updates, ${s.visibilityUpdates} visibility updates`,
+    );
     console.log("--- HTTP ---");
     console.log(`httpRequestsFired: ${s.httpRequestsFired}`);
     console.log(`idsFetched:        ${s.idsFetched}`);
     console.log(`idsAlreadyCached:  ${s.idsAlreadyCached}`);
     console.log(`cache hit rate:    ${hitRate}%`);
-    console.log(`latency p50/p95:   ${p50}ms / ${p95}ms (n=${s.hydrateLatencyMs.length})`);
+    console.log(
+      `latency p50/p95:   ${p50}ms / ${p95}ms (n=${s.hydrateLatencyMs.length})`,
+    );
     console.log("--- cache ---");
     console.log(`cacheSize:         ${s.cacheSize}/${s.cacheCap}`);
     console.log(`capacityReached:   ${s.cacheCapacityReached}`);

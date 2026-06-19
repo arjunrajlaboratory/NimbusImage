@@ -22,7 +22,9 @@ vi.mock("@/store/annotation", () => {
     colorAnnotationIds: vi.fn(),
   };
   Object.defineProperty(state, "annotationsForIteration", {
-    get() { return state.annotations; },
+    get() {
+      return state.annotations;
+    },
     enumerable: true,
   });
   return { default: state };

@@ -88,7 +88,8 @@
                 <v-card-title> Overwrite annotations? </v-card-title>
                 <v-card-text>
                   This will remove
-                  {{ annotationStore.annotationsForIteration.length }} annotations forever
+                  {{ annotationStore.annotationsForIteration.length }}
+                  annotations forever
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer />

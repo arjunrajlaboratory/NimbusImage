@@ -452,8 +452,9 @@ const layerAnnotations = computed(() => {
     const frameAnnotations = layerFrameAnnotations.get(layer.id);
     if (!frameAnnotations) continue;
     const annotationIdsSet = layerIdToAnnotationIds.get(layer.id)!;
-    const needsStubSystem = annotationStore.stubOnlyMode
-      || (globalThreshold
+    const needsStubSystem =
+      annotationStore.stubOnlyMode ||
+      (globalThreshold
         ? globalNeedsStubSystem
         : stubsSize > 0 && frameAnnotations.length > maxVisible);
     for (const annotation of frameAnnotations) {
@@ -461,9 +462,9 @@ const layerAnnotations = computed(() => {
         continue;
       }
       const renderData: TAnnotationOrStub = needsStubSystem
-        ? hydratedAnnotations.get(annotation.id)
-          ?? annotationStore.annotationStubs?.get(annotation.id)
-          ?? annotation
+        ? hydratedAnnotations.get(annotation.id) ??
+          annotationStore.annotationStubs?.get(annotation.id) ??
+          annotation
         : annotation;
       annotationIdsSet.set(annotation.id, renderData);
     }
@@ -794,8 +795,7 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
         const annotation = getAnnotationFromId.value(girderId);
         const layer = store.getLayerFromId(layerId);
         const wasStub = geoJsAnnotation.options("isStub");
-        const layerData = layerAnnotations.value
-          .get(layerId)?.get(girderId);
+        const layerData = layerAnnotations.value.get(layerId)?.get(girderId);
         const isNowHydrated = layerData
           ? isHydratedAnnotation(layerData)
           : false;
@@ -3249,7 +3249,9 @@ watch(selectedToolConfiguration, () => {
 // Visibility and hydration updates
 function updateVisibility() {
   const ids = (
-    store.filteredDraw ? filteredAnnotations.value : annotationStore.annotationsForIteration
+    store.filteredDraw
+      ? filteredAnnotations.value
+      : annotationStore.annotationsForIteration
   ).map((a: IAnnotation) => a.id);
   annotationStore.updateVisibilityAndHydration({
     filteredIds: ids,
@@ -3264,10 +3266,13 @@ const updateVisibilityDebounced = debounce(updateVisibility, 250);
 watch([filteredAnnotations, xy, z, time], updateVisibility);
 
 // Camera changes (pan/zoom) are debounced since they fire rapidly
-watch(() => store.cameraInfo, () => {
-  stubPerf.trackCameraUpdate();
-  updateVisibilityDebounced();
-});
+watch(
+  () => store.cameraInfo,
+  () => {
+    stubPerf.trackCameraUpdate();
+    updateVisibilityDebounced();
+  },
+);
 
 // ROI filter
 watch(roiFilter, () => {

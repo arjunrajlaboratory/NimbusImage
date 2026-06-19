@@ -116,9 +116,7 @@ export class Annotations extends VuexModule {
 
   get inactiveAnnotationIds() {
     const activeIds = new Set(this.activeAnnotationIds);
-    return this.allAnnotationIds.filter(
-      (id: string) => !activeIds.has(id),
-    );
+    return this.allAnnotationIds.filter((id: string) => !activeIds.has(id));
   }
 
   get getAnnotationFromId() {
@@ -1606,8 +1604,7 @@ export class Annotations extends VuexModule {
       const connectionsPromise =
         this.annotationsAPI.getConnectionsForDatasetId(datasetId);
 
-      const count =
-        await this.annotationsAPI.getAnnotationCount(datasetId);
+      const count = await this.annotationsAPI.getAnnotationCount(datasetId);
       const { maxVisible } = this.visibilityConfig;
 
       if (count <= maxVisible) {
@@ -2230,7 +2227,6 @@ export class Annotations extends VuexModule {
     stubPerf.trackRequest(idsToFetch.length, idsToTouch.length);
     _hydrateFromBackend(api, idsToFetch, idsToTouch);
   }
-
 }
 
 const annotationModule = getModule(Annotations);
@@ -2258,9 +2254,7 @@ async function _hydrateFromBackend(
         touchedIds: idsToTouch,
       });
     } catch (error) {
-      logError(
-        `Hydration fetch failed: ${(error as Error).message}`,
-      );
+      logError(`Hydration fetch failed: ${(error as Error).message}`);
     }
   } else if (idsToTouch.length > 0) {
     annotationModule.mergeHydratedAnnotations({
