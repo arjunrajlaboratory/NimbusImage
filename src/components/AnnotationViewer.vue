@@ -849,6 +849,7 @@ function drawNewAnnotations(
       }
     }
   }
+  const stubScaled = getStubScaled();
   for (const [annotationId, geoJSAnnotationList] of drawnGeoJSAnnotations) {
     const isHoveredGT = annotationId === hoveredAnnotationId.value;
     const isSelectedGT = isAnnotationSelected.value(annotationId);
@@ -870,6 +871,7 @@ function drawNewAnnotations(
               isHoveredGT,
               isSelectedGT,
               stubRadius,
+              stubScaled,
             )
           : getAnnotationStyle(annotationId, customColor, layer?.color);
         geoJSAnnotation.options("style", { ...style, ...newStyle });
@@ -1387,6 +1389,7 @@ function createGeoJSAnnotation(
         annotation.id === hoveredAnnotationId.value,
         isAnnotationSelected.value(annotation.id),
         stubRadius,
+        getStubScaled(),
       )
     : getAnnotationStyle(annotation.id, customColor, layer?.color);
 
@@ -1444,6 +1447,7 @@ async function createAnnotationFromTool(
 function restyleAnnotations() {
   const annotations = props.annotationLayer.annotations();
   const len = annotations.length;
+  const stubScaled = getStubScaled();
   for (let i = 0; i < len; i++) {
     const geoJSAnnotation = annotations[i];
     const {
@@ -1463,6 +1467,7 @@ function restyleAnnotations() {
             girderId === hoveredAnnotationId.value,
             isAnnotationSelected.value(girderId),
             stubRadius,
+            stubScaled,
           )
         : getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
@@ -2345,6 +2350,17 @@ function setHoveredAnnotationFromCoordinates(gcsCoordinates: IGeoJSPosition) {
 function getMapUnitsPerPixel(): number {
   const map = props.annotationLayer.map();
   return map.unitsPerPixel(map.zoom());
+}
+
+// Stub radii (estimatedRadius) are in world (image-pixel) units. GeoJS point
+// features size their radius in display pixels unless `scaled` is set; with
+// `scaled = log2(unitsPerPixel(0))` the radius is interpreted in world units and
+// the stub circle tracks the annotation's true footprint at every zoom level.
+// unitsPerPixel(0) is the tile pyramid's zoom-0 resolution (a power of two), so
+// this is the level at which one world unit equals one display pixel.
+function getStubScaled(): number {
+  const map = props.annotationLayer.map();
+  return Math.log2(map.unitsPerPixel(0));
 }
 
 function handleInteractionAnnotationChange(evt: any) {

@@ -113,6 +113,19 @@ describe("getStubStyleFromBaseStyle", () => {
     const style = getStubStyleFromBaseStyle("red");
     expect(style.fillColor).toBe("red");
   });
+
+  it("defaults scaled to 1 when not provided", () => {
+    expect(getStubStyleFromBaseStyle().scaled).toBe(1);
+  });
+
+  it("applies the provided scaled value so stubs track world size", () => {
+    // estimatedRadius is in world units; a GeoJS point with scaled=N renders
+    // radius * 2^(zoom - N), which matches the annotation's true footprint only
+    // when N = log2(unitsPerPixel(0)) (e.g. 5 for a unitsPerPixel(0)=32 pyramid).
+    const style = getStubStyleFromBaseStyle(undefined, false, false, 20, 5);
+    expect(style.scaled).toBe(5);
+    expect(style.radius).toBe(20);
+  });
 });
 
 describe("annotationTestPoints", () => {

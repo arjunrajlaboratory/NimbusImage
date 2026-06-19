@@ -320,11 +320,10 @@ export function estimateAnnotationRadius(
     minY = Math.min(minY, coord.y);
     maxY = Math.max(maxY, coord.y);
   }
-  // TODO: stub circles appear ~2× too large for small annotations (~2px radius).
-  // Works correctly for larger annotations. Suspect GeoJS has an internal minimum
-  // radius or a scaling behavior for very small point features that inflates them.
-  // Needs investigation — possibly related to baseStyle.radius (global setting)
-  // or a GeoJS point feature minimum size.
+  // Returned in world (image-pixel) units. The renderer feeds this into a GeoJS
+  // point feature with `scaled = log2(unitsPerPixel(0))` so the stub circle
+  // matches the annotation's real footprint at every zoom (see
+  // getStubStyleFromBaseStyle).
   return Math.max(maxX - minX, maxY - minY) / 2;
 }
 
@@ -333,6 +332,14 @@ export function getStubStyleFromBaseStyle(
   isHovered: boolean = false,
   isSelected: boolean = false,
   estimatedRadius: number = 5,
+  // `estimatedRadius` is in world (image-pixel) units. A GeoJS point feature with
+  // `scaled: N` renders `radius * 2^(zoom - N)` display pixels; a world-locked
+  // size is `radius / unitsPerPixel(zoom) = radius * 2^zoom / unitsPerPixel(0)`.
+  // These match when `N = log2(unitsPerPixel(0))` (the tile pyramid's 1:1 zoom
+  // level), so the caller passes that value and the stub circle then tracks the
+  // annotation's real footprint at every zoom. Defaults to 1 only for callers
+  // without a map (e.g. tests); the renderer always supplies the real value.
+  scaled: number = 1,
 ): TAnnotationStyle {
   const style: TAnnotationStyle = {
     stroke: true,
@@ -343,7 +350,7 @@ export function getStubStyleFromBaseStyle(
     fillOpacity: 0.4,
     fill: true,
     radius: estimatedRadius,
-    scaled: 1,
+    scaled,
   };
 
   if (annotationColor) {
