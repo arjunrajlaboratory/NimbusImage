@@ -105,12 +105,23 @@ has not adopted Webin**.
 **Implication for NimbusImage credential storage** (more sensitive than Zenodo,
 which uses a scoped PAT):
 
-- **Option A (recommended): store EBI username + password encrypted** (Fernet,
-  reusing the `zenodo_credentials.py` pattern) and re-login to mint a fresh
-  session token at each job start.
-- **Option B: store only a pasted session token** and handle expiry / re-prompt.
+- **Option A: store EBI username + password encrypted** (Fernet, reusing the
+  `zenodo_credentials.py` pattern) and re-login to mint a fresh session token at
+  each job start. Most convenient (no re-prompting), but stores the user's EBI
+  password at rest.
+- **Option B: do not store credentials — the user (re)enters them, we exchange
+  for a session token, and we use that token until it expires.** Re-prompt when
+  it expires. Avoids holding the password at rest, at the cost of re-entry when
+  the token lapses.
 
-Whichever is chosen, the UI must clearly state that it stores EBI credentials.
+> **Current lean (arjunraj, not final): Option B.** Rationale: it feels wrong to
+> store a user's EBI credentials at rest, so prefer having the user re-input
+> their information and just use the token until it expires — hopefully the token
+> lasts long enough to get through a submission. **Open question to validate in
+> the Phase 0 spike:** the actual session-token lifetime. If it's too short to
+> cover a multi-GB/TB FTP upload + submit, we may need Option A (or a token
+> refresh) after all. Whichever is chosen, the UI must be explicit about what is
+> stored.
 
 ### 2.2 File upload — to a personal dropbox, by size tier
 
@@ -169,7 +180,7 @@ areas change (auth, upload ordering, metadata).
 
 | Existing Zenodo file | BIA analog | Reuse | What changes |
 |---|---|---|---|
-| `server/api/zenodo_credentials.py` (Fernet) | `bioarchive_credentials.py` | High | Store EBI creds or session token, not a PAT |
+| `server/api/zenodo_credentials.py` (Fernet) | `bioarchive_credentials.py` | Medium | Per current lean (Option B), holds only a transient session token, not stored creds — see §2.1 |
 | `server/helpers/zenodo_client.py` | `bioarchive_client.py` | Medium | `login()`→token; **FTP upload to dropbox**; `submit(pagetab)`; `get_submission(accession)`. No bucket PUT. |
 | `server/helpers/zenodo_job.py` | `bioarchive_job.py` | High | Same local-job + SSE pattern; step order = *upload-then-submit*; must **build PageTab + File-List** |
 | `server/api/zenodo.py` | `bioarchive.py` | Medium | `submit`/`status`; "publish" → "set release date"; "discard" → delete pre-release draft |
@@ -203,7 +214,9 @@ either as a crib or as a backend dependency.
 ### 2.7 Key risks & open decisions
 
 1. **Credential sensitivity** — store EBI password vs. paste session token vs.
-   (not available) API key. See §2.1.
+   (not available) API key. **Current lean: Option B** (no storage; re-enter and
+   use the session token until expiry). Gated on validating token lifetime in
+   the Phase 0 spike. See §2.1.
 2. **REMBI scope** — minimal-valid + finish-on-portal (recommended) vs. full
    in-app form.
 3. **FTP-from-backend** — streaming FTP/FTPS from Girder File objects with SSE
@@ -349,7 +362,43 @@ defeats the purpose.
 
 ---
 
-## 5. Summary recommendations
+## 5. Prior art — existing tools & precedents
+
+Searching for precedents turned up a telling pattern: **the building blocks for
+programmatic BIA submission exist, but as separate, partial tools — no one
+appears to do fully-automated, one-click end-to-end submission (upload +
+metadata + submit) from a web platform.** This is structural, not an effort gap:
+BIA's curated, large-file, REMBI-heavy workflow resists full automation, which
+is why even EMBL-EBI's own tooling and the most mature bioimaging platform
+(Galaxy) stop at either metadata generation or read-side access.
+
+Ordered by closeness to what NimbusImage wants:
+
+| Tool / precedent | What it does | Gap vs. our goal |
+|---|---|---|
+| [`bia-agent`](https://github.com/BioImage-Archive/bia-agent) (EMBL-EBI, official) | Python lib/CLI that converts **REMBI / MIFA / Giga-EM metadata → PageTab** | **Metadata only** — does *not* authenticate, upload files, or submit. Even EBI's own tool stops at PageTab generation. |
+| [`biostudies-client`](https://github.com/ebi-ait/biostudies-client) (ebi-ait) | Generic BioStudies Python client: `login` → session token → **submit** (with/without files) | Not image-specific; no REMBI/PageTab generation. The half `bia-agent` lacks. |
+| [IDR ← BioStudies ingest](https://idr.openmicroscopy.org/about/submission.html) | IDR pulls images *directly from* the BioStudies FTP/Aspera dropbox after a user uploads there | Inverse direction (consumes the dropbox; doesn't push for the user). Confirms the dropbox-then-reference seam our design relies on. |
+| OMERO → BIA metadata harvesting | BIA can "harvest" metadata from OMERO | Partial/planned; metadata-only. |
+| [Galaxy Image Analysis SIG](https://galaxyproject.org/community/sig/image-analysis/) | Full [OMERO-suite for *uploading to OMERO*](https://training.galaxyproject.org/training-material/topics/imaging/tutorials/omero-suite/tutorial.html); read/discovery guides for BIA, IDR, Zenodo | **No tool that *pushes* to BIA.** Its write-side automation targets OMERO; BIA is read-side only. |
+
+### Key takeaways for our design
+
+- **No direct precedent** for automated end-to-end BIA *submission* from a web
+  platform — NimbusImage would be somewhat novel here.
+- **The pragmatic precedent is exactly the split we recommended:** auto-generate
+  a valid PageTab (the `bia-agent` model) + handle auth/submit programmatically
+  (the `biostudies-client` model), and accept that file upload via FTP/Aspera and
+  final curation stay semi-manual / portal-assisted for v1.
+- **Concrete code to crib from:** [`bia-agent`](https://github.com/BioImage-Archive/bia-agent)
+  for the fiddly **REMBI → PageTab** mapping (the hard part we'd otherwise
+  reverse-engineer), and [`biostudies-client`](https://github.com/ebi-ait/biostudies-client)
+  for the **auth + submit** calls. A first implementation is essentially "stitch
+  the two halves EBI ships separately."
+
+---
+
+## 6. Summary recommendations
 
 - **Publishing is the priority but the harder direction.** Reuse the Zenodo
   publish scaffolding; the genuinely new work is (a) upload-to-dropbox-then-
@@ -358,8 +407,11 @@ defeats the purpose.
   instant DOI.
 - **Start with a Phase 0 DEV-server spike** to lock down live endpoints and the
   minimal-required REMBI set before writing code.
-- **Auth: no API key exists** — store EBI credentials encrypted (Fernet) and
-  mint session tokens per job, or store a pasted session token.
+- **Auth: no API key exists.** Current lean is **not to store credentials** —
+  have the user re-enter and use the session token until it expires (Option B,
+  §2.1); validate token lifetime in the Phase 0 spike.
+- **There is no precedent for fully-automated end-to-end BIA submission** (§5) —
+  crib metadata→PageTab from `bia-agent` and auth/submit from `biostudies-client`.
 - **Reading is easy and worth doing**, especially the **OME-Zarr tile-source
   fast path**, which would let NimbusImage view TB-scale BIA data without
   downloading. Spike that before designing a streaming importer.
@@ -368,7 +420,7 @@ defeats the purpose.
 
 ---
 
-## 6. References
+## 7. References
 
 - [BioImage Archive — home](https://www.ebi.ac.uk/bioimage-archive/)
 - [Submitting data to the BioImage Archive](https://www.ebi.ac.uk/bioimage-archive/submit)
@@ -383,7 +435,10 @@ defeats the purpose.
   [Submissions](https://biostudies.gitbook.io/biostudies-api/perform-submissions) ·
   [Security/Auth](https://biostudies.gitbook.io/biostudies-api/security)
 - [biostudies-backend-services — submission auth config (application.yml)](https://github.com/EBIBioStudies/biostudies-backend-services/blob/master/submission/submission-webapp/src/main/resources/application.yml)
-- [ebi-ait/biostudies-client (Python reference client)](https://github.com/ebi-ait/biostudies-client)
+- [ebi-ait/biostudies-client (Python reference client — auth + submit)](https://github.com/ebi-ait/biostudies-client)
+- [BioImage-Archive/bia-agent (official REMBI/MIFA → PageTab CLI)](https://github.com/BioImage-Archive/bia-agent)
+- [IDR submission — ingests from the BioStudies dropbox](https://idr.openmicroscopy.org/about/submission.html)
+- [Galaxy Image Analysis SIG](https://galaxyproject.org/community/sig/image-analysis/) · [Galaxy OMERO-suite upload tutorial](https://training.galaxyproject.org/training-material/topics/imaging/tutorials/omero-suite/tutorial.html)
 - [EBIBioStudies/BioStudyUISub (official submission app)](https://github.com/EBIBioStudies/BioStudyUISub)
 - [Euro-BioImaging FAIR101 — Data deposition into BioImage Archive (workshop)](https://github.com/Euro-BioImaging/FAIR101-Workshop-on-data-deposition-into-BioImage-Archive)
 - [Webin authentication (EMBL-EBI) — JWT/ttl model used by ENA, *not* BioStudies](https://www.ebi.ac.uk/about/news/service-news/webin-authentication)
