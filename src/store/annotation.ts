@@ -57,6 +57,7 @@ import {
 } from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
 import { stubPerf } from "@/utils/stubPerf";
+import { annotationLoadingTitle } from "@/utils/loadingLabels";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
@@ -1626,16 +1627,29 @@ export class Annotations extends VuexModule {
           this.setStubsFromServer(stubs);
         }
       } else {
-        // Over threshold: stubs only, hydrate on demand
-        const [stubs, connections] = await Promise.all([
-          this.annotationsAPI.getAnnotationStubs(datasetId),
-          connectionsPromise,
-        ]);
-        this.setConnections(connections?.length ? connections : []);
-        this.setAnnotations([]);
-        if (stubs?.length) {
-          this.setStubsFromServer(stubs);
-          this.setStubOnlyMode(true);
+        // Over threshold: stubs only, hydrate on demand. The stub fetch is a
+        // single streamed GET with no incremental progress, so surface an
+        // indeterminate bar titled with the known count ("Loading N
+        // annotations…") — otherwise the canvas sits empty for seconds with no
+        // feedback. (The under-threshold branch already shows a "Fetching
+        // annotations" bar via fetchAllPages, so no bar is added there.)
+        const stubProgressId = await progress.create({
+          type: ProgressType.ANNOTATION_FETCH,
+          title: annotationLoadingTitle(count),
+        });
+        try {
+          const [stubs, connections] = await Promise.all([
+            this.annotationsAPI.getAnnotationStubs(datasetId),
+            connectionsPromise,
+          ]);
+          this.setConnections(connections?.length ? connections : []);
+          this.setAnnotations([]);
+          if (stubs?.length) {
+            this.setStubsFromServer(stubs);
+            this.setStubOnlyMode(true);
+          }
+        } finally {
+          progress.complete(stubProgressId);
         }
       }
     } catch (error) {

@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status (2026-06-20):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); and **C1** — the viewport hydration fetch is now debounced + abortable (section C). **Still open / next:** C2 (zoom-aware hydration); progress indicators for long loads (B); infinite scroll (A3); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
+**Status (2026-06-20):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); and **C1** — the viewport hydration fetch is now debounced + abortable (section C). **Still open / next:** C2 (zoom-aware hydration); progress indicators (B3 only — B1 stub-fetch bar + B2 per-query list feedback are done); infinite scroll (A3); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
 
 ---
 
@@ -627,18 +627,41 @@ the aggregation joined property values onto the **whole matched set** (708K
 
 ### B. Progress indicators for long-loading steps (UX, cheap, high value)
 
-Today several multi-second steps are silent or coarse: the 708K **stub fetch**, the
-**property-values fetch** (the only one that surfaces a bar — `Fetching property
-values (N/total)`), and each **`/list`** query (3.6–25 s with no per-query feedback).
+Several multi-second steps used to be silent or coarse: the 708K **stub fetch**, the
+**property-values fetch** (`Fetching property values (N/total)`), and each **`/list`**
+query (with no per-query feedback).
 
-- **B1 — Determinate bars where counts are known** (stub fetch, property-values fetch):
-  reuse the existing progress-bar pattern. Already done for property values; extend to
-  stub fetch.
-- **B2 — Per-query feedback for `/list`:** the table already has Vuetify's `loading`
-  state; add skeleton rows / a clear "querying N annotations…" affordance and disable
-  paging controls while in flight (avoids the "did my click register?" confusion at 20 s).
-- **B3 — Streaming/chunked feedback:** the backend already streams `orjson`; surfacing
-  partial counts is more work and probably not worth it before A.
+- **B1 — Stub-fetch progress bar (DONE 2026-06-21).** On dataset open in lazy mode the
+  708K stub fetch (`getAnnotationStubs`, a single streamed GET) used to leave the canvas
+  silently empty for seconds. `fetchAnnotations` (over-threshold branch only) now wraps it
+  in a progress entry titled with the already-known `getAnnotationCount` value —
+  **indeterminate** rather than determinate, because the stub response is one chunked
+  `orjson` stream (no `Content-Length`, so neither pagination nor `onDownloadProgress`
+  yields a real percentage; an honest moving bar beats a fake-stuck 0%). The under-threshold
+  branch is untouched — its full fetch already surfaces a `Fetching annotations` bar via
+  `fetchAllPages`, so no second bar is added there. Pure title helper
+  `annotationLoadingTitle(count)` (pluralised, locale-grouped) in `utils/loadingLabels.ts`;
+  it renders through the existing `progress` store → `ProgressBarGroup`. (The property-values
+  fetch already had its bar.) Tests: `loadingLabels.test.ts` (7, shared with B2).
+  **Verified in-browser on 708K Xenium:** during the stub load a bottom-left bar reads
+  `Loading 708,983 annotations…` (progress-store item `ANNOTATION_FETCH`, total 0 →
+  indeterminate animated stripe, no `aria-valuenow`); confirmed both live in the DOM and
+  visually.
+- **B2 — Per-query `/list` feedback (DONE 2026-06-21).** A `/list` query can take ~1s+ (deep
+  pages multi-second), and a page/sort click gave no immediate feedback. In server mode
+  `AnnotationList.vue` now shows a `Querying N annotations…` line (spinner + the matched
+  `annotationListServer.total`, via `listQueryingMessage`) while `serverLoading`, keeps the
+  table mounted (stale rows stay visible), and dims + disables the footer paging controls
+  (`is-loading` → `pointer-events:none; opacity:.5`) so a click registers visibly instead of
+  silently queuing another fetch (the `requestSeq` guard already drops stale responses; this
+  is the UX half). `listQueryingMessage` falls back to a count-less message before the first
+  response (`total` 0). Tests: `loadingLabels.test.ts` (shared with B1).
+  **Verified in-browser on 708K Xenium:** firing a query sets `loading` synchronously,
+  renders `Querying 708,983 annotations…`, adds `is-loading` to the table, and computes
+  `pointer-events:none` / `opacity:0.5` on the footer; confirmed visually during a deep-page
+  (offset 500K) query.
+- **B3 — Streaming/chunked partial counts (deferred):** the backend already streams `orjson`;
+  surfacing partial counts is more work and not worth it yet.
 
 ### C. Hydration refinements (from "Next Steps" 2 & 3 above — partially done)
 
@@ -823,8 +846,9 @@ passes all 708,983 (nothing wrongly hidden) and `propertyValues` stays 0.
 the row-click navigation fix and C3 hydrate-on-selection (section C); **D Stage 1**
 (viewport-scoped property values — wholesale load on open eliminated); **D Stage 2**
 (server-side filtered drawing — the last wholesale-load path removed; the memory story is now
-complete: no code path loads the full property-value map in lazy mode); and **C1**
-(debounce/AbortController on the hydration fetch). **Remaining, recommended order:**
-**C2** (zoom-aware hydration) → **B** (progress indicators) → **A3 / infinite scroll**
-(deep-page residual) → **D2–D5** (per-column loading, server aggregation for plots/panels,
-PV stubs, explicit LRU). D2–D5 are independent and can proceed in parallel.
+complete: no code path loads the full property-value map in lazy mode); **C1**
+(debounce/AbortController on the hydration fetch); and **B1 + B2** (stub-fetch progress bar
++ per-query list feedback). **Remaining, recommended order:**
+**C2** (zoom-aware hydration) → **A3 / infinite scroll** (deep-page residual) → **B3**
+(streaming partial counts — low value) → **D2–D5** (per-column loading, server aggregation
+for plots/panels, PV stubs, explicit LRU). D2–D5 are independent and can proceed in parallel.

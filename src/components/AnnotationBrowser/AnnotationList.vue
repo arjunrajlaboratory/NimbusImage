@@ -174,6 +174,17 @@
         Region (ROI) filters are not applied to this list while browsing a large
         dataset. Use tag, property, or annotation ID filters to narrow results.
       </v-alert>
+      <!-- Per-query feedback (B2): a server /list query can take ~1s+ at scale,
+           so show a clear in-flight affordance with the matched count. The
+           server table's footer is dimmed/disabled in parallel (is-loading). -->
+      <div
+        v-if="isServerMode && serverLoading"
+        class="list-querying"
+        aria-live="polite"
+      >
+        <v-progress-circular indeterminate size="14" width="2" class="mr-2" />
+        {{ serverLoadingMessage }}
+      </div>
       <!-- Client mode, under the size limit: the existing client-side table. -->
       <v-data-table
         v-if="!isServerMode && !tooManyToList"
@@ -257,7 +268,11 @@
           {{ LIST_ITEM_LIMIT.toLocaleString() }} to browse them here.
         </div>
       </div>
-      <!-- Server mode: backend-paginated table. Uses the SAME item markup. -->
+      <!-- Server mode: backend-paginated table. Uses the SAME item markup.
+           The table stays mounted while a query is in flight (stale rows visible)
+           with its footer dimmed/disabled via the is-loading class; the
+           "Querying N annotations…" line above (rendered before this chain) is
+           the in-flight affordance. -->
       <v-data-table-server
         v-else
         :items="serverRowItems"
@@ -271,6 +286,7 @@
         :items-per-page-options="[10, 50, 200]"
         @update:options="onServerOptions"
         class="compact-table"
+        :class="{ 'is-loading': serverLoading }"
       >
         <template v-slot:header.data-table-select>
           <v-checkbox
@@ -339,6 +355,7 @@ import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { simpleCentroid } from "@/utils/annotation";
 import { recenterCameraInfo } from "@/utils/camera";
+import { listQueryingMessage } from "@/utils/loadingLabels";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
@@ -442,6 +459,14 @@ const isServerMode = computed(() => annotationStore.stubOnlyMode);
 const serverItemsLength = computed(() => annotationListServer.total);
 
 const serverLoading = computed(() => annotationListServer.loading);
+
+// Per-query feedback (B2): a /list query at 708K can take ~1s+, so while one is
+// in flight show a clear "Querying N annotations…" affordance (N = the current
+// matched total) and disable the footer paging controls so a click registers
+// visibly instead of silently queuing another fetch.
+const serverLoadingMessage = computed(() =>
+  listQueryingMessage(annotationListServer.total),
+);
 
 // Adapter: present server rows in the SAME item shape the client table uses.
 // Server rows are stubs (no name/coordinates/datasetId); add the fields the
@@ -940,6 +965,7 @@ defineExpose({
   isServerMode,
   serverItemsLength,
   serverLoading,
+  serverLoadingMessage,
   serverRowItems,
   roiActiveInServerMode,
   mapSort,
@@ -1089,6 +1115,24 @@ td span {
 }
 .compact-table .v-data-table-footer {
   font-size: 12px;
+}
+
+/* In-flight list-query affordance (B2): a clear "Querying N annotations…" line
+   shown while a server /list request is pending. */
+.list-querying {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.8;
+  padding: 4px 8px 6px;
+}
+
+/* While a query is in flight, dim and disable the footer paging controls so a
+   click registers visibly instead of silently queuing another fetch (the
+   request-sequence guard already drops stale responses). */
+.compact-table.is-loading .v-data-table-footer {
+  pointer-events: none;
+  opacity: 0.5;
 }
 
 /* Let the palette's frosted-glass surface show through the table — the
