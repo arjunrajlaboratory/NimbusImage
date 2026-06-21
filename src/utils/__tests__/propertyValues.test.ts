@@ -3,8 +3,32 @@ import {
   collectLeafPaths,
   idsMissingPaths,
   scopedMergePropertyValues,
+  histogramBounds,
 } from "@/utils/propertyValues";
-import type { IAnnotationPropertyValues } from "@/store/model";
+import type {
+  IAnnotationPropertyValues,
+  TPropertyHistogram,
+} from "@/store/model";
+
+describe("histogramBounds", () => {
+  it("returns the first bin min and last bin max", () => {
+    const hist: TPropertyHistogram = [
+      { count: 3, min: 11.7, max: 50 },
+      { count: 9, min: 50, max: 100 },
+      { count: 1, min: 100, max: 7697 },
+    ];
+    expect(histogramBounds(hist)).toEqual({ min: 11.7, max: 7697 });
+  });
+
+  it("returns null for an empty histogram", () => {
+    expect(histogramBounds([])).toBeNull();
+  });
+
+  it("returns null for null/undefined", () => {
+    expect(histogramBounds(null)).toBeNull();
+    expect(histogramBounds(undefined)).toBeNull();
+  });
+});
 
 describe("collectLeafPaths", () => {
   it("returns one path per flat property", () => {

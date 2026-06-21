@@ -116,6 +116,7 @@ import {
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { arePathEquals, getValueFromObjectAndPath } from "@/utils/paths";
+import { histogramBounds } from "@/utils/propertyValues";
 import { selectAll, event as d3Event } from "d3-selection";
 import { drag, D3DragEvent } from "d3-drag";
 
@@ -191,9 +192,25 @@ const maxValue = computed({
   },
 });
 
-const defaultMin = computed(() => Math.min(...values.value));
+// Default slider extent = the authoritative full-data range from the server
+// histogram. Falls back to the client values only before the histogram loads
+// (and guards the empty case so stub-only mode never yields Infinity/-Infinity,
+// since propertyValues holds only the visible subset there).
+const defaultMin = computed(() => {
+  const bounds = histogramBounds(hist.value);
+  if (bounds) {
+    return bounds.min;
+  }
+  return values.value.length ? Math.min(...values.value) : 0;
+});
 
-const defaultMax = computed(() => Math.max(...values.value));
+const defaultMax = computed(() => {
+  const bounds = histogramBounds(hist.value);
+  if (bounds) {
+    return bounds.max;
+  }
+  return values.value.length ? Math.max(...values.value) : 0;
+});
 
 const propertyFilters = computed(() => filterStore.propertyFilters);
 
@@ -354,7 +371,20 @@ function removeFilter() {
   filterStore.togglePropertyPathFiltering(props.propertyPath);
 }
 
-watch(hist, () => initializeHandles());
+watch(hist, () => {
+  // Once the server histogram (authoritative full-data range) arrives, sync the
+  // stored default range to it — only while the user is still on defaults
+  // (hasn't dragged a handle). Without this, a filter created before the
+  // histogram loaded (e.g. in stub-only mode, where propertyValues is empty)
+  // keeps a degenerate range and would filter out everything.
+  if (defaultMinMax.value) {
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      range: { min: defaultMin.value, max: defaultMax.value },
+    });
+  }
+  initializeHandles();
+});
 
 onMounted(() => {
   if (

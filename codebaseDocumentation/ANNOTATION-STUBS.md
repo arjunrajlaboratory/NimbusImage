@@ -783,6 +783,28 @@ by property server-side, from Option B / the PV-driven A work):
 filter resets the set to `null` and restores the full visible budget. **Zero
 `annotation_property_values` requests** fired across the whole session.
 
+#### Stage 2 follow-up — bounded-cache consumer audit (DONE 2026-06-21)
+
+Now that `propertyValues` is a *bounded visible-subset* cache in lazy mode, audited every
+consumer that walks the full map. Findings: `filters.ts` is bypassed in lazy mode (server
+membership, above); the `AnnotationList` client-mode `annotationToItem` is unreachable in
+server mode; the CSV-dialog preview is a pre-existing empty-state (the real export streams
+from the backend); tooltips only need the visible subset. **One real gap:**
+`PropertyFilterHistogram.vue` derived the range-slider bounds (`defaultMin`/`defaultMax`)
+from the full `propertyValues` map — in lazy mode that's only the visible subset, and with no
+column displayed it's **empty → `Math.min/ max([])` = Infinity / -Infinity** (degenerate
+slider; a new filter would be created with that range and hide everything).
+
+**Fix:** derive the bounds from the **server-side histogram** (`hist[0].min` /
+`hist[last].max`) — the authoritative full-data range the histogram *bars* already use — via
+new pure helper `histogramBounds` (`utils/propertyValues.ts`, tests: 3). Falls back to the
+client values only before the histogram loads, guarding the empty case (0, never Infinity).
+A `watch(hist)` syncs the stored default range to the histogram range once it arrives (so a
+filter created before the histogram loaded — common in lazy mode — doesn't keep a degenerate
+range). **Verified in-browser on 708K:** opening the `Area` filter shows Min 11.73 / Max
+7697.07 (was Infinity/-Infinity); the stored range syncs to the same; a full-range filter
+passes all 708,983 (nothing wrongly hidden) and `propertyValues` stays 0.
+
 - **D1 — Lazy per-page values everywhere:** make the server-list pattern the norm — only
   fetch values for the rows/annotations currently shown. Limits global sort/filter to what
   the backend computes; this is the direction the architecture already points.
