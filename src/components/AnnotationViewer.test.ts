@@ -512,6 +512,7 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.annotationIdToIdx = {};
     mockedAnnotationStore.annotationStubs = new Map();
     mockedAnnotationStore.visibilityConfig = {
+      stubThreshold: 10000,
       maxVisible: 10000,
       maxHydrated: 5000,
       hydrationCacheCap: 10000,

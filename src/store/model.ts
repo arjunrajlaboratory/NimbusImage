@@ -1451,6 +1451,7 @@ export interface IAnnotationListPage {
 export type THydrationMode = "shapes" | "dots";
 
 export interface IVisibilityConfig {
+  stubThreshold: number; // Dataset annotation count above which stub-only (lazy) mode activates: stubs are fetched and coordinates/property values load on demand. Independent of the render budget (maxVisible).
   maxVisible: number; // Max annotations to render (stubs or shapes)
   maxHydrated: number; // Max annotations to keep hydrated per visibility update
   hydrationCacheCap: number; // Total cap on the hydration cache (accumulates across updates; LRU-evicts beyond cap, protecting selected)

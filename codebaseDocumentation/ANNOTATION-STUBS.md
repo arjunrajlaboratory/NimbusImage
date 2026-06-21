@@ -295,7 +295,9 @@ The bigger win is time-to-interactive: stubs load fast → dots render → user 
 - If the count is ≤ `maxVisible` (20,000), the entire stub system is bypassed: no visibility filtering, no stub-vs-hydrated rendering — the original full annotation objects are used directly
 - **Why this matters:** Without this bypass, changing frames (XY, Z, Time) caused a visible flash. The sequence was: (1) frame changes, (2) `layerAnnotations` re-evaluates with stale `visibleAnnotationIds`/`hydratedAnnotations` from the previous frame, (3) new frame's annotations either get filtered out (invisible) or rendered as stubs, (4) `updateVisibilityAndHydration` runs and fixes the state, (5) re-render shows correct shapes. Steps 2–4 created a 1–2 frame flash of empty or stub-rendered annotations.
 - **Strategic choice:** Rather than trying to keep `visibleAnnotationIds` and `hydratedAnnotations` perfectly in sync with frame changes (which is fragile due to Vue watcher ordering and Vuex action timing), we avoid the problem entirely — the stub system only activates when it's genuinely needed (more annotations than the render budget allows). This means datasets with ≤20K annotations per frame behave identically to master branch, with zero overhead from the stub architecture.
-- The gate variable `needsStubSystem` (`stubsSize > 0 && frameCount > maxVisible`) controls both visibility filtering and `getForRendering` in a single check
+- The gate variable `needsStubSystem` (`stubsSize > 0 && frameCount > maxVisible`, OR `stubOnlyMode`) controls both visibility filtering and `getForRendering` in a single check
+
+> **Note (2026-06-21): `stubThreshold` decouples lazy-mode activation from the render budget.** `maxVisible` still caps *rendering* (the bypass above), but a separate `visibilityConfig.stubThreshold` now decides when **stub-only / lazy mode** activates in `fetchAnnotations` (`count > stubThreshold` → fetch stubs + lazy property values; else full fetch). Previously the fetch decision reused `maxVisible`, so raising the render budget also raised the lazy-mode threshold. Defaults: `stubThreshold: 10000`, `maxVisible: 50000`, `maxHydrated: 20000`, `hydrationCacheCap: 40000` (all overridable in UISettings). So a 26K dataset enters lazy mode (26K > 10K stub threshold) yet renders all of it (< 50K budget). Verified in-browser on the 26K HCR dataset (`stubOnlyMode: true`, `propertyValues: 0`) and the 708K Xenium dataset (50K visible / 20K hydrated).
 
 ### Debounce strategy for visibility updates
 - Frame changes (`xy`, `z`, `time`) and annotation list changes (`filteredAnnotations`) trigger `updateVisibilityAndHydration` **immediately** (no debounce)
@@ -390,7 +392,7 @@ Two new endpoints implemented in `server/api/annotation.py`, registered as route
 **What's been implemented:**
 
 - `AnnotationsAPI.ts`: Added `getAnnotationStubs(datasetId)` and `hydrateAnnotations(annotationIds)` methods with `toStub()` converter
-- `annotation.ts`: `fetchAnnotations()` checks annotation count — under `maxVisible` threshold uses existing full fetch, over threshold uses stubs endpoint
+- `annotation.ts`: `fetchAnnotations()` checks annotation count — under `stubThreshold` (was `maxVisible`; see 2026-06-21 note above) uses existing full fetch, over threshold uses stubs endpoint
 - `annotation.ts`: New `setAnnotationStubsFromBackend()` mutation populates stubs/centroids/spatial index directly from server data (no client-side computation)
 - `annotation.ts`: New `stubOnlyMode` state flag, `annotationsForIteration` getter (returns `annotations[]` normally, stubs in stub-only mode)
 - `annotation.ts`: `removeAnnotationStubs()` mutation for deletions in stub-only mode

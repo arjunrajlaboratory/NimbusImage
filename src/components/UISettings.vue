@@ -16,6 +16,20 @@
       <v-divider class="settings-divider" />
       <div class="text-subtitle-2 mb-2">Annotation rendering</div>
       <v-text-field
+        v-model.number="stubThreshold"
+        label="Stub mode threshold"
+        type="number"
+        density="compact"
+        hide-details
+        class="mb-2"
+        v-description="{
+          section: 'Interface settings',
+          title: 'Stub mode threshold',
+          description:
+            'Dataset annotation count above which stub-only (lazy) mode activates: stubs load first and coordinates/property values load on demand. Independent of the render budget below.',
+        }"
+      />
+      <v-text-field
         v-model.number="maxVisible"
         label="Max visible annotations"
         type="number"
@@ -84,6 +98,14 @@ const darkMode = computed({
   get: () => theme.global.name.value === "dark",
   set: (value: boolean) => {
     theme.global.name.value = value ? "dark" : "light";
+  },
+});
+
+const stubThreshold = computed({
+  get: () => annotationStore.visibilityConfig.stubThreshold,
+  set: (value: number) => {
+    if (value > 0)
+      annotationStore.setVisibilityConfig({ stubThreshold: value });
   },
 });
 

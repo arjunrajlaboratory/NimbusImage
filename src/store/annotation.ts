@@ -167,6 +167,7 @@ export class Annotations extends VuexModule {
   visibleAnnotationIds: Set<string> = markRaw(new Set());
   hydrationMode: THydrationMode = "dots";
   visibilityConfig: IVisibilityConfig = {
+    stubThreshold: 10000,
     maxVisible: 50000,
     maxHydrated: 20000,
     hydrationCacheCap: 40000,
@@ -1610,9 +1611,9 @@ export class Annotations extends VuexModule {
         this.annotationsAPI.getConnectionsForDatasetId(datasetId);
 
       const count = await this.annotationsAPI.getAnnotationCount(datasetId);
-      const { maxVisible } = this.visibilityConfig;
+      const { stubThreshold } = this.visibilityConfig;
 
-      if (count <= maxVisible) {
+      if (count <= stubThreshold) {
         // Under threshold: full fetch + server stubs
         const [annotations, connections, stubs] = await Promise.all([
           this.annotationsAPI.getAnnotationsForDatasetId(datasetId),
