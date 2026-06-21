@@ -277,6 +277,7 @@ vi.mock("@/store/annotation", () => {
     tagSelectedAnnotations: vi.fn(),
     removeTagsFromSelectedAnnotations: vi.fn(),
     setHoveredAnnotationId: vi.fn(),
+    ensureHydrated: vi.fn(),
   });
   Object.defineProperty(state, "annotationsForIteration", {
     get() {

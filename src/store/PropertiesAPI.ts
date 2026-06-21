@@ -22,6 +22,11 @@ export type TAnnotationPropertyValuesAggregation = {
   values: { [propertyId: string]: TPropertyValue };
 }[];
 
+export type TPropertyValueEntry = {
+  annotationId: string;
+  values: IAnnotationPropertyValues[string];
+};
+
 export default class PropertiesAPI {
   private readonly client: RestClientInstance;
 
@@ -110,6 +115,49 @@ export default class PropertiesAPI {
       }
     }
     return annotationMapping;
+  }
+
+  // Values for a specific set of annotations (lazy mode), optionally projecting
+  // only the requested property paths. POST to avoid URL length limits.
+  async getPropertyValuesForIds(
+    datasetId: string,
+    annotationIds: string[],
+    propertyPaths?: string[][],
+  ): Promise<TPropertyValueEntry[]> {
+    if (annotationIds.length === 0) {
+      return [];
+    }
+    const body: {
+      datasetId: string;
+      annotationIds: string[];
+      propertyPaths?: string[][];
+    } = { datasetId, annotationIds };
+    if (propertyPaths && propertyPaths.length > 0) {
+      body.propertyPaths = propertyPaths;
+    }
+    const response = await this.client.post(
+      "annotation_property_values/batch",
+      body,
+    );
+    return (response.data as TPropertyValueEntry[]).map((doc) => ({
+      annotationId: doc.annotationId,
+      values: doc.values ?? {},
+    }));
+  }
+
+  // A bounded sample of value docs, used in lazy mode to discover the set of
+  // property paths without loading every value (structure is homogeneous).
+  async getPropertyValuesSample(
+    datasetId: string,
+    limit: number,
+  ): Promise<TPropertyValueEntry[]> {
+    const response = await this.client.get("annotation_property_values", {
+      params: { datasetId, limit, sort: "_id" },
+    });
+    return (response.data as TPropertyValueEntry[]).map((doc) => ({
+      annotationId: doc.annotationId,
+      values: doc.values ?? {},
+    }));
   }
 
   async deleteProperty(propertyId: string) {

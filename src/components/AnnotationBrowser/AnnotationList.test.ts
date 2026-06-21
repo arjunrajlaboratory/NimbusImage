@@ -13,7 +13,18 @@ vi.mock("@/store", () => ({
     setZ: (...args: any[]) => mockSetZ(...args),
     setTime: (...args: any[]) => mockSetTime(...args),
     setCameraInfo: (...args: any[]) => mockSetCameraInfo(...args),
-    cameraInfo: { center: { x: 0, y: 0 } },
+    // Full ICameraInfo shape: a 20x20 viewport box centered on (0, 0).
+    cameraInfo: {
+      center: { x: 0, y: 0 },
+      zoom: 1,
+      rotate: 0,
+      gcsBounds: [
+        { x: -10, y: -10 },
+        { x: 10, y: -10 },
+        { x: 10, y: 10 },
+        { x: -10, y: 10 },
+      ],
+    },
   },
 }));
 
@@ -29,6 +40,7 @@ const mockColorSelectedAnnotations = vi.fn();
 const mockUpdateAnnotationName = vi.fn();
 const mockGetAnnotationFromId = vi.fn();
 const mockGetStub = vi.fn();
+const mockEnsureHydrated = vi.fn();
 
 vi.mock("@/store/annotation", () => {
   const state = {
@@ -55,6 +67,7 @@ vi.mock("@/store/annotation", () => {
       mockSetHoveredAnnotationId(...args),
     getAnnotationFromId: (...args: any[]) => mockGetAnnotationFromId(...args),
     getStub: (...args: any[]) => mockGetStub(...args),
+    ensureHydrated: (...args: any[]) => mockEnsureHydrated(...args),
     annotationCentroids: {} as Record<string, any>,
     annotations: [],
     annotationIdToIdx: {} as Record<string, number>,
@@ -482,6 +495,53 @@ describe("AnnotationList", () => {
         expect.objectContaining({ center: { x: 55, y: 66 } }),
       );
       expect(mockSetHoveredAnnotationId).toHaveBeenCalledWith("stub1");
+    });
+
+    it("hydrates the navigated-to annotation (C3 guarantee)", () => {
+      const ann = makeAnnotation({
+        id: "ann1",
+        location: { XY: 0, Z: 0, Time: 0 },
+        coordinates: [{ x: 1, y: 2 }],
+      });
+      mockGetAnnotationFromId.mockReturnValue(ann);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.goToAnnotationIdLocation("ann1");
+      expect(mockEnsureHydrated).toHaveBeenCalledWith(["ann1"]);
+    });
+
+    it("translates gcsBounds with the recenter so the new viewport drives hydration", () => {
+      // This recenter bypasses the GeoJS map, so nothing else re-syncs
+      // gcsBounds. It must be translated by the same delta as the center,
+      // otherwise updateVisibilityAndHydration hydrates the stale pre-click
+      // viewport and the destination renders empty.
+      mockGetAnnotationFromId.mockReturnValue(undefined);
+      mockGetStub.mockReturnValue({
+        id: "stub1",
+        location: { XY: 0, Z: 0, Time: 0 },
+        centroid: { x: 500, y: 400 },
+        shape: "point",
+        channel: 0,
+        tags: [],
+        color: null,
+      });
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.goToAnnotationIdLocation("stub1");
+
+      // store.cameraInfo starts at center (0,0) with a 20x20 bounds box; the
+      // recenter to (500,400) shifts every corner by that same (500,400) delta.
+      expect(mockSetCameraInfo).toHaveBeenCalledWith({
+        center: { x: 500, y: 400 },
+        zoom: 1,
+        rotate: 0,
+        gcsBounds: [
+          { x: 490, y: 390 },
+          { x: 510, y: 390 },
+          { x: 510, y: 410 },
+          { x: 490, y: 410 },
+        ],
+      });
     });
   });
 

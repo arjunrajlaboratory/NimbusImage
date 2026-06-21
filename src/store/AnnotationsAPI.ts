@@ -140,13 +140,17 @@ export default class AnnotationsAPI {
     return response.data.ids as string[];
   }
 
-  async hydrateAnnotations(annotationIds: string[]): Promise<IAnnotation[]> {
+  async hydrateAnnotations(
+    annotationIds: string[],
+    signal?: AbortSignal,
+  ): Promise<IAnnotation[]> {
     if (annotationIds.length === 0) {
       return [];
     }
     const response = await this.client.post(
       "upenn_annotation/hydrate",
       annotationIds,
+      { signal },
     );
     return (response.data as any[]).map(this.toAnnotation);
   }

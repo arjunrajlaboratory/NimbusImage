@@ -42,8 +42,13 @@ import {
   simpleCentroid,
   selectRandomSubset,
   estimateAnnotationRadius,
+  idsNeedingHydration,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
+import {
+  createDebouncedAbortableTask,
+  isAbortError,
+} from "@/utils/debouncedAbortable";
 import {
   buildStubUpdates,
   getAnnotationUpdatePatch,
@@ -2225,7 +2230,35 @@ export class Annotations extends VuexModule {
     }
     stubPerf.trackVisibilityUpdate();
     stubPerf.trackRequest(idsToFetch.length, idsToTouch.length);
-    _hydrateFromBackend(api, idsToFetch, idsToTouch);
+    // Debounced + abortable so rapid viewport changes collapse to one fetch and
+    // a superseded in-flight fetch can't overwrite newer cache state (C1).
+    viewportHydrationTask.schedule({ api, idsToFetch, idsToTouch });
+  }
+
+  /**
+   * Hydrate-on-demand for specific ids (C3): selecting or navigating to a stub
+   * that isn't in the hydration cache otherwise renders it as a dot until the
+   * viewport happens to hydrate it. This fetches the full coordinates for the
+   * given ids (known stubs not already hydrated) so they render as real shapes
+   * immediately. No-op outside stub-only mode (everything is already full).
+   */
+  @Action
+  ensureHydrated(ids: string[]) {
+    if (!this.stubOnlyMode || ids.length === 0) {
+      return;
+    }
+    const idsToFetch = idsNeedingHydration(
+      ids,
+      this.hydratedAnnotations,
+      this.annotationStubs,
+    );
+    if (idsToFetch.length === 0) {
+      return;
+    }
+    // Fire the fetch outside the action proxy (vuex-module-decorators breaks
+    // after await). mergeHydratedAnnotations accumulates into the cache and
+    // protects selected ids from LRU eviction.
+    _hydrateFromBackend(this.annotationsAPI, idsToFetch, []);
   }
 }
 
@@ -2243,17 +2276,24 @@ async function _hydrateFromBackend(
   api: AnnotationsAPI,
   idsToFetch: string[],
   idsToTouch: string[],
+  signal?: AbortSignal,
 ) {
   if (idsToFetch.length > 0) {
     const start = performance.now();
     try {
-      const fetched = await api.hydrateAnnotations(idsToFetch);
+      const fetched = await api.hydrateAnnotations(idsToFetch, signal);
       stubPerf.trackLatency(performance.now() - start);
       annotationModule.mergeHydratedAnnotations({
         newEntries: fetched.map((a) => ({ id: a.id, annotation: a })),
         touchedIds: idsToTouch,
       });
     } catch (error) {
+      // Aborted requests are superseded by a newer hydration (C1), not real
+      // failures — swallow them so they can't overwrite newer cache state and
+      // don't spam the log.
+      if (isAbortError(error)) {
+        return;
+      }
       logError(`Hydration fetch failed: ${(error as Error).message}`);
     }
   } else if (idsToTouch.length > 0) {
@@ -2263,6 +2303,23 @@ async function _hydrateFromBackend(
     });
   }
 }
+
+// Viewport-driven hydration (C1): pan/zoom/frame changes call
+// updateVisibilityAndHydration repeatedly, each computing a fresh fetch set.
+// Debounce so rapid changes collapse to one fetch, and abort the previous
+// in-flight fetch when a newer one fires so a stale response can't clobber the
+// newer hydration cache. Selection-driven hydration (ensureHydrated) bypasses
+// this and fires immediately so selected annotations always land.
+const HYDRATION_FETCH_DEBOUNCE_MS = 200;
+const viewportHydrationTask = createDebouncedAbortableTask<{
+  api: AnnotationsAPI;
+  idsToFetch: string[];
+  idsToTouch: string[];
+}>(
+  ({ api, idsToFetch, idsToTouch }, signal) =>
+    _hydrateFromBackend(api, idsToFetch, idsToTouch, signal),
+  HYDRATION_FETCH_DEBOUNCE_MS,
+);
 
 // Self-accept HMR to prevent vuex-module-decorators from re-registering
 // the dynamic module (which causes duplicate getters and state overwrites).

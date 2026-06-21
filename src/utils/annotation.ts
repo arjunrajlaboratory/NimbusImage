@@ -306,6 +306,29 @@ export function selectRandomSubset(ids: string[], maxCount: number): string[] {
   return sorted.slice(0, maxCount);
 }
 
+/**
+ * Of `requestedIds`, return the (deduplicated) ids that must be fetched to
+ * hydrate them: ids that are known stubs but not already in the hydration cache.
+ * Used by the hydrate-on-selection / hydrate-on-navigation path so a selected or
+ * navigated-to stub gets its full coordinates without waiting for a viewport pan.
+ */
+export function idsNeedingHydration(
+  requestedIds: Iterable<string>,
+  hydrated: ReadonlyMap<string, unknown>,
+  stubs: ReadonlyMap<string, unknown>,
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const id of requestedIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (!hydrated.has(id) && stubs.has(id)) {
+      result.push(id);
+    }
+  }
+  return result;
+}
+
 export function estimateAnnotationRadius(
   coordinates: IGeoJSPosition[],
 ): number {

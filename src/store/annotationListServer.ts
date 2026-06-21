@@ -15,22 +15,14 @@ import {
   IAnnotationListRow,
   IAnnotationListSort,
   IAnnotationListFilters,
-  IAnnotationListPropertyFilter,
   ITagAnnotationFilter,
   IIdAnnotationFilter,
   IAnnotationLocation,
 } from "./model";
-
-// The subset of an IPropertyAnnotationFilter that buildListFilters reads.
-// valuesOrRange accepts the PropertyFilterMode enum or its string literals so
-// callers (the filters store) and tests can pass either form.
-interface IListPropertyFilterInput {
-  propertyPath: string[];
-  valuesOrRange: "values" | "range";
-  range: { min: number; max: number };
-  values?: number[];
-  enabled?: boolean;
-}
+import {
+  IListPropertyFilterInput,
+  buildPropertyListFilters,
+} from "@/utils/annotationListFilters";
 
 // Pure: translate the client filter store into backend list filters.
 export function buildListFilters(input: {
@@ -72,22 +64,7 @@ export function buildListFilters(input: {
   if (idConstraints.length > 0) {
     out.idConstraints = idConstraints;
   }
-  const pfs: IAnnotationListPropertyFilter[] = input.propertyFilters
-    .filter((f) => f.enabled !== false)
-    .map((f) =>
-      f.valuesOrRange === "values"
-        ? {
-            path: f.propertyPath,
-            mode: "values" as const,
-            values: f.values,
-          }
-        : {
-            path: f.propertyPath,
-            mode: "range" as const,
-            min: f.range.min,
-            max: f.range.max,
-          },
-    );
+  const pfs = buildPropertyListFilters(input.propertyFilters);
   if (pfs.length > 0) {
     out.propertyFilters = pfs;
   }

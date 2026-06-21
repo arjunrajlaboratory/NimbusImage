@@ -36,9 +36,13 @@ function configurationChanged() {
 // both are loaded. This avoids a race condition where the dataset watcher fires
 // before the configuration has finished loading, causing fetchAnnotations to
 // bail out early due to the missing configuration guard check.
-function fetchAnnotationData() {
+async function fetchAnnotationData() {
   if (dataset.value && configuration.value) {
-    annotationStore.fetchAnnotations();
+    // Await fetchAnnotations first: it determines stub-only (lazy) mode, which
+    // fetchPropertyValues reads to decide between viewport-scoped lazy loading
+    // and the wholesale load. Without the await, the property fetch races ahead
+    // while stubOnlyMode is still false and loads every value into memory.
+    await annotationStore.fetchAnnotations();
     propertiesStore.fetchPropertyValues();
   }
 }

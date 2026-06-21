@@ -128,6 +128,32 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
     def appendMultipleValues(self, list_of_property_values):
         return self.saveMany(list_of_property_values)
 
+    def findByAnnotationIds(
+        self, datasetId, annotationIds, propertyPaths=None
+    ):
+        # Values for a set of annotations in one dataset, optionally projecting
+        # only the requested property paths (each path is a list of keys, e.g.
+        # [propertyId, subId]). Used by viewport-scoped lazy loading so the
+        # client never holds the whole dataset's values in memory.
+        if not annotationIds:
+            return []
+        fields = None
+        if propertyPaths:
+            fields = ["annotationId"] + [
+                "values." + ".".join(path) for path in propertyPaths
+            ]
+        results = []
+        # Chunk the $in so a large id set can't build a pathological query.
+        chunkSize = 50000
+        for start in range(0, len(annotationIds), chunkSize):
+            chunk = annotationIds[start:start + chunkSize]
+            query = {
+                "datasetId": datasetId,
+                "annotationId": {"$in": chunk},
+            }
+            results.extend(self.find(query, fields=fields))
+        return results
+
     def delete(self, propertyId, datasetId):
         # Could use self.collection.updateMany but girder doesn't expose it
         for document in self.find(

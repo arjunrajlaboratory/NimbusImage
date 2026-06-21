@@ -21,7 +21,6 @@ import {
   IWorkerInterfaceValues,
   IPropertyComputeJob,
   IProgressInfo,
-  TPropertyValue,
   ProgressType,
   IJobEventData,
   IErrorInfoList,
@@ -31,6 +30,11 @@ import {
 import main from "./index";
 
 import { canComputeAnnotationProperty } from "@/utils/annotation";
+import {
+  collectLeafPaths,
+  idsMissingPaths,
+  scopedMergePropertyValues,
+} from "@/utils/propertyValues";
 import annotations from "./annotation";
 import jobs, {
   createProgressEventCallback,
@@ -39,6 +43,11 @@ import jobs, {
 import { logError } from "@/utils/log";
 import { findIndexOfPath } from "@/utils/paths";
 import progress from "./progress";
+
+// In lazy (stub-only) mode, property structure is homogeneous across a dataset,
+// so this many value docs are enough to discover every property path without
+// loading the whole dataset's values.
+const PROPERTY_PATH_SAMPLE_SIZE = 512;
 
 export interface IPropertyStatus {
   running: boolean;
@@ -72,6 +81,11 @@ export class Properties extends VuexModule {
   // Mark it raw at declaration so first-load assignment doesn't proxy-walk
   // the whole tree.
   propertyValues: IAnnotationPropertyValues = markRaw({});
+
+  // Lazy mode (stub-only) only: leaf paths discovered from a bounded sample of
+  // value docs, since `propertyValues` then holds only the visible subset and
+  // can't be walked for the full path set. Empty in wholesale mode.
+  discoveredPropertyPaths: string[][] = markRaw([]);
 
   propertyStatuses: {
     [propertyId: string]: IPropertyStatus;
@@ -221,8 +235,31 @@ export class Properties extends VuexModule {
 
   @Mutation
   updatePropertyValues(values: IAnnotationPropertyValues) {
-    // TODO(performance): merge instead
     this.propertyValues = markRaw(values);
+  }
+
+  @Mutation
+  setDiscoveredPropertyPaths(paths: string[][]) {
+    this.discoveredPropertyPaths = markRaw(paths);
+  }
+
+  // Lazy mode: merge freshly-fetched values into the cache, scoped to the
+  // currently-rendered set so the cache stays bounded (see scopedMerge docs).
+  @Mutation
+  mergeVisiblePropertyValues(payload: {
+    newEntries: {
+      annotationId: string;
+      values: IAnnotationPropertyValues[string];
+    }[];
+    keepIds: Set<string>;
+  }) {
+    this.propertyValues = markRaw(
+      scopedMergePropertyValues(
+        this.propertyValues,
+        payload.newEntries,
+        payload.keepIds,
+      ),
+    );
   }
 
   @Mutation
@@ -314,48 +351,18 @@ export class Properties extends VuexModule {
   }
 
   get computedPropertyPaths() {
-    const collectedPaths = new Map<string, string[]>();
-    const stack: [string[], TPropertyValue][] = [];
+    // In lazy mode `propertyValues` holds only the visible subset, so the full
+    // path set comes from the sampled `discoveredPropertyPaths` instead.
+    const leafPaths = annotations.stubOnlyMode
+      ? this.discoveredPropertyPaths
+      : collectLeafPaths(Object.values(this.propertyValues));
 
-    for (const annotationId in this.propertyValues) {
-      stack.push([[], this.propertyValues[annotationId]]);
-    }
-
-    while (stack.length > 0) {
-      const [currentPath, currentValue] = stack.pop()!;
-      const isTraversableObject =
-        currentValue !== null &&
-        typeof currentValue === "object" &&
-        !Array.isArray(currentValue);
-
-      if (!isTraversableObject) {
-        if (currentPath.length > 0) {
-          collectedPaths.set(serializePropertyPath(currentPath), currentPath);
-        }
-        continue;
-      }
-
-      const keys = Object.keys(currentValue);
-      if (keys.length === 0) {
-        if (currentPath.length > 0) {
-          collectedPaths.set(serializePropertyPath(currentPath), currentPath);
-        }
-        continue;
-      }
-
-      const nestedValue = currentValue as Record<string, TPropertyValue>;
-      for (const key of keys) {
-        stack.push([[...currentPath, key], nestedValue[key]]);
-      }
-    }
-
-    return Array.from(collectedPaths.values()).filter((path) => {
-      // Check that the values have a corresponding path
+    return leafPaths.filter((path) => {
+      // Check that the values have a corresponding property
       if (path.length < 1) {
         return false;
       }
-      const property = this.getPropertyById(path[0]);
-      return property !== null;
+      return this.getPropertyById(path[0]) !== null;
     });
   }
 
@@ -681,13 +688,79 @@ export class Properties extends VuexModule {
     }
   }
 
+  // Smart entry used by callers (dataset mount, import, compute completion).
+  // In lazy (stub-only) mode it avoids loading every value into memory: it
+  // discovers paths from a sample and loads values only for the visible set.
+  // Otherwise it loads everything as before. The property-filter case (which
+  // still needs every value for client-side filtered drawing) is handled by
+  // AnnotationViewer, which calls fetchAllPropertyValues while a filter is on.
   @Action
   async fetchPropertyValues() {
     if (!main.dataset?.id) {
       return;
     }
+    if (annotations.stubOnlyMode) {
+      await this.fetchPropertyPathsSample();
+      this.ensureVisiblePropertyValues();
+      return;
+    }
+    await this.fetchAllPropertyValues();
+  }
+
+  @Action
+  async fetchAllPropertyValues() {
+    if (!main.dataset?.id) {
+      return;
+    }
     const values = await this.propertiesAPI.getPropertyValues(main.dataset.id);
     this.updatePropertyValues(values);
+  }
+
+  @Action
+  async fetchPropertyPathsSample() {
+    if (!main.dataset?.id) {
+      return;
+    }
+    const sample = await this.propertiesAPI.getPropertyValuesSample(
+      main.dataset.id,
+      PROPERTY_PATH_SAMPLE_SIZE,
+    );
+    this.setDiscoveredPropertyPaths(
+      collectLeafPaths(sample.map((entry) => entry.values)),
+    );
+  }
+
+  // Lazy mode: ensure the rendered annotations have values for the displayed
+  // columns, pruning the cache to that set. Runs the fetch outside the action
+  // proxy (vuex-module-decorators breaks after await).
+  @Action
+  ensureVisiblePropertyValues() {
+    if (!annotations.stubOnlyMode || !main.dataset?.id) {
+      return;
+    }
+    const visibleIds = [...annotations.visibleAnnotationIds];
+    const keepIds = new Set(visibleIds);
+    const paths = this.displayedPropertyPaths;
+    const idsToFetch = idsMissingPaths(visibleIds, this.propertyValues, paths);
+    if (idsToFetch.length === 0) {
+      // Nothing to fetch; only prune if the cache holds values outside the
+      // visible set. Skipping the no-op rebuild avoids churning the tooltip /
+      // path watchers on every pan when nothing actually changed.
+      const hasStale = Object.keys(this.propertyValues).some(
+        (id) => !keepIds.has(id),
+      );
+      if (hasStale) {
+        this.mergeVisiblePropertyValues({ newEntries: [], keepIds });
+      }
+      return;
+    }
+    _fetchVisiblePropertyValues(
+      this.propertiesAPI,
+      main.dataset.id,
+      idsToFetch,
+      paths,
+      keepIds,
+    );
   }
 
   @Action
@@ -834,7 +907,32 @@ export class Properties extends VuexModule {
   }
 }
 
-export default getModule(Properties);
+const propertiesModule = getModule(Properties);
+export default propertiesModule;
+
+/**
+ * Fetch property values for the given ids (lazy mode) and merge them scoped to
+ * `keepIds`. Runs outside the Vuex action proxy — vuex-module-decorators breaks
+ * state/mutation access after `await`, so we commit via the module instance.
+ */
+async function _fetchVisiblePropertyValues(
+  api: typeof main.propertiesAPI,
+  datasetId: string,
+  idsToFetch: string[],
+  paths: string[][],
+  keepIds: Set<string>,
+) {
+  try {
+    const newEntries = await api.getPropertyValuesForIds(
+      datasetId,
+      idsToFetch,
+      paths,
+    );
+    propertiesModule.mergeVisiblePropertyValues({ newEntries, keepIds });
+  } catch (error) {
+    logError(`Property value fetch failed: ${(error as Error).message}`);
+  }
+}
 
 // Self-accept HMR to prevent vuex-module-decorators from re-registering
 // the dynamic module (which causes duplicate getters and state overwrites).

@@ -5,6 +5,7 @@ import {
   estimateAnnotationRadius,
   getStubStyleFromBaseStyle,
   annotationTestPoints,
+  idsNeedingHydration,
 } from "../annotation";
 
 vi.mock("geojs", () => ({
@@ -153,5 +154,49 @@ describe("annotationTestPoints", () => {
 
   it("returns an empty array when neither coordinates nor centroid exist", () => {
     expect(annotationTestPoints({}, undefined)).toEqual([]);
+  });
+});
+
+describe("idsNeedingHydration", () => {
+  const stubs = new Map([
+    ["a", {}],
+    ["b", {}],
+    ["c", {}],
+  ]);
+
+  it("returns known stubs that are not already hydrated", () => {
+    const hydrated = new Map([["a", {}]]);
+    expect(idsNeedingHydration(["a", "b", "c"], hydrated, stubs)).toEqual([
+      "b",
+      "c",
+    ]);
+  });
+
+  it("skips ids already in the hydration cache", () => {
+    const hydrated = new Map([
+      ["a", {}],
+      ["b", {}],
+      ["c", {}],
+    ]);
+    expect(idsNeedingHydration(["a", "b", "c"], hydrated, stubs)).toEqual([]);
+  });
+
+  it("skips ids that are not known stubs", () => {
+    const hydrated = new Map<string, unknown>();
+    expect(idsNeedingHydration(["a", "unknown"], hydrated, stubs)).toEqual([
+      "a",
+    ]);
+  });
+
+  it("deduplicates repeated ids", () => {
+    const hydrated = new Map<string, unknown>();
+    expect(idsNeedingHydration(["a", "a", "b"], hydrated, stubs)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("returns an empty array for empty input", () => {
+    expect(idsNeedingHydration([], new Map(), stubs)).toEqual([]);
   });
 });

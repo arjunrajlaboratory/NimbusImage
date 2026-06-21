@@ -22,6 +22,7 @@ class PropertyValues(Resource):
         self.route("DELETE", (), self.delete)
         self.route("POST", (), self.add)
         self.route("POST", ("multiple",), self.addMultiple)
+        self.route("POST", ("batch",), self.batch)
         self.route("GET", (), self.find)
         self.route("GET", ("count",), self.count)
         self.route("GET", ("histogram",), self.histogram)
@@ -119,6 +120,39 @@ class PropertyValues(Resource):
         )
         self._annotationPropertyValuesModel.delete(
             params["propertyId"], params["datasetId"]
+        )
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Get property values for a set of annotation ids")
+        .notes(
+            "POST to send the id list (avoids URL length limits). "
+            "Optionally projects only the requested property paths."
+        )
+        .param(
+            "body",
+            (
+                "{ datasetId: string, annotationIds: string[], "
+                "propertyPaths?: string[][] }"
+            ),
+            paramType="body",
+        )
+        .errorResponse()
+        .errorResponse("Read access was denied for the dataset.", 403)
+    )
+    def batch(self, params):
+        body = self.getBodyJson()
+        datasetId = ObjectId(body["datasetId"])
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
+        annotationIds = [ObjectId(i) for i in body.get("annotationIds", [])]
+        propertyPaths = body.get("propertyPaths")
+        return self._annotationPropertyValuesModel.findByAnnotationIds(
+            datasetId, annotationIds, propertyPaths
         )
 
     @access.public(scope=TokenScope.DATA_READ)

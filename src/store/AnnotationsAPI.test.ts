@@ -90,3 +90,23 @@ describe("AnnotationsAPI.fetchAnnotationListIds", () => {
     expect(ids).toEqual(["a", "b"]);
   });
 });
+
+describe("AnnotationsAPI.hydrateAnnotations", () => {
+  it("posts the ids and forwards the abort signal", async () => {
+    const { api, client } = makeApi(async () => ({ data: [] }));
+    const controller = new AbortController();
+    await api.hydrateAnnotations(["a", "b"], controller.signal);
+    expect(client.post).toHaveBeenCalledWith(
+      "upenn_annotation/hydrate",
+      ["a", "b"],
+      { signal: controller.signal },
+    );
+  });
+
+  it("returns [] without calling the client for an empty id list", async () => {
+    const { api, client } = makeApi(async () => ({ data: [] }));
+    const res = await api.hydrateAnnotations([]);
+    expect(res).toEqual([]);
+    expect(client.post).not.toHaveBeenCalled();
+  });
+});

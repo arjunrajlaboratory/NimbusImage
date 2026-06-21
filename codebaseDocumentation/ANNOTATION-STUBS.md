@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status (2026-06-19):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below) and the property-column sort arrow. **Still open / next:** large-scale performance (708K `/list` is 3.6–25 s), progress indicators for long loads, hydration debounce + zoom-aware hydration, and the property-value loading rework. See **Next Steps** and the **Remaining work** summary at the very bottom.
+**Status (2026-06-20):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); and **C1** — the viewport hydration fetch is now debounced + abortable (section C). **Still open / next:** C2 (zoom-aware hydration); progress indicators for long loads (B); infinite scroll (A3); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
 
 ---
 
@@ -41,7 +41,7 @@ Documented in Phase 5 notes below under "Hydration set doesn't change on zoom." 
 
 ### Future (smaller wins)
 
-- **Hydrate-on-selection via backend API** — currently selection preservation only works if the annotation is already in the hydration cache (see `setHydratedAnnotations` loop over `selectedAnnotationIds`). If user selects a stub that isn't hydrated, we should trigger a one-off hydrate for that id.
+- **Hydrate-on-selection via backend API — DONE (2026-06-19, item C3).** Selecting or navigating to an un-hydrated stub now triggers a one-off hydrate via the `ensureHydrated` action. See **C. Hydration refinements → C3** in the consolidated Remaining Work section below.
 - **Handle hydration failures gracefully** — `logError` is called but the UI doesn't retry or surface the error to the user.
 - **Property values lazy loading** — see section below; likely a bigger memory win than stub annotations at scale.
 
@@ -410,7 +410,7 @@ Two new endpoints implemented in `server/api/annotation.py`, registered as route
 - [ ] Viewport-driven hydration that actually tracks zoom level
 - [ ] Re-introduce accumulating cache with LRU eviction (don't re-fetch on every pan)
 - [ ] Debounced fetch (200ms) to batch rapid viewport changes into single request
-- [ ] Hydrate on selection (currently done via mock — needs real API path)
+- [x] Hydrate on selection — DONE (2026-06-19, C3): `ensureHydrated` action triggered on select + navigate (see Remaining Work → C3)
 - [ ] Consider hydrate-on-hover for quick preview
 - [ ] Hydrate all before export operations
 - [ ] Handle hydration failures gracefully
@@ -640,14 +640,62 @@ values (N/total)`), and each **`/list`** query (3.6–25 s with no per-query fee
 
 ### C. Hydration refinements (from "Next Steps" 2 & 3 above — partially done)
 
-- **C1 — Debounce the hydration fetch + `AbortController`:** only the camera watcher is
-  debounced (250 ms); the fetch itself fires un-cancelled, so a zoom-then-pan can stack
-  redundant in-flight requests and stale responses can overwrite newer cache state.
+**RESOLVED (2026-06-19): row-click navigation hydrated the *stale* viewport.**
+Clicking a row's "Go to annotation location" in the annotation list moved the
+camera but the destination stayed empty (dots/sparse) until a manual pan/zoom.
+Root cause: `goToAnnotationIdLocation` (`AnnotationList.vue`) recentered via
+`store.setCameraInfo({ ...store.cameraInfo, center })`, updating `center` but
+leaving `gcsBounds` at the pre-click viewport. It is the **only** programmatic
+recenter that bypasses the GeoJS map — every map-driven recenter
+(`setCenter`/`setCorners`/`resetView` in `ImageViewer.vue`) recomputes
+`gcsBounds` via `synchroniseCameraFromMap`, while `applyCameraInfo` deliberately
+suppresses that sync to avoid multi-map loops. Viewport-driven hydration
+(`updateVisibilityAndHydration`, Step 2) splits current-frame annotations by
+`gcsBounds`, so with stale bounds the destination was classified out-of-viewport
+and never entered the in-viewport visibility/hydration tiers.
+**Fix:** new pure helper `recenterCameraInfo(info, center)` in
+[`src/utils/camera.ts`](../src/utils/camera.ts) translates the four `gcsBounds`
+corners by the center delta (exact for a pure pan — zoom/rotation unchanged);
+`goToAnnotationIdLocation` now calls
+`store.setCameraInfo(recenterCameraInfo(store.cameraInfo, center))`.
+`applyCameraInfo` is untouched (no loop risk). Tests:
+`src/utils/__tests__/camera.test.ts` (6) + an `AnnotationList.test.ts` case
+asserting the translated bounds are passed. Verified in-browser on the 708K
+Xenium dataset.
+
+- **C1 — Debounce the hydration fetch + `AbortController` (DONE 2026-06-20).** Previously
+  only the camera watcher was debounced (250 ms); the viewport hydration fetch itself fired
+  un-cancelled, so rapid zoom/pan/frame/filter changes could stack redundant in-flight
+  requests and a stale response could overwrite newer cache state. Now `updateVisibilityAndHydration`
+  Step 7 routes the fetch through a module-level debounced + abortable task
+  (`viewportHydrationTask`, 200 ms trailing edge): rapid calls collapse to one fetch, and a
+  still-in-flight fetch is `AbortController.abort()`-ed when a newer one fires so its response
+  can't clobber newer state. `AnnotationsAPI.hydrateAnnotations(ids, signal?)` forwards the
+  signal to axios; `_hydrateFromBackend` swallows abort errors (`isAbortError`) instead of
+  logging them. `ensureHydrated` (C3 selection hydrate) deliberately bypasses the task and
+  fires immediately so selected annotations always land. New pure helpers
+  `createDebouncedAbortableTask` + `isAbortError` in `utils/debouncedAbortable.ts` (tests: 8).
+  API test asserts signal forwarding (+2). **Verified in-browser on the 708K Xenium dataset:**
+  an 8-tick zoom burst produced a single `hydrate` POST (coalesced), hydration stayed healthy
+  (`hydrationMode: "shapes"`, cache populated), no console errors.
 - **C2 — Zoom-aware hydration:** Steps 2–4 use the 2× expanded viewport for *both*
   visibility and hydration, so zooming in doesn't re-prioritize the newly-visible region.
   Simplest fix: unexpanded bounds for the hydration split, expanded only for visibility.
-- **C3 — Hydrate-on-selection via backend:** selecting a stub not already in the
-  hydration cache should trigger a one-off hydrate for that id.
+- **C3 — Hydrate-on-selection via backend (DONE 2026-06-19).** Selecting or
+  navigating to a stub not in the hydration cache now triggers a one-off hydrate
+  for that id, so it renders as a full shape immediately instead of a dot. New
+  action `ensureHydrated(ids)` (`annotation.ts`) computes the ids to fetch via the
+  pure `idsNeedingHydration(requestedIds, hydrated, stubs)` helper
+  (`utils/annotation.ts` — dedupes, skips already-hydrated and non-stub ids) and
+  fires `_hydrateFromBackend` (accumulating merge, protects selected ids; no-op
+  outside stub-only mode). Wired at two entry points: `goToAnnotationIdLocation`
+  (`AnnotationList.vue`) hydrates the navigated-to id, and a watcher on
+  `selectedAnnotationIds` (`AnnotationViewer.vue`) covers all selection paths
+  (list click, drag-select, context menu) reactively rather than from each
+  mutation caller. Tests: `annotationStubUtils.test.ts` "idsNeedingHydration" (5)
+  + an `AnnotationList.test.ts` navigation-hydrate case.
+  (The viewport hydration fetch is now debounced/cancellable — see C1 (DONE). The
+  selection hydrate intentionally stays immediate so selected ids always land.)
 
 ### D. Property-value setup rework (the area flagged as "minimally working")
 
@@ -657,6 +705,83 @@ property values for **all** annotations into one `{[annoId]:{[propId]:value}}` m
 708K × N properties this dominates both memory and load time, and it's orthogonal to the
 stub coordinate savings. The server-side list **already** lazy-loads per-page values, but
 **plots, the properties panels, and the (client-mode) filter UI still load wholesale.**
+
+#### Stage 1 — viewport-scoped lazy loading (DONE 2026-06-20)
+
+**Gated + coupled**, mirroring the stub architecture: lazy mode activates only in
+stub-only mode (`annotations.stubOnlyMode`); below that threshold behavior is unchanged
+(wholesale load). On dataset open in lazy mode the **wholesale load is skipped** — the
+single biggest memory/load win, since `Viewer.vue` previously called `fetchPropertyValues`
+on every mount and pulled all 708K×N values resident.
+
+What shipped:
+- **Backend** `POST /annotation_property_values/batch` — values for a set of annotation
+  ids in one dataset, optionally projecting only the requested `propertyPaths` (chunked
+  `$in`). `findByAnnotationIds` in `models/propertyValues.py`; route in
+  `api/propertyValues.py`. Tests: `test_property_values_batch.py` (5).
+- **Frontend** `propertyValues` is now a **bounded merge cache** scoped to the rendered
+  set. `fetchPropertyValues` is lazy-aware: in lazy mode it discovers paths from a bounded
+  **sample** (`fetchPropertyPathsSample`, reuses `find` with a 512-doc limit — no new
+  endpoint) and loads values only for the **visible set × displayed columns**
+  (`ensureVisiblePropertyValues`, coupled to `updateVisibility` in `AnnotationViewer`).
+  `computedPropertyPaths` sources from the sample in lazy mode (via the new pure
+  `collectLeafPaths`), so the path picker / prune-watcher don't depend on the full map.
+- **Pure helpers** `collectLeafPaths`, `idsMissingPaths`, `scopedMergePropertyValues` in
+  `utils/propertyValues.ts` (tests: `propertyValues.test.ts`, 13).
+- **No regression on filtered drawing (Stage 1 only):** while a property filter was active
+  in lazy mode, client-side filtered drawing needed every annotation's value, so a watcher on
+  `filterStore.hasActivePropertyFilter` fell back to `fetchAllPropertyValues` (wholesale load)
+  and pruned back to the visible set when the filter was removed. **This is the last
+  wholesale-load path, now removed in Stage 2 (below).**
+- **Ordering fix:** `Viewer.vue` now `await`s `fetchAnnotations` (which sets
+  `stubOnlyMode`) before calling `fetchPropertyValues`. Without it the property fetch
+  raced ahead while `stubOnlyMode` was still false and took the wholesale branch anyway.
+
+**Verified** on the 708K Xenium dataset (real reload): on open with no columns,
+`propertyValues` holds **0** entries (was 708,983) and only one 512-doc sample request
+fires (`discoveredPropertyPaths` = 10); displaying a column loads values for the visible
+set (≤10K) via `/batch`. CSV/JSON export is unaffected (it streams from the backend), and
+the CSV preview was already empty in stub-only mode (`annotations[]` is empty there).
+
+**Deferred to later D stages:** D2 on-demand per-column (Stage 1 fetches all displayed
+paths for the visible set, not per-column-lazy); D3 server aggregation for plots/panels
+(plots and the properties panels still read the cache / load wholesale); D4 PV stubs; D5
+explicit LRU eviction (Stage 1/2 bound via visible-set scoping rather than an LRU counter).
+
+#### Stage 2 — server-side filtered drawing (DONE 2026-06-20)
+
+Removes the **last wholesale-load path**: in lazy mode an active property filter no longer
+pulls every annotation's value into memory. Property filtering for drawing is now driven by
+a **server-fetched id set** instead of reading `propertyValues[id]` for every annotation.
+
+What shipped (frontend only — the `POST /upenn_annotation/list/ids` endpoint already filters
+by property server-side, from Option B / the PV-driven A work):
+- **`filters.ts`** — new state `propertyFilterPassingIds: Set<string> | null` (markRaw,
+  replaced wholesale) + a monotonic `propertyFilterRequestSeq` guard, and an action
+  `refreshPropertyFilterPassingIds` that fetches the **property-filters-only** matching ids
+  (`fetchAnnotationListIds`) and stores them. `filteredAnnotations` now, in lazy mode with an
+  active property filter, keeps only annotations whose id is in that set (passing all through
+  while the set is still loading — `null` interim — so drawing never flashes empty); other
+  filters (tags/location/selection/annotation-id/ROI) stay client-side on stub fields, so the
+  composition is a clean AND. Full mode is unchanged (client-side per-value check).
+- **Pure helper** `buildPropertyListFilters` extracted to `utils/annotationListFilters.ts`
+  (reused by `annotationListServer.buildListFilters`, DRY).
+- **`AnnotationViewer.vue`** — the old `hasActivePropertyFilter` watcher (which called
+  `fetchAllPropertyValues`) is replaced by a watcher on `filterStore.propertyFilters` that
+  calls `refreshPropertyFilterPassingIds` (refreshing on filter *content* change, not just
+  on/off). `updateVisibility` and the `displayedPropertyPaths` watcher now always call
+  `ensureVisiblePropertyValues` in lazy mode (no more `!hasActivePropertyFilter` guard), so
+  the visible subset's displayed-column values still load while the full map never does.
+- **Tests:** `annotationListFilters.test.ts` (5); `filters.test.ts` (7 — the action's
+  property-only fetch, the null/non-lazy no-ops, the seq guard, and the getter's membership /
+  interim-pass-all / full-mode branches).
+
+**Verified in-browser on the 708K Xenium dataset:** with a property filter enabled
+(`Area ∈ [0,100]`) a single `POST /upenn_annotation/list/ids` fires, `propertyFilterPassingIds`
+= 9,925, drawing narrows to exactly those 9,925 (`visibleAnnotationIds` 10,000 → 9,925), and
+**`propertyValues` stays at 0** (was 708,983 under the old wholesale fallback). Removing the
+filter resets the set to `null` and restores the full visible budget. **Zero
+`annotation_property_values` requests** fired across the whole session.
 
 - **D1 — Lazy per-page values everywhere:** make the server-list pattern the norm — only
   fetch values for the rows/annotations currently shown. Limits global sort/filter to what
@@ -670,8 +795,12 @@ stub coordinate savings. The server-side list **already** lazy-loads per-page va
 - **D5 — Cache eviction:** LRU / frame-based eviction so the value map stays bounded when
   switching properties or frames.
 
-**Recommended order (updated 2026-06-19):** **A is DONE** (A2 + PV-driven queries;
-see A). Remaining: **B** (progress indicators) → **C1/C2** (hydration fixes, local to
-`annotation.ts`) → **A3 / infinite scroll** (removes the deep-page residual; mostly
-frontend) → **D1/D2** (property-value rework, the largest remaining piece). D is
-independent and can proceed in parallel.
+**Recommended order (updated 2026-06-20):** **DONE so far** — A (A2 + PV-driven queries);
+the row-click navigation fix and C3 hydrate-on-selection (section C); **D Stage 1**
+(viewport-scoped property values — wholesale load on open eliminated); **D Stage 2**
+(server-side filtered drawing — the last wholesale-load path removed; the memory story is now
+complete: no code path loads the full property-value map in lazy mode); and **C1**
+(debounce/AbortController on the hydration fetch). **Remaining, recommended order:**
+**C2** (zoom-aware hydration) → **B** (progress indicators) → **A3 / infinite scroll**
+(deep-page residual) → **D2–D5** (per-column loading, server aggregation for plots/panels,
+PV stubs, explicit LRU). D2–D5 are independent and can proceed in parallel.

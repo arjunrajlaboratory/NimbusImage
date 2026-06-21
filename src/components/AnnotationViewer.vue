@@ -3258,6 +3258,12 @@ function updateVisibility() {
     gcsBounds: store.cameraInfo.gcsBounds,
     currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
   });
+  // Property-value lazy loading (D): load values for the now-visible set in lazy
+  // mode. Property filtering is now applied server-side (Stage 2), so even with
+  // an active filter we only need values for the visible subset here.
+  if (annotationStore.stubOnlyMode) {
+    propertiesStore.ensureVisiblePropertyValues();
+  }
 }
 const updateVisibilityDebounced = debounce(updateVisibility, 250);
 
@@ -3271,6 +3277,43 @@ watch(
   () => {
     stubPerf.trackCameraUpdate();
     updateVisibilityDebounced();
+  },
+);
+
+// Hydrate-on-selection (C3): a selected stub that isn't in the hydration cache
+// renders as a dot and can't show its real shape. Selection happens through
+// many code paths (list click, drag-select, context menu), so hydrate reactively
+// here rather than from each mutation caller. ensureHydrated dedupes against the
+// cache, so already-hydrated selections cost nothing.
+watch(
+  () => annotationStore.selectedAnnotationIds,
+  (ids) => {
+    annotationStore.ensureHydrated([...ids]);
+  },
+);
+
+// Property-value lazy loading (D, Stage 2): in lazy mode, property filtering is
+// applied server-side — refresh the passing-id set whenever the property filters
+// change (their content, not just enabled on/off). filteredAnnotations then
+// narrows drawing to that set, and updateVisibility loads values only for the
+// visible subset, so no wholesale value load is ever needed.
+// refreshPropertyFilterPassingIds clears the set when no filter is active.
+watch(
+  () => filterStore.propertyFilters,
+  () => {
+    if (annotationStore.stubOnlyMode) {
+      filterStore.refreshPropertyFilterPassingIds();
+    }
+  },
+);
+
+// Adding/removing a property column changes which values the visible set needs.
+watch(
+  () => propertiesStore.displayedPropertyPaths,
+  () => {
+    if (annotationStore.stubOnlyMode) {
+      propertiesStore.ensureVisiblePropertyValues();
+    }
   },
 );
 

@@ -338,6 +338,7 @@ import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { simpleCentroid } from "@/utils/annotation";
+import { recenterCameraInfo } from "@/utils/camera";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
@@ -696,12 +697,15 @@ function goToAnnotationIdLocation(annotationId: string) {
     ? simpleCentroid(annotation.coordinates)
     : stub?.centroid ?? annotationStore.annotationCentroids[annotationId];
   if (center) {
-    store.setCameraInfo({
-      ...store.cameraInfo,
-      center,
-    });
+    // Recenter as a pure pan and translate gcsBounds with it. The new location
+    // must be hydrated against the *new* viewport, not the stale pre-click one
+    // (this path bypasses the GeoJS map, so nothing else re-syncs gcsBounds).
+    store.setCameraInfo(recenterCameraInfo(store.cameraInfo, center));
   }
   annotationStore.setHoveredAnnotationId(annotationId);
+  // Guarantee the navigated-to annotation renders as a full shape, even if it
+  // falls outside the viewport hydration budget at the destination (C3).
+  annotationStore.ensureHydrated([annotationId]);
 }
 
 const hoveredId = computed(() => {

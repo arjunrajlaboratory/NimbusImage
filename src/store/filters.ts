@@ -5,6 +5,7 @@ import {
   Mutation,
   VuexModule,
 } from "vuex-module-decorators";
+import { markRaw } from "vue";
 import store from "./root";
 
 import main from "./index";
@@ -15,6 +16,7 @@ import {
   tagCloudFilterFunction,
   annotationTestPoints,
 } from "@/utils/annotation";
+import { buildPropertyListFilters } from "@/utils/annotationListFilters";
 
 import {
   IAnnotation,
@@ -25,6 +27,7 @@ import {
   IGeoJSPosition,
   TPropertyHistogram,
   IAnnotationLocation,
+  IAnnotationListFilters,
 } from "./model";
 
 import geo from "geojs";
@@ -68,6 +71,20 @@ export class Filters extends VuexModule {
   histograms: TFilterHistograms = {};
 
   annotationIdFilters: IIdAnnotationFilter[] = [];
+
+  // Lazy (stub-only) mode only: the set of annotation ids passing the active
+  // property filters, fetched server-side so client-side filtered drawing no
+  // longer requires every annotation's property value in memory (D Stage 2).
+  // null means "not in server-property-filter mode" (full mode or no active
+  // property filter) or "not yet loaded" — filteredAnnotations passes all
+  // annotations through the property predicate in that interim. markRaw so the
+  // (potentially large) Set is not deep-proxied; the slot reference is replaced
+  // wholesale to drive reactivity.
+  propertyFilterPassingIds: Set<string> | null = null;
+
+  // Monotonic token guarding against out-of-order responses: only the latest
+  // refreshPropertyFilterPassingIds may apply its result.
+  propertyFilterRequestSeq = 0;
 
   @Mutation
   togglePropertyPathFiltering(path: string[]) {
@@ -193,6 +210,52 @@ export class Filters extends VuexModule {
     );
   }
 
+  get hasActivePropertyFilter() {
+    return this.propertyFilters.some(
+      (filter: IPropertyAnnotationFilter) => filter.enabled,
+    );
+  }
+
+  @Mutation
+  setPropertyFilterPassingIds(ids: string[] | null) {
+    this.propertyFilterPassingIds = ids === null ? null : markRaw(new Set(ids));
+  }
+
+  @Mutation
+  incrementPropertyFilterRequestSeq() {
+    this.propertyFilterRequestSeq += 1;
+  }
+
+  // Lazy mode: fetch the ids passing the active property filters server-side
+  // (property filters only — other filters stay client-side on stub fields, so
+  // composing them is a clean AND in filteredAnnotations). No-op (clears the
+  // set) outside lazy mode or when no property filter is active.
+  @Action
+  async refreshPropertyFilterPassingIds() {
+    const datasetId = main.dataset?.id;
+    if (
+      !datasetId ||
+      !annotation.stubOnlyMode ||
+      !this.hasActivePropertyFilter
+    ) {
+      this.setPropertyFilterPassingIds(null);
+      return;
+    }
+    this.incrementPropertyFilterRequestSeq();
+    const seq = this.propertyFilterRequestSeq;
+    const listFilters: IAnnotationListFilters = {
+      propertyFilters: buildPropertyListFilters(this.propertyFilters),
+    };
+    const ids = await main.annotationsAPI.fetchAnnotationListIds(
+      datasetId,
+      listFilters,
+    );
+    // Drop the result if a newer refresh started while we were awaiting.
+    if (seq === this.propertyFilterRequestSeq) {
+      this.setPropertyFilterPassingIds(ids);
+    }
+  }
+
   get filteredAnnotations() {
     const selectionFilter = this.selectionFilter;
     const tagFilter = this.tagFilter;
@@ -217,6 +280,12 @@ export class Filters extends VuexModule {
     // carry no coordinates, so ROI filtering falls back to the centroid map
     // (populated for every annotation id in both full and stub-only modes).
     const centroidsById = annotation.annotationCentroids;
+    // In lazy mode the full property-value map is not loaded, so property
+    // filtering is driven by a server-fetched id set (D Stage 2) instead of
+    // reading each annotation's value client-side.
+    const useServerPropertyFilter =
+      annotation.stubOnlyMode && enabledPropertyFilters.length > 0;
+    const serverPassingIds = this.propertyFilterPassingIds;
     return annotation.annotationsForIteration.filter(
       (annotation: IAnnotation) => {
         // Location filter
@@ -250,32 +319,48 @@ export class Filters extends VuexModule {
         }
 
         // Property filters
-        const propertyValues = properties.propertyValues[annotation.id] || {};
-        const matchesProperties = enabledPropertyFilters.every(
-          (filter: IPropertyAnnotationFilter) => {
-            const value = getValueFromObjectAndPath(
-              propertyValues,
-              filter.propertyPath,
-            );
-            if (filter.valuesOrRange === "values") {
-              // If no values specified, don't filter
-              if (!filter.values || filter.values.length === 0) {
-                return true;
-              }
-              // Check if the value exists in the set of specified values
-              return typeof value === "number" && filter.values.includes(value);
-            } else {
-              // Default "range" behavior for histograms
-              return (
-                typeof value === "number" &&
-                value >= filter.range.min &&
-                value <= filter.range.max
-              );
+        if (enabledPropertyFilters.length > 0) {
+          if (useServerPropertyFilter) {
+            // Lazy mode: membership in the server-fetched passing set. Until it
+            // loads (null), pass all so drawing doesn't flash empty.
+            if (
+              serverPassingIds !== null &&
+              !serverPassingIds.has(annotation.id)
+            ) {
+              return false;
             }
-          },
-        );
-        if (!matchesProperties) {
-          return false;
+          } else {
+            const propertyValues =
+              properties.propertyValues[annotation.id] || {};
+            const matchesProperties = enabledPropertyFilters.every(
+              (filter: IPropertyAnnotationFilter) => {
+                const value = getValueFromObjectAndPath(
+                  propertyValues,
+                  filter.propertyPath,
+                );
+                if (filter.valuesOrRange === "values") {
+                  // If no values specified, don't filter
+                  if (!filter.values || filter.values.length === 0) {
+                    return true;
+                  }
+                  // Check if the value exists in the set of specified values
+                  return (
+                    typeof value === "number" && filter.values.includes(value)
+                  );
+                } else {
+                  // Default "range" behavior for histograms
+                  return (
+                    typeof value === "number" &&
+                    value >= filter.range.min &&
+                    value <= filter.range.max
+                  );
+                }
+              },
+            );
+            if (!matchesProperties) {
+              return false;
+            }
+          }
         }
 
         // Annotation ID filters
