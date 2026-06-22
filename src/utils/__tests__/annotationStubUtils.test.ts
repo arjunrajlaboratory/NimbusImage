@@ -85,14 +85,31 @@ describe("estimateAnnotationRadius", () => {
 });
 
 describe("getStubStyleFromBaseStyle", () => {
-  it("returns a style with thinner stroke than full annotations", () => {
+  it("matches the full-annotation edge stroke (width and opacity)", () => {
+    // The stub circle should read like the real annotation's outline, not a
+    // thinner/lighter variant — only its shape (circle) and fill distinguish it.
     const style = getStubStyleFromBaseStyle();
-    expect(style.strokeWidth).toBe(2);
+    expect(style.strokeWidth).toBe(4);
+    expect(style.strokeOpacity).toBe(1);
   });
 
-  it("uses lower fill opacity", () => {
-    const style = getStubStyleFromBaseStyle();
-    expect(style.fillOpacity).toBe(0.4);
+  it("thickens the stroke when selected, matching full annotations", () => {
+    const style = getStubStyleFromBaseStyle(undefined, false, true);
+    expect(style.strokeWidth).toBe(6);
+  });
+
+  it("thickens the stroke when hovered, matching full annotations", () => {
+    const style = getStubStyleFromBaseStyle(undefined, true, false);
+    expect(style.strokeWidth).toBe(5);
+  });
+
+  it("matches the full-annotation fill opacity (defaults to 0.5, honors the passed value)", () => {
+    // The stub fill should equal the real annotation's (store.annotationOpacity,
+    // threaded in by the caller); the default mirrors the full-annotation default.
+    expect(getStubStyleFromBaseStyle().fillOpacity).toBe(0.5);
+    expect(
+      getStubStyleFromBaseStyle(undefined, false, false, 5, 1, 0.3).fillOpacity,
+    ).toBe(0.3);
   });
 
   it("uses default radius of 5 when no estimatedRadius provided", () => {

@@ -872,6 +872,7 @@ function drawNewAnnotations(
               isSelectedGT,
               stubRadius,
               stubScaled,
+              store.annotationOpacity,
             )
           : getAnnotationStyle(annotationId, customColor, layer?.color);
         geoJSAnnotation.options("style", { ...style, ...newStyle });
@@ -1390,6 +1391,7 @@ function createGeoJSAnnotation(
         isAnnotationSelected.value(annotation.id),
         stubRadius,
         getStubScaled(),
+        store.annotationOpacity,
       )
     : getAnnotationStyle(annotation.id, customColor, layer?.color);
 
@@ -1468,6 +1470,7 @@ function restyleAnnotations() {
             isAnnotationSelected.value(girderId),
             stubRadius,
             stubScaled,
+            store.annotationOpacity,
           )
         : getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));

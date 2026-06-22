@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status (2026-06-20):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); and **C1** — the viewport hydration fetch is now debounced + abortable (section C). **Still open / next:** C2 (zoom-aware hydration); progress indicators (B3 only — B1 stub-fetch bar + B2 per-query list feedback are done); infinite scroll (A3); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
+**Status (2026-06-22):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **Still open / next:** C2 (zoom-aware hydration); **draw/restyle debouncing** (rapid pans can briefly lock the UI — the C1 fetch is debounced but the draw path isn't); **zoom-adaptive `maxVisible`** (zoomed-out views are noisy with the full-stroke stubs); progress indicators (B3 only — B1 stub-fetch bar + B2 per-query list feedback are done); infinite scroll (A3); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
 
 ---
 
@@ -335,6 +335,43 @@ scale with zoom to track the real shape's footprint), regardless of the
 `scaleAnnotationsWithZoom` setting that governs literal point-annotation dots.
 This resolves the open "should stubs respect scaleAnnotationsWithZoom" to-do below.
 
+### RESOLVED (2026-06-22): stub circle size, stroke, and fill now match the real annotation
+After the world/pixel fix above, a stub still rendered slightly large with a
+distinct (thinner, more translucent) outline. Two follow-ups closed the gap, so a
+dehydrated stub now reads like its hydrated form — only the shape (circle vs.
+polygon) distinguishes it.
+
+- **Size — backend `estimatedRadius` was the bbox _diagonal_/2.** The stubs
+  aggregation computed `sqrt(dx² + dy²)/2`, which circumscribes the bounding box and
+  overshoots the footprint by up to √2 (~41% for a square/round cell; measured
+  1.29–1.41× across the Xenium data). The frontend `estimateAnnotationRadius` already
+  used `max(dx, dy)/2`; the backend now matches it (`server/api/annotation.py`,
+  `test/test_stubs.py`). Verified on 708K: backend radius ÷ `max/2` went from
+  1.29–1.41 to exactly **1.0**.
+- **Stroke + fill — stub style now mirrors the full-annotation style.**
+  `getStubStyleFromBaseStyle` used `strokeWidth 2` / `strokeOpacity 0.8` /
+  `fillOpacity 0.4`; the real annotation (`getAnnotationStyleFromBaseStyle`) uses
+  `strokeWidth 4` / `strokeOpacity 1` (selected 6, hovered 5) and
+  `fillOpacity = store.annotationOpacity`. The stub now uses the same stroke and takes
+  `fillOpacity` as a parameter, which the three `AnnotationViewer` styling sites pass
+  as `store.annotationOpacity` — so the stub fill **tracks the opacity slider** via the
+  existing `baseStyle` restyle watcher. (GeoJS only scales a point's _radius_ with
+  `scaled`, not its stroke, so the stroke is a flat pixel width either way.) Tests:
+  `annotationStubUtils.test.ts`.
+
+**Follow-up observations (noted, not yet addressed):**
+- **UI can lock during rendering updates after several pans.** Even with the C1
+  hydration-fetch debounce + `AbortController`, rapid repeated pans can briefly freeze
+  the UI while GeoJS rebuilds/redraws features. The hydration _fetch_ is debounced, but
+  the **draw/restyle path itself** (a distinct stage) is not coalesced — it likely
+  needs its own debouncing/throttling. See section C (hydration refinements).
+- **Thicker stub strokes hurt readability when zoomed out.** Now that stubs carry the
+  full 4px stroke, a zoomed-out view packed with thousands of small objects looks
+  noisy (strokes dominate the tiny dots). The likely lever is **lowering `maxVisible`**
+  (render fewer objects when zoomed out) rather than re-thinning the stroke — see the
+  `maxVisible` tuning to-do. A zoom-adaptive `maxVisible` would address both this and
+  the lock above.
+
 ### Selection includes non-visible annotations
 - `getSelectedAnnotationsFromAnnotation()` queries both the displayed RBush and the global `annotationSpatialIndex`
 - Drag-select catches ALL annotations in the region on the current frame, regardless of visibility budget
@@ -345,19 +382,20 @@ This resolves the open "should stubs respect scaleAnnotationsWithZoom" to-do bel
 ## To-Do List
 
 ### Threshold and Hydration Refinement
-- [ ] Test and tune `maxVisible` (currently 10,000) — balance between coverage and rendering performance
-- [ ] Test and tune `maxHydrated` (currently 5,000) — how many shapes to render before performance degrades
-- [ ] Consider making thresholds configurable via UI settings panel
+- [ ] Test and tune `maxVisible` (default 50,000) — balance between coverage and rendering performance. **Lowering it when zoomed out would also reduce visual noise** now that stubs use the full 4px stroke (see "stub circle size, stroke, and fill" above).
+- [ ] Test and tune `maxHydrated` (default 20,000) — how many shapes to render before performance degrades
+- [ ] **Zoom-adaptive `maxVisible`** — render fewer objects when zoomed out (where they overlap into noise) and more when zoomed in. Would address both the zoomed-out readability and the post-pan UI lock below.
+- [ ] Consider making thresholds configurable via UI settings panel (they already live in `visibilityConfig`)
 - [ ] Evaluate whether size-based hydration ranking (largest first) is the right heuristic vs. alternatives (density, distance to viewport center, user focus area)
-- [ ] Consider zoom-based adaptive thresholds — show shapes only when annotations are large enough relative to the viewport (code is deferred/commented out in Vue 2 version)
 - [ ] Profile `updateVisibilityAndHydration` with 100K+ annotations to identify bottlenecks
-- [ ] Review debounce timing (currently 250ms) for responsiveness vs CPU trade-off
+- [ ] **Debounce/throttle the draw+restyle path** (not just the C1 hydration fetch) — rapid repeated pans can briefly lock the UI while GeoJS rebuilds features. See section C and the follow-up note above.
 - [ ] Test hydration/dehydration memory churn during rapid pan/zoom
 
 ### Styling Adjustments
 - [x] Review whether stubs should respect `scaleAnnotationsWithZoom` setting or always use fixed world size — **resolved 2026-06-19:** stubs are always world-locked via `scaled = log2(unitsPerPixel(0))` so the dot tracks the annotation's real footprint at every zoom (see "RESOLVED: stub circles too large" above)
+- [x] Stub size/stroke/fill match the real annotation — **resolved 2026-06-22:** backend `estimatedRadius` switched from bbox-diagonal/2 to `max(w,h)/2`, and the stub stroke (4/1.0) + fill (`store.annotationOpacity`) now mirror the full-annotation style (see "stub circle size, stroke, and fill" above). The stub is now distinguished from its hydrated form **only by its circular shape**.
 - [ ] Consider different hover/selection effects for stubs vs full annotations
-- [ ] Fine-tune stub visual distinction (currently thinner stroke + lower opacity)
+- [ ] Reconsider whether stubs should be visually distinct again (they used to have a thinner stroke + lower opacity). They now match the real annotation per user request; if a denser zoomed-out view needs the dots de-emphasized, prefer lowering `maxVisible` over re-thinning the stroke.
 
 ### Selection Improvements
 - [ ] Verify point-click selection works correctly for stub annotations (centroid hit-testing)
@@ -719,6 +757,13 @@ Xenium dataset.
 - **C2 — Zoom-aware hydration:** Steps 2–4 use the 2× expanded viewport for *both*
   visibility and hydration, so zooming in doesn't re-prioritize the newly-visible region.
   Simplest fix: unexpanded bounds for the hydration split, expanded only for visibility.
+- **C4 — Debounce/throttle the draw + restyle path (observed 2026-06-22, not done).**
+  C1 debounced the hydration *fetch*, but rapid repeated pans can still briefly **lock the
+  UI** while GeoJS rebuilds and redraws features (`updateVisibilityAndHydration` →
+  `restyleAnnotations`/`drawAnnotations`). That render stage is distinct from the fetch and
+  isn't coalesced; it likely needs its own debounce/throttle (or a `requestAnimationFrame`
+  batch). A zoom-adaptive `maxVisible` (fewer rendered objects when zoomed out) would also
+  reduce the per-frame draw cost. Lower priority than C2 but the most user-visible jank.
 - **C3 — Hydrate-on-selection via backend (DONE 2026-06-19).** Selecting or
   navigating to a stub not in the hydration cache now triggers a one-off hydrate
   for that id, so it renders as a full shape immediately instead of a dot. New
@@ -855,13 +900,16 @@ passes all 708,983 (nothing wrongly hidden) and `propertyValues` stays 0.
 - **D5 — Cache eviction:** LRU / frame-based eviction so the value map stays bounded when
   switching properties or frames.
 
-**Recommended order (updated 2026-06-20):** **DONE so far** — A (A2 + PV-driven queries);
+**Recommended order (updated 2026-06-22):** **DONE so far** — A (A2 + PV-driven queries);
 the row-click navigation fix and C3 hydrate-on-selection (section C); **D Stage 1**
 (viewport-scoped property values — wholesale load on open eliminated); **D Stage 2**
 (server-side filtered drawing — the last wholesale-load path removed; the memory story is now
 complete: no code path loads the full property-value map in lazy mode); **C1**
-(debounce/AbortController on the hydration fetch); and **B1 + B2** (stub-fetch progress bar
-+ per-query list feedback). **Remaining, recommended order:**
-**C2** (zoom-aware hydration) → **A3 / infinite scroll** (deep-page residual) → **B3**
-(streaming partial counts — low value) → **D2–D5** (per-column loading, server aggregation
-for plots/panels, PV stubs, explicit LRU). D2–D5 are independent and can proceed in parallel.
+(debounce/AbortController on the hydration fetch); **B1 + B2** (stub-fetch progress bar
++ per-query list feedback); and the **stub circle size/stroke/fill match** (2026-06-22).
+**Remaining, recommended order:** **C2** (zoom-aware hydration) → **C4 / zoom-adaptive
+`maxVisible`** (draw-path debounce + fewer rendered objects when zoomed out — fixes the
+post-pan UI lock and zoomed-out noise) → **A3 / infinite scroll** (deep-page residual) →
+**B3** (streaming partial counts — low value) → **D2–D5** (per-column loading, server
+aggregation for plots/panels, PV stubs, explicit LRU). D2–D5 are independent and can proceed
+in parallel.

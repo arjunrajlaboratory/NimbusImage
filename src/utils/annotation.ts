@@ -363,14 +363,23 @@ export function getStubStyleFromBaseStyle(
   // annotation's real footprint at every zoom. Defaults to 1 only for callers
   // without a map (e.g. tests); the renderer always supplies the real value.
   scaled: number = 1,
+  // Fill opacity, matching the full annotation (the caller passes
+  // store.annotationOpacity so the stub tracks the opacity slider). Defaults to
+  // the full-annotation default (0.5) for callers without a store (e.g. tests).
+  fillOpacity: number = 0.5,
 ): TAnnotationStyle {
+  // Stroke and fill match the full-annotation style
+  // (getAnnotationStyleFromBaseStyle: stroke width 4 / opacity 1, selected 6,
+  // hovered 5; fill opacity from the same source) so a stub reads like the real
+  // annotation's outline. Only the shape (circle) distinguishes a stub from its
+  // hydrated form.
   const style: TAnnotationStyle = {
     stroke: true,
     strokeColor: "black",
-    strokeOpacity: 0.8,
-    strokeWidth: 2,
+    strokeOpacity: 1,
+    strokeWidth: 4,
     fillColor: "white",
-    fillOpacity: 0.4,
+    fillOpacity,
     fill: true,
     radius: estimatedRadius,
     scaled,
@@ -385,14 +394,14 @@ export function getStubStyleFromBaseStyle(
     style.strokeColor = geoColor;
   }
   if (isSelected) {
-    style.strokeWidth = 4;
+    style.strokeWidth = 6;
     if (annotationColor) {
       style.strokeColor = { ...geojs.util.convertColor(annotationColor) };
     }
   }
   if (isHovered) {
     style.fillOpacity = 0;
-    style.strokeWidth = 3;
+    style.strokeWidth = 5;
     style.strokeColor = { r: 1, g: 0.9, b: 0.9 };
   }
   return style;

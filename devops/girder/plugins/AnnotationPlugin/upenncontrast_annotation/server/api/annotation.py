@@ -588,24 +588,23 @@ class Annotation(Resource):
                     "x": {"$avg": "$coordinates.x"},
                     "y": {"$avg": "$coordinates.y"},
                 },
+                # Half the larger bounding-box side. Matches the frontend
+                # estimateAnnotationRadius so the stub circle tracks the
+                # annotation's footprint; the previous bbox-diagonal/2
+                # circumscribed the box and overshot the real size by up to
+                # sqrt(2) (a square cell rendered ~41% too large).
                 "estimatedRadius": {
                     "$divide": [
-                        {"$sqrt": {"$add": [
-                            {"$pow": [
-                                {"$subtract": [
-                                    {"$max": "$coordinates.x"},
-                                    {"$min": "$coordinates.x"},
-                                ]},
-                                2,
+                        {"$max": [
+                            {"$subtract": [
+                                {"$max": "$coordinates.x"},
+                                {"$min": "$coordinates.x"},
                             ]},
-                            {"$pow": [
-                                {"$subtract": [
-                                    {"$max": "$coordinates.y"},
-                                    {"$min": "$coordinates.y"},
-                                ]},
-                                2,
+                            {"$subtract": [
+                                {"$max": "$coordinates.y"},
+                                {"$min": "$coordinates.y"},
                             ]},
-                        ]}},
+                        ]},
                         2,
                     ]
                 },

@@ -1,5 +1,4 @@
 import json
-import math
 import pytest
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
@@ -90,8 +89,11 @@ class TestStubs:
         assert stub["centroid"]["x"] == pytest.approx(5.0)
         assert stub["centroid"]["y"] == pytest.approx(5.0)
 
-        # estimatedRadius = diagonal/2 = sqrt(100+100)/2
-        expected_radius = math.sqrt(200) / 2
+        # estimatedRadius = half the larger bbox side = max(10, 10) / 2 = 5.
+        # (Matches the frontend estimateAnnotationRadius so the stub circle
+        # tracks the annotation's footprint instead of its circumscribed
+        # bbox-diagonal, which overshot by up to sqrt(2).)
+        expected_radius = max(10, 10) / 2
         assert stub["estimatedRadius"] == pytest.approx(
             expected_radius
         )
