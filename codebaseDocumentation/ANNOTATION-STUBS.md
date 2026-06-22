@@ -660,6 +660,19 @@ query (with no per-query feedback).
   renders `Querying 708,983 annotations…`, adds `is-loading` to the table, and computes
   `pointer-events:none` / `opacity:0.5` on the footer; confirmed visually during a deep-page
   (offset 500K) query.
+- **B4 — Render-coverage indicator (DONE 2026-06-21).** In lazy mode the canvas renders only
+  a budgeted subset (`maxVisible`, default 50,000) of the loaded stubs, with no on-screen cue
+  that more exist. A small top-center HUD (`RenderCoverageIndicator.vue`, mounted in
+  `ImageViewer.vue` alongside `ProgressBarGroup`) now shows `displayed / loaded rendered`
+  (e.g. `50,000 / 708,983`) with a thin fraction bar. It appears **only while the budget is
+  actively downsampling** — the show signal is budget saturation (`displayed >= maxVisible`),
+  not `displayed < loaded`, so a dataset that fits under the budget (or one with all-but-a-few
+  annotations on the current frame) reads as "fully rendered" and the HUD stays hidden. Pure
+  helper `computeRenderCoverage({stubOnlyMode, displayed, loaded, maxVisible})` in
+  `utils/renderCoverage.ts`; the HUD is `pointer-events:none` so it never blocks the canvas.
+  Tests: `renderCoverage.test.ts` (6, incl. the cross-frame "hide when fully rendered" case).
+  **Verified in-browser:** 708K Xenium shows `50,000 / 708,983 rendered` (bar ~7%); the 26K
+  HCR dataset (26,041 < 50,000 budget → fully rendered) shows nothing.
 - **B3 — Streaming/chunked partial counts (deferred):** the backend already streams `orjson`;
   surfacing partial counts is more work and not worth it yet.
 
