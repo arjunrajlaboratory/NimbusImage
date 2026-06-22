@@ -1457,7 +1457,7 @@ export interface IVisibilityConfig {
   hydrationCacheCap: number; // Total cap on the hydration cache (accumulates across updates; LRU-evicts beyond cap, protecting selected)
   globalThreshold: boolean; // If true, threshold applies to total frame annotations across all layers
   coverageTarget: number; // Fraction of the screen the rendered dots may cover when fully zoomed out. Sets the zoomed-out floor from annotation size + screen; the budget doubles per zoom level up to maxVisible.
-  zoomRefreshFraction: number; // Centered-zoom hysteresis: skip the camera-driven refresh until the magnification changes by this fraction (e.g. 0.2 = 20%). Pans always refresh.
+  viewportRefreshFraction: number; // Camera hysteresis: skip the camera-driven refresh until EITHER the zoom magnification OR the center (as a fraction of the viewport) changes by this fraction (e.g. 0.2 = 20%).
 }
 
 export function isHydratedAnnotation(

@@ -520,7 +520,7 @@ describe("AnnotationViewer", () => {
       hydrationCacheCap: 10000,
       globalThreshold: true,
       coverageTarget: 0.15,
-      zoomRefreshFraction: 0.2,
+      viewportRefreshFraction: 0.2,
     };
     mockedAnnotationStore.averageStubRadius = 0;
     mockedAnnotationStore.updateVisibilityAndHydration = vi.fn();

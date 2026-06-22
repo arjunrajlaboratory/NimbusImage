@@ -174,7 +174,7 @@ export class Annotations extends VuexModule {
     hydrationCacheCap: 40000,
     globalThreshold: true,
     coverageTarget: 0.17,
-    zoomRefreshFraction: 0.2,
+    viewportRefreshFraction: 0.2,
   };
 
   // Average annotation radius (world units) over the loaded stubs, computed once

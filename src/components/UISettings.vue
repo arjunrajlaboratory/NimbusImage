@@ -75,8 +75,8 @@
         }"
       />
       <v-text-field
-        v-model.number="zoomRefreshFraction"
-        label="Zoom refresh threshold"
+        v-model.number="viewportRefreshFraction"
+        label="Viewport refresh threshold"
         type="number"
         step="0.05"
         min="0.01"
@@ -86,9 +86,9 @@
         class="mb-2"
         v-description="{
           section: 'Interface settings',
-          title: 'Zoom refresh threshold',
+          title: 'Viewport refresh threshold',
           description:
-            'How much a centered zoom must change (e.g. 0.2 = 20%) before the view re-renders and re-hydrates. Higher = fewer refreshes / less loading churn while zooming. Pans always refresh.',
+            'How much the zoom (magnification) or pan (fraction of the viewport) must change (e.g. 0.2 = 20%) before the view re-renders and re-hydrates. Higher = fewer refreshes / less loading churn while navigating.',
         }"
       />
       <v-text-field
@@ -173,11 +173,11 @@ const coverageTarget = computed({
   },
 });
 
-const zoomRefreshFraction = computed({
-  get: () => annotationStore.visibilityConfig.zoomRefreshFraction,
+const viewportRefreshFraction = computed({
+  get: () => annotationStore.visibilityConfig.viewportRefreshFraction,
   set: (value: number) => {
     if (value > 0)
-      annotationStore.setVisibilityConfig({ zoomRefreshFraction: value });
+      annotationStore.setVisibilityConfig({ viewportRefreshFraction: value });
   },
 });
 

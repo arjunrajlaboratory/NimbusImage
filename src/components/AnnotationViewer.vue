@@ -3263,9 +3263,27 @@ watch(selectedToolConfiguration, () => {
 // sub-pixel there), so it drives the density-derived render budget.
 const STUB_STROKE_PX = 4;
 
-// Hysteresis baseline: the camera state at the last visibility refresh. Pans
-// always refresh; a centered zoom refreshes only past zoomRefreshFraction.
+// Hysteresis baseline: the camera state at the last visibility refresh.
 let lastRefreshCamera: { zoom: number; center: IGeoJSPosition } | null = null;
+
+// World-unit diagonal of the viewport bounding box — the scale the pan
+// hysteresis measures center movement against. 0 when bounds are unavailable.
+function viewportExtent(gcsBounds: IGeoJSPosition[] | undefined): number {
+  if (!gcsBounds || gcsBounds.length < 2) {
+    return 0;
+  }
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const pt of gcsBounds) {
+    minX = Math.min(minX, pt.x);
+    minY = Math.min(minY, pt.y);
+    maxX = Math.max(maxX, pt.x);
+    maxY = Math.max(maxY, pt.y);
+  }
+  return Math.hypot(maxX - minX, maxY - minY);
+}
 
 // Visibility and hydration updates
 function updateVisibility() {
@@ -3321,10 +3339,10 @@ const updateVisibilityDebounced = debounce(updateVisibility, 250);
 // to avoid flash of empty frame while debounce waits
 watch([filteredAnnotations, xy, z, time], updateVisibility);
 
-// Camera changes (pan/zoom) are debounced since they fire rapidly. Zoom
-// hysteresis (C4): a pan always refreshes, but a centered zoom is skipped until
-// the magnification changes by zoomRefreshFraction — avoids constant re-render +
-// re-hydration churn on small zoom nudges.
+// Camera changes (pan/zoom) are debounced since they fire rapidly. Unified
+// hysteresis (C4): skip the refresh until EITHER the zoom magnification OR the
+// center (as a fraction of the viewport) changes by viewportRefreshFraction —
+// avoids constant re-render + re-hydration churn on small pan/zoom nudges.
 watch(
   () => store.cameraInfo,
   () => {
@@ -3334,7 +3352,8 @@ watch(
       !cameraRefreshNeeded(
         { zoom: cam.zoom, center: cam.center },
         lastRefreshCamera,
-        annotationStore.visibilityConfig.zoomRefreshFraction,
+        annotationStore.visibilityConfig.viewportRefreshFraction,
+        viewportExtent(cam.gcsBounds),
       )
     ) {
       return;

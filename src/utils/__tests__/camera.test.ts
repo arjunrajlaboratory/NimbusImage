@@ -62,59 +62,124 @@ describe("recenterCameraInfo", () => {
 });
 
 describe("cameraRefreshNeeded", () => {
-  // Zoom-only hysteresis (user choice): pans always refresh; a centered zoom
-  // refreshes only once the magnification has changed by >= the fraction.
-  // fraction 0.2 → threshold = log2(1.2) ≈ 0.263 zoom levels.
+  // Unified zoom + pan hysteresis: skip the refresh only when BOTH the zoom
+  // magnification change is < fraction AND the center moved < fraction × the
+  // viewport extent. fraction 0.2 → zoom threshold = log2(1.2) ≈ 0.263 levels;
+  // pan threshold = 0.2 × extent. Here extent = 1000 → pan threshold = 200.
   const last = { zoom: 4, center: { x: 100, y: 100 } };
+  const extent = 1000;
 
   it("refreshes when there is no prior refresh baseline", () => {
     expect(
-      cameraRefreshNeeded({ zoom: 4, center: { x: 100, y: 100 } }, null, 0.2),
+      cameraRefreshNeeded(
+        { zoom: 4, center: { x: 100, y: 100 } },
+        null,
+        0.2,
+        extent,
+      ),
     ).toBe(true);
   });
 
-  it("always refreshes on a pan (any center move), even with zoom unchanged", () => {
+  it("skips a small pan below the distance threshold (zoom unchanged)", () => {
+    // moved 100 < 200 → skip
     expect(
-      cameraRefreshNeeded({ zoom: 4, center: { x: 101, y: 100 } }, last, 0.2),
+      cameraRefreshNeeded(
+        { zoom: 4, center: { x: 200, y: 100 } },
+        last,
+        0.2,
+        extent,
+      ),
+    ).toBe(false);
+  });
+
+  it("refreshes a pan at or beyond the distance threshold", () => {
+    // moved 250 > 200 → refresh
+    expect(
+      cameraRefreshNeeded(
+        { zoom: 4, center: { x: 350, y: 100 } },
+        last,
+        0.2,
+        extent,
+      ),
     ).toBe(true);
+    // diagonal move: hypot(200,200) ≈ 283 > 200 → refresh
     expect(
-      cameraRefreshNeeded({ zoom: 4, center: { x: 100, y: 100.5 } }, last, 0.2),
+      cameraRefreshNeeded(
+        { zoom: 4, center: { x: 300, y: 300 } },
+        last,
+        0.2,
+        extent,
+      ),
     ).toBe(true);
   });
 
   it("skips a centered zoom change below the magnification threshold", () => {
     // |Δzoom| = 0.2 < log2(1.2) ≈ 0.263 → skip
     expect(
-      cameraRefreshNeeded({ zoom: 4.2, center: { x: 100, y: 100 } }, last, 0.2),
-    ).toBe(false);
-    expect(
-      cameraRefreshNeeded({ zoom: 3.8, center: { x: 100, y: 100 } }, last, 0.2),
+      cameraRefreshNeeded(
+        { zoom: 4.2, center: { x: 100, y: 100 } },
+        last,
+        0.2,
+        extent,
+      ),
     ).toBe(false);
   });
 
   it("refreshes a centered zoom change at or above the magnification threshold", () => {
     // |Δzoom| = 0.3 > 0.263 → refresh
     expect(
-      cameraRefreshNeeded({ zoom: 4.3, center: { x: 100, y: 100 } }, last, 0.2),
+      cameraRefreshNeeded(
+        { zoom: 4.3, center: { x: 100, y: 100 } },
+        last,
+        0.2,
+        extent,
+      ),
     ).toBe(true);
+  });
+
+  it("skips when both a small pan and a small zoom are below their thresholds", () => {
+    // moved 100 < 200 AND |Δzoom| 0.2 < 0.263 → skip
     expect(
-      cameraRefreshNeeded({ zoom: 3.7, center: { x: 100, y: 100 } }, last, 0.2),
+      cameraRefreshNeeded(
+        { zoom: 4.2, center: { x: 180, y: 100 } },
+        last,
+        0.2,
+        extent,
+      ),
+    ).toBe(false);
+  });
+
+  it("refreshes when a sub-threshold pan combines with an over-threshold zoom", () => {
+    expect(
+      cameraRefreshNeeded(
+        { zoom: 4.3, center: { x: 180, y: 100 } },
+        last,
+        0.2,
+        extent,
+      ),
+    ).toBe(true);
+  });
+
+  it("refreshes on any pan when the viewport extent is unknown", () => {
+    // extent 0 → can't scale the pan distance → refresh on any center move (safe).
+    expect(
+      cameraRefreshNeeded(
+        { zoom: 4, center: { x: 101, y: 100 } },
+        last,
+        0.2,
+        0,
+      ),
     ).toBe(true);
   });
 
   it("skips when nothing changed", () => {
     expect(
-      cameraRefreshNeeded({ zoom: 4, center: { x: 100, y: 100 } }, last, 0.2),
+      cameraRefreshNeeded(
+        { zoom: 4, center: { x: 100, y: 100 } },
+        last,
+        0.2,
+        extent,
+      ),
     ).toBe(false);
-  });
-
-  it("respects a different fraction", () => {
-    // fraction 1.0 → threshold = log2(2) = 1 level. Δzoom 0.9 skips, 1.0 refreshes.
-    expect(
-      cameraRefreshNeeded({ zoom: 4.9, center: { x: 100, y: 100 } }, last, 1.0),
-    ).toBe(false);
-    expect(
-      cameraRefreshNeeded({ zoom: 5.0, center: { x: 100, y: 100 } }, last, 1.0),
-    ).toBe(true);
   });
 });

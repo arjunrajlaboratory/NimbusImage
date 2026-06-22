@@ -17,36 +17,49 @@ import type { ICameraInfo, IGeoJSPosition } from "@/store/model";
  * the user manually pans or zooms.
  */
 /**
- * Zoom hysteresis for the camera-driven visibility refresh.
+ * Unified pan + zoom hysteresis for the camera-driven visibility refresh.
  *
- * Recomputing the render budget + re-hydrating on every tiny zoom change causes
- * constant loading churn. This gates the refresh: a pan (any center move) always
- * refreshes, but a *centered* zoom refreshes only once the magnification has
- * changed by at least `zoomFraction` (e.g. 0.2 = 20%) since the last refresh.
+ * Recomputing the render budget + re-hydrating on every tiny camera change causes
+ * constant loading churn. This gates the refresh on a single sensitivity
+ * `fraction` (e.g. 0.2 = 20%): refresh once EITHER
+ *   - the zoom magnification changed by >= the fraction (zoom is logarithmic, so
+ *     a 20% change is `log2(1.2)` ≈ 0.263 zoom levels), OR
+ *   - the center moved by >= the fraction of the viewport extent (world units).
+ * Skip only when BOTH are below threshold. Covering pan too is what actually
+ * suppresses scroll-wheel zoom (which shifts the center toward the cursor) — a
+ * zoom-only gate would still refresh on its center drift.
  *
- * Zoom is logarithmic (one level = 2x linear magnification), so a 20% change is
- * `log2(1.2)` ≈ 0.263 zoom levels. Scroll-wheel zoom shifts the center toward the
- * cursor, so it counts as a pan and still refreshes — this is the deliberate
- * "zoom-only" hysteresis: it quantizes centered zooms (buttons, pinch) without
- * touching pan behavior.
+ * `viewportExtent` is a world-unit scale for the pan threshold (the viewport
+ * diagonal); when it is unknown (<= 0) any pan refreshes, which is the safe
+ * default.
  */
 export function cameraRefreshNeeded(
   current: { zoom: number; center: IGeoJSPosition },
   last: { zoom: number; center: IGeoJSPosition } | null,
-  zoomFraction: number,
+  fraction: number,
+  viewportExtent: number,
 ): boolean {
   if (!last || !current.center || !last.center) {
     return true;
   }
-  // A pan (any center movement) always refreshes.
+  // Pan: refresh if the center moved by >= fraction of the viewport extent.
   if (
     current.center.x !== last.center.x ||
     current.center.y !== last.center.y
   ) {
-    return true;
+    if (!(viewportExtent > 0)) {
+      return true; // can't scale the move → refresh on any pan (safe)
+    }
+    const panDistance = Math.hypot(
+      current.center.x - last.center.x,
+      current.center.y - last.center.y,
+    );
+    if (panDistance >= fraction * viewportExtent) {
+      return true;
+    }
   }
-  // Centered zoom: refresh only past the magnification threshold.
-  return Math.abs(current.zoom - last.zoom) >= Math.log2(1 + zoomFraction);
+  // Zoom: refresh only past the magnification threshold.
+  return Math.abs(current.zoom - last.zoom) >= Math.log2(1 + fraction);
 }
 
 export function recenterCameraInfo(

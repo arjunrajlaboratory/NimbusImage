@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status (2026-06-22):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **density-adaptive render budget + zoom hysteresis + restyle throttle (C4)** — the render/hydration budget is now **size-gated** (datasets ≤ `maxVisible` cap render fully at every zoom) and, above the cap, set by a **density-derived** zoomed-out floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K — a readable density map instead of a solid blob) that **doubles per zoom level** up to the cap (`visibilityBudgetForZoom`); a **zoom hysteresis** (`cameraRefreshNeeded`, `zoomRefreshFraction` 0.2) skips the refresh on sub-20% centered zooms to cut loading churn; `restyleAnnotations` is throttled like the draw path; and the render-coverage HUD is now viewport-relative ("Showing N of M in view · K loaded"). See section C4. **Still open / next:** C2 (zoom-aware hydration); infinite scroll (A3); B3 (streaming partial counts); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
+**Status (2026-06-22):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **density-adaptive render budget + zoom hysteresis + restyle throttle (C4)** — the render/hydration budget is now **size-gated** (datasets ≤ `maxVisible` cap render fully at every zoom) and, above the cap, set by a **density-derived** zoomed-out floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K — a readable density map instead of a solid blob) that **doubles per zoom level** up to the cap (`visibilityBudgetForZoom`); a **unified pan+zoom hysteresis** (`cameraRefreshNeeded`, `viewportRefreshFraction` 0.2) skips the refresh until either the zoom magnification or the pan distance (as a fraction of the viewport) crosses 20%, cutting loading churn; `restyleAnnotations` is throttled like the draw path; and the render-coverage HUD is now viewport-relative ("Showing N of M in view · K loaded"). See section C4. **Still open / next:** C2 (zoom-aware hydration); infinite scroll (A3); B3 (streaming partial counts); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
 
 ---
 
@@ -385,7 +385,7 @@ polygon) distinguishes it.
 - [x] Test and tune `maxVisible` (default 50,000) — **2026-06-22: now density-adaptive + size-gated** via `visibilityBudgetForZoom` (C4 above). The 50,000 is both the zoomed-in cap and the size gate (datasets ≤ it render fully). Above it, the effective budget starts at a density-derived floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K) and doubles per zoom level. Resolves the zoomed-out visual noise from the full 4px stroke.
 - [x] Test and tune `maxHydrated` (default 20,000) — scaled by the same zoom factor as `maxVisible` (C4). Fewer shapes hydrated/drawn when zoomed out (where they look like dots anyway).
 - [x] **Zoom-adaptive `maxVisible`** — DONE 2026-06-22 (C4 above). Addresses both zoomed-out readability and per-frame draw cost.
-- [x] Consider making thresholds configurable via UI settings panel — all live in `visibilityConfig` and are editable in `UISettings.vue` (incl. the new `coverageTarget` and `zoomRefreshFraction`).
+- [x] Consider making thresholds configurable via UI settings panel — all live in `visibilityConfig` and are editable in `UISettings.vue` (incl. the new `coverageTarget` and `viewportRefreshFraction`).
 - [ ] Evaluate whether size-based hydration ranking (largest first) is the right heuristic vs. alternatives (density, distance to viewport center, user focus area)
 - [ ] Profile `updateVisibilityAndHydration` with 100K+ annotations to identify bottlenecks
 - [x] **Debounce/throttle the draw+restyle path** — DONE 2026-06-22 (C4): `restyleAnnotations` is now throttled (the draw path already was); the zoom-adaptive budget cuts the per-frame feature count (10× fewer when fully zoomed out) which is the main pan-lock remedy.
@@ -790,14 +790,17 @@ Xenium dataset.
     ~18px), under-rendering resolvable cells (~1.9K of 11K at zoom 3) — the opposite of "more when
     zoomed in." So density sets only the zoomed-out **floor**; the geometric doubling provides the
     ramp.
-  - **Zoom hysteresis.** Recomputing the budget + re-hydrating on every tiny zoom causes constant
-    loading churn. Pure helper `cameraRefreshNeeded` ([`src/utils/camera.ts`](../src/utils/camera.ts))
-    gates the camera-driven refresh: a **pan always refreshes**, but a **centered zoom** refreshes
-    only once the magnification changes by `zoomRefreshFraction` (default **0.2** = 20%, =
-    `log2(1.2)` ≈ 0.263 zoom levels) since the last refresh. (Scroll-wheel zoom shifts center toward
-    the cursor, so it counts as a pan and still refreshes — deliberate "zoom-only" hysteresis per the
-    design choice; it quantizes button/pinch zooms.) New config `zoomRefreshFraction` in
-    `UISettings.vue`. Tests: `camera.test.ts` (+6).
+  - **Unified pan + zoom hysteresis.** Recomputing the budget + re-hydrating on every tiny camera
+    change causes constant loading churn. Pure helper `cameraRefreshNeeded`
+    ([`src/utils/camera.ts`](../src/utils/camera.ts)) gates the camera-driven refresh on a single
+    sensitivity `viewportRefreshFraction` (default **0.2** = 20%): refresh once **either** the zoom
+    magnification changed by ≥ the fraction (= `log2(1.2)` ≈ 0.263 zoom levels) **or** the center
+    moved by ≥ the fraction of the viewport extent (world-unit diagonal of `gcsBounds`, computed by a
+    `viewportExtent` helper in `AnnotationViewer.vue`); skip only when **both** are below threshold.
+    Covering pan too is what suppresses scroll-wheel zoom (which shifts center toward the cursor) — a
+    zoom-only gate would still refresh on that center drift. (This started as zoom-only; the unified
+    variant was the agreed follow-up.) New config `viewportRefreshFraction` in `UISettings.vue`.
+    Tests: `camera.test.ts` (+9).
   - **Restyle throttle.** `restyleAnnotations` iterates every drawn feature and redraws the layer,
     but (unlike the already-throttled `drawAnnotations`) it was uncoalesced — an opacity-slider drag
     or rapid selection over a dense field restyled all features per input tick. Now wrapped in
@@ -816,12 +819,14 @@ Xenium dataset.
     shown⊂in-view⊂total segmented bar. Option 3 was chosen as the clearest compact form.*
 
   **Verified in-browser (real reloads):** 708K Xenium at zoom 0 → budget **10,226** (density floor,
-  cov 0.17), HUD reads `Showing 10,226 of 708,764 in view · 708,983 loaded`; a centered zoom of
-  Δ0.2 (< 0.263) is **skipped** (camera watcher fires, no visibility update), Δ0.6 refreshes and the
-  budget ramps to **15,505** (= floor × 2^0.6). The 26K HCR dataset renders **fully** (21,538 of
-  21,538 in view; all 26,041 current-frame stubs) with the indicator **hidden** — the size gate, so
-  mid-size datasets are never thinned. Tune via `coverageTarget` (lower = sparser overview) and
-  `zoomRefreshFraction` (higher = fewer refreshes while zooming).
+  cov 0.17), HUD reads `Showing 10,226 of 708,764 in view · 708,983 loaded`. Hysteresis (viewport
+  extent ≈ 59,513 world units → pan threshold ≈ 11,903): a centered zoom Δ0.2 (< 0.263) is
+  **skipped** and a small pan (0.1× extent) is **skipped** (camera watcher fires, no visibility
+  update), while a zoom Δ0.6 and a pan of 0.4× extent each **refresh** (budget ramps to **15,505** =
+  floor × 2^0.6 on the zoom). The 26K HCR dataset renders **fully** (21,538 of 21,538 in view; all
+  26,041 current-frame stubs) with the indicator **hidden** — the size gate, so mid-size datasets are
+  never thinned. Tune via `coverageTarget` (lower = sparser overview) and `viewportRefreshFraction`
+  (higher = fewer refreshes while navigating).
 - **C3 — Hydrate-on-selection via backend (DONE 2026-06-19).** Selecting or
   navigating to a stub not in the hydration cache now triggers a one-off hydrate
   for that id, so it renders as a full shape immediately instead of a dot. New
@@ -965,9 +970,9 @@ the row-click navigation fix and C3 hydrate-on-selection (section C); **D Stage 
 complete: no code path loads the full property-value map in lazy mode); **C1**
 (debounce/AbortController on the hydration fetch); **B1 + B2** (stub-fetch progress bar
 + per-query list feedback); the **stub circle size/stroke/fill match** (2026-06-22); and
-**C4 / density-adaptive render budget + zoom hysteresis + restyle throttle + viewport-relative
-indicator** (2026-06-22 — size-gated density-derived budget that doubles per zoom level; pans
-always refresh but sub-20% centered zooms are skipped; mid-size datasets render fully).
+**C4 / density-adaptive render budget + unified pan+zoom hysteresis + restyle throttle +
+viewport-relative indicator** (2026-06-22 — size-gated density-derived budget that doubles per zoom
+level; the refresh is skipped until either zoom or pan crosses 20%; mid-size datasets render fully).
 **Remaining, recommended order:** **C2** (zoom-aware hydration — unexpanded bounds for the
 hydration split; note C4 already computes the unexpanded split for the indicator counts, so
 the bounds are readily available) → **A3 / infinite scroll** (deep-page residual) → **B3**
