@@ -1452,11 +1452,12 @@ export type THydrationMode = "shapes" | "dots";
 
 export interface IVisibilityConfig {
   stubThreshold: number; // Dataset annotation count above which stub-only (lazy) mode activates: stubs are fetched and coordinates/property values load on demand. Independent of the render budget (maxVisible).
-  maxVisible: number; // Max annotations to render (stubs or shapes) — the cap when fully zoomed in
+  maxVisible: number; // Max annotations to render (stubs or shapes) — the cap when fully zoomed in. Datasets at or below this render fully at every zoom (the size gate).
   maxHydrated: number; // Max annotations to keep hydrated per visibility update — the cap when fully zoomed in
   hydrationCacheCap: number; // Total cap on the hydration cache (accumulates across updates; LRU-evicts beyond cap, protecting selected)
   globalThreshold: boolean; // If true, threshold applies to total frame annotations across all layers
-  zoomedOutFraction: number; // Fraction of maxVisible/maxHydrated rendered when fully zoomed out; the budget doubles per zoom level up to the cap. 1 disables zoom scaling.
+  coverageTarget: number; // Fraction of the screen the rendered dots may cover when fully zoomed out. Sets the zoomed-out floor from annotation size + screen; the budget doubles per zoom level up to maxVisible.
+  zoomRefreshFraction: number; // Centered-zoom hysteresis: skip the camera-driven refresh until the magnification changes by this fraction (e.g. 0.2 = 20%). Pans always refresh.
 }
 
 export function isHydratedAnnotation(

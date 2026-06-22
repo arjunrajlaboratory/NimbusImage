@@ -58,8 +58,8 @@
         }"
       />
       <v-text-field
-        v-model.number="zoomedOutFraction"
-        label="Zoomed-out budget fraction"
+        v-model.number="coverageTarget"
+        label="Zoomed-out coverage target"
         type="number"
         step="0.05"
         min="0.01"
@@ -69,9 +69,26 @@
         class="mb-2"
         v-description="{
           section: 'Interface settings',
-          title: 'Zoomed-out budget fraction',
+          title: 'Zoomed-out coverage target',
           description:
-            'Fraction of the render/hydration budget used when fully zoomed out (where dense fields collapse into noise). The budget doubles per zoom level up to the full cap. Set to 1 to disable zoom scaling.',
+            'Fraction of the screen the rendered dots may cover when fully zoomed out (only for datasets larger than the render cap). Lower = sparser/cleaner overview. The budget doubles per zoom level up to the cap.',
+        }"
+      />
+      <v-text-field
+        v-model.number="zoomRefreshFraction"
+        label="Zoom refresh threshold"
+        type="number"
+        step="0.05"
+        min="0.01"
+        max="2"
+        density="compact"
+        hide-details
+        class="mb-2"
+        v-description="{
+          section: 'Interface settings',
+          title: 'Zoom refresh threshold',
+          description:
+            'How much a centered zoom must change (e.g. 0.2 = 20%) before the view re-renders and re-hydrates. Higher = fewer refreshes / less loading churn while zooming. Pans always refresh.',
         }"
       />
       <v-text-field
@@ -148,11 +165,19 @@ const hydrationCacheCap = computed({
   },
 });
 
-const zoomedOutFraction = computed({
-  get: () => annotationStore.visibilityConfig.zoomedOutFraction,
+const coverageTarget = computed({
+  get: () => annotationStore.visibilityConfig.coverageTarget,
   set: (value: number) => {
     if (value > 0 && value <= 1)
-      annotationStore.setVisibilityConfig({ zoomedOutFraction: value });
+      annotationStore.setVisibilityConfig({ coverageTarget: value });
+  },
+});
+
+const zoomRefreshFraction = computed({
+  get: () => annotationStore.visibilityConfig.zoomRefreshFraction,
+  set: (value: number) => {
+    if (value > 0)
+      annotationStore.setVisibilityConfig({ zoomRefreshFraction: value });
   },
 });
 

@@ -3,10 +3,10 @@
     v-if="coverage.show"
     class="render-coverage"
     aria-live="polite"
-    :title="`${coverage.label} annotations rendered. Only a subset is drawn at a time for performance — pan, zoom, or filter to bring more into view.`"
+    :title="`${coverage.shownLabel} drawn — only a subset is rendered at a time for performance. Zoom in or filter to see more. ${coverage.totalLabel} in this dataset.`"
   >
     <span class="render-coverage__label">
-      {{ coverage.label }} <span class="render-coverage__suffix">rendered</span>
+      Showing {{ coverage.shownLabel }}
     </span>
     <div class="render-coverage__track">
       <div
@@ -14,6 +14,7 @@
         :style="{ width: `${(coverage.fraction * 100).toFixed(1)}%` }"
       />
     </div>
+    <span class="render-coverage__suffix">{{ coverage.totalLabel }}</span>
   </div>
 </template>
 
@@ -22,19 +23,16 @@ import { computed } from "vue";
 import annotationStore from "@/store/annotation";
 import { computeRenderCoverage } from "@/utils/renderCoverage";
 
-// displayed = annotations currently rendered (the visibility budget); loaded =
-// all stubs held in memory. The indicator appears only while the render budget
-// is actively downsampling the current view (displayed saturated at the budget);
-// a mid-size dataset that fits under the budget renders fully and stays hidden.
-// Compares against effectiveMaxVisible (the zoom-scaled budget the last update
-// applied), not the static config cap, so it stays accurate as the budget
-// shrinks when zoomed out.
+// Shows how much of what's in the CURRENT VIEWPORT is actually drawn (the "am I
+// seeing everything here?" metric), with the dataset total as context. Appears
+// only while some in-view annotations are downsampled away; when everything in
+// view is rendered (mid-size dataset, or zoomed in far enough) it stays hidden.
 const coverage = computed(() =>
   computeRenderCoverage({
     stubOnlyMode: annotationStore.stubOnlyMode,
-    displayed: annotationStore.visibleAnnotationIds.size,
+    viewportShown: annotationStore.viewportRenderedCount,
+    viewportTotal: annotationStore.viewportAnnotationCount,
     loaded: annotationStore.annotationStubs.size,
-    maxVisible: annotationStore.effectiveMaxVisible,
   }),
 );
 </script>

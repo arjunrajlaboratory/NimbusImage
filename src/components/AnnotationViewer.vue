@@ -114,6 +114,7 @@ import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/polygonSlice";
 import { stubPerf } from "@/utils/stubPerf";
 import { visibilityBudgetForZoom } from "@/utils/visibilityBudget";
+import { cameraRefreshNeeded } from "@/utils/camera";
 import RBush from "rbush";
 
 // Module-level helpers
@@ -3257,6 +3258,15 @@ watch(selectedToolConfiguration, () => {
   watchTool();
 });
 
+// The stub circle's stroke width (px), matching getStubStyleFromBaseStyle. The
+// stroke dominates a dot's on-screen footprint when zoomed out (cells are
+// sub-pixel there), so it drives the density-derived render budget.
+const STUB_STROKE_PX = 4;
+
+// Hysteresis baseline: the camera state at the last visibility refresh. Pans
+// always refresh; a centered zoom refreshes only past zoomRefreshFraction.
+let lastRefreshCamera: { zoom: number; center: IGeoJSPosition } | null = null;
+
 // Visibility and hydration updates
 function updateVisibility() {
   const ids = (
@@ -3266,16 +3276,24 @@ function updateVisibility() {
   ).map((a: IAnnotation) => a.id);
   // Zoom-adaptive budget (C4): render fewer objects when zoomed out (where they
   // overlap into noise and the heavy redraw briefly locks the UI), ramping up to
-  // the full configured cap as the user zooms in.
+  // the full configured cap as the user zooms in. The zoomed-out floor is
+  // derived from on-screen annotation density (size + stroke vs screen).
   const map = props.annotationLayer.map();
-  const { maxVisible, maxHydrated, zoomedOutFraction } =
+  const { maxVisible, maxHydrated, coverageTarget } =
     annotationStore.visibilityConfig;
+  const zoomMin = map.zoomRange().min;
+  const size = map.size();
   const budget = visibilityBudgetForZoom({
     zoom: map.zoom(),
-    zoomMin: map.zoomRange().min,
+    zoomMin,
+    avgRadius: annotationStore.averageStubRadius,
+    unitsPerPixelAtZoomMin: map.unitsPerPixel(zoomMin),
+    screenArea: size.width * size.height,
+    strokePx: STUB_STROKE_PX,
+    coverageTarget,
     maxVisible,
     maxHydrated,
-    zoomedOutFraction,
+    loaded: annotationStore.annotationStubs.size,
   });
   annotationStore.updateVisibilityAndHydration({
     filteredIds: ids,
@@ -3284,6 +3302,12 @@ function updateVisibility() {
     maxVisible: budget.maxVisible,
     maxHydrated: budget.maxHydrated,
   });
+  // Record the hysteresis baseline so the camera watcher can skip sub-threshold
+  // centered-zoom changes until the next genuine refresh.
+  lastRefreshCamera = {
+    zoom: store.cameraInfo.zoom,
+    center: store.cameraInfo.center,
+  };
   // Property-value lazy loading (D): load values for the now-visible set in lazy
   // mode. Property filtering is now applied server-side (Stage 2), so even with
   // an active filter we only need values for the visible subset here.
@@ -3297,11 +3321,24 @@ const updateVisibilityDebounced = debounce(updateVisibility, 250);
 // to avoid flash of empty frame while debounce waits
 watch([filteredAnnotations, xy, z, time], updateVisibility);
 
-// Camera changes (pan/zoom) are debounced since they fire rapidly
+// Camera changes (pan/zoom) are debounced since they fire rapidly. Zoom
+// hysteresis (C4): a pan always refreshes, but a centered zoom is skipped until
+// the magnification changes by zoomRefreshFraction — avoids constant re-render +
+// re-hydration churn on small zoom nudges.
 watch(
   () => store.cameraInfo,
   () => {
     stubPerf.trackCameraUpdate();
+    const cam = store.cameraInfo;
+    if (
+      !cameraRefreshNeeded(
+        { zoom: cam.zoom, center: cam.center },
+        lastRefreshCamera,
+        annotationStore.visibilityConfig.zoomRefreshFraction,
+      )
+    ) {
+      return;
+    }
     updateVisibilityDebounced();
   },
 );

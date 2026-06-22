@@ -173,14 +173,19 @@ export class Annotations extends VuexModule {
     maxHydrated: 20000,
     hydrationCacheCap: 40000,
     globalThreshold: true,
-    zoomedOutFraction: 0.1,
+    coverageTarget: 0.17,
+    zoomRefreshFraction: 0.2,
   };
 
-  // The maxVisible the most recent visibility update actually applied (the
-  // zoom-scaled budget, not the static config cap). The render-coverage
-  // indicator compares the displayed count against this so it reflects the
-  // effective downsampling at the current zoom. Defaults to the config cap.
-  effectiveMaxVisible = 50000;
+  // Average annotation radius (world units) over the loaded stubs, computed once
+  // when stubs are set. Feeds the density-derived zoomed-out render budget.
+  averageStubRadius = 0;
+
+  // Counts within the ACTUAL (unexpanded) viewport on the current frame, set by
+  // each visibility update. The render-coverage indicator reads these to show
+  // how much of what's in view is actually drawn.
+  viewportAnnotationCount = 0;
+  viewportRenderedCount = 0;
 
   @Mutation
   setVisibilityConfig(config: Partial<IVisibilityConfig>) {
@@ -188,8 +193,14 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
-  setEffectiveMaxVisible(value: number) {
-    this.effectiveMaxVisible = value;
+  setAverageStubRadius(value: number) {
+    this.averageStubRadius = value;
+  }
+
+  @Mutation
+  setViewportCounts(counts: { total: number; rendered: number }) {
+    this.viewportAnnotationCount = counts.total;
+    this.viewportRenderedCount = counts.rendered;
   }
 
   get isHydrated() {
@@ -810,6 +821,8 @@ export class Annotations extends VuexModule {
     const spatialItems: { id: string; x: number; y: number }[] = new Array(
       stubs.length,
     );
+    let radiusSum = 0;
+    let radiusCount = 0;
     for (let idx = 0; idx < stubs.length; ++idx) {
       const stub = stubs[idx];
       newStubs.set(stub.id, stub);
@@ -819,9 +832,15 @@ export class Annotations extends VuexModule {
         x: stub.centroid.x,
         y: stub.centroid.y,
       };
+      if (typeof stub.estimatedRadius === "number") {
+        radiusSum += stub.estimatedRadius;
+        radiusCount += 1;
+      }
     }
     this.annotationStubs = markRaw(newStubs);
     this.annotationCentroids = markRaw(newCentroids);
+    // Mean radius feeds the density-derived zoomed-out render budget.
+    this.averageStubRadius = radiusCount > 0 ? radiusSum / radiusCount : 0;
     annotationSpatialIndex.bulkLoad(spatialItems);
   }
 
@@ -2158,7 +2177,6 @@ export class Annotations extends VuexModule {
     const { filteredIds, gcsBounds, currentFrameLocation } = params;
     const maxVisible = params.maxVisible ?? this.visibilityConfig.maxVisible;
     const maxHydrated = params.maxHydrated ?? this.visibilityConfig.maxHydrated;
-    this.setEffectiveMaxVisible(maxVisible);
 
     // Step 1: Split filteredIds by frame
     const currentFrameIds: string[] = [];
@@ -2177,6 +2195,15 @@ export class Annotations extends VuexModule {
     // Step 2: Split current-frame IDs by viewport
     let inViewportIds = currentFrameIds;
     let outOfViewportIds: string[] = [];
+    // The raw (unexpanded) viewport — what the user actually sees — drives the
+    // render-coverage indicator counts below. The expanded box drives
+    // visibility/hydration so panning has pre-loaded annotations ready.
+    let rawBounds: {
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+    } | null = null;
 
     if (gcsBounds && gcsBounds.length === 4) {
       let minX = Infinity,
@@ -2189,6 +2216,7 @@ export class Annotations extends VuexModule {
         maxX = Math.max(maxX, pt.x);
         maxY = Math.max(maxY, pt.y);
       }
+      rawBounds = { minX, minY, maxX, maxY };
       // Expand bounds by 50% on each side so panning has pre-hydrated annotations
       const width = maxX - minX;
       const height = maxY - minY;
@@ -2243,6 +2271,30 @@ export class Annotations extends VuexModule {
 
     // Step 5: Apply visibility
     this.setVisibleAnnotationIds(visibleIds);
+
+    // Step 5b: Render-coverage counts for the ACTUAL (unexpanded) viewport — how
+    // many annotations are in view vs how many of those are drawn. Drives the
+    // render-coverage indicator.
+    const actualInView = rawBounds
+      ? annotationSpatialIndex.splitByViewport(
+          currentFrameIds,
+          rawBounds.minX,
+          rawBounds.minY,
+          rawBounds.maxX,
+          rawBounds.maxY,
+        ).inViewportIds
+      : currentFrameIds;
+    const visibleSet = new Set(visibleIds);
+    let viewportRendered = 0;
+    for (const id of actualInView) {
+      if (visibleSet.has(id)) {
+        viewportRendered += 1;
+      }
+    }
+    this.setViewportCounts({
+      total: actualInView.length,
+      rendered: viewportRendered,
+    });
 
     // Step 6: Determine hydration mode
     this.setHydrationMode(idsToHydrate.length > 0 ? "shapes" : "dots");

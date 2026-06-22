@@ -108,6 +108,7 @@ const mockAnnotationLayer = () => {
       unitsPerPixel: vi.fn().mockReturnValue(1),
       zoom: vi.fn().mockReturnValue(5),
       zoomRange: vi.fn().mockReturnValue({ min: 0, max: 10 }),
+      size: vi.fn().mockReturnValue({ width: 1640, height: 877 }),
       bounds: vi.fn().mockReturnValue({
         left: 0,
         top: 0,
@@ -518,8 +519,10 @@ describe("AnnotationViewer", () => {
       maxHydrated: 5000,
       hydrationCacheCap: 10000,
       globalThreshold: true,
-      zoomedOutFraction: 0.1,
+      coverageTarget: 0.15,
+      zoomRefreshFraction: 0.2,
     };
+    mockedAnnotationStore.averageStubRadius = 0;
     mockedAnnotationStore.updateVisibilityAndHydration = vi.fn();
 
     mockedPropertiesStore.displayWorkerPreview = false;
