@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status (2026-06-22):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **Still open / next:** C2 (zoom-aware hydration); **draw/restyle debouncing** (rapid pans can briefly lock the UI — the C1 fetch is debounced but the draw path isn't); **zoom-adaptive `maxVisible`** (zoomed-out views are noisy with the full-stroke stubs); progress indicators (B3 only — B1 stub-fetch bar + B2 per-query list feedback are done); infinite scroll (A3); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
+**Status (2026-06-22):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **zoom-adaptive `maxVisible` + restyle throttle (C4)** — the visibility/hydration budget now scales with map zoom (`visibilityBudgetForZoom`): ~`zoomedOutFraction`×cap when zoomed out (default 0.1 → 5,000 of 708K, a readable density map instead of a solid blob), doubling per zoom level up to the cap; `restyleAnnotations` is now throttled like the draw path (see "RESOLVED (2026-06-22): zoom-adaptive maxVisible + restyle throttle" / section C4). **Still open / next:** C2 (zoom-aware hydration); infinite scroll (A3); B3 (streaming partial counts); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
 
 ---
 
@@ -382,13 +382,13 @@ polygon) distinguishes it.
 ## To-Do List
 
 ### Threshold and Hydration Refinement
-- [ ] Test and tune `maxVisible` (default 50,000) — balance between coverage and rendering performance. **Lowering it when zoomed out would also reduce visual noise** now that stubs use the full 4px stroke (see "stub circle size, stroke, and fill" above).
-- [ ] Test and tune `maxHydrated` (default 20,000) — how many shapes to render before performance degrades
-- [ ] **Zoom-adaptive `maxVisible`** — render fewer objects when zoomed out (where they overlap into noise) and more when zoomed in. Would address both the zoomed-out readability and the post-pan UI lock below.
-- [ ] Consider making thresholds configurable via UI settings panel (they already live in `visibilityConfig`)
+- [x] Test and tune `maxVisible` (default 50,000) — **2026-06-22: now zoom-adaptive** via `visibilityBudgetForZoom` (C4 above). The 50,000 stays the zoomed-in cap; the effective budget starts at `zoomedOutFraction`×cap (default 0.1 → 5,000) when fully zoomed out and doubles per zoom level. Resolves the zoomed-out visual noise from the full 4px stroke.
+- [x] Test and tune `maxHydrated` (default 20,000) — scaled by the same zoom factor as `maxVisible` (C4). Fewer shapes hydrated/drawn when zoomed out (where they look like dots anyway).
+- [x] **Zoom-adaptive `maxVisible`** — DONE 2026-06-22 (C4 above). Addresses both zoomed-out readability and per-frame draw cost.
+- [x] Consider making thresholds configurable via UI settings panel — all live in `visibilityConfig` and are editable in `UISettings.vue` (incl. the new `zoomedOutFraction`).
 - [ ] Evaluate whether size-based hydration ranking (largest first) is the right heuristic vs. alternatives (density, distance to viewport center, user focus area)
 - [ ] Profile `updateVisibilityAndHydration` with 100K+ annotations to identify bottlenecks
-- [ ] **Debounce/throttle the draw+restyle path** (not just the C1 hydration fetch) — rapid repeated pans can briefly lock the UI while GeoJS rebuilds features. See section C and the follow-up note above.
+- [x] **Debounce/throttle the draw+restyle path** — DONE 2026-06-22 (C4): `restyleAnnotations` is now throttled (the draw path already was); the zoom-adaptive budget cuts the per-frame feature count (10× fewer when fully zoomed out) which is the main pan-lock remedy.
 - [ ] Test hydration/dehydration memory churn during rapid pan/zoom
 
 ### Styling Adjustments
@@ -757,13 +757,42 @@ Xenium dataset.
 - **C2 — Zoom-aware hydration:** Steps 2–4 use the 2× expanded viewport for *both*
   visibility and hydration, so zooming in doesn't re-prioritize the newly-visible region.
   Simplest fix: unexpanded bounds for the hydration split, expanded only for visibility.
-- **C4 — Debounce/throttle the draw + restyle path (observed 2026-06-22, not done).**
-  C1 debounced the hydration *fetch*, but rapid repeated pans can still briefly **lock the
-  UI** while GeoJS rebuilds and redraws features (`updateVisibilityAndHydration` →
-  `restyleAnnotations`/`drawAnnotations`). That render stage is distinct from the fetch and
-  isn't coalesced; it likely needs its own debounce/throttle (or a `requestAnimationFrame`
-  batch). A zoom-adaptive `maxVisible` (fewer rendered objects when zoomed out) would also
-  reduce the per-frame draw cost. Lower priority than C2 but the most user-visible jank.
+- **C4 — Throttle the restyle path + zoom-adaptive `maxVisible` (DONE 2026-06-22).** Two
+  changes addressed the post-pan UI lock and the zoomed-out noise:
+  - **Zoom-adaptive render/hydration budget (the headline).** The visibility budget is now
+    scaled by the live map zoom: a new pure helper `visibilityBudgetForZoom`
+    ([`src/utils/visibilityBudget.ts`](../src/utils/visibilityBudget.ts)) returns an
+    effective `{maxVisible, maxHydrated}` that starts at `zoomedOutFraction` of the cap when
+    fully zoomed out and **doubles per zoom level** up to the configured cap. (On-screen
+    annotation count shrinks ~4× per level, so a flat cap is far too dense zoomed out.)
+    `updateVisibility` (`AnnotationViewer.vue`) reads `map.zoom()`/`map.zoomRange().min`,
+    computes the budget, and passes it as overrides into `updateVisibilityAndHydration`
+    (new optional `maxVisible`/`maxHydrated` params, fall back to config). The action records
+    the applied budget in new state `effectiveMaxVisible`, which `RenderCoverageIndicator`
+    now reads (instead of the static cap) so the HUD stays accurate. New config field
+    `visibilityConfig.zoomedOutFraction` (default **0.1**; `1` disables scaling) exposed in
+    `UISettings.vue`. The static cap is still used for the **stub-system gate**
+    (`needsStubSystem` in `layerAnnotations`) — that decides whether a dataset needs lazy
+    mode at all and must not depend on zoom. Tests: `visibilityBudget.test.ts` (8).
+    This both cuts per-frame draw cost (fewer features → the pan-lock remedy the note below
+    predicted) and fixes zoomed-out readability.
+  - **Restyle throttle.** `restyleAnnotations` iterates every drawn feature and redraws the
+    layer, but (unlike the already-throttled `drawAnnotations`) it was uncoalesced — so an
+    opacity-slider drag or rapid selection/hover over a dense field restyled all features per
+    input tick. It's now wrapped in `throttle(…, THROTTLE)` (same 100 ms leading+trailing
+    pattern as the draw path) and the restyle watchers (`onAnnotationStateChanged`,
+    `onRestyleNeeded`) route through it. The draw path itself was already throttled, so no
+    second draw debounce was added.
+
+  **Verified in-browser on the 708K Xenium dataset (real reload):** at zoom 0 the budget is
+  5,000 (was 50,000) — the solid-red mush becomes a readable density map showing tissue
+  structure, HUD reads `5,000 / 708,983`; scroll-zooming in ramps the budget (zoom 2 →
+  20,000, zoom 4 → 50,000) and hydration renders full shapes (≈22–28K hydrated). The 26K HCR
+  dataset (zoomRange max 5) downsamples to 5,000 zoomed out (channel structure still clearly
+  readable) and renders all 26,146 by ~zoom 3. **Behavior change:** every lazy-mode dataset
+  (count > `stubThreshold`) now downsamples when zoomed out and resolves fully on zoom-in —
+  previously a mid-size lazy dataset that fit under the cap rendered fully at every zoom.
+  Tune via `zoomedOutFraction` (raise toward 1 for a gentler reduction; 1 = old behavior).
 - **C3 — Hydrate-on-selection via backend (DONE 2026-06-19).** Selecting or
   navigating to a stub not in the hydration cache now triggers a one-off hydrate
   for that id, so it renders as a full shape immediately instead of a dot. New
@@ -906,10 +935,12 @@ the row-click navigation fix and C3 hydrate-on-selection (section C); **D Stage 
 (server-side filtered drawing — the last wholesale-load path removed; the memory story is now
 complete: no code path loads the full property-value map in lazy mode); **C1**
 (debounce/AbortController on the hydration fetch); **B1 + B2** (stub-fetch progress bar
-+ per-query list feedback); and the **stub circle size/stroke/fill match** (2026-06-22).
-**Remaining, recommended order:** **C2** (zoom-aware hydration) → **C4 / zoom-adaptive
-`maxVisible`** (draw-path debounce + fewer rendered objects when zoomed out — fixes the
-post-pan UI lock and zoomed-out noise) → **A3 / infinite scroll** (deep-page residual) →
-**B3** (streaming partial counts — low value) → **D2–D5** (per-column loading, server
-aggregation for plots/panels, PV stubs, explicit LRU). D2–D5 are independent and can proceed
-in parallel.
++ per-query list feedback); the **stub circle size/stroke/fill match** (2026-06-22); and
+**C4 / zoom-adaptive `maxVisible` + restyle throttle** (2026-06-22 — fewer rendered objects
+when zoomed out, fixing the zoomed-out noise and cutting the per-frame draw cost behind the
+post-pan lock).
+**Remaining, recommended order:** **C2** (zoom-aware hydration — unexpanded bounds for the
+hydration split; pairs naturally with the zoom-adaptive budget just shipped) → **A3 /
+infinite scroll** (deep-page residual) → **B3** (streaming partial counts — low value) →
+**D2–D5** (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU).
+D2–D5 are independent and can proceed in parallel.

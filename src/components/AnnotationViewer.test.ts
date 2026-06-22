@@ -107,6 +107,7 @@ const mockAnnotationLayer = () => {
     map: vi.fn(() => ({
       unitsPerPixel: vi.fn().mockReturnValue(1),
       zoom: vi.fn().mockReturnValue(5),
+      zoomRange: vi.fn().mockReturnValue({ min: 0, max: 10 }),
       bounds: vi.fn().mockReturnValue({
         left: 0,
         top: 0,
@@ -517,6 +518,7 @@ describe("AnnotationViewer", () => {
       maxHydrated: 5000,
       hydrationCacheCap: 10000,
       globalThreshold: true,
+      zoomedOutFraction: 0.1,
     };
     mockedAnnotationStore.updateVisibilityAndHydration = vi.fn();
 

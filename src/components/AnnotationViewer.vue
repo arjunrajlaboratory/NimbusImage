@@ -113,6 +113,7 @@ import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
 import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/polygonSlice";
 import { stubPerf } from "@/utils/stubPerf";
+import { visibilityBudgetForZoom } from "@/utils/visibilityBudget";
 import RBush from "rbush";
 
 // Module-level helpers
@@ -1479,6 +1480,13 @@ function restyleAnnotations() {
   props.annotationLayer.draw();
 }
 
+// C4: restyle iterates every drawn feature and redraws the layer, so rapid
+// restyle triggers (opacity-slider drag, fast selection/hover changes over a
+// dense field) can briefly lock the UI. Throttle it like the draw path — the
+// leading edge keeps the first change instant, the trailing edge coalesces a
+// burst into one final restyle with the latest state.
+const restyleAnnotationsThrottled = throttle(restyleAnnotations, THROTTLE);
+
 function pointNearPoint(
   selectionPosition: IGeoJSPosition,
   annotationPosition: IGeoJSPosition,
@@ -2531,7 +2539,7 @@ function onPrimaryChange() {
 }
 
 function onAnnotationStateChanged() {
-  restyleAnnotations();
+  restyleAnnotationsThrottled();
 }
 
 function onTimelapseModeChanged() {
@@ -2545,7 +2553,7 @@ function onDisplayedAnnotationsChange() {
 }
 
 function onRestyleNeeded() {
-  restyleAnnotations();
+  restyleAnnotationsThrottled();
 }
 
 function onUnrollChanged() {
@@ -3256,10 +3264,25 @@ function updateVisibility() {
       ? filteredAnnotations.value
       : annotationStore.annotationsForIteration
   ).map((a: IAnnotation) => a.id);
+  // Zoom-adaptive budget (C4): render fewer objects when zoomed out (where they
+  // overlap into noise and the heavy redraw briefly locks the UI), ramping up to
+  // the full configured cap as the user zooms in.
+  const map = props.annotationLayer.map();
+  const { maxVisible, maxHydrated, zoomedOutFraction } =
+    annotationStore.visibilityConfig;
+  const budget = visibilityBudgetForZoom({
+    zoom: map.zoom(),
+    zoomMin: map.zoomRange().min,
+    maxVisible,
+    maxHydrated,
+    zoomedOutFraction,
+  });
   annotationStore.updateVisibilityAndHydration({
     filteredIds: ids,
     gcsBounds: store.cameraInfo.gcsBounds,
     currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
+    maxVisible: budget.maxVisible,
+    maxHydrated: budget.maxHydrated,
   });
   // Property-value lazy loading (D): load values for the now-visible set in lazy
   // mode. Property filtering is now applied server-side (Stage 2), so even with

@@ -173,11 +173,23 @@ export class Annotations extends VuexModule {
     maxHydrated: 20000,
     hydrationCacheCap: 40000,
     globalThreshold: true,
+    zoomedOutFraction: 0.1,
   };
+
+  // The maxVisible the most recent visibility update actually applied (the
+  // zoom-scaled budget, not the static config cap). The render-coverage
+  // indicator compares the displayed count against this so it reflects the
+  // effective downsampling at the current zoom. Defaults to the config cap.
+  effectiveMaxVisible = 50000;
 
   @Mutation
   setVisibilityConfig(config: Partial<IVisibilityConfig>) {
     this.visibilityConfig = { ...this.visibilityConfig, ...config };
+  }
+
+  @Mutation
+  setEffectiveMaxVisible(value: number) {
+    this.effectiveMaxVisible = value;
   }
 
   get isHydrated() {
@@ -2138,9 +2150,15 @@ export class Annotations extends VuexModule {
     filteredIds: string[];
     gcsBounds?: IGeoJSPosition[];
     currentFrameLocation: IAnnotationLocation;
+    // Zoom-adaptive budget overrides (computed from the live map zoom in the
+    // component). Fall back to the static config caps when not supplied.
+    maxVisible?: number;
+    maxHydrated?: number;
   }) {
     const { filteredIds, gcsBounds, currentFrameLocation } = params;
-    const { maxVisible, maxHydrated } = this.visibilityConfig;
+    const maxVisible = params.maxVisible ?? this.visibilityConfig.maxVisible;
+    const maxHydrated = params.maxHydrated ?? this.visibilityConfig.maxHydrated;
+    this.setEffectiveMaxVisible(maxVisible);
 
     // Step 1: Split filteredIds by frame
     const currentFrameIds: string[] = [];

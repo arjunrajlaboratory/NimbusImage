@@ -58,6 +58,23 @@
         }"
       />
       <v-text-field
+        v-model.number="zoomedOutFraction"
+        label="Zoomed-out budget fraction"
+        type="number"
+        step="0.05"
+        min="0.01"
+        max="1"
+        density="compact"
+        hide-details
+        class="mb-2"
+        v-description="{
+          section: 'Interface settings',
+          title: 'Zoomed-out budget fraction',
+          description:
+            'Fraction of the render/hydration budget used when fully zoomed out (where dense fields collapse into noise). The budget doubles per zoom level up to the full cap. Set to 1 to disable zoom scaling.',
+        }"
+      />
+      <v-text-field
         v-model.number="hydrationCacheCap"
         label="Hydration cache cap"
         type="number"
@@ -128,6 +145,14 @@ const hydrationCacheCap = computed({
   set: (value: number) => {
     if (value > 0)
       annotationStore.setVisibilityConfig({ hydrationCacheCap: value });
+  },
+});
+
+const zoomedOutFraction = computed({
+  get: () => annotationStore.visibilityConfig.zoomedOutFraction,
+  set: (value: number) => {
+    if (value > 0 && value <= 1)
+      annotationStore.setVisibilityConfig({ zoomedOutFraction: value });
   },
 });
 

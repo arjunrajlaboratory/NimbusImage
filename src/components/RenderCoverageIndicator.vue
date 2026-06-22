@@ -24,15 +24,17 @@ import { computeRenderCoverage } from "@/utils/renderCoverage";
 
 // displayed = annotations currently rendered (the visibility budget); loaded =
 // all stubs held in memory. The indicator appears only while the render budget
-// is actively downsampling the current view (displayed saturated at
-// maxVisible); a mid-size dataset that fits under the budget renders fully and
-// stays hidden.
+// is actively downsampling the current view (displayed saturated at the budget);
+// a mid-size dataset that fits under the budget renders fully and stays hidden.
+// Compares against effectiveMaxVisible (the zoom-scaled budget the last update
+// applied), not the static config cap, so it stays accurate as the budget
+// shrinks when zoomed out.
 const coverage = computed(() =>
   computeRenderCoverage({
     stubOnlyMode: annotationStore.stubOnlyMode,
     displayed: annotationStore.visibleAnnotationIds.size,
     loaded: annotationStore.annotationStubs.size,
-    maxVisible: annotationStore.visibilityConfig.maxVisible,
+    maxVisible: annotationStore.effectiveMaxVisible,
   }),
 );
 </script>
