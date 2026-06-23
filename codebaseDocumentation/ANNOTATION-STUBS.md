@@ -1191,8 +1191,9 @@ min-heap + capture stub map: action ~1.9 s → ~0.31 s), **draw-path incremental
 
 ## Developer workflow notes & known infra issues
 
-Practical gotchas for anyone working on the stub/draw/hydration code, plus two infra problems that
-should be fixed (each in its own PR — they are pre-existing, not caused by the perf work).
+Practical gotchas for anyone working on the stub/draw/hydration code, plus two pre-existing infra
+problems (not caused by the perf work): the test-suite OOM is now **fixed**; the Vuex store HMR issue
+should be confirmed pre-existing and fixed in its own PR.
 
 ### In-browser profiling / verification workflow
 
@@ -1247,21 +1248,18 @@ handler**, so a hot re-import double-registers.
   re-register, or `hotUpdate`-style state preservation), so store edits hot-reload cleanly. This would
   meaningfully speed up backend-store iteration.
 
-### Infra issue 2 — `AnnotationViewer.test.ts` OOMs as a single file (fix)
+### Infra issue 2 — `AnnotationViewer.test.ts` OOM (FIXED 2026-06-23)
 
-`src/components/AnnotationViewer.test.ts` is ~4400 lines / 246 heavy tests, each mounting the component
-against a large `reactive()`-mocked store. Run as one isolated file it **OOMs the vitest worker**
-("Ineffective mark-compacts near heap limit"); this reproduces on a clean baseline, so it's pre-existing
-and not caused by the perf work. Today you can only run it in **targeted slices** (`vitest run … -t
-"<describe group>"`), which is fragile and hides regressions. Two `handleAnnotationCombine` tests also
-**fail when run in isolation** (order-dependent — they rely on state set up by earlier tests in a full
-run); also baseline-confirmed.
+`src/components/AnnotationViewer.test.ts` (~4400 lines / 246 tests, each mounting the component against
+a large `reactive()`-mocked store) used to **OOM the vitest worker** ("Ineffective mark-compacts near
+heap limit") when run as a single file — you could only run it in `-t` slices, which hid regressions.
 
-- **TODO (fix — own PR):** (a) **split the file** into several focused specs (e.g. by the existing
-  top-level `describe` groups: rendering, selection, tool handlers, timelapse, SAM, …) so each runs in
-  a worker without OOM and the whole suite runs in CI; and/or diagnose the leak — likely the
-  module-level `reactive()` store mock + per-test `mountComponent` not being torn down between tests
-  (check for missing `wrapper.unmount()` / `vi.restoreAllMocks()` in an `afterEach`). (b) **fix the two
-  order-dependent `handleAnnotationCombine` tests** so they pass standalone (set up their own selection
-  state instead of inheriting it). Until then, new draw/selection tests should be runnable via a
-  `-t` slice.
+**Root cause:** the `afterEach` had an empty `if (wrapper) {}` block — the intended `wrapper.unmount()`
+was never written. So all 246 `shallowMount`s (each with its GeoJS mock layers, watchers, and reactive
+subscriptions, attached via `attachTo` to a `document.body` div) accumulated across the run.
+
+**Fix:** `afterEach` now calls `wrapper.unmount()` and clears `document.body.innerHTML`. The full file
+runs in one process in ~2.7 s with all 246 passing (no `-t` slicing needed) — so no file split was
+required after all. The two `handleAnnotationCombine` tests that fail when run *in isolation* (they
+inherit selection state from earlier tests) pass in the full run; making them standalone-safe (set up
+their own state) is a minor optional cleanup, not blocking.

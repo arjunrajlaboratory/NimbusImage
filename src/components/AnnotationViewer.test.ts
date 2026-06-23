@@ -553,8 +553,14 @@ describe("AnnotationViewer", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    // Unmount the mounted component so its watchers, GeoJS layer refs, and
+    // reactive subscriptions are released. Without this the ~246 mounted
+    // instances accumulate across the run and OOM the vitest worker. Also clear
+    // the `attachTo` divs mountComponent appends to document.body.
     if (wrapper) {
+      wrapper.unmount();
     }
+    document.body.innerHTML = "";
   });
 
   // =========================================================================
@@ -1180,7 +1186,12 @@ describe("AnnotationViewer", () => {
         aLayer.removeAllAnnotations();
         for (const id of ["x1", "x2", "x3"]) {
           const f = mockGeoJSAnnotation("point");
-          f.options({ girderId: id, layerId: "layer1", color: null, isStub: false });
+          f.options({
+            girderId: id,
+            layerId: "layer1",
+            color: null,
+            isStub: false,
+          });
           aLayer.addAnnotation(f);
         }
         aLayer.removeAllAnnotations.mockClear();
