@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status (2026-06-22):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **density-adaptive render budget + zoom hysteresis + restyle throttle (C4)** — the render/hydration budget is now **size-gated** (datasets ≤ `maxVisible` cap render fully at every zoom) and, above the cap, set by a **density-derived** zoomed-out floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K — a readable density map instead of a solid blob) that **doubles per zoom level** up to the cap (`visibilityBudgetForZoom`); a **unified pan+zoom hysteresis** (`cameraRefreshNeeded`, `viewportRefreshFraction` 0.2) skips the refresh until either the zoom magnification or the pan distance (as a fraction of the viewport) crosses 20%, cutting loading churn; `restyleAnnotations` is throttled like the draw path; and the render-coverage HUD is now viewport-relative ("Showing N of M in view · K loaded"). See section C4. **C2 (zoom-aware hydration) was built, verified correct, then SHELVED** — it caused a felt rendering regression (zoom-in freeze) because it concentrates full-polygon shapes into the viewport and the draw path rebuilds all features per refresh; parked on branch `shelf/c2-zoom-aware-hydration` (commit `3e783c83`) pending the draw-path fix. See the C2 note in section C. **Next:** the **high-zoom-pan profiling pass is DONE (2026-06-22)** and re-sequenced the roadmap — see "Profiling pass: high-zoom pan (results)". At 708K each refresh blocks the main thread ~3.2–3.5 s, split between **two** co-dominant O(total-annotations) costs: the synchronous `selectRandomSubset` visibility/hydration **sort** (~1.2–2.0 s — a full O(N log N) sort to pick top-K) and a **double** full feature rebuild in `drawAnnotations` (~1.3–1.7 s; it fires twice per pan and is count-bound, not polygon-bound). New order: (1) **selection fix** — make `selectRandomSubset` O(N) / stably hash-ranked (highest leverage, no draw-code risk), (2) **coalesce the double draw**, (3) **draw-path incrementalization** done properly (the naive `clearOldAnnotations(false)` diff measured *slower* — ~88% visible-set churn per pan), then (4) **D3** (server aggregation for plots/panels), then (5) un-shelve C2 (decoupling "hydrated-in-memory" from "drawn-as-shape"). **Deferred to later PRs / lower priority:** A3 (infinite scroll — deep-page tail), D2 (per-column loading — unnecessary; loading all values for one *item* is fine), D4 (PV stubs), D5 (explicit LRU), B3 (streaming partial counts). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
+**Status (2026-06-23):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **density-adaptive render budget + zoom hysteresis + restyle throttle (C4)** — the render/hydration budget is now **size-gated** (datasets ≤ `maxVisible` cap render fully at every zoom) and, above the cap, set by a **density-derived** zoomed-out floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K — a readable density map instead of a solid blob) that **doubles per zoom level** up to the cap (`visibilityBudgetForZoom`); a **unified pan+zoom hysteresis** (`cameraRefreshNeeded`, `viewportRefreshFraction` 0.2) skips the refresh until either the zoom magnification or the pan distance (as a fraction of the viewport) crosses 20%, cutting loading churn; `restyleAnnotations` is throttled like the draw path; and the render-coverage HUD is now viewport-relative ("Showing N of M in view · K loaded"). See section C4. **C2 (zoom-aware hydration) was built, verified correct, then SHELVED** — it caused a felt rendering regression (zoom-in freeze) because it concentrates full-polygon shapes into the viewport and the draw path rebuilds all features per refresh; parked on branch `shelf/c2-zoom-aware-hydration` (commit `3e783c83`) pending the draw-path fix. See the C2 note in section C. **High-zoom pan perf — DONE (2026-06-23).** The profiling pass (2026-06-22) found each refresh blocked the main thread ~3.3 s at 708K, split between **two** co-dominant O(total-annotations) costs; both are now fixed and the per-pan main-thread block is **~3.3 s → ~0.82 s (~4×)**, verified in-browser: **(1) selection fix** — `selectRandomSubset` hashes each id once (was 2×/comparison), `selectLargestBySize` (new) replaces the Step-4 full sort with a bounded min-heap, and the action captures `this.annotationStubs` once instead of through the vuex proxy in hot loops (`updateVisibilityAndHydration` ~1.9 s → ~0.31 s); **(3) draw-path incrementalization** — the main draw now diffs via `clearOldAnnotations(false)` with a stub-aware keep-check (`drawnFeatureUnchanged`) + a hybrid bulk-clear for high churn (frame changes), so ~95 % of features survive a pan and `drawNewAnnotations` drops ~450 ms → ~55 ms; **(2) coalesce double draw** — subsumed by (3): the 2nd (hydrate-merge) draw is now an incremental diff that only updates the newly-hydrated features. See "Profiling pass: high-zoom pan (results)" and the "Draw-path incrementalization (DONE)" note in section C. **Next:** **D3** (server aggregation for plots/panels — last wholesale property-value consumer), then **un-shelve C2** (zoom-aware hydration; the draw path is now incremental, so the reason it froze is gone — consider decoupling "hydrated-in-memory" from "drawn-as-shape"). **Deferred to later PRs / lower priority:** A3 (infinite scroll — deep-page tail), D2 (per-column loading — unnecessary; loading all values for one *item* is fine), D4 (PV stubs), D5 (explicit LRU), B3 (streaming partial counts). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
 
 ---
 
@@ -462,6 +462,29 @@ refresh** and only bite at 708K scale.
 3. Frame/viewport split + `layerAnnotations` recompute — ~0.3–0.4 s.
 4. Hydrate **fetch** — async, ~0.04–0.35 s, mostly off the main thread (already debounced/abortable, C1).
 
+**Implemented (2026-06-23) — all three landed; per-pan main-thread block ~3.3 s → ~0.82 s (~4×),
+verified in-browser on 708K Xenium (zoom 2/5/6 + pan) and 26K HCR (full render + Z frame changes;
+feature count == visible count in every state, no orphans/stale).**
+- **Selection (#1):** `selectRandomSubset` now hashes each id once into a typed array + index sort
+  (was 2 hashes/comparison); `selectLargestBySize` (new, `utils/annotation.ts`) replaces the Step-4
+  hydration full-sort with a **bounded min-heap** (O(n log count), deterministic size+hash tie-break);
+  and `updateVisibilityAndHydration` captures `this.annotationStubs` once instead of resolving it
+  through the vuex-module action proxy ~1.4M times. Action **~1.9 s → ~0.31 s**.
+- **Draw incrementalization (#3):** `drawAnnotationsNoThrottle` routes through
+  `clearOldAnnotations(false)`, which keeps unchanged features and removes/recreates only the rest,
+  with a **hybrid** bulk-clear (`INCREMENTAL_BULK_CLEAR_FRACTION`) when most must go (frame change).
+  **The "~88 % churn" below was a measurement artifact, not real churn:** the old diff used
+  `getAnnotationFromId`, which returns undefined for non-hydrated stubs (the full `annotations[]` is
+  empty in stub-only mode), so it dropped every dot feature each pass. The new stub-aware keep-check
+  (`drawnFeatureUnchanged`) fixes it — true survivor rate on a high-zoom pan is **~95 %**, so
+  `drawNewAnnotations` drops **~450 ms → ~55 ms** and each draw is ~250 ms (was ~680 ms).
+- **Coalesce double draw (#2):** subsumed by #3 — the 2nd (hydrate-merge) draw is now an incremental
+  diff that only re-creates the newly-hydrated features (~250 ms), so the double draw is no longer a
+  perf problem. Literal "draw once" coalescing was not added (it would delay first paint for marginal
+  gain); revisit only if the residual second draw matters.
+
+The original recommendation (kept for the reasoning trail) follows.
+
 **Recommendation — the draw-path rebuild is real but is NOT the first lever, and the naive diff
 fix is wrong.** In priority order:
 1. **Fix the selection cost first (highest leverage, lowest risk, no draw-code changes).** Replace the
@@ -877,9 +900,9 @@ Xenium dataset.
   `git cherry-pick 3e783c83` (or `git show 3e783c83`) to resurrect it. It is *not* on
   `feature/stub-annotations` (reverted via `git reset` after the regression was confirmed).
 
-- **Draw-path incrementalization (a real but NOT the dominant rendering cost — PROFILED 2026-06-22).**
-  `drawAnnotations` (`AnnotationViewer.vue`) tears the whole GeoJS layer down and rebuilds *every*
-  visible feature on every refresh: `drawAnnotationsNoThrottle` calls `clearOldAnnotations(true, …)`
+- **Draw-path incrementalization (DONE 2026-06-23; profiled 2026-06-22).** *Was:*
+  `drawAnnotations` (`AnnotationViewer.vue`) tore the whole GeoJS layer down and rebuilt *every*
+  visible feature on every refresh: `drawAnnotationsNoThrottle` called `clearOldAnnotations(true, …)`
   → `removeAllAnnotations()`, then `drawNewAnnotations` re-creates all features via
   `createGeoJSAnnotation` + `addMultipleAnnotations`. (The snapshot of existing features used by the
   `excluded` skip is built *after* the `removeAllAnnotations`, so it is always empty — the rebuild is
@@ -893,20 +916,28 @@ Xenium dataset.
   - It is **not the largest per-refresh cost** — the synchronous `selectRandomSubset` visibility/
     hydration sort in `updateVisibilityAndHydration` (~1.2–2.0 s) is co-dominant or larger.
 
-  The codebase already has an **incremental diff path** that is unused by the main draw:
-  `clearOldAnnotations(false)` removes only features whose annotation actually changed
-  (color/layer/stub-state), and `drawNewAnnotations` already skips features that are still present (the
-  `excluded` check). **But naively routing the normal draw through it is a regression** — profiling
-  measured it *slower* (total draw 1.1–1.2 s vs 0.66–0.72 s): only ~6.2K of 50K features survive a pan
-  (≈88% visible-set churn), and the diff itself costs ~620 ms (per-feature reactive `.value` lookups +
-  one-by-one `removeAnnotation`, ~O(N²)). A real fix needs (a) a cheap viewport diff with no per-feature
-  reactive getter calls, (b) a batched/O(N) removal, and (c) a **stable visible set across pans** so
-  features persist — which depends on first making `selectRandomSubset` use a stable global hash ranking
-  (see the selection fix in the recommendation above). Also coalesce the **double draw** (visibility
-  update + hydrate merge) into one. Correctness edges to cover with TDD + in-browser: frame changes
-  (XY/Z/Time), stub→shape transitions, connections, and selection highlight. **Sequencing: do the
-  selection (`selectRandomSubset`) fix and the double-draw coalesce first — they are higher-leverage and
-  lower-risk — then incrementalize the draw.**
+  **As built:** `drawAnnotationsNoThrottle` now calls `clearOldAnnotations(false, false)` — the
+  existing incremental diff path — and the snapshot of surviving features feeds `drawNewAnnotations`,
+  whose `excluded` check then skips them so only genuinely-new features are created. Two fixes made the
+  diff a win (the earlier "naive flip is slower" finding was a *bug*, not fundamental):
+  - **Stub-aware keep-check (the bug).** The old `clearOldAnnotations(false)` decided "keep" via
+    `getAnnotationFromId`, which returns undefined for non-hydrated stubs (the full `annotations[]` is
+    empty in stub-only mode), so it dropped **every dot feature** each pass — that, not real churn, is
+    why only ~6.2K survived. The new pure helper `drawnFeatureUnchanged` (`utils/annotation.ts`) keys
+    off `layerData` (the renderData already in `layerAnnotations`): keep iff still displayed on the
+    layer, same color, same dot/shape state. True survivor rate on a high-zoom pan is **~95 %**.
+  - **Hybrid bulk-clear.** `removeAnnotation` is ~O(n) per call, so removing most features one-by-one
+    (a frame change turns the whole set over) would be ~O(n²). `clearOldAnnotations(false)` now
+    collects the removals first and, if they exceed `INCREMENTAL_BULK_CLEAR_FRACTION` (0.5) of the
+    drawn set, does a single `removeAllAnnotations` instead; below it, individual removals.
+
+  Result: `drawNewAnnotations` ~450 ms → ~55 ms, each draw ~250 ms (was ~680 ms). The **double draw**
+  is thereby coalesced in effect — the 2nd (hydrate-merge) draw only re-creates the newly-hydrated
+  features. Verified in-browser across pan/zoom and Z frame changes: drawn feature count == visible
+  count in every state (no orphans, duplicates, or stale features), no console errors. Tests:
+  `drawnFeatureUnchanged` (`annotationStubUtils.test.ts`, 7) + `clearOldAnnotations` keep/hybrid +
+  updated `drawAnnotationsNoThrottle` (`AnnotationViewer.test.ts`). Shipped with the selection fix in
+  commit `344d4d85`.
 - **C4 — Density-adaptive render budget + zoom hysteresis + restyle throttle (DONE 2026-06-22).**
   Three changes addressed the post-pan UI lock and the zoomed-out noise. The budget model went
   through one design iteration: an initial simple `zoomedOutFraction × cap` floor + doubling was
@@ -1113,42 +1144,37 @@ passes all 708,983 (nothing wrongly hidden) and `propertyValues` stays 0.
 - **D5 — Cache eviction:** LRU / frame-based eviction so the value map stays bounded when
   switching properties or frames.
 
-**Recommended order (updated 2026-06-22):** **DONE so far** — A (A2 + PV-driven queries);
+**Recommended order (updated 2026-06-23):** **DONE so far** — A (A2 + PV-driven queries);
 the row-click navigation fix and C3 hydrate-on-selection (section C); **D Stage 1**
 (viewport-scoped property values — wholesale load on open eliminated); **D Stage 2**
 (server-side filtered drawing — the last wholesale-load path removed; the memory story is now
 complete: no code path loads the full property-value map in lazy mode); **C1**
 (debounce/AbortController on the hydration fetch); **B1 + B2** (stub-fetch progress bar
-+ per-query list feedback); the **stub circle size/stroke/fill match** (2026-06-22); and
++ per-query list feedback); the **stub circle size/stroke/fill match** (2026-06-22);
 **C4 / density-adaptive render budget + unified pan+zoom hysteresis + restyle throttle +
 viewport-relative indicator** (2026-06-22 — size-gated density-derived budget that doubles per zoom
-level; the refresh is skipped until either zoom or pan crosses 20%; mid-size datasets render fully).
-**Remaining, recommended order (updated 2026-06-22 after the profiling pass — re-sequenced; the
-profiling showed the selection cost, not the draw, is the largest per-refresh block):**
+level; the refresh is skipped until either zoom or pan crosses 20%; mid-size datasets render fully);
+the **high-zoom-pan profiling pass** (2026-06-22); and the **high-zoom pan perf fix** (2026-06-23,
+commit `344d4d85`) — **selection fix** (`selectRandomSubset` hash-once + `selectLargestBySize`
+min-heap + capture stub map: action ~1.9 s → ~0.31 s), **draw-path incrementalization**
+(`clearOldAnnotations(false)` diff + stub-aware `drawnFeatureUnchanged` keep + hybrid bulk-clear:
+~95 % survivors, `drawNew` ~450 ms → ~55 ms), with the **double draw coalesced in effect**
+(2nd draw is now incremental). Per-pan main-thread block **~3.3 s → ~0.82 s (~4×)** at 708K.
+**Remaining, recommended order (updated 2026-06-23 after #1–#3 shipped):**
 
-1. ~~**Profiling pass on a high-zoom pan**~~ **DONE 2026-06-22** — see "Profiling pass: high-zoom pan
-   (results)" in the To-Do section and the updated "Draw-path incrementalization" note in section C.
-   Finding: at 708K each refresh blocks the main thread ~3.2–3.5 s, split between two co-dominant
-   O(total-annotations) costs — the `selectRandomSubset` visibility/hydration sort (~1.2–2.0 s) and a
-   **double** full feature rebuild (~1.3–1.7 s). The draw rebuild is count-bound (not polygon-bound) and
-   naively routing it through the existing diff path is *slower*.
-2. **Selection fix — `selectRandomSubset` O(N log N) → O(N) (NEW #1 lever; highest leverage, lowest
-   risk, no draw-code changes).** It full-sorts the entire off-viewport set (~700K) calling `hashString`
-   twice per compare to pick top-K. Hash once per id + quickselect/threshold, or keep a **stable global
-   hash ranking** so the off-viewport fill doesn't re-roll each pan (also a prerequisite for a working
-   incremental draw). Apply the same to the Step 4 hydration sort. Removes ~1.2–2.0 s/refresh.
-3. **Coalesce the double draw** — a pan triggers a full `drawAnnotations` twice (visibility update +
-   async hydrate merge). Collapse to one. ~2× win on the draw stage for near-zero risk.
-4. **Draw-path incrementalization (do it properly, not the naive diff).** Needs a cheap viewport diff
-   (no per-feature reactive getter calls), batched/O(N) removal, and a stable visible set (depends on
-   #2). Fixes the residual rebuild cost. Correctness edges via TDD + in-browser per the section-C note.
-5. **D3 — server-side aggregation for plots + properties panels** — the last wholesale
+1. **D3 — server-side aggregation for plots + properties panels** — the last wholesale
    property-value consumers; the remaining structural memory item at scale.
-6. **C2 — zoom-aware hydration (un-shelve)** — only after #2–#4. The profiling showed C2's freeze came
-   from churning the hydration/visible set harder (more ~3 s refresh cycles), not from extra polygons
-   per se (the rebuild is count-bound). Parked on `shelf/c2-zoom-aware-hydration` (commit `3e783c83`);
-   see the C2 note in section C. **Decouple "hydrated-in-memory" from "drawn-as-shape"** (a separate,
-   smaller shape-draw cap) when bringing it back — the profiling supports this directly.
+2. **C2 — zoom-aware hydration (un-shelve)** — the draw path is now incremental, which removes the
+   reason C2 froze (it churned the hydration/visible set harder → more refreshes, each previously
+   paying a full ~3 s selection+rebuild cycle; both are now cheap). Parked on
+   `shelf/c2-zoom-aware-hydration` (commit `3e783c83`); see the C2 note in section C. When bringing it
+   back, **decouple "hydrated-in-memory" from "drawn-as-shape"** (a separate, smaller shape-draw cap) —
+   the profiling supports this directly. Re-verify the high-zoom-pan feel after un-shelving.
+3. **Optional follow-ups to the perf work** (low priority): literal double-draw coalescing (the 2nd
+   draw is already incremental, so marginal); revisit the size-based hydration ranking heuristic
+   (largest-first is near-meaningless when cell sizes are uniform — see the open To-Do); the step1+2
+   frame/viewport split is still O(total-annotations) per refresh (~0.26 s at 708K) if it ever needs
+   trimming.
 
 **Deferred to later PRs / lower priority:**
 - **A3 / infinite scroll** — keyset pagination for the deep-`$skip` list tail (3.4 s at offset
