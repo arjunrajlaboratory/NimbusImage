@@ -1186,3 +1186,82 @@ min-heap + capture stub map: action ~1.9 s → ~0.31 s), **draw-path incremental
 - **D5 — explicit LRU eviction** of the property-value cache — Stage 1/2 already bound it via
   visible-set scoping; low priority.
 - **B3 — streaming partial counts** — low value.
+
+---
+
+## Developer workflow notes & known infra issues
+
+Practical gotchas for anyone working on the stub/draw/hydration code, plus two infra problems that
+should be fixed (each in its own PR — they are pre-existing, not caused by the perf work).
+
+### In-browser profiling / verification workflow
+
+When changing the selection, draw, or hydration code, verify both **correctness** and **performance**
+in-browser on the real datasets (the unit tests can't exercise GeoJS rendering or 700K-scale timing):
+
+- **Datasets.** 708K Xenium (the stress case): `/#/datasetView/6a18deb286eb377626a51dc5/view`. 26K HCR
+  (control — renders fully, under the render budget; **multi-Z, annotations live on Z=3** with only
+  5 on Z=0 and 100 on Z=4, so it's the dataset to test **frame changes** on):
+  `/#/datasetView/69f744e4a3094194968458dc/view`. Frontend :5173, Girder :8080.
+- **Switching datasets via the hash leaves stale store state — force `location.reload()`** (or a hard
+  reload). On the 708K, the stub fetch then takes **~15–20 s** before `annotationStubs` is populated;
+  wait before reading state or driving the map.
+- **Read live state** via
+  `document.querySelector('#app').__vue_app__.config.globalProperties.$store` → `.state.annotation.*`
+  (e.g. `annotationStubs.size`, `visibleAnnotationIds.size`, `hydratedAnnotations.size`,
+  `stubOnlyMode`). Note `store.state.z` is **undefined** — frame indices come through getters; change a
+  frame with `store.dispatch('setZ', n)` (also `setXY`, `setTime`).
+- **Find the map**: iterate `.geojs-map` nodes and call `window.$(node).data('data-geojs-map')`.
+  **Index 0 is the main viewer; index 1 is the 150×150 navigator thumbnail** — don't drive the thumb.
+- **Drive pan/zoom via the map API** (`map.zoom(v)`, `map.center({x,y})`); programmatic moves DO fire
+  the camera watcher, but only after **~700 ms+** (250 ms camera debounce + 200 ms hydrate-fetch
+  debounce) — wait before reading. Synthetic CDP drags do **not** reliably register as geojs pans.
+  Mind the **20 % pan/zoom hysteresis** (`viewportRefreshFraction`): a gesture must cross 20 % of the
+  viewport (zoom magnitude or center distance) to trigger a refresh at all — a too-small move is a no-op.
+- **Counters**: `window.__stubPerf.snapshot()` / `.report()` / `.reset()` (HTTP requests, ids fetched,
+  cache size, hydrate latency, camera/visibility update counts). For ad-hoc stage timing, wrap the
+  function under test in temporary `performance.now()` deltas pushed to a `window.__*` array — **but
+  keep all such instrumentation in `.vue` files** (HMR-safe; see the Vuex issue below) and revert it
+  before committing.
+- **The correctness invariant to check after any draw change**: the count of drawn GeoJS features with
+  a `girderId` must equal `visibleAnnotationIds.size`, with **no duplicate ids and no stale features**
+  (e.g. after a frame change, every drawn feature's `location` must match the current frame). This
+  invariant caught the incremental-draw edge cases; re-run it across pan / zoom-in / zoom-out / frame
+  change. Also confirm zero console errors.
+
+### Infra issue 1 — Vuex store HMR breaks (investigate; fix in a separate PR if pre-existing)
+
+Editing a `vuex-module-decorators` store module (`src/store/*.ts`) while `pnpm run dev` is running makes
+Vite hot-reload **re-register** the module instead of replacing it, producing a cascade of
+`[vuex] duplicate getter key: ...` errors and a broken store (annotations never load, `annotationStubs`
+stays 0). Editing a `.vue` component HMRs fine. The cause is almost certainly that the decorated module
+registers its getters/mutations on the root store at import time and has **no `import.meta.hot` accept
+handler**, so a hot re-import double-registers.
+
+- **Current workaround:** after editing any `src/store/*.ts`, force a full page reload, not an HMR
+  update (and budget the ~15–20 s stub re-fetch on the 708K).
+- **TODO (separate PR):** first confirm this reproduces on a clean checkout independent of the
+  stub-annotations work (it almost certainly does — it's a vuex-module-decorators + Vite interaction,
+  not specific to this feature). If pre-existing, fix it on its own branch: add HMR-dispose/accept
+  handling for the store modules (e.g. unregister the module on `import.meta.hot.dispose` before
+  re-register, or `hotUpdate`-style state preservation), so store edits hot-reload cleanly. This would
+  meaningfully speed up backend-store iteration.
+
+### Infra issue 2 — `AnnotationViewer.test.ts` OOMs as a single file (fix)
+
+`src/components/AnnotationViewer.test.ts` is ~4400 lines / 246 heavy tests, each mounting the component
+against a large `reactive()`-mocked store. Run as one isolated file it **OOMs the vitest worker**
+("Ineffective mark-compacts near heap limit"); this reproduces on a clean baseline, so it's pre-existing
+and not caused by the perf work. Today you can only run it in **targeted slices** (`vitest run … -t
+"<describe group>"`), which is fragile and hides regressions. Two `handleAnnotationCombine` tests also
+**fail when run in isolation** (order-dependent — they rely on state set up by earlier tests in a full
+run); also baseline-confirmed.
+
+- **TODO (fix — own PR):** (a) **split the file** into several focused specs (e.g. by the existing
+  top-level `describe` groups: rendering, selection, tool handlers, timelapse, SAM, …) so each runs in
+  a worker without OOM and the whole suite runs in CI; and/or diagnose the leak — likely the
+  module-level `reactive()` store mock + per-test `mountComponent` not being torn down between tests
+  (check for missing `wrapper.unmount()` / `vi.restoreAllMocks()` in an `afterEach`). (b) **fix the two
+  order-dependent `handleAnnotationCombine` tests** so they pass standalone (set up their own selection
+  state instead of inheriting it). Until then, new draw/selection tests should be runnable via a
+  `-t` slice.
