@@ -41,6 +41,7 @@ import { markRaw, toRaw } from "vue";
 import {
   simpleCentroid,
   selectRandomSubset,
+  selectLargestBySize,
   estimateAnnotationRadius,
   idsNeedingHydration,
 } from "@/utils/annotation";
@@ -2178,10 +2179,16 @@ export class Annotations extends VuexModule {
     const maxVisible = params.maxVisible ?? this.visibilityConfig.maxVisible;
     const maxHydrated = params.maxHydrated ?? this.visibilityConfig.maxHydrated;
 
+    // Capture the stub map once. `this.annotationStubs` resolves through the
+    // vuex-module-decorators action proxy on every access; reading it inside the
+    // hot loops below (~1.4M times at 700K) added hundreds of ms. The local
+    // reference is a plain Map.
+    const stubsMap = this.annotationStubs;
+
     // Step 1: Split filteredIds by frame
     const currentFrameIds: string[] = [];
     for (const id of filteredIds) {
-      const stub = this.annotationStubs.get(id);
+      const stub = stubsMap.get(id);
       if (
         stub &&
         stub.location.XY === currentFrameLocation.XY &&
@@ -2244,28 +2251,22 @@ export class Annotations extends VuexModule {
       visibleIds = [...inViewportIds, ...offViewport];
     }
 
-    // Step 4: Fill hydration budget (two-tier, largest first)
-    const inViewportWithSize = inViewportIds.map((id) => ({
-      id,
-      size: this.annotationStubs.get(id)?.estimatedRadius ?? 0,
-    }));
-    inViewportWithSize.sort((a, b) => b.size - a.size);
-
+    // Step 4: Fill hydration budget (two-tier, largest first). In-viewport
+    // annotations are preferred; off-viewport fills the remainder. Both tiers
+    // pick the largest by estimatedRadius via selectLargestBySize (bounded
+    // min-heap, O(n log count), each id's size+hash computed once, deterministic
+    // hash tie-break) — was a full O(N log N) sort of ~700K {id,size} objects per
+    // refresh (~0.4-0.5 s at high zoom). The tie-break also keeps the hydration
+    // set stable across pans when sizes are near-uniform.
+    const sizeOf = (id: string) => stubsMap.get(id)?.estimatedRadius ?? 0;
     let idsToHydrate: string[];
-    if (inViewportWithSize.length >= maxHydrated) {
-      idsToHydrate = inViewportWithSize
-        .slice(0, maxHydrated)
-        .map((item) => item.id);
+    if (inViewportIds.length >= maxHydrated) {
+      idsToHydrate = selectLargestBySize(inViewportIds, sizeOf, maxHydrated);
     } else {
-      const remainingBudget = maxHydrated - inViewportWithSize.length;
-      const offViewportWithSize = outOfViewportIds.map((id) => ({
-        id,
-        size: this.annotationStubs.get(id)?.estimatedRadius ?? 0,
-      }));
-      offViewportWithSize.sort((a, b) => b.size - a.size);
+      const remainingBudget = maxHydrated - inViewportIds.length;
       idsToHydrate = [
-        ...inViewportWithSize.map((item) => item.id),
-        ...offViewportWithSize.slice(0, remainingBudget).map((item) => item.id),
+        ...inViewportIds,
+        ...selectLargestBySize(outOfViewportIds, sizeOf, remainingBudget),
       ];
     }
 

@@ -8,6 +8,8 @@ import {
   IGeoJSLineFeatureStyle,
   IGeoJSPointFeatureStyle,
   IGeoJSPolygonFeatureStyle,
+  TAnnotationOrStub,
+  isHydratedAnnotation,
 } from "@/store/model";
 import geojs from "geojs";
 import { logError } from "@/utils/log";
@@ -302,8 +304,124 @@ export function hashString(str: string): number {
 
 export function selectRandomSubset(ids: string[], maxCount: number): string[] {
   if (ids.length <= maxCount) return ids;
-  const sorted = [...ids].sort((a, b) => hashString(a) - hashString(b));
-  return sorted.slice(0, maxCount);
+  // Pick the `maxCount` lowest-hash ids (a deterministic, order-independent
+  // pseudo-random subset). Compute each id's hash exactly once into a parallel
+  // typed array and sort an index array — the previous `sort((a, b) =>
+  // hashString(a) - hashString(b))` recomputed the hash twice per comparison
+  // (~2·N·log₂N hashes), which dominated the per-pan cost at 700K (~1.1 s).
+  const n = ids.length;
+  const hashes = new Uint32Array(n);
+  for (let i = 0; i < n; i++) {
+    hashes[i] = hashString(ids[i]);
+  }
+  const order = Array.from({ length: n }, (_, i) => i);
+  order.sort((a, b) => hashes[a] - hashes[b]);
+  const result: string[] = new Array(maxCount);
+  for (let i = 0; i < maxCount; i++) {
+    result[i] = ids[order[i]];
+  }
+  return result;
+}
+
+/**
+ * Return up to `count` ids with the LARGEST `sizeOf(id)`, breaking size ties by
+ * ascending `hashString(id)`. The hash tie-break makes the selection a
+ * deterministic, order-independent function of the id set — critical when sizes
+ * are near-uniform (e.g. cell annotations), so the chosen set stays stable
+ * across pans instead of reshuffling at every tie boundary.
+ *
+ * Each id's size and hash are computed exactly once into parallel typed arrays
+ * and the top `count` are taken with a bounded min-heap (O(n log count)) — vs.
+ * the old approach of allocating an object per id and full-sorting all n with a
+ * key-recomputing comparator, which cost ~0.4-0.5 s per refresh at ~700K ids.
+ */
+export function selectLargestBySize(
+  ids: string[],
+  sizeOf: (id: string) => number,
+  count: number,
+): string[] {
+  if (count <= 0) return [];
+  if (ids.length <= count) return ids;
+  const n = ids.length;
+  const sizes = new Float64Array(n);
+  const hashes = new Uint32Array(n);
+  for (let i = 0; i < n; i++) {
+    sizes[i] = sizeOf(ids[i]);
+    hashes[i] = hashString(ids[i]);
+  }
+  // Keep the `count` best in a bounded MIN-heap keyed by "evictability": the
+  // root is the worst kept element, so a new candidate replaces it iff it beats
+  // it. O(n log count) — ~4× faster than sorting all n at 700K — and avoids the
+  // O(n log n) full sort the old object-sort paid. `worse(a, b)` ⇒ a is more
+  // evictable than b: smaller size, or (size tie) larger hash — so the smaller
+  // hash survives ties, matching the deterministic tie-break above.
+  const worse = (a: number, b: number) =>
+    sizes[a] !== sizes[b] ? sizes[a] < sizes[b] : hashes[a] > hashes[b];
+  const heap = new Int32Array(count);
+  let size = 0;
+  for (let i = 0; i < n; i++) {
+    if (size < count) {
+      // sift up
+      let c = size++;
+      heap[c] = i;
+      while (c > 0) {
+        const p = (c - 1) >> 1;
+        if (worse(heap[c], heap[p])) {
+          const t = heap[c];
+          heap[c] = heap[p];
+          heap[p] = t;
+          c = p;
+        } else break;
+      }
+    } else if (worse(heap[0], i)) {
+      // i beats the current worst — replace root and sift down
+      heap[0] = i;
+      let p = 0;
+      for (;;) {
+        const l = 2 * p + 1;
+        const r = 2 * p + 2;
+        let m = p;
+        if (l < count && worse(heap[l], heap[m])) m = l;
+        if (r < count && worse(heap[r], heap[m])) m = r;
+        if (m === p) break;
+        const t = heap[p];
+        heap[p] = heap[m];
+        heap[m] = t;
+        p = m;
+      }
+    }
+  }
+  const result: string[] = new Array(size);
+  for (let i = 0; i < size; i++) {
+    result[i] = ids[heap[i]];
+  }
+  return result;
+}
+
+/**
+ * Whether an already-drawn GeoJS feature still matches the desired render state,
+ * so the incremental draw path can keep it instead of removing + recreating it.
+ *
+ * `layerData` is the annotation/stub currently assigned to this feature's id on
+ * its layer (undefined ⇒ no longer displayed there). A feature is unchanged iff
+ * its layer still exists, it's still displayed, its color is unchanged, and its
+ * dot/shape state still matches — i.e. a drawn stub is kept only while layerData
+ * is still a stub, and a drawn shape only while layerData is still hydrated.
+ *
+ * Stub-awareness is the fix that makes incremental drawing viable in stub-only
+ * mode: the old keep-check used `getAnnotationFromId`, which returns undefined
+ * for non-hydrated stubs (the full annotations[] array is empty there), so every
+ * dot feature was dropped on each pass and nothing could be reused.
+ */
+export function drawnFeatureUnchanged(
+  layerExists: boolean,
+  layerData: TAnnotationOrStub | undefined,
+  drawnColor: string | null,
+  drawnIsStub: boolean,
+): boolean {
+  if (!layerExists || !layerData) return false;
+  if (layerData.color !== drawnColor) return false;
+  return !isHydratedAnnotation(layerData) === drawnIsStub;
 }
 
 /**

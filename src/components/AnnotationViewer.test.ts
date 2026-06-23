@@ -30,6 +30,20 @@ vi.mock("@/utils/annotation", () => ({
   geojsAnnotationFactory: vi.fn(),
   tagFilterFunction: vi.fn().mockReturnValue(true),
   ellipseToPolygonCoordinates: vi.fn((coords) => coords),
+  // Faithful copy of the real keep-decision (unit-tested in
+  // annotationStubUtils.test.ts). Importing the real module here pulls in its
+  // heavy transitive graph and OOMs this large test file, so mirror the small
+  // pure logic instead — stub ⇔ no `coordinates` field.
+  drawnFeatureUnchanged: (
+    layerExists: boolean,
+    layerData: any,
+    drawnColor: string | null,
+    drawnIsStub: boolean,
+  ) =>
+    !!layerExists &&
+    !!layerData &&
+    layerData.color === drawnColor &&
+    !("coordinates" in layerData) === drawnIsStub,
 }));
 
 vi.mock("@/utils/polygonSlice", () => ({
@@ -1028,7 +1042,7 @@ describe("AnnotationViewer", () => {
         expect(aLayer.removeAllAnnotations).toHaveBeenCalled();
       });
 
-      it("calls clearOldAnnotations and drawNewAnnotations", () => {
+      it("draws incrementally (no bulk removeAllAnnotations) on a normal draw", () => {
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });
         mockedStore.layers = [layer];
         (mockedStore.layerSliceIndexes as any).mockReturnValue({
@@ -1042,8 +1056,11 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
 
         const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.removeAllAnnotations.mockClear();
         (wrapper.vm as any).drawAnnotationsNoThrottle();
-        expect(aLayer.removeAllAnnotations).toHaveBeenCalled();
+        // The normal draw path now diffs incrementally instead of tearing the
+        // whole layer down — a low-churn draw must not bulk-clear.
+        expect(aLayer.removeAllAnnotations).not.toHaveBeenCalled();
         expect(aLayer.draw).toHaveBeenCalled();
       });
 
@@ -1099,6 +1116,80 @@ describe("AnnotationViewer", () => {
         vi.clearAllMocks();
         (wrapper.vm as any).clearOldAnnotations(true, true);
         expect(aLayer.draw).toHaveBeenCalled();
+      });
+
+      // --- incremental diff path (clearOldAnnotations(false)) ---
+      it("keeps a still-displayed feature and removes one no longer displayed", () => {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        // a1 is displayed (hydrated, no color); "gone" is not.
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "a1", channel: 0, color: null }),
+        ];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        const keepFeature = mockGeoJSAnnotation("point");
+        keepFeature.options({
+          girderId: "a1",
+          layerId: "layer1",
+          color: null,
+          isStub: false,
+        });
+        const removeFeature = mockGeoJSAnnotation("point");
+        removeFeature.options({
+          girderId: "gone",
+          layerId: "layer1",
+          color: null,
+          isStub: false,
+        });
+        aLayer.removeAllAnnotations();
+        aLayer.addAnnotation(keepFeature);
+        aLayer.addAnnotation(removeFeature);
+        aLayer.removeAllAnnotations.mockClear();
+
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+
+        const remaining = aLayer.annotations();
+        expect(remaining).toContain(keepFeature);
+        expect(remaining).not.toContain(removeFeature);
+        // low churn (1 of 2) ⇒ individual removal, not a bulk clear
+        expect(aLayer.removeAllAnnotations).not.toHaveBeenCalled();
+      });
+
+      it("bulk-clears when most features must be removed (hybrid)", () => {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        // nothing displayed ⇒ all drawn features must be removed
+        mockedAnnotationStore.annotations = [];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        aLayer.removeAllAnnotations();
+        for (const id of ["x1", "x2", "x3"]) {
+          const f = mockGeoJSAnnotation("point");
+          f.options({ girderId: id, layerId: "layer1", color: null, isStub: false });
+          aLayer.addAnnotation(f);
+        }
+        aLayer.removeAllAnnotations.mockClear();
+
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+
+        // 3 of 3 removed ⇒ a single bulk clear beats N individual removals
+        expect(aLayer.removeAllAnnotations).toHaveBeenCalled();
+        expect(aLayer.annotations()).toHaveLength(0);
       });
     });
 

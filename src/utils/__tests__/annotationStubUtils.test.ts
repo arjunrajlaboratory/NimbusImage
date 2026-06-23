@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import {
   hashString,
   selectRandomSubset,
+  selectLargestBySize,
+  drawnFeatureUnchanged,
   estimateAnnotationRadius,
   getStubStyleFromBaseStyle,
   annotationTestPoints,
@@ -53,6 +55,119 @@ describe("selectRandomSubset", () => {
   it("is deterministic", () => {
     const ids = Array.from({ length: 100 }, (_, i) => `id-${i}`);
     expect(selectRandomSubset(ids, 10)).toEqual(selectRandomSubset(ids, 10));
+  });
+
+  it("selects exactly the maxCount lowest-hash ids", () => {
+    const ids = Array.from({ length: 50 }, (_, i) => `id-${i}`);
+    const k = 10;
+    const expected = [...ids]
+      .sort((a, b) => hashString(a) - hashString(b))
+      .slice(0, k);
+    expect(new Set(selectRandomSubset(ids, k))).toEqual(new Set(expected));
+  });
+
+  it("selects the same set regardless of input order", () => {
+    const ids = Array.from({ length: 50 }, (_, i) => `id-${i}`);
+    const shuffled = [...ids].reverse();
+    expect(new Set(selectRandomSubset(ids, 10))).toEqual(
+      new Set(selectRandomSubset(shuffled, 10)),
+    );
+  });
+});
+
+describe("selectLargestBySize", () => {
+  const sizeMap: Record<string, number> = {
+    a: 10,
+    b: 30,
+    c: 20,
+    d: 5,
+    e: 30, // tie with b
+  };
+  const sizeOf = (id: string) => sizeMap[id] ?? 0;
+
+  it("returns all ids when count >= length", () => {
+    const ids = ["a", "b", "c"];
+    expect(selectLargestBySize(ids, sizeOf, 5)).toEqual(ids);
+  });
+
+  it("returns exactly count ids when over the limit", () => {
+    expect(selectLargestBySize(["a", "b", "c", "d", "e"], sizeOf, 2)).toHaveLength(
+      2,
+    );
+  });
+
+  it("selects the count largest by size", () => {
+    // sizes: b=30, e=30, c=20, a=10, d=5 → top 3 by size are {b, e, c}
+    expect(new Set(selectLargestBySize(["a", "b", "c", "d", "e"], sizeOf, 3))).toEqual(
+      new Set(["b", "e", "c"]),
+    );
+  });
+
+  it("breaks size ties deterministically by ascending hash (pan-stable)", () => {
+    // b and e both have size 30. With count=1, the one chosen must be the
+    // lower-hash of the two, regardless of input order.
+    const lowerHash =
+      hashString("b") < hashString("e") ? "b" : "e";
+    expect(selectLargestBySize(["a", "b", "c", "d", "e"], sizeOf, 1)).toEqual([
+      lowerHash,
+    ]);
+    expect(selectLargestBySize(["e", "d", "c", "b", "a"], sizeOf, 1)).toEqual([
+      lowerHash,
+    ]);
+  });
+
+  it("returns an empty array for count 0", () => {
+    expect(selectLargestBySize(["a", "b"], sizeOf, 0)).toEqual([]);
+  });
+
+  it("matches a brute-force reference on a large tie-heavy input", () => {
+    // Sizes drawn from a tiny set ⇒ heavy ties; exercises the tie-break and the
+    // selection's eviction path well beyond the toy fixture above.
+    const ids = Array.from({ length: 500 }, (_, i) => `id-${i}`);
+    const sizeOf2 = (id: string) => Number(id.slice(3)) % 5;
+    const k = 37;
+    const reference = [...ids]
+      .map((id) => ({ id, s: sizeOf2(id), h: hashString(id) }))
+      .sort((a, b) => b.s - a.s || a.h - b.h)
+      .slice(0, k)
+      .map((x) => x.id);
+    expect(new Set(selectLargestBySize(ids, sizeOf2, k))).toEqual(
+      new Set(reference),
+    );
+  });
+});
+
+describe("drawnFeatureUnchanged", () => {
+  const stub = { id: "a", color: "red" } as any; // no coordinates ⇒ stub
+  const hydrated = { id: "a", color: "red", coordinates: [] } as any;
+
+  it("returns false when the layer no longer exists", () => {
+    expect(drawnFeatureUnchanged(false, stub, "red", true)).toBe(false);
+  });
+
+  it("returns false when the annotation is no longer displayed (no layerData)", () => {
+    expect(drawnFeatureUnchanged(true, undefined, "red", true)).toBe(false);
+  });
+
+  it("returns false when the color changed", () => {
+    expect(drawnFeatureUnchanged(true, stub, "blue", true)).toBe(false);
+  });
+
+  it("returns false when a stub became hydrated (dot → shape)", () => {
+    // drawn as a stub (drawnIsStub=true) but layerData is now hydrated
+    expect(drawnFeatureUnchanged(true, hydrated, "red", true)).toBe(false);
+  });
+
+  it("returns false when a hydrated annotation became a stub (shape → dot)", () => {
+    expect(drawnFeatureUnchanged(true, stub, "red", false)).toBe(false);
+  });
+
+  it("keeps an unchanged stub (the stub-only-mode case the old code dropped)", () => {
+    expect(drawnFeatureUnchanged(true, stub, "red", true)).toBe(true);
+  });
+
+  it("keeps an unchanged hydrated annotation", () => {
+    expect(drawnFeatureUnchanged(true, hydrated, "red", false)).toBe(true);
   });
 });
 

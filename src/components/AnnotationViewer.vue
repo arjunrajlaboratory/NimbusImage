@@ -52,6 +52,13 @@ import { snapCoordinates } from "@/utils/itk";
 import { throttle, debounce } from "lodash";
 const THROTTLE = 100;
 
+// Incremental draw (clearOldAnnotations): GeoJS removeAnnotation is ~O(n) per
+// call, so when more than this fraction of drawn features must be removed (e.g. a
+// frame change, where the whole set turns over) a single bulk removeAllAnnotations
+// is cheaper than N individual removals. Below it (the common pan/zoom case, where
+// the visible set is largely stable) we keep survivors and remove only the rest.
+const INCREMENTAL_BULK_CLEAR_FRACTION = 0.5;
+
 import {
   AnnotationSelectionTypes,
   AnnotationShape,
@@ -97,6 +104,7 @@ import {
   tagFilterFunction,
   ellipseToPolygonCoordinates,
   getStubStyleFromBaseStyle,
+  drawnFeatureUnchanged,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
@@ -647,7 +655,12 @@ function drawAnnotationsNoThrottle() {
     return;
   }
 
-  clearOldAnnotations(true, false);
+  // Incremental: remove only the features whose annotation changed/left, keeping
+  // the rest. drawNewAnnotations adds just the features not already present (the
+  // snapshot below is taken AFTER the diff, so survivors are skipped via the
+  // `excluded` check). clearOldAnnotations falls back to a bulk clear internally
+  // when churn is high (e.g. a frame change), so this stays fast in both regimes.
+  clearOldAnnotations(false, false);
 
   const drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]> = new Map();
   for (const geoJSAnnotation of props.annotationLayer.annotations()) {
@@ -747,74 +760,72 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
     props.annotationLayer.removeAllAnnotations(undefined, undefined, false);
     props.annotationLayer.modified();
   } else {
-    props.annotationLayer
-      .annotations()
-      .forEach((geoJsAnnotation: IGeoJSAnnotation) => {
-        const {
-          girderId,
-          layerId,
-          isConnection,
-          childId,
-          parentId,
-          specialAnnotation,
-          color,
-        } = geoJsAnnotation.options();
+    // Incremental diff: keep features whose annotation is unchanged (still
+    // displayed on the same layer, same color, same dot/shape state) and remove
+    // only the rest. drawNewAnnotations then re-creates just the features that
+    // are new. At high zoom the visible set is largely stable across a pan, so
+    // most features are reused instead of torn down and rebuilt every refresh.
+    const features = props.annotationLayer.annotations();
+    const toRemove: IGeoJSAnnotation[] = [];
+    for (const geoJsAnnotation of features) {
+      const {
+        girderId,
+        layerId,
+        isConnection,
+        childId,
+        parentId,
+        specialAnnotation,
+        color,
+      } = geoJsAnnotation.options();
 
+      if (
+        geoJsAnnotation === props.annotationLayer.currentAnnotation ||
+        specialAnnotation ||
+        !girderId
+      ) {
+        continue;
+      }
+
+      if (isConnection) {
+        const parent = getAnnotationFromId.value(parentId);
+        const child = getAnnotationFromId.value(childId);
         if (
-          geoJsAnnotation === props.annotationLayer.currentAnnotation ||
-          specialAnnotation
+          !connectionIdsSet.value.has(girderId) ||
+          !shouldDrawConnections.value ||
+          !parent ||
+          !child ||
+          !displayedAnnotationIds.value.has(parent.id) ||
+          !displayedAnnotationIds.value.has(child.id)
         ) {
-          return;
+          toRemove.push(geoJsAnnotation);
         }
+        continue;
+      }
 
-        if (clearAll) {
-          props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-          props.annotationLayer.modified();
-          return;
-        }
+      const layerData = layerAnnotations.value.get(layerId)?.get(girderId);
+      const unchanged = drawnFeatureUnchanged(
+        !!store.getLayerFromId(layerId),
+        layerData,
+        color,
+        geoJsAnnotation.options("isStub"),
+      );
+      if (!unchanged) {
+        toRemove.push(geoJsAnnotation);
+      }
+    }
 
-        if (!girderId) {
-          return;
-        }
-
-        if (isConnection) {
-          const parent = getAnnotationFromId.value(parentId);
-          const child = getAnnotationFromId.value(childId);
-          if (
-            !connectionIdsSet.value.has(girderId) ||
-            !shouldDrawConnections.value ||
-            !parent ||
-            !child ||
-            !displayedAnnotationIds.value.has(parent.id) ||
-            !displayedAnnotationIds.value.has(child.id)
-          ) {
-            props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-            props.annotationLayer.modified();
-          }
-          return;
-        }
-
-        const annotation = getAnnotationFromId.value(girderId);
-        const layer = store.getLayerFromId(layerId);
-        const wasStub = geoJsAnnotation.options("isStub");
-        const layerData = layerAnnotations.value.get(layerId)?.get(girderId);
-        const isNowHydrated = layerData
-          ? isHydratedAnnotation(layerData)
-          : false;
-        const stubStateChanged = wasStub === isNowHydrated;
-        if (
-          layer &&
-          annotation &&
-          layerDisplaysAnnotation.value(layer.id, annotation.id) &&
-          annotation.color === color &&
-          !stubStateChanged
-        ) {
-          return;
-        }
-
+    // Hybrid: when most features must be removed (e.g. a frame change), a single
+    // bulk clear is cheaper than N individual O(n) removals; below the threshold
+    // keep the survivors and remove only the changed ones.
+    if (toRemove.length > features.length * INCREMENTAL_BULK_CLEAR_FRACTION) {
+      props.annotationLayer.removeAllAnnotations(undefined, undefined, false);
+      props.annotationLayer.modified();
+    } else if (toRemove.length > 0) {
+      for (const geoJsAnnotation of toRemove) {
         props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-        props.annotationLayer.modified();
-      });
+      }
+      props.annotationLayer.modified();
+    }
   }
   if (redraw) {
     props.annotationLayer.draw();
