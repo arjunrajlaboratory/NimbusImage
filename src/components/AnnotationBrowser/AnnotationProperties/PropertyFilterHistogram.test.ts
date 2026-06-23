@@ -419,13 +419,18 @@ describe("PropertyFilterHistogram", () => {
     expect(call.values).toEqual([1, 2, 3]);
   });
 
-  it("updateValuesFilter does not update when input is empty", () => {
+  it("updateValuesFilter clears values when input is emptied (Codex #5)", () => {
+    // Emptying the textarea must write values: [] so the previously-applied
+    // values filter is actually cleared. The old behavior skipped the update,
+    // leaving the stale filter silently active while the UI looked cleared.
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     (filterStore.updatePropertyFilter as any).mockClear();
     vm.valuesInput = "";
     vm.updateValuesFilter();
-    expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
+    expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
+    const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
+    expect(call.values).toEqual([]);
   });
 
   it("updateValuesFilter handles tab/newline/semicolon separators", () => {

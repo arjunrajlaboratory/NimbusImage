@@ -272,6 +272,7 @@ vi.mock("@/store/annotation", () => {
     pendingAnnotation: null as any,
     stubOnlyMode: false,
     getAnnotationFromId: vi.fn().mockReturnValue(undefined),
+    getStub: vi.fn().mockReturnValue(undefined),
     isAnnotationSelected: vi.fn().mockReturnValue(false),
     annotationIdToIdx: {} as Record<string, number>,
     selectAnnotations: vi.fn(),
@@ -526,6 +527,11 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.hoveredAnnotationId = null;
     mockedAnnotationStore.pendingAnnotation = null;
     mockedAnnotationStore.annotationIdToIdx = {};
+    mockedAnnotationStore.stubOnlyMode = false;
+    (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+      undefined,
+    );
+    (mockedAnnotationStore.getStub as any).mockReturnValue(undefined);
     mockedAnnotationStore.annotationStubs = new Map();
     mockedAnnotationStore.visibilityConfig = {
       stubThreshold: 10000,
@@ -1536,6 +1542,92 @@ describe("AnnotationViewer", () => {
           selectAnn,
         );
         expect(result).toHaveLength(1);
+      });
+
+      // Codex finding #1: in stub-only mode getAnnotationFromId returns
+      // undefined for the displayed-but-unhydrated dots, so selection must
+      // fall back to the stub (centroid + location) or it silently picks
+      // nothing.
+      it("click-selects a visible unhydrated stub in stub-only mode", () => {
+        mockedAnnotationStore.stubOnlyMode = true;
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) =>
+            id === "stub-1"
+              ? {
+                  id: "stub-1",
+                  centroid: { x: 10, y: 20 },
+                  location: { XY: 0, Z: 0, Time: 0 },
+                  shape: "point",
+                  channel: 0,
+                  tags: [],
+                  color: null,
+                }
+              : undefined,
+        );
+        (pointDistance as any).mockReturnValue(1); // click near the dot
+
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "stub-1");
+        geoAnn.options("isConnection", false);
+
+        wrapper = mountComponent();
+        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
+
+        const selectAnn = mockGeoJSAnnotation("point");
+        selectAnn.type = vi.fn().mockReturnValue("point");
+        selectAnn.coordinates = vi.fn().mockReturnValue([{ x: 10, y: 20 }]);
+
+        const result = (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(
+          selectAnn,
+        );
+        expect(result.map((a: any) => a.id)).toEqual(["stub-1"]);
+      });
+
+      it("drag-selects a visible unhydrated stub via its centroid", () => {
+        mockedAnnotationStore.stubOnlyMode = true;
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) =>
+            id === "stub-1"
+              ? {
+                  id: "stub-1",
+                  centroid: { x: 5, y: 5 },
+                  location: { XY: 0, Z: 0, Time: 0 },
+                  shape: "point",
+                  channel: 0,
+                  tags: [],
+                  color: null,
+                }
+              : undefined,
+        );
+        // Stub centroid falls inside the drag polygon.
+        (geojs.util.pointInPolygon as any).mockReturnValue(true);
+
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "stub-1");
+        geoAnn.options("isConnection", false);
+
+        wrapper = mountComponent();
+        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
+
+        const selectAnn = mockGeoJSAnnotation("polygon");
+        selectAnn.type = vi.fn().mockReturnValue("polygon");
+        selectAnn.coordinates = vi.fn().mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 },
+        ]);
+
+        const result = (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(
+          selectAnn,
+        );
+        expect(result.map((a: any) => a.id)).toContain("stub-1");
       });
     });
 

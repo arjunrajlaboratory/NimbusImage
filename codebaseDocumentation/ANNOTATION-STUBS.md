@@ -381,6 +381,17 @@ polygon) distinguishes it.
 
 ## To-Do List
 
+### Code review follow-ups (Codex, 2026-06-23)
+The six findings in [`ANNOTATION-STUBS-REVIEW.md`](./ANNOTATION-STUBS-REVIEW.md)
+are fixed (see its "Resolution" section) — stub-aware selection, stub-aware
+delete-unselected, full stub-state reset, PV-sort dedup, and values-filter
+clearing. One follow-up remains:
+- [ ] **Rebuild `annotationStubs.test.ts` off the real store boundary.** It uses
+  a copied mini-store still asserting the obsolete "hydrate first 20%" strategy
+  that production `setAnnotations` abandoned, so those cases test the copy, not
+  production. Replace with pure-utility tests + a thin integration test (and
+  fold in stub-mode `deleteUnselectedAnnotations` coverage).
+
 ### Threshold and Hydration Refinement
 - [x] Test and tune `maxVisible` (default 50,000) — **2026-06-22: now density-adaptive + size-gated** via `visibilityBudgetForZoom` (C4 above). The 50,000 is both the zoomed-in cap and the size gate (datasets ≤ it render fully). Above it, the effective budget starts at a density-derived floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K) and doubles per zoom level. Resolves the zoomed-out visual noise from the full 4px stroke.
 - [x] Test and tune `maxHydrated` (default 20,000) — scaled by the same zoom factor as `maxVisible` (C4). Fewer shapes hydrated/drawn when zoomed out (where they look like dots anyway).

@@ -378,6 +378,21 @@ export class Annotations extends VuexModule {
     this.annotationConnections = [];
     this.annotationCentroids = markRaw({});
     this.annotationIdToIdx = markRaw({});
+    // Stub-only state. Without this, switching/clearing a large dataset (e.g.
+    // 708K) leaves the stub map, hydration cache, and centroid spatial index
+    // pinned on the heap until the next fetchAnnotations happens to call
+    // setAnnotations([]) — a memory leak and a stale-state risk. Mirror the
+    // empty-load clearing semantics here, and cancel any in-flight viewport
+    // hydration so a late response can't repopulate the just-cleared cache.
+    this.annotationStubs = markRaw(new Map());
+    this.hydratedAnnotations = markRaw(new Map());
+    this.visibleAnnotationIds = markRaw(new Set());
+    this.viewportAnnotationCount = 0;
+    this.viewportRenderedCount = 0;
+    this.averageStubRadius = 0;
+    this.stubOnlyMode = false;
+    annotationSpatialIndex.clear();
+    viewportHydrationTask.cancel();
   }
 
   // Clear per-dataset annotation state. Call when switching datasets so
@@ -1239,10 +1254,15 @@ export class Annotations extends VuexModule {
 
   @Action
   public async deleteUnselectedAnnotations() {
+    // Use allAnnotationIds (stub-aware) rather than this.annotations: in
+    // stub-only mode annotations[] is empty, so the old version computed an
+    // empty unselected set and deleted nothing. This action is dataset-wide;
+    // the AnnotationList toolbar handles filter/list-scoped deletion via the
+    // server endpoint separately.
     const selectedIds = this.selectedAnnotationIds;
-    const unselectedIds = this.annotations
-      .filter((annotation) => !selectedIds.has(annotation.id))
-      .map((annotation) => annotation.id);
+    const unselectedIds = this.allAnnotationIds.filter(
+      (id) => !selectedIds.has(id),
+    );
 
     await this.deleteAnnotations(unselectedIds);
   }

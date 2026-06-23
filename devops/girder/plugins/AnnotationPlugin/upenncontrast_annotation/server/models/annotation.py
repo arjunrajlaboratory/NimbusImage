@@ -421,12 +421,21 @@ class Annotation(AccessControlMixin, ProxiedModel):
         return {"$sort": {"annotationId": 1}}
 
     def _pvDrivenPagePipeline(self, datasetId, filters, sort, propertyPaths,
-                              skip, limit):
+                              skip, limit, restrictToPresentSortValue=False):
         # Sort/paginate the lean property-value docs first, then join the
         # annotation back for just the page and reshape to the
         # annotation-driven output (annotation _id + centroid + values).
         pipeline = [{"$match": {"datasetId": datasetId}}]
         pipeline += self._propertyFilterStages(filters, valueBase="values.")
+        # On a pure property sort, paginate only docs that actually have the
+        # sort key here; the missing-value annotations are appended exactly
+        # once via the no-value tail in _pvDrivenPage. Without this restriction
+        # a PV doc that exists but lacks the sort key (_hasSortValue == 0) is
+        # returned both here AND by the tail (which matches _pv.values.<key>
+        # == None) — duplicating that row and dropping another missing row.
+        if restrictToPresentSortValue and sort and sort.get("key"):
+            valueKey = "values." + ".".join(sort["key"])
+            pipeline.append({"$match": {valueKey: {"$ne": None}}})
         pipeline += self._propertySortAddFields(sort, valueBase="values.")
         pipeline.append(self._pvSortStage(sort))
         pipeline.append({"$skip": skip})
@@ -486,12 +495,6 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def _pvDrivenPage(self, datasetId, filters, sort, propertyPaths,
                       skip, limit):
-        rows = list(self._pvModel.collection.aggregate(
-            self._pvDrivenPagePipeline(
-                datasetId, filters, sort, propertyPaths, skip, limit
-            ),
-            hint={"datasetId": 1, "_id": 1}, allowDiskUse=True,
-        ))
         # A pure property sort (no property filter) must also surface
         # annotations with no value for the sort key, ordered after the
         # present ones. A property filter already excludes those rows.
@@ -499,6 +502,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
             bool(sort and sort.get("type") == "property")
             and not filters.get("propertyFilters")
         )
+        rows = list(self._pvModel.collection.aggregate(
+            self._pvDrivenPagePipeline(
+                datasetId, filters, sort, propertyPaths, skip, limit,
+                restrictToPresentSortValue=isPureSort,
+            ),
+            hint={"datasetId": 1, "_id": 1}, allowDiskUse=True,
+        ))
         if isPureSort and len(rows) < limit:
             hasCount = self._pvHasValueCount(datasetId, sort)
             rows += self._noValueTail(

@@ -306,13 +306,14 @@ function parseValuesInput(input: string): number[] {
 }
 
 function updateValuesFilter() {
-  const parsedValues = parseValuesInput(valuesInput.value);
-  if (parsedValues.length) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      values: parsedValues,
-    });
-  }
+  // Always write the parsed values, even when empty. An empty list means "do
+  // not filter" (see filters.ts). Previously an empty parse was skipped, so
+  // deleting all text from the textarea left the old values filter silently
+  // active while the UI looked cleared.
+  filterStore.updatePropertyFilter({
+    ...propertyFilter.value,
+    values: parseValuesInput(valuesInput.value),
+  });
 }
 
 const debouncedUpdateValues = debounce(updateValuesFilter, 500);

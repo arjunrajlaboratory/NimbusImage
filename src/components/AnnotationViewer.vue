@@ -91,7 +91,7 @@ import {
   IGeoJSMouseState,
   TrackPositionType,
 } from "../store/model";
-import type { TAnnotationOrStub } from "@/store/model";
+import type { TAnnotationOrStub, IAnnotationStub } from "@/store/model";
 import { isHydratedAnnotation } from "@/store/model";
 
 import { logError, logWarning } from "@/utils/log";
@@ -158,10 +158,12 @@ function buildAnnotationBBox(
   return { minX: x, minY: y, maxX: x, maxY: y, annotationId: annotation.id };
 }
 
-function filterAnnotations(
-  annotations: IAnnotation[],
+function filterAnnotations<T extends TAnnotationOrStub>(
+  annotations: T[],
   { tags, tagsInclusive, layerId }: IRestrictTagsAndLayer,
-) {
+): T[] {
+  // Reads only tags/channel, which both full annotations and stubs carry, so
+  // it is safe over TAnnotationOrStub and preserves the input element type.
   let output = annotations.filter((annotation) =>
     tagFilterFunction(annotation.tags, tags, !tagsInclusive),
   );
@@ -1581,6 +1583,46 @@ function shouldSelectAnnotation(
   }
 }
 
+// Resolve a selection candidate id to its hydrated/full annotation, or its stub
+// when unhydrated. In stub-only mode most displayed annotations are unhydrated,
+// so resolving only via getAnnotationFromId (which returns undefined for stubs)
+// silently drops them from selection; fall back to the stub.
+function resolveSelectionCandidate(id: string): TAnnotationOrStub | undefined {
+  return getAnnotationFromId.value(id) ?? annotationStore.getStub(id);
+}
+
+// Drag-select containment: hydrated annotations test their full coordinates
+// (precise); unhydrated stubs fall back to their centroid (they render as a dot
+// there). Geometry-dependent operations refine after hydrate-on-selection.
+function selectionCandidateInPolygon(
+  candidate: TAnnotationOrStub,
+  polygon: IGeoJSPosition[],
+): boolean {
+  if (isHydratedAnnotation(candidate)) {
+    return candidate.coordinates.some((point: IGeoJSPosition) =>
+      geojs.util.pointInPolygon(point, polygon),
+    );
+  }
+  return geojs.util.pointInPolygon(candidate.centroid, polygon);
+}
+
+// Click hit-test for an unhydrated stub: it renders as a dot at its centroid,
+// so test proximity to that dot using the rendered style.
+function shouldSelectStub(
+  clickPosition: IGeoJSPosition,
+  stub: IAnnotationStub,
+  annotationStyle: IGeoJSPointFeatureStyle,
+  unitsPerPixel: number,
+): boolean {
+  return pointNearPoint(
+    clickPosition,
+    stub.centroid,
+    (annotationStyle.radius as number) ?? 0,
+    (annotationStyle.strokeWidth as number) ?? 0,
+    unitsPerPixel,
+  );
+}
+
 function getSelectedAnnotationsFromAnnotation(
   selectAnnotation: IGeoJSAnnotation,
 ) {
@@ -1591,7 +1633,7 @@ function getSelectedAnnotationsFromAnnotation(
   const type = selectAnnotation.type();
 
   const unitsPerPixel = getMapUnitsPerPixel();
-  const selectedAnns: IAnnotation[] = [];
+  const selectedAnns: TAnnotationOrStub[] = [];
   const selectedIds = new Set<string>();
 
   // For drag-select (non-point selection), use spatial index if available
@@ -1614,23 +1656,20 @@ function getSelectedAnnotationsFromAnnotation(
     if (spatialIndex) {
       // Query displayed annotations spatial index (bbox-based, precise)
       const candidates = spatialIndex.search({ minX, minY, maxX, maxY });
-      const getAnnotation = getAnnotationFromId.value;
       for (let i = 0; i < candidates.length; i++) {
         const { annotationId } = candidates[i];
         if (selectedIds.has(annotationId)) {
           continue;
         }
-        const annotation = getAnnotation(annotationId);
+        const candidate = resolveSelectionCandidate(annotationId);
         if (
-          !annotation ||
-          !annotation.coordinates.some((point: IGeoJSPosition) =>
-            geojs.util.pointInPolygon(point, coordinates),
-          )
+          !candidate ||
+          !selectionCandidateInPolygon(candidate, coordinates)
         ) {
           continue;
         }
         selectedIds.add(annotationId);
-        selectedAnns.push(annotation);
+        selectedAnns.push(candidate);
       }
     } else {
       // Fallback: linear scan over GeoJS annotations (tree not yet built)
@@ -1641,17 +1680,15 @@ function getSelectedAnnotationsFromAnnotation(
         if (!girderId || isConnection || selectedIds.has(girderId)) {
           continue;
         }
-        const annotation = getAnnotationFromId.value(girderId);
+        const candidate = resolveSelectionCandidate(girderId);
         if (
-          !annotation ||
-          !annotation.coordinates.some((point: IGeoJSPosition) =>
-            geojs.util.pointInPolygon(point, coordinates),
-          )
+          !candidate ||
+          !selectionCandidateInPolygon(candidate, coordinates)
         ) {
           continue;
         }
         selectedIds.add(girderId);
-        selectedAnns.push(annotation);
+        selectedAnns.push(candidate);
       }
     }
 
@@ -1664,33 +1701,30 @@ function getSelectedAnnotationsFromAnnotation(
       maxX,
       maxY,
     );
-    const getAnnotation = getAnnotationFromId.value;
     for (const annotationId of globalCandidateIds) {
       if (selectedIds.has(annotationId)) {
         continue;
       }
-      const annotation = getAnnotation(annotationId);
-      if (!annotation) {
+      // These are non-visible annotations — in stub-only mode almost always
+      // unhydrated — so resolve to the stub and gate/contain on its
+      // location/centroid, or they are all silently skipped.
+      const candidate = resolveSelectionCandidate(annotationId);
+      if (!candidate) {
         continue;
       }
       // Check if annotation is on the current frame
       if (
-        annotation.location.XY !== xy.value ||
-        annotation.location.Z !== z.value ||
-        annotation.location.Time !== time.value
+        candidate.location.XY !== xy.value ||
+        candidate.location.Z !== z.value ||
+        candidate.location.Time !== time.value
       ) {
         continue;
       }
-      // Full geometric test using actual coordinates
-      if (
-        !annotation.coordinates.some((point: IGeoJSPosition) =>
-          geojs.util.pointInPolygon(point, coordinates),
-        )
-      ) {
+      if (!selectionCandidateInPolygon(candidate, coordinates)) {
         continue;
       }
       selectedIds.add(annotationId);
-      selectedAnns.push(annotation);
+      selectedAnns.push(candidate);
     }
 
     return selectedAnns;
@@ -1707,22 +1741,30 @@ function getSelectedAnnotationsFromAnnotation(
       continue;
     }
 
-    const annotation = getAnnotationFromId.value(girderId);
-    if (
-      !annotation ||
-      !shouldSelectAnnotation(
-        type,
-        coordinates,
-        annotation,
-        geoJSannotation.style(),
-        unitsPerPixel,
-      )
-    ) {
+    const candidate = resolveSelectionCandidate(girderId);
+    if (!candidate) {
+      continue;
+    }
+    const hit = isHydratedAnnotation(candidate)
+      ? shouldSelectAnnotation(
+          type,
+          coordinates,
+          candidate,
+          geoJSannotation.style(),
+          unitsPerPixel,
+        )
+      : shouldSelectStub(
+          coordinates[0],
+          candidate,
+          geoJSannotation.style(),
+          unitsPerPixel,
+        );
+    if (!hit) {
       continue;
     }
 
     selectedIds.add(girderId);
-    selectedAnns.push(annotation);
+    selectedAnns.push(candidate);
   }
 
   return selectedAnns;
@@ -1836,7 +1878,7 @@ async function handleAnnotationConnections(selectAnnotation: IGeoJSAnnotation) {
     return;
   }
 
-  let selectedAnns: IAnnotation[];
+  let selectedAnns: TAnnotationOrStub[];
   if (showTimelapseMode.value) {
     const selectedGeoJSAnnotations =
       getTimelapseAnnotationsFromAnnotation(selectAnnotation);
@@ -2095,8 +2137,14 @@ async function handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
     return;
   }
 
+  // Polygon edits need real geometry, so restrict to hydrated polygons. In
+  // stub-only mode unhydrated stubs are excluded here (same set this handler
+  // operated on before stubs could appear in the selection); they hydrate via
+  // hydrate-on-selection and become editable on a subsequent pass.
   const polygonAnns = selectedAnns.filter(
-    (annotation) => annotation.shape === AnnotationShape.Polygon,
+    (annotation): annotation is IAnnotation =>
+      isHydratedAnnotation(annotation) &&
+      annotation.shape === AnnotationShape.Polygon,
   );
 
   if (polygonAnns.length === 0) {
@@ -2106,12 +2154,9 @@ async function handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
 
   const annotationTemplate = selectedToolConfiguration.value?.values
     ?.annotation as IRestrictTagsAndLayer;
-  let filteredAnns: IAnnotation[] = [];
-  if (annotationTemplate) {
-    filteredAnns = filterAnnotations(selectedAnns, annotationTemplate);
-  } else {
-    filteredAnns = polygonAnns;
-  }
+  const filteredAnns: IAnnotation[] = annotationTemplate
+    ? filterAnnotations(polygonAnns, annotationTemplate)
+    : polygonAnns;
 
   if (filteredAnns.length === 0) {
     props.interactionLayer.removeAnnotation(selectAnnotation);

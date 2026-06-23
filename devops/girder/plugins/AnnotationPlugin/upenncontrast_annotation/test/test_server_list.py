@@ -219,6 +219,44 @@ class TestServerListProperties:
         assert vals == [30, 20, 10]
         assert str(result["rows"][-1]["_id"]) == str(noval["_id"])
 
+    def testPureSortNoDuplicateWhenPvDocLacksSortKey(self, admin, server):
+        # Regression (Codex finding #4): on a pure property sort, an annotation
+        # whose PV doc EXISTS but lacks the sort key must appear exactly once,
+        # in the missing-value tail. The buggy version returned it from both
+        # the PV-driven first segment (_hasSortValue == 0) AND the no-value
+        # tail (which matches _pv.values.<key> == None), duplicating that row
+        # and omitting a different no-PV-doc annotation.
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        hasArea = makeAnnotation(folder["_id"])
+        pv.appendValues({"p": {"Area": 42}}, hasArea["_id"], folder["_id"])
+        otherPv = makeAnnotation(folder["_id"])  # PV doc exists, no p.Area
+        pv.appendValues({"q": {"Other": 7}}, otherPv["_id"], folder["_id"])
+        noPv = makeAnnotation(folder["_id"])  # no PV doc at all
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 10,
+        })
+        result = parseStreaming(resp)
+        ids = [str(r["_id"]) for r in result["rows"]]
+        expected = {
+            str(hasArea["_id"]), str(otherPv["_id"]), str(noPv["_id"])
+        }
+        # Exactly three unique rows: no duplicate, no omission.
+        assert len(ids) == 3
+        assert set(ids) == expected
+        assert result["total"] == 3
+        # Present value first; the two missing-value annotations follow.
+        assert ids[0] == str(hasArea["_id"])
+        assert set(ids[1:]) == {str(otherPv["_id"]), str(noPv["_id"])}
+
     def testPropertyRangeFilterAffectsCountAndRows(self, admin, server):
         folder, anns, noval = self._setup(admin)
         body = {
