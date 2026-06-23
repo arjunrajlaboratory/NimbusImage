@@ -91,23 +91,22 @@ describe("selectLargestBySize", () => {
   });
 
   it("returns exactly count ids when over the limit", () => {
-    expect(selectLargestBySize(["a", "b", "c", "d", "e"], sizeOf, 2)).toHaveLength(
-      2,
-    );
+    expect(
+      selectLargestBySize(["a", "b", "c", "d", "e"], sizeOf, 2),
+    ).toHaveLength(2);
   });
 
   it("selects the count largest by size", () => {
     // sizes: b=30, e=30, c=20, a=10, d=5 → top 3 by size are {b, e, c}
-    expect(new Set(selectLargestBySize(["a", "b", "c", "d", "e"], sizeOf, 3))).toEqual(
-      new Set(["b", "e", "c"]),
-    );
+    expect(
+      new Set(selectLargestBySize(["a", "b", "c", "d", "e"], sizeOf, 3)),
+    ).toEqual(new Set(["b", "e", "c"]));
   });
 
   it("breaks size ties deterministically by ascending hash (pan-stable)", () => {
     // b and e both have size 30. With count=1, the one chosen must be the
     // lower-hash of the two, regardless of input order.
-    const lowerHash =
-      hashString("b") < hashString("e") ? "b" : "e";
+    const lowerHash = hashString("b") < hashString("e") ? "b" : "e";
     expect(selectLargestBySize(["a", "b", "c", "d", "e"], sizeOf, 1)).toEqual([
       lowerHash,
     ]);

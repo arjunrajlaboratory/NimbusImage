@@ -15,6 +15,7 @@ import {
 } from "./model";
 
 import { fetchAllPages } from "@/utils/fetch";
+import { uncomputedCountRequest } from "@/utils/propertyValues";
 
 export type TAnnotationPropertyValuesAggregation = {
   datasetId: string;
@@ -66,6 +67,24 @@ export default class PropertiesAPI {
         `annotation_property_values/histogram?datasetId=${datasetId}&propertyPath=${joinedPath}&buckets=${buckets}`,
       )
       .then((res) => res.data);
+  }
+
+  // Per-property count of annotations matching the property's compute
+  // criteria (shape + tags) that have no computed value yet. The server
+  // returns counts only, so this scales to large datasets without
+  // transferring the full property-value map.
+  async getUncomputedCounts(
+    datasetId: string,
+    properties: IAnnotationProperty[],
+  ): Promise<{ [propertyId: string]: number }> {
+    if (properties.length === 0) {
+      return {};
+    }
+    const response = await this.client.post(
+      "upenn_annotation/uncomputed_counts",
+      { datasetId, properties: uncomputedCountRequest(properties) },
+    );
+    return response.data;
   }
 
   async addAggregatedPropertyValues(

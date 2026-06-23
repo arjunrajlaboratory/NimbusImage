@@ -4,8 +4,11 @@ import {
   idsMissingPaths,
   scopedMergePropertyValues,
   histogramBounds,
+  uncomputedCountRequest,
+  selectUncomputedCount,
 } from "@/utils/propertyValues";
 import type {
+  IAnnotationProperty,
   IAnnotationPropertyValues,
   TPropertyHistogram,
 } from "@/store/model";
@@ -125,5 +128,62 @@ describe("scopedMergePropertyValues", () => {
       new Set(["a"]),
     );
     expect(prev.a).toEqual({ p: 1 });
+  });
+});
+
+describe("uncomputedCountRequest", () => {
+  const makeProperty = (
+    id: string,
+    shape: string,
+    tags: string[],
+    exclusive: boolean,
+  ): IAnnotationProperty =>
+    ({
+      id,
+      name: id,
+      image: "img",
+      shape,
+      tags: { tags, exclusive },
+      workerInterface: {},
+    }) as unknown as IAnnotationProperty;
+
+  it("projects each property to id, shape and tags", () => {
+    const properties = [
+      makeProperty("p1", "point", ["nucleus"], false),
+      makeProperty("p2", "polygon", [], true),
+    ];
+    expect(uncomputedCountRequest(properties)).toEqual([
+      {
+        id: "p1",
+        shape: "point",
+        tags: { tags: ["nucleus"], exclusive: false },
+      },
+      { id: "p2", shape: "polygon", tags: { tags: [], exclusive: true } },
+    ]);
+  });
+
+  it("keeps the tags object shape (does not flatten it)", () => {
+    const [entry] = uncomputedCountRequest([
+      makeProperty("p1", "point", ["a", "b"], true),
+    ]);
+    expect(entry.tags).toEqual({ tags: ["a", "b"], exclusive: true });
+  });
+
+  it("returns an empty array for no properties", () => {
+    expect(uncomputedCountRequest([])).toEqual([]);
+  });
+});
+
+describe("selectUncomputedCount", () => {
+  it("uses the server count in lazy mode", () => {
+    expect(selectUncomputedCount(true, 7, 0)).toBe(7);
+  });
+
+  it("falls back to 0 when the server count is missing in lazy mode", () => {
+    expect(selectUncomputedCount(true, undefined, 5)).toBe(0);
+  });
+
+  it("uses the client count when not in lazy mode", () => {
+    expect(selectUncomputedCount(false, 7, 3)).toBe(3);
   });
 });

@@ -34,6 +34,7 @@ import {
   collectLeafPaths,
   idsMissingPaths,
   scopedMergePropertyValues,
+  selectUncomputedCount,
 } from "@/utils/propertyValues";
 import annotations from "./annotation";
 import jobs, {
@@ -86,6 +87,12 @@ export class Properties extends VuexModule {
   // value docs, since `propertyValues` then holds only the visible subset and
   // can't be walked for the full path set. Empty in wholesale mode.
   discoveredPropertyPaths: string[][] = markRaw([]);
+
+  // Lazy mode (stub-only) only: server-computed count of annotations still
+  // awaiting each property's computation ({propertyId: count}). In wholesale
+  // mode the count is derived client-side from the resident annotation set
+  // (uncomputedAnnotationsPerProperty) and this stays empty.
+  uncomputedCounts: { [propertyId: string]: number } = {};
 
   propertyStatuses: {
     [propertyId: string]: IPropertyStatus;
@@ -193,6 +200,7 @@ export class Properties extends VuexModule {
     // would prune them once new property values arrive, but resetting here
     // releases the references immediately and avoids a UI flash.
     this.displayedPropertyPaths = [];
+    this.uncomputedCounts = {};
     for (const handle of this.pendingWorkerPreviewTimeouts.values()) {
       clearTimeout(handle);
     }
@@ -241,6 +249,11 @@ export class Properties extends VuexModule {
   @Mutation
   setDiscoveredPropertyPaths(paths: string[][]) {
     this.discoveredPropertyPaths = markRaw(paths);
+  }
+
+  @Mutation
+  setUncomputedCounts(counts: { [propertyId: string]: number }) {
+    this.uncomputedCounts = counts;
   }
 
   // Lazy mode: merge freshly-fetched values into the cache, scoped to the
@@ -348,6 +361,27 @@ export class Properties extends VuexModule {
       }
     }
     return uncomputed;
+  }
+
+  // Per-property count of annotations awaiting computation, for the panels'
+  // badge / "Compute all" gating. In lazy (stub-only) mode the full annotation
+  // set isn't resident, so the client count above is always 0; use the
+  // server-computed `uncomputedCounts` instead. This is a plain map (not a
+  // function-returning getter) so a `uncomputedCounts` change is tracked as a
+  // reactive dependency by consuming computeds.
+  get uncomputedCountByProperty(): { [propertyId: string]: number } {
+    const lazy = annotations.stubOnlyMode;
+    const serverCounts = this.uncomputedCounts;
+    const clientCounts = this.uncomputedAnnotationsPerProperty;
+    const result: { [propertyId: string]: number } = {};
+    for (const property of this.properties) {
+      result[property.id] = selectUncomputedCount(
+        lazy,
+        serverCounts[property.id],
+        clientCounts[property.id]?.length ?? 0,
+      );
+    }
+    return result;
   }
 
   get computedPropertyPaths() {
@@ -685,6 +719,11 @@ export class Properties extends VuexModule {
         main.configuration.propertyIds,
       );
       this.setPropertiesImpl(properties);
+      // Properties may load after fetchPropertyValues already ran (the stub
+      // fetch can resolve first when cached), so trigger the count fetch here
+      // too; the guard in fetchUncomputedCounts dedupes (no-op in wholesale
+      // mode or before stub-only mode is known).
+      this.fetchUncomputedCounts();
     }
   }
 
@@ -702,9 +741,38 @@ export class Properties extends VuexModule {
     if (annotations.stubOnlyMode) {
       await this.fetchPropertyPathsSample();
       this.ensureVisiblePropertyValues();
+      this.fetchUncomputedCounts();
       return;
     }
     await this.fetchAllPropertyValues();
+  }
+
+  // Lazy mode: refresh the per-property uncomputed-annotation counts from the
+  // server (counts only — never values). No-op in wholesale mode, where the
+  // count is derived from the resident annotation set. Runs the fetch outside
+  // the action proxy (vuex-module-decorators breaks state/mutation access
+  // after await).
+  @Action
+  fetchUncomputedCounts() {
+    // Needs both lazy mode AND a loaded property list. These are populated by
+    // two independent async flows (fetchAnnotations sets stubOnlyMode;
+    // fetchProperties loads properties) with no guaranteed order, so this is
+    // called from both fetchPropertyValues and fetchProperties; the
+    // properties-empty guard makes whichever fires first a no-op, so it runs
+    // exactly once per open (when both are ready). No properties => nothing to
+    // count.
+    if (
+      !annotations.stubOnlyMode ||
+      !main.dataset?.id ||
+      this.properties.length === 0
+    ) {
+      return;
+    }
+    _fetchUncomputedCounts(
+      this.propertiesAPI,
+      main.dataset.id,
+      this.properties,
+    );
   }
 
   @Action
@@ -931,6 +999,24 @@ async function _fetchVisiblePropertyValues(
     propertiesModule.mergeVisiblePropertyValues({ newEntries, keepIds });
   } catch (error) {
     logError(`Property value fetch failed: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Fetch the per-property uncomputed-annotation counts (lazy mode) and store
+ * them. Runs outside the Vuex action proxy — vuex-module-decorators breaks
+ * state/mutation access after `await`, so we commit via the module instance.
+ */
+async function _fetchUncomputedCounts(
+  api: typeof main.propertiesAPI,
+  datasetId: string,
+  properties: IAnnotationProperty[],
+) {
+  try {
+    const counts = await api.getUncomputedCounts(datasetId, properties);
+    propertiesModule.setUncomputedCounts(counts);
+  } catch (error) {
+    logError(`Uncomputed count fetch failed: ${(error as Error).message}`);
   }
 }
 

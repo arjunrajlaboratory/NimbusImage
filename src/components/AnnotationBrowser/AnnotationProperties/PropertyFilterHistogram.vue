@@ -115,7 +115,7 @@ import {
 } from "vue";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
-import { arePathEquals, getValueFromObjectAndPath } from "@/utils/paths";
+import { arePathEquals } from "@/utils/paths";
 import { histogramBounds } from "@/utils/propertyValues";
 import { selectAll, event as d3Event } from "d3-selection";
 import { drag, D3DragEvent } from "d3-drag";
@@ -193,24 +193,15 @@ const maxValue = computed({
 });
 
 // Default slider extent = the authoritative full-data range from the server
-// histogram. Falls back to the client values only before the histogram loads
-// (and guards the empty case so stub-only mode never yields Infinity/-Infinity,
-// since propertyValues holds only the visible subset there).
-const defaultMin = computed(() => {
-  const bounds = histogramBounds(hist.value);
-  if (bounds) {
-    return bounds.min;
-  }
-  return values.value.length ? Math.min(...values.value) : 0;
-});
+// histogram, which is complete in both wholesale and lazy (stub-only) mode.
+// Falls back to 0 before the histogram loads (the watch on `hist` below syncs
+// the stored range once it arrives). The range is deliberately NOT derived
+// from propertyStore.propertyValues: in lazy mode that map holds only the
+// visible subset, so reading it would both under-represent the range and
+// reintroduce a wholesale per-annotation read.
+const defaultMin = computed(() => histogramBounds(hist.value)?.min ?? 0);
 
-const defaultMax = computed(() => {
-  const bounds = histogramBounds(hist.value);
-  if (bounds) {
-    return bounds.max;
-  }
-  return values.value.length ? Math.max(...values.value) : 0;
-});
+const defaultMax = computed(() => histogramBounds(hist.value)?.max ?? 0);
 
 const propertyFilters = computed(() => filterStore.propertyFilters);
 
@@ -237,22 +228,6 @@ const propertyFilter = computed(() => {
 const propertyFullName = computed(() =>
   propertyStore.getFullNameFromPath(props.propertyPath),
 );
-
-const values = computed(() => {
-  const valuesForThisProperty: number[] = [];
-  const propValues = propertyStore.propertyValues;
-  for (const annotationId in propValues) {
-    const valuesPerProperty = propValues[annotationId];
-    const value = getValueFromObjectAndPath(
-      valuesPerProperty,
-      props.propertyPath,
-    );
-    if (typeof value === "number") {
-      valuesForThisProperty.push(value);
-    }
-  }
-  return valuesForThisProperty;
-});
 
 const hist = computed(() => filterStore.getHistogram(props.propertyPath) || []);
 
@@ -428,7 +403,6 @@ defineExpose({
   defaultMax,
   propertyFilter,
   propertyFullName,
-  values,
   hist,
   area,
   initializeHandles,

@@ -532,6 +532,96 @@ class Annotation(AccessControlMixin, ProxiedModel):
         ))
         return result[0]["n"] if result else 0
 
+    def _propertyComputeMatch(self, shape, tagSpec):
+        """Match expression for the annotations a property CAN be computed on.
+
+        Mirrors the client canComputeAnnotationProperty/tagFilterFunction:
+        same shape, and inclusive -> the annotation carries all the property's
+        tags ($all); exclusive -> the annotation's tags are exactly that set.
+        Empty tags: inclusive matches every annotation of the shape; exclusive
+        matches only untagged annotations.
+        """
+        match = {}
+        if shape:
+            match["shape"] = shape
+        tagSpec = tagSpec or {}
+        tags = tagSpec.get("tags") or []
+        exclusive = bool(tagSpec.get("exclusive"))
+        if tags:
+            match["tags"] = (
+                {"$all": tags, "$size": len(tags)} if exclusive
+                else {"$all": tags}
+            )
+        elif exclusive:
+            match["tags"] = {"$size": 0}
+        return match
+
+    def uncomputedCounts(self, datasetId, propertyFilters):
+        """Per property, the count of annotations awaiting its computation.
+
+        For each property in `propertyFilters` ({id, shape, tags:{tags,
+        exclusive}}), returns the number of annotations matching its compute
+        criteria (shape + tag rule) that have no computed value for it, as
+        {propertyId: count}. Counts only -- never transfers values -- so a
+        700K-annotation dataset never ships its full value map for the
+        properties panel.
+
+        Computed as total_matching - has_value. `has_value` counts
+        property-value docs carrying the property's key; values are only ever
+        written for annotations that matched at compute time, so re-tagging an
+        annotation AFTER its value was computed can under-report the count by
+        that one annotation. That edge case is acceptable for an informational
+        badge and avoids a full per-annotation $lookup join (multi-second at
+        700K).
+        """
+        if not propertyFilters:
+            return {}
+
+        # One $facet over the annotations: a branch per property counting the
+        # documents that match its shape + tag rule. Project to {shape, tags}
+        # first so the facet buffers tiny docs rather than full geometry.
+        totalFacet = {
+            "p%d" % i: [
+                {"$match": self._propertyComputeMatch(
+                    pf.get("shape"), pf.get("tags"))},
+                {"$count": "n"},
+            ]
+            for i, pf in enumerate(propertyFilters)
+        }
+        totals = next(iter(self.collection.aggregate(
+            [
+                {"$match": {"datasetId": datasetId}},
+                {"$project": {"shape": 1, "tags": 1}},
+                {"$facet": totalFacet},
+            ],
+            hint={"datasetId": 1, "_id": 1}, allowDiskUse=True,
+        )), {})
+
+        # One streaming pass over the value docs: count, per top-level property
+        # key, how many docs carry it. `values`' top-level keys are property
+        # ids -- exactly the existence the client checks (propertyValues a/p).
+        hasValueByProperty = {
+            doc["_id"]: doc["n"]
+            for doc in self._pvModel.collection.aggregate(
+                [
+                    {"$match": {"datasetId": datasetId}},
+                    {"$project": {"k": {"$objectToArray": {
+                        "$ifNull": ["$values", {}]}}}},
+                    {"$unwind": "$k"},
+                    {"$group": {"_id": "$k.k", "n": {"$sum": 1}}},
+                ],
+                hint={"datasetId": 1, "_id": 1}, allowDiskUse=True,
+            )
+        }
+
+        counts = {}
+        for i, pf in enumerate(propertyFilters):
+            branch = totals.get("p%d" % i) or []
+            total = branch[0]["n"] if branch else 0
+            hasValue = hasValueByProperty.get(pf["id"], 0)
+            counts[pf["id"]] = max(0, total - hasValue)
+        return counts
+
     def _needsPropertyBeforePage(self, filters, sort):
         """Whether property values must be joined BEFORE pagination.
 

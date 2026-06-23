@@ -799,9 +799,9 @@ const routeName = computed(() => route.name);
 const isDatasetView = computed(() => routeName.value === "datasetview");
 
 const hasUncomputedProperties = computed(() => {
-  const uncomputed = propertyStore.uncomputedAnnotationsPerProperty;
-  for (const id in uncomputed) {
-    if (uncomputed[id].length > 0) {
+  const counts = propertyStore.uncomputedCountByProperty;
+  for (const id in counts) {
+    if (counts[id] > 0) {
       return true;
     }
   }

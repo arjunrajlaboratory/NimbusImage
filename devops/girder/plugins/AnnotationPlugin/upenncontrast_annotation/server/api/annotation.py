@@ -207,6 +207,7 @@ class Annotation(Resource):
         self.route("POST", ("hydrate",), self.hydrate)
         self.route("POST", ("list",), self.listAnnotations)
         self.route("POST", ("list", "ids"), self.listAnnotationIds)
+        self.route("POST", ("uncomputed_counts",), self.uncomputedCounts)
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
@@ -502,6 +503,37 @@ class Annotation(Resource):
         return {
             "count": self._annotationModel.collection.count_documents(query)
         }
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @autoDescribeRoute(
+        Description("Per-property count of annotations awaiting computation")
+        .notes(
+            "For each property, the number of annotations matching its "
+            "compute criteria (shape + tags) that have no computed value "
+            "for it. Returns counts only -- never values -- so a large "
+            "dataset's properties panel never transfers the full value "
+            "map. Body: {datasetId, properties: [{id, shape, tags: "
+            "{tags, exclusive}}]}."
+        )
+        .jsonParam(
+            "body",
+            "datasetId and the properties to count uncomputed annotations for",
+            paramType="body",
+            requireObject=True,
+        )
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
+    def uncomputedCounts(self, body):
+        datasetId = ObjectId(body["datasetId"])
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
+        properties = body.get("properties") or []
+        return self._annotationModel.uncomputedCounts(datasetId, properties)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(

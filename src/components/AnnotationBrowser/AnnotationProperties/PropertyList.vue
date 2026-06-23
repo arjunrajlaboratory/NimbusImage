@@ -87,10 +87,9 @@ const properties = computed(() => propertyStore.properties);
 
 const uncomputedProperties = computed(() => {
   const res: IAnnotationProperty[] = [];
+  const counts = propertyStore.uncomputedCountByProperty;
   for (const property of propertyStore.properties) {
-    if (
-      propertyStore.uncomputedAnnotationsPerProperty[property.id].length > 0
-    ) {
+    if ((counts[property.id] ?? 0) > 0) {
       res.push(property);
     }
   }

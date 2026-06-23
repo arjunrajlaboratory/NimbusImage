@@ -148,30 +148,49 @@ describe("PropertyFilterHistogram", () => {
     expect(vm.propertyFullName).toBeNull();
   });
 
-  it("values extracts numeric values from propertyStore.propertyValues", () => {
+  it("defaultMin returns the histogram's lower bound", () => {
+    (filterStore as any).getHistogram = vi.fn().mockReturnValue([
+      { count: 3, min: 11.7, max: 50 },
+      { count: 9, min: 50, max: 100 },
+    ]);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.values).toEqual(expect.arrayContaining([10, 20, 30]));
-    expect(vm.values).toHaveLength(3);
+    expect(vm.defaultMin).toBe(11.7);
   });
 
-  it("values returns empty array when no matching property values", () => {
-    (propertyStore as any).propertyValues = {};
+  it("defaultMax returns the histogram's upper bound", () => {
+    (filterStore as any).getHistogram = vi.fn().mockReturnValue([
+      { count: 3, min: 11.7, max: 50 },
+      { count: 9, min: 50, max: 100 },
+    ]);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.values).toEqual([]);
+    expect(vm.defaultMax).toBe(100);
   });
 
-  it("defaultMin returns minimum of values", () => {
+  it("defaultMin/defaultMax fall back to 0 before the histogram loads", () => {
+    (filterStore as any).getHistogram = vi.fn().mockReturnValue([]);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.defaultMin).toBe(10);
+    expect(vm.defaultMin).toBe(0);
+    expect(vm.defaultMax).toBe(0);
   });
 
-  it("defaultMax returns maximum of values", () => {
+  it("derives the range from the histogram, not the bounded propertyValues map", () => {
+    // The server histogram is the authoritative full-dataset range; in lazy
+    // mode propertyValues holds only the visible subset, so the range must
+    // never be derived from it (no wholesale read).
+    (propertyStore as any).propertyValues = {
+      ann1: { propA: { sub1: 999 } },
+    };
+    (filterStore as any).getHistogram = vi.fn().mockReturnValue([
+      { count: 1, min: 11.7, max: 50 },
+      { count: 1, min: 50, max: 100 },
+    ]);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.defaultMax).toBe(30);
+    expect(vm.defaultMin).toBe(11.7);
+    expect(vm.defaultMax).toBe(100);
   });
 
   it("minValue getter returns defaultMin when defaultMinMax is true", () => {
