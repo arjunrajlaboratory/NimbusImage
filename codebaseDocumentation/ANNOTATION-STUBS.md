@@ -5,7 +5,7 @@
 The annotation system uses a stub/hydrated architecture to efficiently handle large numbers of annotations. Annotations are loaded as lightweight stubs (centroid + metadata, no coordinates) and selectively hydrated (full coordinates loaded) based on viewport, size, and selection state.
 
 **Branch:** `feature/stub-annotations`
-**Status (2026-06-22):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **density-adaptive render budget + zoom hysteresis + restyle throttle (C4)** — the render/hydration budget is now **size-gated** (datasets ≤ `maxVisible` cap render fully at every zoom) and, above the cap, set by a **density-derived** zoomed-out floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K — a readable density map instead of a solid blob) that **doubles per zoom level** up to the cap (`visibilityBudgetForZoom`); a **unified pan+zoom hysteresis** (`cameraRefreshNeeded`, `viewportRefreshFraction` 0.2) skips the refresh until either the zoom magnification or the pan distance (as a fraction of the viewport) crosses 20%, cutting loading churn; `restyleAnnotations` is throttled like the draw path; and the render-coverage HUD is now viewport-relative ("Showing N of M in view · K loaded"). See section C4. **Still open / next:** C2 (zoom-aware hydration); infinite scroll (A3); B3 (streaming partial counts); D2–D5 (per-column loading, server aggregation for plots/panels, PV stubs, explicit LRU). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
+**Status (2026-06-22):** Backend endpoints + frontend migration complete and functionally correct on real data (HCR 26K, Xenium 708K). Server-side annotation list (Option B) shipped — see [`ANNOTATION-LIST-SERVER-SIDE-DESIGN.md`](./ANNOTATION-LIST-SERVER-SIDE-DESIGN.md). `/list` performance (was 3.6–25 s at 708K) is resolved via PV-driven queries — see section A. Recent fixes: stub circle world-locked sizing (see "RESOLVED: stub circles too large" below); the property-column sort arrow; row-click navigation hydrating the stale viewport (section C); hydrate-on-selection/navigation (C3, section C); **property-value lazy loading Stages 1 & 2** — no code path loads the full property-value map in stub-only mode anymore: the wholesale load on dataset open is gone (Stage 1) and an active property filter now drives drawing from a server-fetched id set instead of loading every value (Stage 2; verified 708K→0 resident even with a filter active, section D); **C1** — the viewport hydration fetch is now debounced + abortable (section C); and **stub circle size/stroke/fill now match the real annotation** (size: backend bbox-diagonal/2 → `max(w,h)/2`; stroke + fill mirror the full-annotation style — see "RESOLVED (2026-06-22)" below). **density-adaptive render budget + zoom hysteresis + restyle throttle (C4)** — the render/hydration budget is now **size-gated** (datasets ≤ `maxVisible` cap render fully at every zoom) and, above the cap, set by a **density-derived** zoomed-out floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K — a readable density map instead of a solid blob) that **doubles per zoom level** up to the cap (`visibilityBudgetForZoom`); a **unified pan+zoom hysteresis** (`cameraRefreshNeeded`, `viewportRefreshFraction` 0.2) skips the refresh until either the zoom magnification or the pan distance (as a fraction of the viewport) crosses 20%, cutting loading churn; `restyleAnnotations` is throttled like the draw path; and the render-coverage HUD is now viewport-relative ("Showing N of M in view · K loaded"). See section C4. **C2 (zoom-aware hydration) was built, verified correct, then SHELVED** — it caused a felt rendering regression (zoom-in freeze) because it concentrates full-polygon shapes into the viewport and the draw path rebuilds all features per refresh; parked on branch `shelf/c2-zoom-aware-hydration` (commit `3e783c83`) pending the draw-path fix. See the C2 note in section C. **Next:** (1) a profiling pass on a high-zoom pan, then (2) **draw-path incrementalization** (the real rendering bottleneck — `drawAnnotations` tears down and rebuilds every feature each refresh, hiccuping at high zoom even at the pre-C2 baseline), then (3) **D3** (server aggregation for plots/panels — last wholesale property-value consumer), then (4) un-shelve C2. **Deferred to later PRs / lower priority:** A3 (infinite scroll — deep-page tail), D2 (per-column loading — unnecessary; loading all values for one *item* is fine), D4 (PV stubs), D5 (explicit LRU), B3 (streaming partial counts). See the **Remaining work** summary at the very bottom for the authoritative roadmap.
 
 ---
 
@@ -389,6 +389,15 @@ polygon) distinguishes it.
 - [ ] Evaluate whether size-based hydration ranking (largest first) is the right heuristic vs. alternatives (density, distance to viewport center, user focus area)
 - [ ] Profile `updateVisibilityAndHydration` with 100K+ annotations to identify bottlenecks
 - [x] **Debounce/throttle the draw+restyle path** — DONE 2026-06-22 (C4): `restyleAnnotations` is now throttled (the draw path already was); the zoom-adaptive budget cuts the per-frame feature count (10× fewer when fully zoomed out) which is the main pan-lock remedy.
+- [ ] **Profiling pass: high-zoom pan (NEXT — do before any draw-path change).** The high-zoom pan
+  still hiccups at the pre-C2 baseline. Profile a high-zoom pan/zoom on the 708K Xenium dataset to
+  attribute the per-refresh cost across stages: the hydrate **fetch** (network + merge), the
+  `layerAnnotations` **recompute**, the GeoJS feature **teardown+rebuild** (`drawAnnotations` →
+  `clearOldAnnotations(true)` + `drawNewAnnotations`), and the **`restyle`** pass. Hypothesis: the
+  full feature rebuild dominates (see "Draw-path incrementalization" in section C). Use the
+  browser Performance panel + `window.__stubPerf` counters; isolate by temporarily stubbing each
+  stage. Output: a confirmed bottleneck ranking that says whether the incremental-draw fix is the
+  right lever (and whether C2 can then return). No production code changes in this pass.
 - [ ] Test hydration/dehydration memory churn during rapid pan/zoom
 
 ### Styling Adjustments
@@ -754,9 +763,46 @@ Xenium dataset.
   API test asserts signal forwarding (+2). **Verified in-browser on the 708K Xenium dataset:**
   an 8-tick zoom burst produced a single `hydrate` POST (coalesced), hydration stayed healthy
   (`hydrationMode: "shapes"`, cache populated), no console errors.
-- **C2 — Zoom-aware hydration:** Steps 2–4 use the 2× expanded viewport for *both*
-  visibility and hydration, so zooming in doesn't re-prioritize the newly-visible region.
-  Simplest fix: unexpanded bounds for the hydration split, expanded only for visibility.
+- **C2 — Zoom-aware hydration (BUILT, then SHELVED 2026-06-22 — do not re-apply before the
+  draw-path fix below).** The change: split current-frame ids by *two* boxes — the 2× expanded
+  box drives visibility (pan pre-load), the **unexpanded** box drives hydration — so zooming in
+  re-prioritizes hydration onto the actual viewport (the simplest fix noted previously). It was
+  implemented, fully tested (pure helpers `selectVisibleIds`/`selectHydrationIds` in
+  `utils/visibilityBudget.ts`; `visibilityBudget.test.ts` +5, `annotationStubs.test.ts` +1), and
+  verified correct on 708K (a budget-saturated zoom put 17,412/17,412 hydrated slots inside the
+  actual viewport vs ~25% before).
+
+  **Why shelved:** it caused a *felt rendering regression* — zooming in froze the UI for a beat.
+  Root cause is **not** the hydration selection but the **draw path**: because an annotation is
+  drawn as a full shape only when it is *both visible and hydrated*, concentrating hydration onto
+  the exact viewport means every annotation you zoom into becomes a full **polygon** (vs. only the
+  largest ones under the old expanded-box ranking), and `drawAnnotations` rebuilds **all** of them
+  from scratch each refresh (see the draw-path item below). More polygons rebuilt per frame inside
+  the viewport = the freeze. C2 also churns the hydration set more tightly with the smaller box, so
+  it refreshes more often. The practical benefit is subtle (the density-adaptive C4 budget already
+  hydrates most of the viewport via the expanded box), so it is not worth the regression **until
+  the draw path is incremental**. After that fix, C2 should be cheap to bring back — possibly with
+  "hydrated-in-memory" decoupled from "drawn-as-shape" (a separate, smaller shape-draw cap).
+
+  **Where it lives:** the finished commit is parked on branch **`shelf/c2-zoom-aware-hydration`**
+  (commit `3e783c83`, "feat(frontend): zoom-aware hydration via unexpanded viewport split (C2)").
+  `git cherry-pick 3e783c83` (or `git show 3e783c83`) to resurrect it. It is *not* on
+  `feature/stub-annotations` (reverted via `git reset` after the regression was confirmed).
+
+- **Draw-path incrementalization (the real rendering bottleneck — NEXT perf item, NOT YET DONE).**
+  `drawAnnotations` (`AnnotationViewer.vue`) tears the whole GeoJS layer down and rebuilds *every*
+  visible feature on every refresh: `drawAnnotationsNoThrottle` calls `clearOldAnnotations(true, …)`
+  → `removeAllAnnotations()`, then `drawNewAnnotations` re-creates all features via
+  `createGeoJSAnnotation` + `addMultipleAnnotations`. At high zoom with thousands of features (and
+  full polygons) this O(N) rebuild per pan/zoom is the **high-zoom pan hiccup that exists even at
+  the pre-C2 baseline**, and it is what C2 amplified. The codebase already has an **incremental diff
+  path** that is unused by the main draw: `clearOldAnnotations(false)` removes only features whose
+  annotation actually changed (color/layer/stub-state), and `drawNewAnnotations` already skips
+  features that are still present (the `excluded` check). Likely fix: route the normal draw through
+  the diff path (or a viewport diff that only adds/removes features entering/leaving). Correctness
+  edges to cover with TDD + in-browser: frame changes (XY/Z/Time), stub→shape transitions,
+  connections, and selection highlight. **Start with a profiling pass (see To-Do) to confirm the
+  rebuild is the dominant cost before touching this delicate code.**
 - **C4 — Density-adaptive render budget + zoom hysteresis + restyle throttle (DONE 2026-06-22).**
   Three changes addressed the post-pan UI lock and the zoomed-out noise. The budget model went
   through one design iteration: an initial simple `zoomedOutFraction × cap` floor + doubling was
@@ -973,8 +1019,28 @@ complete: no code path loads the full property-value map in lazy mode); **C1**
 **C4 / density-adaptive render budget + unified pan+zoom hysteresis + restyle throttle +
 viewport-relative indicator** (2026-06-22 — size-gated density-derived budget that doubles per zoom
 level; the refresh is skipped until either zoom or pan crosses 20%; mid-size datasets render fully).
-**Remaining, recommended order:** **C2** (zoom-aware hydration — unexpanded bounds for the
-hydration split; note C4 already computes the unexpanded split for the indicator counts, so
-the bounds are readily available) → **A3 / infinite scroll** (deep-page residual) → **B3**
-(streaming partial counts — low value) → **D2–D5** (per-column loading, server aggregation for
-plots/panels, PV stubs, explicit LRU). D2–D5 are independent and can proceed in parallel.
+**Remaining, recommended order (updated 2026-06-22 after the C2 regression):**
+
+1. **Profiling pass on a high-zoom pan** (no code changes) — confirm whether the GeoJS feature
+   teardown+rebuild is the dominant per-refresh cost. See the To-Do item and the "Draw-path
+   incrementalization" note in section C.
+2. **Draw-path incrementalization** — route the normal draw through the existing diff path so a
+   pan/zoom only adds/removes the features that changed instead of rebuilding all. Fixes the
+   high-zoom pan hiccup that exists even at the pre-C2 baseline; gated on the profiling pass.
+3. **D3 — server-side aggregation for plots + properties panels** — the last wholesale
+   property-value consumers; the remaining structural memory item at scale.
+4. **C2 — zoom-aware hydration (un-shelve)** — only after the draw path is incremental (it is the
+   reason C2 froze). Parked on branch `shelf/c2-zoom-aware-hydration` (commit `3e783c83`); see the
+   C2 note in section C. Consider decoupling "hydrated-in-memory" from "drawn-as-shape" when
+   bringing it back.
+
+**Deferred to later PRs / lower priority:**
+- **A3 / infinite scroll** — keyset pagination for the deep-`$skip` list tail (3.4 s at offset
+  700K; normal browsing <1 s). Self-contained; pushed to a later PR.
+- **D2 — on-demand per-column loading** — *not necessary for now.* Loading **all** property values
+  for a **single item** is fine; the problem was only loading all values for **all items**, which
+  D Stage 1/2 already solved. Defer.
+- **D4 — property-value stubs** (min/max/mean summaries) — low priority.
+- **D5 — explicit LRU eviction** of the property-value cache — Stage 1/2 already bound it via
+  visible-set scoping; low priority.
+- **B3 — streaming partial counts** — low value.
