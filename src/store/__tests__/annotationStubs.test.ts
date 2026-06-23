@@ -248,8 +248,14 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
           }
         }
 
-        let inViewportIds = currentFrameIds;
-        let outOfViewportIds: string[] = [];
+        // Two viewport splits (mirrors the real action, C2): visibility uses
+        // an EXPANDED box (pan pre-load); hydration uses the UNEXPANDED box —
+        // the region the user actually sees — so zooming in re-prioritizes the
+        // newly-visible annotations.
+        let visInViewport = currentFrameIds;
+        let visOutOfViewport: string[] = [];
+        let hydInViewport = currentFrameIds;
+        let hydOutOfViewport: string[] = [];
 
         if (gcsBounds && gcsBounds.length === 4) {
           let minX = Infinity,
@@ -262,25 +268,32 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
             maxX = Math.max(maxX, pt.x);
             maxY = Math.max(maxY, pt.y);
           }
-          ({ inViewportIds, outOfViewportIds } = spatialIndex.splitByViewport(
-            currentFrameIds,
-            minX,
-            minY,
-            maxX,
-            maxY,
-          ));
+          // Unexpanded (raw) split — the actual viewport — drives hydration.
+          ({ inViewportIds: hydInViewport, outOfViewportIds: hydOutOfViewport } =
+            spatialIndex.splitByViewport(currentFrameIds, minX, minY, maxX, maxY));
+          // Expanded by 50% on each side — drives visibility (pan pre-load).
+          const width = maxX - minX;
+          const height = maxY - minY;
+          ({ inViewportIds: visInViewport, outOfViewportIds: visOutOfViewport } =
+            spatialIndex.splitByViewport(
+              currentFrameIds,
+              minX - width * 0.5,
+              minY - height * 0.5,
+              maxX + width * 0.5,
+              maxY + height * 0.5,
+            ));
         }
 
         let visibleIds: string[];
-        if (inViewportIds.length >= maxVisible) {
-          visibleIds = selectRandomSubset(inViewportIds, maxVisible);
+        if (visInViewport.length >= maxVisible) {
+          visibleIds = selectRandomSubset(visInViewport, maxVisible);
         } else {
-          const remaining = maxVisible - inViewportIds.length;
-          const offViewport = selectRandomSubset(outOfViewportIds, remaining);
-          visibleIds = [...inViewportIds, ...offViewport];
+          const remaining = maxVisible - visInViewport.length;
+          const offViewport = selectRandomSubset(visOutOfViewport, remaining);
+          visibleIds = [...visInViewport, ...offViewport];
         }
 
-        const inViewportWithSize = inViewportIds.map((id) => ({
+        const inViewportWithSize = hydInViewport.map((id) => ({
           id,
           size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
         }));
@@ -293,7 +306,7 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
             .map((item) => item.id);
         } else {
           const remainingBudget = maxHydrated - inViewportWithSize.length;
-          const offViewportWithSize = outOfViewportIds.map((id) => ({
+          const offViewportWithSize = hydOutOfViewport.map((id) => ({
             id,
             size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
           }));
@@ -827,6 +840,48 @@ describe("annotation stub/hydration store logic", () => {
       expect(store.state.hydratedAnnotations.has("large")).toBe(true);
       expect(store.state.hydratedAnnotations.has("medium")).toBe(true);
       expect(store.state.hydratedAnnotations.has("small")).toBe(false);
+    });
+
+    it("hydrates the actual (unexpanded) viewport, not the larger pre-load region (C2)", async () => {
+      // Hydration budget too small to cover everything in the expanded box.
+      store.state.visibilityConfig = { maxVisible: 20000, maxHydrated: 2 };
+
+      // Raw viewport is [0,100]²; expanded 50% on each side → [-50,150]².
+      // Three modest annotations sit inside the actual viewport...
+      const annotations = [
+        makeSquareAnnotation("in-a", 40, 40, 10), // radius 5
+        makeSquareAnnotation("in-b", 60, 60, 8), // radius 4
+        makeSquareAnnotation("in-c", 50, 30, 6), // radius 3
+        // ...and one HUGE annotation just outside it but inside the pre-load
+        // margin (centroid 140,140 ∈ expanded box, ∉ raw box).
+        makeSquareAnnotation("edge-big", 140, 140, 400), // radius 200
+      ];
+      store.commit("setAnnotations", annotations);
+
+      const gcsBounds = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      await store.dispatch("updateVisibilityAndHydration", {
+        filteredIds: annotations.map((a) => a.id),
+        gcsBounds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+      });
+
+      // Hydration tracks what the user is actually looking at: the two largest
+      // annotations INSIDE the viewport — not the huge one in the pre-load
+      // margin. If hydration ranked against the expanded box (the C2 bug),
+      // edge-big would win the budget and in-b would be dropped.
+      expect(store.state.hydratedAnnotations.has("in-a")).toBe(true);
+      expect(store.state.hydratedAnnotations.has("in-b")).toBe(true);
+      expect(store.state.hydratedAnnotations.has("edge-big")).toBe(false);
+
+      // Visibility still pre-loads the expanded region so a pan reveals it
+      // immediately — the off-viewport pre-load must NOT regress.
+      expect(store.state.visibleAnnotationIds.has("edge-big")).toBe(true);
     });
   });
 

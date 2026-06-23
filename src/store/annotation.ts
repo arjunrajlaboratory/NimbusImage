@@ -2199,18 +2199,18 @@ export class Annotations extends VuexModule {
       }
     }
 
-    // Step 2: Split current-frame IDs by viewport
-    let inViewportIds = currentFrameIds;
-    let outOfViewportIds: string[] = [];
-    // The raw (unexpanded) viewport — what the user actually sees — drives the
-    // render-coverage indicator counts below. The expanded box drives
-    // visibility/hydration so panning has pre-loaded annotations ready.
-    let rawBounds: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-    } | null = null;
+    // Step 2: Split current-frame IDs by viewport into two boxes (C2).
+    // Visibility uses an EXPANDED box so panning reveals pre-loaded annotations.
+    // Hydration AND the render-coverage counts use the UNEXPANDED box — the
+    // region the user actually sees — so zooming in re-prioritizes the
+    // newly-visible annotations. (When zoomed out, the expanded box covers the
+    // whole frame, so ranking hydration against it never tracks zoom.)
+    const noSplit = {
+      inViewportIds: currentFrameIds,
+      outOfViewportIds: [] as string[],
+    };
+    let visibilitySplit = noSplit;
+    let hydrationSplit = noSplit;
 
     if (gcsBounds && gcsBounds.length === 4) {
       let minX = Infinity,
@@ -2223,50 +2223,62 @@ export class Annotations extends VuexModule {
         maxX = Math.max(maxX, pt.x);
         maxY = Math.max(maxY, pt.y);
       }
-      rawBounds = { minX, minY, maxX, maxY };
-      // Expand bounds by 50% on each side so panning has pre-hydrated annotations
+      // Unexpanded (raw) split — the actual viewport — drives hydration + the
+      // render-coverage indicator counts.
+      hydrationSplit = annotationSpatialIndex.splitByViewport(
+        currentFrameIds,
+        minX,
+        minY,
+        maxX,
+        maxY,
+      );
+      // Expanded by 50% on each side — drives visibility (pan pre-load).
       const width = maxX - minX;
       const height = maxY - minY;
-      minX -= width * 0.5;
-      maxX += width * 0.5;
-      minY -= height * 0.5;
-      maxY += height * 0.5;
-      ({ inViewportIds, outOfViewportIds } =
-        annotationSpatialIndex.splitByViewport(
-          currentFrameIds,
-          minX,
-          minY,
-          maxX,
-          maxY,
-        ));
+      visibilitySplit = annotationSpatialIndex.splitByViewport(
+        currentFrameIds,
+        minX - width * 0.5,
+        minY - height * 0.5,
+        maxX + width * 0.5,
+        maxY + height * 0.5,
+      );
     }
 
-    // Step 3: Fill visibility budget (two-tier)
+    // Step 3: Fill visibility budget (two-tier, EXPANDED box).
+    const visInViewport = visibilitySplit.inViewportIds;
     let visibleIds: string[];
-    if (inViewportIds.length >= maxVisible) {
-      visibleIds = selectRandomSubset(inViewportIds, maxVisible);
+    if (visInViewport.length >= maxVisible) {
+      visibleIds = selectRandomSubset(visInViewport, maxVisible);
     } else {
-      const remaining = maxVisible - inViewportIds.length;
-      const offViewport = selectRandomSubset(outOfViewportIds, remaining);
-      visibleIds = [...inViewportIds, ...offViewport];
+      const remaining = maxVisible - visInViewport.length;
+      const offViewport = selectRandomSubset(
+        visibilitySplit.outOfViewportIds,
+        remaining,
+      );
+      visibleIds = [...visInViewport, ...offViewport];
     }
 
-    // Step 4: Fill hydration budget (two-tier, largest first). In-viewport
-    // annotations are preferred; off-viewport fills the remainder. Both tiers
-    // pick the largest by estimatedRadius via selectLargestBySize (bounded
-    // min-heap, O(n log count), each id's size+hash computed once, deterministic
-    // hash tie-break) — was a full O(N log N) sort of ~700K {id,size} objects per
-    // refresh (~0.4-0.5 s at high zoom). The tie-break also keeps the hydration
-    // set stable across pans when sizes are near-uniform.
+    // Step 4: Fill hydration budget (two-tier, largest first, UNEXPANDED box).
+    // In-viewport annotations are preferred; off-viewport fills the remainder.
+    // Both tiers pick the largest by estimatedRadius via selectLargestBySize
+    // (bounded min-heap, O(n log count), each id's size+hash computed once,
+    // deterministic hash tie-break) — was a full O(N log N) sort of ~700K
+    // {id,size} objects per refresh (~0.4-0.5 s at high zoom). The tie-break
+    // also keeps the hydration set stable across pans when sizes are near-uniform.
     const sizeOf = (id: string) => stubsMap.get(id)?.estimatedRadius ?? 0;
+    const hydInViewport = hydrationSplit.inViewportIds;
     let idsToHydrate: string[];
-    if (inViewportIds.length >= maxHydrated) {
-      idsToHydrate = selectLargestBySize(inViewportIds, sizeOf, maxHydrated);
+    if (hydInViewport.length >= maxHydrated) {
+      idsToHydrate = selectLargestBySize(hydInViewport, sizeOf, maxHydrated);
     } else {
-      const remainingBudget = maxHydrated - inViewportIds.length;
+      const remainingBudget = maxHydrated - hydInViewport.length;
       idsToHydrate = [
-        ...inViewportIds,
-        ...selectLargestBySize(outOfViewportIds, sizeOf, remainingBudget),
+        ...hydInViewport,
+        ...selectLargestBySize(
+          hydrationSplit.outOfViewportIds,
+          sizeOf,
+          remainingBudget,
+        ),
       ];
     }
 
@@ -2274,17 +2286,10 @@ export class Annotations extends VuexModule {
     this.setVisibleAnnotationIds(visibleIds);
 
     // Step 5b: Render-coverage counts for the ACTUAL (unexpanded) viewport — how
-    // many annotations are in view vs how many of those are drawn. Drives the
-    // render-coverage indicator.
-    const actualInView = rawBounds
-      ? annotationSpatialIndex.splitByViewport(
-          currentFrameIds,
-          rawBounds.minX,
-          rawBounds.minY,
-          rawBounds.maxX,
-          rawBounds.maxY,
-        ).inViewportIds
-      : currentFrameIds;
+    // many annotations are in view vs how many of those are drawn. Reuses the
+    // hydration split (same unexpanded box) — one fewer splitByViewport than
+    // recomputing it here. Drives the render-coverage indicator.
+    const actualInView = hydrationSplit.inViewportIds;
     const visibleSet = new Set(visibleIds);
     let viewportRendered = 0;
     for (const id of actualInView) {
