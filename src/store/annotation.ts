@@ -44,6 +44,7 @@ import {
   stubFromAnnotation,
   idsNeedingHydration,
   planHydrationEvictions,
+  shapeNeedsHydration,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import {
@@ -2314,14 +2315,17 @@ export class Annotations extends VuexModule {
     }
 
     // Step 4: Fill hydration budget (two-tier, largest first, UNEXPANDED box).
-    // In-viewport annotations are preferred; off-viewport fills the remainder.
-    // Both tiers pick the largest by estimatedRadius via selectLargestBySize
-    // (bounded min-heap, O(n log count), each id's size+hash computed once,
-    // deterministic hash tie-break) — was a full O(N log N) sort of ~700K
-    // {id,size} objects per refresh (~0.4-0.5 s at high zoom). The tie-break
-    // also keeps the hydration set stable across pans when sizes are near-uniform.
+    // Points are self-complete (centroid IS the only coordinate), so they never
+    // hydrate — drop them from both tiers BEFORE budget allocation so the budget
+    // goes entirely to shapes that actually need coordinates. For an all-points
+    // dataset this filters the candidate lists to empty, so the size-selection
+    // is skipped entirely.
+    const needsHydration = (id: string): boolean => {
+      const stub = stubsMap.get(id);
+      return !!stub && shapeNeedsHydration(stub.shape);
+    };
     const sizeOf = (id: string) => stubsMap.get(id)?.estimatedRadius ?? 0;
-    const hydInViewport = hydrationSplit.inViewportIds;
+    const hydInViewport = hydrationSplit.inViewportIds.filter(needsHydration);
     let idsToHydrate: string[];
     if (hydInViewport.length >= maxHydrated) {
       idsToHydrate = selectLargestBySize(hydInViewport, sizeOf, maxHydrated);
@@ -2330,7 +2334,7 @@ export class Annotations extends VuexModule {
       idsToHydrate = [
         ...hydInViewport,
         ...selectLargestBySize(
-          hydrationSplit.outOfViewportIds,
+          hydrationSplit.outOfViewportIds.filter(needsHydration),
           sizeOf,
           remainingBudget,
         ),
@@ -2397,11 +2401,15 @@ export class Annotations extends VuexModule {
     if (!this.stubOnlyMode) {
       return;
     }
+    const stubs = this.annotationStubs;
     const idsToFetch = idsNeedingHydration(
       ids,
       this.hydratedAnnotations,
-      this.annotationStubs,
-    );
+      stubs,
+    ).filter((id) => {
+      const stub = stubs.get(id);
+      return !!stub && shapeNeedsHydration(stub.shape);
+    });
     if (idsToFetch.length === 0) {
       return;
     }
