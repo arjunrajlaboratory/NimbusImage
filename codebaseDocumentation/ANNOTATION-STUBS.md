@@ -438,6 +438,26 @@ ever shows this hot:** the connection/timelapse-centroid paths only need
 `id`+`centroid`, so they can read the stub directly (`getStub`) and skip the
 coordinate-array allocation — a surgical per-site change, not a re-architecture.
 
+#### Follow-up (2026-06-24): point moves must update local state in stub-only mode
+Materializing point stubs let alt-drag move a point, but the stub-only update
+path only synced tags/color, so a moved point's backend coordinates changed
+while `annotationStubs` / `annotationCentroids` / `annotationSpatialIndex` kept
+the old centroid until reload. **Fix (two parts):**
+- `buildStubUpdates` now emits a centroid update for a moved point (a point's
+  only coordinate *is* its centroid; gated to point shape), and
+  `applyStubFieldUpdates` applies it to the stub centroid, the centroid index
+  (in place — copying the up-to-1M-entry map per drag would be wasteful), and
+  the spatial index (clean upsert).
+- Newly-created annotations are always added to `hydratedAnnotations` (even in
+  stub-only mode), and `getAnnotationFromId` prefers that hydrated copy before
+  materializing from the stub. `applyStubFieldUpdates` now also makes the
+  hydrated copy's `coordinates` follow a point move (`coordinates = [centroid]`),
+  so a freshly-created, then-dragged point no longer resolves to stale coords in
+  copy/paste, hit-testing, selection, and connections.
+
+Verified in-browser (a created point resolved to its old coords after a move
+before the fix, correct coords after). TDD: 2 new `buildStubUpdates` tests.
+
 ### Selection includes non-visible annotations
 - `getSelectedAnnotationsFromAnnotation()` queries both the displayed RBush and the global `annotationSpatialIndex`
 - Drag-select catches ALL annotations in the region on the current frame, regardless of visibility budget

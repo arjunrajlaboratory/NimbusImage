@@ -1,9 +1,10 @@
 # Problem: the render/hydration budget fills with off-screen annotations when zoomed in
 
 **Status:** Open problem, not yet scheduled. Tracked separately from the
-point-annotation work (see the point-collapse spec under
-`docs/superpowers/specs/`). This is the shape-agnostic, higher-blast-radius
-lever and deserves its own design + verification pass.
+point-annotation work (see the "RESOLVED (2026-06-24): point annotations bypass
+the stub/hydrated machinery" section in `ANNOTATION-STUBS.md`). This is the
+shape-agnostic, higher-blast-radius lever and deserves its own design +
+verification pass.
 
 **Branch context:** `feature/stub-annotations`. This is the same item the
 `ANNOTATION-STUBS.md` overview calls out as the highest-leverage remaining perf
