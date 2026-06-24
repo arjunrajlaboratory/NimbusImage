@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { buildListFilters } from "../annotationListServer";
+import annotationListServer, {
+  buildListFilters,
+} from "../annotationListServer";
 import { IIdAnnotationFilter } from "../model";
+
+describe("annotationListServer defaults", () => {
+  it("defaults to a page size of 10 (matching the client list)", () => {
+    expect(annotationListServer.pageSize).toBe(10);
+  });
+});
 
 // Disabled defaults so the id constraints are inactive unless a test
 // explicitly enables them. Keeps the membership filters out of the way of the

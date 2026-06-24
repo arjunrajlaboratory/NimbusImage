@@ -85,7 +85,10 @@ export class AnnotationListServer extends VuexModule {
   total = 0;
   loading = false;
   page = 1; // 1-based (Vuetify)
-  pageSize = 50;
+  // Matches the client list's default and Vuetify's default page size, so the
+  // server table also shows 10 rows per page by default (the footer reflects
+  // this via the :items-per-page binding).
+  pageSize = 10;
   sort: IAnnotationListSort | null = null;
   idSubstring = "";
 
