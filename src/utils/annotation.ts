@@ -454,6 +454,52 @@ export function idsNeedingHydration(
   return result;
 }
 
+/**
+ * Decide which hydration-cache entries to evict to honor `cap`.
+ *
+ * `orderedIds` is the cache's key order, oldest (LRU) first. Selected ids are
+ * protected: non-selected LRU entries are evicted first. But `cap` is a HARD
+ * ceiling — if the selected set alone exceeds it (e.g. "select all" on a huge
+ * dataset), selected LRU entries are evicted too, so the cache can never grow
+ * unbounded. Returns the ids to evict and how many selected ids survived.
+ */
+export function planHydrationEvictions(
+  orderedIds: string[],
+  selected: ReadonlySet<string>,
+  cap: number,
+): { evict: string[]; protectedSkipped: number } {
+  const evict: string[] = [];
+  if (cap > 0 && orderedIds.length > cap) {
+    let toEvict = orderedIds.length - cap;
+    // Pass 1: evict non-selected LRU first (protect the user's selection).
+    for (const id of orderedIds) {
+      if (toEvict <= 0) break;
+      if (selected.has(id)) continue;
+      evict.push(id);
+      toEvict -= 1;
+    }
+    // Pass 2 (hard ceiling): if the protected set alone still exceeds the cap,
+    // evict selected LRU too rather than letting the cache overflow.
+    if (toEvict > 0) {
+      const evicted = new Set(evict);
+      for (const id of orderedIds) {
+        if (toEvict <= 0) break;
+        if (evicted.has(id)) continue;
+        evict.push(id);
+        toEvict -= 1;
+      }
+    }
+  }
+  const evictSet = new Set(evict);
+  let protectedSkipped = 0;
+  for (const id of orderedIds) {
+    if (selected.has(id) && !evictSet.has(id)) {
+      protectedSkipped += 1;
+    }
+  }
+  return { evict, protectedSkipped };
+}
+
 export function estimateAnnotationRadius(
   coordinates: IGeoJSPosition[],
 ): number {

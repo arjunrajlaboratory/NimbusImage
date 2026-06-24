@@ -9,6 +9,7 @@ import {
   annotationTestPoints,
   idsNeedingHydration,
   stubFromAnnotation,
+  planHydrationEvictions,
 } from "../annotation";
 import { IAnnotation } from "@/store/model";
 
@@ -340,6 +341,49 @@ describe("idsNeedingHydration", () => {
     expect(idsNeedingHydration(["a", "b"], hydratedSet, stubSet)).toEqual([
       "b",
     ]);
+  });
+});
+
+describe("planHydrationEvictions", () => {
+  // orderedIds = LRU order (head = oldest / first to evict).
+  it("evicts nothing when at or under the cap", () => {
+    const plan = planHydrationEvictions(["a", "b", "c"], new Set(), 5);
+    expect(plan.evict).toEqual([]);
+    expect(plan.protectedSkipped).toBe(0);
+  });
+
+  it("evicts the oldest (LRU) entries to reach the cap", () => {
+    const plan = planHydrationEvictions(["a", "b", "c", "d"], new Set(), 2);
+    expect(plan.evict).toEqual(["a", "b"]);
+  });
+
+  it("protects selected ids, evicting non-selected LRU instead", () => {
+    // cap 2, 4 entries → evict 2; "a" is selected so skip it and evict the
+    // next non-selected (b, c).
+    const plan = planHydrationEvictions(
+      ["a", "b", "c", "d"],
+      new Set(["a"]),
+      2,
+    );
+    expect(plan.evict).toEqual(["b", "c"]);
+    expect(plan.protectedSkipped).toBe(1);
+  });
+
+  it("enforces a HARD cap by evicting selected LRU when the protected set alone exceeds the cap (select-all)", () => {
+    // Everything selected, cap 2, 4 entries → must still evict 2 (the LRU
+    // ones) so the cache can't grow unbounded.
+    const plan = planHydrationEvictions(
+      ["a", "b", "c", "d"],
+      new Set(["a", "b", "c", "d"]),
+      2,
+    );
+    expect(plan.evict).toEqual(["a", "b"]);
+    // c and d are selected and survived → 2 protected survivors.
+    expect(plan.protectedSkipped).toBe(2);
+  });
+
+  it("treats cap <= 0 as no cap", () => {
+    expect(planHydrationEvictions(["a", "b"], new Set(), 0).evict).toEqual([]);
   });
 });
 

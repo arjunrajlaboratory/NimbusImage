@@ -212,6 +212,16 @@ class TestStubs:
         )
         assertStatus(resp, 400)
 
+    def testStubsMalformedDatasetReturns400(self, admin, server):
+        """A non-ObjectId datasetId is a clean 400, not a 500."""
+        resp = server.request(
+            path="/upenn_annotation/stubs",
+            method="GET",
+            user=admin,
+            params={"datasetId": "not-an-object-id"},
+        )
+        assertStatus(resp, 400)
+
     def testStubsPointAnnotation(self, admin, server):
         """Single-coordinate point has zero radius and centroid
         at that point."""
@@ -392,6 +402,19 @@ class TestHydrate:
             method="POST",
             user=admin,
             body=json.dumps(ids),
+            type="application/json",
+            isJson=False,
+        )
+        assertStatus(resp, 400)
+
+    def testHydrateMalformedIdReturns400(self, admin, server):
+        # A non-ObjectId in the id list is a clean 400, not an uncaught
+        # bson.InvalidId -> 500.
+        resp = server.request(
+            path="/upenn_annotation/hydrate",
+            method="POST",
+            user=admin,
+            body=json.dumps(["not-an-object-id"]),
             type="application/json",
             isJson=False,
         )

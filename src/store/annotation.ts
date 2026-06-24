@@ -44,6 +44,7 @@ import {
   selectLargestBySize,
   stubFromAnnotation,
   idsNeedingHydration,
+  planHydrationEvictions,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import {
@@ -2161,22 +2162,19 @@ export class Annotations extends VuexModule {
     }
     const cap = this.visibilityConfig.hydrationCacheCap;
     if (cap > 0 && newMap.size > cap) {
-      const selected = this.selectedAnnotationIds;
-      let toEvict = newMap.size - cap;
-      let evicted = 0;
-      let protectedCount = 0;
-      const snapshotKeys = Array.from(newMap.keys());
-      for (const id of snapshotKeys) {
-        if (toEvict <= 0) break;
-        if (selected.has(id)) {
-          protectedCount += 1;
-          continue;
-        }
+      // Selected ids are protected from eviction, but `cap` is a HARD ceiling:
+      // when (nearly) everything is selected — e.g. "select all" on a huge
+      // dataset — selected LRU entries are evicted too so the cache can't grow
+      // without bound (which would defeat lazy mode / risk OOM).
+      const { evict, protectedSkipped } = planHydrationEvictions(
+        Array.from(newMap.keys()),
+        this.selectedAnnotationIds,
+        cap,
+      );
+      for (const id of evict) {
         newMap.delete(id);
-        evicted += 1;
-        toEvict -= 1;
       }
-      stubPerf.trackEviction(evicted, protectedCount);
+      stubPerf.trackEviction(evict.length, protectedSkipped);
     }
     this.hydratedAnnotations = markRaw(newMap);
     stubPerf.trackCache(newMap.size, cap);
@@ -2380,10 +2378,19 @@ export class Annotations extends VuexModule {
     if (idsToFetch.length === 0) {
       return;
     }
+    // Cap the on-demand hydration so a "select all" on a huge dataset can't
+    // post the entire id set to /hydrate (a giant request that defeats lazy
+    // mode and risks OOM). Beyond the cap the extras stay stubs (dots) — you
+    // can't meaningfully view more than this many shapes at once anyway, and
+    // the hydration cache is itself hard-capped. maxHydrated is the natural
+    // "how many shapes to hold" budget.
+    const cap = this.visibilityConfig.maxHydrated;
+    const capped =
+      idsToFetch.length > cap ? idsToFetch.slice(0, cap) : idsToFetch;
     // Fire the fetch outside the action proxy (vuex-module-decorators breaks
     // after await). mergeHydratedAnnotations accumulates into the cache and
-    // protects selected ids from LRU eviction.
-    _hydrateFromBackend(this.annotationsAPI, idsToFetch, []);
+    // protects selected ids from LRU eviction (up to the hard cap).
+    _hydrateFromBackend(this.annotationsAPI, capped, []);
   }
 }
 

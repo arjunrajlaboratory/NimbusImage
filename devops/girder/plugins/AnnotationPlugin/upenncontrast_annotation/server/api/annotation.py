@@ -14,6 +14,7 @@ from girder.models.folder import Folder
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
+    dropNoOpPropertyFilters,
     requireObjectId,
     validateAnnotationIdCount,
     validateListInputs,
@@ -506,7 +507,7 @@ class Annotation(Resource):
         .errorResponse()
     )
     def stubs(self, params):
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
         Folder().load(
             datasetId,
             user=self.getCurrentUser(),
@@ -590,7 +591,8 @@ class Annotation(Resource):
             return []
         validateAnnotationIdCount(len(annotationIds))
 
-        objectIds = [ObjectId(sid) for sid in annotationIds]
+        objectIds = [requireObjectId(sid, "annotationId") for sid in
+                     annotationIds]
 
         # Find the distinct datasets these annotations belong to
         # and verify READ access on each.
@@ -616,13 +618,14 @@ class Annotation(Resource):
     @memoizeBodyJson
     def listAnnotationIds(self, params, *args, **kwargs):
         body = kwargs["memoizedBodyJson"]
-        datasetId = ObjectId(body["datasetId"])
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(),
             level=AccessType.READ, exc=True,
         )
         filters = body.get("filters") or {}
         validateListInputs(filters)
+        dropNoOpPropertyFilters(filters)
         ids = self._annotationModel.listIds(datasetId, filters)
 
         prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
@@ -640,7 +643,7 @@ class Annotation(Resource):
     @memoizeBodyJson
     def listAnnotations(self, params, *args, **kwargs):
         body = kwargs["memoizedBodyJson"]
-        datasetId = ObjectId(body["datasetId"])
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(),
             level=AccessType.READ, exc=True,
@@ -652,6 +655,7 @@ class Annotation(Resource):
         limit = max(1, int(body.get("limit", 50)))
 
         validateListInputs(filters, sort, propertyPaths)
+        dropNoOpPropertyFilters(filters)
 
         # Build the page first: its pipeline construction validates the sort
         # field (ValueError -> 400) before the expensive count aggregation

@@ -53,6 +53,51 @@ Nit:
 
 ---
 
+## Codex review round (PR #1203, 2026-06-23)
+
+A later Codex pass on the open PR surfaced four more findings (P1–P3 from the
+Codex cloud UI; P4 inline on the PR). All fixed (TDD), branch audited per
+pattern.
+
+- **[P1] "Select all" in server-list mode could hydrate the entire dataset.**
+  `ensureHydrated([...allSelectedIds])` posted every unhydrated id to `/hydrate`
+  with no budget — a giant request that defeats lazy mode and risks OOM, and the
+  selected-protection meant the cache could grow unbounded. **Fix:** (a)
+  `ensureHydrated` now caps its fetch at `visibilityConfig.maxHydrated` (extras
+  stay dots — you can't view more shapes than that at once anyway); (b)
+  `hydrationCacheCap` is now a HARD ceiling — new pure `planHydrationEvictions`
+  helper protects selected ids but evicts selected LRU too when the protected
+  set alone exceeds the cap, so the cache can't grow without bound. Tests:
+  `annotationStubUtils.test.ts` "planHydrationEvictions" (5 cases incl. the
+  select-all hard-cap).
+- **[P2] Geometry edit/combine broke on unhydrated stubs.** Combine accepted a
+  stub polygon then failed the union lookup silently; edit dropped unhydrated
+  polygons with no feedback. **Fix:** both paths now detect an unhydrated target
+  and show a toast ("Annotation not fully loaded — zoom in to fully load it…")
+  instead of silently no-op'ing/failing (`AnnotationViewer.vue` snackbar +
+  `notifyGeometryNotLoaded`). Combine also guards the previously-selected first
+  annotation (in case it was LRU-evicted between clicks). **Audit:** the other
+  selection handlers (select, connections, tagging) operate only on
+  ids/tags/centroid — stub-safe — so combine + edit were the only
+  coordinate-requiring paths. Tests: `AnnotationViewer.test.ts` "geometry edits
+  on unhydrated stubs" (edit + combine).
+- **[P3] New public endpoints converted client ids with bare `ObjectId()`** →
+  uncaught `bson.InvalidId` 500s. **Fix:** `stubs`, `hydrate`, `listAnnotations`,
+  `listAnnotationIds` now use `requireObjectId` (→ 400). **Audit:** the
+  pre-existing `find`/`count` (both files) and the `deleteMultiple` id helpers
+  have the same pattern but predate the branch — flagged as a follow-up rather
+  than expanding this PR's diff. Tests: malformed-datasetId/id → 400 in
+  `test_stubs.py` and `test_server_list.py`.
+- **[P4] Empty values-mode property filter wrongly routed `/list` into the
+  PV-driven path,** dropping annotations with no value document (also skewed the
+  count and select-all). **Fix:** new `dropNoOpPropertyFilters` normalizes away
+  no-op filters (empty `values`, or a range with neither bound) before the model
+  chooses a path, so an inactive filter == no filter. Test: `test_server_list.py`
+  "testEmptyValuesFilterIsPassAll" (4 returned incl. the value-less annotation,
+  on both `/list` and `/list/ids`).
+
+---
+
 ## Findings
 
 ### Finding 1 — Public aggregation endpoints have no rate limiting · Medium · Security/Access Control

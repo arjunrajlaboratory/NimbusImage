@@ -280,6 +280,34 @@ class TestServerListProperties:
         })
         assert parseStreaming(resp2)["total"] == 2
 
+    def testEmptyValuesFilterIsPassAll(self, admin, server):
+        # A cleared values-mode filter (values: []) is a no-op: it must NOT
+        # route into the PV-driven path (which drops the annotation that has no
+        # value document). All 4 annotations (3 with a value + 1 without) must
+        # come back, matching "no filter".
+        folder, anns, noval = self._setup(admin)
+        emptyFilter = {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [
+                {"path": ["p", "Area"], "mode": "values", "values": []}
+            ]},
+            "offset": 0, "limit": 10,
+        }
+        resp = postList(
+            server, admin, "/upenn_annotation/list", emptyFilter
+        )
+        result = parseStreaming(resp)
+        assert result["total"] == 4
+        ids = {str(r["_id"]) for r in result["rows"]}
+        assert str(noval["_id"]) in ids
+
+        # /list/ids (select-all) must see the same 4.
+        resp2 = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": emptyFilter["filters"],
+        })
+        assert parseStreaming(resp2)["total"] == 4
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
@@ -563,6 +591,22 @@ class TestServerListValidation:
         resp = postList(server, admin, "/upenn_annotation/list/ids", {
             "datasetId": str(folder["_id"]),
             "filters": {"idSubstring": 123},
+        })
+        assertStatus(resp, 400)
+
+    def testMalformedDatasetIdReturns400OnList(self, admin, server):
+        # A non-ObjectId datasetId must be a clean 400, not an uncaught
+        # bson.InvalidId -> 500.
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": "not-an-object-id",
+            "filters": {}, "sort": None, "propertyPaths": [],
+            "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testMalformedDatasetIdReturns400OnIds(self, admin, server):
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": "not-an-object-id", "filters": {},
         })
         assertStatus(resp, 400)
 

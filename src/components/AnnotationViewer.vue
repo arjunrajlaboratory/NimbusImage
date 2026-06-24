@@ -27,6 +27,14 @@
       v-model:show="showColorDialog"
       @submit="handleColorSubmit"
     />
+
+    <v-snackbar
+      v-model="geometryNotLoadedSnackbar"
+      :timeout="4000"
+      color="info"
+    >
+      {{ GEOMETRY_NOT_LOADED_MESSAGE }}
+    </v-snackbar>
   </div>
 </template>
 
@@ -254,6 +262,17 @@ const contextMenuY = ref(0);
 const rightClickedAnnotation = ref<IAnnotation | null>(null);
 const showTagDialog = ref(false);
 const showColorDialog = ref(false);
+
+// Toast shown when a geometry edit/combine targets a stub whose full
+// coordinates aren't loaded yet (stub-only mode); the op is skipped rather than
+// silently no-op'ing or failing.
+const geometryNotLoadedSnackbar = ref(false);
+const GEOMETRY_NOT_LOADED_MESSAGE =
+  "Annotation not fully loaded — zoom in to fully load it, then try again.";
+
+function notifyGeometryNotLoaded() {
+  geometryNotLoadedSnackbar.value = true;
+}
 
 // ---- Computed properties ----
 
@@ -2001,6 +2020,16 @@ async function handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
 
   const clickedAnnotation = polygonAnnotations[0];
 
+  // Combine needs real geometry. If the clicked polygon's coordinates aren't
+  // loaded yet (stub-only mode), tell the user to zoom in rather than storing a
+  // half-selection or failing the union silently (combineAnnotations would
+  // not find the full annotation).
+  if (clickedAnnotation && !isHydratedAnnotation(clickedAnnotation)) {
+    notifyGeometryNotLoaded();
+    props.interactionLayer.removeAnnotation(selectAnnotation);
+    return;
+  }
+
   if (
     clickedAnnotation &&
     selectedToolState.value?.type === CombineToolStateSymbol &&
@@ -2011,6 +2040,14 @@ async function handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
     const secondAnnotationId = clickedAnnotation.id;
 
     if (firstAnnotationId !== secondAnnotationId) {
+      // The first-clicked annotation may have been dehydrated (LRU-evicted)
+      // between the two clicks; combine still needs its geometry.
+      if (!annotationStore.getHydratedAnnotation(firstAnnotationId)) {
+        notifyGeometryNotLoaded();
+        (selectedToolState.value as any).selectedAnnotationId = null;
+        props.interactionLayer.removeAnnotation(selectAnnotation);
+        return;
+      }
       const tolerance = parseFloat(
         selectedToolConfiguration.value.values?.tolerance ?? "2",
       );
@@ -2137,10 +2174,7 @@ async function handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
     return;
   }
 
-  // Polygon edits need real geometry, so restrict to hydrated polygons. In
-  // stub-only mode unhydrated stubs are excluded here (same set this handler
-  // operated on before stubs could appear in the selection); they hydrate via
-  // hydrate-on-selection and become editable on a subsequent pass.
+  // Polygon edits need real geometry, so restrict to hydrated polygons.
   const polygonAnns = selectedAnns.filter(
     (annotation): annotation is IAnnotation =>
       isHydratedAnnotation(annotation) &&
@@ -2148,6 +2182,16 @@ async function handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
   );
 
   if (polygonAnns.length === 0) {
+    // Distinguish "no polygon selected at all" (silent no-op, as before) from
+    // "a polygon IS selected but its coordinates aren't loaded yet" (stub-only
+    // mode) — the latter would otherwise silently do nothing, so tell the user
+    // to zoom in to load it rather than dropping the edit.
+    const hasUnhydratedPolygon = selectedAnns.some(
+      (a) => !isHydratedAnnotation(a) && a.shape === AnnotationShape.Polygon,
+    );
+    if (hasUnhydratedPolygon) {
+      notifyGeometryNotLoaded();
+    }
     props.interactionLayer.removeAnnotation(selectAnnotation);
     return;
   }
@@ -3606,6 +3650,7 @@ defineExpose({
   rightClickedAnnotation,
   showTagDialog,
   showColorDialog,
+  geometryNotLoadedSnackbar,
   // Computed
   unrolledCentroidCoordinates,
   annotationSelectionType,

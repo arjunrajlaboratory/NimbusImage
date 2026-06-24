@@ -104,6 +104,32 @@ def validateUncomputedCountsProperties(properties):
             )
 
 
+def dropNoOpPropertyFilters(filters):
+    """Remove property filters that don't actually constrain anything, in
+    place. A values-mode filter with an empty values list, or a range-mode
+    filter with neither bound set, is a pass-all no-op (the client treats it
+    so, and _propertyFilterStages emits no $match for it). Left in the list it
+    would still make `filters.get("propertyFilters")` truthy and wrongly route
+    /list, /list/ids, and the count into the PV-driven path -- which starts
+    from the property-values collection and drops annotations that have no
+    value document. Normalizing here keeps an inactive filter equivalent to no
+    filter. Removes the key entirely when nothing active remains."""
+    propertyFilters = filters.get("propertyFilters")
+    if not propertyFilters:
+        return
+
+    def isActive(pf):
+        if pf.get("mode") == "values":
+            return bool(pf.get("values"))
+        return pf.get("min") is not None or pf.get("max") is not None
+
+    active = [pf for pf in propertyFilters if isActive(pf)]
+    if active:
+        filters["propertyFilters"] = active
+    else:
+        del filters["propertyFilters"]
+
+
 def validateListInputs(filters, sort=None, propertyPaths=None):
     """Validate client-supplied filter/sort/path shape. Raises
     RestException(400) on malformed input (avoids uncaught 500s on a public

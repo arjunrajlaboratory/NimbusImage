@@ -273,6 +273,9 @@ vi.mock("@/store/annotation", () => {
     stubOnlyMode: false,
     getAnnotationFromId: vi.fn().mockReturnValue(undefined),
     getStub: vi.fn().mockReturnValue(undefined),
+    // Truthy by default: combine's "is the first annotation still hydrated?"
+    // guard treats it as loaded unless a test overrides it.
+    getHydratedAnnotation: vi.fn().mockReturnValue({ coordinates: [] }),
     isAnnotationSelected: vi.fn().mockReturnValue(false),
     annotationIdToIdx: {} as Record<string, number>,
     selectAnnotations: vi.fn(),
@@ -2751,6 +2754,83 @@ describe("AnnotationViewer", () => {
         expect(
           (wrapper.vm as any).interactionLayer.removeAnnotation,
         ).toHaveBeenCalledWith(selectAnn);
+      });
+    });
+
+    // --- geometry ops on unhydrated stubs (Finding P2) ---
+    describe("geometry edits on unhydrated stubs", () => {
+      // A polygon STUB: no `coordinates` key ⇒ isHydratedAnnotation is false.
+      const polygonStub = {
+        id: "s1",
+        shape: "polygon",
+        centroid: { x: 30, y: 30 },
+        location: { XY: 0, Z: 0, Time: 0 },
+        tags: [],
+        channel: 0,
+        color: null,
+      };
+
+      // Make getSelectedAnnotationsFromAnnotation resolve the click to the
+      // unhydrated stub: getAnnotationFromId misses, getStub hits.
+      function selectStub() {
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockReturnValue(polygonStub);
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const geoAnn = mockGeoJSAnnotation("polygon");
+        geoAnn.options("girderId", "s1");
+        geoAnn.options("isConnection", false);
+        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
+        (geojs as any).util.pointInPolygon.mockReturnValue(true);
+        const selectAnn = mockGeoJSAnnotation("polygon");
+        selectAnn.type = vi.fn().mockReturnValue("polygon");
+        selectAnn.coordinates = vi.fn().mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+          { x: 100, y: 100 },
+        ]);
+        return selectAnn;
+      }
+
+      it("edit: toasts and does NOT edit when the polygon is an unhydrated stub", async () => {
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t1",
+            type: "edit",
+            values: { action: { value: "blob_edit" } },
+          },
+          state: {},
+        } as any;
+        const selectAnn = selectStub();
+
+        await (wrapper.vm as any).handleAnnotationEdits(selectAnn);
+
+        expect((wrapper.vm as any).geometryNotLoadedSnackbar).toBe(true);
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).not.toHaveBeenCalled();
+      });
+
+      it("combine: toasts and does NOT combine when the clicked polygon is an unhydrated stub", async () => {
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t1",
+            type: "edit",
+            values: { action: { value: "combine_click" }, tolerance: "2" },
+          },
+          // The unhydrated-stub guard fires before any tool-state check, so the
+          // exact combine state isn't needed here.
+          state: {},
+        } as any;
+        const selectAnn = selectStub();
+
+        await (wrapper.vm as any).handleAnnotationCombine(selectAnn);
+
+        expect((wrapper.vm as any).geometryNotLoadedSnackbar).toBe(true);
+        expect(mockedAnnotationStore.combineAnnotations).not.toHaveBeenCalled();
       });
     });
 
