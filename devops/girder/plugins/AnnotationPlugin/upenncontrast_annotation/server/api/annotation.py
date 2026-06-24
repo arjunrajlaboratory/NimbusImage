@@ -21,9 +21,7 @@ from ..helpers.validation import (
     validateListInputs,
     validateUncomputedCountsProperties,
 )
-from ..models.annotation import (
-    Annotation as AnnotationModel,
-)
+from ..models.annotation import Annotation as AnnotationModel
 from ..helpers.serialization import orJsonDefaults
 
 
@@ -579,13 +577,13 @@ class Annotation(Resource):
     )
     @memoizeBodyJson
     def listAnnotationIds(self, params, *args, **kwargs):
-        body = kwargs["memoizedBodyJson"]
-        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        bodyJson = kwargs["memoizedBodyJson"]
+        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(),
             level=AccessType.READ, exc=True,
         )
-        filters = body.get("filters") or {}
+        filters = bodyJson.get("filters") or {}
         validateListInputs(filters)
         dropNoOpPropertyFilters(filters)
         ids = self._annotationModel.listIds(datasetId, filters)
@@ -604,27 +602,27 @@ class Annotation(Resource):
     )
     @memoizeBodyJson
     def listAnnotations(self, params, *args, **kwargs):
-        body = kwargs["memoizedBodyJson"]
-        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        bodyJson = kwargs["memoizedBodyJson"]
+        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(),
             level=AccessType.READ, exc=True,
         )
-        filters = body.get("filters") or {}
-        sort = body.get("sort")
-        propertyPaths = body.get("propertyPaths") or []
-        # Parse-or-400 at the boundary, then clamp (Finding 3): a non-integer
+        filters = bodyJson.get("filters") or {}
+        sort = bodyJson.get("sort")
+        propertyPaths = bodyJson.get("propertyPaths") or []
+        # Parse-or-400 at the boundary, then clamp: a non-integer
         # offset/limit would otherwise raise an uncaught int() error -> 500 on
         # this public endpoint.
-        offset = max(0, requireInt(body.get("offset", 0), "offset"))
-        limit = max(1, requireInt(body.get("limit", 50), "limit"))
+        offset = max(0, requireInt(bodyJson.get("offset", 0), "offset"))
+        limit = max(1, requireInt(bodyJson.get("limit", 50), "limit"))
 
         validateListInputs(filters, sort, propertyPaths)
         dropNoOpPropertyFilters(filters)
 
         # Build the page first: its pipeline construction validates the sort
         # field (ValueError -> 400) before the expensive count aggregation
-        # runs, so a bad sort key doesn't pay for a full count (Finding #5).
+        # runs, so a bad sort key doesn't pay for a full count.
         try:
             cursor = self._annotationModel.listPage(
                 datasetId, filters, sort, propertyPaths, offset, limit

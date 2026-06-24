@@ -247,8 +247,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         stub/hydration view of large datasets. Returns a cursor.
 
         Built here (not in the API method) so pipeline construction and the
-        runtime-bound _aggregate options live with the other list aggregations
-        (Finding 13).
+        runtime-bound _aggregate options live with the other list aggregations.
         """
         match = {"datasetId": datasetId}
         if shape:
@@ -398,18 +397,18 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def _propertyFilterStages(self, filters, valueBase="_pv.values."):
         stages = []
-        for pf in filters.get("propertyFilters") or []:
-            valueKey = valueBase + ".".join(pf["path"])
-            if pf.get("mode") == "values":
-                values = pf.get("values") or []
+        for propertyFilter in filters.get("propertyFilters") or []:
+            valueKey = valueBase + ".".join(propertyFilter["path"])
+            if propertyFilter.get("mode") == "values":
+                values = propertyFilter.get("values") or []
                 if values:
                     stages.append({"$match": {valueKey: {"$in": values}}})
             else:  # range
                 cond = {}
-                if pf.get("min") is not None:
-                    cond["$gte"] = pf["min"]
-                if pf.get("max") is not None:
-                    cond["$lte"] = pf["max"]
+                if propertyFilter.get("min") is not None:
+                    cond["$gte"] = propertyFilter["min"]
+                if propertyFilter.get("max") is not None:
+                    cond["$lte"] = propertyFilter["max"]
                 if cond:
                     stages.append({"$match": {valueKey: cond}})
         return stages
@@ -605,7 +604,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             # to the annotation with a NON-preserving unwind so an orphaned
             # value doc (whose annotation no longer exists) is excluded -- the
             # page pipeline drops those too, so counting them would inflate
-            # `total` above the returnable rows (Finding 7). The join is over
+            # `total` above the returnable rows. The join is over
             # the already property-filtered set, not the whole dataset.
             pipeline = [{"$match": {"datasetId": datasetId}}]
             pipeline += self._propertyFilterStages(
@@ -680,10 +679,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         totalFacet = {
             "p%d" % i: [
                 {"$match": self._propertyComputeMatch(
-                    pf.get("shape"), pf.get("tags"))},
+                    propertyFilter.get("shape"), propertyFilter.get("tags"))},
                 {"$count": "n"},
             ]
-            for i, pf in enumerate(propertyFilters)
+            for i, propertyFilter in enumerate(propertyFilters)
         }
         totals = next(iter(self._aggregate(
             self.collection,
@@ -712,11 +711,11 @@ class Annotation(AccessControlMixin, ProxiedModel):
         }
 
         counts = {}
-        for i, pf in enumerate(propertyFilters):
+        for i, propertyFilter in enumerate(propertyFilters):
             branch = totals.get("p%d" % i) or []
             total = branch[0]["n"] if branch else 0
-            hasValue = hasValueByProperty.get(pf["id"], 0)
-            counts[pf["id"]] = max(0, total - hasValue)
+            hasValue = hasValueByProperty.get(propertyFilter["id"], 0)
+            counts[propertyFilter["id"]] = max(0, total - hasValue)
         return counts
 
     def _needsPropertyBeforePage(self, filters, sort):

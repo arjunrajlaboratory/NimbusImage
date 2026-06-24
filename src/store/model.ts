@@ -1451,13 +1451,29 @@ export interface IAnnotationListPage {
 export type THydrationMode = "shapes" | "dots";
 
 export interface IVisibilityConfig {
-  stubThreshold: number; // Dataset annotation count above which stub-only (lazy) mode activates: stubs are fetched and coordinates/property values load on demand. Independent of the render budget (maxVisible).
-  maxVisible: number; // Max annotations to render (stubs or shapes) — the cap when fully zoomed in. Datasets at or below this render fully at every zoom (the size gate).
-  maxHydrated: number; // Max annotations to keep hydrated per visibility update — the cap when fully zoomed in
-  hydrationCacheCap: number; // Total cap on the hydration cache (accumulates across updates; LRU-evicts beyond cap, protecting selected)
-  globalThreshold: boolean; // If true, threshold applies to total frame annotations across all layers
-  coverageTarget: number; // Fraction of the screen the rendered dots may cover when fully zoomed out. Sets the zoomed-out floor from annotation size + screen; the budget doubles per zoom level up to maxVisible.
-  viewportRefreshFraction: number; // Camera hysteresis: skip the camera-driven refresh until EITHER the zoom magnification OR the center (as a fraction of the viewport) changes by this fraction (e.g. 0.2 = 20%).
+  // Dataset annotation count above which stub-only (lazy) mode activates: stubs
+  // are fetched and coordinates/property values load on demand. Independent of
+  // the render budget (maxVisible).
+  stubThreshold: number;
+  // Max annotations to render (stubs or shapes) — the cap when fully zoomed in.
+  // Datasets at or below this render fully at every zoom (the size gate).
+  maxVisible: number;
+  // Max annotations to keep hydrated per visibility update — the cap when fully
+  // zoomed in.
+  maxHydrated: number;
+  // Total cap on the hydration cache (accumulates across updates; LRU-evicts
+  // beyond cap, protecting selected).
+  hydrationCacheCap: number;
+  // If true, threshold applies to total frame annotations across all layers.
+  globalThreshold: boolean;
+  // Fraction of the screen the rendered dots may cover when fully zoomed out.
+  // Sets the zoomed-out floor from annotation size + screen; the budget doubles
+  // per zoom level up to maxVisible.
+  coverageTarget: number;
+  // Camera hysteresis: skip the camera-driven refresh until EITHER the zoom
+  // magnification OR the center (as a fraction of the viewport) changes by this
+  // fraction (e.g. 0.2 = 20%).
+  viewportRefreshFraction: number;
 }
 
 export function isHydratedAnnotation(

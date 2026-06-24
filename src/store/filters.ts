@@ -19,11 +19,6 @@ import {
 import { buildPropertyListFilters } from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
 
-// Monotonic stale-response guard: only the latest refreshPropertyFilterPassingIds
-// may apply its result. Module-level (not Vuex state) since it is an internal
-// token never read by the UI.
-const propertyFilterRequestGuard = createSequenceGuard();
-
 import {
   TAnnotationOrStub,
   ITagAnnotationFilter,
@@ -43,6 +38,11 @@ import {
   findIndexOfPath,
   getValueFromObjectAndPath,
 } from "@/utils/paths";
+
+// Monotonic stale-response guard: only the latest refreshPropertyFilterPassingIds
+// may apply its result. Module-level (not Vuex state) since it is an internal
+// token never read by the UI.
+const propertyFilterRequestGuard = createSequenceGuard();
 
 type TFilterHistograms = {
   [joinedPropertyPath: string]: TPropertyHistogram;

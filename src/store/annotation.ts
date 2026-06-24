@@ -29,13 +29,12 @@ import {
   IJobEventData,
   IDatasetView,
   IAnnotationLocation,
+  type IAnnotationStub,
+  type TAnnotationOrStub,
+  type THydrationMode,
+  type IVisibilityConfig,
 } from "./model";
-import type {
-  IAnnotationStub,
-  TAnnotationOrStub,
-  THydrationMode,
-  IVisibilityConfig,
-} from "./model";
+import type AnnotationsAPI from "./AnnotationsAPI";
 
 import { markRaw, toRaw } from "vue";
 import {
@@ -130,7 +129,9 @@ export class Annotations extends VuexModule {
   get getAnnotationFromId() {
     return (annotationId: string) => {
       const hydrated = this.hydratedAnnotations.get(annotationId);
-      if (hydrated) return hydrated;
+      if (hydrated) {
+        return hydrated;
+      }
       const idx = this.annotationIdToIdx[annotationId];
       return idx === undefined ? undefined : this.annotations[idx];
     };
@@ -2427,7 +2428,6 @@ export default annotationModule;
  * so we run the async fetch as a plain function and commit directly
  * to the module instance.
  */
-import type AnnotationsAPI from "./AnnotationsAPI";
 async function _hydrateFromBackend(
   api: AnnotationsAPI,
   idsToFetch: string[],

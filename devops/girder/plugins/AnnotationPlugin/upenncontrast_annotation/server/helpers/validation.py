@@ -85,28 +85,28 @@ def validatePropertyPaths(propertyPaths):
 def validateUncomputedCountsProperties(properties):
     """Validate the `properties` payload for the uncomputed-counts endpoint.
 
-    Each entry must be a dict carrying a non-empty string `id` (the model does
-    pf["id"] unconditionally); `shape` (if present) a string; and `tags` (if
-    present) a {tags, exclusive} dict (the model does pf.get("tags") expecting
-    a dict). Without this, malformed input raises KeyError/TypeError -> 500 on
-    a public endpoint."""
+    Each entry must be a dict carrying a non-empty string `id` (the model
+    does propertyFilter["id"] unconditionally); `shape` (if present) a
+    string; and `tags` (if present) a {tags, exclusive} dict (the model does
+    propertyFilter.get("tags") expecting a dict). Without this, malformed
+    input raises KeyError/TypeError -> 500 on a public endpoint."""
     if not isinstance(properties, list):
         raise RestException("properties must be a list", code=400)
     requireCountWithin(
         len(properties), MAX_UNCOMPUTED_PROPERTIES, "properties"
     )
-    for pf in properties:
-        if not isinstance(pf, dict):
+    for propertyFilter in properties:
+        if not isinstance(propertyFilter, dict):
             raise RestException("each property must be an object", code=400)
-        propertyId = pf.get("id")
+        propertyId = propertyFilter.get("id")
         if not isinstance(propertyId, str) or not propertyId:
             raise RestException(
                 "each property needs a non-empty string 'id'", code=400
             )
-        shape = pf.get("shape")
+        shape = propertyFilter.get("shape")
         if shape is not None and not isinstance(shape, str):
             raise RestException("property 'shape' must be a string", code=400)
-        tags = pf.get("tags")
+        tags = propertyFilter.get("tags")
         if tags is not None and not isinstance(tags, dict):
             raise RestException(
                 "property 'tags' must be an object {tags, exclusive}",
@@ -128,12 +128,19 @@ def dropNoOpPropertyFilters(filters):
     if not propertyFilters:
         return
 
-    def isActive(pf):
-        if pf.get("mode") == "values":
-            return bool(pf.get("values"))
-        return pf.get("min") is not None or pf.get("max") is not None
+    def isActive(propertyFilter):
+        if propertyFilter.get("mode") == "values":
+            return bool(propertyFilter.get("values"))
+        return (
+            propertyFilter.get("min") is not None
+            or propertyFilter.get("max") is not None
+        )
 
-    active = [pf for pf in propertyFilters if isActive(pf)]
+    active = [
+        propertyFilter
+        for propertyFilter in propertyFilters
+        if isActive(propertyFilter)
+    ]
     if active:
         filters["propertyFilters"] = active
     else:
@@ -145,35 +152,35 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     RestException(400) on malformed input (avoids uncaught 500s on a public
     endpoint). Mutates `filters['idConstraints']` to ObjectIds in place."""
     # A truthy non-dict `filters` (e.g. a string or list) would otherwise reach
-    # filters.get(...) below and raise AttributeError -> 500 (Finding 4).
+    # filters.get(...) below and raise AttributeError -> 500.
     if not isinstance(filters, dict):
         raise RestException("filters must be an object", code=400)
     propertyFilters = filters.get("propertyFilters")
     if propertyFilters is not None:
         if not isinstance(propertyFilters, list):
             raise RestException("propertyFilters must be a list", code=400)
-        for pf in propertyFilters:
-            if not isinstance(pf, dict) or not isValidPropertyPath(
-                pf.get("path")
+        for propertyFilter in propertyFilters:
+            if not isinstance(propertyFilter, dict) or not isValidPropertyPath(
+                propertyFilter.get("path")
             ):
                 raise RestException(
                     "Each property filter needs a valid 'path'", code=400
                 )
-            mode = pf.get("mode")
+            mode = propertyFilter.get("mode")
             if mode not in ("range", "values"):
                 raise RestException(
                     "property filter 'mode' must be 'range' or 'values'",
                     code=400,
                 )
             if mode == "values":
-                values = pf.get("values")
+                values = propertyFilter.get("values")
                 if values is not None and not isinstance(values, list):
                     raise RestException(
                         "property filter 'values' must be a list", code=400
                     )
             else:  # range: bounds are comparison operands, must be numeric
                 for bound in ("min", "max"):
-                    value = pf.get(bound)
+                    value = propertyFilter.get(bound)
                     if value is not None and (
                         isinstance(value, bool)
                         or not isinstance(value, (int, float))
@@ -189,7 +196,7 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     if idConstraints is not None:
         # Each inner list must be non-empty: an empty inner list [[]] would
         # become {"_id": {"$in": []}} -- an unconditional match-none that
-        # silently returns nothing (Finding 17). An empty OUTER list [] is a
+        # silently returns nothing. An empty OUTER list [] is a
         # no-op (no constraint) and stays allowed.
         if not isinstance(idConstraints, list) or not all(
             isinstance(c, list)

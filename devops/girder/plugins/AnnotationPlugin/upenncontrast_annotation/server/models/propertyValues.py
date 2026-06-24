@@ -144,7 +144,7 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
             return []
         # Dict projection so _id is explicitly excluded: a list (inclusion)
         # projection leaves Mongo's default _id:1 in place, leaking the value
-        # doc's id the docstring promises not to return (Finding 10).
+        # doc's id the docstring promises not to return.
         if propertyPaths:
             fields = {"_id": 0, "annotationId": 1}
             for path in propertyPaths:

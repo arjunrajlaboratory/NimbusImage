@@ -470,18 +470,18 @@ export function geometryKeyForRender(data: TAnnotationOrStub): number {
     : coordinatesFingerprint([data.centroid]);
 }
 
-/**
- * Of `requestedIds`, return the (deduplicated) ids that must be fetched to
- * hydrate them: ids that are known stubs but not already in the hydration cache.
- * Used by the hydrate-on-selection / hydrate-on-navigation path so a selected or
- * navigated-to stub gets its full coordinates without waiting for a viewport pan.
- */
 // Membership-only view of a collection: communicates that only key presence is
 // read (a Map or Set both satisfy it), and that values are never touched.
 interface IHasKey {
   has(id: string): boolean;
 }
 
+/**
+ * Of `requestedIds`, return the (deduplicated) ids that must be fetched to
+ * hydrate them: ids that are known stubs but not already in the hydration cache.
+ * Used by the hydrate-on-selection / hydrate-on-navigation path so a selected or
+ * navigated-to stub gets its full coordinates without waiting for a viewport pan.
+ */
 export function idsNeedingHydration(
   requestedIds: Iterable<string>,
   hydrated: IHasKey,
