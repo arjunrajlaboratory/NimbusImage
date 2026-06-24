@@ -129,6 +129,11 @@ export class Annotations extends VuexModule {
   }
 
   get getAnnotationFromId() {
+    // Resolved once per getter access (not per call) so the hot resolution path
+    // — and callers that capture this function once and call it in a loop (e.g.
+    // the connection-draw loop) — don't pay a cross-store `main.dataset` read on
+    // every id. Only used to stamp materialized point stubs (below).
+    const datasetId = main.dataset?.id ?? "";
     return (annotationId: string): IAnnotation | undefined => {
       const hydrated = this.hydratedAnnotations.get(annotationId);
       if (hydrated) {
@@ -144,9 +149,7 @@ export class Annotations extends VuexModule {
       // through this getter — working for point annotations in stub-only mode.
       // Non-point stubs return undefined (they need real hydration).
       const stub = this.annotationStubs.get(annotationId);
-      return stub
-        ? materializeStubAnnotation(stub, main.dataset?.id ?? "")
-        : undefined;
+      return stub ? materializeStubAnnotation(stub, datasetId) : undefined;
     };
   }
 
