@@ -70,7 +70,7 @@
 import { ref, computed, watch } from "vue";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import TagPicker from "@/components/TagPicker.vue";
-import { IAnnotation } from "@/store/model";
+import { IAnnotation, TAnnotationOrStub } from "@/store/model";
 import annotationStore from "@/store/annotation";
 import { tagFilterFunction } from "@/utils/annotation";
 import { logError } from "@/utils/log";
@@ -132,12 +132,14 @@ function save() {
     // Get all annotations with the same original tags
     const annotationsWithSameTags =
       annotationStore.annotationsForIteration.filter(
-        (annotation: IAnnotation) =>
+        (annotation: TAnnotationOrStub) =>
           props.annotation &&
           annotation.tags.length === props.annotation.tags.length &&
           annotation.tags.every((tag) => props.annotation!.tags.includes(tag)),
       );
-    const annotationIds = annotationsWithSameTags.map((a: IAnnotation) => a.id);
+    const annotationIds = annotationsWithSameTags.map(
+      (a: TAnnotationOrStub) => a.id,
+    );
 
     // Update colors if changed
     if (props.annotation.color !== newColor || isRandomColor) {

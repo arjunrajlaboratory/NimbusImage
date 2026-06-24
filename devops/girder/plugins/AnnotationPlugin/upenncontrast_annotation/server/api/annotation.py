@@ -15,6 +15,7 @@ from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
     dropNoOpPropertyFilters,
+    requireInt,
     requireObjectId,
     validateAnnotationIdCount,
     validateListInputs,
@@ -22,7 +23,6 @@ from ..helpers.validation import (
 )
 from ..models.annotation import (
     Annotation as AnnotationModel,
-    AGGREGATION_MAX_TIME_MS,
 )
 from ..helpers.serialization import orJsonDefaults
 
@@ -515,48 +515,10 @@ class Annotation(Resource):
             exc=True,
         )
 
-        match = {"datasetId": datasetId}
-        if params.get("shape"):
-            match["shape"] = params["shape"]
-        if params.get("tags") and len(params["tags"]) > 0:
-            match["tags"] = {"$all": params["tags"]}
-
-        pipeline = [
-            {"$match": match},
-            {"$addFields": {
-                "centroid": {
-                    "x": {"$avg": "$coordinates.x"},
-                    "y": {"$avg": "$coordinates.y"},
-                },
-                # Half the larger bounding-box side. Matches the frontend
-                # estimateAnnotationRadius so the stub circle tracks the
-                # annotation's footprint; the previous bbox-diagonal/2
-                # circumscribed the box and overshot the real size by up to
-                # sqrt(2) (a square cell rendered ~41% too large).
-                "estimatedRadius": {
-                    "$divide": [
-                        {"$max": [
-                            {"$subtract": [
-                                {"$max": "$coordinates.x"},
-                                {"$min": "$coordinates.x"},
-                            ]},
-                            {"$subtract": [
-                                {"$max": "$coordinates.y"},
-                                {"$min": "$coordinates.y"},
-                            ]},
-                        ]},
-                        2,
-                    ]
-                },
-            }},
-            {"$project": {"coordinates": 0}},
-        ]
-
-        cursor = self._annotationModel.collection.aggregate(
-            pipeline,
-            hint={"datasetId": 1, "_id": 1},
-            allowDiskUse=True,
-            maxTimeMS=AGGREGATION_MAX_TIME_MS,
+        cursor = self._annotationModel.stubs(
+            datasetId,
+            shape=params.get("shape"),
+            tags=params.get("tags"),
         )
 
         setResponseHeader("Content-Type", "application/json")
@@ -651,8 +613,11 @@ class Annotation(Resource):
         filters = body.get("filters") or {}
         sort = body.get("sort")
         propertyPaths = body.get("propertyPaths") or []
-        offset = int(body.get("offset", 0))
-        limit = max(1, int(body.get("limit", 50)))
+        # Parse-or-400 at the boundary, then clamp (Finding 3): a non-integer
+        # offset/limit would otherwise raise an uncaught int() error -> 500 on
+        # this public endpoint.
+        offset = max(0, requireInt(body.get("offset", 0), "offset"))
+        limit = max(1, requireInt(body.get("limit", 50), "limit"))
 
         validateListInputs(filters, sort, propertyPaths)
         dropNoOpPropertyFilters(filters)

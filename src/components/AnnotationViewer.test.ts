@@ -39,11 +39,18 @@ vi.mock("@/utils/annotation", () => ({
     layerData: any,
     drawnColor: string | null,
     drawnIsStub: boolean,
+    drawnGeometryKey: number,
   ) =>
     !!layerExists &&
     !!layerData &&
     layerData.color === drawnColor &&
-    !("coordinates" in layerData) === drawnIsStub,
+    !("coordinates" in layerData) === drawnIsStub &&
+    // Mirror geometryKeyForRender: hydrated keys off coordinates length, stub
+    // off centroid — enough fidelity for the viewer test's keep-decision.
+    (drawnGeometryKey === undefined ||
+      drawnGeometryKey === (layerData.coordinates?.length ?? -1)),
+  geometryKeyForRender: (data: any) =>
+    "coordinates" in data ? data.coordinates?.length ?? -1 : -1,
 }));
 
 vi.mock("@/utils/polygonSlice", () => ({

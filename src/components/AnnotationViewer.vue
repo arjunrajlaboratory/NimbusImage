@@ -113,6 +113,7 @@ import {
   ellipseToPolygonCoordinates,
   getStubStyleFromBaseStyle,
   drawnFeatureUnchanged,
+  geometryKeyForRender,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
@@ -404,7 +405,7 @@ const displayableAnnotations = computed(() => {
 });
 
 const displayableAnnotationsByChannel = computed(() => {
-  const annotationsByChannel: Map<number, IAnnotation[]> = new Map();
+  const annotationsByChannel: Map<number, TAnnotationOrStub[]> = new Map();
   const annotations = displayableAnnotations.value;
   const len = annotations.length;
 
@@ -449,7 +450,7 @@ const layerAnnotations = computed(() => {
   const visibleAnnotationIds = annotationStore.visibleAnnotationIds;
 
   // First pass: collect frame annotations per layer
-  const layerFrameAnnotations: Map<string, IAnnotation[]> = new Map();
+  const layerFrameAnnotations: Map<string, TAnnotationOrStub[]> = new Map();
   let totalFrameCount = 0;
   for (const layer of validLayers.value) {
     layerIdToAnnotationIds.set(layer.id, new Map());
@@ -460,7 +461,7 @@ const layerAnnotations = computed(() => {
       const allXY = store.unrollXY || layer.xy.type === "max-merge";
       const allZ = store.unrollZ || layer.z.type === "max-merge";
       const allT = store.unrollT || layer.time.type === "max-merge";
-      const frameAnnotations: IAnnotation[] = [];
+      const frameAnnotations: TAnnotationOrStub[] = [];
       for (const annotation of layerChannelAnnotations) {
         if (
           (allXY || annotation.location.XY === sliceIndexes?.xyIndex) &&
@@ -829,6 +830,7 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
         layerData,
         color,
         geoJsAnnotation.options("isStub"),
+        geoJsAnnotation.options("geometryKey"),
       );
       if (!unchanged) {
         toRemove.push(geoJsAnnotation);
@@ -1414,10 +1416,12 @@ function createGeoJSAnnotation(
 
   const layer = store.getLayerFromId(layerId);
   const customColor = annotation.color;
-  const stubRadius =
-    isStub && !isHydratedAnnotation(annotation)
-      ? annotation.estimatedRadius ?? 5
-      : 5;
+  // Only meaningful for stubs (dots); for full annotations it stays the default
+  // 5 and is never read on the shape path (Finding 18/20). The
+  // !isHydratedAnnotation narrow is what lets TS reach `.estimatedRadius`.
+  const stubRadius = !isHydratedAnnotation(annotation)
+    ? annotation.estimatedRadius ?? 5
+    : 5;
   const style = isStub
     ? getStubStyleFromBaseStyle(
         customColor || layer?.color,
@@ -1441,6 +1445,10 @@ function createGeoJSAnnotation(
     style,
     isStub,
     stubRadius,
+    // Geometry fingerprint (Finding 1): lets clearOldAnnotations detect an
+    // in-place coordinate edit and redraw the feature instead of keeping the
+    // stale shape.
+    geometryKey: geometryKeyForRender(annotation),
   };
 
   return geojsAnnotationFactory(renderShape, coordinates, options);
@@ -3391,7 +3399,7 @@ function updateVisibility() {
   // omit it and let the store derive ids from its own stub map, avoiding a
   // full-dataset id array allocation per frame change (Finding 15).
   const ids = store.filteredDraw
-    ? filteredAnnotations.value.map((a: IAnnotation) => a.id)
+    ? filteredAnnotations.value.map((a: TAnnotationOrStub) => a.id)
     : undefined;
   // Zoom-adaptive budget (C4): render fewer objects when zoomed out (where they
   // overlap into noise and the heavy redraw briefly locks the UI), ramping up to
@@ -3471,7 +3479,10 @@ watch(
 watch(
   () => annotationStore.selectedAnnotationIds,
   (ids) => {
-    annotationStore.ensureHydrated([...ids]);
+    // Pass the Set directly — ensureHydrated iterates it, so no need to spread
+    // a potentially huge "select all" selection into a throwaway array on every
+    // selection change (Finding 14).
+    annotationStore.ensureHydrated(ids);
   },
 );
 

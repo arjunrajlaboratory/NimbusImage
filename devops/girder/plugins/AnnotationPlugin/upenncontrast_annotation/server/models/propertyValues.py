@@ -142,12 +142,15 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         # propertyPaths only narrows which values keys are returned.
         if not annotationIds:
             return []
+        # Dict projection so _id is explicitly excluded: a list (inclusion)
+        # projection leaves Mongo's default _id:1 in place, leaking the value
+        # doc's id the docstring promises not to return (Finding 10).
         if propertyPaths:
-            fields = ["annotationId"] + [
-                "values." + ".".join(path) for path in propertyPaths
-            ]
+            fields = {"_id": 0, "annotationId": 1}
+            for path in propertyPaths:
+                fields["values." + ".".join(path)] = 1
         else:
-            fields = ["annotationId", "values"]
+            fields = {"_id": 0, "annotationId": 1, "values": 1}
         results = []
         # Chunk the $in so a large id set can't build a pathological query.
         chunkSize = 50000

@@ -1,6 +1,7 @@
 import json
 import pytest
 
+from bson import ObjectId
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
@@ -610,6 +611,47 @@ class TestServerListValidation:
         })
         assertStatus(resp, 400)
 
+    def testNonIntegerOffsetReturns400(self, admin, server):
+        # Finding 3: int(offset) on a public endpoint must be a clean 400, not
+        # an uncaught ValueError -> 500.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {}, "sort": None, "propertyPaths": [],
+            "offset": "abc", "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testNonIntegerLimitReturns400(self, admin, server):
+        # Finding 3: int(limit) on a public endpoint must be a clean 400.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {}, "sort": None, "propertyPaths": [],
+            "offset": 0, "limit": [1, 2],
+        })
+        assertStatus(resp, 400)
+
+    def testNonDictFiltersReturns400OnList(self, admin, server):
+        # Finding 4: a truthy non-dict `filters` must be a clean 400, not an
+        # AttributeError (filters.get(...)) -> 500.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": "not-a-dict", "sort": None, "propertyPaths": [],
+            "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testNonDictFiltersReturns400OnIds(self, admin, server):
+        # Finding 4: same guard on the /list/ids endpoint.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": [1, 2, 3],
+        })
+        assertStatus(resp, 400)
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
@@ -724,6 +766,18 @@ class TestServerListIdConstraints:
         })
         assertStatus(resp, 400)
 
+    def testEmptyInnerIdConstraintReturns400(self, admin, server):
+        # Finding 17: an empty inner constraint [[]] passes the vacuous `all`
+        # check and becomes {"_id": {"$in": []}} (an unconditional match-none).
+        # That silent "returns nothing" is ambiguous; reject it at the boundary.
+        folder, a, b, c, d = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"idConstraints": [[]]},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
@@ -757,3 +811,38 @@ class TestServerListIdSubstring:
         })
         assertStatusOk(resp)
         assert parseStreaming(resp)["ids"] == []
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListCountConsistency:
+    """The page `total` must equal the number of rows actually returnable."""
+
+    def testPropertyFilterCountExcludesOrphanValueDocs(self, admin, server):
+        # Finding 7: on the PV-driven property-filter path, listCount counts
+        # matching property-value docs directly, but listPage joins each back to
+        # its annotation with a non-preserving $unwind (dropping value docs
+        # whose annotation no longer exists). An orphan value doc therefore
+        # inflates `total` above the number of returnable rows.
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+
+        real = makeAnnotation(folder["_id"])
+        pv.appendValues({"p": {"Area": 42}}, real["_id"], folder["_id"])
+        # Orphan value doc: annotationId points at a non-existent annotation.
+        pv.appendValues({"p": {"Area": 99}}, ObjectId(), folder["_id"])
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [
+                {"path": ["p", "Area"], "mode": "range", "min": 0}
+            ]},
+            "sort": None, "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 10,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == len(result["rows"])
+        assert result["total"] == 1

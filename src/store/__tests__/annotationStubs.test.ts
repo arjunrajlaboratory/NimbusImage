@@ -23,7 +23,8 @@ import {
 import {
   simpleCentroid,
   estimateAnnotationRadius,
-  selectRandomSubset,
+  selectStableSubset,
+  stubFromAnnotation,
 } from "@/utils/annotation";
 import { AnnotationSpatialIndex } from "@/utils/spatialIndex";
 
@@ -187,6 +188,85 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
         spatialIndex.insert(value.id, centroid.x, centroid.y);
       },
 
+      // Mirrors the real store's setAnnotation mutation: rebuilds the stub,
+      // refreshes the hydrated entry if present, and repositions the spatial
+      // index for a single replaced annotation.
+      setAnnotation(
+        state,
+        { annotation, index }: { annotation: IAnnotation; index: number },
+      ) {
+        const oldStub = state.annotationStubs.get(annotation.id);
+        if (oldStub) {
+          spatialIndex.remove(annotation.id);
+        }
+        state.annotations[index] = annotation;
+        const centroid = simpleCentroid(annotation.coordinates);
+        state.annotationCentroids[annotation.id] = centroid;
+        state.annotationIdToIdx[annotation.id] = index;
+        state.annotationStubs = markRaw(
+          new Map(state.annotationStubs).set(
+            annotation.id,
+            stubFromAnnotation(annotation, centroid),
+          ),
+        );
+        if (state.hydratedAnnotations.has(annotation.id)) {
+          state.hydratedAnnotations = markRaw(
+            new Map(state.hydratedAnnotations).set(annotation.id, annotation),
+          );
+        }
+        spatialIndex.insert(annotation.id, centroid.x, centroid.y);
+      },
+
+      // Mirrors the real store's setAnnotationsAtIndices mutation (batch
+      // in-place update path used by updateAnnotationsPerId in non-stub mode).
+      setAnnotationsAtIndices(
+        state,
+        values: {
+          annotation: IAnnotation;
+          index: number;
+          updateCentroid?: boolean;
+        }[],
+      ) {
+        if (!values.length) {
+          return;
+        }
+        const nextStubs = new Map(state.annotationStubs);
+        const nextHydrated = new Map(state.hydratedAnnotations);
+        let hydratedChanged = false;
+        for (const { annotation, index, updateCentroid = true } of values) {
+          state.annotations[index] = annotation;
+          if (updateCentroid) {
+            state.annotationCentroids[annotation.id] = simpleCentroid(
+              annotation.coordinates,
+            );
+          }
+          state.annotationIdToIdx[annotation.id] = index;
+
+          // Keep the derived maps the canvas renders from in sync with the
+          // edit (Finding 2): rebuild the stub, refresh the hydrated entry if
+          // present, and reposition the spatial index when the centroid moved.
+          const centroid = state.annotationCentroids[annotation.id];
+          if (state.annotationStubs.has(annotation.id)) {
+            nextStubs.set(
+              annotation.id,
+              stubFromAnnotation(annotation, centroid),
+            );
+          }
+          if (nextHydrated.has(annotation.id)) {
+            nextHydrated.set(annotation.id, annotation);
+            hydratedChanged = true;
+          }
+          if (updateCentroid && state.annotationStubs.has(annotation.id)) {
+            // insert is upsert-safe, so this repositions the existing node.
+            spatialIndex.insert(annotation.id, centroid.x, centroid.y);
+          }
+        }
+        state.annotationStubs = markRaw(nextStubs);
+        if (hydratedChanged) {
+          state.hydratedAnnotations = markRaw(nextHydrated);
+        }
+      },
+
       setVisibleAnnotationIds(state, ids: string[]) {
         state.visibleAnnotationIds = markRaw(new Set(ids));
       },
@@ -306,10 +386,10 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
 
         let visibleIds: string[];
         if (visInViewport.length >= maxVisible) {
-          visibleIds = selectRandomSubset(visInViewport, maxVisible);
+          visibleIds = selectStableSubset(visInViewport, maxVisible);
         } else {
           const remaining = maxVisible - visInViewport.length;
-          const offViewport = selectRandomSubset(visOutOfViewport, remaining);
+          const offViewport = selectStableSubset(visOutOfViewport, remaining);
           visibleIds = [...visInViewport, ...offViewport];
         }
 
@@ -526,6 +606,75 @@ describe("annotation stub/hydration store logic", () => {
 
       expect(store.state.annotationStubs.has("old-1")).toBe(true);
       expect(store.state.annotationStubs.has("new-1")).toBe(true);
+    });
+  });
+
+  // ---- setAnnotationsAtIndices (Finding 2) ----
+  //
+  // The non-stub-mode updateAnnotationsPerId path commits via
+  // setAnnotationsAtIndices. Canvas rendering reads annotationStubs /
+  // hydratedAnnotations whenever the stub system is active, so an in-place
+  // edit must refresh those derived maps or the canvas keeps the stale copy.
+
+  describe("setAnnotationsAtIndices", () => {
+    it("refreshes the stub's color when an annotation is edited", () => {
+      const ann = makeSquareAnnotation("ann-0", 10, 10, 20, { color: null });
+      store.commit("setAnnotations", [ann]);
+
+      const edited = { ...ann, color: "#abcdef" };
+      store.commit("setAnnotationsAtIndices", [
+        { annotation: edited, index: 0, updateCentroid: false },
+      ]);
+
+      expect(store.state.annotationStubs.get("ann-0")!.color).toBe("#abcdef");
+    });
+
+    it("refreshes the stub's tags when an annotation is edited", () => {
+      const ann = makeSquareAnnotation("ann-0", 10, 10, 20, { tags: ["DAPI"] });
+      store.commit("setAnnotations", [ann]);
+
+      const edited = { ...ann, tags: ["GFP", "RFP"] };
+      store.commit("setAnnotationsAtIndices", [
+        { annotation: edited, index: 0, updateCentroid: false },
+      ]);
+
+      expect(store.state.annotationStubs.get("ann-0")!.tags).toEqual([
+        "GFP",
+        "RFP",
+      ]);
+    });
+
+    it("refreshes the hydrated entry when present", () => {
+      // ann-0 is hydrated by the mock 20% strategy.
+      const ann = makeSquareAnnotation("ann-0", 10, 10, 20, { color: null });
+      store.commit("setAnnotations", [ann]);
+      expect(store.state.hydratedAnnotations.has("ann-0")).toBe(true);
+
+      const edited = { ...ann, color: "#123456" };
+      store.commit("setAnnotationsAtIndices", [
+        { annotation: edited, index: 0, updateCentroid: false },
+      ]);
+
+      expect(store.state.hydratedAnnotations.get("ann-0")!.color).toBe(
+        "#123456",
+      );
+    });
+
+    it("repositions the spatial index when coordinates change", () => {
+      const ann = makeSquareAnnotation("ann-0", 10, 10, 20);
+      store.commit("setAnnotations", [ann]);
+      // Originally centered near (10,10).
+      expect(spatialIndex.queryBox(0, 0, 20, 20).has("ann-0")).toBe(true);
+
+      const moved = makeSquareAnnotation("ann-0", 500, 500, 20);
+      store.commit("setAnnotationsAtIndices", [
+        { annotation: moved, index: 0, updateCentroid: true },
+      ]);
+
+      // The stale (10,10) location must no longer match; the new one must.
+      expect(spatialIndex.queryBox(0, 0, 20, 20).has("ann-0")).toBe(false);
+      expect(spatialIndex.queryBox(490, 490, 510, 510).has("ann-0")).toBe(true);
+      expect(store.state.annotationStubs.get("ann-0")!.centroid.x).toBe(500);
     });
   });
 

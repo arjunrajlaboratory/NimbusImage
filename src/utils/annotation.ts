@@ -143,10 +143,10 @@ export function simpleCentroid(coordinates: IGeoJSPosition[]): IGeoJSPosition {
 // coordinates, so we fall back to the centroid (matching how stub-based
 // drag-select hit-tests against the centroid index).
 export function annotationTestPoints(
-  annotation: { coordinates?: IGeoJSPosition[] },
+  annotation: TAnnotationOrStub,
   centroid: IGeoJSPosition | undefined,
 ): IGeoJSPosition[] {
-  if (annotation.coordinates && annotation.coordinates.length > 0) {
+  if (isHydratedAnnotation(annotation) && annotation.coordinates.length > 0) {
     return annotation.coordinates;
   }
   return centroid ? [centroid] : [];
@@ -303,7 +303,13 @@ export function hashString(str: string): number {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-export function selectRandomSubset(ids: string[], maxCount: number): string[] {
+/**
+ * Up to `maxCount` ids chosen deterministically by lowest hash. NOT a uniform
+ * random sample — the same id set always yields the same subset (the murmur
+ * finalizer in hashString disperses ids well), which is the point: the chosen
+ * set stays stable across pans instead of reshuffling each frame.
+ */
+export function selectStableSubset(ids: string[], maxCount: number): string[] {
   if (ids.length <= maxCount) return ids;
   // Pick the `maxCount` lowest-hash ids (a deterministic, order-independent
   // pseudo-random subset). Compute each id's hash exactly once into a parallel
@@ -419,10 +425,49 @@ export function drawnFeatureUnchanged(
   layerData: TAnnotationOrStub | undefined,
   drawnColor: string | null,
   drawnIsStub: boolean,
+  drawnGeometryKey: number,
 ): boolean {
   if (!layerExists || !layerData) return false;
   if (layerData.color !== drawnColor) return false;
-  return !isHydratedAnnotation(layerData) === drawnIsStub;
+  if (!isHydratedAnnotation(layerData) !== drawnIsStub) return false;
+  // Geometry guard (Finding 1): the keep-check previously ignored coordinates,
+  // so an in-place edit (polygon-slice, vertex drag) kept the stale feature and
+  // never repainted. Compare the rendered-geometry key so a coordinate change
+  // (or a stub dot whose centroid moved) forces a redraw.
+  return geometryKeyForRender(layerData) === drawnGeometryKey;
+}
+
+/**
+ * Order-sensitive, float-safe fingerprint of a coordinate list. Folds each
+ * vertex (x, y, and z when present) into a 32-bit FNV-1a-style hash, scaling by
+ * 1000 first so sub-pixel edits are still detected. Used by the incremental
+ * draw path to tell whether a feature's geometry changed since it was drawn.
+ */
+export function coordinatesFingerprint(coordinates: IGeoJSPosition[]): number {
+  let h = 0x811c9dc5 ^ coordinates.length;
+  const fold = (value: number): void => {
+    const v = Math.round(value * 1000) | 0;
+    h = Math.imul(h ^ (v & 0xffff), 0x01000193);
+    h = Math.imul(h ^ (v >>> 16), 0x01000193);
+  };
+  for (let i = 0; i < coordinates.length; i++) {
+    const c = coordinates[i];
+    fold(c.x);
+    fold(c.y);
+    if (c.z !== undefined) fold(c.z);
+  }
+  return h >>> 0;
+}
+
+/**
+ * The geometry key the incremental draw path stores on a feature and compares
+ * on each refresh: a hydrated annotation is keyed off its full coordinates; a
+ * stub (drawn as a dot) is keyed off its centroid.
+ */
+export function geometryKeyForRender(data: TAnnotationOrStub): number {
+  return isHydratedAnnotation(data)
+    ? coordinatesFingerprint(data.coordinates)
+    : coordinatesFingerprint([data.centroid]);
 }
 
 /**

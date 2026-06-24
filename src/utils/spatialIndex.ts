@@ -26,6 +26,12 @@ export class AnnotationSpatialIndex {
   }
 
   insert(id: string, x: number, y: number): void {
+    // Upsert: drop any existing node for this id first so re-inserting can't
+    // orphan the old RBush node (itemById would then point only at the new one,
+    // making the stale node un-removable and queryable forever — Finding 5).
+    if (this.itemById.has(id)) {
+      this.remove(id);
+    }
     const item: SpatialItem = { minX: x, minY: y, maxX: x, maxY: y, id };
     this.tree.insert(item);
     this.itemById.set(id, item);

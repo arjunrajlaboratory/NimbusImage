@@ -241,6 +241,53 @@ class Annotation(AccessControlMixin, ProxiedModel):
             )
         ]
 
+    def stubs(self, datasetId, shape=None, tags=None):
+        """Lightweight stub docs for every annotation in a dataset: centroid +
+        estimatedRadius, with the full coordinates dropped. Drives the frontend
+        stub/hydration view of large datasets. Returns a cursor.
+
+        Built here (not in the API method) so pipeline construction and the
+        runtime-bound _aggregate options live with the other list aggregations
+        (Finding 13).
+        """
+        match = {"datasetId": datasetId}
+        if shape:
+            match["shape"] = shape
+        if tags:
+            match["tags"] = {"$all": tags}
+
+        pipeline = [
+            {"$match": match},
+            {"$addFields": {
+                "centroid": {
+                    "x": {"$avg": "$coordinates.x"},
+                    "y": {"$avg": "$coordinates.y"},
+                },
+                # Half the larger bounding-box side. Matches the frontend
+                # estimateAnnotationRadius so the stub circle tracks the
+                # annotation's footprint; the previous bbox-diagonal/2
+                # circumscribed the box and overshot the real size by up to
+                # sqrt(2) (a square cell rendered ~41% too large).
+                "estimatedRadius": {
+                    "$divide": [
+                        {"$max": [
+                            {"$subtract": [
+                                {"$max": "$coordinates.x"},
+                                {"$min": "$coordinates.x"},
+                            ]},
+                            {"$subtract": [
+                                {"$max": "$coordinates.y"},
+                                {"$min": "$coordinates.y"},
+                            ]},
+                        ]},
+                        2,
+                    ]
+                },
+            }},
+            {"$project": {"coordinates": 0}},
+        ]
+        return self._aggregate(self.collection, pipeline)
+
     def _buildListMatchStages(self, datasetId, filters):
         """Pipeline stages matching annotation-document fields.
 
@@ -478,7 +525,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})
         pipeline.append({"$lookup": {
-            "from": "upenn_annotation",
+            "from": self.name,
             "localField": "annotationId",
             "foreignField": "_id",
             "as": "_ann",
@@ -554,11 +601,22 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # Sorting never changes the count, so only a property FILTER matters.
         if (filters.get("propertyFilters")
                 and not self._hasAnnotationFieldFilters(filters)):
-            # PV-driven: count the matching property-value docs directly
-            # rather than joining onto every annotation in the dataset.
+            # PV-driven: count the matching property-value docs, but join back
+            # to the annotation with a NON-preserving unwind so an orphaned
+            # value doc (whose annotation no longer exists) is excluded -- the
+            # page pipeline drops those too, so counting them would inflate
+            # `total` above the returnable rows (Finding 7). The join is over
+            # the already property-filtered set, not the whole dataset.
             pipeline = [{"$match": {"datasetId": datasetId}}]
             pipeline += self._propertyFilterStages(
                 filters, valueBase="values.")
+            pipeline.append({"$lookup": {
+                "from": self.name,
+                "localField": "annotationId",
+                "foreignField": "_id",
+                "as": "_ann",
+            }})
+            pipeline.append({"$unwind": "$_ann"})
             pipeline.append({"$count": "n"})
             result = list(self._aggregate(self._pvModel.collection, pipeline))
             return result[0]["n"] if result else 0

@@ -39,6 +39,23 @@ describe("AnnotationSpatialIndex", () => {
       index.remove("a");
       expect(index.queryBox(0, 0, 20, 20).has("a")).toBe(false);
     });
+
+    it("upserts when an id is inserted again (no stale node leak)", () => {
+      // Finding 5: re-inserting the same id must replace the old node, not
+      // orphan it. Without upsert the old (10,10) node leaks: remove() deletes
+      // only the newest node, leaving the stale one queryable forever.
+      index.insert("a", 10, 10);
+      index.insert("a", 500, 500);
+
+      // The stale location must no longer match; the new one must.
+      expect(index.queryBox(0, 0, 20, 20).has("a")).toBe(false);
+      expect(index.queryBox(490, 490, 510, 510).has("a")).toBe(true);
+
+      // After removal nothing remains at either location.
+      index.remove("a");
+      expect(index.queryBox(0, 0, 20, 20).has("a")).toBe(false);
+      expect(index.queryBox(490, 490, 510, 510).has("a")).toBe(false);
+    });
   });
 
   describe("splitByViewport", () => {

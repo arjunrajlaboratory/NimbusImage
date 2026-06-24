@@ -25,7 +25,7 @@ import { createSequenceGuard } from "@/utils/sequenceGuard";
 const propertyFilterRequestGuard = createSequenceGuard();
 
 import {
-  IAnnotation,
+  TAnnotationOrStub,
   ITagAnnotationFilter,
   IPropertyAnnotationFilter,
   IROIAnnotationFilter,
@@ -283,7 +283,7 @@ export class Filters extends VuexModule {
       annotation.stubOnlyMode && enabledPropertyFilters.length > 0;
     const serverPassingIds = this.propertyFilterPassingIds;
     return annotation.annotationsForIteration.filter(
-      (annotation: IAnnotation) => {
+      (annotation: TAnnotationOrStub) => {
         // Location filter
         if (
           onlyCurrentFrame &&

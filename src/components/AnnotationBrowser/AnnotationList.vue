@@ -340,6 +340,7 @@ import {
   IAnnotation,
   IAnnotationListSort,
   IAnnotationPropertyValues,
+  isHydratedAnnotation,
 } from "@/store/model";
 
 const allHeaders = [
@@ -573,7 +574,13 @@ const filteredItems = computed(() => {
   if (tooManyToList.value) {
     return [];
   }
-  return listedAnnotations.value.map(annotationToItem.value);
+  // The client list path only runs in non-stub mode (server/stub mode handles
+  // large datasets), so every annotation here is hydrated. Narrow with the type
+  // guard so the row item carries full annotation fields and any stray stub is
+  // safely dropped rather than rendering an undefined name (Finding 6).
+  return listedAnnotations.value
+    .filter(isHydratedAnnotation)
+    .map(annotationToItem.value);
 });
 
 const annotationToItem = computed(() => {
@@ -612,7 +619,12 @@ const selectAllValue = computed(() => {
     const total = serverItemsLength.value;
     return total > 0 && annotationStore.selectedAnnotationIds.size === total;
   }
-  return selectedItems.value.length === filteredItems.value.length;
+  // Guard the empty case (Finding 11): 0 === 0 must not read as "all selected"
+  // on an empty table — match the server branch's `> 0` guard.
+  return (
+    filteredItems.value.length > 0 &&
+    selectedItems.value.length === filteredItems.value.length
+  );
 });
 
 function selectAllCallback() {
@@ -720,17 +732,38 @@ const dataTableItems = computed((): IAnnotationListItem[] => {
   const items = filteredItems.value.slice();
   if (sortBy.value.length) {
     const { key, order } = sortBy.value[0];
+    // This list is the single source of truth for getPageFromItemId, so its
+    // order MUST match what the v-data-table actually renders. The table sorts
+    // `filteredItems` with Vuetify 4's internal sortItems algorithm, so mirror
+    // it exactly here (lowercase string compare, numeric coercion, empties
+    // first, Intl.Collator) rather than a hand-rolled `<` — otherwise the two
+    // comparators diverge on case/locale/mixed types and the page jump lands on
+    // the wrong page (Finding 15).
+    const collator = new Intl.Collator(undefined, {
+      sensitivity: "accent",
+      usage: "sort",
+    });
+    const isEmpty = (v: unknown) => v === null || v === undefined || v === "";
     items.sort((a, b) => {
-      const valA = getNestedValue(a, key);
-      const valB = getNestedValue(b, key);
-      // Sort null/undefined to end regardless of sort direction
-      // (matches Vuetify's internal sort behavior)
-      if (valA == null && valB == null) return 0;
-      if (valA == null) return 1;
-      if (valB == null) return -1;
-      if (valA < valB) return order === "asc" ? -1 : 1;
-      if (valA > valB) return order === "asc" ? 1 : -1;
-      return 0;
+      let sortA = getNestedValue(a, key);
+      let sortB = getNestedValue(b, key);
+      if (order === "desc") {
+        [sortA, sortB] = [sortB, sortA];
+      }
+      if (sortA instanceof Date && sortB instanceof Date) {
+        sortA = sortA.getTime();
+        sortB = sortB.getTime();
+      }
+      sortA = sortA != null ? sortA.toString().toLocaleLowerCase() : sortA;
+      sortB = sortB != null ? sortB.toString().toLocaleLowerCase() : sortB;
+      if (sortA === sortB) return 0;
+      if (isEmpty(sortA) && isEmpty(sortB)) return 0;
+      if (isEmpty(sortA)) return -1;
+      if (isEmpty(sortB)) return 1;
+      if (!isNaN(sortA) && !isNaN(sortB)) {
+        return Number(sortA) - Number(sortB);
+      }
+      return collator.compare(sortA, sortB);
     });
   }
   return items;

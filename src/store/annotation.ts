@@ -40,7 +40,7 @@ import type {
 import { markRaw, toRaw } from "vue";
 import {
   simpleCentroid,
-  selectRandomSubset,
+  selectStableSubset,
   selectLargestBySize,
   stubFromAnnotation,
   idsNeedingHydration,
@@ -154,13 +154,14 @@ export class Annotations extends VuexModule {
     return tagSet;
   }
 
-  get annotationsForIteration(): IAnnotation[] {
+  get annotationsForIteration(): TAnnotationOrStub[] {
     if (!this.stubOnlyMode) {
       return this.annotations;
     }
-    return Array.from(
-      this.annotationStubs.values(),
-    ) as unknown as IAnnotation[];
+    // In stub-only mode the full annotations[] array is empty; iterate the
+    // stub map instead. Typed as the honest union so consumers must narrow via
+    // isHydratedAnnotation before touching coordinates/name/shape (Finding 6).
+    return Array.from(this.annotationStubs.values());
   }
 
   hoveredAnnotationId: string | null = null;
@@ -651,6 +652,9 @@ export class Annotations extends VuexModule {
     return annotation;
   }
 
+  // Single interactive add. Clones the whole stub/hydrated maps, so it is
+  // O(stub count) per call and MUST NOT be looped (Finding 16) — bulk creation
+  // goes through addAnnotationsImpl, which clones each map once for the batch.
   @Mutation
   private addAnnotationImpl(value: IAnnotation) {
     const annotation = markRaw(value);
@@ -749,6 +753,9 @@ export class Annotations extends VuexModule {
     }
 
     const nextAnnotations = [...this.annotations];
+    const nextStubs = new Map(this.annotationStubs);
+    const nextHydrated = new Map(this.hydratedAnnotations);
+    let hydratedChanged = false;
     for (const { annotation: value, index, updateCentroid = true } of values) {
       const annotation = markRaw(value);
       nextAnnotations[index] = annotation;
@@ -758,8 +765,29 @@ export class Annotations extends VuexModule {
         );
       }
       this.annotationIdToIdx[annotation.id] = index;
+
+      // Keep the derived maps the canvas renders from in sync with the edit
+      // (Finding 2): layerAnnotations resolves renderData from hydrated/stub
+      // maps whenever the stub system is active, so an in-place edit that only
+      // touched annotations[] would otherwise repaint stale color/tags/shape.
+      const centroid = this.annotationCentroids[annotation.id];
+      if (this.annotationStubs.has(annotation.id)) {
+        nextStubs.set(annotation.id, stubFromAnnotation(annotation, centroid));
+      }
+      if (nextHydrated.has(annotation.id)) {
+        nextHydrated.set(annotation.id, annotation);
+        hydratedChanged = true;
+      }
+      if (updateCentroid && this.annotationStubs.has(annotation.id)) {
+        // insert is upsert-safe, so this repositions the existing node.
+        annotationSpatialIndex.insert(annotation.id, centroid.x, centroid.y);
+      }
     }
     this.annotations = nextAnnotations;
+    this.annotationStubs = markRaw(nextStubs);
+    if (hydratedChanged) {
+      this.hydratedAnnotations = markRaw(nextHydrated);
+    }
   }
 
   @Mutation
@@ -1662,25 +1690,17 @@ export class Annotations extends VuexModule {
       }
 
       if (count <= stubThreshold) {
-        // Under threshold: full fetch + server stubs
-        const [annotations, connections, stubs] = await Promise.all([
+        // Under threshold: full fetch only. Full annotations are a superset of
+        // the server stubs, and setAnnotations builds the centroids / stub map /
+        // spatial index client-side — cheap at this size — so re-fetching stubs
+        // separately is a redundant round-trip (Finding 8). Passing a bare array
+        // leaves serverStubsFollow false, triggering that client-side build.
+        const [annotations, connections] = await Promise.all([
           this.annotationsAPI.getAnnotationsForDatasetId(datasetId),
           connectionsPromise,
-          this.annotationsAPI.getAnnotationStubs(datasetId),
         ]);
         this.setConnections(connections?.length ? connections : []);
-        // When server stubs are present they (re)build the centroids/stub
-        // map/spatial index, so tell setAnnotations to skip that client-side
-        // build rather than do it twice (Finding 14).
-        const haveServerStubs = !!stubs?.length;
-        this.setAnnotations(
-          annotations?.length
-            ? { values: annotations, serverStubsFollow: haveServerStubs }
-            : [],
-        );
-        if (haveServerStubs) {
-          this.setStubsFromServer(stubs);
-        }
+        this.setAnnotations(annotations?.length ? annotations : []);
       } else {
         // Over threshold: stubs only, hydrate on demand. The stub fetch is a
         // single streamed GET with no incremental progress, so surface an
@@ -2280,10 +2300,10 @@ export class Annotations extends VuexModule {
     const visInViewport = visibilitySplit.inViewportIds;
     let visibleIds: string[];
     if (visInViewport.length >= maxVisible) {
-      visibleIds = selectRandomSubset(visInViewport, maxVisible);
+      visibleIds = selectStableSubset(visInViewport, maxVisible);
     } else {
       const remaining = maxVisible - visInViewport.length;
-      const offViewport = selectRandomSubset(
+      const offViewport = selectStableSubset(
         visibilitySplit.outOfViewportIds,
         remaining,
       );
@@ -2366,8 +2386,12 @@ export class Annotations extends VuexModule {
    * immediately. No-op outside stub-only mode (everything is already full).
    */
   @Action
-  ensureHydrated(ids: string[]) {
-    if (!this.stubOnlyMode || ids.length === 0) {
+  ensureHydrated(ids: Iterable<string>) {
+    // Accept any iterable (Array or the live selection Set) so callers don't
+    // have to spread a large selection into a throwaway array on every change
+    // (Finding 14). idsNeedingHydration iterates it directly and returns []
+    // for an empty input, which the idsToFetch guard below already handles.
+    if (!this.stubOnlyMode) {
       return;
     }
     const idsToFetch = idsNeedingHydration(

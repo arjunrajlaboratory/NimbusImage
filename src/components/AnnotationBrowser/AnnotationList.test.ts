@@ -403,6 +403,16 @@ describe("AnnotationList", () => {
       expect(vm.selectAllValue).toBe(false);
     });
 
+    it("selectAllValue is false for an empty filtered list (Finding 11)", () => {
+      (filterStore as any).filteredAnnotations = [];
+      (annotationStore as any).selectedAnnotationIds = new Set();
+      (annotationStore as any).isAnnotationSelected = vi.fn(() => false);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      // 0 === 0 must NOT read as "all selected" on an empty table.
+      expect(vm.selectAllValue).toBe(false);
+    });
+
     it("selectAllIndeterminate is true when some but not all selected", () => {
       const ann1 = makeAnnotation({ id: "ann1" });
       const ann2 = makeAnnotation({ id: "ann2" });

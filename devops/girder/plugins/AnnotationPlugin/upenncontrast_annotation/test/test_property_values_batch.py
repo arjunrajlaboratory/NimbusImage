@@ -241,3 +241,43 @@ class TestPropertyValuesBatch:
         )
         assertStatusOk(resp)
         assert resp.json[0]["values"] == {"propA": 1}
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestFindByAnnotationIds:
+    """Model-level shape contract for findByAnnotationIds."""
+
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotation = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        AnnotationPropertyValues().appendValues(
+            {"propA": {"sub": 5}}, annotation["_id"], folder["_id"]
+        )
+        return folder, annotation
+
+    def testExcludesIdAndDatasetId(self, admin):
+        # Finding 10: the docstring promises annotationId + values only, with
+        # _id and datasetId excluded. A list (inclusion) projection silently
+        # leaves Mongo's default _id:1 in place.
+        folder, annotation = self._setup(admin)
+        docs = AnnotationPropertyValues().findByAnnotationIds(
+            folder["_id"], [annotation["_id"]]
+        )
+        assert len(docs) == 1
+        assert "_id" not in docs[0]
+        assert "datasetId" not in docs[0]
+        assert set(docs[0].keys()) == {"annotationId", "values"}
+
+    def testExcludesIdWithProjectedPaths(self, admin):
+        folder, annotation = self._setup(admin)
+        docs = AnnotationPropertyValues().findByAnnotationIds(
+            folder["_id"], [annotation["_id"]], propertyPaths=[["propA"]]
+        )
+        assert len(docs) == 1
+        assert "_id" not in docs[0]
+        assert "datasetId" not in docs[0]

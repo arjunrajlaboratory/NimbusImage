@@ -112,6 +112,25 @@ describe("idsMissingPaths", () => {
   it("returns nothing when there are no paths to satisfy", () => {
     expect(idsMissingPaths(["a", "z"], cache, [])).toEqual([]);
   });
+
+  it("treats an array value as a leaf (does not index into it)", () => {
+    // Finding 12: collectLeafPaths stops at an array (array == leaf), so a path
+    // that tries to descend INTO an array by index is not a real path. valueAtPath
+    // must agree and treat that as missing rather than reading arr["0"].
+    const arrCache: IAnnotationPropertyValues = {
+      a: { p: { Area: [1, 2, 3] } as unknown as number },
+    };
+    expect(idsMissingPaths(["a"], arrCache, [["p", "Area", "0"]])).toEqual([
+      "a",
+    ]);
+  });
+
+  it("returns present when a path resolves to an array leaf", () => {
+    const arrCache: IAnnotationPropertyValues = {
+      a: { p: { Area: [1, 2, 3] } as unknown as number },
+    };
+    expect(idsMissingPaths(["a"], arrCache, [["p", "Area"]])).toEqual([]);
+  });
 });
 
 describe("scopedMergePropertyValues", () => {

@@ -48,6 +48,16 @@ def requireObjectId(value, field="id"):
         raise RestException("%s is not a valid id" % field, code=400)
 
 
+def requireInt(value, field):
+    """Parse `value` into an int, raising RestException(400) on a non-integer.
+    Pagination params reach a public endpoint, so a bad value must be a clean
+    400 rather than an uncaught int() ValueError/TypeError -> 500."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise RestException("%s must be an integer" % field, code=400)
+
+
 def isValidPropertyPath(path):
     """A property path is a non-empty list of non-empty strings with no '.' or
     '$' (which would build a wrong/injected projection key)."""
@@ -134,6 +144,10 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     """Validate client-supplied filter/sort/path shape. Raises
     RestException(400) on malformed input (avoids uncaught 500s on a public
     endpoint). Mutates `filters['idConstraints']` to ObjectIds in place."""
+    # A truthy non-dict `filters` (e.g. a string or list) would otherwise reach
+    # filters.get(...) below and raise AttributeError -> 500 (Finding 4).
+    if not isinstance(filters, dict):
+        raise RestException("filters must be an object", code=400)
     propertyFilters = filters.get("propertyFilters")
     if propertyFilters is not None:
         if not isinstance(propertyFilters, list):
@@ -173,13 +187,19 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
         raise RestException("idSubstring must be a string", code=400)
     idConstraints = filters.get("idConstraints")
     if idConstraints is not None:
+        # Each inner list must be non-empty: an empty inner list [[]] would
+        # become {"_id": {"$in": []}} -- an unconditional match-none that
+        # silently returns nothing (Finding 17). An empty OUTER list [] is a
+        # no-op (no constraint) and stays allowed.
         if not isinstance(idConstraints, list) or not all(
             isinstance(c, list)
+            and len(c) > 0
             and all(isinstance(i, str) and i for i in c)
             for c in idConstraints
         ):
             raise RestException(
-                "idConstraints must be a list of lists of id strings",
+                "idConstraints must be a list of non-empty lists of id "
+                "strings",
                 code=400,
             )
         # Convert ids to ObjectId once here (the model consumes them

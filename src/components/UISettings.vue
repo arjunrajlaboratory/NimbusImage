@@ -97,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useTheme } from "vuetify";
 import annotationStore from "@/store/annotation";
 import Persister from "@/store/Persister";
@@ -204,6 +204,16 @@ function flashNote(key: TVisibilityNumericKey, value: number) {
     delete notes[key];
   }, 4000);
 }
+
+// Clear pending flashNote timers on unmount so a callback can't fire and mutate
+// reactive state on a destroyed component (Finding 9).
+onBeforeUnmount(() => {
+  for (const timer of Object.values(noteTimers)) {
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+    }
+  }
+});
 
 function commitField(key: TVisibilityNumericKey) {
   const { config, adjusted } = clampVisibilityConfig(

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   hashString,
-  selectRandomSubset,
+  selectStableSubset,
   selectLargestBySize,
   drawnFeatureUnchanged,
   estimateAnnotationRadius,
@@ -10,8 +10,10 @@ import {
   idsNeedingHydration,
   stubFromAnnotation,
   planHydrationEvictions,
+  coordinatesFingerprint,
+  geometryKeyForRender,
 } from "../annotation";
-import { IAnnotation } from "@/store/model";
+import { IAnnotation, TAnnotationOrStub } from "@/store/model";
 
 vi.mock("geojs", () => ({
   default: {
@@ -44,20 +46,20 @@ describe("hashString", () => {
   });
 });
 
-describe("selectRandomSubset", () => {
+describe("selectStableSubset", () => {
   it("returns all if under limit", () => {
     const ids = ["a", "b", "c"];
-    expect(selectRandomSubset(ids, 5)).toEqual(ids);
+    expect(selectStableSubset(ids, 5)).toEqual(ids);
   });
 
   it("returns exactly maxCount if over limit", () => {
     const ids = Array.from({ length: 100 }, (_, i) => `id-${i}`);
-    expect(selectRandomSubset(ids, 10)).toHaveLength(10);
+    expect(selectStableSubset(ids, 10)).toHaveLength(10);
   });
 
   it("is deterministic", () => {
     const ids = Array.from({ length: 100 }, (_, i) => `id-${i}`);
-    expect(selectRandomSubset(ids, 10)).toEqual(selectRandomSubset(ids, 10));
+    expect(selectStableSubset(ids, 10)).toEqual(selectStableSubset(ids, 10));
   });
 
   it("selects exactly the maxCount lowest-hash ids", () => {
@@ -66,14 +68,14 @@ describe("selectRandomSubset", () => {
     const expected = [...ids]
       .sort((a, b) => hashString(a) - hashString(b))
       .slice(0, k);
-    expect(new Set(selectRandomSubset(ids, k))).toEqual(new Set(expected));
+    expect(new Set(selectStableSubset(ids, k))).toEqual(new Set(expected));
   });
 
   it("selects the same set regardless of input order", () => {
     const ids = Array.from({ length: 50 }, (_, i) => `id-${i}`);
     const shuffled = [...ids].reverse();
-    expect(new Set(selectRandomSubset(ids, 10))).toEqual(
-      new Set(selectRandomSubset(shuffled, 10)),
+    expect(new Set(selectStableSubset(ids, 10))).toEqual(
+      new Set(selectStableSubset(shuffled, 10)),
     );
   });
 });
@@ -139,37 +141,141 @@ describe("selectLargestBySize", () => {
   });
 });
 
+describe("coordinatesFingerprint", () => {
+  it("is stable for identical coordinates", () => {
+    const a = [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ];
+    const b = [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ];
+    expect(coordinatesFingerprint(a)).toBe(coordinatesFingerprint(b));
+  });
+
+  it("changes when a vertex moves", () => {
+    const before = [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ];
+    const after = [
+      { x: 1, y: 2 },
+      { x: 3, y: 5 },
+    ];
+    expect(coordinatesFingerprint(before)).not.toBe(
+      coordinatesFingerprint(after),
+    );
+  });
+
+  it("changes when the vertex count changes", () => {
+    const fewer = [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ];
+    const more = [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+      { x: 5, y: 6 },
+    ];
+    expect(coordinatesFingerprint(fewer)).not.toBe(
+      coordinatesFingerprint(more),
+    );
+  });
+
+  it("detects sub-integer (fractional) vertex moves", () => {
+    const before = [{ x: 100.001, y: 200 }];
+    const after = [{ x: 100.002, y: 200 }];
+    expect(coordinatesFingerprint(before)).not.toBe(
+      coordinatesFingerprint(after),
+    );
+  });
+});
+
+describe("geometryKeyForRender", () => {
+  it("keys a hydrated annotation off its coordinates", () => {
+    const before = {
+      id: "a",
+      color: "red",
+      coordinates: [{ x: 0, y: 0 }],
+    } as any;
+    const after = {
+      id: "a",
+      color: "red",
+      coordinates: [{ x: 9, y: 9 }],
+    } as any;
+    expect(geometryKeyForRender(before)).not.toBe(geometryKeyForRender(after));
+  });
+
+  it("keys a stub off its centroid", () => {
+    const before = { id: "a", color: "red", centroid: { x: 0, y: 0 } } as any;
+    const after = { id: "a", color: "red", centroid: { x: 9, y: 9 } } as any;
+    expect(geometryKeyForRender(before)).not.toBe(geometryKeyForRender(after));
+  });
+});
+
 describe("drawnFeatureUnchanged", () => {
-  const stub = { id: "a", color: "red" } as any; // no coordinates ⇒ stub
-  const hydrated = { id: "a", color: "red", coordinates: [] } as any;
+  // Stub renders as a dot at its centroid; hydrated renders its coordinates.
+  const stub = { id: "a", color: "red", centroid: { x: 0, y: 0 } } as any;
+  const hydrated = {
+    id: "a",
+    color: "red",
+    coordinates: [{ x: 0, y: 0 }],
+  } as any;
+  const stubKey = geometryKeyForRender(stub);
+  const hydratedKey = geometryKeyForRender(hydrated);
 
   it("returns false when the layer no longer exists", () => {
-    expect(drawnFeatureUnchanged(false, stub, "red", true)).toBe(false);
+    expect(drawnFeatureUnchanged(false, stub, "red", true, stubKey)).toBe(
+      false,
+    );
   });
 
   it("returns false when the annotation is no longer displayed (no layerData)", () => {
-    expect(drawnFeatureUnchanged(true, undefined, "red", true)).toBe(false);
+    expect(drawnFeatureUnchanged(true, undefined, "red", true, stubKey)).toBe(
+      false,
+    );
   });
 
   it("returns false when the color changed", () => {
-    expect(drawnFeatureUnchanged(true, stub, "blue", true)).toBe(false);
+    expect(drawnFeatureUnchanged(true, stub, "blue", true, stubKey)).toBe(
+      false,
+    );
   });
 
   it("returns false when a stub became hydrated (dot → shape)", () => {
     // drawn as a stub (drawnIsStub=true) but layerData is now hydrated
-    expect(drawnFeatureUnchanged(true, hydrated, "red", true)).toBe(false);
+    expect(
+      drawnFeatureUnchanged(true, hydrated, "red", true, hydratedKey),
+    ).toBe(false);
   });
 
   it("returns false when a hydrated annotation became a stub (shape → dot)", () => {
-    expect(drawnFeatureUnchanged(true, stub, "red", false)).toBe(false);
+    expect(drawnFeatureUnchanged(true, stub, "red", false, stubKey)).toBe(
+      false,
+    );
+  });
+
+  it("returns false when the geometry changed (in-place coordinate edit)", () => {
+    const edited = {
+      id: "a",
+      color: "red",
+      coordinates: [{ x: 50, y: 50 }],
+    } as any;
+    // Feature was drawn with the old hydratedKey; layerData now has new coords.
+    expect(drawnFeatureUnchanged(true, edited, "red", false, hydratedKey)).toBe(
+      false,
+    );
   });
 
   it("keeps an unchanged stub (the stub-only-mode case the old code dropped)", () => {
-    expect(drawnFeatureUnchanged(true, stub, "red", true)).toBe(true);
+    expect(drawnFeatureUnchanged(true, stub, "red", true, stubKey)).toBe(true);
   });
 
   it("keeps an unchanged hydrated annotation", () => {
-    expect(drawnFeatureUnchanged(true, hydrated, "red", false)).toBe(true);
+    expect(
+      drawnFeatureUnchanged(true, hydrated, "red", false, hydratedKey),
+    ).toBe(true);
   });
 });
 
@@ -264,30 +370,32 @@ describe("getStubStyleFromBaseStyle", () => {
 });
 
 describe("annotationTestPoints", () => {
+  // Minimal fixtures: annotationTestPoints only reads `coordinates` and uses
+  // isHydratedAnnotation ("coordinates" in obj) to distinguish hydrated vs stub.
+  const hydrated = (coordinates: { x: number; y: number }[]) =>
+    ({ coordinates }) as unknown as TAnnotationOrStub;
+  const stub = () => ({}) as unknown as TAnnotationOrStub;
+
   it("returns the annotation coordinates when present", () => {
     const coords = [
       { x: 1, y: 2 },
       { x: 3, y: 4 },
     ];
-    expect(annotationTestPoints({ coordinates: coords }, undefined)).toBe(
-      coords,
-    );
+    expect(annotationTestPoints(hydrated(coords), undefined)).toBe(coords);
   });
 
   it("falls back to the centroid when coordinates are absent (stub)", () => {
     const centroid = { x: 5, y: 6 };
-    expect(annotationTestPoints({}, centroid)).toEqual([centroid]);
+    expect(annotationTestPoints(stub(), centroid)).toEqual([centroid]);
   });
 
   it("falls back to the centroid when coordinates is an empty array", () => {
     const centroid = { x: 7, y: 8 };
-    expect(annotationTestPoints({ coordinates: [] }, centroid)).toEqual([
-      centroid,
-    ]);
+    expect(annotationTestPoints(hydrated([]), centroid)).toEqual([centroid]);
   });
 
   it("returns an empty array when neither coordinates nor centroid exist", () => {
-    expect(annotationTestPoints({}, undefined)).toEqual([]);
+    expect(annotationTestPoints(stub(), undefined)).toEqual([]);
   });
 });
 
