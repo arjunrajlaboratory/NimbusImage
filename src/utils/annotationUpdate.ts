@@ -1,4 +1,9 @@
-import { IAnnotation, IAnnotationStub } from "@/store/model";
+import {
+  AnnotationShape,
+  IAnnotation,
+  IAnnotationStub,
+  IGeoJSPosition,
+} from "@/store/model";
 
 type AnnotationUpdateField = keyof Omit<IAnnotation, "id">;
 
@@ -49,12 +54,15 @@ export function getAnnotationUpdatePatch(
   return Object.keys(patch).length > 1 ? patch : null;
 }
 
-// The tag/color fields that a stub carries and that can therefore be patched
-// locally after a stub-only-mode edit (see buildStubUpdates).
+// The stub-carried fields that can be patched locally after a stub-only-mode
+// edit (see buildStubUpdates). `centroid` is only emitted for point stubs whose
+// coordinate moved (a point's coordinate IS its centroid), so the local centroid
+// index + spatial index can follow the move without a reload.
 export interface IStubFieldUpdate {
   id: string;
   tags?: string[];
   color?: string | null;
+  centroid?: IGeoJSPosition;
 }
 
 /**
@@ -106,6 +114,17 @@ export function buildStubUpdates(
     }
     if (patch.color !== undefined) {
       fieldUpdate.color = patch.color;
+      hasStubField = true;
+    }
+    // A point's only coordinate IS its centroid, so a moved point must refresh
+    // the local centroid (and downstream centroid/spatial indexes). Only points
+    // qualify — for other shapes the centroid is not coordinates[0].
+    if (
+      patch.coordinates !== undefined &&
+      patch.coordinates.length > 0 &&
+      stub.shape === AnnotationShape.Point
+    ) {
+      fieldUpdate.centroid = patch.coordinates[0];
       hasStubField = true;
     }
     if (hasStubField) {

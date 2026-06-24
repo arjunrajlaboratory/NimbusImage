@@ -907,8 +907,9 @@ export class Annotations extends VuexModule {
     this.stubOnlyMode = mode;
   }
 
-  // Patch tags/color on existing stubs (and any hydrated copies) after a
-  // stub-only-mode edit, so the canvas reflects the change without a reload.
+  // Patch tags/color (and, for a moved point, centroid) on existing stubs (and
+  // any hydrated copies) after a stub-only-mode edit, so the canvas reflects the
+  // change without a reload.
   @Mutation
   public applyStubFieldUpdates(updates: IStubFieldUpdate[]) {
     if (!updates.length) {
@@ -923,6 +924,9 @@ export class Annotations extends VuexModule {
           ...stub,
           ...(update.tags !== undefined ? { tags: update.tags } : {}),
           ...(update.color !== undefined ? { color: update.color } : {}),
+          ...(update.centroid !== undefined
+            ? { centroid: update.centroid }
+            : {}),
         });
       }
       const hydrated = newHydrated.get(update.id);
@@ -934,6 +938,18 @@ export class Annotations extends VuexModule {
             ...(update.tags !== undefined ? { tags: update.tags } : {}),
             ...(update.color !== undefined ? { color: update.color } : {}),
           }),
+        );
+      }
+      // A moved point stub: follow the move in the centroid index (mutated in
+      // place — copying the up-to-1M-entry map per drag would be wasteful, and
+      // it's markRaw/non-reactive so the redraw is driven by the annotationStubs
+      // reassignment below) and the spatial index (clean upsert).
+      if (update.centroid !== undefined) {
+        this.annotationCentroids[update.id] = update.centroid;
+        annotationSpatialIndex.insert(
+          update.id,
+          update.centroid.x,
+          update.centroid.y,
         );
       }
     }

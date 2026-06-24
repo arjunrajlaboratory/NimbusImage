@@ -180,4 +180,57 @@ describe("buildStubUpdates", () => {
     expect(patches).toEqual([]);
     expect(stubFieldUpdates).toEqual([]);
   });
+
+  it("records a centroid update when a point stub is moved (drag)", () => {
+    // A point's only coordinate IS its centroid, so a coordinate move must also
+    // refresh the local stub centroid (and, via applyStubFieldUpdates, the
+    // centroid index + spatial index) — otherwise the moved point snaps back to
+    // its old position until reload.
+    const stubs: Record<string, IAnnotationStub> = {
+      p1: makeStub({
+        id: "p1",
+        shape: AnnotationShape.Point,
+        centroid: { x: 10, y: 20 },
+      }),
+    };
+    const move = (a: IAnnotation) => {
+      a.coordinates = [{ x: 15, y: 25 }];
+    };
+
+    const { patches, stubFieldUpdates } = buildStubUpdates(
+      ["p1"],
+      (id) => stubs[id],
+      move,
+    );
+
+    expect(patches).toEqual([{ id: "p1", coordinates: [{ x: 15, y: 25 }] }]);
+    expect(stubFieldUpdates).toEqual([
+      { id: "p1", centroid: { x: 15, y: 25 } },
+    ]);
+  });
+
+  it("does not record a centroid update for a non-point coordinate change", () => {
+    // A polygon's centroid is not coordinates[0], so buildStubUpdates must not
+    // fabricate a centroid from a polygon coordinate edit (the backend still
+    // gets the coordinates patch).
+    const stubs: Record<string, IAnnotationStub> = {
+      poly: makeStub({ id: "poly", shape: AnnotationShape.Polygon }),
+    };
+    const move = (a: IAnnotation) => {
+      a.coordinates = [
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+        { x: 3, y: 3 },
+      ];
+    };
+
+    const { patches, stubFieldUpdates } = buildStubUpdates(
+      ["poly"],
+      (id) => stubs[id],
+      move,
+    );
+
+    expect(patches.length).toBe(1);
+    expect(stubFieldUpdates).toEqual([]);
+  });
 });

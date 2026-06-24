@@ -691,7 +691,8 @@ function removePropertyColumn(path: string[]) {
 
 function goToAnnotationIdLocation(annotationId: string) {
   // In stub-only mode getAnnotationFromId returns undefined for non-hydrated
-  // annotations, so fall back to the stub (which carries location + centroid).
+  // non-point annotations, so fall back to the stub (which carries location +
+  // centroid).
   const annotation = annotationStore.getAnnotationFromId(annotationId);
   const stub = annotationStore.getStub(annotationId);
   const location = annotation?.location ?? stub?.location;

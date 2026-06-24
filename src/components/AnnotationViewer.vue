@@ -1615,9 +1615,10 @@ function shouldSelectAnnotation(
 }
 
 // Resolve a selection candidate id to its hydrated/full annotation, or its stub
-// when unhydrated. In stub-only mode most displayed annotations are unhydrated,
-// so resolving only via getAnnotationFromId (which returns undefined for stubs)
-// silently drops them from selection; fall back to the stub.
+// when unhydrated. In stub-only mode most displayed annotations are unhydrated;
+// getAnnotationFromId materializes point stubs but returns undefined for
+// non-point stubs, which would silently drop them from selection — so fall back
+// to the stub.
 function resolveSelectionCandidate(id: string): TAnnotationOrStub | undefined {
   return getAnnotationFromId.value(id) ?? annotationStore.getStub(id);
 }
