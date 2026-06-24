@@ -417,8 +417,9 @@ export function selectLargestBySize(
  *
  * Stub-awareness is the fix that makes incremental drawing viable in stub-only
  * mode: the old keep-check used `getAnnotationFromId`, which returns undefined
- * for non-hydrated stubs (the full annotations[] array is empty there), so every
- * dot feature was dropped on each pass and nothing could be reused.
+ * for non-hydrated non-point stubs (point stubs now materialize from their
+ * centroid; the full annotations[] array is empty otherwise), so every dot
+ * feature was dropped on each pass and nothing could be reused.
  */
 export function drawnFeatureUnchanged(
   layerExists: boolean,

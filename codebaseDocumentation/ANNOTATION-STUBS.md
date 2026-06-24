@@ -556,7 +556,7 @@ feature count == visible count in every state, no orphans/stale).**
   `clearOldAnnotations(false)`, which keeps unchanged features and removes/recreates only the rest,
   with a **hybrid** bulk-clear (`INCREMENTAL_BULK_CLEAR_FRACTION`) when most must go (frame change).
   **The "~88 % churn" below was a measurement artifact, not real churn:** the old diff used
-  `getAnnotationFromId`, which returns undefined for non-hydrated stubs (the full `annotations[]` is
+  `getAnnotationFromId`, which returns undefined for non-hydrated non-point stubs (the full `annotations[]` is
   empty in stub-only mode), so it dropped every dot feature each pass. The new stub-aware keep-check
   (`drawnFeatureUnchanged`) fixes it — true survivor rate on a high-zoom pan is **~95 %**, so
   `drawNewAnnotations` drops **~450 ms → ~55 ms** and each draw is ~250 ms (was ~680 ms).
@@ -1021,7 +1021,7 @@ Xenium dataset.
   whose `excluded` check then skips them so only genuinely-new features are created. Two fixes made the
   diff a win (the earlier "naive flip is slower" finding was a *bug*, not fundamental):
   - **Stub-aware keep-check (the bug).** The old `clearOldAnnotations(false)` decided "keep" via
-    `getAnnotationFromId`, which returns undefined for non-hydrated stubs (the full `annotations[]` is
+    `getAnnotationFromId`, which returns undefined for non-hydrated non-point stubs (the full `annotations[]` is
     empty in stub-only mode), so it dropped **every dot feature** each pass — that, not real churn, is
     why only ~6.2K survived. The new pure helper `drawnFeatureUnchanged` (`utils/annotation.ts`) keys
     off `layerData` (the renderData already in `layerAnnotations`): keep iff still displayed on the

@@ -937,6 +937,14 @@ export class Annotations extends VuexModule {
             ...hydrated,
             ...(update.tags !== undefined ? { tags: update.tags } : {}),
             ...(update.color !== undefined ? { color: update.color } : {}),
+            // A moved point can still be in hydratedAnnotations (newly-created
+            // annotations are always hydrated), and getAnnotationFromId prefers
+            // the hydrated copy over materializing from the updated stub — so the
+            // hydrated copy's coordinate must follow the move too, or it resolves
+            // to the stale position. A point's only coordinate IS its centroid.
+            ...(update.centroid !== undefined
+              ? { coordinates: [{ ...update.centroid }] }
+              : {}),
           }),
         );
       }

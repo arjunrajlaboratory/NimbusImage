@@ -1568,9 +1568,9 @@ describe("AnnotationViewer", () => {
       });
 
       // Codex finding #1: in stub-only mode getAnnotationFromId returns
-      // undefined for the displayed-but-unhydrated dots, so selection must
-      // fall back to the stub (centroid + location) or it silently picks
-      // nothing.
+      // undefined for displayed-but-unhydrated non-point stubs (dots), so
+      // selection must fall back to the stub (centroid + location) or it
+      // silently picks nothing.
       it("click-selects a visible unhydrated stub in stub-only mode", () => {
         mockedAnnotationStore.stubOnlyMode = true;
         (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
