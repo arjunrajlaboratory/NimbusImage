@@ -85,9 +85,9 @@ pattern.
   uncaught `bson.InvalidId` 500s. **Fix:** `stubs`, `hydrate`, `listAnnotations`,
   `listAnnotationIds` now use `requireObjectId` (→ 400). **Audit:** the
   pre-existing `find`/`count` (both files) and the `deleteMultiple` id helpers
-  have the same pattern but predate the branch — flagged as a follow-up rather
-  than expanding this PR's diff. Tests: malformed-datasetId/id → 400 in
-  `test_stubs.py` and `test_server_list.py`.
+  have the same pattern but predate the branch — filed as follow-up issue
+  **#1204** rather than expanding this PR's diff. Tests: malformed-datasetId/id
+  → 400 in `test_stubs.py` and `test_server_list.py`.
 - **[P4] Empty values-mode property filter wrongly routed `/list` into the
   PV-driven path,** dropping annotations with no value document (also skewed the
   count and select-all). **Fix:** new `dropNoOpPropertyFilters` normalizes away
