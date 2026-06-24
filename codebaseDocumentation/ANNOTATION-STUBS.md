@@ -372,6 +372,41 @@ polygon) distinguishes it.
   `maxVisible` tuning to-do. A zoom-adaptive `maxVisible` would address both this and
   the lock above.
 
+### RESOLVED (2026-06-24): point annotations bypass the stub/hydrated machinery
+A point's centroid **is** its only coordinate, so the stub/hydrated split — built
+for polygons, where coordinates are the bulk of the payload — is pure overhead
+for points. Investigation on a 1,000,000-point dataset confirmed it: hydration
+fetched ~23K points whose `/hydrate` response equalled the centroid already held,
+the `/stubs` payload was ~239 MB (a point stub's metadata dwarfs its one
+coordinate), and a point stub rendered as a radius-0 dot that popped/resized into
+a `scaled` regular point the moment it hydrated.
+
+**Fix (collapse, not removal — points stay in the lightweight index):**
+- New pure predicates in `utils/annotation.ts`: `shapeNeedsHydration(shape)`
+  (`false` for `Point`, `true` otherwise) and
+  `drawnFeatureUsesDotStyle(isStub, shape)` (`isStub && shapeNeedsHydration(shape)`).
+- **Render** (`AnnotationViewer.vue`, three styling sites — `createGeoJSAnnotation`,
+  the `drawNewAnnotations` restyle loop, `restyleAnnotations`): a point stub now
+  renders with the **regular point style** (`getAnnotationStyle`), not the dot
+  stub style. `annotationShape` is carried in the GeoJS feature `options` so the
+  restyle loops can re-derive the decision. Non-point stubs are unchanged.
+- **Hydration** (`annotation.ts`): `updateVisibilityAndHydration` Step 4 filters
+  points out of **both** hydration tiers before budget allocation, and
+  `ensureHydrated` drops point ids. Points never enter `hydratedAnnotations` and
+  never hit `/hydrate`.
+- **Unchanged:** points stay in `annotationStubs` + the spatial index, and the
+  visibility budget still downsamples them — that (not stubs) is what makes 1M
+  points tractable. `estimatedRadius` is now unused for points. No backend change.
+- **Click hit-test stays consistent for free:** `shouldSelectStub` tests against
+  the feature's live `style()`, which is now the regular point style — so the hit
+  radius matches the drawn radius automatically.
+- **Verified in-browser** on 1M points + 200 polygons: `stubOnlyMode` true,
+  `hydratedAnnotations` held the 200 polygons and **zero** points across repeated
+  pans, `httpRequestsFired` = 1 (the polygons), points still downsampled
+  (`visibleAnnotationIds` ~15K). The residual ~1.2 s per-pan main-thread block is
+  the C2-independent visible-set rebuild — see issue #1205
+  (`VIEWPORT-BOUND-BUDGET.md`), deliberately out of scope here.
+
 ### Selection includes non-visible annotations
 - `getSelectedAnnotationsFromAnnotation()` queries both the displayed RBush and the global `annotationSpatialIndex`
 - Drag-select catches ALL annotations in the region on the current frame, regardless of visibility budget
