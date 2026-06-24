@@ -44,7 +44,7 @@ import {
   stubFromAnnotation,
   idsNeedingHydration,
   planHydrationEvictions,
-  shapeNeedsHydration,
+  idHasHydratableShape,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import {
@@ -2319,11 +2319,11 @@ export class Annotations extends VuexModule {
     // hydrate — drop them from both tiers BEFORE budget allocation so the budget
     // goes entirely to shapes that actually need coordinates. For an all-points
     // dataset this filters the candidate lists to empty, so the size-selection
-    // is skipped entirely.
-    const needsHydration = (id: string): boolean => {
-      const stub = stubsMap.get(id);
-      return !!stub && shapeNeedsHydration(stub.shape);
-    };
+    // is skipped entirely. selectLargestBySize then picks the largest by
+    // estimatedRadius via a bounded min-heap (not a full O(N log N) sort) — see
+    // its definition.
+    const needsHydration = (id: string): boolean =>
+      idHasHydratableShape(id, stubsMap);
     const sizeOf = (id: string) => stubsMap.get(id)?.estimatedRadius ?? 0;
     const hydInViewport = hydrationSplit.inViewportIds.filter(needsHydration);
     let idsToHydrate: string[];
@@ -2406,10 +2406,7 @@ export class Annotations extends VuexModule {
       ids,
       this.hydratedAnnotations,
       stubs,
-    ).filter((id) => {
-      const stub = stubs.get(id);
-      return !!stub && shapeNeedsHydration(stub.shape);
-    });
+    ).filter((id) => idHasHydratableShape(id, stubs));
     if (idsToFetch.length === 0) {
       return;
     }

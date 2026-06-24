@@ -54,8 +54,9 @@ vi.mock("@/utils/annotation", () => ({
   // Faithful copy of the real predicate (unit-tested in Task 1). Point stubs
   // use the regular point style (false); polygon/line/rectangle stubs use the
   // dot style (true).
-  drawnFeatureUsesDotStyle: (isStub: boolean, shape: string) =>
-    isStub && shape !== "point",
+  drawnFeatureUsesDotStyle: vi.fn(
+    (isStub: boolean, shape: string) => isStub && shape !== "point",
+  ),
   getStubStyleFromBaseStyle: vi.fn().mockReturnValue({
     fillColor: "blue",
     fillOpacity: 0.3,

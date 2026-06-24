@@ -585,6 +585,18 @@ export function drawnFeatureUsesDotStyle(
   return isStub && shapeNeedsHydration(shape);
 }
 
+// True when the stub for `id` exists and is a shape that still needs hydration
+// (i.e. not a point). Single-sources the "drop self-complete points from
+// hydration" guard used by both the viewport hydration budget and
+// ensureHydrated.
+export function idHasHydratableShape(
+  id: string,
+  stubs: Map<string, IAnnotationStub>,
+): boolean {
+  const stub = stubs.get(id);
+  return !!stub && shapeNeedsHydration(stub.shape);
+}
+
 /**
  * Build an annotation stub (centroid + metadata, no coordinates) from a full
  * annotation and its precomputed centroid. Single source for the stub field set

@@ -14,8 +14,14 @@ import {
   geometryKeyForRender,
   shapeNeedsHydration,
   drawnFeatureUsesDotStyle,
+  idHasHydratableShape,
 } from "../annotation";
-import { IAnnotation, TAnnotationOrStub, AnnotationShape } from "@/store/model";
+import {
+  IAnnotation,
+  IAnnotationStub,
+  TAnnotationOrStub,
+  AnnotationShape,
+} from "@/store/model";
 
 vi.mock("geojs", () => ({
   default: {
@@ -557,7 +563,37 @@ describe("drawnFeatureUsesDotStyle", () => {
   });
 
   it("does NOT use the dot style for a hydrated annotation", () => {
-    expect(drawnFeatureUsesDotStyle(false, AnnotationShape.Polygon)).toBe(false);
+    expect(drawnFeatureUsesDotStyle(false, AnnotationShape.Polygon)).toBe(
+      false,
+    );
     expect(drawnFeatureUsesDotStyle(false, AnnotationShape.Point)).toBe(false);
+  });
+});
+
+describe("idHasHydratableShape", () => {
+  const stub = (id: string, shape: AnnotationShape): IAnnotationStub => ({
+    id,
+    centroid: { x: 0, y: 0 },
+    location: { XY: 0, Z: 0, Time: 0 },
+    shape,
+    channel: 0,
+    tags: [],
+    color: null,
+  });
+  const stubs = new Map<string, IAnnotationStub>([
+    ["poly", stub("poly", AnnotationShape.Polygon)],
+    ["pt", stub("pt", AnnotationShape.Point)],
+  ]);
+
+  it("is true for a non-point stub", () => {
+    expect(idHasHydratableShape("poly", stubs)).toBe(true);
+  });
+
+  it("is false for a point stub", () => {
+    expect(idHasHydratableShape("pt", stubs)).toBe(false);
+  });
+
+  it("is false for an unknown id (no stub)", () => {
+    expect(idHasHydratableShape("missing", stubs)).toBe(false);
   });
 });

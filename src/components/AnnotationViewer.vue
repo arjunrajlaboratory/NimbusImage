@@ -1424,8 +1424,7 @@ function createGeoJSAnnotation(
   const stubRadius = !isHydratedAnnotation(annotation)
     ? annotation.estimatedRadius ?? 5
     : 5;
-  const useDotStyle = drawnFeatureUsesDotStyle(isStub, annotation.shape);
-  const style = useDotStyle
+  const style = drawnFeatureUsesDotStyle(isStub, annotation.shape)
     ? getStubStyleFromBaseStyle(
         customColor || layer?.color,
         annotation.id === hoveredAnnotationId.value,
