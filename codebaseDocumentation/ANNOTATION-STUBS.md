@@ -424,6 +424,20 @@ read regressed the hot path 17→76 ms/100K; hoisting it lands at ~36 ms/100K).
 Verified in-browser: `getAnnotationFromId(pointId)` returns a materialized point,
 and all 5 point→point test connections resolve both endpoints.
 
+**Perf note / future lever.** Materializing adds cost only on the
+resolve-an-unhydrated-point path (hydrated/full annotations return early,
+unchanged); benchmarked at ~36 ms/100K resolutions vs ~17 ms for the old
+`undefined` return (~357 vs ~173 ns/call). This getter is **not** on the 50K
+per-feature render loop (that uses `getForRendering`), and every volume caller
+that resolves points (connection draw, timelapse track drawing, selection
+hit-test) genuinely needs the point — so inlining the materialization at those
+sites would cost the same, just spread across more code. The 100K figure is a
+micro-benchmark; the heaviest real caller (timelapse track draw) is bounded by
+displayed connections (single-digit ms, dwarfed by the draw). **If a profile
+ever shows this hot:** the connection/timelapse-centroid paths only need
+`id`+`centroid`, so they can read the stub directly (`getStub`) and skip the
+coordinate-array allocation — a surgical per-site change, not a re-architecture.
+
 ### Selection includes non-visible annotations
 - `getSelectedAnnotationsFromAnnotation()` queries both the displayed RBush and the global `annotationSpatialIndex`
 - Drag-select catches ALL annotations in the region on the current frame, regardless of visibility budget
