@@ -51,6 +51,18 @@ vi.mock("@/utils/annotation", () => ({
       drawnGeometryKey === (layerData.coordinates?.length ?? -1)),
   geometryKeyForRender: (data: any) =>
     "coordinates" in data ? data.coordinates?.length ?? -1 : -1,
+  // Faithful copy of the real predicate (unit-tested in Task 1). Point stubs
+  // use the regular point style (false); polygon/line/rectangle stubs use the
+  // dot style (true).
+  drawnFeatureUsesDotStyle: (isStub: boolean, shape: string) =>
+    isStub && shape !== "point",
+  getStubStyleFromBaseStyle: vi.fn().mockReturnValue({
+    fillColor: "blue",
+    fillOpacity: 0.3,
+    strokeColor: "blue",
+    strokeWidth: 1,
+    radius: 5,
+  }),
 }));
 
 vi.mock("@/utils/polygonSlice", () => ({

@@ -112,6 +112,7 @@ import {
   tagFilterFunction,
   ellipseToPolygonCoordinates,
   getStubStyleFromBaseStyle,
+  drawnFeatureUsesDotStyle,
   drawnFeatureUnchanged,
   geometryKeyForRender,
 } from "@/utils/annotation";
@@ -897,11 +898,12 @@ function drawNewAnnotations(
         style,
         customColor,
         isStub,
+        annotationShape,
         stubRadius,
       } = geoJSAnnotation.options();
       if (isHovered != isHoveredGT || isSelected != isSelectedGT) {
         const layer = store.getLayerFromId(layerId);
-        const newStyle = isStub
+        const newStyle = drawnFeatureUsesDotStyle(isStub, annotationShape)
           ? getStubStyleFromBaseStyle(
               customColor || layer?.color,
               isHoveredGT,
@@ -1422,7 +1424,8 @@ function createGeoJSAnnotation(
   const stubRadius = !isHydratedAnnotation(annotation)
     ? annotation.estimatedRadius ?? 5
     : 5;
-  const style = isStub
+  const useDotStyle = drawnFeatureUsesDotStyle(isStub, annotation.shape);
+  const style = useDotStyle
     ? getStubStyleFromBaseStyle(
         customColor || layer?.color,
         annotation.id === hoveredAnnotationId.value,
@@ -1444,6 +1447,7 @@ function createGeoJSAnnotation(
     customColor,
     style,
     isStub,
+    annotationShape: annotation.shape,
     stubRadius,
     // Geometry fingerprint (Finding 1): lets clearOldAnnotations detect an
     // in-place coordinate edit and redraw the feature instead of keeping the
@@ -1501,11 +1505,12 @@ function restyleAnnotations() {
       customColor,
       isConnection,
       isStub,
+      annotationShape,
       stubRadius,
     } = geoJSAnnotation.options();
     if (girderId && !isConnection) {
       const layer = store.getLayerFromId(layerId);
-      const newStyle = isStub
+      const newStyle = drawnFeatureUsesDotStyle(isStub, annotationShape)
         ? getStubStyleFromBaseStyle(
             customColor || layer?.color,
             girderId === hoveredAnnotationId.value,
