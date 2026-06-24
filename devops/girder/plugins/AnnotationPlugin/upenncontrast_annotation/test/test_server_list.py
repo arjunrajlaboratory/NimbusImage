@@ -652,6 +652,73 @@ class TestServerListValidation:
         })
         assertStatus(resp, 400)
 
+    def testArrayBodyReturns400OnList(self, admin, server):
+        # P2: a non-object (JSON array) body would reach bodyJson.get(...) and
+        # raise AttributeError -> 500. requireObjectBody makes it a clean 400.
+        self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", [1, 2, 3])
+        assertStatus(resp, 400)
+
+    def testArrayBodyReturns400OnIds(self, admin, server):
+        self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", [1, 2, 3])
+        assertStatus(resp, 400)
+
+    def testNonDictTagsFilterReturns400(self, admin, server):
+        # P2: filters.tags must be a dict. A truthy non-dict (e.g. a string)
+        # would reach tags.get("values") in _buildListMatchStages and raise
+        # AttributeError -> 500.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": "bad"},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testNonListTagsValuesReturns400(self, admin, server):
+        # P2: filters.tags.values must be a list (the model iterates/$in's it).
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": {"values": "bad"}},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testNonDictLocationFilterReturns400(self, admin, server):
+        # P2: filters.location must be a dict. A truthy non-dict would reach
+        # location.get("XY") in _buildListMatchStages -> AttributeError -> 500.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"location": "bad"},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+        })
+        assertStatus(resp, 400)
+
+    def testNonDictTagsFilterReturns400OnIds(self, admin, server):
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": "bad"},
+        })
+        assertStatus(resp, 400)
+
+    def testOversizedLimitIsClampedNot500(self, admin, server):
+        # P3: an unbounded limit lets a public caller stream arbitrarily many
+        # full rows. The limit is clamped to MAX_LIST_LIMIT, so an enormous
+        # request succeeds (clamped), it does not 400/500.
+        folder = self._folder(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {}, "sort": None, "propertyPaths": [],
+            "offset": 0, "limit": 10 ** 12,
+        })
+        assertStatusOk(resp)
+        # Only one annotation exists; clamping the page size does not drop it.
+        assert parseStreaming(resp)["total"] == 1
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
@@ -769,7 +836,7 @@ class TestServerListIdConstraints:
     def testEmptyInnerIdConstraintReturns400(self, admin, server):
         # Finding 17: an empty inner constraint [[]] passes the vacuous `all`
         # check and becomes {"_id": {"$in": []}} (an unconditional match-none).
-        # That silent "returns nothing" is ambiguous; reject it at the boundary.
+        # That silent "returns nothing" is ambiguous; reject at the boundary.
         folder, a, b, c, d = self._setup(admin)
         resp = postList(server, admin, "/upenn_annotation/list", {
             "datasetId": str(folder["_id"]),
@@ -820,7 +887,7 @@ class TestServerListCountConsistency:
 
     def testPropertyFilterCountExcludesOrphanValueDocs(self, admin, server):
         # Finding 7: on the PV-driven property-filter path, listCount counts
-        # matching property-value docs directly, but listPage joins each back to
+        # matching property-value docs directly, but listPage joins each back
         # its annotation with a non-preserving $unwind (dropping value docs
         # whose annotation no longer exists). An orphan value doc therefore
         # inflates `total` above the number of returnable rows.

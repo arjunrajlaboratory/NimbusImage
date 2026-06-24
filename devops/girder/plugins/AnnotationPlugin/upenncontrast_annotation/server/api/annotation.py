@@ -14,8 +14,10 @@ from girder.models.folder import Folder
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
+    MAX_LIST_LIMIT,
     dropNoOpPropertyFilters,
     requireInt,
+    requireObjectBody,
     requireObjectId,
     validateAnnotationIdCount,
     validateListInputs,
@@ -577,7 +579,7 @@ class Annotation(Resource):
     )
     @memoizeBodyJson
     def listAnnotationIds(self, params, *args, **kwargs):
-        bodyJson = kwargs["memoizedBodyJson"]
+        bodyJson = requireObjectBody(kwargs["memoizedBodyJson"])
         datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(),
@@ -602,7 +604,7 @@ class Annotation(Resource):
     )
     @memoizeBodyJson
     def listAnnotations(self, params, *args, **kwargs):
-        bodyJson = kwargs["memoizedBodyJson"]
+        bodyJson = requireObjectBody(kwargs["memoizedBodyJson"])
         datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(),
@@ -613,9 +615,14 @@ class Annotation(Resource):
         propertyPaths = bodyJson.get("propertyPaths") or []
         # Parse-or-400 at the boundary, then clamp: a non-integer
         # offset/limit would otherwise raise an uncaught int() error -> 500 on
-        # this public endpoint.
+        # this public endpoint. The limit is clamped to MAX_LIST_LIMIT so a
+        # public caller can't request an arbitrarily large page and force
+        # serialization of that many full rows.
         offset = max(0, requireInt(bodyJson.get("offset", 0), "offset"))
-        limit = max(1, requireInt(bodyJson.get("limit", 50), "limit"))
+        limit = min(
+            MAX_LIST_LIMIT,
+            max(1, requireInt(bodyJson.get("limit", 50), "limit")),
+        )
 
         validateListInputs(filters, sort, propertyPaths)
         dropNoOpPropertyFilters(filters)

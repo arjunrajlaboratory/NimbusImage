@@ -867,6 +867,28 @@ watch(
   { deep: true },
 );
 
+// Scope server-mode selection to the current query. The selection set is
+// global, and deleteSelected/tag/color act on it directly, so a selection made
+// under one filter would otherwise persist — hidden — after switching filters,
+// and a later "delete selected" would silently delete rows no longer in view.
+// Clearing on any query change keeps the selection equal to "things in the
+// current filtered list", which is also what the header checkbox now reports.
+// We key off currentFilters (the canonical query definition) rather than the
+// raw inputs so projection-only changes (displayedPropertyPaths) and frame
+// scrubbing while onlyCurrentFrame is off — neither of which changes the
+// matching set — don't needlessly drop the selection. Sort and page changes
+// don't touch currentFilters either, so selection persists across pages.
+watch(
+  () => annotationListServer.currentFilters,
+  () => {
+    if (!isServerMode.value) {
+      return;
+    }
+    annotationStore.setSelected([]);
+  },
+  { deep: true },
+);
+
 onBeforeUnmount(() => {
   debouncedServerRefetch.cancel();
 });

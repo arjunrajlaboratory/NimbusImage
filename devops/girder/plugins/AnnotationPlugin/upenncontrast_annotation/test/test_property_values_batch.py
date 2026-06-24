@@ -227,6 +227,35 @@ class TestPropertyValuesBatch:
         )
         assertStatus(resp, 400)
 
+    def testScalarAnnotationIdsReturns400(self, admin, server):
+        # P2: a scalar annotationIds (e.g. 5) would reach len(5) -> TypeError
+        # -> 500. requireList rejects it at the boundary as a clean 400.
+        folder, _ = self._makeDatasetWithValues(admin, [{"propA": 1}])
+        resp = self._batch(
+            server,
+            admin,
+            {"datasetId": str(folder["_id"]), "annotationIds": 5},
+        )
+        assertStatus(resp, 400)
+
+    def testStringAnnotationIdsReturns400(self, admin, server):
+        # P2: a string would len() to its char count then iterate per char
+        # (odd 400s); reject the non-list shape up front.
+        folder, _ = self._makeDatasetWithValues(admin, [{"propA": 1}])
+        resp = self._batch(
+            server,
+            admin,
+            {"datasetId": str(folder["_id"]), "annotationIds": "abc"},
+        )
+        assertStatus(resp, 400)
+
+    def testArrayBodyReturns400(self, admin, server):
+        # P2: a non-object (JSON array) body would reach body.get(...) and
+        # raise AttributeError -> 500. requireObjectBody makes it a clean 400.
+        self._makeDatasetWithValues(admin, [{"propA": 1}])
+        resp = self._batch(server, admin, [1, 2, 3])
+        assertStatus(resp, 400)
+
     def testEmptyPropertyPathsListIsAllowed(self, admin, server):
         # An empty list means "no projection" -> full values, same as omitting.
         folder, ids = self._makeDatasetWithValues(admin, [{"propA": 1}])

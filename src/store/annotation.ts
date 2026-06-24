@@ -2158,8 +2158,10 @@ export class Annotations extends VuexModule {
    * - `newEntries` (freshly fetched from the backend) are inserted at the
    *   tail, overwriting any prior value for their ids.
    * - If the total exceeds `hydrationCacheCap`, LRU entries (at the head)
-   *   are evicted. Selected annotation ids are skipped during eviction so
-   *   they are never dropped from the cache.
+   *   are evicted. Selected annotation ids are skipped during eviction, but
+   *   `cap` is a HARD ceiling: if the selected set alone exceeds it (e.g.
+   *   "select all" on a huge dataset), selected LRU entries are evicted too
+   *   so the cache can't grow unbounded.
    *
    * JS Map preserves insertion order, so `delete(id); set(id, v)` moves an
    * entry to the tail — that's the touch operation.

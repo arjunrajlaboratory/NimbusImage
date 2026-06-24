@@ -160,7 +160,7 @@ const numericFields: INumericField[] = [
     key: "hydrationCacheCap",
     label: "Hydration cache cap",
     description:
-      "Total cap on cached full-shape annotations. Accumulates across pans/zooms; least-recently-used are evicted past the cap (selected are never evicted). Cannot be below Max hydrated.",
+      "Total cap on cached full-shape annotations. Accumulates across pans/zooms; least-recently-used are evicted past the cap (selected are protected until the selection alone exceeds the cap, a hard ceiling). Cannot be below Max hydrated.",
     step: 1000,
   },
   {

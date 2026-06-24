@@ -9,6 +9,8 @@ from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.validation import (
+    requireList,
+    requireObjectBody,
     requireObjectId,
     validateAnnotationIdCount,
     validatePropertyPaths,
@@ -146,7 +148,7 @@ class PropertyValues(Resource):
         .errorResponse("Read access was denied for the dataset.", 403)
     )
     def batch(self, params):
-        body = self.getBodyJson()
+        body = requireObjectBody(self.getBodyJson())
         datasetId = requireObjectId(body.get("datasetId"), "datasetId")
         propertyPaths = body.get("propertyPaths")
         if propertyPaths is not None:
@@ -154,7 +156,10 @@ class PropertyValues(Resource):
             # injected projection key; a non-list-of-lists-of-strings would
             # raise TypeError in findByAnnotationIds. Reject at the boundary.
             validatePropertyPaths(propertyPaths)
-        rawIds = body.get("annotationIds", [])
+        # Guard the list shape before len()/iterating: a scalar would raise
+        # TypeError on len(), a string would iterate per-character. Both must
+        # be a clean 400 on this public endpoint, not a 500.
+        rawIds = requireList(body.get("annotationIds", []), "annotationIds")
         validateAnnotationIdCount(len(rawIds))
         Folder().load(
             datasetId,

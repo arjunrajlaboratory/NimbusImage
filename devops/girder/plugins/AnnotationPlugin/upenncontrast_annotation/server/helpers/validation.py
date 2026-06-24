@@ -20,6 +20,14 @@ from girder.exceptions import RestException
 MAX_UNCOMPUTED_PROPERTIES = 10_000_000
 MAX_ANNOTATION_IDS = 10_000_000
 
+# Upper clamp on the page size accepted by the public /list endpoint. This is
+# an abuse guard, not a tuning knob: it caps how many full annotation rows an
+# unauthenticated caller can make a single request stream/serialize, well above
+# any real UI page size (the frontend caps page sizes far lower). Real paging
+# stays unaffected; only a degenerate request asking for an enormous page is
+# clamped down rather than served.
+MAX_LIST_LIMIT = 10_000
+
 
 def requireCountWithin(count, limit, name):
     """Raise RestException(400) if `count` exceeds `limit`."""
@@ -27,6 +35,29 @@ def requireCountWithin(count, limit, name):
         raise RestException(
             "%s exceeds the maximum of %d" % (name, limit), code=400
         )
+
+
+def requireObjectBody(body, name="Request body"):
+    """Return `body` if it is a dict, else raise RestException(400).
+
+    Public endpoints parse the request body and immediately call `.get()` on
+    it. A client that POSTs a JSON array (or any non-object) would otherwise
+    trip an uncaught AttributeError -> 500. Guard the shape once at the API
+    boundary so a non-object body is a clean 400."""
+    if not isinstance(body, dict):
+        raise RestException("%s must be a JSON object" % name, code=400)
+    return body
+
+
+def requireList(value, field):
+    """Return `value` if it is a list, else raise RestException(400).
+
+    Guards body fields that are about to be len()'d or iterated: a scalar or
+    string would otherwise raise TypeError (len of an int) or iterate
+    per-character, neither of which is a clean error on a public endpoint."""
+    if not isinstance(value, list):
+        raise RestException("%s must be a list" % field, code=400)
+    return value
 
 
 def validateAnnotationIdCount(count):
@@ -221,6 +252,22 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
             raise RestException(
                 "idConstraints contains an invalid id", code=400
             )
+    # The model's _buildListMatchStages does filters["tags"].get("values") and
+    # filters["location"].get("XY"): a truthy non-dict (e.g. a string) would
+    # be carried through and raise AttributeError -> 500 there. Guard the shape
+    # here at the API boundary.
+    tags = filters.get("tags")
+    if tags is not None:
+        if not isinstance(tags, dict):
+            raise RestException("filters.tags must be an object", code=400)
+        tagValues = tags.get("values")
+        if tagValues is not None and not isinstance(tagValues, list):
+            raise RestException(
+                "filters.tags.values must be a list", code=400
+            )
+    location = filters.get("location")
+    if location is not None and not isinstance(location, dict):
+        raise RestException("filters.location must be an object", code=400)
     if sort is not None:
         if not isinstance(sort, dict) or sort.get("type") not in (
             "field", "property"
