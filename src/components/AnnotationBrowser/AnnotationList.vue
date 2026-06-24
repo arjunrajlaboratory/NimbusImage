@@ -217,28 +217,12 @@
           :key="header.key"
           v-slot:[`header.${header.key}`]="{ column, getSortIcon }"
         >
-          <!-- Custom header slots replace Vuetify's default content, including
-               the sort icon. Reproduce the default structure so property columns
-               still show their sort arrow next to the remove button. -->
-          <div class="v-data-table-header__content">
-            <span class="property-header-label">{{ column.title }}</span>
-            <v-icon
-              v-if="column.sortable"
-              class="v-data-table-header__sort-icon"
-              :icon="getSortIcon(column)"
-            />
-            <v-btn
-              variant="text"
-              size="x-small"
-              density="compact"
-              icon
-              class="property-header-remove ml-1"
-              :title="`Remove '${column.title}' from list`"
-              @click.stop="removePropertyColumn(header.path)"
-            >
-              <v-icon size="14">mdi-close</v-icon>
-            </v-btn>
-          </div>
+          <property-column-header
+            :title="column.title"
+            :sortable="column.sortable"
+            :sort-icon="getSortIcon(column) as string"
+            @remove="removePropertyColumn(header.path)"
+          />
         </template>
         <template v-slot:item="{ item }">
           <annotation-list-row
@@ -283,6 +267,8 @@
         density="compact"
         item-value="annotation.id"
         v-model="selectedIds"
+        :page="annotationListServer.page"
+        :items-per-page="annotationListServer.pageSize"
         :items-per-page-options="[10, 50, 200]"
         @update:options="onServerOptions"
         class="compact-table"
@@ -301,28 +287,12 @@
           :key="header.key"
           v-slot:[`header.${header.key}`]="{ column, getSortIcon }"
         >
-          <!-- Custom header slots replace Vuetify's default content, including
-               the sort icon. Reproduce the default structure so property columns
-               still show their sort arrow next to the remove button. -->
-          <div class="v-data-table-header__content">
-            <span class="property-header-label">{{ column.title }}</span>
-            <v-icon
-              v-if="column.sortable"
-              class="v-data-table-header__sort-icon"
-              :icon="getSortIcon(column)"
-            />
-            <v-btn
-              variant="text"
-              size="x-small"
-              density="compact"
-              icon
-              class="property-header-remove ml-1"
-              :title="`Remove '${column.title}' from list`"
-              @click.stop="removePropertyColumn(header.path)"
-            >
-              <v-icon size="14">mdi-close</v-icon>
-            </v-btn>
-          </div>
+          <property-column-header
+            :title="column.title"
+            :sortable="column.sortable"
+            :sort-icon="getSortIcon(column) as string"
+            @remove="removePropertyColumn(header.path)"
+          />
         </template>
         <template v-slot:item="{ item }">
           <annotation-list-row
@@ -355,6 +325,7 @@ import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { simpleCentroid } from "@/utils/annotation";
 import { recenterCameraInfo } from "@/utils/camera";
+import { sortsEqual } from "@/utils/annotationListFilters";
 import { listQueryingMessage } from "@/utils/loadingLabels";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
@@ -362,6 +333,7 @@ import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
 import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
+import PropertyColumnHeader from "@/components/AnnotationBrowser/PropertyColumnHeader.vue";
 
 import {
   AnnotationNames,
@@ -402,7 +374,8 @@ interface IAnnotationListItem {
   annotation: IAnnotation;
   index: number;
   shapeName: string;
-  isSelected: boolean;
+  // Selection state is read reactively from the store in the row component, not
+  // baked into the item, so toggling a selection doesn't re-map the page array.
   properties: IAnnotationPropertyValues[string];
 }
 
@@ -476,7 +449,6 @@ const serverRowItems = computed(() =>
     annotation: { ...row, name: row.name ?? null },
     index: (annotationListServer.page - 1) * annotationListServer.pageSize + i,
     shapeName: AnnotationNames[row.shape],
-    isSelected: annotationStore.isAnnotationSelected(row.id),
     properties: row.values || {},
   })),
 );
@@ -534,7 +506,7 @@ function onServerOptions(opts: {
   if (
     opts.page === annotationListServer.page &&
     opts.itemsPerPage === annotationListServer.pageSize &&
-    JSON.stringify(newSort) === JSON.stringify(annotationListServer.sort)
+    sortsEqual(newSort, annotationListServer.sort)
   ) {
     return;
   }
@@ -561,7 +533,9 @@ const selectedIds = computed({
 });
 
 const selectedItems = computed(() => {
-  return filteredItems.value.filter((item) => item.isSelected);
+  return filteredItems.value.filter((item) =>
+    annotationStore.isAnnotationSelected(item.annotation.id),
+  );
 });
 
 function toggleAnnotationSelection(annotation: { id: string }) {
@@ -607,7 +581,6 @@ const annotationToItem = computed(() => {
     annotation,
     index: annotationIdToIndex.value[annotation.id],
     shapeName: AnnotationNames[annotation.shape],
-    isSelected: annotationStore.isAnnotationSelected(annotation.id),
     properties: propertyStore.propertyValues[annotation.id] || {},
   });
 });
@@ -1079,21 +1052,8 @@ td span {
   text-transform: none;
 }
 
-.property-header-label {
-  vertical-align: middle;
-  font-size: 12px;
-  font-weight: 500;
-  display: inline-block;
-  max-width: 100%;
-}
-
-.property-header-remove {
-  vertical-align: middle;
-  opacity: 0.6;
-}
-.property-header-remove:hover {
-  opacity: 1;
-}
+/* Property-column header styles moved to PropertyColumnHeader.vue (scoped to
+   that component, which now owns the header markup). */
 
 /* Compact data-table typography — headers + cells slightly smaller and
    tighter than Vuetify's default 14px / 48px so the palette feels dense

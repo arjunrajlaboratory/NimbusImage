@@ -1,8 +1,11 @@
 import json
 import pytest
 
+from bson.objectid import ObjectId
+
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
+from upenncontrast_annotation.server.helpers import validation
 from upenncontrast_annotation.server.models.annotation import Annotation
 
 from . import girder_utilities as utilities
@@ -376,3 +379,55 @@ class TestHydrate:
         # No matching annotations, and no datasets to check
         # access on — returns empty
         assert result == []
+
+    def testHydrateAnnotationIdsCapRejectsOversized(
+        self, admin, server, monkeypatch
+    ):
+        # A degenerate id list is rejected (a sanity ceiling; the cap is read
+        # at call time so we can shrink it for the test).
+        monkeypatch.setattr(validation, "MAX_ANNOTATION_IDS", 2)
+        ids = ["012345678901234567890123"] * 3
+        resp = server.request(
+            path="/upenn_annotation/hydrate",
+            method="POST",
+            user=admin,
+            body=json.dumps(ids),
+            type="application/json",
+            isJson=False,
+        )
+        assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestDistinctDatasetIds:
+    """Model helper backing the hydrate/deleteMultiple access checks."""
+
+    def testReturnsDistinctDatasetsForIds(self, admin):
+        folderA = utilities.createFolder(
+            admin, "ds_a", upenn_utilities.datasetMetadata
+        )
+        folderB = utilities.createFolder(
+            admin, "ds_b", upenn_utilities.datasetMetadata
+        )
+        idsA = [
+            createPolygonAnnotation(folderA["_id"], [{"x": 0, "y": 0}])["_id"]
+            for _ in range(3)
+        ]
+        idsB = [
+            createPolygonAnnotation(folderB["_id"], [{"x": 0, "y": 0}])["_id"]
+            for _ in range(2)
+        ]
+        result = Annotation().distinctDatasetIds(idsA + idsB)
+        assert set(result) == {folderA["_id"], folderB["_id"]}
+
+    def testEmptyInputReturnsEmpty(self, admin):
+        assert Annotation().distinctDatasetIds([]) == []
+
+    def testNonexistentIdsReturnEmpty(self, admin):
+        assert (
+            Annotation().distinctDatasetIds(
+                [ObjectId("012345678901234567890123")]
+            )
+            == []
+        )

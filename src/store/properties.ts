@@ -36,6 +36,7 @@ import {
   scopedMergePropertyValues,
   selectUncomputedCount,
 } from "@/utils/propertyValues";
+import { createSequenceGuard } from "@/utils/sequenceGuard";
 import annotations from "./annotation";
 import jobs, {
   createProgressEventCallback,
@@ -200,6 +201,10 @@ export class Properties extends VuexModule {
     // would prune them once new property values arrive, but resetting here
     // releases the references immediately and avoids a UI flash.
     this.displayedPropertyPaths = [];
+    // Sibling lazy-mode field: also references the previous dataset's property
+    // ids and is meaningless in the new dataset, so reset it here too (it is
+    // otherwise only refreshed on the next fetchPropertyPathsSample).
+    this.discoveredPropertyPaths = markRaw([]);
     this.uncomputedCounts = {};
     for (const handle of this.pendingWorkerPreviewTimeouts.values()) {
       clearTimeout(handle);
@@ -806,6 +811,9 @@ export class Properties extends VuexModule {
     if (!annotations.stubOnlyMode || !main.dataset?.id) {
       return;
     }
+    // Claim the latest token up front so any in-flight fetch from a prior call
+    // is superseded (and a synchronous prune below reflects the latest set).
+    const token = visiblePropertyValuesGuard.next();
     const visibleIds = [...annotations.visibleAnnotationIds];
     const keepIds = new Set(visibleIds);
     const paths = this.displayedPropertyPaths;
@@ -828,6 +836,7 @@ export class Properties extends VuexModule {
       idsToFetch,
       paths,
       keepIds,
+      token,
     );
   }
 
@@ -978,10 +987,19 @@ export class Properties extends VuexModule {
 const propertiesModule = getModule(Properties);
 export default propertiesModule;
 
+// Stale-response guard for the visible-property-value fetch: rapid pans can fire
+// overlapping fetches scoped to different visible sets; only the latest may
+// merge. Without it, a slow earlier fetch resolving last prunes freshly-fetched
+// entries against its stale keepIds.
+const visiblePropertyValuesGuard = createSequenceGuard();
+
 /**
  * Fetch property values for the given ids (lazy mode) and merge them scoped to
  * `keepIds`. Runs outside the Vuex action proxy — vuex-module-decorators breaks
  * state/mutation access after `await`, so we commit via the module instance.
+ *
+ * `token` is the guard token captured when this fetch was scheduled; the result
+ * is dropped if a newer fetch/prune superseded it while we were awaiting.
  */
 async function _fetchVisiblePropertyValues(
   api: typeof main.propertiesAPI,
@@ -989,6 +1007,7 @@ async function _fetchVisiblePropertyValues(
   idsToFetch: string[],
   paths: string[][],
   keepIds: Set<string>,
+  token: number,
 ) {
   try {
     const newEntries = await api.getPropertyValuesForIds(
@@ -996,7 +1015,9 @@ async function _fetchVisiblePropertyValues(
       idsToFetch,
       paths,
     );
-    propertiesModule.mergeVisiblePropertyValues({ newEntries, keepIds });
+    if (visiblePropertyValuesGuard.isCurrent(token)) {
+      propertiesModule.mergeVisiblePropertyValues({ newEntries, keepIds });
+    }
   } catch (error) {
     logError(`Property value fetch failed: ${(error as Error).message}`);
   }

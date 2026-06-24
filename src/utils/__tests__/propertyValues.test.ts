@@ -6,7 +6,30 @@ import {
   histogramBounds,
   uncomputedCountRequest,
   selectUncomputedCount,
+  coerceUncomputedCounts,
 } from "@/utils/propertyValues";
+
+describe("coerceUncomputedCounts", () => {
+  it("returns a clean numeric map for a well-formed response", () => {
+    expect(coerceUncomputedCounts({ propA: 3, propB: 0 })).toEqual({
+      propA: 3,
+      propB: 0,
+    });
+  });
+
+  it("drops non-numeric entries", () => {
+    expect(
+      coerceUncomputedCounts({ propA: 3, propB: "x", propC: null }),
+    ).toEqual({ propA: 3 });
+  });
+
+  it("returns an empty map for non-object input", () => {
+    expect(coerceUncomputedCounts(null)).toEqual({});
+    expect(coerceUncomputedCounts(undefined)).toEqual({});
+    expect(coerceUncomputedCounts("nope")).toEqual({});
+    expect(coerceUncomputedCounts([1, 2, 3])).toEqual({});
+  });
+});
 import type {
   IAnnotationProperty,
   IAnnotationPropertyValues,

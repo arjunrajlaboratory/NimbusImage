@@ -4518,5 +4518,28 @@ describe("AnnotationViewer", () => {
         ).toHaveBeenCalled();
       });
     });
+
+    // =======================================================================
+    // onBeforeUnmount cleanup (Finding 4)
+    // =======================================================================
+    describe("onBeforeUnmount cleanup", () => {
+      it("cancels all pending debounced/throttled callbacks so none fire after teardown", () => {
+        wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        const spies = [
+          vi.spyOn(vm.updateVisibilityDebounced, "cancel"),
+          vi.spyOn(vm.restyleAnnotationsThrottled, "cancel"),
+          vi.spyOn(vm.drawAnnotations, "cancel"),
+          vi.spyOn(vm.drawTooltips, "cancel"),
+          vi.spyOn(vm.handleValueOnMouseMoveDebounce, "cancel"),
+        ];
+
+        wrapper.unmount();
+
+        for (const spy of spies) {
+          expect(spy).toHaveBeenCalled();
+        }
+      });
+    });
   });
 });

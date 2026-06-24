@@ -23,6 +23,14 @@ import {
   IListPropertyFilterInput,
   buildPropertyListFilters,
 } from "@/utils/annotationListFilters";
+import { createSequenceGuard } from "@/utils/sequenceGuard";
+
+// Monotonic stale-response guard: only the latest fetchPage may apply its
+// result. Debounce reduces overlap but doesn't eliminate it (e.g. immediate
+// pagination racing a trailing debounced filter fetch, or a fast page-1
+// returning after a slow filtered request). Module-level (not Vuex state) since
+// it is an internal token never read by the UI.
+const pageRequestGuard = createSequenceGuard();
 
 // Pure: translate the client filter store into backend list filters.
 export function buildListFilters(input: {
@@ -80,16 +88,6 @@ export class AnnotationListServer extends VuexModule {
   pageSize = 50;
   sort: IAnnotationListSort | null = null;
   idSubstring = "";
-  // Monotonic token guarding against out-of-order responses: only the latest
-  // fetchPage may apply its result. Debounce reduces overlap but doesn't
-  // eliminate it (e.g. immediate pagination racing a trailing debounced filter
-  // fetch, or a fast page-1 returning after a slow filtered request).
-  requestSeq = 0;
-
-  @Mutation
-  incrementRequestSeq() {
-    this.requestSeq += 1;
-  }
 
   @Mutation
   setPageResult(payload: { rows: IAnnotationListRow[]; total: number }) {
@@ -142,8 +140,7 @@ export class AnnotationListServer extends VuexModule {
     if (!datasetId) {
       return;
     }
-    this.incrementRequestSeq();
-    const seq = this.requestSeq;
+    const token = pageRequestGuard.next();
     this.setLoading(true);
     try {
       const page = await main.annotationsAPI.fetchAnnotationListPage({
@@ -155,11 +152,11 @@ export class AnnotationListServer extends VuexModule {
         limit: this.pageSize,
       });
       // Drop the result if a newer fetchPage started while we were awaiting.
-      if (seq === this.requestSeq) {
+      if (pageRequestGuard.isCurrent(token)) {
         this.setPageResult(page);
       }
     } finally {
-      if (seq === this.requestSeq) {
+      if (pageRequestGuard.isCurrent(token)) {
         this.setLoading(false);
       }
     }

@@ -17,6 +17,12 @@ import {
   annotationTestPoints,
 } from "@/utils/annotation";
 import { buildPropertyListFilters } from "@/utils/annotationListFilters";
+import { createSequenceGuard } from "@/utils/sequenceGuard";
+
+// Monotonic stale-response guard: only the latest refreshPropertyFilterPassingIds
+// may apply its result. Module-level (not Vuex state) since it is an internal
+// token never read by the UI.
+const propertyFilterRequestGuard = createSequenceGuard();
 
 import {
   IAnnotation,
@@ -81,10 +87,6 @@ export class Filters extends VuexModule {
   // (potentially large) Set is not deep-proxied; the slot reference is replaced
   // wholesale to drive reactivity.
   propertyFilterPassingIds: Set<string> | null = null;
-
-  // Monotonic token guarding against out-of-order responses: only the latest
-  // refreshPropertyFilterPassingIds may apply its result.
-  propertyFilterRequestSeq = 0;
 
   @Mutation
   togglePropertyPathFiltering(path: string[]) {
@@ -221,11 +223,6 @@ export class Filters extends VuexModule {
     this.propertyFilterPassingIds = ids === null ? null : markRaw(new Set(ids));
   }
 
-  @Mutation
-  incrementPropertyFilterRequestSeq() {
-    this.propertyFilterRequestSeq += 1;
-  }
-
   // Lazy mode: fetch the ids passing the active property filters server-side
   // (property filters only — other filters stay client-side on stub fields, so
   // composing them is a clean AND in filteredAnnotations). No-op (clears the
@@ -241,8 +238,7 @@ export class Filters extends VuexModule {
       this.setPropertyFilterPassingIds(null);
       return;
     }
-    this.incrementPropertyFilterRequestSeq();
-    const seq = this.propertyFilterRequestSeq;
+    const token = propertyFilterRequestGuard.next();
     const listFilters: IAnnotationListFilters = {
       propertyFilters: buildPropertyListFilters(this.propertyFilters),
     };
@@ -251,7 +247,7 @@ export class Filters extends VuexModule {
       listFilters,
     );
     // Drop the result if a newer refresh started while we were awaiting.
-    if (seq === this.propertyFilterRequestSeq) {
+    if (propertyFilterRequestGuard.isCurrent(token)) {
       this.setPropertyFilterPassingIds(ids);
     }
   }

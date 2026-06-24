@@ -1,5 +1,48 @@
 import { describe, it, expect } from "vitest";
-import { buildPropertyListFilters } from "@/utils/annotationListFilters";
+import {
+  buildPropertyListFilters,
+  sortsEqual,
+} from "@/utils/annotationListFilters";
+
+describe("sortsEqual", () => {
+  it("treats two nulls as equal", () => {
+    expect(sortsEqual(null, null)).toBe(true);
+  });
+
+  it("treats null and a sort as unequal", () => {
+    expect(sortsEqual(null, { type: "field", key: "name", order: "asc" })).toBe(
+      false,
+    );
+  });
+
+  it("compares field sorts by type, key, and order", () => {
+    const a = { type: "field" as const, key: "name", order: "asc" as const };
+    expect(sortsEqual(a, { ...a })).toBe(true);
+    expect(sortsEqual(a, { ...a, order: "desc" })).toBe(false);
+    expect(sortsEqual(a, { ...a, key: "location.XY" })).toBe(false);
+  });
+
+  it("compares property sorts by their key path element-wise", () => {
+    const a = {
+      type: "property" as const,
+      key: ["propA", "sub0"],
+      order: "asc" as const,
+    };
+    expect(sortsEqual(a, { ...a, key: ["propA", "sub0"] })).toBe(true);
+    expect(sortsEqual(a, { ...a, key: ["propA", "sub1"] })).toBe(false);
+    expect(sortsEqual(a, { ...a, key: ["propA"] })).toBe(false);
+  });
+
+  it("treats a string key and a single-element array key as unequal", () => {
+    // Different sort types/keys must not collapse together.
+    expect(
+      sortsEqual(
+        { type: "field", key: "propA", order: "asc" },
+        { type: "property", key: ["propA"], order: "asc" },
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("buildPropertyListFilters", () => {
   it("translates a range filter", () => {

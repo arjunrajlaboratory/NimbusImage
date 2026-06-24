@@ -10,7 +10,7 @@
       <v-checkbox
         hide-details
         title
-        :model-value="item.isSelected"
+        :model-value="annotationStore.isAnnotationSelected(item.annotation.id)"
         @click.stop="() => emit('toggle-select', item.annotation)"
       />
     </td>
@@ -83,6 +83,7 @@
 
 <script lang="ts" setup>
 import { IAnnotationLocation, IAnnotationPropertyValues } from "@/store/model";
+import annotationStore from "@/store/annotation";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 
 // The subset of an annotation the row renders. Works for both client-mode
@@ -99,7 +100,8 @@ export interface IAnnotationListRowItem {
   annotation: IRowAnnotation;
   index: number;
   shapeName: string;
-  isSelected: boolean;
+  // Selection is read reactively from the store in the row (not baked into the
+  // item) so toggling a selection doesn't re-map the whole page array.
   properties: IAnnotationPropertyValues[string];
 }
 

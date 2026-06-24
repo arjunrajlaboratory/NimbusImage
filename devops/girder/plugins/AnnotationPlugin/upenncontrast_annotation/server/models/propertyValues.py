@@ -135,13 +135,19 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         # only the requested property paths (each path is a list of keys, e.g.
         # [propertyId, subId]). Used by viewport-scoped lazy loading so the
         # client never holds the whole dataset's values in memory.
+        #
+        # The returned docs carry a consistent minimal shape regardless of
+        # whether propertyPaths is given: annotationId + values (the only
+        # fields the client keys on), with datasetId/_id excluded.
+        # propertyPaths only narrows which values keys are returned.
         if not annotationIds:
             return []
-        fields = None
         if propertyPaths:
             fields = ["annotationId"] + [
                 "values." + ".".join(path) for path in propertyPaths
             ]
+        else:
+            fields = ["annotationId", "values"]
         results = []
         # Chunk the $in so a large id set can't build a pathological query.
         chunkSize = 50000

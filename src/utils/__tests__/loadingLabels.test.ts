@@ -18,6 +18,12 @@ describe("annotationLoadingTitle", () => {
   it("uses the plural noun for a count of 0", () => {
     expect(annotationLoadingTitle(0)).toBe("Loading 0 annotations…");
   });
+
+  it("omits the count when it is unknown (count failed → Infinity)", () => {
+    // fetchAnnotations passes Infinity when the count request failed and it
+    // falls back to stub-only mode; the bar shouldn't say "Infinity".
+    expect(annotationLoadingTitle(Infinity)).toBe("Loading annotations…");
+  });
 });
 
 describe("listQueryingMessage", () => {

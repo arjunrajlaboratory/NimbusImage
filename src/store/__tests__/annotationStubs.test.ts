@@ -227,7 +227,7 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
       updateVisibilityAndHydration(
         { state, commit },
         params: {
-          filteredIds: string[];
+          filteredIds?: string[];
           gcsBounds?: { x: number; y: number }[];
           currentFrameLocation: IAnnotationLocation;
         },
@@ -235,16 +235,26 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
         const { filteredIds, gcsBounds, currentFrameLocation } = params;
         const { maxVisible, maxHydrated } = state.visibilityConfig;
 
+        const onCurrentFrame = (stub: IAnnotationStub | undefined) =>
+          !!stub &&
+          stub.location.XY === currentFrameLocation.XY &&
+          stub.location.Z === currentFrameLocation.Z &&
+          stub.location.Time === currentFrameLocation.Time;
+
+        // When filteredIds is omitted (no client filter), iterate the stub map
+        // directly instead of a pre-built id array (Finding 15).
         const currentFrameIds: string[] = [];
-        for (const id of filteredIds) {
-          const stub = state.annotationStubs.get(id);
-          if (
-            stub &&
-            stub.location.XY === currentFrameLocation.XY &&
-            stub.location.Z === currentFrameLocation.Z &&
-            stub.location.Time === currentFrameLocation.Time
-          ) {
-            currentFrameIds.push(id);
+        if (filteredIds) {
+          for (const id of filteredIds) {
+            if (onCurrentFrame(state.annotationStubs.get(id))) {
+              currentFrameIds.push(id);
+            }
+          }
+        } else {
+          for (const [id, stub] of state.annotationStubs) {
+            if (onCurrentFrame(stub)) {
+              currentFrameIds.push(id);
+            }
           }
         }
 
@@ -269,19 +279,29 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
             maxY = Math.max(maxY, pt.y);
           }
           // Unexpanded (raw) split — the actual viewport — drives hydration.
-          ({ inViewportIds: hydInViewport, outOfViewportIds: hydOutOfViewport } =
-            spatialIndex.splitByViewport(currentFrameIds, minX, minY, maxX, maxY));
+          ({
+            inViewportIds: hydInViewport,
+            outOfViewportIds: hydOutOfViewport,
+          } = spatialIndex.splitByViewport(
+            currentFrameIds,
+            minX,
+            minY,
+            maxX,
+            maxY,
+          ));
           // Expanded by 50% on each side — drives visibility (pan pre-load).
           const width = maxX - minX;
           const height = maxY - minY;
-          ({ inViewportIds: visInViewport, outOfViewportIds: visOutOfViewport } =
-            spatialIndex.splitByViewport(
-              currentFrameIds,
-              minX - width * 0.5,
-              minY - height * 0.5,
-              maxX + width * 0.5,
-              maxY + height * 0.5,
-            ));
+          ({
+            inViewportIds: visInViewport,
+            outOfViewportIds: visOutOfViewport,
+          } = spatialIndex.splitByViewport(
+            currentFrameIds,
+            minX - width * 0.5,
+            minY - height * 0.5,
+            maxX + width * 0.5,
+            maxY + height * 0.5,
+          ));
         }
 
         let visibleIds: string[];
@@ -712,6 +732,31 @@ describe("annotation stub/hydration store logic", () => {
       });
 
       // Only frame 0 annotations should be visible
+      expect(store.state.visibleAnnotationIds.has("frame0-a")).toBe(true);
+      expect(store.state.visibleAnnotationIds.has("frame0-b")).toBe(true);
+      expect(store.state.visibleAnnotationIds.has("frame1-a")).toBe(false);
+    });
+
+    it("derives ids from the stub map when filteredIds is omitted (Finding 15)", async () => {
+      const annotations = [
+        makeSquareAnnotation("frame0-a", 50, 50, 10, {
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+        makeSquareAnnotation("frame0-b", 60, 60, 10, {
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+        makeSquareAnnotation("frame1-a", 70, 70, 10, {
+          location: { XY: 1, Z: 0, Time: 0 },
+        }),
+      ];
+      store.commit("setAnnotations", annotations);
+
+      // No filteredIds passed → the action walks its own stub map and applies
+      // the same current-frame filter, equivalent to passing every id.
+      await store.dispatch("updateVisibilityAndHydration", {
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+      });
+
       expect(store.state.visibleAnnotationIds.has("frame0-a")).toBe(true);
       expect(store.state.visibleAnnotationIds.has("frame0-b")).toBe(true);
       expect(store.state.visibleAnnotationIds.has("frame1-a")).toBe(false);

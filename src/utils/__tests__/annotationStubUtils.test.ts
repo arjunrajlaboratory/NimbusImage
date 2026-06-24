@@ -8,7 +8,9 @@ import {
   getStubStyleFromBaseStyle,
   annotationTestPoints,
   idsNeedingHydration,
+  stubFromAnnotation,
 } from "../annotation";
+import { IAnnotation } from "@/store/model";
 
 vi.mock("geojs", () => ({
   default: {
@@ -329,5 +331,52 @@ describe("idsNeedingHydration", () => {
 
   it("returns an empty array for empty input", () => {
     expect(idsNeedingHydration([], new Map(), stubs)).toEqual([]);
+  });
+
+  it("accepts any has-only collection (e.g. a Set) for the lookups", () => {
+    // The params only use .has(); a Set satisfies the contract.
+    const hydratedSet = new Set<string>(["a"]);
+    const stubSet = new Set<string>(["a", "b", "c"]);
+    expect(idsNeedingHydration(["a", "b"], hydratedSet, stubSet)).toEqual([
+      "b",
+    ]);
+  });
+});
+
+describe("stubFromAnnotation", () => {
+  const annotation = {
+    id: "ann-1",
+    location: { XY: 2, Z: 1, Time: 0 },
+    shape: "polygon",
+    channel: 3,
+    tags: ["nucleus"],
+    color: "#ff0000",
+    coordinates: [
+      { x: 0, y: 0, z: 0 },
+      { x: 10, y: 0, z: 0 },
+      { x: 10, y: 4, z: 0 },
+      { x: 0, y: 4, z: 0 },
+    ],
+  } as unknown as IAnnotation;
+
+  it("builds a stub carrying the centroid and the annotation's stub fields", () => {
+    const centroid = { x: 5, y: 2, z: 0 };
+    expect(stubFromAnnotation(annotation, centroid)).toEqual({
+      id: "ann-1",
+      centroid,
+      location: { XY: 2, Z: 1, Time: 0 },
+      shape: "polygon",
+      channel: 3,
+      tags: ["nucleus"],
+      color: "#ff0000",
+      estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
+    });
+  });
+
+  it("derives estimatedRadius from the annotation coordinates (max extent / 2)", () => {
+    // bbox is 10 wide x 4 tall → max(10,4)/2 = 5
+    expect(
+      stubFromAnnotation(annotation, { x: 5, y: 2, z: 0 }).estimatedRadius,
+    ).toBe(5);
   });
 });

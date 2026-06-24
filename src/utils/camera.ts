@@ -1,22 +1,6 @@
 import type { ICameraInfo, IGeoJSPosition } from "@/store/model";
 
 /**
- * Recenter the camera as a pure pan, keeping gcsBounds in sync with the center.
- *
- * A pan leaves zoom and rotation unchanged, so the four gcsBounds corners
- * translate by exactly the center delta. Keeping gcsBounds consistent with the
- * center matters because viewport-driven annotation hydration
- * (`updateVisibilityAndHydration`) reads `cameraInfo.gcsBounds` to decide which
- * annotations are in view and should be hydrated/rendered.
- *
- * Recenters that go through the GeoJS map recompute gcsBounds from the real map
- * via `synchroniseCameraFromMap`. This helper is for programmatic recenters that
- * bypass the map (e.g. clicking "Go to annotation location" in the annotation
- * list): without translating gcsBounds, the new location would be hydrated
- * against the stale pre-recenter viewport, leaving the destination empty until
- * the user manually pans or zooms.
- */
-/**
  * Unified pan + zoom hysteresis for the camera-driven visibility refresh.
  *
  * Recomputing the render budget + re-hydrating on every tiny camera change causes
@@ -47,6 +31,9 @@ export function cameraRefreshNeeded(
     current.center.x !== last.center.x ||
     current.center.y !== last.center.y
   ) {
+    // Written as `!(x > 0)` rather than `x <= 0` so it also catches NaN (an
+    // unknown/uninitialized extent): NaN comparisons are always false, so
+    // `!(NaN > 0)` is true → refresh on any pan, the safe default.
     if (!(viewportExtent > 0)) {
       return true; // can't scale the move → refresh on any pan (safe)
     }
@@ -62,6 +49,22 @@ export function cameraRefreshNeeded(
   return Math.abs(current.zoom - last.zoom) >= Math.log2(1 + fraction);
 }
 
+/**
+ * Recenter the camera as a pure pan, keeping gcsBounds in sync with the center.
+ *
+ * A pan leaves zoom and rotation unchanged, so the four gcsBounds corners
+ * translate by exactly the center delta. Keeping gcsBounds consistent with the
+ * center matters because viewport-driven annotation hydration
+ * (`updateVisibilityAndHydration`) reads `cameraInfo.gcsBounds` to decide which
+ * annotations are in view and should be hydrated/rendered.
+ *
+ * Recenters that go through the GeoJS map recompute gcsBounds from the real map
+ * via `synchroniseCameraFromMap`. This helper is for programmatic recenters that
+ * bypass the map (e.g. clicking "Go to annotation location" in the annotation
+ * list): without translating gcsBounds, the new location would be hydrated
+ * against the stale pre-recenter viewport, leaving the destination empty until
+ * the user manually pans or zooms.
+ */
 export function recenterCameraInfo(
   info: ICameraInfo,
   center: IGeoJSPosition,

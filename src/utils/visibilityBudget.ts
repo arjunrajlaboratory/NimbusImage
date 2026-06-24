@@ -20,13 +20,11 @@
 //
 // Kept pure for unit testing; the component supplies the live map geometry.
 
+import { clamp } from "@/utils/math";
+
 export interface IVisibilityBudget {
   maxVisible: number;
   maxHydrated: number;
-}
-
-function clamp(value: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, value));
 }
 
 export function visibilityBudgetForZoom(input: {

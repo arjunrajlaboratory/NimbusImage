@@ -60,6 +60,31 @@ describe("getAnnotationUpdatePatch", () => {
       color: "#ff0000",
     });
   });
+
+  it("diffs partial (stub-shaped) annotations that lack coordinates/name", () => {
+    // A stub has no coordinates/name; the diff must work over just the
+    // stub-carried fields (the stub-only-mode edit path).
+    const before: Partial<IAnnotation> = {
+      id: "ann-1",
+      tags: ["cell"],
+      color: null,
+    };
+    const after: Partial<IAnnotation> = {
+      id: "ann-1",
+      tags: ["cell", "edited"],
+      color: null,
+    };
+    expect(getAnnotationUpdatePatch(before, after)).toEqual({
+      id: "ann-1",
+      tags: ["cell", "edited"],
+    });
+  });
+
+  it("returns null when the partial annotation has no id", () => {
+    const before: Partial<IAnnotation> = { tags: ["a"] };
+    const after: Partial<IAnnotation> = { tags: ["b"] };
+    expect(getAnnotationUpdatePatch(before, after)).toBeNull();
+  });
 });
 
 describe("buildStubUpdates", () => {

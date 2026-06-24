@@ -8,6 +8,7 @@ import {
   IGeoJSLineFeatureStyle,
   IGeoJSPointFeatureStyle,
   IGeoJSPolygonFeatureStyle,
+  IAnnotationStub,
   TAnnotationOrStub,
   isHydratedAnnotation,
 } from "@/store/model";
@@ -430,10 +431,16 @@ export function drawnFeatureUnchanged(
  * Used by the hydrate-on-selection / hydrate-on-navigation path so a selected or
  * navigated-to stub gets its full coordinates without waiting for a viewport pan.
  */
+// Membership-only view of a collection: communicates that only key presence is
+// read (a Map or Set both satisfy it), and that values are never touched.
+interface IHasKey {
+  has(id: string): boolean;
+}
+
 export function idsNeedingHydration(
   requestedIds: Iterable<string>,
-  hydrated: ReadonlyMap<string, unknown>,
-  stubs: ReadonlyMap<string, unknown>,
+  hydrated: IHasKey,
+  stubs: IHasKey,
 ): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -466,6 +473,28 @@ export function estimateAnnotationRadius(
   // matches the annotation's real footprint at every zoom (see
   // getStubStyleFromBaseStyle).
   return Math.max(maxX - minX, maxY - minY) / 2;
+}
+
+/**
+ * Build an annotation stub (centroid + metadata, no coordinates) from a full
+ * annotation and its precomputed centroid. Single source for the stub field set
+ * that the annotation store builds when ingesting full annotations (add / set /
+ * setAnnotations), so the shape can't drift between those sites.
+ */
+export function stubFromAnnotation(
+  annotation: IAnnotation,
+  centroid: IGeoJSPosition,
+): IAnnotationStub {
+  return {
+    id: annotation.id,
+    centroid,
+    location: annotation.location,
+    shape: annotation.shape,
+    channel: annotation.channel,
+    tags: annotation.tags,
+    color: annotation.color,
+    estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
+  };
 }
 
 export function getStubStyleFromBaseStyle(

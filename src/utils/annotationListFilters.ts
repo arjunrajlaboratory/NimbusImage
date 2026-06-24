@@ -1,4 +1,35 @@
-import { IAnnotationListPropertyFilter } from "@/store/model";
+import {
+  IAnnotationListPropertyFilter,
+  IAnnotationListSort,
+} from "@/store/model";
+
+// Structural equality for two list sorts (or nulls). Compares type, order, and
+// key element-wise (key may be a string field name or a string[] property
+// path). Used instead of JSON.stringify, which is key-order-sensitive and
+// would treat a string key and a single-element array key as different shapes
+// only by luck of serialization.
+export function sortsEqual(
+  a: IAnnotationListSort | null,
+  b: IAnnotationListSort | null,
+): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  if (a.type !== b.type || a.order !== b.order) {
+    return false;
+  }
+  const aKey = a.key;
+  const bKey = b.key;
+  if (Array.isArray(aKey) || Array.isArray(bKey)) {
+    if (!Array.isArray(aKey) || !Array.isArray(bKey)) {
+      return false;
+    }
+    return (
+      aKey.length === bKey.length && aKey.every((part, i) => part === bKey[i])
+    );
+  }
+  return aKey === bKey;
+}
 
 // The subset of an IPropertyAnnotationFilter that the list-filter builders read.
 // valuesOrRange accepts the PropertyFilterMode enum or its string literals so

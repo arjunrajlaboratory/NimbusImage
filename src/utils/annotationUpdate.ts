@@ -23,9 +23,15 @@ function jsonEqual(a: unknown, b: unknown): boolean {
 }
 
 export function getAnnotationUpdatePatch(
-  before: IAnnotation,
-  after: IAnnotation,
+  before: Partial<IAnnotation>,
+  after: Partial<IAnnotation>,
 ): AnnotationUpdatePatch | null {
+  // Accepts partials so the stub-only-mode edit path can diff stub-shaped
+  // objects (tags/color/etc., no coordinates/name) without a force-cast. An
+  // entry with no id can't be patched.
+  if (after.id === undefined) {
+    return null;
+  }
   const patch: AnnotationUpdatePatch = { id: after.id };
 
   for (const field of annotationUpdateFields) {
@@ -76,9 +82,15 @@ export function buildStubUpdates(
     if (!stub) {
       continue;
     }
-    const before = { ...stub, tags: [...stub.tags] } as unknown as IAnnotation;
-    const after = { ...stub, tags: [...stub.tags] } as unknown as IAnnotation;
-    editFunction(after);
+    // A stub is a partial annotation: it carries tags/color/location/etc. but
+    // not coordinates/name. getAnnotationUpdatePatch diffs over partials, so no
+    // force-cast is needed there. The single `as IAnnotation` at the
+    // editFunction boundary documents the precondition: in stub-only mode
+    // editFunction must only touch stub-carried fields — touching
+    // coordinates/name would read undefined.
+    const before: Partial<IAnnotation> = { ...stub, tags: [...stub.tags] };
+    const after: Partial<IAnnotation> = { ...stub, tags: [...stub.tags] };
+    editFunction(after as IAnnotation);
 
     const patch = getAnnotationUpdatePatch(before, after);
     if (!patch) {

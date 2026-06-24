@@ -8,10 +8,15 @@ function formatAnnotationCount(count: number): string {
   return `${count.toLocaleString()} ${noun}`;
 }
 
-// Title for the lazy-mode stub-fetch progress bar (B1). The count is known up
-// front (getAnnotationCount), so even an indeterminate bar can state the
-// magnitude of the load instead of leaving the canvas silently empty.
+// Title for the lazy-mode stub-fetch progress bar (B1). The count is usually
+// known up front (getAnnotationCount), so even an indeterminate bar can state
+// the magnitude of the load instead of leaving the canvas silently empty. When
+// the count is unknown (the count request failed and the caller fell back to
+// stub-only mode, passing a non-finite count), omit the magnitude.
 export function annotationLoadingTitle(count: number): string {
+  if (!Number.isFinite(count)) {
+    return "Loading annotations…";
+  }
   return `Loading ${formatAnnotationCount(count)}…`;
 }
 

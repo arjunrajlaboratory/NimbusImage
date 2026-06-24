@@ -9,6 +9,8 @@
 // while you're actually seeing everything in your view. Viewport-relative is the
 // honest signal.) Kept pure for unit testing.
 
+import { clamp } from "@/utils/math";
+
 export interface IRenderCoverage {
   // Whether the indicator should be shown at all.
   show: boolean;
@@ -33,9 +35,7 @@ export function computeRenderCoverage(input: {
   const show =
     stubOnlyMode && viewportTotal > 0 && viewportShown < viewportTotal;
   const fraction =
-    viewportTotal > 0
-      ? Math.min(1, Math.max(0, viewportShown / viewportTotal))
-      : 1;
+    viewportTotal > 0 ? clamp(viewportShown / viewportTotal, 0, 1) : 1;
   return {
     show,
     fraction,

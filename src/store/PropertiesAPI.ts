@@ -15,7 +15,10 @@ import {
 } from "./model";
 
 import { fetchAllPages } from "@/utils/fetch";
-import { uncomputedCountRequest } from "@/utils/propertyValues";
+import {
+  uncomputedCountRequest,
+  coerceUncomputedCounts,
+} from "@/utils/propertyValues";
 
 export type TAnnotationPropertyValuesAggregation = {
   datasetId: string;
@@ -84,7 +87,7 @@ export default class PropertiesAPI {
       "upenn_annotation/uncomputed_counts",
       { datasetId, properties: uncomputedCountRequest(properties) },
     );
-    return response.data;
+    return coerceUncomputedCounts(response.data);
   }
 
   async addAggregatedPropertyValues(

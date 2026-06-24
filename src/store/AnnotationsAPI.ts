@@ -368,10 +368,14 @@ export default class AnnotationsAPI {
   // Count endpoints
 
   async getAnnotationCount(datasetId: string): Promise<number> {
-    return this.client
-      .get("upenn_annotation/count", { params: { datasetId } })
-      .then((res) => res.data.count)
-      .catch(() => 0);
+    // Intentionally does NOT swallow errors to 0: a silent 0 is <=
+    // stubThreshold and would route a large dataset into the full-fetch (OOM)
+    // branch. Callers must handle the rejection (fetchAnnotations falls back to
+    // stub-only mode; DatasetInfo shows the count as unknown).
+    const res = await this.client.get("upenn_annotation/count", {
+      params: { datasetId },
+    });
+    return res.data.count;
   }
 
   async getConnectionCount(datasetId: string): Promise<number> {

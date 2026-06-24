@@ -42,7 +42,7 @@ import {
   simpleCentroid,
   selectRandomSubset,
   selectLargestBySize,
-  estimateAnnotationRadius,
+  stubFromAnnotation,
   idsNeedingHydration,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
@@ -661,16 +661,10 @@ export class Annotations extends VuexModule {
 
     const centroid = this.annotationCentroids[value.id];
     this.annotationStubs = markRaw(
-      new Map(this.annotationStubs).set(value.id, {
-        id: value.id,
-        centroid,
-        location: value.location,
-        shape: value.shape,
-        channel: value.channel,
-        tags: value.tags,
-        color: value.color,
-        estimatedRadius: estimateAnnotationRadius(value.coordinates),
-      }),
+      new Map(this.annotationStubs).set(
+        value.id,
+        stubFromAnnotation(value, centroid),
+      ),
     );
 
     // New annotations are always hydrated
@@ -697,16 +691,7 @@ export class Annotations extends VuexModule {
       this.annotationCentroids[annotation.id] = centroid;
       this.annotationIdToIdx[annotation.id] = index;
 
-      newStubs.set(annotation.id, {
-        id: annotation.id,
-        centroid,
-        location: annotation.location,
-        shape: annotation.shape,
-        channel: annotation.channel,
-        tags: annotation.tags,
-        color: annotation.color,
-        estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
-      });
+      newStubs.set(annotation.id, stubFromAnnotation(annotation, centroid));
 
       // New annotations are always hydrated
       newHydrated.set(annotation.id, annotation);
@@ -742,16 +727,7 @@ export class Annotations extends VuexModule {
 
     const centroid = this.annotationCentroids[annotation.id];
     const newStubs = new Map(this.annotationStubs);
-    newStubs.set(annotation.id, {
-      id: annotation.id,
-      centroid,
-      location: annotation.location,
-      shape: annotation.shape,
-      channel: annotation.channel,
-      tags: annotation.tags,
-      color: annotation.color,
-      estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
-    });
+    newStubs.set(annotation.id, stubFromAnnotation(annotation, centroid));
     this.annotationStubs = markRaw(newStubs);
 
     // Update hydrated if present
@@ -786,43 +762,47 @@ export class Annotations extends VuexModule {
   }
 
   @Mutation
-  public setAnnotations(values: IAnnotation[]) {
+  public setAnnotations(
+    payload:
+      | IAnnotation[]
+      | { values: IAnnotation[]; serverStubsFollow?: boolean },
+  ) {
+    // Accept a bare array (the common case) or an options object. When
+    // `serverStubsFollow` is set, a setStubsFromServer call follows
+    // immediately and will (re)build the centroids, stub map, and spatial
+    // index from server data — so skip the client-side build here instead of
+    // doing the O(N) work twice (Finding 14).
+    const values = Array.isArray(payload) ? payload : payload.values;
+    const serverStubsFollow = Array.isArray(payload)
+      ? false
+      : !!payload.serverStubsFollow;
+
     this.annotations = values.map((annotation) => markRaw(annotation));
-    this.annotationCentroids = markRaw({});
     this.annotationIdToIdx = markRaw({});
     for (let idx = 0; idx < this.annotations.length; ++idx) {
-      const annotation = this.annotations[idx];
-      this.annotationCentroids[annotation.id] = markRaw(
-        simpleCentroid(annotation.coordinates),
+      this.annotationIdToIdx[this.annotations[idx].id] = idx;
+    }
+
+    if (!serverStubsFollow) {
+      this.annotationCentroids = markRaw({});
+      const newStubs = new Map<string, IAnnotationStub>();
+      const spatialItems: { id: string; x: number; y: number }[] = new Array(
+        this.annotations.length,
       );
-      this.annotationIdToIdx[annotation.id] = idx;
+      for (let idx = 0; idx < this.annotations.length; ++idx) {
+        const annotation = this.annotations[idx];
+        const centroid = markRaw(simpleCentroid(annotation.coordinates));
+        this.annotationCentroids[annotation.id] = centroid;
+        newStubs.set(annotation.id, stubFromAnnotation(annotation, centroid));
+        spatialItems[idx] = {
+          id: annotation.id,
+          x: centroid.x,
+          y: centroid.y,
+        };
+      }
+      this.annotationStubs = markRaw(newStubs);
+      annotationSpatialIndex.bulkLoad(spatialItems);
     }
-
-    // Build stub map
-    const newStubs = new Map<string, IAnnotationStub>();
-    const spatialItems: { id: string; x: number; y: number }[] = new Array(
-      this.annotations.length,
-    );
-
-    for (let idx = 0; idx < this.annotations.length; ++idx) {
-      const annotation = this.annotations[idx];
-      const centroid = this.annotationCentroids[annotation.id];
-      newStubs.set(annotation.id, {
-        id: annotation.id,
-        centroid,
-        location: annotation.location,
-        shape: annotation.shape,
-        channel: annotation.channel,
-        tags: annotation.tags,
-        color: annotation.color,
-        estimatedRadius: estimateAnnotationRadius(annotation.coordinates),
-      });
-      spatialItems[idx] = { id: annotation.id, x: centroid.x, y: centroid.y };
-    }
-    this.annotationStubs = markRaw(newStubs);
-
-    // Spatial index
-    annotationSpatialIndex.bulkLoad(spatialItems);
 
     // Clear hydration cache — will be repopulated on demand by
     // updateVisibilityAndHydration
@@ -1663,8 +1643,22 @@ export class Annotations extends VuexModule {
       const connectionsPromise =
         this.annotationsAPI.getConnectionsForDatasetId(datasetId);
 
-      const count = await this.annotationsAPI.getAnnotationCount(datasetId);
       const { stubThreshold } = this.visibilityConfig;
+      let count: number;
+      try {
+        count = await this.annotationsAPI.getAnnotationCount(datasetId);
+      } catch (error) {
+        // A transient count failure must NOT route a large dataset into the
+        // full-fetch branch (the OOM path). Treat "unknown count" as
+        // over-threshold so we take the safe stub-only path. Infinity also
+        // gives the loading bar a count-less title.
+        logError(
+          `Annotation count failed; using stub-only mode: ${
+            (error as Error).message
+          }`,
+        );
+        count = Number.POSITIVE_INFINITY;
+      }
 
       if (count <= stubThreshold) {
         // Under threshold: full fetch + server stubs
@@ -1674,8 +1668,16 @@ export class Annotations extends VuexModule {
           this.annotationsAPI.getAnnotationStubs(datasetId),
         ]);
         this.setConnections(connections?.length ? connections : []);
-        this.setAnnotations(annotations?.length ? annotations : []);
-        if (stubs?.length) {
+        // When server stubs are present they (re)build the centroids/stub
+        // map/spatial index, so tell setAnnotations to skip that client-side
+        // build rather than do it twice (Finding 14).
+        const haveServerStubs = !!stubs?.length;
+        this.setAnnotations(
+          annotations?.length
+            ? { values: annotations, serverStubsFollow: haveServerStubs }
+            : [],
+        );
+        if (haveServerStubs) {
           this.setStubsFromServer(stubs);
         }
       } else {
@@ -2187,7 +2189,10 @@ export class Annotations extends VuexModule {
 
   @Action
   updateVisibilityAndHydration(params: {
-    filteredIds: string[];
+    // The client-filtered id set. Omit it when no client filter is active: the
+    // action then iterates its own stub map directly, avoiding a full-dataset
+    // id array allocation in the component on every frame change (Finding 15).
+    filteredIds?: string[];
     gcsBounds?: IGeoJSPosition[];
     currentFrameLocation: IAnnotationLocation;
     // Zoom-adaptive budget overrides (computed from the live map zoom in the
@@ -2205,17 +2210,26 @@ export class Annotations extends VuexModule {
     // reference is a plain Map.
     const stubsMap = this.annotationStubs;
 
-    // Step 1: Split filteredIds by frame
+    const onCurrentFrame = (stub: IAnnotationStub | undefined): boolean =>
+      !!stub &&
+      stub.location.XY === currentFrameLocation.XY &&
+      stub.location.Z === currentFrameLocation.Z &&
+      stub.location.Time === currentFrameLocation.Time;
+
+    // Step 1: Split by frame. With an explicit filtered set, walk it; otherwise
+    // iterate the stub map directly (no per-frame id array allocated upstream).
     const currentFrameIds: string[] = [];
-    for (const id of filteredIds) {
-      const stub = stubsMap.get(id);
-      if (
-        stub &&
-        stub.location.XY === currentFrameLocation.XY &&
-        stub.location.Z === currentFrameLocation.Z &&
-        stub.location.Time === currentFrameLocation.Time
-      ) {
-        currentFrameIds.push(id);
+    if (filteredIds) {
+      for (const id of filteredIds) {
+        if (onCurrentFrame(stubsMap.get(id))) {
+          currentFrameIds.push(id);
+        }
+      }
+    } else {
+      for (const [id, stub] of stubsMap) {
+        if (onCurrentFrame(stub)) {
+          currentFrameIds.push(id);
+        }
       }
     }
 

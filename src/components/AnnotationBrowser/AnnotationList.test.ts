@@ -321,13 +321,22 @@ describe("AnnotationList", () => {
       expect(items[0].shapeName).toBe("Point"); // shape 0 = Point
     });
 
-    it("includes isSelected from annotationStore", () => {
+    it("reads selection reactively from the store rather than baking it into items (Finding 17)", () => {
       const ann = makeAnnotation({ id: "ann1" });
       (filterStore as any).filteredAnnotations = [ann];
-      (annotationStore as any).isAnnotationSelected = vi.fn(() => true);
+      (annotationStore as any).annotationIdToIdx = { ann1: 0 };
+      (annotationStore as any).isAnnotationSelected = vi.fn(
+        (id: string) => id === "ann1",
+      );
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.filteredItems[0].isSelected).toBe(true);
+      // Items no longer carry a baked isSelected flag (so toggling a selection
+      // doesn't re-map the page array).
+      expect(vm.filteredItems[0].isSelected).toBeUndefined();
+      // selectedItems still reflects the store's current selection.
+      expect(vm.selectedItems.map((i: any) => i.annotation.id)).toEqual([
+        "ann1",
+      ]);
     });
   });
 

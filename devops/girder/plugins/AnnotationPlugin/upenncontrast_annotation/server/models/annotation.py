@@ -15,6 +15,13 @@ from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
 
+# Bound any single aggregation's DB runtime so one expensive query (e.g. over a
+# 700K-annotation public dataset) can't run unbounded and pin a Mongo
+# connection. 5 minutes: comfortably above the slowest legitimate query, but a
+# hard ceiling against a runaway one.
+AGGREGATION_MAX_TIME_MS = 300000
+DEFAULT_AGGREGATE_HINT = {"datasetId": 1, "_id": 1}
+
 
 class AnnotationSchema:
     coordSchema = {
@@ -108,6 +115,17 @@ class Annotation(AccessControlMixin, ProxiedModel):
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
     )
 
+    def _aggregate(self, collection, pipeline, hint=DEFAULT_AGGREGATE_HINT):
+        """Run an aggregation with the standard index hint, allowDiskUse, and a
+        bounded maxTimeMS. Centralizes those options so every heavy/public
+        aggregation is runtime-bounded (see AGGREGATION_MAX_TIME_MS)."""
+        return collection.aggregate(
+            pipeline,
+            hint=hint,
+            allowDiskUse=True,
+            maxTimeMS=AGGREGATION_MAX_TIME_MS,
+        )
+
     def annotationRemovedEvent(self, event):
         if event.info and event.info["_id"]:
             events.trigger(
@@ -200,6 +218,29 @@ class Annotation(AccessControlMixin, ProxiedModel):
         }
         self.removeWithQuery(query)
 
+    def distinctDatasetIds(self, objectIds):
+        """The distinct datasetIds of the given annotation ObjectIds.
+
+        Used by the hydrate/deleteMultiple endpoints to discover which datasets
+        the requested annotations belong to so access can be checked against
+        those datasets (no id-smuggling escalation). Aggregation is the
+        sanctioned use of collection directly; keeping it here keeps the API
+        method free of pipeline construction.
+        """
+        if not objectIds:
+            return []
+        return [
+            doc["_id"]
+            for doc in self._aggregate(
+                self.collection,
+                [
+                    {"$match": {"_id": {"$in": list(objectIds)}}},
+                    {"$group": {"_id": "$datasetId"}},
+                ],
+                hint="_id_",
+            )
+        ]
+
     def _buildListMatchStages(self, datasetId, filters):
         """Pipeline stages matching annotation-document fields.
 
@@ -260,9 +301,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             pipeline += self._propertyFilterStages(
                 filters, valueBase="values.")
             pipeline.append({"$project": {"annotationId": 1, "_id": 0}})
-            cursor = self._pvModel.collection.aggregate(
-                pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
-            )
+            cursor = self._aggregate(self._pvModel.collection, pipeline)
             return [str(doc["annotationId"]) for doc in cursor]
 
         pipeline = self._buildListMatchStages(datasetId, filters)
@@ -270,9 +309,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             pipeline += self._lookupStages()
             pipeline += self._propertyFilterStages(filters)
         pipeline.append({"$project": {"_id": 1}})
-        cursor = self.collection.aggregate(
-            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
-        )
+        cursor = self._aggregate(self.collection, pipeline)
         return [str(doc["_id"]) for doc in cursor]
 
     # Annotation fields allowed as a sort key (field-type sort).
@@ -468,9 +505,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             {"$match": {"datasetId": datasetId, valueKey: {"$ne": None}}},
             {"$count": "n"},
         ]
-        result = list(self._pvModel.collection.aggregate(
-            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
-        ))
+        result = list(self._aggregate(self._pvModel.collection, pipeline))
         return result[0]["n"] if result else 0
 
     def _noValueTail(self, datasetId, sort, propertyPaths,
@@ -489,9 +524,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         pipeline.append({"$limit": tailLimit})
         pipeline.append(self._centroidAddFields())
         pipeline += self._projectStage(propertyPaths)
-        return list(self.collection.aggregate(
-            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
-        ))
+        return list(self._aggregate(self.collection, pipeline))
 
     def _pvDrivenPage(self, datasetId, filters, sort, propertyPaths,
                       skip, limit):
@@ -502,12 +535,12 @@ class Annotation(AccessControlMixin, ProxiedModel):
             bool(sort and sort.get("type") == "property")
             and not filters.get("propertyFilters")
         )
-        rows = list(self._pvModel.collection.aggregate(
+        rows = list(self._aggregate(
+            self._pvModel.collection,
             self._pvDrivenPagePipeline(
                 datasetId, filters, sort, propertyPaths, skip, limit,
                 restrictToPresentSortValue=isPureSort,
             ),
-            hint={"datasetId": 1, "_id": 1}, allowDiskUse=True,
         ))
         if isPureSort and len(rows) < limit:
             hasCount = self._pvHasValueCount(datasetId, sort)
@@ -527,9 +560,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             pipeline += self._propertyFilterStages(
                 filters, valueBase="values.")
             pipeline.append({"$count": "n"})
-            result = list(self._pvModel.collection.aggregate(
-                pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
-            ))
+            result = list(self._aggregate(self._pvModel.collection, pipeline))
             return result[0]["n"] if result else 0
 
         pipeline = self._buildListMatchStages(datasetId, filters)
@@ -537,9 +568,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             pipeline += self._lookupStages()
             pipeline += self._propertyFilterStages(filters)
         pipeline.append({"$count": "n"})
-        result = list(self.collection.aggregate(
-            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
-        ))
+        result = list(self._aggregate(self.collection, pipeline))
         return result[0]["n"] if result else 0
 
     def _propertyComputeMatch(self, shape, tagSpec):
@@ -598,13 +627,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
             ]
             for i, pf in enumerate(propertyFilters)
         }
-        totals = next(iter(self.collection.aggregate(
+        totals = next(iter(self._aggregate(
+            self.collection,
             [
                 {"$match": {"datasetId": datasetId}},
                 {"$project": {"shape": 1, "tags": 1}},
                 {"$facet": totalFacet},
             ],
-            hint={"datasetId": 1, "_id": 1}, allowDiskUse=True,
         )), {})
 
         # One streaming pass over the value docs: count, per top-level property
@@ -612,7 +641,8 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # ids -- exactly the existence the client checks (propertyValues a/p).
         hasValueByProperty = {
             doc["_id"]: doc["n"]
-            for doc in self._pvModel.collection.aggregate(
+            for doc in self._aggregate(
+                self._pvModel.collection,
                 [
                     {"$match": {"datasetId": datasetId}},
                     {"$project": {"k": {"$objectToArray": {
@@ -620,7 +650,6 @@ class Annotation(AccessControlMixin, ProxiedModel):
                     {"$unwind": "$k"},
                     {"$group": {"_id": "$k.k", "n": {"$sum": 1}}},
                 ],
-                hint={"datasetId": 1, "_id": 1}, allowDiskUse=True,
             )
         }
 
@@ -661,9 +690,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 pipeline += self._lookupStages()
             pipeline.append(self._centroidAddFields())
             pipeline += self._projectStage(propertyPaths)
-            return self.collection.aggregate(
-                pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
-            )
+            return self._aggregate(self.collection, pipeline)
 
         if self._canDrivePvPage(filters, sort):
             # Drive from the property-values collection: sort/filter and
@@ -686,9 +713,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         pipeline.append({"$limit": limit})
         pipeline.append(self._centroidAddFields())
         pipeline += self._projectStage(propertyPaths)
-        return self.collection.aggregate(
-            pipeline, hint={"datasetId": 1, "_id": 1}, allowDiskUse=True
-        )
+        return self._aggregate(self.collection, pipeline)
 
     def getAnnotationById(self, id, user=None):
         return self.load(id, user=user, level=AccessType.READ)

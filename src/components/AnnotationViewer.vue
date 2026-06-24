@@ -3343,11 +3343,12 @@ function viewportExtent(gcsBounds: IGeoJSPosition[] | undefined): number {
 
 // Visibility and hydration updates
 function updateVisibility() {
-  const ids = (
-    store.filteredDraw
-      ? filteredAnnotations.value
-      : annotationStore.annotationsForIteration
-  ).map((a: IAnnotation) => a.id);
+  // Only materialize an id array when a client filter is active. Without one,
+  // omit it and let the store derive ids from its own stub map, avoiding a
+  // full-dataset id array allocation per frame change (Finding 15).
+  const ids = store.filteredDraw
+    ? filteredAnnotations.value.map((a: IAnnotation) => a.id)
+    : undefined;
   // Zoom-adaptive budget (C4): render fewer objects when zoomed out (where they
   // overlap into noise and the heavy redraw briefly locks the UI), ramping up to
   // the full configured cap as the user zooms in. The zoomed-out floor is
@@ -3370,7 +3371,7 @@ function updateVisibility() {
     loaded: annotationStore.annotationStubs.size,
   });
   annotationStore.updateVisibilityAndHydration({
-    filteredIds: ids,
+    ...(ids !== undefined ? { filteredIds: ids } : {}),
     gcsBounds: store.cameraInfo.gcsBounds,
     currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
     maxVisible: budget.maxVisible,
@@ -3565,6 +3566,14 @@ onBeforeUnmount(() => {
   unbindAnnotationEvents(props.annotationLayer);
   unbindInteractionEvents(props.interactionLayer);
   unbindTimelapseEvents(props.timelapseLayer);
+  // Cancel pending debounced/throttled callbacks so a trailing fire after
+  // teardown (e.g. navigating away right after a pan) can't run against a dead
+  // layer / torn-down view (Finding 4).
+  updateVisibilityDebounced.cancel();
+  restyleAnnotationsThrottled.cancel();
+  drawAnnotations.cancel();
+  drawTooltips.cancel();
+  handleValueOnMouseMoveDebounce.cancel();
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
   }
@@ -3658,6 +3667,8 @@ defineExpose({
   drawAnnotations,
   drawTooltipsNoThrottle,
   drawTooltips,
+  updateVisibilityDebounced,
+  restyleAnnotationsThrottled,
   clearOldAnnotations,
   drawNewAnnotations,
   drawNewConnections,

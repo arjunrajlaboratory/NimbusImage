@@ -13,108 +13,20 @@ from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
-from ..models.annotation import Annotation as AnnotationModel
+from ..helpers.validation import (
+    requireObjectId,
+    validateAnnotationIdCount,
+    validateListInputs,
+    validateUncomputedCountsProperties,
+)
+from ..models.annotation import (
+    Annotation as AnnotationModel,
+    AGGREGATION_MAX_TIME_MS,
+)
 from ..helpers.serialization import orJsonDefaults
 
 
 # Helper functions to get dataset ID for recordable endpoints
-
-
-def _isValidPropertyPath(path):
-    return (
-        isinstance(path, list)
-        and len(path) > 0
-        and all(
-            isinstance(p, str) and p and "." not in p and "$" not in p
-            for p in path
-        )
-    )
-
-
-def _validateListInputs(filters, sort=None, propertyPaths=None):
-    """Validate client-supplied filter/sort/path shape. Raises
-    RestException(400) on malformed input (avoids uncaught 500s on a
-    public endpoint)."""
-    propertyFilters = filters.get("propertyFilters")
-    if propertyFilters is not None:
-        if not isinstance(propertyFilters, list):
-            raise RestException("propertyFilters must be a list", code=400)
-        for pf in propertyFilters:
-            if not isinstance(pf, dict) or not _isValidPropertyPath(
-                pf.get("path")
-            ):
-                raise RestException(
-                    "Each property filter needs a valid 'path'", code=400
-                )
-            mode = pf.get("mode")
-            if mode not in ("range", "values"):
-                raise RestException(
-                    "property filter 'mode' must be 'range' or 'values'",
-                    code=400,
-                )
-            if mode == "values":
-                values = pf.get("values")
-                if values is not None and not isinstance(values, list):
-                    raise RestException(
-                        "property filter 'values' must be a list", code=400
-                    )
-            else:  # range: bounds are comparison operands, must be numeric
-                for bound in ("min", "max"):
-                    value = pf.get(bound)
-                    if value is not None and (
-                        isinstance(value, bool)
-                        or not isinstance(value, (int, float))
-                    ):
-                        raise RestException(
-                            "property filter '%s' must be a number" % bound,
-                            code=400,
-                        )
-    idSubstring = filters.get("idSubstring")
-    if idSubstring is not None and not isinstance(idSubstring, str):
-        raise RestException("idSubstring must be a string", code=400)
-    idConstraints = filters.get("idConstraints")
-    if idConstraints is not None:
-        if not isinstance(idConstraints, list) or not all(
-            isinstance(c, list)
-            and all(isinstance(i, str) and i for i in c)
-            for c in idConstraints
-        ):
-            raise RestException(
-                "idConstraints must be a list of lists of id strings",
-                code=400,
-            )
-        # Convert ids to ObjectId once here (the model consumes them
-        # directly); an invalid id would otherwise raise bson.InvalidId deep
-        # in the aggregation as an uncaught 500 on this public endpoint.
-        try:
-            filters["idConstraints"] = [
-                [ObjectId(i) for i in constraint]
-                for constraint in idConstraints
-            ]
-        except InvalidId:
-            raise RestException(
-                "idConstraints contains an invalid id", code=400
-            )
-    if sort is not None:
-        if not isinstance(sort, dict) or sort.get("type") not in (
-            "field", "property"
-        ):
-            raise RestException(
-                "sort.type must be 'field' or 'property'", code=400
-            )
-        if sort["type"] == "property" and not _isValidPropertyPath(
-            sort.get("key")
-        ):
-            raise RestException(
-                "property sort needs a valid 'key' path", code=400
-            )
-    if propertyPaths is not None:
-        if not isinstance(propertyPaths, list) or not all(
-            _isValidPropertyPath(p) for p in propertyPaths
-        ):
-            raise RestException(
-                "propertyPaths must be a list of valid paths", code=400
-            )
 
 
 def _streamJsonArray(items, prefix=b"[", suffix=b"]", default=None):
@@ -291,13 +203,7 @@ class Annotation(Resource):
         stringIds = [stringId for stringId in bodyJson]
         objectIds = [ObjectId(sid) for sid in stringIds]
         # Find all distinct datasets these annotations belong to
-        datasetIds = [
-            doc["_id"] for doc in
-            self._annotationModel.collection.aggregate([
-                {"$match": {"_id": {"$in": objectIds}}},
-                {"$group": {"_id": "$datasetId"}},
-            ], hint="_id_")
-        ]
+        datasetIds = self._annotationModel.distinctDatasetIds(objectIds)
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
         self._annotationModel.deleteMultiple(stringIds)
 
@@ -525,14 +431,15 @@ class Annotation(Resource):
         .errorResponse("Read access denied.", 403)
     )
     def uncomputedCounts(self, body):
-        datasetId = ObjectId(body["datasetId"])
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        properties = body.get("properties") or []
+        validateUncomputedCountsProperties(properties)
         Folder().load(
             datasetId,
             user=self.getCurrentUser(),
             level=AccessType.READ,
             exc=True,
         )
-        properties = body.get("properties") or []
         return self._annotationModel.uncomputedCounts(datasetId, properties)
 
     @access.public(scope=TokenScope.DATA_READ)
@@ -647,6 +554,8 @@ class Annotation(Resource):
         cursor = self._annotationModel.collection.aggregate(
             pipeline,
             hint={"datasetId": 1, "_id": 1},
+            allowDiskUse=True,
+            maxTimeMS=AGGREGATION_MAX_TIME_MS,
         )
 
         setResponseHeader("Content-Type", "application/json")
@@ -679,18 +588,13 @@ class Annotation(Resource):
     def hydrate(self, annotationIds):
         if not annotationIds:
             return []
+        validateAnnotationIdCount(len(annotationIds))
 
         objectIds = [ObjectId(sid) for sid in annotationIds]
 
         # Find the distinct datasets these annotations belong to
         # and verify READ access on each.
-        datasetIds = [
-            doc["_id"] for doc in
-            self._annotationModel.collection.aggregate([
-                {"$match": {"_id": {"$in": objectIds}}},
-                {"$group": {"_id": "$datasetId"}},
-            ], hint="_id_")
-        ]
+        datasetIds = self._annotationModel.distinctDatasetIds(objectIds)
         requireDatasetsAccess(
             datasetIds, self.getCurrentUser(), level=AccessType.READ
         )
@@ -718,7 +622,7 @@ class Annotation(Resource):
             level=AccessType.READ, exc=True,
         )
         filters = body.get("filters") or {}
-        _validateListInputs(filters)
+        validateListInputs(filters)
         ids = self._annotationModel.listIds(datasetId, filters)
 
         prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
@@ -747,7 +651,7 @@ class Annotation(Resource):
         offset = int(body.get("offset", 0))
         limit = max(1, int(body.get("limit", 50)))
 
-        _validateListInputs(filters, sort, propertyPaths)
+        validateListInputs(filters, sort, propertyPaths)
 
         # Build the page first: its pipeline construction validates the sort
         # field (ValueError -> 400) before the expensive count aggregation

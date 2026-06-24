@@ -4,6 +4,7 @@ import pytest
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
+from upenncontrast_annotation.server.helpers import validation
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.propertyValues import (
     AnnotationPropertyValues,
@@ -207,4 +208,71 @@ class TestUncomputedCounts:
             "012345678901234567890123",
             [self._prop("propA")],
         )
+        assertStatus(resp, 400)
+
+    def testMalformedDatasetIdReturns400(self, admin, server):
+        # A non-ObjectId string must be a clean 400, not an uncaught
+        # bson.InvalidId -> 500 on this public endpoint.
+        resp = self._uncomputed(
+            server, admin, "not-an-object-id", [self._prop("propA")]
+        )
+        assertStatus(resp, 400)
+
+    def testMissingDatasetIdReturns400(self, admin, server):
+        resp = server.request(
+            path="/upenn_annotation/uncomputed_counts",
+            method="POST",
+            user=admin,
+            body=json.dumps({"properties": [self._prop("propA")]}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testPropertyMissingIdReturns400(self, admin, server):
+        # The model does pf["id"] unconditionally -> KeyError -> 500 without
+        # validation. Each property entry must carry a non-empty string id.
+        folder = self._makeDataset(admin)
+        resp = self._uncomputed(
+            server, admin, str(folder["_id"]), [{"shape": "point"}]
+        )
+        assertStatus(resp, 400)
+
+    def testPropertyEntryNotADictReturns400(self, admin, server):
+        folder = self._makeDataset(admin)
+        resp = self._uncomputed(server, admin, str(folder["_id"]), [5])
+        assertStatus(resp, 400)
+
+    def testPropertyIdNotAStringReturns400(self, admin, server):
+        folder = self._makeDataset(admin)
+        resp = self._uncomputed(
+            server, admin, str(folder["_id"]), [{"id": 5}]
+        )
+        assertStatus(resp, 400)
+
+    def testPropertiesNotAListReturns400(self, admin, server):
+        folder = self._makeDataset(admin)
+        resp = self._uncomputed(
+            server, admin, str(folder["_id"]), {"id": "propA"}
+        )
+        assertStatus(resp, 400)
+
+    def testPropertyTagsNotADictReturns400(self, admin, server):
+        # The model does pf.get("tags") expecting a {tags, exclusive} dict.
+        folder = self._makeDataset(admin)
+        resp = self._uncomputed(
+            server,
+            admin,
+            str(folder["_id"]),
+            [{"id": "propA", "shape": "point", "tags": ["nucleus"]}],
+        )
+        assertStatus(resp, 400)
+
+    def testPropertiesCountCapRejectsOversized(self, admin, server,
+                                               monkeypatch):
+        # A degenerate properties list is rejected (a sanity ceiling; the cap
+        # is read at call time so we can shrink it for the test).
+        monkeypatch.setattr(validation, "MAX_UNCOMPUTED_PROPERTIES", 2)
+        folder = self._makeDataset(admin)
+        props = [self._prop("p%d" % i) for i in range(3)]
+        resp = self._uncomputed(server, admin, str(folder["_id"]), props)
         assertStatus(resp, 400)

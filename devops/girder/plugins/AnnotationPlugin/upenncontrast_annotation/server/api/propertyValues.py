@@ -8,6 +8,11 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
+from ..helpers.validation import (
+    requireObjectId,
+    validateAnnotationIdCount,
+    validatePropertyPaths,
+)
 from ..models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
 )
@@ -142,15 +147,22 @@ class PropertyValues(Resource):
     )
     def batch(self, params):
         body = self.getBodyJson()
-        datasetId = ObjectId(body["datasetId"])
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        propertyPaths = body.get("propertyPaths")
+        if propertyPaths is not None:
+            # A component containing '.'/'$' would silently build a wrong or
+            # injected projection key; a non-list-of-lists-of-strings would
+            # raise TypeError in findByAnnotationIds. Reject at the boundary.
+            validatePropertyPaths(propertyPaths)
+        rawIds = body.get("annotationIds", [])
+        validateAnnotationIdCount(len(rawIds))
         Folder().load(
             datasetId,
             user=self.getCurrentUser(),
             level=AccessType.READ,
             exc=True,
         )
-        annotationIds = [ObjectId(i) for i in body.get("annotationIds", [])]
-        propertyPaths = body.get("propertyPaths")
+        annotationIds = [requireObjectId(i, "annotationId") for i in rawIds]
         return self._annotationPropertyValuesModel.findByAnnotationIds(
             datasetId, annotationIds, propertyPaths
         )

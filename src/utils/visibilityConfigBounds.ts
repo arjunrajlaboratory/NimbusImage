@@ -10,6 +10,7 @@
 // it to the live store + the inline "adjusted" notice.
 
 import type { IVisibilityConfig } from "@/store/model";
+import { clamp } from "@/utils/math";
 
 export interface IVisibilityBound {
   min: number;
@@ -42,7 +43,7 @@ export const VISIBILITY_BOUNDS: Record<
 const NUMERIC_KEYS = Object.keys(VISIBILITY_BOUNDS) as TVisibilityNumericKey[];
 
 function clampField(value: number, bound: IVisibilityBound): number {
-  const clamped = Math.min(bound.max, Math.max(bound.min, value));
+  const clamped = clamp(value, bound.min, bound.max);
   return bound.integer ? Math.round(clamped) : clamped;
 }
 
