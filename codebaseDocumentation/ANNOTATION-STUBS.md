@@ -407,6 +407,23 @@ a `scaled` regular point the moment it hydrated.
   the C2-independent visible-set rebuild — see issue #1205
   (`VIEWPORT-BOUND-BUDGET.md`), deliberately out of scope here.
 
+#### Follow-up (2026-06-24): resolution layer also had to collapse for points
+The first pass collapsed *rendering* and *hydration* for points but missed the
+*resolution* layer. Codex found that connection rendering, copy/paste, and
+timelapse linking all resolve ids through `getAnnotationFromId`, which returned
+`undefined` for unhydrated point stubs — so with points never hydrating, those
+features silently dropped point annotations in stub-only mode. (Codex flagged 3
+sites; the same pattern hit ~6, incl. `createConnection`.) **Fix:**
+`getAnnotationFromId` now materializes a point stub into a full `IAnnotation`
+(`coordinates = [centroid]`) via the pure `materializeStubAnnotation` helper in
+`utils/annotation.ts` — non-point stubs still return `undefined` (they need real
+hydration). One getter change fixes every site that resolves through it. The
+`datasetId` stamp is sourced once per getter access from `main.dataset` (not
+stored per-stub — that would waste ~50 MB on 1M identical values, and a per-call
+read regressed the hot path 17→76 ms/100K; hoisting it lands at ~36 ms/100K).
+Verified in-browser: `getAnnotationFromId(pointId)` returns a materialized point,
+and all 5 point→point test connections resolve both endpoints.
+
 ### Selection includes non-visible annotations
 - `getSelectedAnnotationsFromAnnotation()` queries both the displayed RBush and the global `annotationSpatialIndex`
 - Drag-select catches ALL annotations in the region on the current frame, regardless of visibility budget
