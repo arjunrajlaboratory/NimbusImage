@@ -597,6 +597,36 @@ export function idHasHydratableShape(
   return !!stub && shapeNeedsHydration(stub.shape);
 }
 
+// Resolve a stub to a full annotation WITHOUT hydration, when possible. A point
+// stub is self-complete — its centroid IS its only coordinate — so it
+// materializes to a full IAnnotation (coordinates = [centroid]). This lets
+// resolution paths (connection rendering, copy/paste, timelapse linking) treat a
+// point stub as a complete annotation, since points never hydrate. Other shapes
+// carry real coordinate lists a stub doesn't hold, so they return undefined
+// (they genuinely need backend hydration). datasetId is supplied by the caller
+// (all stubs belong to the loaded dataset) rather than stored per-stub. The
+// centroid is cloned so a consumer mutating the coordinate can't corrupt the
+// stub or the spatial index.
+export function materializeStubAnnotation(
+  stub: IAnnotationStub,
+  datasetId: string,
+): IAnnotation | undefined {
+  if (shapeNeedsHydration(stub.shape)) {
+    return undefined;
+  }
+  return {
+    id: stub.id,
+    name: null,
+    coordinates: [{ ...stub.centroid }],
+    location: stub.location,
+    shape: stub.shape,
+    channel: stub.channel,
+    tags: stub.tags,
+    color: stub.color,
+    datasetId,
+  };
+}
+
 /**
  * Build an annotation stub (centroid + metadata, no coordinates) from a full
  * annotation and its precomputed centroid. Single source for the stub field set

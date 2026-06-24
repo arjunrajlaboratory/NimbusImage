@@ -45,6 +45,7 @@ import {
   idsNeedingHydration,
   planHydrationEvictions,
   idHasHydratableShape,
+  materializeStubAnnotation,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import {
@@ -128,13 +129,24 @@ export class Annotations extends VuexModule {
   }
 
   get getAnnotationFromId() {
-    return (annotationId: string) => {
+    return (annotationId: string): IAnnotation | undefined => {
       const hydrated = this.hydratedAnnotations.get(annotationId);
       if (hydrated) {
         return hydrated;
       }
       const idx = this.annotationIdToIdx[annotationId];
-      return idx === undefined ? undefined : this.annotations[idx];
+      if (idx !== undefined) {
+        return this.annotations[idx];
+      }
+      // A point never hydrates (its centroid IS its only coordinate), so resolve
+      // a point stub to a materialized full annotation. This keeps connection
+      // rendering, copy/paste, and timelapse linking — all of which resolve ids
+      // through this getter — working for point annotations in stub-only mode.
+      // Non-point stubs return undefined (they need real hydration).
+      const stub = this.annotationStubs.get(annotationId);
+      return stub
+        ? materializeStubAnnotation(stub, main.dataset?.id ?? "")
+        : undefined;
     };
   }
 

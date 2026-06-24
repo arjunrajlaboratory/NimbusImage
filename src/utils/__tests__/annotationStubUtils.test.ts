@@ -15,6 +15,7 @@ import {
   shapeNeedsHydration,
   drawnFeatureUsesDotStyle,
   idHasHydratableShape,
+  materializeStubAnnotation,
 } from "../annotation";
 import {
   IAnnotation,
@@ -595,5 +596,47 @@ describe("idHasHydratableShape", () => {
 
   it("is false for an unknown id (no stub)", () => {
     expect(idHasHydratableShape("missing", stubs)).toBe(false);
+  });
+});
+
+describe("materializeStubAnnotation", () => {
+  const pointStub: IAnnotationStub = {
+    id: "pt1",
+    centroid: { x: 12, y: 34 },
+    location: { XY: 1, Z: 2, Time: 3 },
+    shape: AnnotationShape.Point,
+    channel: 5,
+    tags: ["a", "b"],
+    color: "#fff",
+  };
+
+  it("materializes a point stub into a full annotation with coordinates = [centroid]", () => {
+    const ann = materializeStubAnnotation(pointStub, "ds1");
+    expect(ann).toEqual({
+      id: "pt1",
+      name: null,
+      coordinates: [{ x: 12, y: 34 }],
+      location: { XY: 1, Z: 2, Time: 3 },
+      shape: AnnotationShape.Point,
+      channel: 5,
+      tags: ["a", "b"],
+      color: "#fff",
+      datasetId: "ds1",
+    });
+  });
+
+  it("clones the centroid so mutating the coordinate does not corrupt the stub", () => {
+    const ann = materializeStubAnnotation(pointStub, "ds1")!;
+    expect(ann.coordinates[0]).not.toBe(pointStub.centroid);
+    ann.coordinates[0].x = 999;
+    expect(pointStub.centroid.x).toBe(12);
+  });
+
+  it("returns undefined for a non-point stub (no coordinate list to materialize)", () => {
+    const polyStub: IAnnotationStub = {
+      ...pointStub,
+      shape: AnnotationShape.Polygon,
+    };
+    expect(materializeStubAnnotation(polyStub, "ds1")).toBeUndefined();
   });
 });
