@@ -873,20 +873,27 @@ watch(
 // and a later "delete selected" would silently delete rows no longer in view.
 // Clearing on any query change keeps the selection equal to "things in the
 // current filtered list", which is also what the header checkbox now reports.
-// We key off currentFilters (the canonical query definition) rather than the
-// raw inputs so projection-only changes (displayedPropertyPaths) and frame
-// scrubbing while onlyCurrentFrame is off — neither of which changes the
-// matching set — don't needlessly drop the selection. Sort and page changes
-// don't touch currentFilters either, so selection persists across pages.
+//
+// We key off currentFilters (the canonical query definition) so projection-only
+// changes (displayedPropertyPaths) and sort/page changes — none of which change
+// the matching set — don't drop the selection. We watch its JSON-serialized
+// value, NOT the object with { deep: true }: currentFilters is rebuilt as a new
+// object on every read and its getter reads the frame (xy/z/time)
+// unconditionally to assemble currentFrame, so main.z is a reactive dependency
+// even though the frame is only included in the output when onlyCurrentFrame is
+// on. A deep watch fires on every re-trigger regardless of value equality, so
+// it would clear the selection on a frame scrub with onlyCurrentFrame off (the
+// query didn't actually change). Comparing the serialized value fires only when
+// the query content genuinely changes; stringify also traverses the object, so
+// nested filter changes are still tracked.
 watch(
-  () => annotationListServer.currentFilters,
+  () => JSON.stringify(annotationListServer.currentFilters),
   () => {
     if (!isServerMode.value) {
       return;
     }
     annotationStore.setSelected([]);
   },
-  { deep: true },
 );
 
 onBeforeUnmount(() => {
