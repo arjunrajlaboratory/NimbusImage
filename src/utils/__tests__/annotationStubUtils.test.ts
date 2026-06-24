@@ -12,8 +12,10 @@ import {
   planHydrationEvictions,
   coordinatesFingerprint,
   geometryKeyForRender,
+  shapeNeedsHydration,
+  drawnFeatureUsesDotStyle,
 } from "../annotation";
-import { IAnnotation, TAnnotationOrStub } from "@/store/model";
+import { IAnnotation, TAnnotationOrStub, AnnotationShape } from "@/store/model";
 
 vi.mock("geojs", () => ({
   default: {
@@ -530,5 +532,32 @@ describe("stubFromAnnotation", () => {
     expect(
       stubFromAnnotation(annotation, { x: 5, y: 2, z: 0 }).estimatedRadius,
     ).toBe(5);
+  });
+});
+
+describe("shapeNeedsHydration", () => {
+  it("returns false for points (a point's centroid is its only coordinate)", () => {
+    expect(shapeNeedsHydration(AnnotationShape.Point)).toBe(false);
+  });
+
+  it("returns true for polygon, line, and rectangle", () => {
+    expect(shapeNeedsHydration(AnnotationShape.Polygon)).toBe(true);
+    expect(shapeNeedsHydration(AnnotationShape.Line)).toBe(true);
+    expect(shapeNeedsHydration(AnnotationShape.Rectangle)).toBe(true);
+  });
+});
+
+describe("drawnFeatureUsesDotStyle", () => {
+  it("uses the dot style for an unhydrated non-point stub", () => {
+    expect(drawnFeatureUsesDotStyle(true, AnnotationShape.Polygon)).toBe(true);
+  });
+
+  it("does NOT use the dot style for a point stub (regular point style)", () => {
+    expect(drawnFeatureUsesDotStyle(true, AnnotationShape.Point)).toBe(false);
+  });
+
+  it("does NOT use the dot style for a hydrated annotation", () => {
+    expect(drawnFeatureUsesDotStyle(false, AnnotationShape.Polygon)).toBe(false);
+    expect(drawnFeatureUsesDotStyle(false, AnnotationShape.Point)).toBe(false);
   });
 });

@@ -566,6 +566,25 @@ export function estimateAnnotationRadius(
   return Math.max(maxX - minX, maxY - minY) / 2;
 }
 
+// Whether annotations of this shape need backend hydration. Points do NOT: a
+// point's centroid IS its single coordinate, so a point stub already holds its
+// full geometry. Such stubs render with the regular point style (not the dot
+// placeholder) and are never fetched from /hydrate. Polygons/lines/rectangles
+// load as dot stubs and hydrate on demand.
+export function shapeNeedsHydration(shape: AnnotationShape): boolean {
+  return shape !== AnnotationShape.Point;
+}
+
+// A drawn feature uses the dot placeholder style only when it is an unhydrated
+// stub of a shape that still needs hydration. Point stubs use the regular point
+// style — identical to a hydrated point — because they are already complete.
+export function drawnFeatureUsesDotStyle(
+  isStub: boolean,
+  shape: AnnotationShape,
+): boolean {
+  return isStub && shapeNeedsHydration(shape);
+}
+
 /**
  * Build an annotation stub (centroid + metadata, no coordinates) from a full
  * annotation and its precomputed centroid. Single source for the stub field set
