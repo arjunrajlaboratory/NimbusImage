@@ -10,6 +10,40 @@ from __future__ import annotations
 import os
 
 import girder_client
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# NIM-006: transient 502/503/504 responses happen under normal load
+# (backend saturation, proxy timeouts). Retry them with jittered
+# exponential backoff so callers don't have to hand-roll retry loops.
+#
+# Only idempotent methods are retried (urllib3's default allowed set:
+# GET/HEAD/PUT/DELETE/OPTIONS/TRACE). POST is deliberately excluded so a
+# retried compute submission can't create duplicate jobs/annotations
+# (NIM-007). raise_on_status=False lets girder_client raise its usual
+# HttpError on the final response instead of a urllib3 RetryError.
+_RETRY_TOTAL = 5
+_RETRY_STATUS_FORCELIST = (502, 503, 504)
+_RETRY_BACKOFF_FACTOR = 0.5
+_RETRY_BACKOFF_JITTER = 0.5
+
+
+def _build_retry_session() -> requests.Session:
+    """Build a requests.Session that retries transient 5xx with backoff."""
+    retry = Retry(
+        total=_RETRY_TOTAL,
+        status_forcelist=_RETRY_STATUS_FORCELIST,
+        backoff_factor=_RETRY_BACKOFF_FACTOR,
+        backoff_jitter=_RETRY_BACKOFF_JITTER,
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session = requests.Session()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 def create_client(
@@ -50,6 +84,10 @@ def create_client(
         )
 
     gc = girder_client.GirderClient(apiUrl=api_url)
+    # Route all requests (including authentication) through a session that
+    # retries transient 5xx (NIM-006). girder_client uses gc._session for
+    # every request when it is set.
+    gc._session = _build_retry_session()
 
     if token is not None:
         gc.setToken(token)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from nimbusimage.jobs import Job
@@ -25,6 +26,7 @@ class AnnotationAccessor:
         tags: list[str] | None = None,
         limit: int = 0,
         offset: int = 0,
+        after_id: str | None = None,
     ) -> list[Annotation]:
         """List annotations in this dataset.
 
@@ -32,7 +34,14 @@ class AnnotationAccessor:
             shape: Filter by shape ('polygon', 'point', 'line').
             tags: Filter by tags (JSON-encoded array sent to server).
             limit: Max results. 0 = unlimited.
-            offset: Skip this many results.
+            offset: Skip this many results. NOTE: ``offset`` is positional
+                and **not stable across mutations** — if you delete or add
+                annotations between paged calls, an offset loop will skip or
+                repeat records. Use :meth:`iter_all` (a stable ``after_id``
+                cursor) for delete/modify-as-you-go loops.
+            after_id: Return only annotations whose ``_id`` is greater than
+                this one (a stable cursor). When set, the server ignores
+                ``offset``. Prefer :meth:`iter_all` over passing this by hand.
 
         Returns:
             List of Annotation objects.
@@ -45,9 +54,60 @@ class AnnotationAccessor:
             url += f"&shape={shape}"
         if tags:
             url += f"&tags={json.dumps(tags)}"
+        if after_id:
+            url += f"&afterId={after_id}"
 
         data = self._gc.get(url)
         return [Annotation.from_dict(d) for d in data]
+
+    def iter_all(
+        self,
+        shape: str | None = None,
+        tags: list[str] | None = None,
+        page_size: int = 1000,
+    ) -> Iterator[Annotation]:
+        """Iterate over every matching annotation, one page at a time.
+
+        Walks the backend's stable ``afterId`` cursor: each page asks for
+        annotations whose ``_id`` is greater than the largest ``_id`` seen
+        so far. This is **mutation-safe** — unlike offset pagination, you
+        can delete or modify annotations as you iterate without skipping
+        records (the cursor only ever advances past IDs already yielded).
+
+        This is the recommended way to fetch large result sets and to drive
+        delete-as-you-go cleanup loops.
+
+        Note:
+            Correctness relies on the server returning each page in
+            ascending ``_id`` order (so ``page[-1]`` is the largest ``_id``
+            in the page). This holds for annotations today.
+
+        Args:
+            shape: Filter by shape ('polygon', 'point', 'line').
+            tags: Filter by tags.
+            page_size: Number of annotations to fetch per request.
+
+        Yields:
+            Annotation objects, in ascending ``_id`` order.
+        """
+        after_id: str | None = None
+        while True:
+            page = self.list(
+                shape=shape,
+                tags=tags,
+                limit=page_size,
+                after_id=after_id,
+            )
+            if not page:
+                break
+            for annotation in page:
+                yield annotation
+            after_id = page[-1].id
+            if after_id is None:
+                raise RuntimeError(
+                    "Server returned an annotation without an _id; "
+                    "cannot advance the iter_all cursor."
+                )
 
     def get(self, annotation_id: str) -> Annotation:
         """Get a single annotation by ID."""
@@ -178,11 +238,15 @@ class AnnotationAccessor:
             channel: Channel index for the worker to process.
             tags: Tags to assign to created annotations.
             location: Location (XY/Z/Time) for single-tile processing.
-                Defaults to ``Location()``.
+                Defaults to ``Location()``. Mutually exclusive with
+                ``assignment``: in batch mode the worker iterates the
+                ``assignment`` ranges and ignores ``location``/``tile``,
+                so passing both raises ``ValueError``.
             assignment: Assignment range for batch processing. Can be
                 a dict like ``{'XY': '0-2', 'Z': 0, 'Time': 0}`` or
                 range strings like ``{'XY': '0-2', 'Z': 0, 'Time': '0-4'}``.
-                Defaults to the location if not provided.
+                Defaults to the location if not provided. Do not combine
+                with ``location=`` (see above).
             worker_interface: Parameter values matching the worker's
                 interface schema (from ``client.get_worker_interface()``).
                 Keys must match exactly (e.g., ``'Square size'``, not
@@ -208,6 +272,18 @@ class AnnotationAccessor:
             connections) — omitting it causes a ``KeyError`` after
             annotations are uploaded.
         """
+        # NIM-004: in batch mode the worker iterates the ``assignment``
+        # ranges and ignores ``tile``/``location`` entirely. Silently
+        # dropping a caller-supplied location is a footgun, so reject the
+        # conflicting combination instead of ignoring one of the arguments.
+        if location is not None and assignment is not None:
+            raise ValueError(
+                "location= is ignored in batch mode; pass ranges via "
+                "assignment= only (the worker iterates assignment ranges "
+                "and ignores location/tile). Provide either a single-tile "
+                "location= or batch ranges via assignment=, not both."
+            )
+
         loc = location or Location()
         loc_dict = loc.to_dict()
         if assignment is None:
