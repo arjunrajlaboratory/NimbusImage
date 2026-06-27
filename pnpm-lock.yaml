@@ -22,6 +22,9 @@ importers:
       '@girder/components':
         specifier: 4.0.0
         version: 4.0.0(patch_hash=shbcdgp4xngx26zuxkycvn5el4)(typescript@5.9.3)(vite-plugin-vuetify@2.1.3(vite@6.4.2(@types/node@20.19.33)(sass@1.97.3)(terser@5.48.0))(vue@3.5.28(typescript@5.9.3))(vuetify@4.0.5))
+      '@kitware/vtk.js':
+        specifier: ^36.2.1
+        version: 36.2.1(autoprefixer@10.4.16(postcss@8.5.6))(wslink@1.12.4)
       '@mdi/font':
         specifier: ^5.3.45
         version: 5.9.55
@@ -1144,6 +1147,13 @@ packages:
     resolution: {integrity: sha512-mh8LbS9d4Jq84KLw8pzho7XC2q2/IJGiJss3xwRoLD1A+EE16SjN4PfaG4jRCzKegTFLlN0Zd8SdUPE6XdoPFg==}
     engines: {node: '>=v12.0.0'}
 
+  '@kitware/vtk.js@36.2.1':
+    resolution: {integrity: sha512-u5V7jfYeve1WNXVl7bZbjp755t1/EMyiW2y0aQU7YZ7RteCfZ8mxk9jB3DTeo9pGcIsVr+E8SIQz2bXHHedPlg==}
+    hasBin: true
+    peerDependencies:
+      autoprefixer: ^10.4.7
+      wslink: '>=1.1.0 || ^2.0.0'
+
   '@mapbox/node-pre-gyp@1.0.11':
     resolution: {integrity: sha512-Yhlar6v9WQgUp/He7BdgzOz8lqMQ8sU+jkCq7Wx8Myc5YFJLbEe7lgui/V7G1qB1DJykHSGwreceSaD60Y0PUQ==}
     hasBin: true
@@ -1186,13 +1196,29 @@ packages:
     resolution: {integrity: sha512-0JT29/LaxVgRcGKvHmSrUTEvZ8BXvZhGl2LASRUgHqDTC1M5g1pLmVv56IYNyt3bG2CUjDkc67wnyZC14pbQrQ==}
     engines: {node: '>=8.0'}
 
+  '@oozcitak/dom@2.0.2':
+    resolution: {integrity: sha512-GjpKhkSYC3Mj4+lfwEyI1dqnsKTgwGy48ytZEhm4A/xnH/8z9M3ZVXKr/YGQi3uCLs1AEBS+x5T2JPiueEDW8w==}
+    engines: {node: '>=20.0'}
+
   '@oozcitak/infra@1.0.8':
     resolution: {integrity: sha512-JRAUc9VR6IGHOL7OGF+yrvs0LO8SlqGnPAMqyzOuFZPSZSXI7Xf2O9+awQPSMXgIWGtgUf/dA6Hs6X6ySEaWTg==}
     engines: {node: '>=6.0'}
 
+  '@oozcitak/infra@2.0.2':
+    resolution: {integrity: sha512-2g+E7hoE2dgCz/APPOEK5s3rMhJvNxSMBrP+U+j1OWsIbtSpWxxlUjq1lU8RIsFJNYv7NMlnVsCuHcUzJW+8vA==}
+    engines: {node: '>=20.0'}
+
   '@oozcitak/url@1.0.4':
     resolution: {integrity: sha512-kDcD8y+y3FCSOvnBI6HJgl00viO/nGbQoCINmQ0h98OhnGITrWR3bOGfwYCthgcrV8AnTJz8MzslTQbC3SOAmw==}
     engines: {node: '>=8.0'}
+
+  '@oozcitak/url@3.0.0':
+    resolution: {integrity: sha512-ZKfET8Ak1wsLAiLWNfFkZc/BraDccuTJKR6svTYc7sVjbR+Iu0vtXdiDMY4o6jaFl5TW2TlS7jbLl4VovtAJWQ==}
+    engines: {node: '>=20.0'}
+
+  '@oozcitak/util@10.0.0':
+    resolution: {integrity: sha512-hAX0pT/73190NLqBPPWSdBVGtbY6VOhWYK3qqHqtXQ1gK7kS2yz4+ivsN07hpJ6I3aeMtKP6J6npsEKOAzuTLA==}
+    engines: {node: '>=20.0'}
 
   '@oozcitak/util@8.3.8':
     resolution: {integrity: sha512-T8TbSnGsxo6TDBJx/Sgv/BlVJL3tshxZP7Aq5R1mSnM5OcHY2dQaxLMu2+E8u3gN0MLOzdjurqN4ZRVuzQycOQ==}
@@ -1630,6 +1656,9 @@ packages:
 
   '@types/webxr@0.5.10':
     resolution: {integrity: sha512-n3u5sqXQJhf1CS68mw3Wf16FQ4cRPNBBwdYLFzq3UddiADOim1Pn3Y6PBdDilz1vOJF3ybLxJ8ZEDlLIzrOQZg==}
+
+  '@types/webxr@0.5.5':
+    resolution: {integrity: sha512-HVOsSRTQYx3zpVl0c0FBmmmcY/60BkQLzVnpE9M1aG4f2Z0aKlBWfj4XZ2zr++XNBfkQWYcwhGlmuu44RJPDqg==}
 
   '@typescript-eslint/eslint-plugin@6.19.0':
     resolution: {integrity: sha512-DUCUkQNklCQYnrBSSikjVChdc84/vMPDQSgJTHBZ64G9bA9w0Crc0rd2diujKbTdp6w2J47qkeHQLoi0rpLCdg==}
@@ -3272,6 +3301,10 @@ packages:
     resolution: {integrity: sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==}
     hasBin: true
 
+  js-yaml@4.3.0:
+    resolution: {integrity: sha512-1td788aAnnZ5qs7V2QIRl1owjtYpbKt749Y3xauqQgwIIGF/xXWz1wMTEBx5O3LK3lXLVuqXPdPxj2BoFHaW9Q==}
+    hasBin: true
+
   jsdom@24.0.0:
     resolution: {integrity: sha512-UDS2NayCvmXSXVP6mpTj+73JnNQadZlr9N68189xib2tx5Mls7swlTNao26IoHv46BZJFvXygyRtyXd1feAk1A==}
     engines: {node: '>=18'}
@@ -3663,6 +3696,9 @@ packages:
 
   package-json-from-dist@1.0.1:
     resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
+
+  pako@1.0.11:
+    resolution: {integrity: sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==}
 
   papaparse@5.4.1:
     resolution: {integrity: sha512-HipMsgJkZu8br23pW15uvo6sib6wne/4woLZPlFf3rpDyMe9ywEXUsuD7+6K9PRkJlVT51j/sCOYDKGGS3ZJrw==}
@@ -4451,6 +4487,9 @@ packages:
   url-parse@1.5.10:
     resolution: {integrity: sha512-WypcfiRhfeUP9vvF0j6rw0J3hrWrw6iZv3+22h6iRMJ/8z1Tj6XfLP4DsUix5MhMPnXpiHDoKyoZ/bdCkwBCiQ==}
 
+  utif@3.1.0:
+    resolution: {integrity: sha512-WEo4D/xOvFW53K5f5QTaTbbiORcm2/pCL9P6qmJnup+17eYfKaEhDeX9PeQkuyEoIxlbGklDuGl8xwuXYMrrXQ==}
+
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
@@ -4765,6 +4804,10 @@ packages:
   xmlbuilder2@3.0.2:
     resolution: {integrity: sha512-h4MUawGY21CTdhV4xm3DG9dgsqyhDkZvVJBx88beqX8wJs3VgyGQgAn5VreHuae6unTQxh115aMK5InCVmOIKw==}
     engines: {node: '>=12.0'}
+
+  xmlbuilder2@4.0.3:
+    resolution: {integrity: sha512-bx8Q1STctnNaaDymWnkfQLKofs0mGNN7rLLapJlGuV3VlvegD7Ls4ggMjE3aUSWItCCzU0PEv45lI87iSigiCA==}
+    engines: {node: '>=20.0'}
 
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
@@ -5901,6 +5944,24 @@ snapshots:
     dependencies:
       lodash: 4.18.1
 
+  '@kitware/vtk.js@36.2.1(autoprefixer@10.4.16(postcss@8.5.6))(wslink@1.12.4)':
+    dependencies:
+      '@types/webxr': 0.5.5
+      autoprefixer: 10.4.16(postcss@8.5.6)
+      commander: 9.2.0
+      d3-scale: 4.0.2
+      fast-deep-equal: 3.1.3
+      fflate: 0.7.3
+      gl-matrix: 3.4.3
+      globalthis: 1.0.3
+      seedrandom: 3.0.5
+      shelljs: 0.8.5
+      spark-md5: 3.0.2
+      utif: 3.1.0
+      webworker-promise: 0.5.0
+      wslink: 1.12.4
+      xmlbuilder2: 4.0.3
+
   '@mapbox/node-pre-gyp@1.0.11':
     dependencies:
       detect-libc: 2.1.2
@@ -5962,16 +6023,33 @@ snapshots:
       '@oozcitak/util': 8.3.8
     optional: true
 
+  '@oozcitak/dom@2.0.2':
+    dependencies:
+      '@oozcitak/infra': 2.0.2
+      '@oozcitak/url': 3.0.0
+      '@oozcitak/util': 10.0.0
+
   '@oozcitak/infra@1.0.8':
     dependencies:
       '@oozcitak/util': 8.3.8
     optional: true
+
+  '@oozcitak/infra@2.0.2':
+    dependencies:
+      '@oozcitak/util': 10.0.0
 
   '@oozcitak/url@1.0.4':
     dependencies:
       '@oozcitak/infra': 1.0.8
       '@oozcitak/util': 8.3.8
     optional: true
+
+  '@oozcitak/url@3.0.0':
+    dependencies:
+      '@oozcitak/infra': 2.0.2
+      '@oozcitak/util': 10.0.0
+
+  '@oozcitak/util@10.0.0': {}
 
   '@oozcitak/util@8.3.8':
     optional: true
@@ -6314,6 +6392,8 @@ snapshots:
 
   '@types/webxr@0.5.10':
     optional: true
+
+  '@types/webxr@0.5.5': {}
 
   '@typescript-eslint/eslint-plugin@6.19.0(@typescript-eslint/parser@6.19.0(eslint@8.56.0)(typescript@5.9.3))(eslint@8.56.0)(typescript@5.9.3)':
     dependencies:
@@ -6782,7 +6862,6 @@ snapshots:
       picocolors: 1.1.1
       postcss: 8.5.6
       postcss-value-parser: 4.2.0
-    optional: true
 
   axios@1.16.0:
     dependencies:
@@ -7006,8 +7085,7 @@ snapshots:
 
   commander@7.2.0: {}
 
-  commander@9.2.0:
-    optional: true
+  commander@9.2.0: {}
 
   concat-map@0.0.1: {}
 
@@ -7394,7 +7472,6 @@ snapshots:
       define-data-property: 1.1.1
       has-property-descriptors: 1.0.1
       object-keys: 1.1.1
-    optional: true
 
   delaunator@5.0.1:
     dependencies:
@@ -7682,8 +7759,7 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.3
 
-  fflate@0.7.3:
-    optional: true
+  fflate@0.7.3: {}
 
   fflate@0.7.4: {}
 
@@ -7745,8 +7821,7 @@ snapshots:
       hasown: 2.0.4
       mime-types: 2.1.35
 
-  fraction.js@4.3.7:
-    optional: true
+  fraction.js@4.3.7: {}
 
   fs-constants@1.0.0: {}
 
@@ -7862,8 +7937,7 @@ snapshots:
 
   gl-mat4@1.2.0: {}
 
-  gl-matrix@3.4.3:
-    optional: true
+  gl-matrix@3.4.3: {}
 
   gl-vec3@1.1.3: {}
 
@@ -7912,7 +7986,6 @@ snapshots:
   globalthis@1.0.3:
     dependencies:
       define-properties: 1.2.1
-    optional: true
 
   globby@11.1.0:
     dependencies:
@@ -8044,8 +8117,7 @@ snapshots:
 
   internmap@1.0.1: {}
 
-  interpret@1.4.0:
-    optional: true
+  interpret@1.4.0: {}
 
   ipfs-car@1.2.0:
     dependencies:
@@ -8098,7 +8170,6 @@ snapshots:
   is-core-module@2.16.2:
     dependencies:
       hasown: 2.0.4
-    optional: true
 
   is-docker@2.2.1: {}
 
@@ -8241,6 +8312,10 @@ snapshots:
       esprima: 4.0.1
 
   js-yaml@4.1.0:
+    dependencies:
+      argparse: 2.0.1
+
+  js-yaml@4.3.0:
     dependencies:
       argparse: 2.0.1
 
@@ -8522,8 +8597,7 @@ snapshots:
 
   normalize-path@3.0.0: {}
 
-  normalize-range@0.1.2:
-    optional: true
+  normalize-range@0.1.2: {}
 
   npmlog@5.0.1:
     dependencies:
@@ -8613,6 +8687,8 @@ snapshots:
 
   package-json-from-dist@1.0.1: {}
 
+  pako@1.0.11: {}
+
   papaparse@5.4.1: {}
 
   parent-module@1.0.1:
@@ -8692,8 +8768,7 @@ snapshots:
       cssesc: 3.0.0
       util-deprecate: 1.0.2
 
-  postcss-value-parser@4.2.0:
-    optional: true
+  postcss-value-parser@4.2.0: {}
 
   postcss@8.5.6:
     dependencies:
@@ -8893,7 +8968,6 @@ snapshots:
   rechoir@0.6.2:
     dependencies:
       resolve: 1.22.12
-    optional: true
 
   reflect-metadata@0.1.14: {}
 
@@ -8944,7 +9018,6 @@ snapshots:
       is-core-module: 2.16.2
       path-parse: 1.0.7
       supports-preserve-symlinks-flag: 1.0.0
-    optional: true
 
   resolve@1.22.8:
     dependencies:
@@ -9049,8 +9122,7 @@ snapshots:
       ajv-formats: 2.1.1(ajv@8.20.0)
       ajv-keywords: 5.1.0(ajv@8.20.0)
 
-  seedrandom@3.0.5:
-    optional: true
+  seedrandom@3.0.5: {}
 
   seek-bzip@1.0.6:
     dependencies:
@@ -9094,7 +9166,6 @@ snapshots:
       glob: 7.2.3
       interpret: 1.4.0
       rechoir: 0.6.2
-    optional: true
 
   side-channel-list@1.0.1:
     dependencies:
@@ -9165,8 +9236,7 @@ snapshots:
 
   source-map@0.7.4: {}
 
-  spark-md5@3.0.2:
-    optional: true
+  spark-md5@3.0.2: {}
 
   sparse-array@1.3.2: {}
 
@@ -9449,6 +9519,10 @@ snapshots:
       querystringify: 2.2.0
       requires-port: 1.0.0
 
+  utif@3.1.0:
+    dependencies:
+      pako: 1.0.11
+
   util-deprecate@1.0.2: {}
 
   utrie@1.0.2:
@@ -9716,8 +9790,7 @@ snapshots:
       - postcss
       - uglify-js
 
-  webworker-promise@0.5.0:
-    optional: true
+  webworker-promise@0.5.0: {}
 
   whatwg-encoding@3.1.1:
     dependencies:
@@ -9784,7 +9857,6 @@ snapshots:
   wslink@1.12.4:
     dependencies:
       json5: 2.2.3
-    optional: true
 
   xml-name-validator@4.0.0: {}
 
@@ -9798,6 +9870,13 @@ snapshots:
       '@types/node': 20.19.41
       js-yaml: 3.14.0
     optional: true
+
+  xmlbuilder2@4.0.3:
+    dependencies:
+      '@oozcitak/dom': 2.0.2
+      '@oozcitak/infra': 2.0.2
+      '@oozcitak/util': 10.0.0
+      js-yaml: 4.3.0
 
   xmlchars@2.2.0: {}
 
