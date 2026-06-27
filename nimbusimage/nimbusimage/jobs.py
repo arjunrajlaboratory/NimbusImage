@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import sys
 import time
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import girder_client
+import girder_client
+
+# Scopes a (scoped) API key needs to poll job status. The job-status
+# endpoint is @access.public and effectively requires core.user_auth; a
+# key minted without it gets a 401 whose raw message misattributes the
+# missing scope (NIM-005).
+_JOB_SCOPE_HINT = (
+    "Could not read job status (HTTP 401). Your API key is most likely "
+    "missing the 'core.user_auth' scope, which is required to poll job "
+    "status — the raw 401 misattributes this. Provision a key that "
+    "includes 'core.user_auth' (and 'jobs.rest.list_job' so job logs can "
+    "be read too), or use a full-access key. See the nimbusimage README "
+    "(Authentication) for the required scope set."
+)
 
 # Girder job status codes
 STATUS_INACTIVE = 0
@@ -75,8 +86,19 @@ class Job:
         return self.status == STATUS_SUCCESS
 
     def refresh(self) -> None:
-        """Fetch latest job status and log from the server."""
-        self._data = self._gc.get(f"job/{self._id}")
+        """Fetch latest job status and log from the server.
+
+        Raises:
+            PermissionError: If the job-status request returns 401, which
+                almost always means the API key lacks the ``core.user_auth``
+                scope (NIM-005). The message names the likely missing scope.
+        """
+        try:
+            self._data = self._gc.get(f"job/{self._id}")
+        except girder_client.HttpError as exc:
+            if getattr(exc, "status", None) == 401:
+                raise PermissionError(_JOB_SCOPE_HINT) from exc
+            raise
         try:
             log_resp = self._gc.get(f"job/{self._id}/log")
             if isinstance(log_resp, list):
@@ -106,6 +128,9 @@ class Job:
 
         Raises:
             TimeoutError: If timeout is reached before the job finishes.
+            PermissionError: If polling returns 401 — usually a missing
+                ``core.user_auth`` scope on the API key (NIM-005). Raised
+                via :meth:`refresh`.
         """
         start = time.monotonic()
         last_log_len = 0
