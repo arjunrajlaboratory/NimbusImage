@@ -96,6 +96,23 @@ class TestRetryConfiguration:
         assert "POST" not in retry.allowed_methods
         assert "GET" in retry.allowed_methods
 
+    def test_jitter_applied_when_supported(self):
+        gc = create_client(api_url="https://example.test/api/v1", token="x")
+        retry = gc._session.get_adapter("https://example.test/").max_retries
+        assert retry.backoff_jitter == 0.5
+
+    def test_jitter_omitted_when_unsupported(self, monkeypatch):
+        """urllib3 1.26.x has no backoff_jitter kwarg — passing it would
+        crash create_client (Codex P2). The kwarg must be gated."""
+        import nimbusimage._girder as g
+
+        monkeypatch.setattr(g, "_RETRY_SUPPORTS_JITTER", False)
+        gc = g.create_client(api_url="https://example.test/api/v1", token="x")
+        retry = gc._session.get_adapter("https://example.test/").max_retries
+        # Not passed -> urllib3's default (0.0); and it must still build.
+        assert retry.backoff_jitter == 0.0
+        assert retry.total and retry.total > 0
+
 
 class TestRetryBehavior:
     def test_retries_503_then_succeeds(self, flaky_server):

@@ -7,6 +7,7 @@ and error handling are centralized.
 
 from __future__ import annotations
 
+import inspect
 import os
 
 import girder_client
@@ -28,17 +29,27 @@ _RETRY_STATUS_FORCELIST = (502, 503, 504)
 _RETRY_BACKOFF_FACTOR = 0.5
 _RETRY_BACKOFF_JITTER = 0.5
 
+# backoff_jitter was added in urllib3 2.0. Passing it on urllib3 1.26.x
+# raises TypeError at construction, so gate it by feature detection rather
+# than version parsing. Backoff still applies without jitter on older
+# urllib3 — we just lose the thundering-herd spread.
+_RETRY_SUPPORTS_JITTER = (
+    "backoff_jitter" in inspect.signature(Retry.__init__).parameters
+)
+
 
 def _build_retry_session() -> requests.Session:
     """Build a requests.Session that retries transient 5xx with backoff."""
-    retry = Retry(
+    retry_kwargs = dict(
         total=_RETRY_TOTAL,
         status_forcelist=_RETRY_STATUS_FORCELIST,
         backoff_factor=_RETRY_BACKOFF_FACTOR,
-        backoff_jitter=_RETRY_BACKOFF_JITTER,
         respect_retry_after_header=True,
         raise_on_status=False,
     )
+    if _RETRY_SUPPORTS_JITTER:
+        retry_kwargs["backoff_jitter"] = _RETRY_BACKOFF_JITTER
+    retry = Retry(**retry_kwargs)
     adapter = HTTPAdapter(max_retries=retry)
     session = requests.Session()
     session.mount("http://", adapter)
