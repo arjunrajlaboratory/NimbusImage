@@ -25,6 +25,23 @@ class TestAnnotationListAfterId:
         call_url = mock_gc.get.call_args[0][0]
         assert "afterId" not in call_url
 
+    def test_list_passes_sort(self, mock_gc):
+        mock_gc.get.return_value = []
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+
+        accessor.list(sort="_id", sortdir=1)
+        call_url = mock_gc.get.call_args[0][0]
+        assert "sort=_id" in call_url
+        assert "sortdir=1" in call_url
+
+    def test_list_omits_sort_by_default(self, mock_gc):
+        mock_gc.get.return_value = []
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+
+        accessor.list()
+        call_url = mock_gc.get.call_args[0][0]
+        assert "sort=" not in call_url
+
 
 class TestAnnotationIterAll:
     """NIM-002: iter_all() walks the stable afterId cursor.
@@ -52,6 +69,45 @@ class TestAnnotationIterAll:
         assert "limit=2" in urls[0]
         assert "afterId=a2" in urls[1]
         assert "afterId=a3" in urls[2]
+
+    def test_iter_all_requests_id_sort_every_page(self, mock_gc):
+        """The afterId cursor is only correct if the server sorts by _id,
+        so iter_all must force sort=_id&sortdir=1 on every request — the
+        backend otherwise defaults to lowerName."""
+        mock_gc.get.side_effect = [
+            [{"_id": "a1", "shape": "point"}],
+            [],
+        ]
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+
+        list(accessor.iter_all(page_size=1))
+        for call in mock_gc.get.call_args_list:
+            url = call[0][0]
+            assert "sort=_id" in url
+            assert "sortdir=1" in url
+
+    def test_iter_all_correct_when_backend_unsorted(self, mock_gc):
+        """If the server only returns _id-ordered pages when sort=_id is
+        requested (and scrambled order otherwise), iter_all must still yield
+        every record once — proving it relies on the sort param, not luck."""
+        ordered = ["a1", "a2", "a3", "a4", "a5"]
+        scrambled = ["a3", "a1", "a5", "a2", "a4"]
+
+        def fake_get(url):
+            after = None
+            if "afterId=" in url:
+                after = url.split("afterId=", 1)[1].split("&", 1)[0]
+            limit = int(url.split("limit=", 1)[1].split("&", 1)[0])
+            source = ordered if "sort=_id" in url else scrambled
+            pool = [i for i in source if after is None or i > after]
+            return [{"_id": i, "shape": "point"} for i in pool[:limit]]
+
+        mock_gc.get.side_effect = fake_get
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+
+        seen = [a.id for a in accessor.iter_all(page_size=2)]
+        assert sorted(seen) == ordered
+        assert seen == sorted(seen)
 
     def test_iter_all_raises_if_page_item_has_no_id(self, mock_gc):
         """A missing _id would otherwise drop the cursor and infinite-loop."""

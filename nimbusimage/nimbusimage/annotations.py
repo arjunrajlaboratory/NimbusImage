@@ -27,6 +27,8 @@ class AnnotationAccessor:
         limit: int = 0,
         offset: int = 0,
         after_id: str | None = None,
+        sort: str | None = None,
+        sortdir: int = 1,
     ) -> list[Annotation]:
         """List annotations in this dataset.
 
@@ -41,7 +43,13 @@ class AnnotationAccessor:
                 cursor) for delete/modify-as-you-go loops.
             after_id: Return only annotations whose ``_id`` is greater than
                 this one (a stable cursor). When set, the server ignores
-                ``offset``. Prefer :meth:`iter_all` over passing this by hand.
+                ``offset``. Only meaningful with ``sort="_id"`` (the server
+                otherwise defaults to a non-``_id`` sort); prefer
+                :meth:`iter_all`, which sets this for you.
+            sort: Field to sort by (e.g. ``"_id"``). If omitted, the server
+                uses its own default sort, which is **not** ``_id``.
+            sortdir: Sort direction, ``1`` ascending or ``-1`` descending.
+                Only applied when ``sort`` is set.
 
         Returns:
             List of Annotation objects.
@@ -56,6 +64,8 @@ class AnnotationAccessor:
             url += f"&tags={json.dumps(tags)}"
         if after_id:
             url += f"&afterId={after_id}"
+        if sort:
+            url += f"&sort={sort}&sortdir={sortdir}"
 
         data = self._gc.get(url)
         return [Annotation.from_dict(d) for d in data]
@@ -77,10 +87,11 @@ class AnnotationAccessor:
         This is the recommended way to fetch large result sets and to drive
         delete-as-you-go cleanup loops.
 
-        Note:
-            Correctness relies on the server returning each page in
-            ascending ``_id`` order (so ``page[-1]`` is the largest ``_id``
-            in the page). This holds for annotations today.
+        The cursor's correctness requires each page to come back in
+        ascending ``_id`` order (so ``page[-1]`` is the largest ``_id`` in
+        the page). The server's default sort is **not** ``_id``, so this
+        explicitly requests ``sort="_id"`` on every page — without it the
+        cursor could skip, duplicate, or loop on records.
 
         Args:
             shape: Filter by shape ('polygon', 'point', 'line').
@@ -97,6 +108,8 @@ class AnnotationAccessor:
                 tags=tags,
                 limit=page_size,
                 after_id=after_id,
+                sort="_id",
+                sortdir=1,
             )
             if not page:
                 break
