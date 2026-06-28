@@ -92,6 +92,16 @@
       >
         <v-icon size="20">mdi-axis-arrow</v-icon>
       </v-btn>
+      <v-btn
+        variant="text"
+        size="small"
+        icon
+        :color="showBoundingBox ? 'primary' : undefined"
+        title="Scaled bounding box (µm)"
+        @click="showBoundingBox = !showBoundingBox"
+      >
+        <v-icon size="20">mdi-grid</v-icon>
+      </v-btn>
 
       <v-divider vertical />
 
@@ -183,6 +193,7 @@ import vtkActor, {
   vtkActor as VtkActor,
 } from "@kitware/vtk.js/Rendering/Core/Actor";
 import vtkAxesActor from "@kitware/vtk.js/Rendering/Core/AxesActor";
+import vtkCubeAxesActor from "@kitware/vtk.js/Rendering/Core/CubeAxesActor";
 import vtkOrientationMarkerWidget, {
   vtkOrientationMarkerWidget as VtkOrientationMarkerWidget,
 } from "@kitware/vtk.js/Interaction/Widgets/OrientationMarkerWidget";
@@ -233,6 +244,13 @@ interface IVolumePipeline {
   actor: VtkVolume;
 }
 
+// CubeAxesActor ships without types; it's a vtkActor with these extra methods.
+type VtkCubeAxesActor = VtkActor & {
+  setCamera(camera: unknown): boolean;
+  setDataBounds(bounds: number[]): boolean;
+  setGridLines(value: boolean): boolean;
+};
+
 const vtkContainer = ref<HTMLElement | null>(null);
 const loading = ref(false);
 const statusText = ref("");
@@ -246,6 +264,7 @@ const SEGMENTATION_OPACITY = 0.55;
 let genericRenderWindow: VtkGenericRenderWindow | null = null;
 let orientationWidget: VtkOrientationMarkerWidget | null = null;
 let axesActor: ReturnType<typeof vtkAxesActor.newInstance> | null = null;
+let cubeAxesActor: VtkCubeAxesActor | null = null;
 let volumePipelines: IVolumePipeline[] = [];
 let segmentationActor: VtkActor | null = null;
 let segmentationMapper: VtkMapper | null = null;
@@ -290,6 +309,11 @@ const showSegmentations = computed({
 const showAxes = computed({
   get: () => volumeViewStore.showAxes,
   set: (value: boolean) => volumeViewStore.setShowAxes(value),
+});
+
+const showBoundingBox = computed({
+  get: () => volumeViewStore.showBoundingBox,
+  set: (value: boolean) => volumeViewStore.setShowBoundingBox(value),
 });
 
 const segmentationColorMode = computed<TVolumeSegmentationColorMode>({
@@ -449,6 +473,33 @@ function resetCamera() {
   render();
 }
 
+function boundsFromGeometry(geometry: VolumeGeometry): number[] {
+  const [dx, dy, dz] = geometry.dimensions;
+  const [sx, sy, sz] = geometry.spacing;
+  const [ox, oy, oz] = geometry.origin;
+  return [
+    ox,
+    ox + (dx - 1) * sx,
+    oy,
+    oy + (dy - 1) * sy,
+    oz,
+    oz + (dz - 1) * sz,
+  ];
+}
+
+// Scaled bounding box (µm tick labels). Tracks the current volume bounds and
+// is only shown when enabled and a volume exists.
+function updateBoundingBox() {
+  if (!cubeAxesActor) {
+    return;
+  }
+  if (activeGeometry) {
+    cubeAxesActor.setDataBounds(boundsFromGeometry(activeGeometry));
+  }
+  cubeAxesActor.setVisibility(showBoundingBox.value && !!activeGeometry);
+  render();
+}
+
 function addChannelVolume(volume: ChannelVolume) {
   const currentRenderer = renderer();
   if (!currentRenderer) {
@@ -515,6 +566,7 @@ async function rebuildVolume() {
     volumes.forEach(addChannelVolume);
     activeGeometry = volumes[0]?.geometry ?? null;
     updateSegmentationActor();
+    updateBoundingBox();
     // Reframe only when the volume geometry fundamentally changes (dataset or
     // depth axis); contrast / channel-visibility rebuilds keep the camera.
     const signature = `${currentDataset.id}|${axisMode.value}`;
@@ -636,13 +688,21 @@ onMounted(async () => {
       interactor: genericRenderWindow.getInteractor(),
     }),
   );
+  // Bottom-right corner; the toolbar/status are shifted left to leave room.
   orientationWidget.setViewportCorner(
-    vtkOrientationMarkerWidget.Corners.TOP_RIGHT,
+    vtkOrientationMarkerWidget.Corners.BOTTOM_RIGHT,
   );
   orientationWidget.setViewportSize(0.15);
   orientationWidget.setMinPixelSize(80);
   orientationWidget.setMaxPixelSize(160);
   orientationWidget.setEnabled(showAxes.value);
+
+  // Scaled bounding box with µm tick labels (off until toggled / a build runs).
+  cubeAxesActor = markRaw(vtkCubeAxesActor.newInstance() as VtkCubeAxesActor);
+  cubeAxesActor.setCamera(genericRenderWindow.getRenderer().getActiveCamera());
+  cubeAxesActor.setGridLines(false);
+  cubeAxesActor.setVisibility(false);
+  genericRenderWindow.getRenderer().addActor(cubeAxesActor);
 
   resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(vtkContainer.value);
@@ -660,6 +720,11 @@ onBeforeUnmount(() => {
   orientationWidget = null;
   axesActor?.delete();
   axesActor = null;
+  if (cubeAxesActor) {
+    renderer()?.removeActor(cubeAxesActor);
+    cubeAxesActor.delete();
+    cubeAxesActor = null;
+  }
   genericRenderWindow?.delete();
   genericRenderWindow = null;
 });
@@ -679,6 +744,7 @@ watch(showAxes, (value) => {
   orientationWidget?.setEnabled(value);
   render();
 });
+watch(showBoundingBox, updateBoundingBox);
 watch(colorKey, applyLayerColors);
 // Segmentation-only inputs (these don't change the volume, so they don't go
 // through rebuildVolume). Navigation / axis changes update segmentations via
@@ -728,12 +794,15 @@ defineExpose({
   inset: 0;
 }
 
-// The 2D/3D toggle lives in the top app bar, and 3D mode has no scalebar, so
-// the volume toolbar sits in the bottom-right corner with the status readout
-// stacked just above it — all clear of the left-hand navigator/layers panels.
+// The 2D/3D toggle lives in the top app bar. The orientation gizmo sits in the
+// bottom-right corner, so the toolbar and status are offset left of it (and
+// clear of the left-hand navigator/layers panels). The status stacks just
+// above the toolbar.
+$gizmo-clearance: 130px;
+
 .volume-toolbar {
   position: absolute;
-  right: 10px;
+  right: $gizmo-clearance;
   bottom: 10px;
   z-index: 1000;
   display: flex;
@@ -761,7 +830,7 @@ defineExpose({
 
 .volume-status {
   position: absolute;
-  right: 10px;
+  right: $gizmo-clearance;
   bottom: 56px;
   z-index: 1000;
   display: flex;

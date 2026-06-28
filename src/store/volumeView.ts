@@ -23,6 +23,8 @@ export class VolumeView extends VuexModule {
   showVolume: boolean = true;
   showSegmentations: boolean = false;
   showAxes: boolean = true;
+  // Scaled bounding box (CubeAxesActor) with µm tick labels — off by default.
+  showBoundingBox: boolean = false;
   segmentationColorMode: TVolumeSegmentationColorMode = "tag";
   segmentationPropertyPath: string[] = [];
   // Depth spacing (µm) to use when time is the depth axis. null → auto default
@@ -57,6 +59,11 @@ export class VolumeView extends VuexModule {
   @Mutation
   setShowAxes(value: boolean) {
     this.showAxes = value;
+  }
+
+  @Mutation
+  setShowBoundingBox(value: boolean) {
+    this.showBoundingBox = value;
   }
 
   @Mutation

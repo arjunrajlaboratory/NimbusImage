@@ -12,6 +12,14 @@ const h = vi.hoisted(() => {
     addActor: vi.fn(),
     removeActor: vi.fn(),
     resetCamera: vi.fn(),
+    getActiveCamera: vi.fn(() => ({})),
+  };
+  const cubeAxes = {
+    setCamera: vi.fn(),
+    setDataBounds: vi.fn(),
+    setGridLines: vi.fn(),
+    setVisibility: vi.fn(),
+    delete: vi.fn(),
   };
   const orientationWidget = {
     setViewportCorner: vi.fn(),
@@ -34,6 +42,7 @@ const h = vi.hoisted(() => {
     annotationsTo3D: vi.fn(),
     renderer,
     orientationWidget,
+    cubeAxes,
     property,
   };
 });
@@ -99,10 +108,13 @@ vi.mock("@kitware/vtk.js/Rendering/Core/Mapper", () => ({
 vi.mock("@kitware/vtk.js/Rendering/Core/AxesActor", () => ({
   default: { newInstance: vi.fn(() => ({ delete: vi.fn() })) },
 }));
+vi.mock("@kitware/vtk.js/Rendering/Core/CubeAxesActor", () => ({
+  default: { newInstance: vi.fn(() => h.cubeAxes) },
+}));
 vi.mock("@kitware/vtk.js/Interaction/Widgets/OrientationMarkerWidget", () => ({
   default: {
     newInstance: vi.fn(() => h.orientationWidget),
-    Corners: { TOP_RIGHT: 3 },
+    Corners: { BOTTOM_LEFT: 0, BOTTOM_RIGHT: 1, TOP_LEFT: 2, TOP_RIGHT: 3 },
   },
 }));
 
@@ -153,6 +165,7 @@ vi.mock("@/store/volumeView", () => {
     showVolume: true,
     showSegmentations: true,
     showAxes: true,
+    showBoundingBox: false,
     segmentationColorMode: "tag",
     segmentationPropertyPath: [] as string[],
     timeStepUmOverride: null as number | null,
@@ -162,6 +175,7 @@ vi.mock("@/store/volumeView", () => {
     setShowVolume: (v: boolean) => (state.showVolume = v),
     setShowSegmentations: (v: boolean) => (state.showSegmentations = v),
     setShowAxes: (v: boolean) => (state.showAxes = v),
+    setShowBoundingBox: (v: boolean) => (state.showBoundingBox = v),
     setSegmentationColorMode: (v: string) => (state.segmentationColorMode = v),
     setSegmentationPropertyPath: (v: string[]) =>
       (state.segmentationPropertyPath = v),
@@ -191,7 +205,14 @@ import VolumeViewer from "./VolumeViewer.vue";
 const fakeVolume = {
   layer: { id: "dapi" },
   imageData: {},
-  geometry: { dimensions: [4, 4, 3], depthStride: 1 },
+  geometry: {
+    unit: "um",
+    dimensions: [4, 4, 3],
+    spacing: [1, 1, 1],
+    origin: [0, 0, 0],
+    sourceSize: [4, 4],
+    depthStride: 1,
+  },
 };
 
 function segResult() {
@@ -232,8 +253,10 @@ beforeEach(() => {
   // Reset store-driven state between tests.
   volumeViewStore.setAxis("z");
   volumeViewStore.setShowAxes(true);
+  volumeViewStore.setShowBoundingBox(false);
   volumeViewStore.setShowSegmentations(true);
   volumeViewStore.setSegmentationColorMode("tag");
+  h.cubeAxes.setVisibility.mockClear();
   h.buildVolume.mockReset().mockResolvedValue([fakeVolume]);
   h.annotationsTo3D.mockReset().mockImplementation(segResult);
   h.renderer.resetCamera.mockClear();
@@ -275,6 +298,18 @@ describe("VolumeViewer", () => {
     await nextTick();
 
     expect(h.orientationWidget.setEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it("shows the scaled bounding box with the volume bounds when toggled", async () => {
+    await mountReady();
+    h.cubeAxes.setVisibility.mockClear();
+    h.cubeAxes.setDataBounds.mockClear();
+
+    volumeViewStore.setShowBoundingBox(true);
+    await nextTick();
+
+    expect(h.cubeAxes.setVisibility).toHaveBeenLastCalledWith(true);
+    expect(h.cubeAxes.setDataBounds).toHaveBeenCalled();
   });
 
   it("rebuilds segmentations on color-mode change without rebuilding the volume", async () => {
