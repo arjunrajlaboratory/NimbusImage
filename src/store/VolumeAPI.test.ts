@@ -248,4 +248,50 @@ describe("TileFrameVolumeSource", () => {
 
     expect(volume.imageData.getSpacing()).toEqual([2, 4, 5]);
   });
+
+  it("subsamples the depth axis past the cap and scales depth spacing", async () => {
+    // 6 z-planes at 3 µm steps (from PositionZ).
+    const images = Array.from({ length: 6 }, (_unused, z) =>
+      makeImage(z, z, z * 3),
+    );
+    const dataset = makeDataset(images);
+    const layerStackImage: ILayerStackImage = {
+      layer,
+      images: [images[0]],
+      urls: [],
+      fullUrls: [],
+      hist: null,
+      singleFrame: null,
+    };
+    const client: { get: any } = {
+      get: vi.fn(async () => ({ data: new Blob(["png"]) })),
+    };
+
+    const source = new TileFrameVolumeSource(client as any, {
+      concurrency: 1,
+      maxXYDimension: 8,
+      maxDepth: 3,
+      scalarMemoryBudgetBytes: 1024 * 1024,
+    });
+    const [volume] = await source.buildVolume({
+      dataset,
+      layers: [layerStackImage],
+      xy: 0,
+      z: 0,
+      time: 0,
+      zStepUmOverride: null,
+    });
+
+    // 6 planes capped at 3 -> stride 2 -> keep z 0, 2, 4.
+    expect(volume.imageData.getDimensions()).toEqual([8, 4, 3]);
+    expect(volume.geometry.depthStride).toBe(2);
+    // Per-plane z step 3 µm × stride 2 = 6 µm.
+    expect(volume.imageData.getSpacing()).toEqual([1, 2, 6]);
+
+    const getMock = client.get as ReturnType<typeof vi.fn>;
+    expect(getMock).toHaveBeenCalledTimes(3);
+    expect(getMock.mock.calls.map((call: any) => call[1].params.frame)).toEqual(
+      [0, 2, 4],
+    );
+  });
 });

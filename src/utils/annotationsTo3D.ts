@@ -234,9 +234,14 @@ export function annotationsTo3D(
   let minScalar = Number.POSITIVE_INFINITY;
   let maxScalar = Number.NEGATIVE_INFINITY;
 
+  // When the volume depth was subsampled, original depth index d maps to the
+  // (possibly fractional) voxel position d / depthStride, keeping the prism at
+  // its true physical depth.
+  const depthStride = options.geometry.depthStride ?? 1;
   polygons.forEach(({ annotation, polygon }, index) => {
-    const depthIndex =
+    const originalDepth =
       axis === "z" ? annotation.location.Z : annotation.location.Time;
+    const depthIndex = originalDepth / depthStride;
     if (depthIndex < 0 || depthIndex >= options.geometry.dimensions[2]) {
       skippedByShape.outOfBoundsDepth =
         (skippedByShape.outOfBoundsDepth ?? 0) + 1;

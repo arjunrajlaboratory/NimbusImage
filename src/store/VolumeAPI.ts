@@ -24,6 +24,10 @@ export interface VolumeGeometry {
   origin: [number, number, number];
   dimensions: [number, number, number];
   sourceSize: [number, number];
+  // How many original depth planes each rendered voxel represents (>1 when the
+  // depth axis was subsampled to fit the cap). Used to place annotations.
+  // Optional for back-compat; treated as 1 when absent.
+  depthStride?: number;
 }
 
 export interface ChannelVolume {
@@ -46,6 +50,7 @@ export interface VolumeRequest {
   // Depth spacing (µm) to use when axis === "t". null/undefined → 5× pixel size.
   timeStepUmOverride?: number | null;
   maxXYDimension?: number;
+  maxDepth?: number;
   scalarMemoryBudgetBytes?: number;
 }
 
@@ -59,6 +64,7 @@ export interface VolumeSource {
 interface ITileFrameVolumeSourceOptions {
   concurrency?: number;
   maxXYDimension?: number;
+  maxDepth?: number;
   scalarMemoryBudgetBytes?: number;
 }
 
@@ -75,6 +81,10 @@ interface IResolvedLayer {
 const defaultOptions: Required<ITileFrameVolumeSourceOptions> = {
   concurrency: 5,
   maxXYDimension: 512,
+  // Cap the depth (z/time) count. Keeps the GPU 3D texture under common WebGL2
+  // limits (~2048) and bounds the number of frame fetches. Deeper stacks are
+  // subsampled (every Nth plane).
+  maxDepth: 512,
   scalarMemoryBudgetBytes: 128 * 1024 * 1024,
 };
 
@@ -342,7 +352,22 @@ export class TileFrameVolumeSource implements VolumeSource {
       request.maxXYDimension ?? this.options.maxXYDimension;
     const scalarMemoryBudgetBytes =
       request.scalarMemoryBudgetBytes ?? this.options.scalarMemoryBudgetBytes;
-    const axisValues = axis === "z" ? request.dataset.z : request.dataset.time;
+    const allAxisValues =
+      axis === "z" ? request.dataset.z : request.dataset.time;
+    // Cap the depth: subsample to every Nth plane/timepoint so the GPU 3D
+    // texture stays under WebGL limits and the fetch count stays bounded.
+    const maxDepth = request.maxDepth ?? this.options.maxDepth;
+    const depthStride = Math.max(1, Math.ceil(allAxisValues.length / maxDepth));
+    const axisValues = allAxisValues.filter(
+      (_value, index) => index % depthStride === 0,
+    );
+    if (depthStride > 1) {
+      logWarning(
+        `3D volume depth subsampled: showing every ${depthStride} ` +
+          `${axis === "z" ? "z-planes" : "timepoints"} ` +
+          `(${axisValues.length}/${allAxisValues.length})`,
+      );
+    }
     // Only infer z spacing when z is the depth axis, so time mode never logs a
     // spurious "unable to infer z spacing" warning.
     const zStepUm =
@@ -396,10 +421,12 @@ export class TileFrameVolumeSource implements VolumeSource {
           );
         }
 
-        const thirdSpacingUm =
+        const perPlaneSpacingUm =
           axis === "z"
             ? zStepUm
             : inferTimeStepUm(firstImage, request.timeStepUmOverride);
+        // Subsampled voxels are `depthStride` original planes apart.
+        const thirdSpacingUm = perPlaneSpacingUm * depthStride;
         const [pixelUmX, pixelUmY] = effectivePixelSizeUm(firstImage);
         const geometry: VolumeGeometry = {
           unit: "um",
@@ -411,6 +438,7 @@ export class TileFrameVolumeSource implements VolumeSource {
           origin: [0, 0, 0],
           dimensions: [fetchedWidth, fetchedHeight, depthCount],
           sourceSize: [firstImage.sizeX, firstImage.sizeY],
+          depthStride,
         };
         const scalarData = new Uint8Array(
           fetchedWidth * fetchedHeight * depthCount,
