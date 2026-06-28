@@ -1,22 +1,6 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
   <div class="viewer">
-    <div class="viewer-mode-toggle">
-      <v-btn-toggle
-        v-model="volumeViewMode"
-        mandatory
-        density="compact"
-        variant="outlined"
-        color="primary"
-      >
-        <v-btn value="2d" size="small" title="2D">
-          <v-icon size="18">mdi-image-outline</v-icon>
-        </v-btn>
-        <v-btn value="3d" size="small" title="3D">
-          <v-icon size="18">mdi-cube-scan</v-icon>
-        </v-btn>
-      </v-btn-toggle>
-    </div>
     <image-viewer
       v-if="volumeViewMode === '2d'"
       class="main"
@@ -36,16 +20,13 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
-import { TVolumeViewMode } from "@/store/model";
 
 const shouldResetMaps = ref(false);
 
 const dataset = computed(() => store.dataset);
 const configuration = computed(() => store.configuration);
-const volumeViewMode = computed<TVolumeViewMode>({
-  get: () => volumeViewStore.viewMode,
-  set: (value) => volumeViewStore.setViewMode(value),
-});
+// Read-only: the 2D/3D toggle lives in the top app bar (App.vue).
+const volumeViewMode = computed(() => volumeViewStore.viewMode);
 
 function datasetChanged() {
   if (dataset.value && dataset.value.time.length <= 1) {
@@ -103,17 +84,5 @@ defineExpose({
 
 .main {
   flex: 1 1 0;
-}
-
-.viewer-mode-toggle {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  z-index: 1300;
-  padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 6px;
-  background: rgba(18, 24, 30, 0.78);
-  backdrop-filter: blur(10px);
 }
 </style>

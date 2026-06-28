@@ -728,13 +728,13 @@ defineExpose({
   inset: 0;
 }
 
-// The 2D/3D switcher (in Viewer.vue) sits in the bottom-right corner; the
-// volume toolbar stacks just above it, and the status/progress readout above
-// that — all clear of the left-hand navigator/layers panels.
+// The 2D/3D toggle lives in the top app bar, and 3D mode has no scalebar, so
+// the volume toolbar sits in the bottom-right corner with the status readout
+// stacked just above it — all clear of the left-hand navigator/layers panels.
 .volume-toolbar {
   position: absolute;
   right: 10px;
-  bottom: 56px;
+  bottom: 10px;
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -762,7 +762,7 @@ defineExpose({
 .volume-status {
   position: absolute;
   right: 10px;
-  bottom: 112px;
+  bottom: 56px;
   z-index: 1000;
   display: flex;
   align-items: center;
