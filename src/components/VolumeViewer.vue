@@ -395,6 +395,15 @@ const volumeBuildKey = computed(() =>
       id: layerStackImage.layer.id,
       channel: layerStackImage.layer.channel,
       contrast: layerStackImage.layer.contrast,
+      // Slice settings pick which frame(s) feed the volume (see
+      // resolveVisibleLayers): the xy slice always, and the fixed (non-depth)
+      // axis slice. The depth axis iterates all of its values, so its own
+      // slice setting is irrelevant and intentionally omitted.
+      xy: layerStackImage.layer.xy,
+      fixedSlice:
+        axisMode.value === "z"
+          ? layerStackImage.layer.time
+          : layerStackImage.layer.z,
     })),
   }),
 );
