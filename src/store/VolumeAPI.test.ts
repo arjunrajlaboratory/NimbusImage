@@ -312,31 +312,23 @@ describe("TileFrameVolumeSource", () => {
       hist: null,
       singleFrame: null,
     };
-    // Histogram endpoint returns a per-frame range; region returns a PNG blob.
     const client: { get: any } = {
-      get: vi.fn(async (url: string, config: any) => {
-        if (url.includes("/histogram")) {
-          const frame = config.params.frame;
-          return {
-            data: [
-              {
-                min: frame,
-                max: 100 + frame,
-                samples: 5,
-                hist: [],
-                bin_edges: [],
-              },
-            ],
-          };
-        }
-        return { data: new Blob(["png"]) };
-      }),
+      get: vi.fn(async () => ({ data: new Blob(["png"]) })),
     };
+    // Injected fetcher returns the merged whole-cube range.
+    const getLayerHistogram = vi.fn(async (images: IImage[]) => ({
+      min: 0,
+      max: 102,
+      samples: images.length * 5,
+      hist: [],
+      bin_edges: [0, 102],
+    }));
 
     const source = new TileFrameVolumeSource(client as any, {
       concurrency: 1,
       maxXYDimension: 4,
       scalarMemoryBudgetBytes: 1024 * 1024,
+      getLayerHistogram,
     });
     await source.buildVolume({
       dataset,
@@ -347,16 +339,11 @@ describe("TileFrameVolumeSource", () => {
       zStepUmOverride: 5,
     });
 
-    const getMock = client.get as ReturnType<typeof vi.fn>;
-    const histogramCalls = getMock.mock.calls.filter((call: any) =>
-      call[0].includes("/histogram"),
-    );
-    const regionCalls = getMock.mock.calls.filter((call: any) =>
-      call[0].includes("/region"),
-    );
-    // Histograms fetched for all 3 frames; merged cube range = [0, 102].
-    expect(histogramCalls.length).toBe(3);
-    const style = JSON.parse(regionCalls[0][1].params.style);
+    // The cube histogram (one merged call over the sampled frames) drives the
+    // windowing for every frame: black/white 0–100 → [0, 102].
+    expect(getLayerHistogram).toHaveBeenCalledTimes(1);
+    expect(getLayerHistogram.mock.calls[0][0]).toHaveLength(3);
+    const style = JSON.parse(client.get.mock.calls[0][1].params.style);
     expect(style.min).toBe(0);
     expect(style.max).toBe(102);
   });

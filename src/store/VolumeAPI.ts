@@ -16,12 +16,14 @@ import {
   ILayerStackImage,
   TVolumeAxis,
 } from "@/store/model";
-import {
-  ITileHistogram,
-  ITileOptions,
-  mergeHistograms,
-  toStyle,
-} from "@/store/images";
+import { ITileHistogram, ITileOptions, toStyle } from "@/store/images";
+
+// Fetches and merges the histograms for a set of frames into one range. Injected
+// so the volume reuses GirderAPI's cached, merging implementation rather than
+// duplicating histogram fetching here.
+export type LayerHistogramFetcher = (
+  images: IImage[],
+) => Promise<ITileHistogram | null>;
 
 export interface VolumeGeometry {
   unit: "um";
@@ -74,7 +76,14 @@ interface ITileFrameVolumeSourceOptions {
   // How many depth frames to sample when estimating the whole-cube intensity
   // range for percentile contrast windowing.
   histogramSampleCount?: number;
+  // Supplies the (cached, merging) histogram for a set of frames. Required for
+  // percentile contrast; absolute contrast never calls it.
+  getLayerHistogram?: LayerHistogramFetcher;
 }
+
+type RequiredNumericOptions = Required<
+  Omit<ITileFrameVolumeSourceOptions, "getLayerHistogram">
+>;
 
 interface IResolvedLayer {
   layerStackImage: ILayerStackImage;
@@ -86,7 +95,7 @@ interface IResolvedLayer {
   channelValue: number;
 }
 
-const defaultOptions: Required<ITileFrameVolumeSourceOptions> = {
+const defaultOptions: RequiredNumericOptions = {
   concurrency: 5,
   maxXYDimension: 512,
   // Cap the depth (z/time) count. Keeps the GPU 3D texture under common WebGL2
@@ -317,51 +326,34 @@ async function decodePngToGrayscale(
 
 export class TileFrameVolumeSource implements VolumeSource {
   private readonly client: RestClientInstance;
-  private readonly options: Required<ITileFrameVolumeSourceOptions>;
+  private readonly options: RequiredNumericOptions;
+  private readonly getLayerHistogram: LayerHistogramFetcher | null;
 
   constructor(
     client: RestClientInstance,
     options: ITileFrameVolumeSourceOptions = {},
   ) {
     this.client = client;
-    this.options = { ...defaultOptions, ...options };
+    const { getLayerHistogram, ...numericOptions } = options;
+    this.options = { ...defaultOptions, ...numericOptions };
+    this.getLayerHistogram = getLayerHistogram ?? null;
   }
 
-  // Whole-cube intensity range for percentile windowing: sample depth frames,
-  // fetch each one's histogram, and merge to min-of-mins / max-of-maxs. This
-  // makes the volume windowing independent of which single z/t the navigator
-  // is on (a per-frame histogram would shift the whole volume as you scrub).
+  // Whole-cube intensity range for percentile windowing: sample depth frames
+  // and get their merged histogram. This makes the windowing independent of
+  // which single z/t the navigator is on (a per-frame histogram would shift the
+  // whole volume as you scrub). Delegates to the injected (cached) fetcher.
   private async fetchCubeHistogram(
     images: IImage[],
-    limit: <T>(fn: () => Promise<T>) => Promise<T>,
-    signal?: AbortSignal,
   ): Promise<ITileHistogram | null> {
+    if (!this.getLayerHistogram) {
+      return null;
+    }
     const sampled = sampleEvenly(images, this.options.histogramSampleCount);
     if (sampled.length === 0) {
       return null;
     }
-    const histograms = await Promise.all(
-      sampled.map((image) =>
-        limit(async () => {
-          throwIfAborted(signal);
-          const response = await this.client.get(
-            `item/${image.item._id}/tiles/histogram`,
-            {
-              params: {
-                frame: image.frameIndex,
-                bins: 256,
-                width: 1024,
-                height: 1024,
-                resample: false,
-              },
-              signal,
-            },
-          );
-          return response.data[0] as ITileHistogram;
-        }),
-      ),
-    );
-    return mergeHistograms(histograms);
+    return this.getLayerHistogram(sampled);
   }
 
   private async fetchFrame(
@@ -509,8 +501,6 @@ export class TileFrameVolumeSource implements VolumeSource {
             ? null
             : await this.fetchCubeHistogram(
                 sourceImages.filter((image): image is IImage => image !== null),
-                limit,
-                signal,
               );
 
         await Promise.all(

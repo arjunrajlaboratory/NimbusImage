@@ -236,10 +236,16 @@ interface IVolumePipeline {
 const vtkContainer = ref<HTMLElement | null>(null);
 const loading = ref(false);
 const statusText = ref("");
-const volumeSource = new TileFrameVolumeSource(store.girderRestProxy);
+const volumeSource = new TileFrameVolumeSource(store.girderRestProxy, {
+  // Reuse GirderAPI's cached, merging histogram fetch for whole-cube windowing.
+  getLayerHistogram: (images) => store.api.getLayerHistogram(images),
+});
+
+const SEGMENTATION_OPACITY = 0.55;
 
 let genericRenderWindow: VtkGenericRenderWindow | null = null;
 let orientationWidget: VtkOrientationMarkerWidget | null = null;
+let axesActor: ReturnType<typeof vtkAxesActor.newInstance> | null = null;
 let volumePipelines: IVolumePipeline[] = [];
 let segmentationActor: VtkActor | null = null;
 let segmentationMapper: VtkMapper | null = null;
@@ -571,7 +577,7 @@ function updateSegmentationActor() {
 
   segmentationActor = vtkActor.newInstance();
   segmentationActor.setMapper(segmentationMapper);
-  segmentationActor.getProperty().setOpacity(0.55);
+  segmentationActor.getProperty().setOpacity(SEGMENTATION_OPACITY);
   // Backface culling off: earcut cap triangulation has arbitrary winding, and
   // the translucent prisms should render both faces.
   segmentationActor.getProperty().setBackfaceCulling(false);
@@ -623,9 +629,10 @@ onMounted(async () => {
 
   // Orientation gizmo (corner XYZ axes that rotate with the camera). The depth
   // axis is the blue Z arrow whether it represents z-planes or time.
+  axesActor = markRaw(vtkAxesActor.newInstance());
   orientationWidget = markRaw(
     vtkOrientationMarkerWidget.newInstance({
-      actor: vtkAxesActor.newInstance(),
+      actor: axesActor,
       interactor: genericRenderWindow.getInteractor(),
     }),
   );
@@ -651,6 +658,8 @@ onBeforeUnmount(() => {
   orientationWidget?.setEnabled(false);
   orientationWidget?.delete();
   orientationWidget = null;
+  axesActor?.delete();
+  axesActor = null;
   genericRenderWindow?.delete();
   genericRenderWindow = null;
 });
