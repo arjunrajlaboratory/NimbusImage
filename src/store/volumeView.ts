@@ -22,6 +22,7 @@ export class VolumeView extends VuexModule {
   blendMode: TVolumeBlendMode = "composite";
   showVolume: boolean = true;
   showSegmentations: boolean = false;
+  showAxes: boolean = true;
   segmentationColorMode: TVolumeSegmentationColorMode = "tag";
   segmentationPropertyPath: string[] = [];
   // Depth spacing (µm) to use when time is the depth axis. null → auto default
@@ -51,6 +52,11 @@ export class VolumeView extends VuexModule {
   @Mutation
   setShowSegmentations(value: boolean) {
     this.showSegmentations = value;
+  }
+
+  @Mutation
+  setShowAxes(value: boolean) {
+    this.showAxes = value;
   }
 
   @Mutation

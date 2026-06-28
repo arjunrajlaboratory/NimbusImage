@@ -82,6 +82,16 @@
       >
         <v-icon size="20">mdi-fit-to-page-outline</v-icon>
       </v-btn>
+      <v-btn
+        variant="text"
+        size="small"
+        icon
+        :color="showAxes ? 'primary' : undefined"
+        title="Orientation axes"
+        @click="showAxes = !showAxes"
+      >
+        <v-icon size="20">mdi-axis-arrow</v-icon>
+      </v-btn>
 
       <v-divider vertical />
 
@@ -172,6 +182,10 @@ import "@kitware/vtk.js/Rendering/Profiles/Volume";
 import vtkActor, {
   vtkActor as VtkActor,
 } from "@kitware/vtk.js/Rendering/Core/Actor";
+import vtkAxesActor from "@kitware/vtk.js/Rendering/Core/AxesActor";
+import vtkOrientationMarkerWidget, {
+  vtkOrientationMarkerWidget as VtkOrientationMarkerWidget,
+} from "@kitware/vtk.js/Interaction/Widgets/OrientationMarkerWidget";
 import vtkMapper, {
   vtkMapper as VtkMapper,
 } from "@kitware/vtk.js/Rendering/Core/Mapper";
@@ -225,6 +239,7 @@ const statusText = ref("");
 const volumeSource = new TileFrameVolumeSource(store.girderRestProxy);
 
 let genericRenderWindow: VtkGenericRenderWindow | null = null;
+let orientationWidget: VtkOrientationMarkerWidget | null = null;
 let volumePipelines: IVolumePipeline[] = [];
 let segmentationActor: VtkActor | null = null;
 let segmentationMapper: VtkMapper | null = null;
@@ -264,6 +279,11 @@ const showVolume = computed({
 const showSegmentations = computed({
   get: () => volumeViewStore.showSegmentations,
   set: (value: boolean) => volumeViewStore.setShowSegmentations(value),
+});
+
+const showAxes = computed({
+  get: () => volumeViewStore.showAxes,
+  set: (value: boolean) => volumeViewStore.setShowAxes(value),
 });
 
 const segmentationColorMode = computed<TVolumeSegmentationColorMode>({
@@ -618,6 +638,23 @@ onMounted(async () => {
     }),
   );
   genericRenderWindow.setContainer(vtkContainer.value);
+
+  // Orientation gizmo (corner XYZ axes that rotate with the camera). The depth
+  // axis is the blue Z arrow whether it represents z-planes or time.
+  orientationWidget = markRaw(
+    vtkOrientationMarkerWidget.newInstance({
+      actor: vtkAxesActor.newInstance(),
+      interactor: genericRenderWindow.getInteractor(),
+    }),
+  );
+  orientationWidget.setViewportCorner(
+    vtkOrientationMarkerWidget.Corners.TOP_RIGHT,
+  );
+  orientationWidget.setViewportSize(0.15);
+  orientationWidget.setMinPixelSize(80);
+  orientationWidget.setMaxPixelSize(160);
+  orientationWidget.setEnabled(showAxes.value);
+
   resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(vtkContainer.value);
   rebuildVolume();
@@ -629,6 +666,9 @@ onBeforeUnmount(() => {
   resizeObserver = null;
   clearSegmentationActor();
   clearVolumeActors();
+  orientationWidget?.setEnabled(false);
+  orientationWidget?.delete();
+  orientationWidget = null;
   genericRenderWindow?.delete();
   genericRenderWindow = null;
 });
@@ -644,6 +684,10 @@ watch(volumeBuildKey, rebuildVolume);
 watch(blendMode, applyBlendMode);
 watch(showVolume, applyVisibility);
 watch(showSegmentations, applyVisibility);
+watch(showAxes, (value) => {
+  orientationWidget?.setEnabled(value);
+  render();
+});
 watch(colorKey, applyLayerColors);
 // Segmentation-only inputs (these don't change the volume, so they don't go
 // through rebuildVolume). Navigation / axis changes update segmentations via
