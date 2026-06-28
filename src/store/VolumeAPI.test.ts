@@ -294,4 +294,70 @@ describe("TileFrameVolumeSource", () => {
       [0, 2, 4],
     );
   });
+
+  it("windows percentile contrast against the whole-cube range", async () => {
+    const z0 = makeImage(0, 0);
+    const z1 = makeImage(1, 1);
+    const z2 = makeImage(2, 2);
+    const dataset = makeDataset([z0, z1, z2]);
+    const percentileLayer: IDisplayLayer = {
+      ...layer,
+      contrast: { mode: "percentile", blackPoint: 0, whitePoint: 100 },
+    };
+    const layerStackImage: ILayerStackImage = {
+      layer: percentileLayer,
+      images: [z0],
+      urls: [],
+      fullUrls: [],
+      hist: null,
+      singleFrame: null,
+    };
+    // Histogram endpoint returns a per-frame range; region returns a PNG blob.
+    const client: { get: any } = {
+      get: vi.fn(async (url: string, config: any) => {
+        if (url.includes("/histogram")) {
+          const frame = config.params.frame;
+          return {
+            data: [
+              {
+                min: frame,
+                max: 100 + frame,
+                samples: 5,
+                hist: [],
+                bin_edges: [],
+              },
+            ],
+          };
+        }
+        return { data: new Blob(["png"]) };
+      }),
+    };
+
+    const source = new TileFrameVolumeSource(client as any, {
+      concurrency: 1,
+      maxXYDimension: 4,
+      scalarMemoryBudgetBytes: 1024 * 1024,
+    });
+    await source.buildVolume({
+      dataset,
+      layers: [layerStackImage],
+      xy: 0,
+      z: 0,
+      time: 0,
+      zStepUmOverride: 5,
+    });
+
+    const getMock = client.get as ReturnType<typeof vi.fn>;
+    const histogramCalls = getMock.mock.calls.filter((call: any) =>
+      call[0].includes("/histogram"),
+    );
+    const regionCalls = getMock.mock.calls.filter((call: any) =>
+      call[0].includes("/region"),
+    );
+    // Histograms fetched for all 3 frames; merged cube range = [0, 102].
+    expect(histogramCalls.length).toBe(3);
+    const style = JSON.parse(regionCalls[0][1].params.style);
+    expect(style.min).toBe(0);
+    expect(style.max).toBe(102);
+  });
 });

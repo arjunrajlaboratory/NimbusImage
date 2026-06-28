@@ -16,7 +16,12 @@ import {
   ILayerStackImage,
   TVolumeAxis,
 } from "@/store/model";
-import { ITileHistogram, ITileOptions, toStyle } from "@/store/images";
+import {
+  ITileHistogram,
+  ITileOptions,
+  mergeHistograms,
+  toStyle,
+} from "@/store/images";
 
 export interface VolumeGeometry {
   unit: "um";
@@ -66,6 +71,9 @@ interface ITileFrameVolumeSourceOptions {
   maxXYDimension?: number;
   maxDepth?: number;
   scalarMemoryBudgetBytes?: number;
+  // How many depth frames to sample when estimating the whole-cube intensity
+  // range for percentile contrast windowing.
+  histogramSampleCount?: number;
 }
 
 interface IResolvedLayer {
@@ -86,7 +94,20 @@ const defaultOptions: Required<ITileFrameVolumeSourceOptions> = {
   // subsampled (every Nth plane).
   maxDepth: 512,
   scalarMemoryBudgetBytes: 128 * 1024 * 1024,
+  histogramSampleCount: 24,
 };
+
+// Evenly sample up to `count` items from a list (returns all if fewer).
+function sampleEvenly<T>(items: T[], count: number): T[] {
+  if (items.length <= count) {
+    return items;
+  }
+  const result: T[] = [];
+  for (let index = 0; index < count; index += 1) {
+    result.push(items[Math.floor((index * items.length) / count)]);
+  }
+  return result;
+}
 
 function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) {
@@ -306,6 +327,43 @@ export class TileFrameVolumeSource implements VolumeSource {
     this.options = { ...defaultOptions, ...options };
   }
 
+  // Whole-cube intensity range for percentile windowing: sample depth frames,
+  // fetch each one's histogram, and merge to min-of-mins / max-of-maxs. This
+  // makes the volume windowing independent of which single z/t the navigator
+  // is on (a per-frame histogram would shift the whole volume as you scrub).
+  private async fetchCubeHistogram(
+    images: IImage[],
+    limit: <T>(fn: () => Promise<T>) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<ITileHistogram | null> {
+    const sampled = sampleEvenly(images, this.options.histogramSampleCount);
+    if (sampled.length === 0) {
+      return null;
+    }
+    const histograms = await Promise.all(
+      sampled.map((image) =>
+        limit(async () => {
+          throwIfAborted(signal);
+          const response = await this.client.get(
+            `item/${image.item._id}/tiles/histogram`,
+            {
+              params: {
+                frame: image.frameIndex,
+                bins: 256,
+                width: 1024,
+                height: 1024,
+                resample: false,
+              },
+              signal,
+            },
+          );
+          return response.data[0] as ITileHistogram;
+        }),
+      ),
+    );
+    return mergeHistograms(histograms);
+  }
+
   private async fetchFrame(
     image: IImage,
     layer: IDisplayLayer,
@@ -444,6 +502,17 @@ export class TileFrameVolumeSource implements VolumeSource {
           fetchedWidth * fetchedHeight * depthCount,
         );
 
+        // Percentile contrast needs a histogram; absolute contrast ignores it.
+        // Use a whole-cube range so windowing is independent of the current z/t.
+        const cubeHistogram =
+          layerStackImage.layer.contrast.mode === "absolute"
+            ? null
+            : await this.fetchCubeHistogram(
+                sourceImages.filter((image): image is IImage => image !== null),
+                limit,
+                signal,
+              );
+
         await Promise.all(
           sourceImages.map((image, depthIndex) =>
             limit(async () => {
@@ -458,7 +527,7 @@ export class TileFrameVolumeSource implements VolumeSource {
               const plane = await this.fetchFrame(
                 image,
                 layerStackImage.layer,
-                layerStackImage.hist,
+                cubeHistogram,
                 fetchedWidth,
                 fetchedHeight,
                 signal,

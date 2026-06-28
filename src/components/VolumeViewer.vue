@@ -365,13 +365,6 @@ const volumeBuildKey = computed(() =>
       id: layerStackImage.layer.id,
       channel: layerStackImage.layer.channel,
       contrast: layerStackImage.layer.contrast,
-      hist: layerStackImage.hist
-        ? [
-            layerStackImage.hist.min,
-            layerStackImage.hist.max,
-            layerStackImage.hist.samples,
-          ]
-        : null,
     })),
   }),
 );
@@ -474,16 +467,6 @@ function addChannelVolume(volume: ChannelVolume) {
   currentRenderer.addVolume(actor);
 }
 
-async function ensureHistograms() {
-  await Promise.all(
-    visibleLayerStackImages.value.map((layerStackImage) =>
-      layerStackImage.hist
-        ? Promise.resolve(layerStackImage.hist)
-        : store.getLayerHistogram(layerStackImage.layer),
-    ),
-  );
-}
-
 async function rebuildVolume() {
   const currentDataset = dataset.value;
   const currentRenderer = renderer();
@@ -507,7 +490,6 @@ async function rebuildVolume() {
   }
 
   try {
-    await ensureHistograms();
     const volumes = await volumeSource.buildVolume(
       {
         dataset: currentDataset,

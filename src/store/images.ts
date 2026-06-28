@@ -198,6 +198,20 @@ export function mergeHistograms(histograms: ITileHistogram[]): ITileHistogram {
     return histograms[0];
   }
 
-  // TODO
-  return histograms[0];
+  // Merge the data range across histograms. `toStyle` only uses min/max for
+  // windowing, so we don't attempt to merge bins (per-frame bin edges aren't
+  // guaranteed to align); `hist`/`bin_edges` are left as the overall range.
+  let min = Infinity;
+  let max = -Infinity;
+  let samples = 0;
+  for (const histogram of histograms) {
+    if (histogram.min < min) {
+      min = histogram.min;
+    }
+    if (histogram.max > max) {
+      max = histogram.max;
+    }
+    samples += histogram.samples ?? 0;
+  }
+  return { min, max, samples, bin_edges: [min, max], hist: [] };
 }
