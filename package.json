@@ -65,6 +65,7 @@
     "dataframe-js": "^1.4.4",
     "date-fns": "^4.1.0",
     "driver.js": "^1.4.0",
+    "earcut": "^3.0.2",
     "fflate": "^0.7.4",
     "fs-extra": "^10.0.0",
     "gif.js": "^0.2.0",

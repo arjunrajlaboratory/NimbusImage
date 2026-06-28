@@ -118,6 +118,9 @@ importers:
       driver.js:
         specifier: ^1.4.0
         version: 1.4.0
+      earcut:
+        specifier: ^3.0.2
+        version: 3.0.2
       fflate:
         specifier: ^0.7.4
         version: 0.7.4
@@ -2610,8 +2613,8 @@ packages:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
 
-  earcut@3.0.0:
-    resolution: {integrity: sha512-41Fs7Q/PLq1SDbqjsgcY7GA42T0jvaCNGXgGtsNdvg+Yv8eIu06bxv4/PoREkZ9nMDNwnUSG9OFB9+yv8eKhDg==}
+  earcut@3.0.2:
+    resolution: {integrity: sha512-X7hshQbLyMJ/3RPhyObLARM2sNxxmRALLKx1+NVFFnQ9gKzmCrxm9+uLIAdBcvc8FNLpctqlQ2V6AE92Ol9UDQ==}
 
   eastasianwidth@0.2.0:
     resolution: {integrity: sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==}
@@ -7525,7 +7528,7 @@ snapshots:
       es-errors: 1.3.0
       gopd: 1.2.0
 
-  earcut@3.0.0: {}
+  earcut@3.0.2: {}
 
   eastasianwidth@0.2.0: {}
 
@@ -7877,7 +7880,7 @@ snapshots:
       canvas: 3.1.0
       color-name: 2.0.0
       docdash: 2.0.2
-      earcut: 3.0.0
+      earcut: 3.0.2
       gl-mat3: 2.0.0
       gl-mat4: 1.2.0
       gl-vec3: 1.1.3
