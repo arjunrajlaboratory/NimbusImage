@@ -48,6 +48,7 @@ import { fetchAllPages } from "@/utils/fetch";
 import { stringify } from "qs";
 import { logError, logWarning } from "@/utils/log";
 import { markRaw } from "vue";
+import { inferZStepFromDimensionLabelsUm } from "@/utils/dimensionLabels";
 
 // Modern browsers limit concurrency to a single domain at 6 requests (though
 // using HTML 2 might improve that slightly).  For a single layer, if we set
@@ -1101,6 +1102,7 @@ export function asDataset(folder: IGirderFolder): IDataset {
     name: folder.name,
     description: folder.description,
     creatorId: folder.creatorId,
+    dimensionLabels: folder.meta?.dimensionLabels,
     xy: [],
     z: [],
     width: 1,
@@ -1149,6 +1151,13 @@ export function getDatasetScales(dataset: IDataset): IScales {
     scales.pixelSize = {
       value: (tileInfo.mm_x + tileInfo.mm_y) / 2,
       unit: "mm",
+    };
+  }
+  const zStepUm = inferZStepFromDimensionLabelsUm(dataset.dimensionLabels);
+  if (zStepUm !== null && zStepUm > 0) {
+    scales.zStep = {
+      value: zStepUm,
+      unit: "µm",
     };
   }
   return scales;

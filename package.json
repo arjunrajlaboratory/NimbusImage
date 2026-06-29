@@ -33,6 +33,7 @@
   },
   "dependencies": {
     "@girder/components": "4.0.0",
+    "@kitware/vtk.js": "^36.2.1",
     "@mdi/font": "^5.3.45",
     "@sentry/vue": "^10.53.1",
     "@types/bluebird": "^3.5.42",
@@ -64,6 +65,7 @@
     "dataframe-js": "^1.4.4",
     "date-fns": "^4.1.0",
     "driver.js": "^1.4.0",
+    "earcut": "^3.0.2",
     "fflate": "^0.7.4",
     "fs-extra": "^10.0.0",
     "gif.js": "^0.2.0",

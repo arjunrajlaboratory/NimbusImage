@@ -141,6 +141,20 @@
               </button>
             </template>
           </v-tooltip>
+          <v-tooltip text="3D volume view (toggle 2D / 3D)">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: is3DView }"
+                aria-label="3D view"
+                @click.stop="toggle3DView"
+              >
+                <v-icon size="18">mdi-cube-scan</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
         </div>
       </template>
       <v-spacer />
@@ -464,6 +478,7 @@ import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import volumeViewStore from "@/store/volumeView";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
@@ -623,6 +638,11 @@ function togglePalette(id: PaletteId) {
   } else {
     openPalette(id);
   }
+}
+
+const is3DView = computed(() => volumeViewStore.viewMode === "3d");
+function toggle3DView() {
+  volumeViewStore.setViewMode(is3DView.value ? "2d" : "3d");
 }
 
 function closeAllPalettes() {
