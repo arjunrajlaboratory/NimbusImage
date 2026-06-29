@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.1.0",
   "license": "Apache 2.0",
-  "packageManager": "pnpm@9.11.0",
+  "packageManager": "pnpm@11.9.0",
   "private": true,
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,6 @@
     "tsc": "vue-tsc --noEmit",
     "serve": "vite preview --host 0.0.0.0",
     "preinstall": "npx only-allow pnpm",
-    "postinstall": "patch-package --patch-dir patches/patch-package",
     "emscripten-build": "pnpm emscripten-build:release",
     "emscripten-build:release": "itk-wasm --source-dir itk build",
     "emscripten-build:debug": "itk-wasm --source-dir itk build -- -DCMAKE_BUILD_TYPE=Debug",
@@ -19,17 +18,6 @@
     "lint:fix": "pnpm lint --fix",
     "lint:ci": "pnpm lint --max-warnings=0",
     "test": "vitest"
-  },
-  "pnpm": {
-    "overrides": {
-      "@girder/components>js-cookie": "^3.0.7",
-      "@protobufjs/utf8": "^1.1.1",
-      "@girder/components>markdown-it": "^14.0.0",
-      "uc.micro": "2.0.0"
-    },
-    "patchedDependencies": {
-      "@girder/components": "patches/@girder__components.patch"
-    }
   },
   "dependencies": {
     "@girder/components": "4.0.0",
@@ -81,7 +69,6 @@
     "p-limit": "^7.1.1",
     "p-retry": "^7.0.0",
     "papaparse": "^5.4.1",
-    "patch-package": "^8.0.0",
     "polygon-clipping": "^0.15.7",
     "qs": "^6.15.2",
     "rbush": "^4.0.1",

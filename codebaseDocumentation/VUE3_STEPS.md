@@ -997,10 +997,10 @@ Upgraded vue-tsc and cleaned up all lint/prettier/unused-var issues to reach 0 e
   - Upstream bug: https://github.com/girder/girder_web_components/issues/361
   - Upstream PR: https://github.com/girder/girder_web_components/pull/362
   - The patch fixes both `src/` (source) and `dist/girder.es.js` (compiled) since Vite resolves the `dist` entry point.
-- **Patch directory organization:** The project uses two separate patching systems:
-  - **patch-package** (postinstall): Patches for `d3` and `mousetrap` live in `patches/patch-package/`. The postinstall script uses `--patch-dir patches/patch-package` to scope its scan.
-  - **pnpm `patchedDependencies`** (install-time): The `@girder/components` patch lives at `patches/@girder__components.patch` and is registered in `package.json` under `pnpm.patchedDependencies`. pnpm applies it automatically during `pnpm install`.
-  - This separation prevents patch-package from warning about unrecognized pnpm patch files.
+- **Dependency patches (pnpm `patchedDependencies`):** All package patches are applied at install time via pnpm's `patchedDependencies`, configured in `pnpm-workspace.yaml`. Patch files live in `patches/`, named `<pkg>@<version>.patch`:
+  - `patches/d3@3.5.17.patch`, `patches/mousetrap@1.6.5.patch`, `patches/@girder__components.patch`
+  - pnpm applies them automatically during `pnpm install` — there is no `postinstall` step.
+  - **History:** `d3` and `mousetrap` were previously applied via `patch-package` (a `postinstall` script scanning `patches/patch-package/`). That was retired because pnpm 10+ no longer reads the `pnpm` field in `package.json` (overrides + patches moved to `pnpm-workspace.yaml`, which requires pnpm ≥ 10), and the `patch-package` flow failed under pnpm's `node_modules` layout on the build host. To convert a `patch-package` patch to a pnpm patch, strip the `node_modules/<pkg>/` prefix from the diff paths and add an entry under `patchedDependencies`.
 
 ---
 

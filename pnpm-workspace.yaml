@@ -1,0 +1,19 @@
+overrides:
+  "@girder/components>js-cookie": "^3.0.7"
+  "@protobufjs/utf8": "^1.1.1"
+  "@girder/components>markdown-it": "^14.0.0"
+  "uc.micro": "2.0.0"
+patchedDependencies:
+  "@girder/components@4.0.0": patches/@girder__components.patch
+  "d3@3.5.17": patches/d3@3.5.17.patch
+  "mousetrap@1.6.5": patches/mousetrap@1.6.5.patch
+# pnpm 10+ blocks dependency build scripts by default (pnpm 9 ran them).
+# Production builds on pnpm 11 with all of these skipped, so none are required;
+# set to false to keep them off. Flip one to true to allow its build script.
+allowBuilds:
+  "@parcel/watcher": false
+  canvas: false
+  core-js: false
+  esbuild: false
+  protobufjs: false
+  vuex-module-decorators: false
