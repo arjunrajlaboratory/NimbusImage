@@ -478,6 +478,24 @@ clearing. One follow-up remains:
   production. Replace with pure-utility tests + a thin integration test (and
   fold in stub-mode `deleteUnselectedAnnotations` coverage).
 
+### 3D VolumeViewer interaction with stub-only mode (master merge, 2026-06-30)
+The 3D volume work (`VolumeViewer.vue`, `annotationsTo3D`) landed on `master`
+and was merged into this branch. `annotationsTo3D` needs full
+`IAnnotation[]` (it reads `coordinates`), but on this branch
+`filterStore.filteredAnnotations` is now `TAnnotationOrStub[]`. The merge fix
+narrows the input with `.filter(isHydratedAnnotation)` in
+`updateSegmentationActor` — correct for the data available, but it means:
+- [ ] **The 3D segmentation overlay only renders *hydrated* annotations in
+  stub-only mode.** Stubs carry just a centroid (no coordinates), so any
+  annotation not currently hydrated is silently absent from the 3D view. For a
+  large (stub-only) dataset this can mean the overlay shows a small,
+  zoom/viewport-dependent subset rather than all segmentations. Decide the
+  intended behavior: (a) accept the hydrated-only subset (document it in the UI),
+  or (b) fetch full coordinates for the 3D-relevant annotations on demand —
+  likely a dedicated bounded fetch keyed to the volume's frame range, since the
+  whole point of stubs is to avoid loading everything. Until then the limitation
+  is undocumented in the UI.
+
 ### Threshold and Hydration Refinement
 - [x] Test and tune `maxVisible` (default 50,000) — **2026-06-22: now density-adaptive + size-gated** via `visibilityBudgetForZoom` (C4 above). The 50,000 is both the zoomed-in cap and the size gate (datasets ≤ it render fully). Above it, the effective budget starts at a density-derived floor (`coverageTarget × screenArea / dotArea`, default 0.17 → ~10K of 708K) and doubles per zoom level. Resolves the zoomed-out visual noise from the full 4px stroke.
 - [x] Test and tune `maxHydrated` (default 20,000) — scaled by the same zoom factor as `maxVisible` (C4). Fewer shapes hydrated/drawn when zoomed out (where they look like dots anyway).
