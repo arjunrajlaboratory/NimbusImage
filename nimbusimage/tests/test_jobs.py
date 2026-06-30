@@ -69,6 +69,50 @@ class TestJobRefresh:
         assert "line 2" in job.log
 
 
+class TestJobScopeError:
+    """NIM-005: a 401 from job/{id} usually means the API key lacks the
+    'core.user_auth' scope, not that the job is missing. Re-raise with a
+    message that names the real culprit instead of the raw Girder 401.
+    """
+
+    def _http_error(self, status):
+        from girder_client import HttpError
+
+        return HttpError(
+            status=status,
+            text="not authorized",
+            url="job/j1",
+            method="GET",
+        )
+
+    def test_refresh_401_names_user_auth_scope(self):
+        gc = MagicMock()
+        gc.get.side_effect = self._http_error(401)
+        job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
+
+        with pytest.raises(PermissionError, match="core.user_auth"):
+            job.refresh()
+
+    def test_wait_401_names_user_auth_scope(self):
+        gc = MagicMock()
+        gc.get.side_effect = self._http_error(401)
+        job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
+
+        with pytest.raises(PermissionError, match="core.user_auth"):
+            job.wait(verbose=False)
+
+    def test_refresh_non_401_propagates_unchanged(self):
+        from girder_client import HttpError
+
+        gc = MagicMock()
+        gc.get.side_effect = self._http_error(500)
+        job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
+
+        # A 500 is not a scope problem — don't mislabel it.
+        with pytest.raises(HttpError):
+            job.refresh()
+
+
 class TestJobWait:
     def test_wait_returns_true_on_success(self):
         gc = MagicMock()
@@ -197,6 +241,61 @@ class TestAnnotationCompute:
         ]
         for key in required:
             assert key in body, f"Missing required key: {key}"
+
+
+class TestComputeLocationValidation:
+    """NIM-004: location is silently dropped in batch mode.
+
+    Once an explicit ``assignment`` (batch ranges) is supplied, the worker
+    iterates the assignment ranges and ignores ``tile``/``location``. Passing
+    both should be an error, not a silent no-op.
+    """
+
+    def test_location_with_assignment_raises(self, mock_gc):
+        from nimbusimage.annotations import AnnotationAccessor
+        from nimbusimage.models import Location
+
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+        with pytest.raises(ValueError, match="batch mode"):
+            accessor.compute(
+                image="myworker:latest",
+                location=Location(xy=1, z=0, time=0),
+                assignment={"XY": "1-14", "Time": "1-14"},
+            )
+        # Must fail before any request is sent.
+        mock_gc.post.assert_not_called()
+
+    def test_location_alone_still_works(self, mock_gc):
+        """Single-tile mode: location backfills assignment and tile."""
+        mock_gc.post.return_value = [{"_id": "j1", "status": 1}]
+
+        from nimbusimage.annotations import AnnotationAccessor
+        from nimbusimage.models import Location
+
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+        accessor.compute(
+            image="w:latest", location=Location(xy=2, z=0, time=3)
+        )
+        body = mock_gc.post.call_args[1]["json"]
+        assert body["tile"]["XY"] == 2
+        assert body["tile"]["Time"] == 3
+        # location backfills assignment when no explicit assignment given
+        assert body["assignment"]["XY"] == 2
+        assert body["assignment"]["Time"] == 3
+
+    def test_assignment_alone_still_works(self, mock_gc):
+        """Batch mode: assignment ranges pass through untouched."""
+        mock_gc.post.return_value = [{"_id": "j1", "status": 1}]
+
+        from nimbusimage.annotations import AnnotationAccessor
+
+        accessor = AnnotationAccessor(mock_gc, "ds_001")
+        accessor.compute(
+            image="w:latest",
+            assignment={"XY": "1-14", "Time": "1-14"},
+        )
+        body = mock_gc.post.call_args[1]["json"]
+        assert body["assignment"] == {"XY": "1-14", "Time": "1-14"}
 
 
 class TestPropertyCompute:

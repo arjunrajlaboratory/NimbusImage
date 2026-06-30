@@ -2,25 +2,31 @@
 <template>
   <div class="viewer">
     <image-viewer
+      v-if="volumeViewMode === '2d'"
       class="main"
       :should-reset-maps="shouldResetMaps"
       @reset-complete="handleResetComplete"
     />
+    <volume-viewer v-else class="main" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import ImageViewer from "@/components/ImageViewer.vue";
+import VolumeViewer from "@/components/VolumeViewer.vue";
 
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
+import volumeViewStore from "@/store/volumeView";
 
 const shouldResetMaps = ref(false);
 
 const dataset = computed(() => store.dataset);
 const configuration = computed(() => store.configuration);
+// Read-only: the 2D/3D toggle lives in the top app bar (App.vue).
+const volumeViewMode = computed(() => volumeViewStore.viewMode);
 
 function datasetChanged() {
   if (dataset.value && dataset.value.time.length <= 1) {
@@ -65,12 +71,14 @@ defineExpose({
   shouldResetMaps,
   dataset,
   configuration,
+  volumeViewMode,
   handleResetComplete,
 });
 </script>
 
 <style lang="scss" scoped>
 .viewer {
+  position: relative;
   width: 100%;
   /* Fill the viewport — the glass app bar floats over the full-bleed image
      canvas; the tool palettes float over it rather than pushing it. */

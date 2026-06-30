@@ -299,12 +299,19 @@ export interface IRestrictTagsAndLayer {
   layerId: string | null;
 }
 
+export interface IDimensionLabels {
+  xy?: string[] | null;
+  z?: string[] | null;
+  t?: string[] | null;
+}
+
 export interface IDataset {
   readonly id: string;
 
   name: string;
   description: string;
   creatorId: string;
+  dimensionLabels?: IDimensionLabels;
 
   xy: number[];
   z: number[];
@@ -323,6 +330,15 @@ export interface IViewConfiguration {
 }
 
 export type TLayerMode = "single" | "multiple" | "unroll";
+
+export type TVolumeViewMode = "2d" | "3d";
+
+export type TVolumeBlendMode = "composite" | "mip";
+
+export type TVolumeSegmentationColorMode = "tag" | "property";
+
+// Which dataset axis is mapped to the 3rd (depth) dimension of the volume.
+export type TVolumeAxis = "z" | "t";
 
 export interface IDownloadParameters {
   encoding: string;
