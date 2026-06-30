@@ -226,6 +226,7 @@ import {
   TVolumeAxis,
   TVolumeBlendMode,
   TVolumeSegmentationColorMode,
+  isHydratedAnnotation,
 } from "@/store/model";
 import {
   ChannelVolume,
@@ -614,7 +615,9 @@ function updateSegmentationActor() {
   }
 
   const result = annotationsTo3D({
-    annotations: filterStore.filteredAnnotations,
+    // Stubs carry no coordinates and cannot be rendered as 3D geometry; only
+    // hydrated annotations have the polygon/point data annotationsTo3D needs.
+    annotations: filterStore.filteredAnnotations.filter(isHydratedAnnotation),
     geometry: activeGeometry,
     currentXY: store.xy,
     currentTime: store.time,
