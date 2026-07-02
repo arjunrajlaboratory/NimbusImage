@@ -116,6 +116,30 @@ describe("createOnnxInferenceSession", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  it("warmModelCache downloads and stores the model without creating a session", async () => {
+    const { warmModelCache } = await importFreshModule();
+    await warmModelCache("/models/encoder.onnx");
+    expect(fetchMock).toHaveBeenCalledWith("/models/encoder.onnx");
+    expect(cachePut).toHaveBeenCalledTimes(1);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("warmModelCache skips the download when the model is already cached", async () => {
+    cacheMatch.mockResolvedValue(makeResponse(modelBuffer));
+    const { warmModelCache } = await importFreshModule();
+    await warmModelCache("/models/encoder.onnx");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(cachePut).not.toHaveBeenCalled();
+  });
+
+  it("warmModelCache never throws", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const { warmModelCache } = await importFreshModule();
+    await expect(
+      warmModelCache("/models/encoder.onnx"),
+    ).resolves.toBeUndefined();
+  });
+
   it("does not cache failures: a retry after an error attempts a new fetch", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network down"));
     const { createOnnxInferenceSession } = await importFreshModule();

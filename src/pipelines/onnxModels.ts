@@ -1,6 +1,9 @@
 import { InferenceSession, env } from "onnxruntime-web/webgpu";
 
-env.wasm.wasmPaths = "onnx-wasm/";
+// Must be root-absolute: onnxruntime-web resolves this prefix with a dynamic
+// import() for the .mjs loader, and a bare "onnx-wasm/..." specifier is not a
+// valid module specifier (it would also resolve against the SPA route path).
+env.wasm.wasmPaths = "/onnx-wasm/";
 // On dual-GPU machines (e.g. laptops with integrated + discrete GPU), the
 // browser may hand WebGPU the low-power adapter by default, which makes the
 // SAM encoder several times slower. Explicitly request the fast one.
@@ -39,6 +42,26 @@ async function fetchModelBuffer(modelPath: string): Promise<ArrayBuffer> {
     }
   }
   return await response.arrayBuffer();
+}
+
+/**
+ * Best-effort: download the model at the given path into the persistent
+ * cache so that a later `createOnnxInferenceSession` doesn't pay for the
+ * network fetch. No-op if already cached or if the Cache API is unavailable.
+ */
+export async function warmModelCache(modelPath: string): Promise<void> {
+  try {
+    const cache = await caches.open(MODEL_CACHE_NAME);
+    if (await cache.match(modelPath)) {
+      return;
+    }
+    const response = await fetch(modelPath);
+    if (response.ok) {
+      await cache.put(modelPath, response);
+    }
+  } catch {
+    // Warming the cache is only an optimization: never let it throw
+  }
 }
 
 export async function createOnnxInferenceSession(

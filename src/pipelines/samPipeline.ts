@@ -24,6 +24,7 @@ import {
 import {
   createOnnxInferenceSession,
   runOnnxSessionSerialized,
+  warmModelCache,
 } from "./onnxModels";
 import { InferenceSession, Tensor, TypedTensor } from "onnxruntime-web/webgpu";
 import geojs from "geojs";
@@ -113,13 +114,38 @@ function createEncoderContext(model: TSamModel): ISamEncoderContext {
   };
 }
 
+function getSamModelPaths(model: TSamModel) {
+  const encoderExt = isSam2Model(model) ? "ort" : "onnx";
+  return {
+    encoder: `/onnx-models/sam/${model}/encoder.${encoderExt}`,
+    decoder: `/onnx-models/sam/${model}/decoder.onnx`,
+  };
+}
+
+/**
+ * Start downloading the model files for the given SAM model into the
+ * persistent model cache, without creating inference sessions.
+ * Call when a SAM tool is likely to be used soon: the encoder is large, so
+ * downloading it in the background hides most of the tool's loading time.
+ */
+export function warmSamModelCache(model: TSamModel) {
+  if (!("gpu" in navigator)) {
+    // SAM tools can't run without WebGPU: don't waste bandwidth
+    return;
+  }
+  const { encoder, decoder } = getSamModelPaths(model);
+  warmModelCache(encoder);
+  warmModelCache(decoder);
+}
+
 function createEncoderSession(model: TSamModel): Promise<InferenceSession> {
-  const ext = isSam2Model(model) ? "ort" : "onnx";
-  const encoderPath = `/onnx-models/sam/${model}/encoder.${ext}`;
   const encoderOptions: InferenceSession.SessionOptions = {
     executionProviders: ["webgpu"],
   };
-  return createOnnxInferenceSession(encoderPath, encoderOptions);
+  return createOnnxInferenceSession(
+    getSamModelPaths(model).encoder,
+    encoderOptions,
+  );
 }
 
 function createDecoderContext(): ISamDecoderContext {
@@ -136,9 +162,7 @@ function createDecoderContext(): ISamDecoderContext {
 }
 
 function createDecoderSession(model: TSamModel): Promise<InferenceSession> {
-  const decoderPath = `/onnx-models/sam/${model}/decoder.onnx`;
-  const decoderOptions = {};
-  return createOnnxInferenceSession(decoderPath, decoderOptions);
+  return createOnnxInferenceSession(getSamModelPaths(model).decoder, {});
 }
 
 async function screenshot({ map, imageLayers }: IMapEntry) {
