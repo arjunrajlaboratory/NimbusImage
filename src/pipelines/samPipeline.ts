@@ -190,20 +190,27 @@ function processCanvas(
   }
 
   // Draw the input image
-  context.clearRect(0, 0, maxWidth, maxHeight);
   context.drawImage(srcCanvas, 0, 0, scaledWidth, scaledHeight);
 
-  // Convert image to normalized float32 buffer
-  const imageData = context.getImageData(0, 0, maxWidth, maxHeight);
+  // Convert image to normalized float32 buffer.
+  // Only the region covered by the image is read back and normalized; the
+  // rest of the buffer stays 0, which matches the reference SAM
+  // preprocessing (normalize first, then pad with zeros).
+  const imageData = context.getImageData(0, 0, scaledWidth, scaledHeight);
   const rgbaBuffer = imageData.data;
   const nPixels = maxWidth * maxHeight;
+  buffer.fill(0);
   for (let channel = 0; channel < 3; ++channel) {
     const channelOffset = channel * nPixels;
     const mean = meanPerChannel[channel];
-    const std = stdPerChannel[channel];
-    for (let iPixel = 0; iPixel < nPixels; ++iPixel) {
-      buffer[channelOffset + iPixel] =
-        (rgbaBuffer[iPixel * 4 + channel] - mean) / std;
+    const stdInverse = 1 / stdPerChannel[channel];
+    for (let y = 0; y < scaledHeight; ++y) {
+      const srcRowOffset = y * scaledWidth;
+      const dstRowOffset = channelOffset + y * maxWidth;
+      for (let x = 0; x < scaledWidth; ++x) {
+        buffer[dstRowOffset + x] =
+          (rgbaBuffer[(srcRowOffset + x) * 4 + channel] - mean) * stdInverse;
+      }
     }
   }
 
