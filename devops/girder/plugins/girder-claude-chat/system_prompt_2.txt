@@ -1041,16 +1041,31 @@ NimbusImage can render your image stack as an interactive 3D volume instead of a
 
 **What You See in 3D**:
 - Each currently visible channel/layer is rendered as its own semi-transparent volume, colored to match that layer's assigned color—multi-channel overlays work in 3D just as in 2D
-- Choose whether the volume's depth axis is **Z** (your z-stack) or **Time** (only available for datasets with more than one timepoint)—useful for viewing true 3D structure or for viewing a timelapse as a spatial volume
-- Polygon-based objects (blobs) can be overlaid as extruded 3D "Segmentations"; toggle this on/off and color them by tag or by a computed property. Point, line, and rectangle objects are not currently shown in the 3D view
+- Polygon-based objects (blobs) can be overlaid as extruded 3D "Segmentations." Point, line, and rectangle objects are not currently shown in the 3D view
+
+**Depth Axis: Z vs. Time**:
+- A two-button toggle at the left of the 3D toolbar sets what the volume's "depth" dimension represents:
+  - **Z** (z-axis icon): the depth axis is your z-stack, giving a true 3D reconstruction of the sample at the current timepoint
+  - **Clock icon**: the depth axis is Time instead of Z, so a timelapse is displayed as a spatial volume—the current z-slice is held fixed and successive timepoints are stacked like slices of a volume. This is only enabled for datasets with more than one timepoint
+- When Time is selected as the depth axis, an extra button (up/down arrows icon) opens a "Time depth spacing" dialog. Since time doesn't have a physical depth, this dialog lets you set how many micrometers apart each timepoint should appear (defaults to 5× the pixel size, but you can enter a custom value, or "Reset to default")
+
+**Toolbar Buttons**:
+- **Depth axis toggle** (z-axis / clock icons): switch between Z and Time as the volume's depth dimension, as above
+- **Time depth spacing** (up/down arrow icon, only shown when Time is the depth axis): opens the spacing dialog described above
+- **Blend mode toggle** (layers icon / bell-curve icon): controls how overlapping voxels along each viewing ray are combined
+  - **Composite**: normal semi-transparent volume blending, good for seeing overall 3D shape and structure
+  - **Maximum intensity**: shows only the brightest voxel along each ray (a live, rotatable maximum-intensity projection)—good for sparse bright objects like spots, since dim surrounding signal doesn't obscure them
+- **Volume** (cube icon): show/hide the rendered image volume itself
+- **Segmentations** (polygon icon): show/hide the extruded 3D polygon annotation overlay
+- **Reset camera** (fit-to-page icon): reframes the view to fit the current volume
+- **Orientation axes** (axis-arrow icon): toggles a small XYZ orientation gizmo in the bottom-right corner that rotates with the camera, so you can always tell which way is up
+- **Scaled bounding box** (grid icon): toggles a box with micrometer-labeled tick marks around the volume, useful for judging physical scale
+- **Segmentation color mode toggle** (tag icon / scatter-plot icon): choose whether 3D segmentations are colored by tag or by a computed property; selecting "property" reveals a dropdown to pick which property to color by
 
 **Navigation Controls**:
 - Rotate: click and drag
 - Zoom: scroll wheel
 - Pan: right-click/shift-drag
-- "Reset camera" button reframes the view on the current volume
-- Toggle the orientation axes gizmo (small XYZ indicator in the bottom-right) to keep track of orientation while rotating
-- Toggle a scaled bounding box that draws a box with micrometer-labeled tick marks around the volume, useful for judging physical scale
 
 **Contrast in 3D**:
 - Percentile-based contrast is computed by sampling across the entire volume rather than a single slice, so the display stays stable while rotating or scrubbing through the volume—contrast may therefore look slightly different from the 2D view at any single slice
