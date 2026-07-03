@@ -426,6 +426,41 @@
     ]
   },
   {
+    "name": "Line scan tools",
+    "type": "linescan",
+    "shortName": "Linescan",
+    "interface": [
+      {
+        "name": "Line type",
+        "type": "select",
+        "id": "lineType",
+        "isSubmenu": true,
+        "meta": {
+          "items": [
+            {
+              "text": "Freehand line scan",
+              "value": "freehand",
+              "description": "Drag to plot intensity along a freehand line"
+            },
+            {
+              "text": "Segment line scan",
+              "value": "segment",
+              "description": "Click two points to plot intensity along a line"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Channel (optional)",
+        "id": "layer",
+        "type": "layerSelect",
+        "meta": {
+          "label": "Channel"
+        }
+      }
+    ]
+  },
+  {
     "name": "Tagging tools",
     "type": "tagging",
     "shortName": "Tag",

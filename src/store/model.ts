@@ -63,7 +63,8 @@ export type TToolType =
   | "edit"
   | "segmentation"
   | "samAnnotation"
-  | "tagging";
+  | "tagging"
+  | "linescan";
 
 export interface IToolTemplateInterface {
   id: string;
@@ -901,6 +902,12 @@ export interface IGeoJSAnnotationLayer extends IGeoJSLayer {
     arg?: string | null,
     editAnnotation?: IGeoJSAnnotation,
   ) => string | null | IGeoJSAnnotationLayer;
+  // The annotation currently being created or edited, if any
+  currentAnnotation: IGeoJSAnnotation | null;
+  options: (() => IObject) &
+    ((key: string) => any) &
+    ((key: string, value: any) => IGeoJSAnnotationLayer) &
+    ((values: IObject) => IGeoJSAnnotationLayer);
 }
 
 // https://opengeoscience.github.io/geojs/apidocs/geo.html#.point2D

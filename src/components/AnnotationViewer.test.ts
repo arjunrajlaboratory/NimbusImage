@@ -103,6 +103,7 @@ const mockAnnotationLayer = () => {
     geoOn: vi.fn(),
     geoOff: vi.fn(),
     mode: vi.fn(),
+    options: vi.fn(),
     currentAnnotation: null,
     map: vi.fn(() => ({
       unitsPerPixel: vi.fn().mockReturnValue(1),

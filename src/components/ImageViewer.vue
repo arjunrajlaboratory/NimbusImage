@@ -96,6 +96,7 @@
         </div>
       </div>
     </div>
+    <line-scan-panel />
     <div class="bottom-right-container">
       <v-btn
         v-if="submitPendingAnnotation"
@@ -234,6 +235,7 @@ import {
 import setFrameQuad, { ISetQuadStatus } from "@/utils/setFrameQuad";
 
 import AnnotationViewer from "@/components/AnnotationViewer.vue";
+import LineScanPanel from "@/components/LineScanPanel.vue";
 import ImageOverview from "@/components/ImageOverview.vue";
 import ScaleSettings from "@/components/ScaleSettings.vue";
 import ProgressBarGroup from "@/components/ProgressBarGroup.vue";
