@@ -173,10 +173,10 @@ import {
   ImportOptions,
 } from "@/utils/annotationImport";
 import {
-  IAnnotation,
-  IAnnotationConnection,
-  IAnnotationProperty,
   IAnnotationPropertyValues,
+  ISerializedAnnotation,
+  ISerializedConnection,
+  ISerializedProperty,
   ISerializedData,
 } from "@/store/model";
 import { logError } from "@/utils/log";
@@ -188,9 +188,9 @@ const isLoadingFile = ref(false);
 const isJsonLoaded = ref(false);
 const isImporting = ref(false);
 
-const annotations = ref<IAnnotation[]>([]);
-const connections = ref<IAnnotationConnection[]>([]);
-const properties = ref<IAnnotationProperty[]>([]);
+const annotations = ref<ISerializedAnnotation[]>([]);
+const connections = ref<ISerializedConnection[]>([]);
+const properties = ref<ISerializedProperty[]>([]);
 const values = ref<IAnnotationPropertyValues>({});
 
 const importAnnotations = ref(true);
