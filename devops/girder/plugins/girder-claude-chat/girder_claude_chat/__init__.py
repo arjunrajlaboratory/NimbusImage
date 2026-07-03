@@ -7,6 +7,8 @@ from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
 
+from .analysis import ClaudeAnalysisResource
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -74,3 +76,4 @@ class GirderClaudeChatPlugin(plugin.GirderPlugin):
 
     def load(self, info):
         info['apiRoot'].claude_chat = ClaudeChatResource()
+        info['apiRoot'].claude_analysis = ClaudeAnalysisResource()
