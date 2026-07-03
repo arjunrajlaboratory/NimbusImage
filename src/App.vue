@@ -362,10 +362,27 @@
             </v-btn>
           </template>
         </v-tooltip>
+        <v-tooltip text="AI analysis of property values">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              variant="text"
+              icon
+              size="small"
+              @click="analysisPanelOpen = !analysisPanelOpen"
+            >
+              <v-icon>mdi-chart-scatter-plot</v-icon>
+            </v-btn>
+          </template>
+        </v-tooltip>
       </div>
     </v-app-bar>
 
     <chat-component v-if="chatbotOpen" @close="chatbotOpen = false" />
+    <analysis-panel
+      v-if="analysisPanelOpen"
+      @close="analysisPanelOpen = false"
+    />
 
     <v-main>
       <router-view />
@@ -482,6 +499,7 @@ import volumeViewStore from "@/store/volumeView";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
+import AnalysisPanel from "@/components/AnalysisPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
@@ -504,6 +522,7 @@ void Toolset;
 void HelpPanel;
 void BreadCrumbs;
 void ChatComponent;
+void AnalysisPanel;
 
 const route = useRoute();
 const router = useRouter();
@@ -519,6 +538,7 @@ const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analyzePanel = ref(false);
 const chatbotOpen = ref(false);
+const analysisPanelOpen = ref(false);
 
 // Left-zone palettes (dissolved left sidebar). Open by default.
 const navigatorPanel = ref(true);
@@ -976,6 +996,7 @@ defineExpose({
   layersPanel,
   analyzePanel,
   chatbotOpen,
+  analysisPanelOpen,
   isUploadLoading,
   helpPanelIsOpen,
   appHotkeys,
