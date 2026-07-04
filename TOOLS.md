@@ -92,7 +92,10 @@ The tool demonstrates how to:
 
 The line scan tool is a *measurement* tool: it never creates stored annotations.
 It plots the raw pixel intensities along a line in a panel at the bottom right
-of the viewer, updating live while the line is being drawn.
+of the viewer, updating live while the line is being drawn. The panel also
+shows the line length in pixels and, when the configuration has a physical
+pixel size (anything other than the 1 m placeholder default), in physical
+units.
 
 ### The template
 
