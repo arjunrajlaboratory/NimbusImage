@@ -71,6 +71,63 @@ main-thread freezes (Xenium pan/zoom) and ~87 ms per z-switch between two heavy 
 > dataset's z=4 was bulk-populated (≈26K annotations copied from z=3) to create this
 > fixture; see `scripts/generate_test_annotations.py` for generating similar fixtures.
 
+## Fix applied (HCR z-scrub) — retained-feature reuse
+
+The z-scrub freeze was the **CPU-side reconstruction** of every visible GeoJS
+feature on each frame change: `drawNewAnnotations` called `createGeoJSAnnotation`
+for ~8k features (zoom 0; far more zoomed in). Decomposed live, that was ~51 ms of
+construction + ~26 ms add/GL-draw at zoom 0 (≈194 ms + 108 ms for ~26k at zoom 2).
+
+Two changes in `AnnotationViewer.vue` (`feature/stub-annotations`):
+
+1. **Retained-feature LRU** — torn-down GeoJS feature objects are kept in an LRU
+   keyed by `(layerId, annotationId)` and re-added when an annotation reappears,
+   skipping reconstruction. Keyed per-annotation (not per-frame) so reuse is robust
+   to the two-phase frame update and throttle coalescing. Each reuse is revalidated
+   via `drawnFeatureUnchanged` (layer/color/stub-ness/geometry) + an opacity style
+   token, and restyled for hover/selection, so the rendered set is identical to a
+   full rebuild (verified: layer feature count == displayed-id count at each Z).
+2. **No wasted leading draw on frame change** — frame indices (`xy`/`z`/`time`) were
+   removed from the `onPrimaryChange` watcher; the redraw now flows once through
+   `updateVisibility → displayedAnnotations`, with the correct visible set, instead of
+   a first draw against the stale (pre-update) set followed by the real one.
+
+**Measured (clean back-to-back A/B, same machine state):** warm-median `maxBlock`
+**87 → ~68 ms**; once the cache is warm a frame's draw is ~33 ms (vs ~77 ms cold),
+i.e. reconstruction is eliminated. Timelapse pan/zoom stay **0 ms** (no regression).
+
+**Residual (does not yet meet a strict ≤40 ms gate):** with reconstruction gone, the
+remaining per-Z cost is `updateVisibilityAndHydration` (~17 ms) + `layerAnnotations`
+recompute (~4 ms) + the add/GL-draw of ~8k features (~28 ms), which bundle into one
+~50–68 ms task (the GeoJS GL buffer is rebuilt because features leave and re-enter the
+layer). The `maxBlock` probe metric is longtask-quantized (0 below 50 ms, then ≥50),
+so this sits right at the threshold and reads bimodally. Getting reliably under 50 ms
+would require either avoiding the GL rebuild (keep both frames resident across two
+layers and toggle layer visibility) or splitting the task across macrotasks (lowers
+`maxBlock` but worsens worst-frame time + heap — rejected as metric-gaming).
+
+**Review follow-ups (applied):** the LRU cap is now derived from
+`visibilityConfig.maxVisible` (not a fixed 60k); the skip predicate was extracted to
+the unit-tested `shouldRetainFeature` in `src/utils/annotation.ts`; two round-trip
+reuse tests plus a frame-index (`xy`/`z`/`time`) redraw integration test were added to
+`AnnotationViewer.test.ts`; and the `_exit`/re-add reliance is documented and pinned
+to `geojs ^1.19.1`.
+
+**Two rendering bugs found while testing, both fixed (verified live):**
+
+1. *Zoom in → out drift:* reused features were re-added with the default (ingcs) gcs,
+   so `addAnnotation`'s per-add `_convertCoordinates(ingcs → gcs)` ran a **second**
+   time on already-gcs coordinates and drifted them off the image (dots in bands
+   above/below, worsening each zoom-out). Fixed by re-adding reused features with
+   `gcs = null` (no conversion) while fresh features keep `undefined` (convert once).
+   This bug was the cache.
+2. *Vanish after scrubbing empty Z frames:* a draw that only *adds* features (return
+   to an annotation frame while the layer is already empty) never marked the layer
+   `modified()`, so GeoJS's `_update` skipped the render — features in the list,
+   nothing painted, until reload. Fixed in `drawAnnotationsNoThrottle` by marking the
+   layer modified when the feature count grows. **Independent of the cache** (shared
+   draw path). Full write-up: `codebaseDocumentation/ZSCRUB_FEATURE_REUSE.md`.
+
 ## Wiring it into a loop (sketch)
 
 ```

@@ -471,6 +471,41 @@ export function geometryKeyForRender(data: TAnnotationOrStub): number {
     : coordinatesFingerprint([data.centroid]);
 }
 
+// Fields read off a drawn GeoJS feature to decide whether it may be stashed in
+// the retained-feature cache (the per-(layer, annotation) LRU in
+// AnnotationViewer that lets a frame scrub reuse torn-down features instead of
+// reconstructing them via createGeoJSAnnotation).
+export interface IRetainableFeatureOptions {
+  girderId?: string | null;
+  layerId?: string | null;
+  isConnection?: boolean;
+  specialAnnotation?: boolean;
+}
+
+/**
+ * Whether a torn-down feature is eligible to be retained for later reuse.
+ *
+ * Retainable only when the feature has a stable (layer, annotation) identity to
+ * key on (both `layerId` and `girderId` present) AND is an ordinary annotation
+ * feature. Connections are rebuilt cheaply from their endpoints
+ * (drawNewConnections), and special / in-progress features have no reusable
+ * identity — both are skipped. The current edit annotation is excluded by the
+ * caller via object identity, which can't be expressed from options alone.
+ *
+ * This is the single source of truth for the cache's skip list: extend it here
+ * (with a matching test) rather than re-deriving the predicate at call sites.
+ */
+export function shouldRetainFeature(
+  options: IRetainableFeatureOptions,
+): boolean {
+  return Boolean(
+    options.girderId &&
+      options.layerId &&
+      !options.isConnection &&
+      !options.specialAnnotation,
+  );
+}
+
 // Membership-only view of a collection: communicates that only key presence is
 // read (a Map or Set both satisfy it), and that values are never touched.
 interface IHasKey {

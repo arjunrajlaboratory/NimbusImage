@@ -115,6 +115,7 @@ import {
   drawnFeatureUsesDotStyle,
   drawnFeatureUnchanged,
   geometryKeyForRender,
+  shouldRetainFeature,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
@@ -660,6 +661,170 @@ function unrolledCoordinates(
   return coordinates;
 }
 
+// --- Retained-feature cache (frame-scrub optimization) -----------------------
+// A frame change (Z / Time / XY) turns over the entire visible set, so
+// clearOldAnnotations bulk-clears and drawNewAnnotations reconstructs every
+// GeoJS feature via createGeoJSAnnotation. On large stub datasets that
+// reconstruction is the dominant cost of the scrub freeze (measured ~50 ms of
+// construction for ~8k features at low zoom, ~190 ms for ~26k zoomed in, on top
+// of the ~25-110 ms GL draw). Instead we retain torn-down feature objects in an
+// LRU keyed by (layer, annotation) and, when an annotation reappears (e.g. a
+// scrub back to a recent frame), re-add the cached object — skipping
+// reconstruction. Keying per annotation rather than per frame makes reuse robust
+// to the two-phase frame update (a leading draw with the stale visible set, then
+// the heavy draw once the set lands) and to throttle coalescing during fast
+// scrubs: whatever was removed is reused whenever its id is drawn again. Each
+// reused feature is still validated against the live render data
+// (drawnFeatureUnchanged: layer existence, color, stub-ness, geometry) and
+// restyled for hover/selection, so the rendered set is identical to a rebuild.
+//
+// Bound: we hold roughly the off-screen frames' worth of features on top of the
+// live layer, so cap at a small multiple of the live visible-set cap. Deriving
+// from visibilityConfig.maxVisible (rather than a fixed literal) keeps the bound
+// consistent if that cap is reconfigured; the 1.2x multiple reproduces the
+// previously-tuned 60k at the default 50k cap. Lower the multiple if memory is
+// tighter than reuse value on very large (700k+) datasets.
+const RETAINED_FEATURE_MULTIPLE = 1.2;
+function retainedFeatureLimit(): number {
+  return Math.ceil(
+    annotationStore.visibilityConfig.maxVisible * RETAINED_FEATURE_MULTIPLE,
+  );
+}
+// `layerId|girderId` -> feature. Map insertion order doubles as LRU recency.
+const retainedFeatures = new Map<string, IGeoJSAnnotation>();
+// Global style inputs that bake into a feature's appearance but that
+// drawnFeatureUnchanged does NOT check; when they change every cached feature is
+// stale, so the whole cache is dropped. Opacity is the only one that actually
+// varies in practice and is ALSO covered by onRestyleNeeded (baseStyle watch) —
+// the token is a defense-in-depth guard, not the sole path. getStubScaled() is
+// included for completeness (it is the dot's baked `scaled` baseline), but note
+// it reads unitsPerPixel at the FIXED zoom level 0, so it is constant across
+// zoom: GeoJS rescales dots with zoom via the `scaled` style at render time, so
+// reuse across zoom levels needs no re-bake and the token does not change on
+// zoom. It only moves on a map/dataset re-init.
+let retainedStyleToken = "";
+
+function retainedFeatureKey(layerId: string, girderId: string): string {
+  return `${layerId}|${girderId}`;
+}
+
+function currentStyleToken(): string {
+  return `${getStubScaled()}|${store.annotationOpacity}`;
+}
+
+// Drop the cache when the global style token changes; returns nothing — callers
+// run this before reuse so a stale-styled feature can never be re-added.
+function syncRetainedStyleToken(): void {
+  const token = currentStyleToken();
+  if (token !== retainedStyleToken) {
+    retainedFeatures.clear();
+    retainedStyleToken = token;
+  }
+}
+
+// The cache assumes each feature belongs to exactly one frame. Unroll genuinely
+// breaks that (the unroll grid offset makes a feature's coordinates
+// frame-dependent). For max-merge a single draw spans many frames so the visible
+// set no longer turns over per frame; per-(layer, annotation) keying would still
+// be sound there, but retention buys little and we disable it conservatively
+// rather than reason about the merged-set bookkeeping.
+function isFrameCacheEnabled(): boolean {
+  if (unrolling.value) {
+    return false;
+  }
+  for (const layer of validLayers.value) {
+    if (
+      layer.xy.type === "max-merge" ||
+      layer.z.type === "max-merge" ||
+      layer.time.type === "max-merge"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function clearRetainedFeatureCache(): void {
+  retainedFeatures.clear();
+}
+
+// Stash features removed from the layer (frame left / pan out) so a later redraw
+// of the same annotation reuses them. The skip list (connections, special /
+// in-progress features) lives in shouldRetainFeature; the current edit
+// annotation is excluded here by object identity. Stale-but-cached features are
+// harmless: the reuse validity check rejects them and the LRU evicts them.
+//
+// Reuse safety depends on a GeoJS contract: removeAnnotation() runs
+// annotation._exit(), which for the base annotation type only detaches a cursor
+// mousemove handler and leaves coordinates/options/state intact, so the object
+// can be re-added later via addMultipleAnnotations. This is verified against
+// geojs ^1.19.1 (see package.json). If a geojs upgrade makes _exit (or a feature
+// subtype's override) free renderer state, reused features could render or
+// hit-test wrong with no failing unit test — re-verify on upgrade.
+function retainRemovedFeatures(removed: IGeoJSAnnotation[]): void {
+  if (!isFrameCacheEnabled()) {
+    return;
+  }
+  syncRetainedStyleToken();
+  for (const feature of removed) {
+    const options = feature.options();
+    if (
+      !shouldRetainFeature(options) ||
+      feature === props.annotationLayer.currentAnnotation
+    ) {
+      continue;
+    }
+    const key = retainedFeatureKey(options.layerId, options.girderId);
+    // Re-insert to refresh LRU recency.
+    retainedFeatures.delete(key);
+    retainedFeatures.set(key, feature);
+  }
+  // Trim oldest-first to the (cap-derived) limit. O(overflow), not O(size):
+  // evict only the surplus rather than materializing the full key set.
+  const limit = retainedFeatureLimit();
+  while (retainedFeatures.size > limit) {
+    const oldest = retainedFeatures.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    retainedFeatures.delete(oldest);
+  }
+}
+
+// Pull a retained feature for (layerId, annotationId) if one exists and is still
+// valid for the current render data; route it through the hover/selection
+// restyle pass. Returns null when there is nothing reusable. Callers must have
+// run syncRetainedStyleToken() for this draw first.
+function takeRetainedFeature(
+  layerId: string,
+  annotationId: string,
+  renderData: TAnnotationOrStub,
+  drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]>,
+): IGeoJSAnnotation | null {
+  const key = retainedFeatureKey(layerId, annotationId);
+  const cached = retainedFeatures.get(key);
+  if (
+    !cached ||
+    !drawnFeatureUnchanged(
+      true,
+      renderData,
+      cached.options("color"),
+      cached.options("isStub"),
+      cached.options("geometryKey"),
+    )
+  ) {
+    return null;
+  }
+  retainedFeatures.delete(key);
+  let list = drawnGeoJSAnnotations.get(annotationId);
+  if (!list) {
+    list = [];
+    drawnGeoJSAnnotations.set(annotationId, list);
+  }
+  list.push(cached);
+  return cached;
+}
+
 function drawAnnotationsAndTooltips() {
   drawAnnotations();
   drawTooltips();
@@ -696,9 +861,25 @@ function drawAnnotationsNoThrottle() {
     }
   }
 
+  // Count features BEFORE adding. GeoJS gates the annotation layer's `_update`
+  // (the WebGL feature-data rebuild) on a modified timestamp; addAnnotation /
+  // addMultipleAnnotations called with update=false do NOT bump it, and
+  // clearOldAnnotations marks the layer modified ONLY when it removes features.
+  // So when a draw *adds* features to an otherwise-unchanged layer — e.g.
+  // returning to an annotation frame while the layer was already empty after
+  // scrubbing through blank Z slices — draw() alone renders nothing and the
+  // annotations stay invisible until some later modification (or a reload).
+  // Mark the layer modified whenever the feature count grew so the added
+  // features actually paint. (Guarded so a pure pan with no add/remove still
+  // skips the _update, preserving the incremental-draw optimization.)
+  const featureCountBeforeAdd = props.annotationLayer.annotations().length;
+
   drawNewAnnotations(drawnGeoJSAnnotations);
   if (shouldDrawConnections.value) {
     drawNewConnections(drawnGeoJSAnnotations);
+  }
+  if (props.annotationLayer.annotations().length > featureCountBeforeAdd) {
+    props.annotationLayer.modified();
   }
   props.annotationLayer.draw();
 }
@@ -842,9 +1023,15 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
     // bulk clear is cheaper than N individual O(n) removals; below the threshold
     // keep the survivors and remove only the changed ones.
     if (toRemove.length > features.length * INCREMENTAL_BULK_CLEAR_FRACTION) {
+      // High churn (e.g. a frame change): retain the about-to-be-removed
+      // features so a scrub back reuses them instead of reconstructing the
+      // whole visible set. removeAllAnnotations removes every feature, so retain
+      // all of them.
+      retainRemovedFeatures(features);
       props.annotationLayer.removeAllAnnotations(undefined, undefined, false);
       props.annotationLayer.modified();
     } else if (toRemove.length > 0) {
+      retainRemovedFeatures(toRemove);
       for (const geoJsAnnotation of toRemove) {
         props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
       }
@@ -859,10 +1046,25 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
 function drawNewAnnotations(
   drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]>,
 ) {
+  // Reuse retained features when available — re-adding a cached GeoJS object
+  // skips the costly createGeoJSAnnotation reconstruction when an annotation
+  // reappears (e.g. a scrub back to a recently visited frame).
+  const reuseEnabled = isFrameCacheEnabled();
+  if (reuseEnabled) {
+    syncRetainedStyleToken();
+  }
   for (const [layerId, annotationMap] of layerAnnotations.value) {
     const layer = store.getLayerFromId(layerId);
     if (layer) {
-      let newAnnotations: IGeoJSAnnotation[] = [];
+      // Freshly-created features hold ingcs (image-pixel) coordinates; reused
+      // features were already converted to the map gcs on their first add.
+      // addAnnotation() converts ingcs -> gcs on EVERY add, so the two must be
+      // added in separate batches with different gcs args — re-adding a reused
+      // feature with the default (ingcs) would convert its already-gcs
+      // coordinates a second time and drift it off the image (worsening on each
+      // zoom-out that re-adds it).
+      const freshAnnotations: IGeoJSAnnotation[] = [];
+      const reusedAnnotations: IGeoJSAnnotation[] = [];
       for (const [annotationId, annotation] of annotationMap) {
         const excluded = drawnGeoJSAnnotations
           .get(annotationId)
@@ -871,16 +1073,38 @@ function drawNewAnnotations(
               geoJSAnnotation.options("layerId") === layer.id,
           );
         if (!excluded) {
-          const geoJSAnnotation = createGeoJSAnnotation(annotation, layerId);
-          if (geoJSAnnotation) {
-            newAnnotations.push(geoJSAnnotation);
+          const reused = reuseEnabled
+            ? takeRetainedFeature(
+                layerId,
+                annotationId,
+                annotation,
+                drawnGeoJSAnnotations,
+              )
+            : null;
+          if (reused) {
+            reusedAnnotations.push(reused);
+          } else {
+            const created = createGeoJSAnnotation(annotation, layerId);
+            if (created) {
+              freshAnnotations.push(created);
+            }
           }
         }
       }
-      if (newAnnotations.length > 0) {
+      if (freshAnnotations.length > 0) {
+        // gcs undefined -> ingcs: addAnnotation converts pixel coords to gcs.
         props.annotationLayer.addMultipleAnnotations(
-          newAnnotations,
+          freshAnnotations,
           undefined,
+          false,
+        );
+      }
+      if (reusedAnnotations.length > 0) {
+        // gcs null -> map gcs: addAnnotation skips conversion (coords already
+        // in gcs), so a reused feature renders at its original position.
+        props.annotationLayer.addMultipleAnnotations(
+          reusedAnnotations,
+          null,
           false,
         );
       }
@@ -2667,10 +2891,17 @@ function onDisplayedAnnotationsChange() {
 }
 
 function onRestyleNeeded() {
+  // baseStyle / layer color / tool-highlight changes alter a feature's baked
+  // appearance in ways the per-feature reuse check doesn't cover, so drop the
+  // retained cache and let the next frame reconstruct.
+  clearRetainedFeatureCache();
   restyleAnnotationsThrottled();
 }
 
 function onUnrollChanged() {
+  // Unroll changes which frames a single draw spans, invalidating frame-keyed
+  // retention.
+  clearRetainedFeatureCache();
   clearOldAnnotations(true);
   drawAnnotationsAndTooltips();
 }
@@ -3294,16 +3525,17 @@ async function handleDragEnd(evt: IGeoJSMouseState) {
 
 // ---- Watchers ----
 
-// Primary change: 6 sources
+// Primary change: 3 sources.
+// Frame changes (xy/z/time) are intentionally NOT here. A frame change updates
+// `visibleAnnotationIds` via the updateVisibility watcher; that change flows
+// through layerAnnotations -> displayedAnnotations -> onDisplayedAnnotationsChange,
+// which draws once with the correct visible set. Drawing here too produced a
+// wasted leading draw with the stale (pre-update) visible set, which both
+// rendered an empty/incorrect frame momentarily and forced layerAnnotations to
+// recompute twice per frame change (the dominant residual cost of the scrub
+// freeze once feature reconstruction is cached).
 watch(
-  [
-    annotationConnections,
-    xy,
-    z,
-    time,
-    shouldDrawAnnotations,
-    shouldDrawConnections,
-  ],
+  [annotationConnections, shouldDrawAnnotations, shouldDrawConnections],
   () => {
     onPrimaryChange();
   },
@@ -3581,6 +3813,9 @@ watch(selectedToolRadius, () => {
 watch(
   () => props.annotationLayer,
   (newLayer, oldLayer) => {
+    // The retained features belong to the old layer instance; drop them so a
+    // rebuilt layer (e.g. dataset reset) never re-adds dead feature objects.
+    clearRetainedFeatureCache();
     unbindAnnotationEvents(oldLayer);
     bindAnnotationEvents(newLayer);
     addHoverCallback();
@@ -3637,6 +3872,7 @@ onBeforeUnmount(() => {
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
   }
+  clearRetainedFeatureCache();
 });
 
 // ---- Expose ----

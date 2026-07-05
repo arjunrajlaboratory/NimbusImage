@@ -64,6 +64,16 @@ vi.mock("@/utils/annotation", () => ({
     strokeWidth: 1,
     radius: 5,
   }),
+  // Faithful copy of the real retained-feature skip predicate (unit-tested in
+  // annotationStubUtils.test.ts). Retainable only with a stable (layer,
+  // annotation) identity and not a connection / special feature.
+  shouldRetainFeature: (options: any) =>
+    !!(
+      options.girderId &&
+      options.layerId &&
+      !options.isConnection &&
+      !options.specialAnnotation
+    ),
 }));
 
 vi.mock("@/utils/polygonSlice", () => ({
@@ -1300,6 +1310,146 @@ describe("AnnotationViewer", () => {
 
         // Should update the style since isHovered changed
         expect(geoAnn.options).toHaveBeenCalledWith("isHovered", true);
+      });
+    });
+
+    // --- retained-feature reuse (frame-scrub cache) ---
+    // These drive the cache logic against the GeoJS mock, so they guard the
+    // wiring (retain on remove, reuse-or-reject on redraw) — NOT the real GeoJS
+    // _exit/re-add contract the optimization relies on (see retainRemovedFeatures
+    // in AnnotationViewer.vue, which is pinned to geojs ^1.19.1).
+    describe("retained-feature reuse", () => {
+      function setupDisplayedLayer() {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+      }
+
+      // A previously-drawn feature for a1; `color` decides whether the reuse
+      // validity check (drawnFeatureUnchanged) accepts it against ann1.
+      function drawnFeatureForA1(color: string | null) {
+        const feature = mockGeoJSAnnotation("point");
+        feature.options({
+          girderId: "a1",
+          layerId: "layer1",
+          color,
+          isStub: false,
+          geometryKey: 1, // ann1 has one coordinate
+        });
+        return feature;
+      }
+
+      it("reuses a removed feature instead of reconstructing it on scrub-back", () => {
+        setupDisplayedLayer();
+        const ann1 = makeAnnotation({ id: "a1", channel: 0, color: null });
+        mockedAnnotationStore.annotations = [ann1];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        const feature = drawnFeatureForA1(null);
+        aLayer.removeAllAnnotations();
+        aLayer.addAnnotation(feature);
+
+        // Frame leaves a1: not displayed ⇒ clearOldAnnotations removes + retains.
+        mockedAnnotationStore.annotations = [];
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+        expect(aLayer.annotations()).not.toContain(feature);
+
+        // Scrub back: a1 displayed again ⇒ reuse the retained object, no rebuild.
+        mockedAnnotationStore.annotations = [ann1];
+        (geojsAnnotationFactory as any).mockClear();
+        aLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawNewAnnotations(new Map());
+
+        expect(geojsAnnotationFactory).not.toHaveBeenCalled();
+        expect(aLayer.annotations()).toContain(feature);
+        // A reused feature's coordinates were already converted to the map gcs
+        // on its first add; it must be re-added with gcs=null so addAnnotation
+        // does NOT convert them a second time (which drifts it off the image on
+        // each zoom-out). Fresh features use gcs=undefined (ingcs) instead.
+        expect(aLayer.addMultipleAnnotations).toHaveBeenCalledWith(
+          [feature],
+          null,
+          false,
+        );
+      });
+
+      it("rejects a stale cached feature and reconstructs it", () => {
+        setupDisplayedLayer();
+        const ann1 = makeAnnotation({ id: "a1", channel: 0, color: null });
+        mockedAnnotationStore.annotations = [ann1];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        // Cached feature's color no longer matches ann1 ⇒ must not be reused.
+        const staleFeature = drawnFeatureForA1("stale-color");
+        aLayer.removeAllAnnotations();
+        aLayer.addAnnotation(staleFeature);
+
+        mockedAnnotationStore.annotations = [];
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+
+        mockedAnnotationStore.annotations = [ann1];
+        (geojsAnnotationFactory as any).mockClear();
+        const freshFeature = mockGeoJSAnnotation("point");
+        (geojsAnnotationFactory as any).mockReturnValue(freshFeature);
+        aLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawNewAnnotations(new Map());
+
+        expect(geojsAnnotationFactory).toHaveBeenCalled();
+        expect(aLayer.annotations()).not.toContain(staleFeature);
+        // A freshly-created feature holds ingcs (pixel) coordinates, so it is
+        // added with gcs=undefined and addAnnotation converts it to gcs.
+        expect(aLayer.addMultipleAnnotations).toHaveBeenCalledWith(
+          [freshFeature],
+          undefined,
+          false,
+        );
+      });
+    });
+
+    // Regression: adding features to an otherwise-unchanged layer must mark it
+    // modified() so GeoJS's _update rebuilds and the features actually paint.
+    // clearOldAnnotations only marks modified on REMOVAL, and
+    // addMultipleAnnotations/addAnnotation with update=false never do — so
+    // without an explicit modified() the added features sit in the layer
+    // unrendered (the "annotations vanish after scrubbing through empty Z
+    // frames, until refresh" bug).
+    describe("marks the layer modified when a draw adds features", () => {
+      it("calls modified() when features are added to an empty layer", () => {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "a1", channel: 0 }),
+        ];
+        (geojsAnnotationFactory as any).mockReturnValue(
+          mockGeoJSAnnotation("point"),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        // Empty layer, as after scrubbing through a blank Z frame: the clear
+        // pass removes nothing, so only the add path can mark modified.
+        aLayer.removeAllAnnotations();
+        aLayer.modified.mockClear();
+        aLayer.draw.mockClear();
+
+        (wrapper.vm as any).drawAnnotationsNoThrottle();
+
+        expect(aLayer.annotations().length).toBeGreaterThan(0);
+        expect(aLayer.modified).toHaveBeenCalled();
+        expect(aLayer.draw).toHaveBeenCalled();
       });
     });
   });
@@ -4286,6 +4436,83 @@ describe("AnnotationViewer", () => {
         (wrapper.vm as any).onDisplayedAnnotationsChange();
         expect(spy).not.toHaveBeenCalled();
       });
+    });
+
+    // Integration coverage for the watcher change: xy/z/time were removed from
+    // the primary-change watcher. A frame change must still redraw — it now
+    // flows visibility → displayedAnnotations → onDisplayedAnnotationsChange,
+    // which draws once with the new frame's set (no leading draw via
+    // onPrimaryChange). These drive a real store frame change end-to-end.
+    describe("frame-index change (xy/z/time) redraw path", () => {
+      function setupTwoFrames(axis: "xy" | "z" | "time") {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        // Slice indexes track the current store frame, so the displayed set
+        // turns over when the frame changes.
+        (mockedStore.layerSliceIndexes as any).mockImplementation(() => ({
+          xyIndex: mockedStore.xy,
+          zIndex: mockedStore.z,
+          tIndex: mockedStore.time,
+        }));
+        const locFor = (v: number) => ({
+          XY: axis === "xy" ? v : 0,
+          Z: axis === "z" ? v : 0,
+          Time: axis === "time" ? v : 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "f0", channel: 0, location: locFor(0) }),
+          makeAnnotation({ id: "f1", channel: 0, location: locFor(1) }),
+        ];
+        // Created features carry their annotation id so the drawn set is
+        // inspectable through the (arg-ignoring) factory mock.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (_shape: any, _coords: any, options: any) => {
+            const feature = mockGeoJSAnnotation("point");
+            if (options) feature.options(options);
+            return feature;
+          },
+        );
+      }
+
+      function drawnIds(aLayer: any): (string | undefined)[] {
+        return aLayer.annotations().map((f: any) => f.options("girderId"));
+      }
+
+      it.each(["xy", "z", "time"] as const)(
+        "redraws with the new frame's annotations when %s changes",
+        async (axis) => {
+          setupTwoFrames(axis);
+          // Mount on an empty frame so the first real draw is the seed below.
+          mockedStore[axis] = 9;
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          const aLayer = (wrapper.vm as any).annotationLayer;
+
+          // Seed frame 0: f0 becomes displayed and is drawn.
+          mockedStore[axis] = 0;
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          expect(
+            (wrapper.vm as any).displayedAnnotations.map((a: any) => a.id),
+          ).toEqual(["f0"]);
+          expect(drawnIds(aLayer)).toContain("f0");
+
+          // Frame change to 1: the displayed set turns over and a redraw runs.
+          aLayer.draw.mockClear();
+          mockedStore[axis] = 1;
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+
+          expect(
+            (wrapper.vm as any).displayedAnnotations.map((a: any) => a.id),
+          ).toEqual(["f1"]);
+          expect(aLayer.draw).toHaveBeenCalled();
+          expect(drawnIds(aLayer)).toContain("f1");
+          expect(drawnIds(aLayer)).not.toContain("f0");
+          // The frame change never routed through onPrimaryChange.
+          expect((wrapper.vm as any).handlingPrimaryChange).toBe(false);
+        },
+      );
     });
 
     describe("onRestyleNeeded", () => {

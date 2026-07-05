@@ -16,6 +16,7 @@ import {
   drawnFeatureUsesDotStyle,
   idHasHydratableShape,
   materializeStubAnnotation,
+  shouldRetainFeature,
 } from "../annotation";
 import {
   IAnnotation,
@@ -285,6 +286,46 @@ describe("drawnFeatureUnchanged", () => {
     expect(
       drawnFeatureUnchanged(true, hydrated, "red", false, hydratedKey),
     ).toBe(true);
+  });
+});
+
+describe("shouldRetainFeature", () => {
+  const retainable = {
+    girderId: "annot-1",
+    layerId: "layer-1",
+    isConnection: false,
+    specialAnnotation: false,
+  };
+
+  it("retains an ordinary annotation feature with a stable identity", () => {
+    expect(shouldRetainFeature(retainable)).toBe(true);
+  });
+
+  it("skips a feature with no girderId", () => {
+    expect(shouldRetainFeature({ ...retainable, girderId: null })).toBe(false);
+    expect(shouldRetainFeature({ ...retainable, girderId: undefined })).toBe(
+      false,
+    );
+  });
+
+  it("skips a feature with no layerId", () => {
+    expect(shouldRetainFeature({ ...retainable, layerId: null })).toBe(false);
+  });
+
+  it("skips connection features (rebuilt from endpoints, not cached)", () => {
+    expect(shouldRetainFeature({ ...retainable, isConnection: true })).toBe(
+      false,
+    );
+  });
+
+  it("skips special / in-progress features", () => {
+    expect(
+      shouldRetainFeature({ ...retainable, specialAnnotation: true }),
+    ).toBe(false);
+  });
+
+  it("tolerates absent optional flags (defaults to retainable)", () => {
+    expect(shouldRetainFeature({ girderId: "a", layerId: "l" })).toBe(true);
   });
 });
 

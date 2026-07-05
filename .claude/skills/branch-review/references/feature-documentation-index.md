@@ -12,6 +12,8 @@ Use this index to load relevant architecture docs when reviewing feature-specifi
 | SAM tool, ONNX models, WebGPU inference | `codebaseDocumentation/SAM2_MIGRATION.md` |
 | Batch annotation compute, worker batch | `codebaseDocumentation/BATCH_ANNOTATION_COMPUTE.md` |
 | Batch property compute | `codebaseDocumentation/BATCH_PROPERTY_COMPUTE.md` |
+| Annotation rendering / draw path / stubs / hydration / z-scrub perf | `codebaseDocumentation/ANNOTATION-STUBS.md`, `codebaseDocumentation/ANNOTATION_PERFORMANCE_OPTIMIZATIONS.md`, `codebaseDocumentation/ZSCRUB_FEATURE_REUSE.md`, `codebaseDocumentation/VIEWPORT-BOUND-BUDGET.md` |
+| Component tests (`*.test.ts` under `src/components/`), watcher/draw/mock behavior | `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md` |
 
 ## File Pattern -> Feature Area Mapping
 
@@ -23,6 +25,8 @@ Use this index to load relevant architecture docs when reviewing feature-specifi
 | `samPipeline.ts`, `computePipeline.ts`, ONNX configs | SAM tool |
 | `AnnotationWorkerMenu.vue`, `computeAnnotationsWithWorkerBatch` | Batch annotation |
 | `AnnotationProperties.vue`, `computePropertyBatch` | Batch property |
+| `AnnotationViewer.vue`, `ImageViewer.vue`, `utils/annotation.ts` draw/stub helpers | Annotation rendering |
+| `*.test.ts` under `src/components/` (mounting components) | Component tests |
 
 ## Cross-Cutting Patterns
 
