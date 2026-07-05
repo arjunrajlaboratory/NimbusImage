@@ -1944,26 +1944,24 @@ function removeLineScanAnnotation() {
 function clearLineScanState() {
   removeLineScanAnnotation();
   lineScanSegmentStart.value = null;
+  lineScanStore.setSegmentStartPlaced(false);
 }
 
 // Display the scanned line on the interaction layer and publish it to the
-// linescan store, where LineScanPanel picks it up to plot the intensities
+// linescan store, where LineScanPanel picks it up to plot the intensities.
+// The display annotation is recreated on every update: addAnnotation converts
+// the image coordinates to map coordinates exactly once per added annotation,
+// so mutating an already-added annotation's coordinates in place would leave
+// them in the wrong coordinate space (drawn mirrored off-image).
 function updateLineScanLine(
   coordinates: IGeoJSPosition[],
   isComplete: boolean,
 ) {
-  if (lineScanAnnotation.value) {
-    lineScanAnnotation.value._coordinates(coordinates);
-    lineScanAnnotation.value.draw();
-  } else {
-    const annotation = geojsAnnotationFactory(
-      AnnotationShape.Line,
-      coordinates,
-      { style: { ...lineScanDisplayStyle } },
-    );
-    if (!annotation) {
-      return;
-    }
+  removeLineScanAnnotation();
+  const annotation = geojsAnnotationFactory(AnnotationShape.Line, coordinates, {
+    style: { ...lineScanDisplayStyle },
+  });
+  if (annotation) {
     annotation.options("specialAnnotation", true);
     lineScanAnnotation.value = markRaw(annotation);
     props.interactionLayer.addAnnotation(annotation);
@@ -1975,31 +1973,39 @@ function updateLineScanLine(
 }
 
 // Live updates while the line is being drawn: segment previews between the
-// two clicks, and freehand lines while the mouse button is held down
-const handleLineScanMouseMove = throttle((evt: IGeoJSMouseState) => {
-  if (selectedToolConfiguration.value?.type !== "linescan" || !evt?.geo) {
-    return;
-  }
-  if (isLineScanSegmentTool.value) {
-    if (lineScanSegmentStart.value) {
-      updateLineScanLine([lineScanSegmentStart.value, evt.geo], false);
-    }
-  } else {
-    const current = props.interactionLayer.currentAnnotation;
-    if (!current) {
+// two clicks, and freehand lines while the mouse button is held down.
+// Bound to both mousemove (segment previews) and actionmove (freehand drags:
+// geojs suppresses mousemove events while a drag action is active).
+const handleLineScanMouseMove = throttle(
+  (evt: { geo?: IGeoJSPosition; mouse?: IGeoJSMouseState }) => {
+    const geo = evt?.geo ?? evt?.mouse?.geo;
+    if (selectedToolConfiguration.value?.type !== "linescan" || !geo) {
       return;
     }
-    // A new line is being drawn: it replaces the previous scan display
-    removeLineScanAnnotation();
-    const coordinates = current.coordinates();
-    if (coordinates.length >= 2) {
+    if (isLineScanSegmentTool.value) {
+      if (lineScanSegmentStart.value) {
+        updateLineScanLine([lineScanSegmentStart.value, geo], false);
+      }
+    } else {
+      // The layer always holds an empty in-create annotation while the tool
+      // is armed; fewer than 2 coordinates means no drag is in progress and
+      // the previously scanned line stays displayed
+      const coordinates =
+        props.interactionLayer.currentAnnotation?.coordinates() ?? [];
+      if (coordinates.length < 2) {
+        return;
+      }
+      // A new line is being drawn: geojs displays it while the drag is in
+      // progress, so only replace the previous scan display and plot data
+      removeLineScanAnnotation();
       lineScanStore.setLine({
         points: coordinates.map(({ x, y }) => ({ x, y })),
         isComplete: false,
       });
     }
-  }
-}, THROTTLE);
+  },
+  THROTTLE,
+);
 
 function handleLineScanAnnotationDone(annotation: IGeoJSAnnotation) {
   const coordinates = annotation.coordinates().map(({ x, y }) => ({ x, y }));
@@ -2009,9 +2015,11 @@ function handleLineScanAnnotationDone(annotation: IGeoJSAnnotation) {
     if (lineScanSegmentStart.value === null) {
       removeLineScanAnnotation();
       lineScanSegmentStart.value = coordinates[0];
+      lineScanStore.setSegmentStartPlaced(true);
     } else {
       updateLineScanLine([lineScanSegmentStart.value, coordinates[0]], true);
       lineScanSegmentStart.value = null;
+      lineScanStore.setSegmentStartPlaced(false);
     }
   } else if (coordinates.length >= 2) {
     removeLineScanAnnotation();
@@ -2156,6 +2164,10 @@ function clearAnnotationMode() {
     cursorAnnotation.value = null;
   }
   props.interactionLayer.geoOff(geojs.event.mousemove, handleLineScanMouseMove);
+  props.interactionLayer.geoOff(
+    geojs.event.actionmove,
+    handleLineScanMouseMove,
+  );
   // Restore the geojs default changed by the freehand linescan mode
   props.interactionLayer.options("continuousCloseProximity", 10);
 }
@@ -2254,6 +2266,10 @@ function setNewAnnotationMode() {
       }
       props.interactionLayer.geoOn(
         geojs.event.mousemove,
+        handleLineScanMouseMove,
+      );
+      props.interactionLayer.geoOn(
+        geojs.event.actionmove,
         handleLineScanMouseMove,
       );
       break;
@@ -2763,6 +2779,7 @@ function unbindInteractionEvents(layer: IGeoJSAnnotationLayer | undefined) {
   // always-detach is safe.
   layer.geoOff(geojs.event.mouseclick, handleTaggingClick);
   layer.geoOff(geojs.event.mousemove, handleLineScanMouseMove);
+  layer.geoOff(geojs.event.actionmove, handleLineScanMouseMove);
 }
 
 function bindTimelapseEvents(
@@ -3212,12 +3229,21 @@ watch(selectedToolConfiguration, () => {
   watchTool();
 });
 
-// Linescan tool selection: publish the configured channel layer and drop any
-// ongoing scan when switching to another tool
+// Linescan tool selection: publish the tool state the panel needs (channel
+// layer, line type) and drop any ongoing scan when switching to another tool
 watch(selectedToolConfiguration, (toolConfiguration) => {
   if (toolConfiguration?.type === "linescan") {
     lineScanStore.setToolLayerId(toolConfiguration.values.layer ?? null);
+    lineScanStore.setToolLineType(
+      toolConfiguration.values.lineType?.value === "segment"
+        ? "segment"
+        : "freehand",
+    );
+    // A segment started with the previously selected tool can't be finished
+    lineScanSegmentStart.value = null;
+    lineScanStore.setSegmentStartPlaced(false);
   } else {
+    lineScanStore.setToolLineType(null);
     lineScanStore.clearLine();
   }
 });
@@ -3342,6 +3368,7 @@ onBeforeUnmount(() => {
   unbindAnnotationEvents(props.annotationLayer);
   unbindInteractionEvents(props.interactionLayer);
   unbindTimelapseEvents(props.timelapseLayer);
+  lineScanStore.setToolLineType(null);
   lineScanStore.clearLine();
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);

@@ -27,6 +27,14 @@ export class LineScan extends VuexModule {
   // Layer id picked in the tool configuration, or null for no preselection
   toolLayerId: string | null = null;
 
+  // Line type of the currently selected linescan tool, or null when no
+  // linescan tool is selected. The panel stays visible while a tool is
+  // selected so it can display drawing instructions.
+  toolLineType: "freehand" | "segment" | null = null;
+
+  // True after the first click of a segment scan, until the second click
+  segmentStartPlaced: boolean = false;
+
   get isActive() {
     return this.points !== null;
   }
@@ -52,6 +60,16 @@ export class LineScan extends VuexModule {
   @Mutation
   setToolLayerId(layerId: string | null) {
     this.toolLayerId = layerId;
+  }
+
+  @Mutation
+  setToolLineType(lineType: "freehand" | "segment" | null) {
+    this.toolLineType = lineType;
+  }
+
+  @Mutation
+  setSegmentStartPlaced(segmentStartPlaced: boolean) {
+    this.segmentStartPlaced = segmentStartPlaced;
   }
 }
 

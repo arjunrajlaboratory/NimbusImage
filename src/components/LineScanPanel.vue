@@ -1,5 +1,5 @@
 <template>
-  <v-card v-if="isActive" class="line-scan-panel" elevation="8">
+  <v-card v-if="isVisible" class="line-scan-panel" elevation="8">
     <div class="panel-header">
       <v-icon size="16" class="mr-1">mdi-chart-bell-curve</v-icon>
       <span class="panel-title">Line scan</span>
@@ -187,7 +187,11 @@ const channelMode = ref<"all" | "selected">("all");
 // Ignore responses of superseded scan requests
 let scanRequestId = 0;
 
-const isActive = computed(() => lineScanStore.isActive);
+// Visible while a linescan tool is selected (showing drawing instructions
+// before any line exists) or while a scanned line is displayed
+const isVisible = computed(
+  () => lineScanStore.toolLineType !== null || lineScanStore.isActive,
+);
 
 const toolLayer = computed(() =>
   lineScanStore.toolLayerId
@@ -212,9 +216,19 @@ const hintText = computed(() => {
   if (isLoading.value) {
     return "Scanning…";
   }
-  return scanLayers.value.length
-    ? "Draw a line on the image to scan intensities"
-    : "No visible layers to scan";
+  if (!scanLayers.value.length) {
+    return "No visible layers to scan";
+  }
+  switch (lineScanStore.toolLineType) {
+    case "freehand":
+      return "Click and drag to draw a line";
+    case "segment":
+      return lineScanStore.segmentStartPlaced
+        ? "Click again to finish the segment"
+        : "Click once to start a segment";
+    default:
+      return "Draw a line on the image to scan intensities";
+  }
 });
 
 const totalLength = computed(() =>
