@@ -63,7 +63,6 @@
     "lodash": "^4.18.1",
     "marked": "^14.1.1",
     "mitt": "^3.0.1",
-    "ml-random-forest": "^2.1.0",
     "mousetrap": "^1.6.4",
     "onnxruntime-common": "1.17.0-dev.20240109-ab897a4a40",
     "onnxruntime-web": "1.19.0-dev.20240801-4b8f6dcbb6",
