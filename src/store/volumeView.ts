@@ -29,6 +29,12 @@ export class VolumeView extends VuexModule {
   segmentationPropertyPath: string[] = [];
   // Opacity of 3D annotation surfaces and point spheres, in (0, 1].
   segmentationOpacity: number = 0.55;
+  // Loft same-tag annotations that overlap across adjacent slices into
+  // continuous 3D surfaces (instead of per-slice prisms).
+  loftSurfaces: boolean = true;
+  // Minimum xy overlap (% of the smaller annotation) required to treat
+  // annotations on adjacent slices as the same object. 0 = any overlap.
+  loftOverlapPercent: number = 0;
   // Depth spacing (µm) to use when time is the depth axis. null → auto default
   // (5× the xy pixel size), computed at build time.
   timeStepUmOverride: number | null = null;
@@ -81,6 +87,16 @@ export class VolumeView extends VuexModule {
   @Mutation
   setSegmentationOpacity(value: number) {
     this.segmentationOpacity = Math.min(1, Math.max(0.05, value));
+  }
+
+  @Mutation
+  setLoftSurfaces(value: boolean) {
+    this.loftSurfaces = value;
+  }
+
+  @Mutation
+  setLoftOverlapPercent(value: number) {
+    this.loftOverlapPercent = Math.min(95, Math.max(0, value));
   }
 
   @Mutation

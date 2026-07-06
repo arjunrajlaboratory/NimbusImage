@@ -17,6 +17,12 @@ import {
 } from "@/store/model";
 import { getValueFromObjectAndPath } from "@/utils/paths";
 import { logWarning } from "@/utils/log";
+import {
+  IPlanarPoint,
+  alignRingToReference,
+  overlapFraction,
+  resampleClosedContour,
+} from "@/utils/contourLoft";
 import type { VolumeGeometry } from "@/store/VolumeAPI";
 
 export interface IAnnotationsTo3DOptions {
@@ -32,6 +38,13 @@ export interface IAnnotationsTo3DOptions {
   colorMode: TVolumeSegmentationColorMode;
   propertyPath: string[];
   propertyValues: IAnnotationPropertyValues;
+  // Loft same-tag polygons that overlap in xy on adjacent depth slices into
+  // continuous surfaces instead of per-slice prisms. Defaults to false.
+  loftSurfaces?: boolean;
+  // Minimum xy overlap — as a fraction of the smaller polygon's area, in
+  // [0, 1] — for two annotations on adjacent slices to count as the same
+  // object. 0 (the default) connects any positive overlap.
+  loftOverlapFraction?: number;
 }
 
 export interface IAnnotationsTo3DResult {
@@ -243,6 +256,203 @@ function addRibbon(
   }
 }
 
+// A polygon annotation queued for surface emission, with its depth resolved.
+interface IPrismEntry {
+  polygon: IPlanarPoint[];
+  // Depth in original slice indices (used to find adjacent slices).
+  originalDepth: number;
+  // Depth in (possibly subsampled) volume voxels (used to place geometry).
+  depthIndex: number;
+  scalar: number;
+  tag: string;
+}
+
+// Pairs each polygon with at most one polygon on the next slice — greedy
+// best-overlap matching, like frame-to-frame tracking — and returns the
+// resulting chains. Only same-tag polygons on consecutive original slices
+// whose xy overlap reaches `minOverlapFraction` are linked; a chain of
+// length 1 falls back to a plain prism.
+function buildLoftChains(
+  entries: IPrismEntry[],
+  minOverlapFraction: number,
+): IPrismEntry[][] {
+  const bounds = new Map<IPrismEntry, [number, number, number, number]>();
+  for (const entry of entries) {
+    const xs = entry.polygon.map((point) => point.x);
+    const ys = entry.polygon.map((point) => point.y);
+    bounds.set(entry, [
+      Math.min(...xs),
+      Math.min(...ys),
+      Math.max(...xs),
+      Math.max(...ys),
+    ]);
+  }
+  const boundsIntersect = (a: IPrismEntry, b: IPrismEntry) => {
+    const [aMinX, aMinY, aMaxX, aMaxY] = bounds.get(a)!;
+    const [bMinX, bMinY, bMaxX, bMaxY] = bounds.get(b)!;
+    return aMinX <= bMaxX && bMinX <= aMaxX && aMinY <= bMaxY && bMinY <= aMaxY;
+  };
+
+  const byTagAndDepth = new Map<string, Map<number, IPrismEntry[]>>();
+  for (const entry of entries) {
+    const byDepth = byTagAndDepth.get(entry.tag) ?? new Map();
+    byTagAndDepth.set(entry.tag, byDepth);
+    byDepth.set(entry.originalDepth, [
+      ...(byDepth.get(entry.originalDepth) ?? []),
+      entry,
+    ]);
+  }
+
+  const nextOf = new Map<IPrismEntry, IPrismEntry>();
+  const hasPrevious = new Set<IPrismEntry>();
+  for (const byDepth of byTagAndDepth.values()) {
+    for (const [depth, sliceEntries] of byDepth) {
+      const nextSliceEntries = byDepth.get(depth + 1);
+      if (!nextSliceEntries) {
+        continue;
+      }
+      const candidates: {
+        lower: IPrismEntry;
+        upper: IPrismEntry;
+        overlap: number;
+      }[] = [];
+      for (const lower of sliceEntries) {
+        for (const upper of nextSliceEntries) {
+          if (!boundsIntersect(lower, upper)) {
+            continue;
+          }
+          const overlap = overlapFraction(lower.polygon, upper.polygon);
+          if (overlap > 0 && overlap >= minOverlapFraction) {
+            candidates.push({ lower, upper, overlap });
+          }
+        }
+      }
+      candidates.sort((a, b) => b.overlap - a.overlap);
+      for (const { lower, upper } of candidates) {
+        if (!nextOf.has(lower) && !hasPrevious.has(upper)) {
+          nextOf.set(lower, upper);
+          hasPrevious.add(upper);
+        }
+      }
+    }
+  }
+
+  const chains: IPrismEntry[][] = [];
+  for (const entry of entries) {
+    if (hasPrevious.has(entry)) {
+      continue;
+    }
+    const chain: IPrismEntry[] = [];
+    for (
+      let link: IPrismEntry | undefined = entry;
+      link !== undefined;
+      link = nextOf.get(link)
+    ) {
+      chain.push(link);
+    }
+    chains.push(chain);
+  }
+  return chains;
+}
+
+// Resampled ring sizes for lofted surfaces: enough points to keep blob
+// detail, bounded so huge SAM polygons don't explode the mesh.
+const LOFT_MIN_RING_SIZE = 24;
+const LOFT_MAX_RING_SIZE = 128;
+
+// Lofts a chain of stacked polygons into one continuous closed surface:
+// each contour is resampled to a shared ring size and aligned with the ring
+// below it, consecutive rings are stitched with triangle bands, and skirt
+// rings extend the first/last contours by half a slice so the surface spans
+// the full slice thicknesses. Caps close the two ends.
+function addLoftedChain(
+  chain: IPrismEntry[],
+  halfSliceThickness: number,
+  world: IWorldTransform,
+  mesh: ISurfaceMesh,
+) {
+  const ringSize = Math.min(
+    LOFT_MAX_RING_SIZE,
+    Math.max(LOFT_MIN_RING_SIZE, ...chain.map((entry) => entry.polygon.length)),
+  );
+  const rings: IPlanarPoint[][] = [];
+  for (const entry of chain) {
+    let ring = resampleClosedContour(entry.polygon, ringSize);
+    if (rings.length > 0) {
+      ring = alignRingToReference(ring, rings[rings.length - 1]);
+    }
+    rings.push(ring);
+  }
+
+  const pushRing = (ring: IPlanarPoint[], z: number) => {
+    const baseIndex = mesh.points.length / 3;
+    for (const point of ring) {
+      mesh.points.push(world.toX(point.x), world.toY(point.y), z);
+    }
+    return baseIndex;
+  };
+
+  const lastIndex = chain.length - 1;
+  const ringBases = [
+    pushRing(rings[0], world.zCenter(chain[0].depthIndex) - halfSliceThickness),
+    ...chain.map((entry, index) =>
+      pushRing(rings[index], world.zCenter(entry.depthIndex)),
+    ),
+    pushRing(
+      rings[lastIndex],
+      world.zCenter(chain[lastIndex].depthIndex) + halfSliceThickness,
+    ),
+  ];
+
+  for (let bandIndex = 0; bandIndex < ringBases.length - 1; bandIndex += 1) {
+    const lowerBase = ringBases[bandIndex];
+    const upperBase = ringBases[bandIndex + 1];
+    // The bottom skirt band follows the first annotation's scalar, every
+    // other band the annotation at its top ring.
+    const scalar = chain[Math.min(bandIndex, lastIndex)].scalar;
+    for (let index = 0; index < ringSize; index += 1) {
+      const next = (index + 1) % ringSize;
+      mesh.triangles.push(
+        3,
+        lowerBase + index,
+        lowerBase + next,
+        upperBase + next,
+      );
+      mesh.cellScalars.push(scalar);
+      mesh.triangles.push(
+        3,
+        lowerBase + index,
+        upperBase + next,
+        upperBase + index,
+      );
+      mesh.cellScalars.push(scalar);
+    }
+  }
+
+  const addCap = (ring: IPlanarPoint[], baseIndex: number, scalar: number) => {
+    const flat: number[] = [];
+    for (const point of ring) {
+      flat.push(point.x, point.y);
+    }
+    const capIndices = earcut(flat);
+    for (let index = 0; index < capIndices.length; index += 3) {
+      mesh.triangles.push(
+        3,
+        baseIndex + capIndices[index],
+        baseIndex + capIndices[index + 1],
+        baseIndex + capIndices[index + 2],
+      );
+      mesh.cellScalars.push(scalar);
+    }
+  };
+  addCap(rings[0], ringBases[0], chain[0].scalar);
+  addCap(
+    rings[lastIndex],
+    ringBases[ringBases.length - 1],
+    chain[lastIndex].scalar,
+  );
+}
+
 type TSegmentationKind = "prism" | "ribbon" | "sphere";
 
 interface ISegmentationItem {
@@ -386,6 +596,7 @@ export function annotationsTo3D(
   };
   const spherePoints: number[] = [];
   const sphereScalars: number[] = [];
+  const prismEntries: IPrismEntry[] = [];
   let usedAnnotationCount = 0;
   let minScalar = Number.POSITIVE_INFINITY;
   let maxScalar = Number.NEGATIVE_INFINITY;
@@ -419,7 +630,14 @@ export function annotationsTo3D(
 
     switch (item.kind) {
       case "prism":
-        addPrism(item.planarPoints, depthIndex, scalar, world, surfaceMesh);
+        // Queued rather than emitted: prisms may be lofted together below.
+        prismEntries.push({
+          polygon: item.planarPoints,
+          originalDepth,
+          depthIndex,
+          scalar,
+          tag: item.annotation.tags[0] ?? "untagged",
+        });
         break;
       case "ribbon":
         addRibbon(item.planarPoints, depthIndex, scalar, world, surfaceMesh);
@@ -437,6 +655,26 @@ export function annotationsTo3D(
     }
     usedAnnotationCount += 1;
   });
+
+  const chains = options.loftSurfaces
+    ? buildLoftChains(prismEntries, options.loftOverlapFraction ?? 0)
+    : prismEntries.map((entry) => [entry]);
+  // Half the world-z distance between consecutive original slices, so lofted
+  // surfaces span the full thickness of their first and last slices.
+  const halfSliceThickness = options.geometry.spacing[2] / depthStride / 2;
+  for (const chain of chains) {
+    if (chain.length === 1) {
+      addPrism(
+        chain[0].polygon,
+        chain[0].depthIndex,
+        chain[0].scalar,
+        world,
+        surfaceMesh,
+      );
+    } else {
+      addLoftedChain(chain, halfSliceThickness, world, surfaceMesh);
+    }
+  }
 
   const surfacePolyData = buildSurfacePolyData(surfaceMesh);
   const pointsPolyData = buildPointsPolyData(spherePoints, sphereScalars);

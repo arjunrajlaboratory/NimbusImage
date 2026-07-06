@@ -145,6 +145,86 @@ describe("annotationsTo3D", () => {
     ).toEqual([1]);
   });
 
+  it("lofts overlapping same-tag polygons on adjacent slices", () => {
+    const result = convert(
+      [
+        annotation({ id: "slice-0", location: { XY: 0, Z: 0, Time: 0 } }),
+        annotation({ id: "slice-1", location: { XY: 0, Z: 1, Time: 0 } }),
+      ],
+      { loftSurfaces: true },
+    );
+
+    expect(result.usedCount).toBe(2);
+    // Four rings (bottom skirt, two slice centers, top skirt) of 24 points.
+    expect(result.surfacePolyData.getNumberOfPoints()).toBe(96);
+    // Three bands of 2×24 triangles plus two end caps.
+    expect(result.surfacePolyData.getNumberOfCells()).toBeGreaterThan(144);
+
+    const points = Array.from(result.surfacePolyData.getPoints().getData());
+    // The bottom skirt ring extends half a slice below the first center.
+    expect(points[2]).toBe(-2.5);
+    // The last pushed ring is the top skirt, half a slice above z index 1.
+    expect(points[points.length - 1]).toBe(7.5);
+  });
+
+  it("keeps separate prisms when overlap is below the loft threshold", () => {
+    const annotations = [
+      annotation({ id: "slice-0", location: { XY: 0, Z: 0, Time: 0 } }),
+      annotation({
+        id: "slice-1",
+        location: { XY: 0, Z: 1, Time: 0 },
+        // Shifted by half the width: 50% overlap of the smaller polygon.
+        coordinates: [
+          { x: 1, y: 0 },
+          { x: 3, y: 0 },
+          { x: 3, y: 2 },
+          { x: 1, y: 2 },
+        ],
+      }),
+    ];
+
+    const lofted = convert(annotations, {
+      loftSurfaces: true,
+      loftOverlapFraction: 0.25,
+    });
+    expect(lofted.surfacePolyData.getNumberOfPoints()).toBe(96);
+
+    const separate = convert(annotations, {
+      loftSurfaces: true,
+      loftOverlapFraction: 0.75,
+    });
+    expect(separate.surfacePolyData.getNumberOfPoints()).toBe(16);
+    expect(separate.surfacePolyData.getNumberOfCells()).toBe(24);
+  });
+
+  it("does not loft across z gaps or across different tags", () => {
+    const gapped = convert(
+      [
+        annotation({ id: "slice-0", location: { XY: 0, Z: 0, Time: 0 } }),
+        annotation({ id: "slice-2", location: { XY: 0, Z: 2, Time: 0 } }),
+      ],
+      { loftSurfaces: true },
+    );
+    expect(gapped.surfacePolyData.getNumberOfCells()).toBe(24);
+
+    const mixedTags = convert(
+      [
+        annotation({
+          id: "slice-0",
+          tags: ["nucleus"],
+          location: { XY: 0, Z: 0, Time: 0 },
+        }),
+        annotation({
+          id: "slice-1",
+          tags: ["cell"],
+          location: { XY: 0, Z: 1, Time: 0 },
+        }),
+      ],
+      { loftSurfaces: true },
+    );
+    expect(mixedTags.surfacePolyData.getNumberOfCells()).toBe(24);
+  });
+
   it("uses numeric property values as per-cell scalars", () => {
     const result = convert([annotation({ id: "ann-a" })], {
       colorMode: "property",

@@ -89,6 +89,27 @@
         />
       </div>
       <v-btn
+        v-if="showSegmentations"
+        variant="text"
+        size="small"
+        icon
+        :color="loftSurfaces ? 'primary' : undefined"
+        title="Loft stacked annotations into smooth surfaces"
+        @click="loftSurfaces = !loftSurfaces"
+      >
+        <v-icon size="20">mdi-vector-curve</v-icon>
+      </v-btn>
+      <v-btn
+        v-if="showSegmentations && loftSurfaces"
+        variant="text"
+        size="small"
+        icon
+        title="Loft overlap threshold"
+        @click="loftDialog = true"
+      >
+        <v-icon size="20">mdi-tune-variant</v-icon>
+      </v-btn>
+      <v-btn
         variant="text"
         size="small"
         icon
@@ -158,6 +179,39 @@
       />
       <span>{{ statusText }}</span>
     </div>
+
+    <v-dialog v-model="loftDialog" max-width="420px">
+      <v-card>
+        <v-card-title>Loft overlap threshold</v-card-title>
+        <v-card-text>
+          <v-slider
+            v-model="loftOverlapPercent"
+            :min="0"
+            :max="95"
+            :step="5"
+            density="comfortable"
+            hide-details
+          >
+            <template v-slot:append>
+              <span class="loft-threshold-value">
+                {{ loftOverlapPercent }}%
+              </span>
+            </template>
+          </v-slider>
+          <div class="loft-hint">
+            Annotations with the same tag on adjacent slices are joined into one
+            surface when their xy overlap is at least this fraction of the
+            smaller annotation. 0% joins on any overlap.
+          </div>
+        </v-card-text>
+        <v-card-actions class="button-bar">
+          <v-spacer />
+          <v-btn variant="text" size="small" @click="loftDialog = false">
+            Close
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <v-dialog v-model="timeSpacingDialog" max-width="360px">
       <v-card>
@@ -350,6 +404,18 @@ const segmentationOpacity = computed({
   get: () => volumeViewStore.segmentationOpacity,
   set: (value: number) => volumeViewStore.setSegmentationOpacity(value),
 });
+
+const loftSurfaces = computed({
+  get: () => volumeViewStore.loftSurfaces,
+  set: (value: boolean) => volumeViewStore.setLoftSurfaces(value),
+});
+
+const loftOverlapPercent = computed({
+  get: () => volumeViewStore.loftOverlapPercent,
+  set: (value: number) => volumeViewStore.setLoftOverlapPercent(value),
+});
+
+const loftDialog = ref(false);
 
 function propertyKey(path: string[]) {
   return path.join("\u0000");
@@ -668,6 +734,8 @@ function updateSegmentationActors() {
     colorMode: segmentationColorMode.value,
     propertyPath: volumeViewStore.segmentationPropertyPath,
     propertyValues: propertyStore.propertyValues,
+    loftSurfaces: loftSurfaces.value,
+    loftOverlapFraction: loftOverlapPercent.value / 100,
   });
 
   if (result.surfacePolyData.getNumberOfCells() > 0) {
@@ -825,6 +893,8 @@ watch(
     segmentationColorMode,
     selectedPropertyKey,
     () => propertyStore.propertyValues,
+    loftSurfaces,
+    loftOverlapPercent,
   ],
   () => {
     updateSegmentationActors();
@@ -840,6 +910,8 @@ defineExpose({
   showSegmentations,
   segmentationColorMode,
   segmentationOpacity,
+  loftSurfaces,
+  loftOverlapPercent,
   selectedPropertyKey,
   propertyItems,
   rebuildVolume,
@@ -906,10 +978,17 @@ $gizmo-clearance: 130px;
   }
 }
 
-.time-spacing-hint {
+.time-spacing-hint,
+.loft-hint {
   margin-top: 8px;
   font-size: 12px;
   opacity: 0.7;
+}
+
+.loft-threshold-value {
+  min-width: 40px;
+  text-align: right;
+  font-size: 13px;
 }
 
 .volume-status {

@@ -215,6 +215,8 @@ vi.mock("@/store/volumeView", () => {
     segmentationColorMode: "tag",
     segmentationPropertyPath: [] as string[],
     segmentationOpacity: 0.55,
+    loftSurfaces: true,
+    loftOverlapPercent: 0,
     timeStepUmOverride: null as number | null,
     setViewMode: (v: string) => (state.viewMode = v),
     setAxis: (v: string) => (state.axis = v),
@@ -227,6 +229,8 @@ vi.mock("@/store/volumeView", () => {
     setSegmentationPropertyPath: (v: string[]) =>
       (state.segmentationPropertyPath = v),
     setSegmentationOpacity: (v: number) => (state.segmentationOpacity = v),
+    setLoftSurfaces: (v: boolean) => (state.loftSurfaces = v),
+    setLoftOverlapPercent: (v: number) => (state.loftOverlapPercent = v),
     setTimeStepUmOverride: (v: number | null) => (state.timeStepUmOverride = v),
   });
   return { default: state };
@@ -307,6 +311,8 @@ beforeEach(() => {
   volumeViewStore.setShowSegmentations(true);
   volumeViewStore.setSegmentationColorMode("tag");
   volumeViewStore.setSegmentationOpacity(0.55);
+  volumeViewStore.setLoftSurfaces(true);
+  volumeViewStore.setLoftOverlapPercent(0);
   h.properties.length = 0;
   h.sphereMappers.length = 0;
   h.cubeAxes.setVisibility.mockClear();
@@ -396,6 +402,25 @@ describe("VolumeViewer", () => {
     expect((wrapper.vm as any).blendMode).toBe("composite");
     (wrapper.vm as any).blendMode = "mip";
     expect(volumeViewStore.blendMode).toBe("mip");
+  });
+
+  it("passes loft settings through and rebuilds segmentations on change", async () => {
+    await mountReady();
+    expect(h.annotationsTo3D.mock.calls[0][0]).toMatchObject({
+      loftSurfaces: true,
+      loftOverlapFraction: 0,
+    });
+    h.annotationsTo3D.mockClear();
+    h.buildVolume.mockClear();
+
+    volumeViewStore.setLoftOverlapPercent(50);
+    await nextTick();
+
+    expect(h.annotationsTo3D).toHaveBeenCalledTimes(1);
+    expect(h.annotationsTo3D.mock.calls[0][0]).toMatchObject({
+      loftOverlapFraction: 0.5,
+    });
+    expect(h.buildVolume).not.toHaveBeenCalled();
   });
 
   it("renders point annotations with a sphere mapper at the suggested radius", async () => {
