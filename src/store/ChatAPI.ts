@@ -1,5 +1,10 @@
 import { RestClientInstance } from "@/girder";
-import { IChatImage, IChatMessage } from "./model";
+import {
+  IChatImage,
+  IChatMessage,
+  IToolSuggestion,
+  IToolSuggestionCatalogEntry,
+} from "./model";
 
 interface IClaudeAPIChatMessage {
   role: "user" | "assistant";
@@ -100,5 +105,25 @@ export default class ChatAPI {
       throw data.error;
     }
     return toChatMessage(data);
+  }
+
+  // Ask Claude which tools to suggest for a freshly opened dataset, given
+  // screenshots of the interface + viewport, the catalog of tools the frontend
+  // can set up, and the dataset's channel names. Returns raw suggestions that
+  // reference the catalog by id (see store/toolSuggestions.ts for resolution).
+  async getToolSuggestions(params: {
+    images: { media_type: string; data: string }[];
+    catalog: IToolSuggestionCatalogEntry[];
+    channels: string[];
+  }): Promise<IToolSuggestion[]> {
+    const response = await this.client.post("claude_suggest_tools", params);
+    const { data } = response;
+    if (!data) {
+      return [];
+    }
+    if ("error" in data) {
+      throw data.error;
+    }
+    return data.suggestions ?? [];
   }
 }
