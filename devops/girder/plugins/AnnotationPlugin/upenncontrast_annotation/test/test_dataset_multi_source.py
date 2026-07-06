@@ -128,6 +128,26 @@ class TestDatasetMultiSourceValidation:
         )
         assertStatus(resp, 403)
 
+    def testRejectsMalformedAssignments(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "malformed_assignments", upenn_utilities.datasetMetadata
+        )
+        for badBody in (
+            {"assignments": "XY"},
+            {"assignments": {"bogus": {"source": "file", "guess": "C"}}},
+            {"assignments": {"XY": {"source": "file"}}},
+            {"assignments": {"XY": ["file", "XY"]}},
+        ):
+            resp = server.request(
+                path=MULTI_SOURCE_PATH % folder["_id"],
+                method="POST",
+                user=admin,
+                body=json.dumps(badBody),
+                type="application/json",
+            )
+            assertStatus(resp, 400)
+            assert "assignments" in resp.json["message"]
+
     def testAllowedWithExplicitWriteAccess(self, admin, user, server):
         """A user granted WRITE (but not owner) can configure the
         dataset; verifies the check is a genuine WRITE check and not an

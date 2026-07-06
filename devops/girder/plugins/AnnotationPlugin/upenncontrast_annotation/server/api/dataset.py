@@ -30,7 +30,7 @@ from girder.models.upload import Upload
 from girder_large_image.models.image_item import ImageItem
 
 from ..helpers.multi_source import (
-    compute_configuration, validate_assignments,
+    UP_DIMS, compute_configuration, validate_assignments,
 )
 
 MULTI_SOURCE_ITEM_NAME = "multi-source2.json"
@@ -77,10 +77,12 @@ class Dataset(Resource):
     )
     def createMultiSource(self, folder, body):
         body = body or {}
-        assignmentStrategy = body.get("assignments")
+        assignmentStrategy = self._parseAssignmentStrategy(
+            body.get("assignments")
+        )
         transcodeOption = body.get("transcode")
-        splitRGBBands = body.get("splitRGBBands", True)
-        enableCompositing = body.get("enableCompositing", False)
+        splitRGBBands = bool(body.get("splitRGBBands", True))
+        enableCompositing = bool(body.get("enableCompositing", False))
         dryRun = bool(body.get("dryRun", False))
 
         if folder.get("meta", {}).get("subtype") != "contrastDataset":
@@ -142,7 +144,7 @@ class Dataset(Resource):
         )
 
         if dryRun:
-            return result
+            return dict(result, transcode=transcode)
 
         newItem, newFile = self._uploadConfiguration(
             folder, result["config"], user
@@ -171,6 +173,33 @@ class Dataset(Resource):
             "assignments": result["assignments"],
             "transcode": transcode,
         }
+
+    @staticmethod
+    def _parseAssignmentStrategy(strategy):
+        """Validate the optional per-dimension assignment strategy from
+        the request body: ``{dim: {"source", "guess"} | null}``."""
+        if strategy is None:
+            return None
+        if not isinstance(strategy, dict):
+            raise RestException("assignments must be an object.", code=400)
+        for dim, saved in strategy.items():
+            if dim not in UP_DIMS:
+                raise RestException(
+                    'Unknown dimension "%s" in assignments (expected one '
+                    "of %s)." % (dim, ", ".join(UP_DIMS)),
+                    code=400,
+                )
+            if saved is None:
+                continue
+            if not (isinstance(saved, dict)
+                    and isinstance(saved.get("source"), str)
+                    and isinstance(saved.get("guess"), str)):
+                raise RestException(
+                    'assignments["%s"] must be null or an object with '
+                    'string "source" and "guess" fields.' % dim,
+                    code=400,
+                )
+        return strategy
 
     def _markLargeImages(self, items, user, token):
         """Mark plain image items as large images without a job.
