@@ -511,6 +511,9 @@ re-proposed.
 
 ## 9. Future work
 
+- **SAM-embedding similarity variant** — specified in §11 below; a
+  complementary approach that reuses the SAM encoder embeddings we already
+  compute.
 - **Backend batch apply** (the natural backend piece): serialize the flattened
   forest + feature config to JSON, run over all locations via the existing
   `segmentation` docker-worker route, creating annotations server-side.
@@ -558,3 +561,178 @@ above:
   current proposals) — only **Clear** drops the model. This matches the
   roam-and-re-predict design: an empty examples array means "re-predict with
   cached model", per §4.5.
+
+---
+
+## 11. Variant B: SAM-embedding similarity segmentation (specified, not implemented)
+
+A second, complementary route to "circle a few examples, find the rest": reuse
+the **SAM image embeddings we already compute** (`samPipeline.ts` encoder) to
+find objects that *look like* the examples, and use the SAM decoder to
+produce their masks. This is the "personalized SAM" family of techniques
+(cf. PerSAM/Matcher): one or a few example masks → an embedding-space
+descriptor → similarity-guided prompting of the decoder.
+
+### 11.1 Why this variant, and how it relates to the classifier (§1–§8)
+
+| | Classifier (AutoSeg, implemented) | SAM similarity (this section) |
+|---|---|---|
+| Examples needed | ~2+ fg (bg auto-sampled) | 1+ (each example is one SAM click) |
+| What it matches | per-pixel texture/intensity | object-level appearance (semantic) |
+| Boundary quality | threshold + CC; touching objects can merge | SAM decoder masks; handles touching objects much better |
+| Browser support | all browsers (pure TS/worker) | Chrome/WebGPU only (same as SAM tool) |
+| Cost per update | retrain ~0.5 s + dense predict | K decoder runs (~20–50 ms each, serialized) |
+| Fails when | contrast/display changed, texture ambiguous | objects smaller than ~2 embedding cells (~32 px at model scale), or appearance ≠ embedding-salient |
+
+The two variants share the entire "putative proposals → info panel → accept"
+UX and most of the §5 integration surface. They should be exposed as two tool
+templates (or one template with a method select), not merged into one
+algorithm.
+
+### 11.2 Prerequisites already in the codebase
+
+- Encoder graph with cached ONNX sessions and the screenshot→1024×1024
+  aspect-preserving resize, including the recorded `scaledWidth/scaledHeight`
+  → display scale factors (`samPipeline.ts:163-224`). The image occupies the
+  **top-left** of the padded model input; everything right/below
+  `scaledWidth/scaledHeight` is padding and must be masked out of all
+  embedding math.
+- Encoder outputs: `image_embed` `(1, 256, 64, 64)` for both SAM1 ViT-B and
+  SAM2 Hiera; SAM2 additionally `high_res_feats_0/1` (see `ONNX.md:85-112`).
+  Each embedding cell corresponds to a 16×16 px patch of the model input.
+- Decoder runs with arbitrary point/box prompts (`processPrompt`,
+  `samPipeline.ts:241-328`; boxes = point pairs labeled 2/3), serialized per
+  session (`runOnnxSessionSerialized`).
+- Mask → single-blob polygon via ITK `MaskToBlob` — a perfect fit here, since
+  each decoder run yields exactly one object mask.
+- The AutoSeg integration surface (§5): putative rendering, panel skeleton,
+  bulk accept, dedupe-vs-committed.
+
+### 11.3 Algorithm
+
+**1. Example acquisition.** The user clicks (or box-drags) each example —
+the normal SAM prompt flow, reusing `mouseStateToSamPrompt`. Each example is
+decoded immediately to a mask, so examples are precise object masks, not
+freehand circles. Keep per-example masks; a "mark background" polarity (panel
+toggle, as in AutoSeg) yields *negative* examples. Optionally, accepted
+polygons from earlier rounds can be re-ingested as examples.
+
+**2. Descriptor extraction (mask pooling).** For each example mask:
+downsample the mask to the 64×64 embedding grid (a cell is "in" if ≥50% of
+its 16×16 patch is inside the mask, with a ≥1-cell fallback at the argmax
+coverage cell for small objects). L2-normalize each cell's 256-dim feature,
+average the in-mask cells, L2-normalize again → descriptor `d_i`. Keep
+per-example descriptors (do NOT average across examples — score with
+`max_i cos(f, d_i)` so multi-modal appearance works). Negative examples give
+`n_j` descriptors used as a penalty: `score(f) = max_i cos(f, d_i) −
+λ · max_j cos(f, n_j)` (λ ≈ 0.5, tune empirically).
+
+**3. Similarity map.** Score every non-padding embedding cell → a 64×64
+similarity map. This is trivially cheap (≤4096 × 256 dot products, sub-ms in
+JS; no worker needed).
+
+**4. Candidate prompt generation** — three modes, in order of preference:
+
+- **(a) Similarity-peak prompting (default).** 3×3 max-filter NMS on the
+  similarity map; take local maxima above `τ_prompt` (default: 0.6 × the
+  mean self-similarity of the examples — calibrate against what the
+  examples themselves score, not an absolute constant), cap at K = 64 peaks,
+  minimum peak separation ~1.5 cells. Each peak center (cell → model-input px
+  → prompt coords) becomes one foreground-point decoder prompt.
+- **(b) Box prompting at peaks (option).** Same peaks, but prompt with a box
+  centered on the peak sized to the median example's bounding box (in model
+  input px). Helps when single points bleed into adjacent touching objects;
+  worse when object size varies a lot. Expose as a panel toggle
+  ("Prompt with: point / example-sized box").
+- **(c) Dense grid sweep ("thorough" mode).** AMG-style N×N point grid
+  (e.g. 32×32) over the non-padding region, decode all, filter by similarity
+  afterwards. Only worthwhile when similarity peaks miss objects (weak
+  embedding contrast); ~10–20× more decoder runs. Expose as an explicit
+  "Thorough scan" button, not the live default.
+
+**5. Decode + verify.** For each candidate prompt, run the decoder (one run
+per candidate, serialized; reuse the existing decoder context/session and
+mask handling — SAM1 `orig_im_size` vs SAM2 rescale, exactly as today). Then
+verify each candidate mask independently of how it was prompted:
+mask-pool its own descriptor (step 2) and require
+`score ≥ τ_accept` (the panel's similarity threshold, default 0.5 of example
+self-similarity — this is the live slider, like AutoSeg's probability
+threshold) **and** `iou_prediction ≥ 0.7` **and** area within the size filter
+(same auto range from example areas as §4.4).
+
+**6. Dedupe / NMS.** Nearby peaks often decode to the same object. Greedy
+NMS on the low-res (256×256) decoder masks: sort candidates by score, drop
+any with mask-IoU > 0.6 against an already-kept candidate. Also drop
+candidates whose mask contains an example centroid (the examples are already
+segmented), then apply the §4.4 step 7 centroid dedupe against committed
+annotations. Convert survivors to polygons via `MaskToBlob` + RDP simplify +
+`displayToGcs` — identical tail to the existing SAM path.
+
+### 11.4 Pipeline sketch
+
+Extends the existing SAM DAG rather than duplicating it — the encoder chain
+(screenshot → processCanvas → runEncoder) is reused verbatim; new nodes hang
+off the encoder output:
+
+```
+encoderOutput ──► descriptors(examples' masks)     [cheap, main thread]
+              └─► similarityMap(descriptors)       [cheap]
+similarityMap ──► candidatePrompts(mode, τ_prompt, K)
+candidatePrompts ──► decodeCandidates              [K serialized decoder runs,
+                                                    progress into status]
+decodeCandidates ──► verify+NMS+sizeFilter(τ_accept, sizeRange)
+                 ──► maskToPolygons ──► dedupe vs annotations ──► proposals
+```
+
+- `τ_accept`, size range, and simplification changes re-run only the
+  verify/NMS tail on cached candidate masks+descriptors (no re-decoding) —
+  the same cheap-reslider property as AutoSeg's postprocess node.
+- Pan/zoom → new encoder run (already debounced 1000 ms) → descriptors from
+  *examples in the old view* are still valid (they are embedding-space
+  vectors, not pixel coords) → similarity map + candidates recompute in the
+  new view. Same roam-and-accept workflow as AutoSeg, with the same caveat
+  that embeddings are computed on the styled render, plus a new one: SAM
+  embeddings are not fully scale-invariant, so matching degrades if the user
+  zooms far from the zoom level the examples were taken at. Surface the
+  examples' capture zoom in the panel if this bites in practice.
+
+**Decoder budget**: K = 64 point candidates × ~20–50 ms ≈ 1.3–3.2 s per
+viewport on WebGPU, serialized. Stream results into the putative overlay as
+they decode (update `proposals` incrementally every ~8 candidates) rather
+than blocking until the full batch completes; show "23/64 candidates" in the
+status line. Thorough mode (32×32 grid = 1024 runs) is tens of seconds —
+acceptable only as an explicit user action with progress + cancel.
+
+### 11.5 Integration surface
+
+- New `TToolType` `"samSimilarity"` (or a `method` submenu on a shared
+  template) with the SAM models select, `annotation` config, similarity
+  threshold, prompt-mode select, and simplification — WebGPU-gated with the
+  same `IErrorToolState` fallback as SAM.
+- Tool state mirrors `IExampleSegmentationToolState`: examples (now
+  `{ polarity, mask descriptor, polygon }`), proposals, status with
+  candidate-progress, `nextPolarity`.
+- Panel = AutoSeg panel skeleton (§5.5) with: similarity slider replacing the
+  probability threshold, prompt-mode toggle, "Thorough scan" button, and the
+  same Undo/Clear/Accept N. Accept path is byte-for-byte the AutoSeg accept
+  (bulk `createMultipleAnnotations` + dedupe re-run).
+- Viewer wiring: example acquisition is SAM's existing mouse-prompt capture
+  (not polygon mode); putative rendering reuses the AutoSeg proposal
+  watcher pattern.
+
+### 11.6 Risks / open questions
+
+- **Threshold calibration** is the main UX risk: absolute cosine thresholds
+  vary by image; always normalize against example self-similarity (11.3
+  step 4/5) and let the slider express a fraction of it.
+- **Small objects** (< ~32 model-input px) occupy <2 embedding cells;
+  descriptors get noisy. The classifier variant is strictly better there —
+  document the guidance "zoom in" / "use AutoSeg for small blobs".
+- **Batched decoding**: the ONNX decoder takes one prompt set per run; if K
+  runs prove too slow, investigate exporting a decoder with a batch
+  dimension over prompts, or running 2–3 decoder sessions round-robin
+  (WebGPU serialization is per-session).
+- **SAM2 high-res features** (`high_res_feats_0/1`) could sharpen
+  descriptors for small objects (concat pooled high-res features to the
+  256-dim descriptor); leave as a follow-up experiment, `image_embed`-only
+  first.
