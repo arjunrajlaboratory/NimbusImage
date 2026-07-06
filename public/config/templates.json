@@ -360,6 +360,87 @@
     ]
   },
   {
+    "name": "Find similar objects (SAM, experimental, Chrome/WebGPU only)",
+    "type": "samSimilarity",
+    "shortName": "SimSAM",
+    "description": "Click one or more example objects and SAM finds visually similar objects in the current view.",
+    "interface": [
+      {
+        "id": "model",
+        "type": "select",
+        "isSubmenu": true,
+        "meta": {
+          "items": [
+            {
+              "text": "SAM1 ViT-B",
+              "value": "vit_b",
+              "description": "Original SAM model, click or drag to segment objects with AI"
+            },
+            {
+              "text": "SAM2 Hiera Base+",
+              "value": "sam2_hiera_base_plus",
+              "description": "SAM2 base+ model, better quality segmentation"
+            },
+            {
+              "text": "SAM2 Hiera Large",
+              "value": "sam2_hiera_large",
+              "description": "SAM2 large model, best quality segmentation"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Annotation Configuration",
+        "id": "annotation",
+        "type": "annotation",
+        "meta": {
+          "hideShape": true,
+          "defaultShape": "polygon"
+        }
+      },
+      {
+        "name": "Similarity threshold",
+        "id": "similarityThreshold",
+        "type": "text",
+        "meta": {
+          "value": "0.5",
+          "type": "number"
+        }
+      },
+      {
+        "name": "Prompt mode",
+        "id": "promptMode",
+        "type": "select",
+        "meta": {
+          "items": [
+            {
+              "text": "Point prompts",
+              "value": "point"
+            },
+            {
+              "text": "Box prompts",
+              "value": "box"
+            },
+            {
+              "text": "Thorough grid scan",
+              "value": "grid",
+              "description": "Scans a uniform grid of points across the view - much slower, use only if similar objects are being missed"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Simplification",
+        "id": "simplificationTolerance",
+        "type": "text",
+        "meta": {
+          "value": "1",
+          "type": "number"
+        }
+      }
+    ]
+  },
+  {
     "name": "Annotation Connections",
     "type": "connection",
     "shortName": "Connection",

@@ -736,3 +736,85 @@ acceptable only as an explicit user action with progress + cancel.
   descriptors for small objects (concat pooled high-res features to the
   256-dim descriptor); leave as a follow-up experiment, `image_embed`-only
   first.
+
+### 11.7 Implementation notes / deviations (Variant B)
+
+Status: **pipeline/store layer implemented** (`src/pipelines/samSimilarityPipeline.ts`,
+`src/store/model.ts`, `src/store/index.ts`, `public/config/templates.json`).
+`AnnotationViewer.vue`/`ImageViewer.vue`/`Toolset.vue` wiring and the tool
+menu panel are a later increment (§11.5's viewer/panel bullets), same split
+as this document uses for Variant A's §5.4/§5.5. Where the implementation
+departs from §11.3/§11.4 above:
+
+- **Decode-node score filtering (§11.4 "Decode + verify").** The decode
+  node's output is the *full* scored candidate list, filtered only by
+  `iou_prediction >= 0.7` (skipped if a model doesn't expose usable
+  `iou_predictions`) - **not** also by `score >= τ_accept`. The similarity
+  threshold is applied exclusively in the verify/NMS tail. This is required
+  by the "re-runs on threshold ... change WITHOUT re-decoding" property:
+  if the threshold were also applied at decode time, decode's output would
+  depend on the threshold and moving the slider would look like a no-op
+  (stale candidates never redecoded) rather than cheaply re-filtering.
+- **Simplification is a tail-only step, not baked in at decode.** `displayToWorld`
+  is applied at decode time (it must be - see next bullet), but
+  `simplifyCoordinates` runs in the verify/NMS tail, only on the small
+  surviving candidate set, so moving the simplification slider re-runs the
+  cheap tail exactly like a threshold or size-range change, per this
+  section's explicit "re-runs on threshold/size/simplification change
+  WITHOUT re-decoding" requirement. (An earlier draft of this section's
+  wording - "simplifyCoordinates + displayToWorld already applied at
+  decode" - would bake simplification in per-candidate at decode time,
+  which conflicts with that requirement; this implementation resolves the
+  conflict in favor of the explicit no-redecode constraint.)
+- **`displayToWorld` cannot be deferred to the tail.** Candidate/example
+  mask polygons are produced in *display* (screenshot-canvas) coordinates,
+  which are only meaningful relative to the map's camera transform at the
+  moment of that particular screenshot. If the map has since panned/zoomed,
+  converting an old display-coordinate polygon with the *current*
+  `map.displayToGcs` would silently produce wrong GCS points. `displayToWorld`
+  therefore runs immediately at decode/example-decode time, using the same
+  `mapEntry` value that produced the screenshot for that run - exactly
+  mirroring `samPipeline.ts`'s own decoder chain ordering.
+- **Box-prompt sizing (§11.3 step 4b)** is derived from the *cached
+  embedding-grid cellMask* bounding boxes of foreground examples (median
+  width/height in cells x 16), not from their display-space polygons. Cell
+  masks are embedding-space and already the thing that survives re-encodes
+  in the descriptor cache, so this keeps box sizing correct across
+  pans/zooms without re-deriving it from a screenshot-epoch-specific
+  polygon.
+- **Thorough "grid" mode uses a 16x16 uniform point grid** (256 decode
+  runs), not the 32x32 grid mentioned in §11.4's "Decoder budget" note.
+- **`TSamSimilarityNodes.output`** additionally exposes `examples` (the
+  example-descriptor node, whose output includes `decodedExamples`) beyond
+  the `proposals` output sketched in §11.4/§11.5, so the tool-state factory
+  can mirror decoded example polygons into `state.examples` with a plain
+  `onOutputUpdate` listener - the same mechanism used for every other
+  mirrored field - rather than threading a fourth injected callback through
+  pipeline creation (injected callbacks are reserved for the two things
+  that genuinely need mid-computation delivery: decode progress and
+  streamed partial proposals, both of which fire *during* a single node's
+  long-running computation rather than merely on its resolution).
+- **Decode staleness mechanism** (§11.4 "Stream results into the putative
+  overlay ..."): the decode node compares `candidatesNode.output` against
+  the exact `candidates` array reference it was invoked with, after every
+  candidate. `ComputeNode.compute()` never invokes a node's function
+  concurrently with itself, so the only way this reference can change
+  mid-loop is candidatesNode (a direct parent) recomputing - which is
+  precisely the condition that makes the current decode run stale. On
+  detecting this, the loop simply stops (returning whatever was verified so
+  far); no error is thrown or swallowed. `ComputeNode`'s own
+  `shouldRecompute` flag is already set in this scenario (a parent changed
+  while `computing` was true), so ComputeNode itself re-invokes decode with
+  the fresh candidates as soon as the stale call resolves - the early
+  return is a performance optimization (skip the remaining now-pointless
+  decodes), never a correctness requirement.
+- **Foreground-only example aggregates.** `exampleCellMasks`,
+  `exampleAreasGcs`, and `examplePromptAnchorsGcs` (used for the
+  already-segmented dedupe check and the auto size range) are computed from
+  **foreground** examples only; background/negative examples contribute
+  only their descriptor to the negative set used in scoring.
+- **WebGPU gating** matches `samPipeline.ts`: `createSamSimilarityPipeline`
+  throws if `"gpu" in navigator` is false, and
+  `createSamSimilarityToolStateFromToolConfiguration` catches that and
+  returns an `IErrorToolState`, the same pattern as
+  `createSamToolStateFromToolConfiguration`.

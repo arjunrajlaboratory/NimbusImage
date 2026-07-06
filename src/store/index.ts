@@ -84,6 +84,7 @@ import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
 import { createSamToolStateFromToolConfiguration } from "@/pipelines/samPipeline";
 import { createExampleSegmentationToolStateFromToolConfiguration } from "@/pipelines/exampleSegmentationPipeline";
+import { createSamSimilarityToolStateFromToolConfiguration } from "@/pipelines/samSimilarityPipeline";
 import { isEqual } from "lodash";
 import { logError, logWarning } from "@/utils/log";
 
@@ -818,6 +819,11 @@ export class Main extends VuexModule {
         case "exampleSegmentation":
           state = createExampleSegmentationToolStateFromToolConfiguration(
             configuration as IToolConfiguration<"exampleSegmentation">,
+          );
+          break;
+        case "samSimilarity":
+          state = createSamSimilarityToolStateFromToolConfiguration(
+            configuration as IToolConfiguration<"samSimilarity">,
           );
           break;
         case "connection":

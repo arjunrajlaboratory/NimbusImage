@@ -64,6 +64,7 @@ export type TToolType =
   | "segmentation"
   | "samAnnotation"
   | "exampleSegmentation"
+  | "samSimilarity"
   | "tagging";
 
 export interface IToolTemplateInterface {
@@ -189,6 +190,52 @@ export interface IExampleSegmentationToolState {
   nextPolarity: "foreground" | "background";
 }
 
+export const SamSimilarityToolStateSymbol: unique symbol = Symbol(
+  "SamSimilarityToolState",
+);
+
+export type TSamSimilarityToolStateSymbol = typeof SamSimilarityToolStateSymbol;
+
+export interface ISamSimilarityExample {
+  polarity: "foreground" | "background";
+  prompt: TSamPrompt;
+  // The decoded example outline in GCS (image) coords; null until the
+  // example-decode node has processed this example (see
+  // EXAMPLE_SEGMENTATION_TOOL.md §11.4).
+  polygon: IGeoJSPosition[] | null;
+}
+
+export interface ISamSimilarityStatus {
+  phase: "idle" | "computing" | "ready" | "error";
+  error?: string;
+  putativeCount: number; // proposals.length after all filtering
+  // Candidate-decode progress (§11.4: "Stream results ... every ~8
+  // candidates" / "show '23/64 candidates' in the status line"). null when
+  // no decode run is in flight.
+  progress: { done: number; total: number } | null;
+  timings: { encodeMs?: number; decodeMs?: number };
+  // Auto size range derived from foreground example areas, surfaced so the
+  // tool menu panel can display the size filter placeholders (same pattern
+  // as IExampleSegmentationStatus.autoSizeRange).
+  autoSizeRange?: { min: number; max: number } | null;
+}
+
+export interface ISamSimilarityToolState {
+  type: TSamSimilarityToolStateSymbol;
+  nodes: TSamSimilarityNodes; // markRaw'd pipeline nodes
+  // Reactive mirror of nodes.input.geoJSMap.output, same pattern as
+  // ISamAnnotationToolState.mapEntry.
+  mapEntry: IMapEntry | null;
+  // Reactive mirror of the examples input node, with decoded polygons filled
+  // in by the example-decode node (same array order as the input).
+  examples: ISamSimilarityExample[];
+  proposals: IGeoJSPosition[][] | null; // GCS polygons, post-dedupe; null = nothing computed
+  // Polarity applied to the next SAM-prompted example; set by the tool menu
+  // panel (same pattern as IExampleSegmentationToolState.nextPolarity).
+  nextPolarity: "foreground" | "background";
+  status: ISamSimilarityStatus; // reactive mirror
+}
+
 export const ConnectionToolStateSymbol: unique symbol = Symbol(
   "ConnectionToolState",
 );
@@ -229,6 +276,7 @@ export interface IErrorToolState {
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
   exampleSegmentation: IExampleSegmentationToolState | IErrorToolState;
+  samSimilarity: ISamSimilarityToolState | IErrorToolState;
   connection: IConnectionToolState;
   // Edit tool can have CombineToolState when action is "combine_click"
   edit: ICombineToolState | IBaseToolState;
@@ -1901,6 +1949,7 @@ import type { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
 import type { TSamNodes } from "@/pipelines/samPipeline";
 import type { TExampleSegmentationNodes } from "@/pipelines/exampleSegmentationPipeline";
+import type { TSamSimilarityNodes } from "@/pipelines/samSimilarityPipeline";
 
 // TODO: It's kind of weird to have this function here.
 export function newLayer(

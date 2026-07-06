@@ -29,6 +29,8 @@ import {
   NoOutput,
   TNoOutput,
   createComputeNode,
+  readManualInputOr,
+  withErrorReporting,
 } from "./computePipeline";
 import { ExampleSegmentationWorkerClient } from "@/utils/exampleSegmentation/workerClient";
 import {
@@ -38,7 +40,7 @@ import {
   IWorkerPoint,
   IWorkerTimings,
 } from "@/utils/exampleSegmentation/types";
-import { simpleCentroid } from "@/utils/annotation";
+import { dedupeProposalsAgainstAnnotations } from "@/utils/proposalDedupe";
 
 const MAX_WORKING_DIMENSION = 1024;
 const DEFAULT_THRESHOLD = 0.5;
@@ -46,12 +48,6 @@ const DEFAULT_SIZE_RANGE = { min: null, max: null } as const;
 const DEFAULT_SIMPLIFICATION_TOLERANCE = 1;
 
 type TSizeRange = { min: number | null; max: number | null };
-
-/** Reads a ManualInputNode's current value, falling back when it has none yet. */
-function readManualInputOr<T>(node: ManualInputNode<T>, fallback: T): T {
-  const value = node.output;
-  return value === NoOutput ? fallback : value;
-}
 
 /**
  * Take a screenshot of the visible image layers, same approach as
@@ -174,75 +170,11 @@ function convertContourToGcs(
   );
 }
 
-/**
- * Drops proposals whose centroid lies inside an existing annotation that (a)
- * is at the tool's current location (XY/Z/Time) and (b) shares at least one
- * tag with the tool's configured tags (spec §4.4 step 7). This is what makes
- * the roam-and-accept workflow idempotent: accepted objects are not
- * re-proposed.
- *
- * The annotation store is imported dynamically (rather than statically) to
- * avoid introducing a load-time circular dependency: this pipeline module is
- * imported from src/store/index.ts, and src/store/annotation.ts reads
- * `main.annotationsAPI` eagerly at module load time, so pulling it in
- * statically here would risk `main` being undefined during that cycle (the
- * same pattern is used in src/store/jobs.ts for the same reason).
- */
-async function dedupeProposals(
-  proposals: IGeoJSPosition[][],
-  toolConfiguration: IToolConfiguration<"exampleSegmentation">,
-): Promise<IGeoJSPosition[][]> {
-  if (proposals.length === 0) {
-    return proposals;
-  }
-  const { default: annotationStore } = await import("@/store/annotation");
-  const { location } =
-    await annotationStore.getAnnotationLocationFromTool(toolConfiguration);
-  const toolTags: string[] = toolConfiguration.values.annotation?.tags ?? [];
-  const overlappingAnnotations = annotationStore.annotations.filter(
-    (existing) =>
-      existing.location.XY === location.XY &&
-      existing.location.Z === location.Z &&
-      existing.location.Time === location.Time &&
-      existing.tags.some((tag) => toolTags.includes(tag)),
-  );
-  if (overlappingAnnotations.length === 0) {
-    return proposals;
-  }
-  return proposals.filter((proposal) => {
-    const centroid = simpleCentroid(proposal);
-    return !overlappingAnnotations.some((existing) =>
-      geojs.util.pointInPolygon(centroid, existing.coordinates),
-    );
-  });
-}
-
 interface IProposalsOutput {
   proposals: IGeoJSPosition[][];
   componentCount: number;
   autoSizeRange: { min: number; max: number } | null;
   timings: IWorkerTimings;
-}
-
-/**
- * Wraps a node function so any thrown/rejected error is reported through
- * `reportError` (which updates reactive status) before being re-thrown.
- * ComputeNode.compute() already treats a thrown error as "no output" (it
- * logs it and leaves the node's output at NoOutput) - this just adds a
- * side-channel so the tool state can also surface the error message.
- */
-function withErrorReporting<Args extends any[], TResult>(
-  fn: (...args: Args) => Promise<TResult> | TResult,
-  reportError: (error: Error) => void,
-): (...args: Args) => Promise<TResult> {
-  return async (...args: Args) => {
-    try {
-      return await fn(...args);
-    } catch (error) {
-      reportError(error instanceof Error ? error : new Error(String(error)));
-      throw error;
-    }
-  };
 }
 
 export type TExampleSegmentationNodes = {
@@ -428,7 +360,10 @@ function createExampleSegmentationPipeline(
         simplificationTolerance,
       ),
     );
-    const proposals = await dedupeProposals(gcsPolygons, toolConfiguration);
+    const proposals = await dedupeProposalsAgainstAnnotations(
+      gcsPolygons,
+      toolConfiguration,
+    );
     return {
       proposals,
       componentCount: postprocessResult.componentCount,

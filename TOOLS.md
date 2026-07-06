@@ -94,6 +94,8 @@ This tool has the type `exampleSegmentation` (shortName `AutoSeg`). Unlike `snap
 
 The tool circles freehand example polygons on the image (foreground/background), trains a small random-forest pixel classifier in a dedicated web worker (`src/workers/exampleSegmentation.worker.ts`) on multi-scale image features of the current viewport, and proposes putative object outlines that can be accepted in bulk. The reactive compute-DAG that wires the worker calls together lives in `src/pipelines/exampleSegmentationPipeline.ts` (same `ComputeNode`/`ManualInputNode` pattern as the SAM tool in `src/pipelines/samPipeline.ts`), and its normative interfaces are documented in `codebaseDocumentation/EXAMPLE_SEGMENTATION_TOOL.md`.
 
+A second variant of the same "circle a few examples, find the rest" idea has the type `samSimilarity` (shortName `SimSAM`, template description "Find similar objects (SAM, experimental, Chrome/WebGPU only)"). Instead of a pixel classifier, it reuses the SAM encoder embeddings (`src/pipelines/samPipeline.ts`, exported for this purpose) to build a descriptor per example mask, scores the rest of the embedding grid against it, and prompts the SAM decoder at the resulting similarity peaks (or a uniform grid in "thorough" mode). Its pipeline lives in `src/pipelines/samSimilarityPipeline.ts`, and its normative interfaces are documented in `codebaseDocumentation/EXAMPLE_SEGMENTATION_TOOL.md` §11.
+
 ## Featured Tools Configuration
 
 The file `public/config/featuredTools.json` configures which tools appear in the "Featured" section at the top of the tool selection dialog.
