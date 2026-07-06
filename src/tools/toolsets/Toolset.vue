@@ -65,6 +65,21 @@
                 </template>
               </div>
             </template>
+            <!-- SAM-similarity ("Find similar objects") tools also expose
+                 their options in an inline panel, same pattern as SAM and
+                 AutoSeg above. -->
+            <template v-else-if="tool.type === 'samSimilarity'">
+              <div>
+                <tool-item
+                  :tool="tool"
+                  :disabled="!isLoggedIn"
+                  v-bind="activatorProps"
+                />
+                <template v-if="selectedTool && selectedTool.id === tool.id">
+                  <sam-similarity-tool-menu :toolConfiguration="tool" />
+                </template>
+              </div>
+            </template>
             <template v-else>
               <tool-item
                 :tool="tool"
@@ -147,6 +162,7 @@ import {
 import AnnotationWorkerMenu from "@/components/AnnotationWorkerMenu.vue";
 import SamToolMenu from "@/components/SamToolMenu.vue";
 import ExampleSegmentationToolMenu from "@/components/ExampleSegmentationToolMenu.vue";
+import SamSimilarityToolMenu from "@/components/SamSimilarityToolMenu.vue";
 import CircleToDotMenu from "@/components/CircleToDotMenu.vue";
 import ToolCreation from "@/tools/creation/ToolCreation.vue";
 import ToolTypeSelection from "@/tools/creation/ToolTypeSelection.vue";

@@ -564,7 +564,7 @@ above:
 
 ---
 
-## 11. Variant B: SAM-embedding similarity segmentation (specified, not implemented)
+## 11. Variant B: SAM-embedding similarity segmentation (implemented — see §11.7 for deviations)
 
 A second, complementary route to "circle a few examples, find the rest": reuse
 the **SAM image embeddings we already compute** (`samPipeline.ts` encoder) to

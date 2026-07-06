@@ -228,8 +228,10 @@ import {
   IMouseState,
   SamAnnotationToolStateSymbol,
   ExampleSegmentationToolStateSymbol,
+  SamSimilarityToolStateSymbol,
   ISamAnnotationToolState,
   IExampleSegmentationToolState,
+  ISamSimilarityToolState,
   IGeoJSMap,
   ProgressType,
   IGeoJSActionRecord,
@@ -1394,16 +1396,21 @@ function toggleViewLock() {
   });
 }
 
-// Both SAM and example-segmentation tool states are fed the current map
-// through an input node named `geoJSMap` (samPipeline.ts /
-// exampleSegmentationPipeline.ts). Factored into one type guard so the
-// map-feeding watcher below doesn't need to duplicate itself per tool type.
+// SAM, example-segmentation, and SAM-similarity tool states are all fed the
+// current map through an input node named `geoJSMap` (samPipeline.ts /
+// exampleSegmentationPipeline.ts / samSimilarityPipeline.ts). Factored into
+// one type guard so the map-feeding watcher below doesn't need to duplicate
+// itself per tool type.
 function hasGeoJSMapInput(
   toolState: TToolState | null | undefined,
-): toolState is ISamAnnotationToolState | IExampleSegmentationToolState {
+): toolState is
+  | ISamAnnotationToolState
+  | IExampleSegmentationToolState
+  | ISamSimilarityToolState {
   return (
     toolState?.type === SamAnnotationToolStateSymbol ||
-    toolState?.type === ExampleSegmentationToolStateSymbol
+    toolState?.type === ExampleSegmentationToolStateSymbol ||
+    toolState?.type === SamSimilarityToolStateSymbol
   );
 }
 

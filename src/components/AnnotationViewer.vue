@@ -86,6 +86,10 @@ import {
   ExampleSegmentationToolStateSymbol,
   IExampleSegmentationToolState,
   IExampleSegmentationExample,
+  SamSimilarityToolStateSymbol,
+  ISamSimilarityToolState,
+  ISamSimilarityExample,
+  PromptType,
 } from "../store/model";
 
 import { logError, logWarning } from "@/utils/log";
@@ -103,7 +107,7 @@ import {
   mouseStateToSamPrompt,
   samPromptToAnnotation,
 } from "@/pipelines/samPipeline";
-import { NoOutput } from "@/pipelines/computePipeline";
+import { NoOutput, readManualInputOr } from "@/pipelines/computePipeline";
 
 import AnnotationContextMenu from "@/components/AnnotationContextMenu.vue";
 import AnnotationActionPanel from "@/components/AnnotationActionPanel.vue";
@@ -230,6 +234,11 @@ const exampleSegmentationExampleAnnotations = shallowRef<IGeoJSAnnotation[]>(
 const exampleSegmentationProposalAnnotations = shallowRef<IGeoJSAnnotation[]>(
   [],
 );
+// SAM-similarity ("SimSAM") tool: decoded example outlines and putative
+// proposal polygons, rendered the same way as AutoSeg's example/proposal
+// annotations above.
+const samSimilarityExampleAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
+const samSimilarityProposalAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
 const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 // Plain coordinate array, fully replaced on each set — shallowRef purely
 // because nothing reads its inner mutations, not because it's heavy.
@@ -349,6 +358,28 @@ const exampleSegmentationExamples = computed(
 
 const exampleSegmentationProposals = computed(
   () => exampleSegmentationToolState.value?.proposals ?? null,
+);
+
+const samSimilarityToolState = computed((): ISamSimilarityToolState | null => {
+  const state = selectedToolState.value;
+  if (!(state?.type === SamSimilarityToolStateSymbol)) {
+    return null;
+  }
+  // Read from the reactive mapEntry property instead of the raw pipeline
+  // node output, same rationale as samToolState above.
+  const mapEntry = state.mapEntry;
+  if (!mapEntry || mapEntry.map !== props.map) {
+    return null;
+  }
+  return state;
+});
+
+const samSimilarityExamples = computed(
+  (): ISamSimilarityExample[] => samSimilarityToolState.value?.examples ?? [],
+);
+
+const samSimilarityProposals = computed(
+  () => samSimilarityToolState.value?.proposals ?? null,
 );
 
 const toolHighlightedAnnotationIds = computed((): Set<string> => {
@@ -1965,6 +1996,37 @@ function addExampleSegmentationExample(annotation: IGeoJSAnnotation) {
   state.nodes.input.examples.setValue([...state.examples, newExample]);
 }
 
+// SAM-similarity ("SimSAM") example capture: called from consumeMouseState
+// (custom mouse-capture path, same as SAM's own prompt flow) rather than
+// from an interaction-layer annotation event, since this tool's interaction
+// mode is null (see setNewAnnotationMode's "samSimilarity" case).
+function addSamSimilarityExample(mouseState: IMouseState) {
+  const state = samSimilarityToolState.value;
+  if (!state) {
+    return;
+  }
+  const newPrompt = mouseStateToSamPrompt(mouseState);
+  if (!newPrompt) {
+    return;
+  }
+  let polarity = state.nextPolarity;
+  let prompt = newPrompt;
+  if (prompt.type === PromptType.backgroundPoint) {
+    // Right-click (or any non-primary button) is a quick negative example:
+    // treat it as a foreground point at the same coordinates (SAM decodes
+    // foreground and background points differently) but force background
+    // polarity so it still counts as a negative example.
+    prompt = { type: PromptType.foregroundPoint, point: prompt.point };
+    polarity = "background";
+  }
+  const currentExamples = readManualInputOr(state.nodes.input.examples, []);
+  // ManualInputNode-style: push a new array rather than mutating in place.
+  state.nodes.input.examples.setValue([
+    ...currentExamples,
+    { polarity, prompt },
+  ]);
+}
+
 async function handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
   const selectedAnns = getSelectedAnnotationsFromAnnotation(selectAnnotation);
 
@@ -2192,6 +2254,11 @@ function setNewAnnotationMode() {
       }
       break;
     case "samAnnotation":
+    case "samSimilarity":
+      // Custom mouse capture, same as SAM's prompt flow above (points/boxes
+      // via captured-mouse-state, not a GeoJS interaction annotation mode).
+      props.interactionLayer.mode(null);
+      break;
     case null:
     case undefined:
       props.interactionLayer.mode(null);
@@ -2336,6 +2403,14 @@ function previewMouseState(mouseState: IMouseState | null) {
     props.interactionLayer.removeAnnotation(selectionAnnotation.value);
   }
 
+  // SAM-similarity examples are single clicks/box-drags decoded on release;
+  // unlike SAM's own live decoder-preview or the generic freehand-path
+  // preview below, no interactive outline is drawn while dragging.
+  if (samSimilarityToolState.value) {
+    selectionAnnotation.value = null;
+    return;
+  }
+
   const previewBaseStyle = {
     fillOpacity: 0,
     strokeColor: "white",
@@ -2398,6 +2473,8 @@ function consumeMouseState(mouseState: IMouseState) {
           : [...currentPrompts, newPrompt];
       promptNode.setValue(newPrompts);
     }
+  } else if (samSimilarityToolState.value) {
+    addSamSimilarityExample(mouseState);
   } else {
     let annotation;
     if (
@@ -2608,6 +2685,75 @@ function onExampleSegmentationProposalsChanged() {
     newAnnotations.push(markedAnnotation);
   }
   exampleSegmentationProposalAnnotations.value = newAnnotations;
+}
+
+// SAM-similarity decoded example outlines: green for foreground (object)
+// examples, red for background examples, no fill - same rendering approach
+// as onExampleSegmentationExamplesChanged above. Examples without a decoded
+// polygon yet (decode still in flight) are skipped.
+function onSamSimilarityExamplesChanged() {
+  for (const annotation of samSimilarityExampleAnnotations.value) {
+    props.annotationLayer.removeAnnotation(annotation);
+  }
+  const style = {
+    fillOpacity: 0,
+    strokeOpacity: 1,
+    strokeWidth: 2,
+    closed: true,
+  };
+  const newAnnotations: IGeoJSAnnotation[] = [];
+  for (const example of samSimilarityExamples.value) {
+    if (!example.polygon) {
+      continue;
+    }
+    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
+      style: {
+        ...style,
+        strokeColor: example.polarity === "foreground" ? "#00FF00" : "#FF0000",
+      },
+      vertices: example.polygon,
+    });
+    geoJsAnnotation.options("specialAnnotation", true);
+    const markedAnnotation = markRaw(geoJsAnnotation);
+    props.annotationLayer.addAnnotation(markedAnnotation);
+    newAnnotations.push(markedAnnotation);
+  }
+  samSimilarityExampleAnnotations.value = newAnnotations;
+}
+
+// SAM-similarity putative proposals: low-opacity preview polygons in the
+// tool's configured color, visually distinct from committed annotations -
+// same rendering approach as onExampleSegmentationProposalsChanged above.
+function onSamSimilarityProposalsChanged() {
+  for (const annotation of samSimilarityProposalAnnotations.value) {
+    props.annotationLayer.removeAnnotation(annotation);
+  }
+  const proposals = samSimilarityProposals.value;
+  if (!proposals) {
+    samSimilarityProposalAnnotations.value = [];
+    return;
+  }
+  const color =
+    selectedToolConfiguration.value?.values?.annotation?.color ?? "blue";
+  const style = {
+    fillOpacity: 0.15,
+    fillColor: color,
+    strokeColor: color,
+    strokeOpacity: 0.8,
+    strokeWidth: 1,
+  };
+  const newAnnotations: IGeoJSAnnotation[] = [];
+  for (const proposal of proposals) {
+    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
+      style,
+      vertices: proposal,
+    });
+    geoJsAnnotation.options("specialAnnotation", true);
+    const markedAnnotation = markRaw(geoJsAnnotation);
+    props.annotationLayer.addAnnotation(markedAnnotation);
+    newAnnotations.push(markedAnnotation);
+  }
+  samSimilarityProposalAnnotations.value = newAnnotations;
 }
 
 function onMousePathChanged(
@@ -3244,6 +3390,16 @@ watch(exampleSegmentationProposals, () => {
   onExampleSegmentationProposalsChanged();
 });
 
+// SAM similarity decoded examples
+watch(samSimilarityExamples, () => {
+  onSamSimilarityExamplesChanged();
+});
+
+// SAM similarity putative proposals
+watch(samSimilarityProposals, () => {
+  onSamSimilarityProposalsChanged();
+});
+
 // Captured mouse state — split into two cheap watchers instead of one
 // `{ deep: true }` watcher that recursively dirty-checks IMouseState (which
 // includes the entire IMapEntry → GeoJS map). Identity transitions handle
@@ -3353,6 +3509,8 @@ defineExpose({
   samLivePreviewAnnotation,
   exampleSegmentationExampleAnnotations,
   exampleSegmentationProposalAnnotations,
+  samSimilarityExampleAnnotations,
+  samSimilarityProposalAnnotations,
   cursorAnnotation,
   lastCursorPosition,
   handlingPrimaryChange,
@@ -3389,6 +3547,9 @@ defineExpose({
   exampleSegmentationToolState,
   exampleSegmentationExamples,
   exampleSegmentationProposals,
+  samSimilarityToolState,
+  samSimilarityExamples,
+  samSimilarityProposals,
   toolHighlightedAnnotationIds,
   pendingStoreAnnotation,
   samMainOutput,
@@ -3451,6 +3612,7 @@ defineExpose({
   addAnnotationFromGeoJsAnnotation,
   addAnnotationFromSnapping,
   addExampleSegmentationExample,
+  addSamSimilarityExample,
   handleAnnotationEdits,
   editPolygonAnnotation,
   handleNewROIFilter,
@@ -3482,6 +3644,8 @@ defineExpose({
   onSamLivePreviewOutputChanged,
   onExampleSegmentationExamplesChanged,
   onExampleSegmentationProposalsChanged,
+  onSamSimilarityExamplesChanged,
+  onSamSimilarityProposalsChanged,
   onMousePathChanged,
   renderWorkerPreview,
   onSamPromptsChanged,
