@@ -1,0 +1,402 @@
+[
+  {
+    "name": "get_interface_state",
+    "description": "Get a structured snapshot of the current NimbusImage interface state: dataset, collection, location (XY/Z/Time), layer mode, camera, layers (id, name, channel, color, contrast, visibility), selected tool, active annotation filters, and annotation counts. Cheap and precise — prefer this over capture_screenshot for questions about application state. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "capture_screenshot",
+    "description": "Capture a screenshot and receive it as an image. 'viewport' shows just the rendered image in the viewer (reliable), 'interface' shows the whole application window (may miss some WebGL content). Use only when you need to see image content (e.g. what kind of cells are visible); use get_interface_state for application state. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["viewport", "interface", "both"],
+          "description": "Which screenshot(s) to capture. Default: viewport."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_annotation_summary",
+    "description": "Get annotation counts grouped by tag, shape and channel, plus the count of currently filtered and selected annotations. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_annotations",
+    "description": "List annotations matching a query, with id, name, shape, tags, channel, location, color and centroid. Results are paged; use limit/offset for more. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": { "$ref": "#/definitions/annotationQuery" },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum number of annotations to return (default 50)."
+        },
+        "offset": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false,
+      "definitions": {
+        "annotationQuery": {
+          "type": "object",
+          "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
+          "properties": {
+            "tags": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
+            },
+            "exclusive": {
+              "type": "boolean",
+              "description": "If true, annotations must have ALL the given tags."
+            },
+            "shape": {
+              "type": "string",
+              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+            },
+            "channel": { "type": "integer" },
+            "currentFrameOnly": {
+              "type": "boolean",
+              "description": "Only annotations at the current XY/Z/Time location."
+            },
+            "ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Explicit annotation ids."
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  {
+    "name": "list_tools",
+    "description": "List the tools in the current collection's toolset (id, name, type, and the worker image for worker-based tools). Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_workers",
+    "description": "List the available worker images (automated annotation algorithms such as Cellpose or Piscis) with their names and descriptions. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_worker_interface",
+    "description": "Get the parameter schema (name, type, default, min/max) for a worker image. Call before run_worker to know which workerInterfaceValues can be set. May take a few seconds if the interface is not cached. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "The worker Docker image, as returned by list_workers or list_tools."
+        }
+      },
+      "required": ["image"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_location",
+    "description": "Move the viewer to a different XY position, Z slice and/or time point. Omitted fields keep their current value. Values are clamped to the dataset's range. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "xy": { "type": "integer", "minimum": 0 },
+        "z": { "type": "integer", "minimum": 0 },
+        "time": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_camera",
+    "description": "Pan and/or zoom the viewer camera. Provide center (image pixel coordinates) and/or zoom (GeoJS zoom level; current value and bounds come from get_interface_state; +1 doubles magnification). Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "center": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          },
+          "required": ["x", "y"],
+          "additionalProperties": false
+        },
+        "zoom": { "type": "number" }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_layer_mode",
+    "description": "Switch the layer display mode: 'single' (one layer at a time), 'multiple' (blended layers), or 'unroll' (grid of frames; optionally choose which dimensions to unroll). Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["single", "multiple", "unroll"]
+        },
+        "unrollXY": { "type": "boolean" },
+        "unrollZ": { "type": "boolean" },
+        "unrollT": { "type": "boolean" }
+      },
+      "required": ["mode"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "update_layer",
+    "description": "Change one display layer: color (hex), visibility, contrast (black/white points), or name. Refer to the layer by its id or its exact name from get_interface_state. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "layer": {
+          "type": "string",
+          "description": "Layer id or layer name."
+        },
+        "color": {
+          "type": "string",
+          "description": "Hex color like #RRGGBB."
+        },
+        "visible": { "type": "boolean" },
+        "contrast": {
+          "type": "object",
+          "properties": {
+            "mode": { "type": "string", "enum": ["percentile", "absolute"] },
+            "blackPoint": { "type": "number" },
+            "whitePoint": { "type": "number" }
+          },
+          "required": ["mode", "blackPoint", "whitePoint"],
+          "additionalProperties": false
+        },
+        "name": { "type": "string" }
+      },
+      "required": ["layer"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_layer_visibility",
+    "description": "Declaratively set which layers are visible: the listed layers (by id or name) become visible, all others are hidden. In 'single' layer mode only pass one layer. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "visibleLayers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Layer ids or names that should be visible."
+        }
+      },
+      "required": ["visibleLayers"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "select_annotations",
+    "description": "Change the current annotation selection using a query (same query shape as list_annotations). Mode 'replace' sets the selection, 'add' extends it, 'remove' subtracts from it, 'clear' empties it. Reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": { "$ref": "#/definitions/annotationQuery" },
+        "mode": {
+          "type": "string",
+          "enum": ["replace", "add", "remove", "clear"]
+        }
+      },
+      "required": ["mode"],
+      "additionalProperties": false,
+      "definitions": {
+        "annotationQuery": {
+          "type": "object",
+          "properties": {
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "exclusive": { "type": "boolean" },
+            "shape": {
+              "type": "string",
+              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+            },
+            "channel": { "type": "integer" },
+            "currentFrameOnly": { "type": "boolean" },
+            "ids": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  {
+    "name": "color_annotations",
+    "description": "Set the display color of annotations, either the current selection (target 'selection') or those matching a query. Pass color null to clear the override so annotations fall back to their layer color. This edits stored annotations; undoable with the undo tool.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "oneOf": [
+            { "type": "string", "enum": ["selection"] },
+            { "$ref": "#/definitions/annotationQuery" }
+          ]
+        },
+        "color": {
+          "type": ["string", "null"],
+          "description": "Hex color like #RRGGBB, or null to clear."
+        },
+        "randomize": {
+          "type": "boolean",
+          "description": "Give each annotation a random color instead."
+        }
+      },
+      "required": ["target", "color"],
+      "additionalProperties": false,
+      "definitions": {
+        "annotationQuery": {
+          "type": "object",
+          "properties": {
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "exclusive": { "type": "boolean" },
+            "shape": {
+              "type": "string",
+              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+            },
+            "channel": { "type": "integer" },
+            "currentFrameOnly": { "type": "boolean" },
+            "ids": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  {
+    "name": "tag_annotations",
+    "description": "Add, remove or replace tags on annotations (current selection or a query). This edits stored annotations; undoable with the undo tool.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "oneOf": [
+            { "type": "string", "enum": ["selection"] },
+            { "$ref": "#/definitions/annotationQuery" }
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["add", "remove", "replace"]
+        }
+      },
+      "required": ["target", "tags", "mode"],
+      "additionalProperties": false,
+      "definitions": {
+        "annotationQuery": {
+          "type": "object",
+          "properties": {
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "exclusive": { "type": "boolean" },
+            "shape": {
+              "type": "string",
+              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+            },
+            "channel": { "type": "integer" },
+            "currentFrameOnly": { "type": "boolean" },
+            "ids": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  {
+    "name": "set_annotation_filter",
+    "description": "Configure which annotations are shown in the viewer and annotation browser: filter by tags and/or restrict to the current frame. Use clearAll to remove the tag filter and frame restriction. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Show only annotations with at least one of these tags (all, if exclusive)."
+        },
+        "exclusive": { "type": "boolean" },
+        "currentFrameOnly": { "type": "boolean" },
+        "clearAll": {
+          "type": "boolean",
+          "description": "Disable the tag filter and current-frame restriction."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "select_tool",
+    "description": "Activate a tool from the toolset by its id (from list_tools), or pass null to deactivate the current tool. Reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "toolId": { "type": ["string", "null"] }
+      },
+      "required": ["toolId"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "undo",
+    "description": "Undo the most recent annotation change in this dataset (create/edit/delete/tag/color). Does not affect view state such as camera or layer settings.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "redo",
+    "description": "Redo the most recently undone annotation change in this dataset.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "run_worker",
+    "description": "Run a worker-based annotation tool from the toolset (by tool id from list_tools). Starts a compute job that may create many annotations and take minutes; the user must approve. Returns the job id immediately; progress is shown to the user. Optionally override worker parameters (see get_worker_interface for the schema; unspecified parameters use saved or default values).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "toolId": { "type": "string" },
+        "workerInterfaceValues": {
+          "type": "object",
+          "description": "Parameter overrides keyed by parameter name.",
+          "additionalProperties": true
+        }
+      },
+      "required": ["toolId"],
+      "additionalProperties": false
+    }
+  }
+]

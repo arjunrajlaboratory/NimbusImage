@@ -362,10 +362,26 @@
             </v-btn>
           </template>
         </v-tooltip>
+        <v-tooltip
+          text="Open the Nimbus AI panel: an assistant that can drive the interface for you"
+        >
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              variant="text"
+              icon
+              size="small"
+              @click="aiPanelOpen = !aiPanelOpen"
+            >
+              <v-icon>mdi-robot-outline</v-icon>
+            </v-btn>
+          </template>
+        </v-tooltip>
       </div>
     </v-app-bar>
 
     <chat-component v-if="chatbotOpen" @close="chatbotOpen = false" />
+    <ai-panel v-if="aiPanelOpen" @close="aiPanelOpen = false" />
 
     <v-main>
       <router-view />
@@ -482,6 +498,7 @@ import volumeViewStore from "@/store/volumeView";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
+import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
@@ -504,6 +521,7 @@ void Toolset;
 void HelpPanel;
 void BreadCrumbs;
 void ChatComponent;
+void AiPanel;
 
 const route = useRoute();
 const router = useRouter();
@@ -519,6 +537,7 @@ const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analyzePanel = ref(false);
 const chatbotOpen = ref(false);
+const aiPanelOpen = ref(false);
 
 // Left-zone palettes (dissolved left sidebar). Open by default.
 const navigatorPanel = ref(true);
@@ -976,6 +995,7 @@ defineExpose({
   layersPanel,
   analyzePanel,
   chatbotOpen,
+  aiPanelOpen,
   isUploadLoading,
   helpPanelIsOpen,
   appHotkeys,

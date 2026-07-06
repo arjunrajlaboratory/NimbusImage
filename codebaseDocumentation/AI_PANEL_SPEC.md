@@ -1,6 +1,18 @@
 # AI Panel — Agent-Driven Interface Control (Design Spec)
 
-> **Status: design spec, not yet implemented.** This document specifies an
+> **Status: Option A implemented on this branch (first pass).** What exists:
+> the `POST /claude_agent` relay endpoint with server-held system prompt and
+> tool definitions (`girder-claude-chat/agent_tools.json`), the executor
+> registry (`src/agent/executors.ts`), the agent-loop store
+> (`src/store/aiPanel.ts`), and the panel UI (`src/components/AiPanel.vue`)
+> with transcript cards, Run/Cancel gating, stop, and per-turn view revert.
+> Tier 3 currently ships `run_worker` only; `add_tool`, `compute_property`,
+> `create_annotations`/`delete_annotations`, `save_contrast`, `navigate`,
+> `set_display_options`, `get_property_summary` and the `fit` variant of
+> `set_camera` are not yet implemented. Streaming, token budgets and
+> IndexedDB persistence remain Phase 4.
+>
+> This document specifies an
 > "AI panel" where a user converses with an agent that can *drive the
 > NimbusImage interface* — move to a location, recolor layers and
 > annotations, apply filters, select tools, run workers — through a curated

@@ -25,6 +25,7 @@ import { v4 as uuidv4 } from "uuid";
 import AnnotationsAPI from "./AnnotationsAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ChatAPI from "./ChatAPI";
+import AgentAPI from "./AgentAPI";
 import GirderAPI from "./GirderAPI";
 import ExportAPI from "./ExportAPI";
 import ProjectsAPI from "./ProjectsAPI";
@@ -236,6 +237,7 @@ export class Main extends VuexModule {
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   chatAPI = new ChatAPI(this.girderRestProxy);
+  agentAPI = new AgentAPI(this.girderRestProxy);
   exportAPI = new ExportAPI(this.girderRestProxy);
   projectsAPI = new ProjectsAPI(this.girderRestProxy);
   zenodoAPI = new ZenodoAPI(this.girderRestProxy);
