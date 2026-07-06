@@ -1,6 +1,6 @@
 ---
 name: nimbus-backend
-description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), and backend test patterns. Use this skill even for small backend changes — layer violations and looped DB queries are the most common review issues."
+description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), public endpoint input validation (validation.py helpers, MAX_* clamps, bson InvalidId → 400), loading plugin changes into the running container (rebuild, not restart), and backend test patterns. Use this skill even for small backend changes."
 ---
 
 # Nimbus Backend Development (Girder)
@@ -214,6 +214,45 @@ raise AccessException("Permission denied")
 - **Never** use `except Exception:` or bare `except:` — too broad, swallows system errors
 - Catch **specific** exception types only (e.g., `except bson.errors.InvalidId:`)
 - Don't add validation that duplicates framework behavior (e.g., checking ObjectId validity before `ObjectId()` conversion)
+
+### bson InvalidId is NOT a ValueError
+
+`bson.errors.InvalidId`'s MRO is `InvalidId → BSONError → Exception` — **`except ValueError` does not catch it**. `ObjectId("notanobjectid")` raises `InvalidId`; `ObjectId(123)` raises `TypeError`. When mapping malformed caller-supplied ids to a clean 400, catch `InvalidId` explicitly at the API boundary:
+
+```python
+from bson.errors import InvalidId
+
+try:
+    obj_ids = [ObjectId(s) for s in raw_ids]
+except InvalidId:
+    raise RestException("Invalid annotation id", 400)
+```
+
+Convert ids once at the API boundary and pass ObjectIds down — don't convert deep in a model/aggregation where the failure surfaces as a 500.
+
+## Public Endpoint Input Validation
+
+This is the single most-recurring review finding in this plugin: an `@access.public` endpoint calls `.get()` / `len()` / `int()` / indexes request data **without first checking its type**, so a malformed payload (JSON-array body, `filters.tags: "bad"`, scalar `annotationIds`, oversized `limit`) raises an uncaught `AttributeError`/`TypeError` → 500 instead of a clean 400 — and unbounded limits let unauthenticated callers force huge DB/serialization work.
+
+For any new or edited public endpoint, validate at the API boundary with the shared helpers in `server/helpers/validation.py`:
+
+| Helper | Guards |
+|---|---|
+| `requireObjectBody(body, name)` | body is a dict before any `.get()` |
+| `requireList(value, field)` | field is a list before `len()`/iteration |
+| `requireObjectId(value, field)` / `requireInt(value, field)` | parse-or-400 |
+| `validateListInputs(...)` | filters/sort/paths incl. nested `tags`/`location` shape |
+| `MAX_*` constants (`MAX_LIST_LIMIT`, `MAX_ANNOTATION_IDS`, …) | clamp counts/limits |
+
+Rules: validation and `RestException` live in the API layer, never in models. Add a backend test per malformed-input case (malformed body → 400, not 500). When you fix one endpoint, sweep the other public endpoints in the same file for the identical gap — reviewers flag one instance per round.
+
+## Loading Plugin Changes Into the Running Backend
+
+The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:
+
+- `docker compose restart girder` does **NOT** load the change — new routes return `No matching route` while old ones work.
+- Required: `docker compose build girder && docker compose up -d girder` (fast — cached layers; girder is back in ~7s).
+- `tox` runs against plugin **source**, so tests pass even when the live `:8080` API is stale. Always rebuild before verifying endpoints with curl or the browser.
 
 ## Logging
 
