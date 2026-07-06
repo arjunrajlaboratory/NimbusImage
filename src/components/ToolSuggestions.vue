@@ -47,7 +47,7 @@
           Based on what's in your image, you might want these tools:
         </div>
         <div
-          v-for="resolved in suggestions"
+          v-for="resolved in sortedSuggestions"
           :key="resolved.tool.id"
           class="suggestion-row"
         >
@@ -60,6 +60,15 @@
               >
                 · {{ resolved.suggestion.channelName }}
               </span>
+              <v-chip
+                v-if="resolved.suggestion.confidence"
+                size="x-small"
+                variant="flat"
+                :color="confidenceColor(resolved.suggestion.confidence)"
+                class="suggestion-confidence"
+              >
+                {{ resolved.suggestion.confidence }}
+              </v-chip>
             </div>
             <div class="suggestion-reason">
               {{ resolved.suggestion.reason }}
@@ -96,6 +105,30 @@ const status = computed(() => toolSuggestionsStore.status);
 const suggestions = computed(() => toolSuggestionsStore.suggestions);
 const errorMessage = computed(() => toolSuggestionsStore.errorMessage);
 
+// Higher-confidence suggestions first; undefined confidence sorts last.
+// Sorted separately from the raw store array so the store is never mutated.
+const confidenceRank: Record<"high" | "medium" | "low", number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+
+const sortedSuggestions = computed(() =>
+  [...suggestions.value].sort((a, b) => {
+    const aRank = a.suggestion.confidence
+      ? confidenceRank[a.suggestion.confidence]
+      : confidenceRank.low + 1;
+    const bRank = b.suggestion.confidence
+      ? confidenceRank[b.suggestion.confidence]
+      : confidenceRank.low + 1;
+    return aRank - bRank;
+  }),
+);
+
+function confidenceColor(confidence: "low" | "medium" | "high") {
+  return { high: "success", medium: "warning", low: "secondary" }[confidence];
+}
+
 // Show the panel while loading, on error, or when there is something to show —
 // but never once the user has dismissed it for this run.
 const visible = computed(() => {
@@ -120,7 +153,16 @@ function dismiss() {
   toolSuggestionsStore.setDismissed(true);
 }
 
-defineExpose({ status, suggestions, errorMessage, visible, accept, acceptAll });
+defineExpose({
+  status,
+  suggestions,
+  sortedSuggestions,
+  errorMessage,
+  visible,
+  accept,
+  acceptAll,
+  confidenceColor,
+});
 </script>
 
 <style scoped lang="scss">
@@ -189,6 +231,12 @@ defineExpose({ status, suggestions, errorMessage, visible, accept, acceptAll });
 .suggestion-channel {
   font-weight: 400;
   opacity: 0.7;
+}
+
+.suggestion-confidence {
+  margin-left: 6px;
+  vertical-align: middle;
+  text-transform: capitalize;
 }
 
 .suggestion-reason {
