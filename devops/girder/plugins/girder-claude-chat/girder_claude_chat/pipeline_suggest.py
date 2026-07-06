@@ -112,6 +112,19 @@ class PipelineSuggestResource(Resource):
             )
             self.client = None
 
+    # TODO(rate-limit): this endpoint calls the paid Anthropic API on behalf
+    # of any logged-in user with no per-user throttle. There is currently no
+    # established rate-limiting pattern anywhere in this codebase to reuse
+    # (confirmed against codebaseDocumentation/API_RATE_LIMITING_AUDIT.md,
+    # which audits the whole stack and finds "no rate limiting configured
+    # anywhere" - no nginx layer, no Girder plugin, no per-user throttle
+    # helper) and Girder's `girder.api.access` module has no built-in
+    # decorator for it either. Adding one here would mean inventing a
+    # bespoke, likely fragile mechanism (e.g. an in-process counter that
+    # doesn't work across multiple Girder worker processes) for this single
+    # endpoint. Once a real rate-limiting layer exists (see the audit doc's
+    # recommendations), apply it here first since this is the only
+    # endpoint that spends real money per call.
     @access.user
     @autoDescribeRoute(
         Description(

@@ -204,7 +204,10 @@ const shapeItems = Object.values(AnnotationShape).map((value) => ({
 }));
 
 async function ensureWorkerInterface(image: string) {
-  if (propertiesStore.getWorkerInterface(image) !== undefined) {
+  // Only skip when a real (non-null) interface is already cached. A cached
+  // `null` means a previous fetch failed or came back empty - retry it
+  // rather than treating it as a permanent "no interface" answer.
+  if (propertiesStore.getWorkerInterface(image) != null) {
     return;
   }
   fetchingInterface.value = true;

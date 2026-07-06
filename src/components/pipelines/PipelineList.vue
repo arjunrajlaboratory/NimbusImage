@@ -114,6 +114,13 @@
         <v-card-text>
           Are you sure you want to delete "{{ pipelineToDelete?.name }}"? This
           cannot be undone.
+          <v-checkbox
+            v-model="removeMaterializedProperties"
+            label="Also remove computed properties created by this pipeline"
+            density="compact"
+            hide-details
+            class="mt-2"
+          />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -154,6 +161,7 @@ const duplicatingId = ref<string | null>(null);
 const showDeleteDialog = ref(false);
 const pipelineToDelete = ref<IPipeline | null>(null);
 const deleting = ref(false);
+const removeMaterializedProperties = ref(true);
 
 function createPipeline() {
   emit("open-builder", pipelinesStore.createEmptyPipeline());
@@ -175,6 +183,7 @@ async function duplicate(pipelineId: string) {
 
 function askDelete(pipeline: IPipeline) {
   pipelineToDelete.value = pipeline;
+  removeMaterializedProperties.value = true;
   showDeleteDialog.value = true;
 }
 
@@ -185,7 +194,10 @@ async function confirmDelete() {
   deleting.value = true;
   actionError.value = null;
   try {
-    await pipelinesStore.deletePipeline(pipelineToDelete.value.id);
+    await pipelinesStore.deletePipeline({
+      pipelineId: pipelineToDelete.value.id,
+      removeMaterializedProperties: removeMaterializedProperties.value,
+    });
     showDeleteDialog.value = false;
   } catch (error) {
     logError("Failed to delete pipeline:", error);
@@ -202,5 +214,6 @@ defineExpose({
   duplicate,
   askDelete,
   confirmDelete,
+  removeMaterializedProperties,
 });
 </script>

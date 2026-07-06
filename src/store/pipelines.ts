@@ -181,8 +181,61 @@ export class Pipelines extends VuexModule {
     await main.updateConfigurationPipelines(next);
   }
 
+  // True when some OTHER step (optionally excluding one pipeline / one step)
+  // still points its materializedPropertyId at `propertyId`. Used to avoid
+  // deleting a property that another pipeline (or another step) relies on.
+  get isMaterializedPropertyReferenced() {
+    return (
+      propertyId: string,
+      exclude: { pipelineId?: string; stepId?: string } = {},
+    ): boolean =>
+      this.pipelines.some(
+        (p) =>
+          p.id !== exclude.pipelineId &&
+          p.steps.some(
+            (s) =>
+              s.kind === "property" &&
+              s.materializedPropertyId === propertyId &&
+              s.id !== exclude.stepId,
+          ),
+      );
+  }
+
+  // Delete a pipeline. By default also deletes the persisted properties its
+  // property steps materialized (see ensureMaterializedProperty), unless
+  // another pipeline's step still references the same property id.
+  //
+  // Takes a single object payload (rather than two positional parameters)
+  // because vuex-module-decorators' dynamic-module action wrapper only
+  // forwards ONE payload argument to the underlying method - calling
+  // `pipelinesStore.deletePipeline(id, false)` would route through
+  // `store.dispatch(type, id, false)`, where Vuex treats the third argument
+  // as dispatch *options*, not a second payload, so `false` would never
+  // reach this method and the default would always win.
   @Action
-  async deletePipeline(pipelineId: string) {
+  async deletePipeline({
+    pipelineId,
+    removeMaterializedProperties = true,
+  }: {
+    pipelineId: string;
+    removeMaterializedProperties?: boolean;
+  }) {
+    if (removeMaterializedProperties) {
+      const target = this.getPipelineById(pipelineId);
+      const materializedPropertyIds = new Set<string>();
+      for (const step of target?.steps ?? []) {
+        if (step.kind === "property" && step.materializedPropertyId) {
+          materializedPropertyIds.add(step.materializedPropertyId);
+        }
+      }
+      for (const propertyId of materializedPropertyIds) {
+        if (
+          !this.isMaterializedPropertyReferenced(propertyId, { pipelineId })
+        ) {
+          await properties.deleteProperty(propertyId);
+        }
+      }
+    }
     await main.updateConfigurationPipelines(
       this.pipelines.filter((p) => p.id !== pipelineId),
     );
@@ -233,6 +286,11 @@ export class Pipelines extends VuexModule {
     if (existing && matches) {
       return existing;
     }
+    // If the step pointed at a real, existing property that no longer
+    // matches (drift: the step's config changed), remember its id so we can
+    // remove it below once the replacement is created. Only ever set for a
+    // property that actually existed - never for a stale/dangling id.
+    const staleId = existing?.id;
     const created = await properties.createProperty({
       name: step.name,
       image: step.image,
@@ -245,6 +303,13 @@ export class Pipelines extends VuexModule {
     });
     if (created) {
       step.materializedPropertyId = created.id;
+      if (
+        staleId &&
+        staleId !== created.id &&
+        !this.isMaterializedPropertyReferenced(staleId, { stepId: step.id })
+      ) {
+        await properties.deleteProperty(staleId);
+      }
     }
     return created;
   }
@@ -326,6 +391,11 @@ export class Pipelines extends VuexModule {
     let cancelled = 0;
     let failedStepIndex: number | null = null;
     let done = 0;
+    // Set when ensureMaterializedProperty actually assigns/changes a step's
+    // materializedPropertyId during this run. Only then is it worth PUTting
+    // the config back - a run with no property steps (or only reused,
+    // already-matching properties) shouldn't write the config at all.
+    let materializedPropertyChanged = false;
 
     for (const stepIndex of enabledIndices) {
       const step = pipeline.steps[stepIndex];
@@ -385,7 +455,11 @@ export class Pipelines extends VuexModule {
             errorCallback,
           });
         } else {
+          const previousMaterializedPropertyId = step.materializedPropertyId;
           const property = await this.ensureMaterializedProperty(step);
+          if (step.materializedPropertyId !== previousMaterializedPropertyId) {
+            materializedPropertyChanged = true;
+          }
           if (property) {
             submitted = await properties.submitPropertyJob({
               property,
@@ -436,8 +510,13 @@ export class Pipelines extends VuexModule {
       }
     }
 
-    // Persist any newly-materialized property ids captured during the run.
-    await main.updateConfigurationPipelines(cloneDeep(this.pipelines));
+    // Persist newly-materialized property ids captured during the run, but
+    // only when something actually changed - an annotation-only run (or one
+    // whose property steps all reused an already-matching property) has
+    // nothing new to write back to the configuration.
+    if (materializedPropertyChanged) {
+      await main.updateConfigurationPipelines(cloneDeep(this.pipelines));
+    }
 
     // Refresh derived state once for the whole run (mirrors the single-step and
     // batch completion paths).
