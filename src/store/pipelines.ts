@@ -490,15 +490,13 @@ export class Pipelines extends VuexModule {
       if (!isAnnotation && !isProperty) {
         continue;
       }
-      let iface = properties.getWorkerInterface(image) ?? null;
-      if (!iface) {
-        try {
-          await properties.fetchWorkerInterface({ image });
-          iface = properties.getWorkerInterface(image) ?? null;
-        } catch {
-          iface = null;
-        }
-      }
+      // Only include interfaces already cached. We deliberately do NOT
+      // fetchWorkerInterface here: an uncached interface fetch can launch a
+      // Docker container, and doing that for every installed image just to
+      // build a suggestion prompt would be slow and surprising. Workers the
+      // user has already configured are cached; the rest fall back to labels
+      // only, which is enough for the model to propose a sensible pipeline.
+      const iface = properties.getWorkerInterface(image) ?? null;
       const entry: IWorkerCatalogEntry = {
         image,
         name: labels.interfaceName || image,
