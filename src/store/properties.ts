@@ -461,6 +461,51 @@ export class Properties extends VuexModule {
     return computeJob;
   }
 
+  // Thin, promise-returning submitter for a single property-compute job.
+  // Unlike computeProperty it does NOT own progress creation or the
+  // post-completion fetchPropertyValues/updateHistograms — the caller (e.g. the
+  // pipeline runner) drives those once for the whole run.
+  @Action
+  async submitPropertyJob({
+    property,
+    datasetId,
+    eventCallback,
+    errorCallback,
+  }: {
+    property: IAnnotationProperty;
+    datasetId: string;
+    eventCallback?: (data: IJobEventData) => void;
+    errorCallback?: (data: IJobEventData) => void;
+  }): Promise<{
+    job: IPropertyComputeJob;
+    completionPromise: Promise<boolean>;
+  } | null> {
+    if (!main.isLoggedIn) {
+      return null;
+    }
+    const response = await this.propertiesAPI.computeProperty(
+      property.id,
+      datasetId,
+      property,
+      main.scales,
+    );
+    const jobId = response.data[0]?._id;
+    if (!jobId) {
+      return null;
+    }
+    const computeJob: IPropertyComputeJob = {
+      propertyId: property.id,
+      jobId,
+      datasetId,
+      eventCallback,
+      errorCallback,
+    };
+    // Capture the completion promise immediately (a fast job can be removed
+    // from the job map before we could look it up later).
+    const completionPromise = jobs.addJob(computeJob);
+    return { job: computeJob, completionPromise };
+  }
+
   @Action
   async computePropertyBatch({
     property,

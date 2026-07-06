@@ -47,6 +47,7 @@ import {
   TLayerMode,
   ISnapshot,
   IDatasetConfigurationBase,
+  IPipeline,
   IToolConfiguration,
   AnnotationNames,
   AnnotationShape,
@@ -384,6 +385,7 @@ export class Main extends VuexModule {
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
+  isPipelineDialogOpen: boolean = false;
   // True while a layer is being dragged (reordered/grouped). Used to suppress
   // palette re-layout that would otherwise re-render the draggable mid-drag.
   isLayerDragging: boolean = false;
@@ -1181,6 +1183,11 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  public setIsPipelineDialogOpen(value: boolean) {
+    this.isPipelineDialogOpen = value;
+  }
+
+  @Mutation
   public setIsLayerDragging(value: boolean) {
     this.isLayerDragging = value;
   }
@@ -1936,6 +1943,14 @@ export class Main extends VuexModule {
     if (this.configuration) {
       this.configuration.propertyIds = propertyIds;
       this.syncConfiguration("propertyIds");
+    }
+  }
+
+  @Action
+  updateConfigurationPipelines(pipelines: IPipeline[]) {
+    if (this.configuration) {
+      this.configuration.pipelines = pipelines;
+      this.syncConfiguration("pipelines");
     }
   }
 

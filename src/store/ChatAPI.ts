@@ -1,5 +1,10 @@
 import { RestClientInstance } from "@/girder";
-import { IChatImage, IChatMessage } from "./model";
+import {
+  IChatImage,
+  IChatMessage,
+  IPipelineSuggestRequest,
+  ISuggestedPipeline,
+} from "./model";
 
 interface IClaudeAPIChatMessage {
   role: "user" | "assistant";
@@ -100,5 +105,22 @@ export default class ChatAPI {
       throw data.error;
     }
     return toChatMessage(data);
+  }
+
+  // Ask the backend (which proxies Claude with forced tool-use) to suggest
+  // analysis pipelines. Returns the raw suggestions; the caller validates them
+  // against installed images and converts them to IPipeline.
+  async suggestPipelines(
+    request: IPipelineSuggestRequest,
+  ): Promise<ISuggestedPipeline[]> {
+    const response = await this.client.post("claude_pipeline/suggest", request);
+    const { data } = response;
+    if (!data) {
+      return [];
+    }
+    if ("error" in data) {
+      throw data.error;
+    }
+    return (data.suggestions ?? []) as ISuggestedPipeline[];
   }
 }

@@ -1414,6 +1414,60 @@ export class Annotations extends VuexModule {
     return computeJob;
   }
 
+  // Thin, promise-returning submitter for a single annotation-worker job.
+  // Unlike computeAnnotationsWithWorker it does NOT own progress creation or
+  // post-completion side effects (fetchAnnotations/loadLargeImages) — the
+  // caller (e.g. the pipeline runner) drives those once for the whole run.
+  // Reads the worker interface values from tool.values.workerInterfaceValues,
+  // so transient tools built by the pipeline runner work without extra args.
+  @Action
+  public async submitAnnotationWorkerJob({
+    tool,
+    datasetId,
+    eventCallback,
+    errorCallback,
+  }: {
+    tool: IToolConfiguration;
+    datasetId: string;
+    eventCallback?: (data: IJobEventData) => void;
+    errorCallback?: (data: IJobEventData) => void;
+  }): Promise<{
+    job: IAnnotationComputeJob;
+    completionPromise: Promise<boolean>;
+  } | null> {
+    if (!main.isLoggedIn) {
+      return null;
+    }
+    const workerInterface = (tool.values?.workerInterfaceValues ??
+      {}) as IWorkerInterfaceValues;
+    const { location, channel } =
+      await this.getAnnotationLocationFromTool(tool);
+    const tile = { ...location };
+    const response = await this.annotationsAPI.computeAnnotationWithWorker(
+      tool,
+      { id: datasetId },
+      { location, channel, tile },
+      workerInterface,
+      main.layers,
+      main.scales,
+    );
+    const jobId = response.data[0]?._id;
+    if (!jobId) {
+      return null;
+    }
+    const computeJob: IAnnotationComputeJob = {
+      toolId: tool.id,
+      jobId,
+      datasetId,
+      eventCallback,
+      errorCallback,
+    };
+    // Capture the completion promise immediately (a fast job can be removed
+    // from the job map before we could look it up later).
+    const completionPromise = jobs.addJob(computeJob);
+    return { job: computeJob, completionPromise };
+  }
+
   @Action
   public async computeAnnotationsWithWorkerBatch({
     tool,
