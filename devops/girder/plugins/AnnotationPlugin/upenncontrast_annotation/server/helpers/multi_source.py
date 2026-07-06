@@ -29,6 +29,7 @@ which is half-away-from-zero, and that is what is ported here.)
 """
 
 import math
+import re
 from decimal import Decimal, ROUND_HALF_UP
 
 UP_DIMS = ("XY", "Z", "T", "C")
@@ -81,14 +82,10 @@ def js_to_fixed(x, digits):
 
 
 # JS regex used by trimFloat to strip trailing zeros.
-_TRIM_TRAILING = None
+_TRIM_TRAILING = re.compile(r"(?:\.0+|(\.\d*?[1-9])0+)$")
 
 
 def _trim_trailing_zeros(text):
-    global _TRIM_TRAILING
-    if _TRIM_TRAILING is None:
-        import re
-        _TRIM_TRAILING = re.compile(r"(?:\.0+|(\.\d*?[1-9])0+)$")
     return _TRIM_TRAILING.sub(lambda m: m.group(1) or "", text)
 
 
@@ -527,7 +524,7 @@ def _value_from_assignments(assignments, item_names, dim, item_idx,
     return frame_idx
 
 
-def _channels_from_assignment(assignment, rgb_band_count_unused=None):
+def _channels_from_assignment(assignment):
     """Compute the base channel list from the C assignment (before RGB
     expansion). Mirrors the switch in ``generateJson``."""
     channels = None
@@ -604,7 +601,7 @@ def _camera_matrix_source(nd2):
     return volume.get("cameraTransformationMatrix")
 
 
-def _compositing_positions(tiles_metadata, internal_metadata, channels):
+def _compositing_positions(tiles_metadata, internal_metadata):
     """Compute ``finalCoordinates`` for the compositing path."""
     first_tile = tiles_metadata[0]
     mm_x = first_tile["mm_x"]
@@ -747,7 +744,7 @@ def generate_multi_source_config(item_names, tiles_metadata,
                     })
 
         final_coordinates = _compositing_positions(
-            tiles_metadata, internal_metadata, channels,
+            tiles_metadata, internal_metadata,
         )
         for source_idx, source in enumerate(sources):
             source["position"] = final_coordinates[

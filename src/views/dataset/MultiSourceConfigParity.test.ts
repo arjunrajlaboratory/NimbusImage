@@ -197,9 +197,7 @@ function extractAssignments(vm: any): Record<TDim, any> {
   const result: Record<string, any> = {};
   for (const dim of DIMS) {
     const value = vm.assignments[dim]?.value;
-    result[dim] = value
-      ? { source: value.source, guess: value.guess }
-      : null;
+    result[dim] = value ? { source: value.source, guess: value.guess } : null;
   }
   return result as Record<TDim, any>;
 }

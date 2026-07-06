@@ -254,7 +254,8 @@ class TestFormatDistanceShort:
 
     def test_micro_sign_is_u00b5(self):
         # The micron label must use MICRO SIGN U+00B5, not GREEK MU U+03BC.
-        assert "µm" in format_distance_short(1)
+        assert format_distance_short(1) == "1 µm"
+        assert "μ" not in format_distance_short(1)
 
     def test_non_finite(self):
         assert format_distance_short(float("inf")) == ""

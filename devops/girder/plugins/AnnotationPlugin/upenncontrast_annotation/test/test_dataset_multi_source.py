@@ -58,7 +58,7 @@ def _firstFile(item):
 
 
 @pytest.fixture
-def largeImageCapable(admin):
+def largeImageCapable(admin, fsAssetstore):
     """Skip dependent tests if no large_image tile source is installed.
 
     Probes the real capability directly against the model layer (not the
