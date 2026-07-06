@@ -16,7 +16,12 @@ const h = vi.hoisted(() => ({
       compatibility: { channels: {} as Record<number, string> },
     } as any,
     isLoggedIn: true,
-    api: { cancelJob: vi.fn() },
+    selectedConfigurationId: "cfg1",
+    api: {
+      cancelJob: vi.fn(),
+      findDatasetViews: vi.fn().mockResolvedValue([]),
+      batchResources: vi.fn().mockResolvedValue({ folder: {} }),
+    },
     loadLargeImages: vi.fn().mockResolvedValue(false),
     scheduleTileFramesComputation: vi.fn(),
     scheduleMaxMergeCache: vi.fn(),
@@ -496,5 +501,62 @@ describe("deletePipeline", () => {
     expect(h.main.updateConfigurationPipelines).toHaveBeenCalledWith([
       otherPipeline,
     ]);
+  });
+});
+
+describe("runPipelineBatch", () => {
+  it("runs the pipeline once per dataset and tallies results", async () => {
+    h.main.api.findDatasetViews.mockResolvedValue([
+      { datasetId: "d1" },
+      { datasetId: "d2" },
+      { datasetId: "d2" }, // duplicate → deduped
+    ]);
+    h.main.api.batchResources.mockResolvedValue({
+      folder: { d1: { name: "Dataset 1" }, d2: { name: "Dataset 2" } },
+    });
+    const datasetsRun: string[] = [];
+    h.annotations.submitAnnotationWorkerJob.mockImplementation(
+      async ({ datasetId }: any) => {
+        datasetsRun.push(datasetId);
+        return submitResult("j", true);
+      },
+    );
+
+    const summary = await pipelinesStore.runPipelineBatch({
+      pipeline: pipeline([annotationStep("a")]),
+      configurationId: "cfg1",
+    });
+
+    expect(datasetsRun).toEqual(["d1", "d2"]);
+    expect(summary).toEqual({ succeeded: 2, failed: 0, cancelled: 0 });
+    // One end-of-batch refresh, not one per dataset.
+    expect(h.annotations.fetchAnnotations).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts a dataset with a failed step as failed", async () => {
+    h.main.api.findDatasetViews.mockResolvedValue([
+      { datasetId: "d1" },
+      { datasetId: "d2" },
+    ]);
+    h.annotations.submitAnnotationWorkerJob.mockImplementation(
+      async ({ datasetId }: any) => submitResult("j", datasetId !== "d2"),
+    );
+
+    const summary = await pipelinesStore.runPipelineBatch({
+      pipeline: pipeline([annotationStep("a")]),
+      configurationId: "cfg1",
+    });
+
+    expect(summary).toEqual({ succeeded: 1, failed: 1, cancelled: 0 });
+  });
+
+  it("returns empty when the collection has no datasets", async () => {
+    h.main.api.findDatasetViews.mockResolvedValue([]);
+    const summary = await pipelinesStore.runPipelineBatch({
+      pipeline: pipeline([annotationStep("a")]),
+      configurationId: "cfg1",
+    });
+    expect(summary).toEqual({ succeeded: 0, failed: 0, cancelled: 0 });
+    expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
   });
 });

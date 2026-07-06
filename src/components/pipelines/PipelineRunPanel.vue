@@ -22,7 +22,65 @@
       </v-col>
     </v-row>
 
-    <v-row v-if="stepStatuses.length > 0" class="my-2" dense>
+    <v-row
+      v-if="canApplyToAllDatasets || batchDisabledReason"
+      class="my-0"
+      dense
+    >
+      <v-col class="py-1">
+        <v-tooltip location="bottom" :disabled="!batchDisabledReason">
+          <template v-slot:activator="{ props: activatorProps }">
+            <div v-bind="activatorProps" class="d-inline-block">
+              <v-checkbox
+                v-model="applyToAllDatasets"
+                :label="`Apply to all datasets in collection (${collectionDatasetCount})`"
+                :disabled="
+                  isRunning || !canApplyToAllDatasets || !!batchProgress
+                "
+                density="compact"
+                hide-details
+              />
+            </div>
+          </template>
+          <span>{{ batchDisabledReason }}</span>
+        </v-tooltip>
+      </v-col>
+    </v-row>
+
+    <v-row v-if="batchProgress" class="my-2" dense>
+      <v-col class="py-1">
+        <div class="text-caption text-medium-emphasis mb-1">
+          Datasets:
+          {{
+            batchProgress.completed +
+            batchProgress.failed +
+            batchProgress.cancelled
+          }}
+          / {{ batchProgress.total }}
+          <span v-if="batchProgress.failed > 0" class="text-error">
+            ({{ batchProgress.failed }} failed)
+          </span>
+          <span v-if="batchProgress.cancelled > 0" class="text-warning">
+            ({{ batchProgress.cancelled }} cancelled)
+          </span>
+        </div>
+        <v-progress-linear
+          :model-value="batchPercent"
+          color="primary"
+          height="10"
+          striped
+        />
+        <div class="text-caption mt-1">
+          Current: {{ batchProgress.currentDatasetName }}
+        </div>
+      </v-col>
+    </v-row>
+
+    <v-row
+      v-if="!applyToAllDatasets && stepStatuses.length > 0"
+      class="my-2"
+      dense
+    >
       <v-col class="py-1">
         <div class="text-caption text-medium-emphasis mb-1">
           Overall progress: {{ doneCount }} / {{ totalEnabled }} steps
@@ -35,7 +93,7 @@
       </v-col>
     </v-row>
 
-    <v-list density="compact" class="my-2">
+    <v-list v-if="!applyToAllDatasets" density="compact" class="my-2">
       <v-list-item v-for="(step, index) in pipeline.steps" :key="step.id">
         <template v-slot:prepend>
           <v-progress-circular
@@ -124,16 +182,19 @@
       density="compact"
       class="mt-2"
     >
-      {{ result.succeeded }} succeeded, {{ result.failed }} failed,
-      {{ result.cancelled }} cancelled.
+      {{ result.succeeded }}
+      {{ lastRunWasBatch ? "datasets" : "steps" }} succeeded,
+      {{ result.failed }} failed, {{ result.cancelled }} cancelled.
     </v-alert>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import store from "@/store";
 import pipelinesStore from "@/store/pipelines";
 import annotationStore from "@/store/annotation";
+import { logError } from "@/utils/log";
 import {
   IErrorInfoList,
   IPipeline,
@@ -141,6 +202,9 @@ import {
   IProgressInfo,
   MessageType,
 } from "@/store/model";
+
+// Matches the limit used elsewhere (AnalyzeDialog / AnnotationWorkerMenu).
+const BATCH_DATASET_LIMIT = 50;
 
 const props = defineProps<{
   pipeline: IPipeline;
@@ -165,10 +229,61 @@ const stepStatuses = ref<IStepRunState[]>([]);
 const cancelFn = ref<(() => void) | null>(null);
 const cancelledByUser = ref(false);
 const result = ref<IPipelineRunResult | null>(null);
+const lastRunWasBatch = ref(false);
+
+// Batch (across all datasets in the collection) state.
+const applyToAllDatasets = ref(false);
+const collectionDatasetCount = ref(0);
+const loadingDatasetCount = ref(false);
+const batchProgress = ref<{
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  currentDatasetName: string;
+} | null>(null);
 
 const isRunning = computed(
   () => pipelinesStore.runningPipelineId === props.pipeline.id,
 );
+
+const canApplyToAllDatasets = computed(
+  () =>
+    store.selectedConfigurationId !== null &&
+    collectionDatasetCount.value > 1 &&
+    collectionDatasetCount.value <= BATCH_DATASET_LIMIT,
+);
+
+const batchDisabledReason = computed<string | null>(() => {
+  if (!store.selectedConfigurationId) return null;
+  if (loadingDatasetCount.value) return null;
+  if (collectionDatasetCount.value <= 1) return null;
+  if (collectionDatasetCount.value > BATCH_DATASET_LIMIT) {
+    return `Collection has more than ${BATCH_DATASET_LIMIT} datasets`;
+  }
+  return null;
+});
+
+const batchPercent = computed(() => {
+  if (!batchProgress.value || batchProgress.value.total === 0) return 0;
+  const { completed, failed, cancelled, total } = batchProgress.value;
+  return ((completed + failed + cancelled) / total) * 100;
+});
+
+async function fetchCollectionDatasetCount() {
+  loadingDatasetCount.value = true;
+  try {
+    collectionDatasetCount.value = await store.getCollectionDatasetCount();
+  } catch (error) {
+    logError("Failed to fetch collection dataset count:", error);
+    collectionDatasetCount.value = 0;
+  } finally {
+    loadingDatasetCount.value = false;
+  }
+}
+
+watch(() => store.selectedConfigurationId, fetchCollectionDatasetCount);
+onMounted(fetchCollectionDatasetCount);
 
 const canRun = computed(
   () =>
@@ -282,7 +397,13 @@ async function run() {
   result.value = null;
   cancelFn.value = null;
   cancelledByUser.value = false;
+  lastRunWasBatch.value = applyToAllDatasets.value;
   initStepStatuses();
+
+  if (applyToAllDatasets.value && store.selectedConfigurationId) {
+    await runBatch();
+    return;
+  }
 
   await pipelinesStore.runPipeline({
     pipeline: props.pipeline,
@@ -313,6 +434,39 @@ async function run() {
     onComplete: (runResult) => {
       result.value = runResult;
       cancelFn.value = null;
+    },
+  });
+}
+
+async function runBatch() {
+  const configurationId = store.selectedConfigurationId;
+  if (!configurationId) {
+    return;
+  }
+  batchProgress.value = {
+    total: collectionDatasetCount.value,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    currentDatasetName: "Starting…",
+  };
+  await pipelinesStore.runPipelineBatch({
+    pipeline: props.pipeline,
+    configurationId,
+    continueOnError: continueOnError.value,
+    onBatchProgress: (status) => {
+      batchProgress.value = status;
+    },
+    onCancel: (cancel) => {
+      cancelFn.value = cancel;
+    },
+    onComplete: (summary) => {
+      cancelFn.value = null;
+      // Reuse the result banner (datasets rather than steps).
+      result.value = { ...summary, failedStepIndex: null };
+      setTimeout(() => {
+        batchProgress.value = null;
+      }, 3000);
     },
   });
 }

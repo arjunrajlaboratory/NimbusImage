@@ -20,6 +20,7 @@ import {
   IAnnotationComputeJob,
   IAnnotationPipelineStep,
   IAnnotationProperty,
+  IDatasetView,
   IErrorInfoList,
   IJobEventData,
   IPipeline,
@@ -327,6 +328,8 @@ export class Pipelines extends VuexModule {
     onStepComplete,
     onCancel,
     onComplete,
+    skipRefresh = false,
+    skipRunningState = false,
   }: {
     pipeline: IPipeline;
     datasetId?: string;
@@ -337,6 +340,11 @@ export class Pipelines extends VuexModule {
     onStepComplete?: (stepIndex: number, success: boolean) => void;
     onCancel?: (cancel: () => void) => void;
     onComplete?: (result: IPipelineRunResult) => void;
+    // When run as a child of runPipelineBatch: the batch owns the "running"
+    // indicator and does a single end-of-batch refresh, so per-dataset runs
+    // skip both to avoid flicker and N redundant heavy refreshes.
+    skipRunningState?: boolean;
+    skipRefresh?: boolean;
   }): Promise<IPipelineRunResult> {
     const emptyResult: IPipelineRunResult = {
       succeeded: 0,
@@ -362,7 +370,9 @@ export class Pipelines extends VuexModule {
       return emptyResult;
     }
 
-    this.setRunningPipelineId(pipeline.id);
+    if (!skipRunningState) {
+      this.setRunningPipelineId(pipeline.id);
+    }
 
     let isCancelled = false;
     let currentJob: IAnnotationComputeJob | IPropertyComputeJob | null = null;
@@ -518,25 +528,17 @@ export class Pipelines extends VuexModule {
       await main.updateConfigurationPipelines(cloneDeep(this.pipelines));
     }
 
-    // Refresh derived state once for the whole run (mirrors the single-step and
-    // batch completion paths).
-    await annotations.fetchAnnotations();
-    await properties.fetchPropertyValues();
-    try {
-      const filters = (await import("./filters")).default;
-      await filters.updateHistograms();
-    } catch {
-      // filters module optional at this point; ignore
-    }
-    const newLargeImage = await main.loadLargeImages(true);
-    if (newLargeImage) {
-      main.scheduleTileFramesComputation(targetDatasetId);
-      main.scheduleMaxMergeCache(targetDatasetId);
-      main.scheduleHistogramCache(targetDatasetId);
+    // Refresh derived state once for the whole run. Skipped for batch children —
+    // runPipelineBatch refreshes once at the end for the currently-viewed
+    // dataset.
+    if (!skipRefresh) {
+      await this.refreshAfterRun();
     }
 
     progress.complete(topProgressId);
-    this.setRunningPipelineId(null);
+    if (!skipRunningState) {
+      this.setRunningPipelineId(null);
+    }
 
     const result: IPipelineRunResult = {
       succeeded,
@@ -546,6 +548,173 @@ export class Pipelines extends VuexModule {
     };
     onComplete?.(result);
     return result;
+  }
+
+  // Refresh derived state for the currently-viewed dataset. Shared by the
+  // single-run and batch-run completion paths.
+  @Action
+  async refreshAfterRun() {
+    await annotations.fetchAnnotations();
+    await properties.fetchPropertyValues();
+    try {
+      const filters = (await import("./filters")).default;
+      await filters.updateHistograms();
+    } catch {
+      // filters module optional at this point; ignore
+    }
+    const currentDatasetId = main.dataset?.id;
+    if (!currentDatasetId) {
+      return;
+    }
+    const newLargeImage = await main.loadLargeImages(true);
+    if (newLargeImage) {
+      main.scheduleTileFramesComputation(currentDatasetId);
+      main.scheduleMaxMergeCache(currentDatasetId);
+      main.scheduleHistogramCache(currentDatasetId);
+    }
+  }
+
+  // ---- Batch runner (one pipeline across every dataset in a collection) --
+
+  // Runs the whole pipeline once per dataset in the configuration, awaiting
+  // each before the next (the outer product of the batch pattern and the
+  // pipeline runner). Mirrors computeAnnotationsWithWorkerBatch. The per-
+  // dataset runs skip their own running-state + refresh; this action owns the
+  // "running" indicator and does a single refresh at the end.
+  @Action
+  async runPipelineBatch({
+    pipeline,
+    configurationId,
+    continueOnError = false,
+    onBatchProgress,
+    onCancel,
+    onComplete,
+  }: {
+    pipeline: IPipeline;
+    configurationId: string;
+    continueOnError?: boolean;
+    onBatchProgress?: (status: {
+      total: number;
+      completed: number;
+      failed: number;
+      cancelled: number;
+      currentDatasetName: string;
+    }) => void;
+    onCancel?: (cancel: () => void) => void;
+    onComplete?: (result: {
+      succeeded: number;
+      failed: number;
+      cancelled: number;
+    }) => void;
+  }): Promise<{ succeeded: number; failed: number; cancelled: number }> {
+    const emptyResult = { succeeded: 0, failed: 0, cancelled: 0 };
+    if (!main.isLoggedIn) {
+      onComplete?.(emptyResult);
+      return emptyResult;
+    }
+
+    let isCancelled = false;
+    let innerCancel: (() => void) | null = null;
+    const cancel = () => {
+      isCancelled = true;
+      innerCancel?.();
+    };
+    // Wire the cancel handle up immediately, before any await.
+    onCancel?.(cancel);
+
+    const datasetViews: IDatasetView[] = await main.api.findDatasetViews({
+      configurationId,
+    });
+    const datasetIds: string[] = [
+      ...new Set(datasetViews.map((v) => v.datasetId)),
+    ];
+    const total = datasetIds.length;
+    if (total === 0) {
+      onComplete?.(emptyResult);
+      return emptyResult;
+    }
+
+    const datasetInfo = await main.api.batchResources({ folder: datasetIds });
+    const datasetNames: { [id: string]: string } = {};
+    for (const id of datasetIds) {
+      datasetNames[id] = datasetInfo.folder?.[id]?.name || "Unknown dataset";
+    }
+
+    this.setRunningPipelineId(pipeline.id);
+    const batchProgressId = await progress.create({
+      type: ProgressType.BATCH_PIPELINE_COMPUTE,
+      title: `Batch pipeline: ${pipeline.name}`,
+    });
+    progress.update({ id: batchProgressId, progress: 0, total });
+
+    let completed = 0;
+    let failed = 0;
+    let cancelled = 0;
+
+    for (const datasetId of datasetIds) {
+      if (isCancelled) {
+        cancelled++;
+        onBatchProgress?.({
+          total,
+          completed,
+          failed,
+          cancelled,
+          currentDatasetName: datasetNames[datasetId],
+        });
+        continue;
+      }
+
+      onBatchProgress?.({
+        total,
+        completed,
+        failed,
+        cancelled,
+        currentDatasetName: datasetNames[datasetId],
+      });
+
+      const result = await this.runPipeline({
+        pipeline,
+        datasetId,
+        continueOnError,
+        skipRunningState: true,
+        skipRefresh: true,
+        onCancel: (c) => {
+          innerCancel = c;
+        },
+      });
+
+      if (isCancelled) {
+        cancelled++;
+      } else if (result.failed === 0 && result.cancelled === 0) {
+        completed++;
+      } else {
+        failed++;
+      }
+
+      progress.update({
+        id: batchProgressId,
+        progress: completed + failed + cancelled,
+        total,
+      });
+      onBatchProgress?.({
+        total,
+        completed,
+        failed,
+        cancelled,
+        currentDatasetName: datasetNames[datasetId],
+      });
+    }
+
+    progress.complete(batchProgressId);
+    this.setRunningPipelineId(null);
+
+    // Single refresh for the currently-viewed dataset (the batch may have
+    // touched many others, but only the current one is on screen).
+    await this.refreshAfterRun();
+
+    const summary = { succeeded: completed, failed, cancelled };
+    onComplete?.(summary);
+    return summary;
   }
 
   // ---- AI suggestion ----------------------------------------------------
