@@ -63,6 +63,7 @@ export type TToolType =
   | "edit"
   | "segmentation"
   | "samAnnotation"
+  | "exampleSegmentation"
   | "tagging";
 
 export interface IToolTemplateInterface {
@@ -146,6 +147,43 @@ export interface ISamAnnotationToolState {
   livePreview: IGeoJSPosition[] | null;
 }
 
+export const ExampleSegmentationToolStateSymbol: unique symbol = Symbol(
+  "Example segmentation tool state",
+);
+
+export type TExampleSegmentationToolStateSymbol =
+  typeof ExampleSegmentationToolStateSymbol;
+
+export interface IExampleSegmentationExample {
+  polarity: "foreground" | "background";
+  coordinates: IGeoJSPosition[]; // GCS (image) coords of the circled polygon
+}
+
+export interface IExampleSegmentationStatus {
+  phase: "idle" | "computing" | "ready" | "error";
+  error?: string;
+  putativeCount: number; // proposals.length after all filtering
+  timings: {
+    featuresMs?: number;
+    trainMs?: number;
+    predictMs?: number;
+    postprocessMs?: number;
+  };
+}
+
+export interface IExampleSegmentationToolState {
+  type: TExampleSegmentationToolStateSymbol;
+  nodes: TExampleSegmentationNodes; // markRaw'd pipeline nodes
+  // Reactive mirror of nodes.input.geoJSMap.output, same pattern as
+  // ISamAnnotationToolState.mapEntry (see comment above).
+  mapEntry: IMapEntry | null;
+  examples: IExampleSegmentationExample[]; // reactive mirror of the examples input node
+  proposals: IGeoJSPosition[][] | null; // GCS polygons, post-dedupe; null = nothing computed
+  status: IExampleSegmentationStatus; // reactive mirror
+  // Polarity applied to the next circled example; set by the tool menu panel.
+  nextPolarity: "foreground" | "background";
+}
+
 export const ConnectionToolStateSymbol: unique symbol = Symbol(
   "ConnectionToolState",
 );
@@ -185,6 +223,7 @@ export interface IErrorToolState {
 
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
+  exampleSegmentation: IExampleSegmentationToolState | IErrorToolState;
   connection: IConnectionToolState;
   // Edit tool can have CombineToolState when action is "combine_click"
   edit: ICombineToolState | IBaseToolState;
@@ -1856,6 +1895,7 @@ import { ISetQuadStatus } from "@/utils/setFrameQuad";
 import type { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
 import type { TSamNodes } from "@/pipelines/samPipeline";
+import type { TExampleSegmentationNodes } from "@/pipelines/exampleSegmentationPipeline";
 
 // TODO: It's kind of weird to have this function here.
 export function newLayer(

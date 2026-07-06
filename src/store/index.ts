@@ -83,6 +83,7 @@ import { Debounce } from "@/utils/debounce";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
 import { createSamToolStateFromToolConfiguration } from "@/pipelines/samPipeline";
+import { createExampleSegmentationToolStateFromToolConfiguration } from "@/pipelines/exampleSegmentationPipeline";
 import { isEqual } from "lodash";
 import { logError, logWarning } from "@/utils/log";
 
@@ -812,6 +813,11 @@ export class Main extends VuexModule {
         case "samAnnotation":
           state = createSamToolStateFromToolConfiguration(
             configuration as IToolConfiguration<"samAnnotation">,
+          );
+          break;
+        case "exampleSegmentation":
+          state = createExampleSegmentationToolStateFromToolConfiguration(
+            configuration as IToolConfiguration<"exampleSegmentation">,
           );
           break;
         case "connection":

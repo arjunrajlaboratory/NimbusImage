@@ -325,6 +325,41 @@
     ]
   },
   {
+    "name": "Auto-segment from examples (experimental)",
+    "type": "exampleSegmentation",
+    "shortName": "AutoSeg",
+    "description": "Circle a few example objects and a classifier trained in your browser outlines similar objects in the current view. Works on what is displayed: zoom and adjust contrast first.",
+    "interface": [
+      {
+        "name": "Annotation Configuration",
+        "id": "annotation",
+        "type": "annotation",
+        "meta": {
+          "hideShape": true,
+          "defaultShape": "polygon"
+        }
+      },
+      {
+        "name": "Detection threshold",
+        "id": "threshold",
+        "type": "text",
+        "meta": {
+          "value": "0.5",
+          "type": "number"
+        }
+      },
+      {
+        "name": "Simplification",
+        "id": "simplificationTolerance",
+        "type": "text",
+        "meta": {
+          "value": "1",
+          "type": "number"
+        }
+      }
+    ]
+  },
+  {
     "name": "Annotation Connections",
     "type": "connection",
     "shortName": "Connection",
