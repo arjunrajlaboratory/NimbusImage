@@ -132,13 +132,18 @@ Viewer.vue (config changes, map ready, empty tools, unseen)
    output. Sonnet 5 also supports `output_config.format` (JSON schema) — could
    switch if the installed `anthropic` SDK version supports it, which would let
    us keep adaptive thinking on.
-6. **Duplication.** `ChatComponent.vue` still has its own screenshot functions;
-   migrate it to `utils/interfaceCapture.ts`.
-7. **Tests.** No unit tests were added for `toolSuggestions.ts`,
-   `ToolSuggestions.vue`, or the backend endpoint yet. The backend forced-tool
-   response and the frontend catalog/resolution logic are both good candidates.
-8. **Confidence field** is returned but unused in the UI — could sort or filter
-   by it, or hide low-confidence suggestions.
+6. ~~**Duplication.** `ChatComponent.vue` still has its own screenshot
+   functions.~~ **Done** — `ChatComponent.vue` now uses
+   `utils/interfaceCapture.ts` (a thin `captureViewportScreenshot` wrapper is
+   kept there so the component's no-arg exposed method still works for its
+   test).
+7. ~~**Tests.**~~ **Done (frontend).** `src/store/toolSuggestions.test.ts` and
+   `src/components/ToolSuggestions.test.ts` cover the guards, resolution logic,
+   accept flow, visibility, and confidence sort/chip. The **backend**
+   `/claude_suggest_tools` endpoint still has no test — a good next candidate.
+8. ~~**Confidence field** is returned but unused in the UI.~~ **Done** — the
+   panel now shows a confidence chip and sorts high→medium→low. Could still
+   additionally *filter out* low-confidence suggestions if desired.
 
 ## Model migration note
 
