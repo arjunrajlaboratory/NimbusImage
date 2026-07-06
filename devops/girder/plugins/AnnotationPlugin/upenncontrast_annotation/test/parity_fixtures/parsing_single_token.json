@@ -1,0 +1,25 @@
+{
+  "name": "parsing_single_token",
+  "description": "A single varying non-numeric token (cellA/cellB).",
+  "input": {
+    "filenames": [
+      "cellA.tif",
+      "cellB.tif"
+    ]
+  },
+  "expected": {
+    "variables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "cellA.tif": 0,
+          "cellB.tif": 1
+        },
+        "values": [
+          "cellA",
+          "cellB"
+        ]
+      }
+    ]
+  }
+}
