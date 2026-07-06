@@ -20,6 +20,23 @@
           </v-btn>
         </template>
       </v-tooltip>
+      <v-tooltip
+        text="Pipelines: chain multiple worker steps and run them in sequence"
+      >
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            variant="text"
+            icon
+            size="small"
+            class="mr-1"
+            aria-label="Pipelines"
+            @click="store.setIsPipelineDialogOpen(true)"
+          >
+            <v-icon>mdi-transit-connection-variant</v-icon>
+          </v-btn>
+        </template>
+      </v-tooltip>
       <property-picker>
         <template v-slot:activator="{ props: pickerProps }">
           <v-btn
