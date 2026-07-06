@@ -227,9 +227,13 @@ import {
   IGeoJSPoint2D,
   IMouseState,
   SamAnnotationToolStateSymbol,
+  ExampleSegmentationToolStateSymbol,
+  ISamAnnotationToolState,
+  IExampleSegmentationToolState,
   IGeoJSMap,
   ProgressType,
   IGeoJSActionRecord,
+  TToolState,
 } from "../store/model";
 import setFrameQuad, { ISetQuadStatus } from "@/utils/setFrameQuad";
 
@@ -1390,6 +1394,19 @@ function toggleViewLock() {
   });
 }
 
+// Both SAM and example-segmentation tool states are fed the current map
+// through an input node named `geoJSMap` (samPipeline.ts /
+// exampleSegmentationPipeline.ts). Factored into one type guard so the
+// map-feeding watcher below doesn't need to duplicate itself per tool type.
+function hasGeoJSMapInput(
+  toolState: TToolState | null | undefined,
+): toolState is ISamAnnotationToolState | IExampleSegmentationToolState {
+  return (
+    toolState?.type === SamAnnotationToolStateSymbol ||
+    toolState?.type === ExampleSegmentationToolStateSymbol
+  );
+}
+
 // ---- Watchers ----
 
 watch(
@@ -1429,7 +1446,7 @@ watch(maps, () => {
 
 watch([samMapEntry, layersReady, cameraInfo, selectedTool], () => {
   const toolState = selectedTool.value?.state;
-  if (toolState?.type === SamAnnotationToolStateSymbol && layersReady.value) {
+  if (hasGeoJSMapInput(toolState) && layersReady.value) {
     toolState.nodes.input.geoJSMap.setValue(samMapEntry.value ?? NoOutput);
   }
 });
@@ -1546,6 +1563,7 @@ defineExpose({
   annotationStore,
   girderResources,
   sync,
+  hasGeoJSMapInput,
   maps,
   cameraInfo,
   overview,

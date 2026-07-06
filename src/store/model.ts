@@ -169,6 +169,11 @@ export interface IExampleSegmentationStatus {
     predictMs?: number;
     postprocessMs?: number;
   };
+  // Auto size range derived from foreground example areas (spec §4.4 step 3),
+  // surfaced so the tool menu panel can show it as size filter placeholders.
+  // Undefined until the first postprocess result arrives; null if the worker
+  // couldn't compute one (e.g. no foreground examples yet).
+  autoSizeRange?: { min: number; max: number } | null;
 }
 
 export interface IExampleSegmentationToolState {

@@ -6,8 +6,10 @@ and similar objects across the viewport are outlined as *putative* annotations.
 An info panel shows the number of putative annotations; clicking **Accept**
 commits them in bulk.
 
-Status: **specified, not yet implemented**. This document is the implementation
-contract — interfaces below are normative.
+Status: **implemented** (see "Implementation notes / deviations" at the end
+for where the code intentionally departs from this spec). This document was
+the implementation contract; interfaces below are normative unless a
+deviation is listed.
 
 ---
 
@@ -451,6 +453,7 @@ clickable item, add a trivial one-item select like other sections use.)
 | File | Contents |
 |---|---|
 | `src/utils/exampleSegmentation/types.ts` | Worker protocol + shared types (§4.5) |
+| `src/utils/exampleSegmentation/workerClient.ts` | Typed RPC client over the worker (requestId matching, buffer transfer) |
 | `src/utils/exampleSegmentation/features.ts` | Separable Gaussian, gradient magnitude, LoG on Float32Array planes; channel extraction/dedupe |
 | `src/utils/exampleSegmentation/forest.ts` | Train via ml-random-forest (or fallback CART), tree flattening, fast dense predict |
 | `src/utils/exampleSegmentation/postprocess.ts` | Threshold, scanline flood-fill CC labeling, size filter, Moore contour tracing |
@@ -520,3 +523,38 @@ re-proposed.
   active-learning hints (show lowest-confidence proposals first).
 - Feature set toggles (texture/structure-tensor features) if plain multiscale
   Gaussians prove insufficient.
+
+---
+
+## 10. Implementation notes / deviations
+
+Where the shipped implementation intentionally departs from the sections
+above:
+
+- **Classifier library (§4.3)**: `ml-random-forest` was evaluated and
+  rejected — its bundled `ml-cart` recomputes Gini per candidate threshold
+  (no sort-and-sweep), putting training ~40× over the ≤500 ms budget at 12k
+  rows. The shipped forest (`forest.ts`) is a from-scratch CART with
+  histogram-based split search (32 bins), seeded-LCG bagging for determinism,
+  and the flattened typed-array predictor described in the spec. Defaults are
+  **16 trees** (not 32), max depth 12 — train and dense-predict cost scale
+  linearly with tree count and 16 keeps the live loop interactive with
+  negligible accuracy loss for binary pixel classification.
+- **`TExampleSegmentationNodes` (§5.2)** additionally exposes
+  `reset(): Promise<void>` (drops the worker's model/probability map and
+  re-arms the "no model yet" guard); the panel's **Clear** uses it. The
+  `geoJSMap` input node is typed `ManualInputNode<IMapEntry | TNoOutput>`
+  (same as SAM's) so the shared ImageViewer map-feeding watcher can pass
+  `NoOutput`.
+- **`IExampleSegmentationStatus` (§5.1)** additionally carries
+  `autoSizeRange`, surfaced from the worker so the panel can display the auto
+  size-filter values as placeholders.
+- **Worker protocol (§4.5)**: `trainPredict` carries the post-processing
+  params in a `params` object (the "implementer may merge" option), and the
+  response type is a single `ISegmentationResultResponse` shared by
+  `trainPredict` and `postprocess` — see `types.ts`, which is the source of
+  truth.
+- **Undo to zero examples** keeps the trained model (and therefore the
+  current proposals) — only **Clear** drops the model. This matches the
+  roam-and-re-predict design: an empty examples array means "re-predict with
+  cached model", per §4.5.

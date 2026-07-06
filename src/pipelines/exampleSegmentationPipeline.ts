@@ -248,7 +248,11 @@ function withErrorReporting<Args extends any[], TResult>(
 export type TExampleSegmentationNodes = {
   allNodes: ComputeNode<any, any>[];
   input: {
-    geoJSMap: ManualInputNode<IMapEntry>;
+    // | TNoOutput so callers (e.g. ImageViewer's map-feeding watcher, shared
+    // with SAM's identically-shaped geoJSMap node) can setValue(NoOutput)
+    // when no map is available yet - same typing as samPipeline.ts's
+    // geoJsMapInputNode.
+    geoJSMap: ManualInputNode<IMapEntry | TNoOutput>;
     examples: ManualInputNode<IExampleSegmentationExample[]>;
     threshold: ManualInputNode<number>;
     sizeRange: ManualInputNode<TSizeRange>;
@@ -257,6 +261,10 @@ export type TExampleSegmentationNodes = {
   output: {
     proposals: ComputeNode<any, any>;
   };
+  // Drops the worker's trained model, examples, and probability map, and
+  // re-arms the "no model yet" guard so trainPredict resolves to NoOutput
+  // (clearing the proposals) until a new example is drawn.
+  reset: () => Promise<void>;
 };
 
 function createExampleSegmentationPipeline(
@@ -269,11 +277,14 @@ function createExampleSegmentationPipeline(
   // "If no forest exists yet, the node outputs NoOutput").
   const modelState = { trained: false };
 
-  const geoJSMapInputNode = new ManualInputNode<IMapEntry>(NoOutput, {
-    type: "debounce",
-    wait: 1000,
-    options: { leading: false, trailing: true },
-  });
+  const geoJSMapInputNode = new ManualInputNode<IMapEntry | TNoOutput>(
+    NoOutput,
+    {
+      type: "debounce",
+      wait: 1000,
+      options: { leading: false, trailing: true },
+    },
+  );
   const examplesInputNode = new ManualInputNode<IExampleSegmentationExample[]>(
     [],
   );
@@ -454,6 +465,11 @@ function createExampleSegmentationPipeline(
     output: {
       proposals: proposalsNode,
     },
+    reset: async () => {
+      lastExamples = null;
+      modelState.trained = false;
+      await workerClient.reset();
+    },
   };
 }
 
@@ -498,20 +514,6 @@ export function createExampleSegmentationToolStateFromToolConfiguration(
   }
   state.nodes = nodes;
 
-  const { allNodes } = nodes;
-  const recomputeComputingPhase = () => {
-    const isComputing = allNodes.some((node) => node.isComputing);
-    if (isComputing) {
-      state.status = { ...state.status, phase: "computing" };
-    } else if (state.status.phase === "computing") {
-      state.status = {
-        ...state.status,
-        phase: state.proposals === null ? "idle" : "ready",
-      };
-    }
-  };
-  allNodes.forEach((node) => node.onOutputUpdate(recomputeComputingPhase));
-
   // Mirror geoJSMap output to the reactive state.mapEntry property, same
   // pattern as createSamToolStateFromToolConfiguration.
   const geoJSMapNode = nodes.input.geoJSMap;
@@ -541,8 +543,26 @@ export function createExampleSegmentationToolStateFromToolConfiguration(
       phase: "ready",
       putativeCount: rawOutput.proposals.length,
       timings: rawOutput.timings,
+      autoSizeRange: rawOutput.autoSizeRange,
     };
   });
+
+  // Registered after the mirrors above so that, when a node's output update
+  // fires all callbacks in order, this one reads the already-mirrored
+  // state.proposals rather than a stale value.
+  const { allNodes } = nodes;
+  const recomputeComputingPhase = () => {
+    const isComputing = allNodes.some((node) => node.isComputing);
+    if (isComputing) {
+      state.status = { ...state.status, phase: "computing" };
+    } else if (state.status.phase === "computing") {
+      state.status = {
+        ...state.status,
+        phase: state.proposals === null ? "idle" : "ready",
+      };
+    }
+  };
+  allNodes.forEach((node) => node.onOutputUpdate(recomputeComputingPhase));
 
   return state;
 }

@@ -83,6 +83,9 @@ import {
   CombineToolStateSymbol,
   IGeoJSMouseState,
   TrackPositionType,
+  ExampleSegmentationToolStateSymbol,
+  IExampleSegmentationToolState,
+  IExampleSegmentationExample,
 } from "../store/model";
 
 import { logError, logWarning } from "@/utils/log";
@@ -218,6 +221,15 @@ const selectionAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const samPromptAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
 const samUnsubmittedAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const samLivePreviewAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+// Example-segmentation ("AutoSeg") tool: circled training-example outlines
+// and putative proposal polygons, drawn the same way as SAM's prompt/output
+// annotations above.
+const exampleSegmentationExampleAnnotations = shallowRef<IGeoJSAnnotation[]>(
+  [],
+);
+const exampleSegmentationProposalAnnotations = shallowRef<IGeoJSAnnotation[]>(
+  [],
+);
 const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 // Plain coordinate array, fully replaced on each set — shallowRef purely
 // because nothing reads its inner mutations, not because it's heavy.
@@ -313,6 +325,31 @@ const samPrompts = computed((): TSamPrompt[] => {
   const prompts = samToolState.value?.nodes.input.mainPrompt.output;
   return prompts === undefined || prompts === NoOutput ? [] : prompts;
 });
+
+const exampleSegmentationToolState = computed(
+  (): IExampleSegmentationToolState | null => {
+    const state = selectedToolState.value;
+    if (!(state?.type === ExampleSegmentationToolStateSymbol)) {
+      return null;
+    }
+    // Read from the reactive mapEntry property instead of the raw pipeline
+    // node output, same rationale as samToolState above.
+    const mapEntry = state.mapEntry;
+    if (!mapEntry || mapEntry.map !== props.map) {
+      return null;
+    }
+    return state;
+  },
+);
+
+const exampleSegmentationExamples = computed(
+  (): IExampleSegmentationExample[] =>
+    exampleSegmentationToolState.value?.examples ?? [],
+);
+
+const exampleSegmentationProposals = computed(
+  () => exampleSegmentationToolState.value?.proposals ?? null,
+);
 
 const toolHighlightedAnnotationIds = computed((): Set<string> => {
   const state = selectedToolState.value;
@@ -1913,6 +1950,21 @@ async function addAnnotationFromSnapping(annotation: IGeoJSAnnotation) {
   );
 }
 
+function addExampleSegmentationExample(annotation: IGeoJSAnnotation) {
+  const state = exampleSegmentationToolState.value;
+  if (!annotation || !state) {
+    return;
+  }
+  const coordinates = annotation.coordinates();
+  props.interactionLayer.removeAnnotation(annotation);
+  const newExample: IExampleSegmentationExample = {
+    polarity: state.nextPolarity,
+    coordinates,
+  };
+  // ManualInputNode-style: push a new array rather than mutating in place.
+  state.nodes.input.examples.setValue([...state.examples, newExample]);
+}
+
 async function handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
   const selectedAnns = getSelectedAnnotationsFromAnnotation(selectAnnotation);
 
@@ -2108,6 +2160,11 @@ function setNewAnnotationMode() {
     case "segmentation":
       props.interactionLayer.mode(null);
       break;
+    case "exampleSegmentation":
+      // Freehand circling of training examples, same UX as the snap tool's
+      // polygon branch above.
+      props.interactionLayer.mode("polygon");
+      break;
     case "connection":
       if (
         selectedToolConfiguration.value.values.action.value.endsWith("click")
@@ -2220,6 +2277,9 @@ function handleInteractionAnnotationChange(evt: any) {
           break;
         case "snap":
           addAnnotationFromSnapping(evt.annotation);
+          break;
+        case "exampleSegmentation":
+          addExampleSegmentationExample(evt.annotation);
           break;
         case "select":
           selectAnnotations(evt.annotation);
@@ -2483,6 +2543,71 @@ function onSamLivePreviewOutputChanged() {
 
   samLivePreviewAnnotation.value = markRaw(geoJsAnnotation);
   props.annotationLayer.addAnnotation(samLivePreviewAnnotation.value);
+}
+
+// Example-segmentation training-example outlines: green for foreground
+// (object) examples, red for background examples, no fill - same rendering
+// approach as onSamPromptsChanged above.
+function onExampleSegmentationExamplesChanged() {
+  for (const annotation of exampleSegmentationExampleAnnotations.value) {
+    props.annotationLayer.removeAnnotation(annotation);
+  }
+  const style = {
+    fillOpacity: 0,
+    strokeOpacity: 1,
+    strokeWidth: 2,
+    closed: true,
+  };
+  const newAnnotations: IGeoJSAnnotation[] = [];
+  for (const example of exampleSegmentationExamples.value) {
+    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
+      style: {
+        ...style,
+        strokeColor: example.polarity === "foreground" ? "#00FF00" : "#FF0000",
+      },
+      vertices: example.coordinates,
+    });
+    geoJsAnnotation.options("specialAnnotation", true);
+    const markedAnnotation = markRaw(geoJsAnnotation);
+    props.annotationLayer.addAnnotation(markedAnnotation);
+    newAnnotations.push(markedAnnotation);
+  }
+  exampleSegmentationExampleAnnotations.value = newAnnotations;
+}
+
+// Example-segmentation putative proposals: low-opacity preview polygons in
+// the tool's configured color, visually distinct from committed annotations
+// - same rendering approach as onSamMainOutputChanged above.
+function onExampleSegmentationProposalsChanged() {
+  for (const annotation of exampleSegmentationProposalAnnotations.value) {
+    props.annotationLayer.removeAnnotation(annotation);
+  }
+  const proposals = exampleSegmentationProposals.value;
+  if (!proposals) {
+    exampleSegmentationProposalAnnotations.value = [];
+    return;
+  }
+  const color =
+    selectedToolConfiguration.value?.values?.annotation?.color ?? "blue";
+  const style = {
+    fillOpacity: 0.15,
+    fillColor: color,
+    strokeColor: color,
+    strokeOpacity: 0.8,
+    strokeWidth: 1,
+  };
+  const newAnnotations: IGeoJSAnnotation[] = [];
+  for (const proposal of proposals) {
+    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
+      style,
+      vertices: proposal,
+    });
+    geoJsAnnotation.options("specialAnnotation", true);
+    const markedAnnotation = markRaw(geoJsAnnotation);
+    props.annotationLayer.addAnnotation(markedAnnotation);
+    newAnnotations.push(markedAnnotation);
+  }
+  exampleSegmentationProposalAnnotations.value = newAnnotations;
 }
 
 function onMousePathChanged(
@@ -3109,6 +3234,16 @@ watch(samLivePreviewOutput, () => {
   onSamLivePreviewOutputChanged();
 });
 
+// Example segmentation training examples
+watch(exampleSegmentationExamples, () => {
+  onExampleSegmentationExamplesChanged();
+});
+
+// Example segmentation putative proposals
+watch(exampleSegmentationProposals, () => {
+  onExampleSegmentationProposalsChanged();
+});
+
 // Captured mouse state — split into two cheap watchers instead of one
 // `{ deep: true }` watcher that recursively dirty-checks IMouseState (which
 // includes the entire IMapEntry → GeoJS map). Identity transitions handle
@@ -3216,6 +3351,8 @@ defineExpose({
   samPromptAnnotations,
   samUnsubmittedAnnotation,
   samLivePreviewAnnotation,
+  exampleSegmentationExampleAnnotations,
+  exampleSegmentationProposalAnnotations,
   cursorAnnotation,
   lastCursorPosition,
   handlingPrimaryChange,
@@ -3249,6 +3386,9 @@ defineExpose({
   selectedToolState,
   samToolState,
   samPrompts,
+  exampleSegmentationToolState,
+  exampleSegmentationExamples,
+  exampleSegmentationProposals,
   toolHighlightedAnnotationIds,
   pendingStoreAnnotation,
   samMainOutput,
@@ -3310,6 +3450,7 @@ defineExpose({
   handleAnnotationCombine,
   addAnnotationFromGeoJsAnnotation,
   addAnnotationFromSnapping,
+  addExampleSegmentationExample,
   handleAnnotationEdits,
   editPolygonAnnotation,
   handleNewROIFilter,
@@ -3339,6 +3480,8 @@ defineExpose({
   pendingAnnotationChanged,
   onSamMainOutputChanged,
   onSamLivePreviewOutputChanged,
+  onExampleSegmentationExamplesChanged,
+  onExampleSegmentationProposalsChanged,
   onMousePathChanged,
   renderWorkerPreview,
   onSamPromptsChanged,

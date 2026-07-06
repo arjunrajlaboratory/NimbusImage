@@ -7,7 +7,10 @@
 // loop over flattened trees stored in typed arrays, reading directly from
 // feature planes - never a number[][] built per pixel.
 
-const DEFAULT_N_ESTIMATORS = 32;
+// 16 trees keeps live retrain + dense predict interactive (train and predict
+// cost scale linearly with tree count); accuracy loss vs 32 trees is
+// negligible for binary pixel classification with soft-voting leaves.
+const DEFAULT_N_ESTIMATORS = 16;
 const DEFAULT_MAX_DEPTH = 12;
 const DEFAULT_MIN_SAMPLES_SPLIT = 3;
 // Fixed default seed so training is deterministic given identical inputs, as
