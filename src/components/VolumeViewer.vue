@@ -73,6 +73,21 @@
       >
         <v-icon size="20">mdi-vector-polygon</v-icon>
       </v-btn>
+      <div
+        v-if="showSegmentations"
+        class="segmentation-opacity"
+        title="Segmentation opacity"
+      >
+        <v-icon size="16">mdi-opacity</v-icon>
+        <v-slider
+          v-model="segmentationOpacity"
+          :min="0.05"
+          :max="1"
+          :step="0.05"
+          density="compact"
+          hide-details
+        />
+      </div>
       <v-btn
         variant="text"
         size="small"
@@ -189,9 +204,15 @@
 <script setup lang="ts">
 import "@kitware/vtk.js/Rendering/Profiles/Geometry";
 import "@kitware/vtk.js/Rendering/Profiles/Volume";
+// Registers the OpenGL implementation of vtkSphereMapper (point spheres).
+import "@kitware/vtk.js/Rendering/Profiles/Molecule";
+import vtkPolyDataNormals from "@kitware/vtk.js/Filters/Core/PolyDataNormals";
 import vtkActor, {
   vtkActor as VtkActor,
 } from "@kitware/vtk.js/Rendering/Core/Actor";
+import vtkSphereMapper, {
+  vtkSphereMapper as VtkSphereMapper,
+} from "@kitware/vtk.js/Rendering/Core/SphereMapper";
 import vtkAxesActor from "@kitware/vtk.js/Rendering/Core/AxesActor";
 import vtkCubeAxesActor from "@kitware/vtk.js/Rendering/Core/CubeAxesActor";
 import vtkOrientationMarkerWidget, {
@@ -259,15 +280,19 @@ const volumeSource = new TileFrameVolumeSource(store.girderRestProxy, {
   getLayerHistogram: (images) => store.api.getLayerHistogram(images),
 });
 
-const SEGMENTATION_OPACITY = 0.55;
+interface ISegmentationPipeline {
+  actor: VtkActor;
+  mapper: VtkMapper | VtkSphereMapper;
+}
 
 let genericRenderWindow: VtkGenericRenderWindow | null = null;
 let orientationWidget: VtkOrientationMarkerWidget | null = null;
 let axesActor: ReturnType<typeof vtkAxesActor.newInstance> | null = null;
 let cubeAxesActor: VtkCubeAxesActor | null = null;
 let volumePipelines: IVolumePipeline[] = [];
-let segmentationActor: VtkActor | null = null;
-let segmentationMapper: VtkMapper | null = null;
+// Annotation rendering: one actor for extruded surfaces, one for point
+// spheres (only the ones with geometry are created).
+let segmentationPipelines: ISegmentationPipeline[] = [];
 let activeGeometry: VolumeGeometry | null = null;
 let activeAbortController: AbortController | null = null;
 let buildSerial = 0;
@@ -319,6 +344,11 @@ const showBoundingBox = computed({
 const segmentationColorMode = computed<TVolumeSegmentationColorMode>({
   get: () => volumeViewStore.segmentationColorMode,
   set: (value) => volumeViewStore.setSegmentationColorMode(value),
+});
+
+const segmentationOpacity = computed({
+  get: () => volumeViewStore.segmentationOpacity,
+  set: (value: number) => volumeViewStore.setSegmentationOpacity(value),
 });
 
 function propertyKey(path: string[]) {
@@ -449,15 +479,14 @@ function applyTransferFunction(pipeline: IVolumePipeline) {
   property.setShade(false);
 }
 
-function clearSegmentationActor() {
+function clearSegmentationActors() {
   const currentRenderer = renderer();
-  if (currentRenderer && segmentationActor) {
-    currentRenderer.removeActor(segmentationActor);
+  for (const pipeline of segmentationPipelines) {
+    currentRenderer?.removeActor(pipeline.actor);
+    pipeline.actor.delete();
+    pipeline.mapper.delete();
   }
-  segmentationActor?.delete();
-  segmentationMapper?.delete();
-  segmentationActor = null;
-  segmentationMapper = null;
+  segmentationPipelines = [];
 }
 
 function clearVolumeActors() {
@@ -546,7 +575,7 @@ async function rebuildVolume() {
   const serial = ++buildSerial;
   loading.value = true;
   statusText.value = "Building 3D";
-  clearSegmentationActor();
+  clearSegmentationActors();
   clearVolumeActors();
 
   if (visibleLayerStackImages.value.length === 0) {
@@ -574,7 +603,7 @@ async function rebuildVolume() {
     }
     volumes.forEach(addChannelVolume);
     activeGeometry = volumes[0]?.geometry ?? null;
-    updateSegmentationActor();
+    updateSegmentationActors();
     updateBoundingBox();
     // Reframe only when the volume geometry fundamentally changes (dataset or
     // depth axis); contrast / channel-visibility rebuilds keep the camera.
@@ -599,16 +628,32 @@ async function rebuildVolume() {
   }
 }
 
-function updateSegmentationActor() {
+function addSegmentationActor(mapper: VtkMapper | VtkSphereMapper) {
   const currentRenderer = renderer();
-  if (!currentRenderer || !activeGeometry) {
-    clearSegmentationActor();
-    render();
+  if (!currentRenderer) {
     return;
   }
+  const actor = vtkActor.newInstance();
+  actor.setMapper(mapper);
+  const property = actor.getProperty();
+  property.setOpacity(segmentationOpacity.value);
+  // Backface culling off: earcut cap triangulation has arbitrary winding, and
+  // the translucent prisms/ribbons should render both faces.
+  property.setBackfaceCulling(false);
+  // Lit, slightly specular shading so annotations read as surfaces.
+  property.setInterpolationToPhong();
+  property.setAmbient(0.3);
+  property.setDiffuse(0.7);
+  property.setSpecular(0.15);
+  property.setSpecularPower(16);
+  segmentationPipelines.push(markRaw({ actor, mapper }));
+  currentRenderer.addActor(actor);
+}
 
-  clearSegmentationActor();
-  if (!showSegmentations.value) {
+function updateSegmentationActors() {
+  const currentRenderer = renderer();
+  clearSegmentationActors();
+  if (!currentRenderer || !activeGeometry || !showSegmentations.value) {
     render();
     return;
   }
@@ -624,25 +669,39 @@ function updateSegmentationActor() {
     propertyPath: volumeViewStore.segmentationPropertyPath,
     propertyValues: propertyStore.propertyValues,
   });
-  if (result.polyData.getNumberOfCells() === 0) {
-    render();
-    return;
+
+  if (result.surfacePolyData.getNumberOfCells() > 0) {
+    // Smooth point normals make the extruded prisms shade like rounded
+    // surfaces instead of flat unlit slabs.
+    const normalsFilter = vtkPolyDataNormals.newInstance();
+    normalsFilter.setInputData(result.surfacePolyData);
+    const mapper = vtkMapper.newInstance({ scalarVisibility: true });
+    mapper.setInputData(normalsFilter.getOutputData());
+    mapper.setScalarModeToUseCellData();
+    mapper.setColorModeToMapScalars();
+    mapper.setLookupTable(result.lookupTable);
+    mapper.setScalarRange(result.scalarRange);
+    addSegmentationActor(mapper);
   }
 
-  segmentationMapper = vtkMapper.newInstance({ scalarVisibility: true });
-  segmentationMapper.setInputData(result.polyData);
-  segmentationMapper.setScalarModeToUseCellData();
-  segmentationMapper.setColorModeToMapScalars();
-  segmentationMapper.setLookupTable(result.lookupTable);
-  segmentationMapper.setScalarRange(result.scalarRange);
+  if (result.pointsPolyData.getNumberOfPoints() > 0) {
+    // Point annotations render as small shaded spheres.
+    const mapper = vtkSphereMapper.newInstance();
+    mapper.setInputData(result.pointsPolyData);
+    mapper.setRadius(result.pointRadius);
+    mapper.setScalarModeToUsePointData();
+    mapper.setColorModeToMapScalars();
+    mapper.setLookupTable(result.lookupTable);
+    mapper.setScalarRange(result.scalarRange);
+    addSegmentationActor(mapper);
+  }
+  render();
+}
 
-  segmentationActor = vtkActor.newInstance();
-  segmentationActor.setMapper(segmentationMapper);
-  segmentationActor.getProperty().setOpacity(SEGMENTATION_OPACITY);
-  // Backface culling off: earcut cap triangulation has arbitrary winding, and
-  // the translucent prisms should render both faces.
-  segmentationActor.getProperty().setBackfaceCulling(false);
-  currentRenderer.addActor(segmentationActor);
+function applySegmentationOpacity() {
+  segmentationPipelines.forEach((pipeline) =>
+    pipeline.actor.getProperty().setOpacity(segmentationOpacity.value),
+  );
   render();
 }
 
@@ -650,11 +709,11 @@ function applyVisibility() {
   volumePipelines.forEach((pipeline) =>
     pipeline.actor.setVisibility(showVolume.value),
   );
-  if (segmentationActor) {
-    segmentationActor.setVisibility(showSegmentations.value);
-  }
-  if (showSegmentations.value && !segmentationActor) {
-    updateSegmentationActor();
+  segmentationPipelines.forEach((pipeline) =>
+    pipeline.actor.setVisibility(showSegmentations.value),
+  );
+  if (showSegmentations.value && segmentationPipelines.length === 0) {
+    updateSegmentationActors();
   }
   render();
 }
@@ -722,7 +781,7 @@ onBeforeUnmount(() => {
   activeAbortController?.abort();
   resizeObserver?.disconnect();
   resizeObserver = null;
-  clearSegmentationActor();
+  clearSegmentationActors();
   clearVolumeActors();
   orientationWidget?.setEnabled(false);
   orientationWidget?.delete();
@@ -755,6 +814,8 @@ watch(showAxes, (value) => {
 });
 watch(showBoundingBox, updateBoundingBox);
 watch(colorKey, applyLayerColors);
+// Opacity only touches actor properties; the geometry is left alone.
+watch(segmentationOpacity, applySegmentationOpacity);
 // Segmentation-only inputs (these don't change the volume, so they don't go
 // through rebuildVolume). Navigation / axis changes update segmentations via
 // the rebuild instead.
@@ -766,7 +827,7 @@ watch(
     () => propertyStore.propertyValues,
   ],
   () => {
-    updateSegmentationActor();
+    updateSegmentationActors();
   },
 );
 
@@ -778,11 +839,12 @@ defineExpose({
   showVolume,
   showSegmentations,
   segmentationColorMode,
+  segmentationOpacity,
   selectedPropertyKey,
   propertyItems,
   rebuildVolume,
   resetCamera,
-  updateSegmentationActor,
+  updateSegmentationActors,
   get genericRenderWindow() {
     return genericRenderWindow;
   },
@@ -829,6 +891,19 @@ $gizmo-clearance: 130px;
 
 .property-select {
   width: min(260px, 35vw);
+}
+
+.segmentation-opacity {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 110px;
+  padding: 0 4px;
+
+  .v-slider {
+    flex: 1;
+    margin-inline: 0;
+  }
 }
 
 .time-spacing-hint {

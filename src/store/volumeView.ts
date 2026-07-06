@@ -27,6 +27,8 @@ export class VolumeView extends VuexModule {
   showBoundingBox: boolean = false;
   segmentationColorMode: TVolumeSegmentationColorMode = "tag";
   segmentationPropertyPath: string[] = [];
+  // Opacity of 3D annotation surfaces and point spheres, in (0, 1].
+  segmentationOpacity: number = 0.55;
   // Depth spacing (µm) to use when time is the depth axis. null → auto default
   // (5× the xy pixel size), computed at build time.
   timeStepUmOverride: number | null = null;
@@ -74,6 +76,11 @@ export class VolumeView extends VuexModule {
   @Mutation
   setSegmentationPropertyPath(value: string[]) {
     this.segmentationPropertyPath = [...value];
+  }
+
+  @Mutation
+  setSegmentationOpacity(value: number) {
+    this.segmentationOpacity = Math.min(1, Math.max(0.05, value));
   }
 
   @Mutation
