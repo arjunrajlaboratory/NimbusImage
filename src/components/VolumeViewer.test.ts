@@ -252,6 +252,7 @@ vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));
 
 import volumeViewStore from "@/store/volumeView";
 import propertyStore from "@/store/properties";
+import filterStore from "@/store/filters";
 import VolumeViewer from "./VolumeViewer.vue";
 
 const fakeVolume = {
@@ -421,6 +422,26 @@ describe("VolumeViewer", () => {
       loftOverlapFraction: 0.5,
     });
     expect(h.buildVolume).not.toHaveBeenCalled();
+  });
+
+  it("discards a segmentation build that finishes after segmentations were hidden", async () => {
+    await mountReady();
+    // Make the next build hang until we resolve it, like a slow worker job.
+    let resolveBuild!: (value: ReturnType<typeof segResult>) => void;
+    h.annotationsTo3D.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveBuild = resolve)),
+    );
+    (filterStore as any).filteredAnnotations = [{ id: "new" }];
+    await nextTick();
+
+    volumeViewStore.setShowSegmentations(false);
+    await nextTick();
+    h.renderer.addActor.mockClear();
+
+    resolveBuild(segResult());
+    await flushPromises();
+
+    expect(h.renderer.addActor).not.toHaveBeenCalled();
   });
 
   it("renders point annotations with a sphere mapper at the suggested radius", async () => {

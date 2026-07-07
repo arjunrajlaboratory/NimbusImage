@@ -763,7 +763,14 @@ async function updateSegmentationActors() {
     logError(error);
     return;
   }
-  if (serial !== segmentationSerial || !renderer() || !activeGeometry) {
+  // Superseded, torn down, or hidden while the build was in flight
+  // (applyVisibility only toggles actors that already exist).
+  if (
+    serial !== segmentationSerial ||
+    !renderer() ||
+    !activeGeometry ||
+    !showSegmentations.value
+  ) {
     return;
   }
   clearSegmentationActors();
