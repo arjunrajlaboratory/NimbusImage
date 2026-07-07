@@ -171,13 +171,13 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { debounce } from "lodash";
 import store from "@/store";
-import annotationStore from "@/store/annotation";
 import {
   ExampleSegmentationToolStateSymbol,
-  IAnnotationBase,
   IToolConfiguration,
 } from "@/store/model";
 import { NoOutput } from "@/pipelines/computePipeline";
+import { acceptProposalsFromTool } from "@/utils/proposalAccept";
+import { toNullableNumber } from "@/utils/parsing";
 
 const DEFAULT_THRESHOLD = 0.5;
 const DEFAULT_SIMPLIFICATION_TOLERANCE = 1;
@@ -304,14 +304,6 @@ const sizeRangeValue = computed(() => {
   return value == null || value === NoOutput ? { min: null, max: null } : value;
 });
 
-function toNullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-  const num = Number(value);
-  return Number.isNaN(num) ? null : num;
-}
-
 const minSizeInput = computed({
   get: () => sizeRangeValue.value.min,
   set: (value: unknown) => {
@@ -356,29 +348,15 @@ async function clearAll() {
 }
 
 async function accept() {
-  const state = exampleState.value;
-  const proposals = state?.proposals;
-  const datasetId = store.dataset?.id;
-  if (!state || !proposals || proposals.length === 0 || !datasetId) {
+  const proposals = exampleState.value?.proposals;
+  if (!proposals) {
     return;
   }
   isAccepting.value = true;
   try {
-    const { location, channel } =
-      await annotationStore.getAnnotationLocationFromTool(
-        props.toolConfiguration,
-      );
-    const { tags, shape, color } = props.toolConfiguration.values.annotation;
-    const annotationBases: IAnnotationBase[] = proposals.map((coordinates) => ({
-      tags,
-      shape,
-      channel,
-      location,
-      coordinates,
-      datasetId,
-      color: color ?? null,
-    }));
-    await annotationStore.createMultipleAnnotations(annotationBases);
+    if (!(await acceptProposalsFromTool(props.toolConfiguration, proposals))) {
+      return;
+    }
     // Newly-committed annotations must be deduped out of future proposals
     // (spec §4.4 step 7), but the pipeline only recomputes proposals when one
     // of its input nodes changes - it has no dedicated "revalidate" entry

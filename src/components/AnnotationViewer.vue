@@ -2622,138 +2622,104 @@ function onSamLivePreviewOutputChanged() {
   props.annotationLayer.addAnnotation(samLivePreviewAnnotation.value);
 }
 
-// Example-segmentation training-example outlines: green for foreground
-// (object) examples, red for background examples, no fill - same rendering
-// approach as onSamPromptsChanged above.
+// Shared renderer for the example-based segmentation tools' transient
+// geometry (training-example outlines and putative proposals): removes the
+// previous batch from the annotation layer and draws one specialAnnotation
+// polygon per entry, returning the new batch.
+function replacePreviewPolygons(
+  previousAnnotations: IGeoJSAnnotation[],
+  polygons: { vertices: IGeoJSPosition[]; style: Record<string, unknown> }[],
+): IGeoJSAnnotation[] {
+  for (const annotation of previousAnnotations) {
+    props.annotationLayer.removeAnnotation(annotation);
+  }
+  const newAnnotations: IGeoJSAnnotation[] = [];
+  for (const { vertices, style } of polygons) {
+    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
+      style,
+      vertices,
+    });
+    geoJsAnnotation.options("specialAnnotation", true);
+    const markedAnnotation = markRaw(geoJsAnnotation);
+    props.annotationLayer.addAnnotation(markedAnnotation);
+    newAnnotations.push(markedAnnotation);
+  }
+  return newAnnotations;
+}
+
+// Training-example outlines: green for foreground (object) examples, red for
+// background examples, no fill.
+function exampleOutlineStyle(polarity: "foreground" | "background") {
+  return {
+    fillOpacity: 0,
+    strokeOpacity: 1,
+    strokeWidth: 2,
+    closed: true,
+    strokeColor: polarity === "foreground" ? "#00FF00" : "#FF0000",
+  };
+}
+
+// Putative proposals: low-opacity preview polygons in the tool's configured
+// color, visually distinct from committed annotations.
+function proposalPreviewStyle() {
+  const color =
+    selectedToolConfiguration.value?.values?.annotation?.color ?? "blue";
+  return {
+    fillOpacity: 0.15,
+    fillColor: color,
+    strokeColor: color,
+    strokeOpacity: 0.8,
+    strokeWidth: 1,
+  };
+}
+
 function onExampleSegmentationExamplesChanged() {
-  for (const annotation of exampleSegmentationExampleAnnotations.value) {
-    props.annotationLayer.removeAnnotation(annotation);
-  }
-  const style = {
-    fillOpacity: 0,
-    strokeOpacity: 1,
-    strokeWidth: 2,
-    closed: true,
-  };
-  const newAnnotations: IGeoJSAnnotation[] = [];
-  for (const example of exampleSegmentationExamples.value) {
-    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
-      style: {
-        ...style,
-        strokeColor: example.polarity === "foreground" ? "#00FF00" : "#FF0000",
-      },
+  exampleSegmentationExampleAnnotations.value = replacePreviewPolygons(
+    exampleSegmentationExampleAnnotations.value,
+    exampleSegmentationExamples.value.map((example) => ({
       vertices: example.coordinates,
-    });
-    geoJsAnnotation.options("specialAnnotation", true);
-    const markedAnnotation = markRaw(geoJsAnnotation);
-    props.annotationLayer.addAnnotation(markedAnnotation);
-    newAnnotations.push(markedAnnotation);
-  }
-  exampleSegmentationExampleAnnotations.value = newAnnotations;
+      style: exampleOutlineStyle(example.polarity),
+    })),
+  );
 }
 
-// Example-segmentation putative proposals: low-opacity preview polygons in
-// the tool's configured color, visually distinct from committed annotations
-// - same rendering approach as onSamMainOutputChanged above.
 function onExampleSegmentationProposalsChanged() {
-  for (const annotation of exampleSegmentationProposalAnnotations.value) {
-    props.annotationLayer.removeAnnotation(annotation);
-  }
-  const proposals = exampleSegmentationProposals.value;
-  if (!proposals) {
-    exampleSegmentationProposalAnnotations.value = [];
-    return;
-  }
-  const color =
-    selectedToolConfiguration.value?.values?.annotation?.color ?? "blue";
-  const style = {
-    fillOpacity: 0.15,
-    fillColor: color,
-    strokeColor: color,
-    strokeOpacity: 0.8,
-    strokeWidth: 1,
-  };
-  const newAnnotations: IGeoJSAnnotation[] = [];
-  for (const proposal of proposals) {
-    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
-      style,
+  const style = proposalPreviewStyle();
+  exampleSegmentationProposalAnnotations.value = replacePreviewPolygons(
+    exampleSegmentationProposalAnnotations.value,
+    (exampleSegmentationProposals.value ?? []).map((proposal) => ({
       vertices: proposal,
-    });
-    geoJsAnnotation.options("specialAnnotation", true);
-    const markedAnnotation = markRaw(geoJsAnnotation);
-    props.annotationLayer.addAnnotation(markedAnnotation);
-    newAnnotations.push(markedAnnotation);
-  }
-  exampleSegmentationProposalAnnotations.value = newAnnotations;
+      style,
+    })),
+  );
 }
 
-// SAM-similarity decoded example outlines: green for foreground (object)
-// examples, red for background examples, no fill - same rendering approach
-// as onExampleSegmentationExamplesChanged above. Examples without a decoded
-// polygon yet (decode still in flight) are skipped.
+// Examples without a decoded polygon yet (decode still in flight) are skipped.
 function onSamSimilarityExamplesChanged() {
-  for (const annotation of samSimilarityExampleAnnotations.value) {
-    props.annotationLayer.removeAnnotation(annotation);
-  }
-  const style = {
-    fillOpacity: 0,
-    strokeOpacity: 1,
-    strokeWidth: 2,
-    closed: true,
-  };
-  const newAnnotations: IGeoJSAnnotation[] = [];
-  for (const example of samSimilarityExamples.value) {
-    if (!example.polygon) {
-      continue;
-    }
-    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
-      style: {
-        ...style,
-        strokeColor: example.polarity === "foreground" ? "#00FF00" : "#FF0000",
-      },
-      vertices: example.polygon,
-    });
-    geoJsAnnotation.options("specialAnnotation", true);
-    const markedAnnotation = markRaw(geoJsAnnotation);
-    props.annotationLayer.addAnnotation(markedAnnotation);
-    newAnnotations.push(markedAnnotation);
-  }
-  samSimilarityExampleAnnotations.value = newAnnotations;
+  samSimilarityExampleAnnotations.value = replacePreviewPolygons(
+    samSimilarityExampleAnnotations.value,
+    samSimilarityExamples.value.flatMap((example) =>
+      example.polygon
+        ? [
+            {
+              vertices: example.polygon,
+              style: exampleOutlineStyle(example.polarity),
+            },
+          ]
+        : [],
+    ),
+  );
 }
 
-// SAM-similarity putative proposals: low-opacity preview polygons in the
-// tool's configured color, visually distinct from committed annotations -
-// same rendering approach as onExampleSegmentationProposalsChanged above.
 function onSamSimilarityProposalsChanged() {
-  for (const annotation of samSimilarityProposalAnnotations.value) {
-    props.annotationLayer.removeAnnotation(annotation);
-  }
-  const proposals = samSimilarityProposals.value;
-  if (!proposals) {
-    samSimilarityProposalAnnotations.value = [];
-    return;
-  }
-  const color =
-    selectedToolConfiguration.value?.values?.annotation?.color ?? "blue";
-  const style = {
-    fillOpacity: 0.15,
-    fillColor: color,
-    strokeColor: color,
-    strokeOpacity: 0.8,
-    strokeWidth: 1,
-  };
-  const newAnnotations: IGeoJSAnnotation[] = [];
-  for (const proposal of proposals) {
-    const geoJsAnnotation = geojs.annotation.polygonAnnotation({
-      style,
+  const style = proposalPreviewStyle();
+  samSimilarityProposalAnnotations.value = replacePreviewPolygons(
+    samSimilarityProposalAnnotations.value,
+    (samSimilarityProposals.value ?? []).map((proposal) => ({
       vertices: proposal,
-    });
-    geoJsAnnotation.options("specialAnnotation", true);
-    const markedAnnotation = markRaw(geoJsAnnotation);
-    props.annotationLayer.addAnnotation(markedAnnotation);
-    newAnnotations.push(markedAnnotation);
-  }
-  samSimilarityProposalAnnotations.value = newAnnotations;
+      style,
+    })),
+  );
 }
 
 function onMousePathChanged(

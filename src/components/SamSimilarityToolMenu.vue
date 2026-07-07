@@ -194,13 +194,13 @@
 import { computed, ref, watch, onMounted } from "vue";
 import { debounce } from "lodash";
 import store from "@/store";
-import annotationStore from "@/store/annotation";
 import {
-  IAnnotationBase,
   IToolConfiguration,
   SamSimilarityToolStateSymbol,
 } from "@/store/model";
-import { NoOutput } from "@/pipelines/computePipeline";
+import { NoOutput, readManualInputOr } from "@/pipelines/computePipeline";
+import { acceptProposalsFromTool } from "@/utils/proposalAccept";
+import { toNullableNumber } from "@/utils/parsing";
 
 const DEFAULT_SIMILARITY_THRESHOLD = 0.5;
 const DEFAULT_SIMPLIFICATION_TOLERANCE = 1;
@@ -361,14 +361,6 @@ const sizeRangeValue = computed(() => {
   return value == null || value === NoOutput ? { min: null, max: null } : value;
 });
 
-function toNullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-  const num = Number(value);
-  return Number.isNaN(num) ? null : num;
-}
-
 const minSizeInput = computed({
   get: () => sizeRangeValue.value.min,
   set: (value: unknown) => {
@@ -394,10 +386,19 @@ function resetSizeRangeToAuto() {
 
 function undoExample() {
   const state = similarityState.value;
-  if (!state || state.examples.length === 0) {
+  if (!state) {
     return;
   }
-  state.nodes.input.examples.setValue(state.examples.slice(0, -1));
+  // Slice the input node's own array rather than the state.examples mirror:
+  // the mirror holds freshly-built decoded-example objects, and the
+  // pipeline's descriptor cache is keyed by the input objects' identity -
+  // feeding mirror objects back in would miss the cache and re-decode every
+  // remaining example.
+  const currentExamples = readManualInputOr(state.nodes.input.examples, []);
+  if (currentExamples.length === 0) {
+    return;
+  }
+  state.nodes.input.examples.setValue(currentExamples.slice(0, -1));
 }
 
 async function clearAll() {
@@ -413,29 +414,15 @@ async function clearAll() {
 }
 
 async function accept() {
-  const state = similarityState.value;
-  const proposals = state?.proposals;
-  const datasetId = store.dataset?.id;
-  if (!state || !proposals || proposals.length === 0 || !datasetId) {
+  const proposals = similarityState.value?.proposals;
+  if (!proposals) {
     return;
   }
   isAccepting.value = true;
   try {
-    const { location, channel } =
-      await annotationStore.getAnnotationLocationFromTool(
-        props.toolConfiguration,
-      );
-    const { tags, shape, color } = props.toolConfiguration.values.annotation;
-    const annotationBases: IAnnotationBase[] = proposals.map((coordinates) => ({
-      tags,
-      shape,
-      channel,
-      location,
-      coordinates,
-      datasetId,
-      color: color ?? null,
-    }));
-    await annotationStore.createMultipleAnnotations(annotationBases);
+    if (!(await acceptProposalsFromTool(props.toolConfiguration, proposals))) {
+      return;
+    }
     // Newly-committed annotations must be deduped out of future proposals
     // (mirrors the "already segmented" dedupe check), but the pipeline only
     // recomputes proposals when one of its input nodes changes. Re-setting

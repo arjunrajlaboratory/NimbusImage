@@ -19,9 +19,14 @@ vi.mock("@/store/annotation", () => ({
   },
 }));
 
-vi.mock("@/pipelines/computePipeline", () => ({
-  NoOutput: Symbol("NoOutput"),
-}));
+vi.mock("@/pipelines/computePipeline", () => {
+  const NoOutput = Symbol("NoOutput");
+  return {
+    NoOutput,
+    readManualInputOr: (node: { output: unknown }, fallback: unknown) =>
+      node.output === NoOutput ? fallback : node.output,
+  };
+});
 
 import SamSimilarityToolMenu from "./SamSimilarityToolMenu.vue";
 import store from "@/store";
@@ -211,12 +216,21 @@ describe("SamSimilarityToolMenu", () => {
     ).toHaveBeenCalledWith(0.5, true);
   });
 
-  it("undoExample pops the last example and pushes a new array", () => {
-    const examples = [
-      { polarity: "foreground", prompt: {}, polygon: [] },
-      { polarity: "background", prompt: {}, polygon: null },
+  it("undoExample pops the last example from the input node, not the mirror", () => {
+    // The state.examples mirror holds freshly-built decoded-example objects;
+    // undo must slice the INPUT node's array so the pipeline's
+    // reference-keyed descriptor cache still hits for the remaining examples.
+    const inputExamples = [
+      { polarity: "foreground", prompt: {} },
+      { polarity: "background", prompt: {} },
     ];
-    const similarityState = createSimilarityState({ examples });
+    const similarityState = createSimilarityState({
+      examples: [
+        { polarity: "foreground", prompt: {}, polygon: [] },
+        { polarity: "background", prompt: {}, polygon: null },
+      ],
+    });
+    similarityState.nodes.input.examples.output = inputExamples;
     (store as any).selectedTool = { state: similarityState };
 
     const wrapper = mountComponent();
@@ -225,7 +239,7 @@ describe("SamSimilarityToolMenu", () => {
     vm.undoExample();
 
     expect(similarityState.nodes.input.examples.setValue).toHaveBeenCalledWith([
-      examples[0],
+      inputExamples[0],
     ]);
   });
 
