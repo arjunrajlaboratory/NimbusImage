@@ -4,7 +4,7 @@
       <v-overlay
         :model-value="isNavigating"
         contained
-        scrim="white"
+        scrim="background"
         :opacity="0.8"
         z-index="9999"
         class="d-flex align-center justify-center"
@@ -144,7 +144,7 @@
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <div class="d-flex align-center mb-4">
-                <span class="text-h6 font-weight-medium mr-4">Browse</span>
+                <span class="panel-section-title mr-4">Browse</span>
                 <v-btn-toggle
                   v-model="browseMode"
                   mandatory
@@ -239,7 +239,7 @@
       <!-- Upload Choice Dialog -->
       <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
         <v-card>
-          <v-card-title class="headline d-flex align-center">
+          <v-card-title class="d-flex align-center">
             Create dataset
             <v-btn
               variant="text"
@@ -366,9 +366,7 @@
             </v-alert>
 
             <v-card class="mb-4">
-              <v-card-title class="text-subtitle-1 pa-3"
-                >Location:</v-card-title
-              >
+              <div class="panel-section-title pa-3">Location</div>
               <v-card-text class="pt-0">
                 <girder-location-chooser
                   v-model="selectedLocation"
@@ -1411,18 +1409,22 @@ defineExpose({
   min-height: 0;
 }
 
-.drag-active {
-  border: 2px dashed white;
-}
-
 .upload-card {
   cursor: pointer;
   position: relative;
-  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border: 2px dashed var(--nimbus-border-strong);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+
+  &:hover {
+    border-color: rgba(var(--v-theme-primary), 0.5);
+    background-color: var(--nimbus-glass-hover);
+  }
 
   &.drag-active {
-    border: 2px dashed var(--v-primary-base);
-    background-color: rgba(var(--v-primary-base), 0.1);
+    border: 2px dashed rgb(var(--v-theme-primary));
+    background-color: rgba(var(--v-theme-primary), 0.1);
   }
 }
 
@@ -1434,55 +1436,6 @@ defineExpose({
   }
 }
 
-.section-title {
-  padding: 0;
-  height: auto;
-  display: block;
-}
-
-.pulse-btn {
-  animation: subtle-pulse 0.75s 1 ease-in-out;
-  transition: all 0.3s ease;
-  position: relative; /* Needed for the pseudo-element */
-}
-
-/* Use a pseudo-element for the pulsing effect to avoid affecting the button content */
-.pulse-btn::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  border-radius: inherit;
-  box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-  animation: subtle-pulse-shadow 9s 3 ease-in-out;
-}
-
-@keyframes subtle-pulse {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.05);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes subtle-pulse-shadow {
-  0% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
-  }
-}
-
 .loading-container {
   display: flex;
   flex-direction: column;
@@ -1491,10 +1444,10 @@ defineExpose({
 }
 
 .loading-text {
-  color: #424242; /* Dark gray text for contrast on white background */
-  font-size: 1.5rem; /* Medium weight for better visibility */
-  font-weight: 500; /* Medium weight for better visibility */
-  margin-top: 16px; /* Space between spinner and text */
+  color: rgb(var(--v-theme-on-background));
+  font-size: 1.5rem;
+  font-weight: 500;
+  margin-top: 16px;
   text-align: center;
 }
 </style>
