@@ -115,6 +115,18 @@ Viewer.vue (config changes, map ready, empty tools, unseen)
   dataset channel with that name (`dataset.channelNames`) and the configuration
   layer on that channel, and sets it as the annotation setup's `layer`.
 
+## Resolved from Codex review (PR #1224)
+
+- **Empty worker catalog on first open.** `properties.fetchWorkerImageList()`
+  is otherwise only called by the tool-picker / worker-menu UI, so on a first
+  open `workerImageList` was `{}` and the catalog contained only `manual:blob`
+  — Cellpose/Piscis could never be suggested. `suggestForCurrentConfiguration`
+  now awaits `fetchWorkerImageList()` before building the catalog.
+- **Stale results after switching collections.** The action now captures the
+  configuration id at the start and discards the result (status → idle) if
+  `main.configuration` changed while the request was in flight, so suggestions
+  computed for the old collection's channels/layers aren't applied to a new one.
+
 ## Known rough edges / TODO for the polish pass
 
 1. ~~**Screenshot timing.** Fixed delay after the map appears.~~ **Done** — the

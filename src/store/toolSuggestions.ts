@@ -257,11 +257,20 @@ export class ToolSuggestions extends VuexModule {
     if (!main.dataset) {
       return;
     }
+    // Remember which configuration this run is for, so we can discard the
+    // result if the user navigates to a different collection mid-request.
+    const startConfigurationId = main.configuration?.id ?? null;
     this.setDismissed(false);
     this.setErrorMessage(null);
     this.setStatus("loading");
     this.setSuggestions([]);
     try {
+      // The worker image list is otherwise only loaded by the tool-picker /
+      // worker-menu UI. On a first open the user hasn't touched those, so
+      // ensure it's populated here — otherwise the catalog would contain only
+      // manual tools and could never suggest Cellpose/Piscis/etc.
+      await properties.fetchWorkerImageList();
+
       const map = main.maps[0]?.map;
       const [interfaceShot, viewportShot] = await Promise.all([
         captureInterfaceScreenshot(),
@@ -291,6 +300,15 @@ export class ToolSuggestions extends VuexModule {
 
       const rawSuggestions: IToolSuggestion[] =
         await main.chatAPI.getToolSuggestions({ images, catalog, channels });
+
+      // If the user switched collections while the request was in flight,
+      // discard the result: it was computed for the old configuration's
+      // channels/layers and must not be applied to the new one.
+      if ((main.configuration?.id ?? null) !== startConfigurationId) {
+        this.setStatus("idle");
+        this.setSuggestions([]);
+        return;
+      }
 
       const catalogById = new Map(catalog.map((entry) => [entry.id, entry]));
       const resolved: IResolvedToolSuggestion[] = [];

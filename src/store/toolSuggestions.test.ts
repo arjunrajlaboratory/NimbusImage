@@ -32,6 +32,7 @@ vi.mock("./index", () => ({
 vi.mock("./properties", () => ({
   default: {
     workerImageList: {} as any,
+    fetchWorkerImageList: vi.fn(),
   },
 }));
 
@@ -325,6 +326,30 @@ describe("toolSuggestions store", () => {
         media_type: "image/png",
         data: "AAAA",
       });
+      (properties.fetchWorkerImageList as any).mockClear();
+    });
+
+    it("loads the worker image list before building the catalog", async () => {
+      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([]);
+
+      await toolSuggestions.suggestForCurrentConfiguration();
+
+      expect(properties.fetchWorkerImageList).toHaveBeenCalled();
+    });
+
+    it("discards results if the configuration changed during the request", async () => {
+      main.configuration = makeConfiguration({ id: "cfg-a" });
+      // While the request is in flight, the user navigates to another
+      // collection; the resolved suggestions must be dropped.
+      (main.chatAPI.getToolSuggestions as any).mockImplementation(async () => {
+        main.configuration = makeConfiguration({ id: "cfg-b" });
+        return [{ toolId: "manual:blob", reason: "blobs", confidence: "high" }];
+      });
+
+      await toolSuggestions.suggestForCurrentConfiguration();
+
+      expect(toolSuggestions.status).toBe("idle");
+      expect(toolSuggestions.suggestions).toHaveLength(0);
     });
 
     it("sets status loading then done, and resolves suggestions from the catalog", async () => {
