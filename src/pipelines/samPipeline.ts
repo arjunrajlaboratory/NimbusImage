@@ -213,7 +213,10 @@ function processCanvas(
     scaledHeight = maxHeight; // = srcHeight * scale
   }
 
-  // Draw the input image
+  // Draw the input image. Clear the target region first: the canvas is
+  // reused across screenshots, and transparent screenshot pixels would
+  // otherwise blend (source-over) with the previously drawn image.
+  context.clearRect(0, 0, scaledWidth, scaledHeight);
   context.drawImage(srcCanvas, 0, 0, scaledWidth, scaledHeight);
 
   // Convert image to normalized float32 buffer.
