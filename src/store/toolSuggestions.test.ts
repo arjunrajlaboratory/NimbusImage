@@ -25,6 +25,7 @@ vi.mock("./index", () => ({
     maps: [] as any[],
     chatAPI: { getToolSuggestions: vi.fn() },
     addToolToConfiguration: vi.fn(),
+    addToolsToConfiguration: vi.fn(),
   },
 }));
 
@@ -184,6 +185,7 @@ describe("toolSuggestions store", () => {
       maps: [],
       chatAPI: { getToolSuggestions: vi.fn() },
       addToolToConfiguration: vi.fn(),
+      addToolsToConfiguration: vi.fn(),
     });
     Object.assign(properties, { workerImageList: {} });
 
@@ -261,6 +263,34 @@ describe("toolSuggestions store", () => {
       expect(toolSuggestions.seenConfigurationIds).toContain("cfg-fresh");
       expect(main.chatAPI.getToolSuggestions).toHaveBeenCalledTimes(1);
       expect(toolSuggestions.status).toBe("done");
+    });
+
+    it("un-marks the configuration seen when the request errors, so a later trigger retries", async () => {
+      main.configuration = makeConfiguration({ id: "cfg-error" });
+      main.dataset = makeDataset();
+      (main as any).layers = [makeLayer()];
+      main.toolTemplateList = [segmentationTemplate, createTemplate];
+      main.maps = [{ map: {} }] as any;
+      (captureInterfaceScreenshot as any).mockResolvedValue({
+        data: "data:image/png;base64,AAAA",
+        type: "image/png",
+      });
+      (captureViewportScreenshot as any).mockResolvedValue({
+        data: "data:image/png;base64,AAAA",
+        type: "image/png",
+      });
+      (dataUrlToBase64 as any).mockReturnValue({
+        media_type: "image/png",
+        data: "AAAA",
+      });
+      (main.chatAPI.getToolSuggestions as any).mockRejectedValue(
+        new Error("boom"),
+      );
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      expect(toolSuggestions.status).toBe("error");
+      expect(toolSuggestions.seenConfigurationIds).not.toContain("cfg-error");
     });
   });
 
@@ -409,16 +439,19 @@ describe("toolSuggestions store", () => {
       expect(toolSuggestions.suggestions[0].tool.id).toBe("tool-b");
     });
 
-    it("acceptAllSuggestions adds every suggestion and clears the list", async () => {
+    it("acceptAllSuggestions adds every suggestion in one batch and clears the list", async () => {
       const resolvedA = makeResolved("tool-a", manualBlobEntry);
       const resolvedB = makeResolved("tool-b", manualBlobEntry);
       (toolSuggestions as any).setSuggestions([resolvedA, resolvedB]);
 
       await toolSuggestions.acceptAllSuggestions();
 
-      expect(main.addToolToConfiguration).toHaveBeenCalledTimes(2);
-      expect(main.addToolToConfiguration).toHaveBeenCalledWith(resolvedA.tool);
-      expect(main.addToolToConfiguration).toHaveBeenCalledWith(resolvedB.tool);
+      // Single batched call, not one sync per tool.
+      expect(main.addToolsToConfiguration).toHaveBeenCalledTimes(1);
+      expect(main.addToolsToConfiguration).toHaveBeenCalledWith([
+        resolvedA.tool,
+        resolvedB.tool,
+      ]);
       expect(toolSuggestions.suggestions).toHaveLength(0);
     });
   });

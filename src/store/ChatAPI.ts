@@ -5,6 +5,7 @@ import {
   IToolSuggestion,
   IToolSuggestionCatalogEntry,
 } from "./model";
+import { dataUrlToBase64 } from "@/utils/interfaceCapture";
 
 interface IClaudeAPIChatMessage {
   role: "user" | "assistant";
@@ -41,17 +42,14 @@ function toClaudeApiMessages(
       { type: "text", text: message.content },
     ];
     message.images?.forEach((image: IChatImage) => {
-      const match = image.data.match(
-        /data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+).*,(.*)/,
-      );
-      if (match?.length === 3) {
-        const [, mediaType, data] = match;
+      const parsed = dataUrlToBase64(image.data);
+      if (parsed) {
         messageContent.push({
           type: "image",
           source: {
             type: "base64",
-            media_type: mediaType,
-            data,
+            media_type: parsed.media_type,
+            data: parsed.data,
           },
         });
       }

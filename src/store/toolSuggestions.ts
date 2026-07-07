@@ -198,6 +198,13 @@ export class ToolSuggestions extends VuexModule {
   }
 
   @Mutation
+  private unmarkConfigurationSeen(configurationId: string) {
+    this.seenConfigurationIds = this.seenConfigurationIds.filter(
+      (id) => id !== configurationId,
+    );
+  }
+
+  @Mutation
   setDismissed(value: boolean) {
     this.dismissed = value;
   }
@@ -233,8 +240,14 @@ export class ToolSuggestions extends VuexModule {
     if (this.seenConfigurationIds.includes(configuration.id)) {
       return;
     }
+    // Mark seen before the async call so a second layers-ready doesn't kick
+    // off a duplicate request. If the request fails, un-mark it so a later
+    // layers-ready can retry.
     this.markConfigurationSeen(configuration.id);
     await this.suggestForCurrentConfiguration();
+    if (this.status === "error") {
+      this.unmarkConfigurationSeen(configuration.id);
+    }
   }
 
   // Capture screenshots, ask the backend, and resolve suggestions into
@@ -311,12 +324,12 @@ export class ToolSuggestions extends VuexModule {
     this.removeSuggestionByToolId(resolved.tool.id);
   }
 
-  // Add all remaining suggested tools.
+  // Add all remaining suggested tools in a single configuration sync.
   @Action
   async acceptAllSuggestions() {
-    const toAdd = [...this.suggestions];
-    for (const resolved of toAdd) {
-      main.addToolToConfiguration(resolved.tool);
+    const tools = this.suggestions.map((resolved) => resolved.tool);
+    if (tools.length > 0) {
+      main.addToolsToConfiguration(tools);
     }
     this.setSuggestions([]);
   }
