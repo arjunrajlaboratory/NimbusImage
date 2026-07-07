@@ -1,9 +1,6 @@
 import json
 import os
 import logging
-import time
-from collections import defaultdict, deque
-from threading import Lock
 from anthropic import Anthropic, AnthropicError
 
 from girder import plugin
@@ -11,6 +8,8 @@ from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
 from girder.exceptions import RestException
+
+from .rate_limit import SlidingWindowRateLimiter
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -98,13 +97,8 @@ class ClaudeAgentResource(Resource):
     AGENT_MAX_MESSAGES = 400
 
     # Abuse/cost protection (see AI_PANEL_SPEC.md §6.1 and
-    # API_RATE_LIMITING_AUDIT.md). The per-user request rate limit is a
-    # sliding window kept in an in-memory dict of deques. NOTE: this is a
-    # single-process limit only — if Girder runs multiple worker processes
-    # each keeps its own window, so the effective cap is
-    # RATE_LIMIT_MAX_REQUESTS times the process count. Adequate as a v1
-    # backstop; a shared store (Redis/Mongo) would be needed for a hard
-    # global cap.
+    # API_RATE_LIMITING_AUDIT.md); limiter semantics and the
+    # single-process caveat are documented in rate_limit.py.
     RATE_LIMIT_WINDOW_SECONDS = 60
     RATE_LIMIT_MAX_REQUESTS = 30
     # Reject conversations whose JSON-serialized messages exceed this size
@@ -116,9 +110,9 @@ class ClaudeAgentResource(Resource):
         self.resourceName = 'claude_agent'
         self.route('POST', (), self.agent_message)
 
-        # user id -> deque of recent request timestamps (monotonic)
-        self._request_times = defaultdict(deque)
-        self._rate_limit_lock = Lock()
+        self._rate_limiter = SlidingWindowRateLimiter(
+            self.RATE_LIMIT_MAX_REQUESTS, self.RATE_LIMIT_WINDOW_SECONDS
+        )
 
         prompt_path = os.path.join(PLUGIN_DIR, 'agent_system_prompt.txt')
         try:
@@ -153,24 +147,34 @@ class ClaudeAgentResource(Resource):
             )
 
     def _check_rate_limit(self, user_id):
-        """Enforce the per-user sliding-window request rate limit.
+        """Raise RestException(429) when the user exceeds the rate limit."""
+        if not self._rate_limiter.check(user_id):
+            raise RestException(
+                'Rate limit exceeded: too many AI-panel requests. '
+                'Please wait a moment and try again.',
+                code=429,
+            )
 
-        Raises RestException(code=429) when the caller has made more than
-        RATE_LIMIT_MAX_REQUESTS requests within the trailing window.
+    @staticmethod
+    def _add_message_cache_breakpoint(messages):
+        """Mark the end of the conversation as a prompt-cache breakpoint.
+
+        System prompt and tools carry the first two breakpoints; without a
+        third one on the messages, every loop iteration would reprocess
+        the whole conversation (including in-turn screenshots) uncached.
+        Marking the last content block lets each iteration read the prefix
+        written by the previous one. Mutates this request's parsed body
+        only — the client's own copy of the conversation is never touched.
+        (Caveat: a single turn adding more than ~20 content blocks falls
+        outside the cache lookback window; rare with this tool surface.)
         """
-        now = time.monotonic()
-        cutoff = now - self.RATE_LIMIT_WINDOW_SECONDS
-        with self._rate_limit_lock:
-            times = self._request_times[user_id]
-            while times and times[0] < cutoff:
-                times.popleft()
-            if len(times) >= self.RATE_LIMIT_MAX_REQUESTS:
-                raise RestException(
-                    'Rate limit exceeded: too many AI-panel requests. '
-                    'Please wait a moment and try again.',
-                    code=429,
-                )
-            times.append(now)
+        content = messages[-1].get('content')
+        if (
+            isinstance(content, list)
+            and content
+            and isinstance(content[-1], dict)
+        ):
+            content[-1]['cache_control'] = {'type': 'ephemeral'}
 
     @access.user
     @autoDescribeRoute(
@@ -204,6 +208,7 @@ class ClaudeAgentResource(Resource):
                 'and start a new one.',
                 code=413,
             )
+        self._add_message_cache_breakpoint(messages)
         try:
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,

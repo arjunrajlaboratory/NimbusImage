@@ -165,7 +165,7 @@
   },
   {
     "name": "update_layer",
-    "description": "Change one display layer: color (hex), visibility, contrast (black/white points), or name. Refer to the layer by its id or its exact name from get_interface_state. Visible immediately; reversible.",
+    "description": "Change one display layer: color (hex), visibility, contrast (black/white points), or name. Color, visibility and name change the shared collection; contrast is saved as the user's personal view override (same as the contrast slider in the UI). Refer to the layer by its id or its exact name from get_interface_state. Visible immediately; reversible.",
     "input_schema": {
       "type": "object",
       "properties": {

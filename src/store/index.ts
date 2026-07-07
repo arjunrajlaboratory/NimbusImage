@@ -2209,6 +2209,22 @@ export class Main extends VuexModule {
     }
   }
 
+  // Replace the whole per-view contrast override map in one backend sync,
+  // instead of one saveContrastInView call (and dataset-view update) per
+  // layer. Used by the AI panel's revert-view-changes.
+  @Action
+  async setViewContrastOverrides(layerContrasts: {
+    [layerId: string]: IContrast;
+  }) {
+    if (!this.datasetView) {
+      return;
+    }
+    this.datasetView.layerContrasts = { ...layerContrasts };
+    if (this.canEditDatasetView) {
+      await this.api.updateDatasetView(this.datasetView);
+    }
+  }
+
   @Action
   saveScaleInConfiguration({
     itemId,

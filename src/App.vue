@@ -356,7 +356,7 @@
               variant="text"
               icon
               size="small"
-              @click="chatbotOpen = !chatbotOpen"
+              @click="toggleChatbot"
             >
               <v-icon>mdi-chat</v-icon>
             </v-btn>
@@ -371,7 +371,7 @@
               variant="text"
               icon
               size="small"
-              @click="aiPanelOpen = !aiPanelOpen"
+              @click="toggleAiPanel"
             >
               <v-icon>mdi-robot-outline</v-icon>
             </v-btn>
@@ -538,6 +538,23 @@ const filtersPanel = ref(false);
 const analyzePanel = ref(false);
 const chatbotOpen = ref(false);
 const aiPanelOpen = ref(false);
+
+// The chat and AI panels render as floating cards at the same screen
+// position (bottom right), so they are mutually exclusive: opening one
+// closes the other.
+function toggleChatbot() {
+  chatbotOpen.value = !chatbotOpen.value;
+  if (chatbotOpen.value) {
+    aiPanelOpen.value = false;
+  }
+}
+
+function toggleAiPanel() {
+  aiPanelOpen.value = !aiPanelOpen.value;
+  if (aiPanelOpen.value) {
+    chatbotOpen.value = false;
+  }
+}
 
 // Left-zone palettes (dissolved left sidebar). Open by default.
 const navigatorPanel = ref(true);

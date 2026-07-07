@@ -234,7 +234,8 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Mirrors the ChatComponent floating card, offset so both can be open */
+/* Same footprint and position as the ChatComponent card; App.vue keeps the
+   two panels mutually exclusive since they would fully overlap. */
 .ai-panel {
   position: fixed;
   bottom: 20px;

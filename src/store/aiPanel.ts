@@ -23,6 +23,10 @@ import {
   restoreViewState,
   snapshotViewState,
 } from "@/agent/executors";
+import {
+  pruneOldScreenshots,
+  repairDanglingToolUse,
+} from "@/agent/wireConversation";
 import { dataUrlToBase64 } from "@/utils/interfaceCapture";
 
 // AI panel: conversational agent that drives the interface through the tool
@@ -73,68 +77,13 @@ let wireMessages: IAgentWireMessage[] = [];
 let approvalResolver: ((approved: boolean) => void) | null = null;
 let turnSnapshot: IViewStateSnapshot | null = null;
 let panelElement: HTMLElement | null = null;
+// Bumped on clearConversation so late async notifications (e.g. a worker
+// job finishing minutes after its conversation was cleared) are dropped
+// instead of landing in an unrelated conversation.
+let conversationGeneration = 0;
 
 export function setAgentPanelElement(element: HTMLElement | null) {
   panelElement = element;
-}
-
-const PRUNED_IMAGE_PLACEHOLDER =
-  "[screenshot from an earlier turn omitted — capture again if needed]";
-
-// Screenshots are large base64 blobs; left in wireMessages they would be
-// resent on every subsequent API call and grow the conversation without
-// bound. Called at the start of each new turn: every message currently in
-// wireMessages belongs to a previous turn, so we can safely replace image
-// blocks inside tool_result content with a short text placeholder. Only
-// user-role tool_result content is touched — assistant messages and
-// thinking blocks are never modified. Panel display items are separate
-// from wireMessages and are unaffected.
-function pruneOldScreenshots() {
-  for (const message of wireMessages) {
-    if (message.role !== "user") {
-      continue;
-    }
-    for (const block of message.content) {
-      if (block.type !== "tool_result" || !Array.isArray(block.content)) {
-        continue;
-      }
-      block.content = block.content.map((inner) =>
-        inner.type === "image"
-          ? { type: "text", text: PRUNED_IMAGE_PLACEHOLDER }
-          : inner,
-      );
-    }
-  }
-}
-
-// If the loop threw after an assistant message with tool_use blocks was
-// pushed but before the matching tool_result user message was appended, the
-// conversation is left with a dangling tool_use and every subsequent API
-// call 400s. Append synthetic error tool_results (one per tool_use id) so
-// the conversation stays valid. Assistant messages (including thinking
-// blocks) are never modified.
-function repairDanglingToolUse() {
-  const last = wireMessages[wireMessages.length - 1];
-  if (!last || last.role !== "assistant") {
-    return;
-  }
-  const toolUseBlocks = last.content.filter(
-    (block): block is IAgentToolUseBlock => block.type === "tool_use",
-  );
-  if (toolUseBlocks.length === 0) {
-    return;
-  }
-  wireMessages.push({
-    role: "user",
-    content: toolUseBlocks.map((block) => ({
-      type: "tool_result",
-      tool_use_id: block.id,
-      content: [
-        { type: "text", text: "Tool execution was interrupted by an error" },
-      ],
-      is_error: true,
-    })),
-  });
 }
 
 function toResultContent(
@@ -283,6 +232,7 @@ export class AiPanel extends VuexModule {
     }
     wireMessages = [];
     turnSnapshot = null;
+    conversationGeneration++;
     this.clearItemsImpl();
     this.setCanRevert(false);
   }
@@ -299,9 +249,12 @@ export class AiPanel extends VuexModule {
     this.setCanRevert(false);
 
     // Drop base64 screenshots from earlier turns before this turn's calls.
-    pruneOldScreenshots();
+    pruneOldScreenshots(wireMessages);
 
     this.addItemImpl({ kind: "user", text: trimmed });
+    // Every turn should end with something visible below the user message;
+    // compare against this to detect empty turns (e.g. a refusal).
+    const itemCountAfterUserMessage = this.items.length;
     wireMessages.push({
       role: "user",
       content: [
@@ -332,6 +285,12 @@ export class AiPanel extends VuexModule {
           }
         }
         if (response.stop_reason !== "tool_use") {
+          if (response.stop_reason === "max_tokens") {
+            this.addItemImpl({
+              kind: "info",
+              text: "The response was cut short (output limit reached). Ask the assistant to continue if something is missing.",
+            });
+          }
           break;
         }
         const toolUses = response.content.filter(
@@ -356,6 +315,14 @@ export class AiPanel extends VuexModule {
           text: `Stopped after ${MAX_TOOL_ITERATIONS} tool calls. Send a message to continue.`,
         });
       }
+      if (this.items.length === itemCountAfterUserMessage) {
+        // No text, no tool calls, no info — e.g. a refusal or an empty
+        // reply. Show something so the turn doesn't look like a hang.
+        this.addItemImpl({
+          kind: "info",
+          text: "The assistant returned no visible output for this message.",
+        });
+      }
     } catch (error: any) {
       logError("Agent loop error:", error);
       this.addItemImpl({
@@ -368,7 +335,7 @@ export class AiPanel extends VuexModule {
       if (assistantPushedThisTurn) {
         // If the failure left a dangling tool_use with no tool_result,
         // append synthetic error results so the conversation stays valid.
-        repairDanglingToolUse();
+        repairDanglingToolUse(wireMessages);
       } else if (
         wireMessages.length > 0 &&
         wireMessages[wireMessages.length - 1].role === "user"
@@ -447,12 +414,19 @@ export class AiPanel extends VuexModule {
     }
 
     try {
+      // Late notifications (e.g. worker completion) reference this
+      // conversation; drop them if it has been cleared in the meantime.
+      const generation = conversationGeneration;
       const { result, images } = await executeAgentTool(
         toolUse.name,
         toolUse.input,
         {
           panelElement,
-          notify: (text: string) => this.addItemImpl({ kind: "info", text }),
+          notify: (text: string) => {
+            if (generation === conversationGeneration) {
+              this.addItemImpl({ kind: "info", text });
+            }
+          },
         },
       );
       this.updateItemImpl({

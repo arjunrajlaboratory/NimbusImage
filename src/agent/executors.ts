@@ -2,6 +2,7 @@ import main from "@/store";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
+import jobsStore from "@/store/jobs";
 import {
   IAnnotation,
   IChatImage,
@@ -215,6 +216,19 @@ async function runWorkerTool(
   const tool: IToolConfiguration | undefined = main.tools.find(
     (t) => t.id === input.toolId,
   );
+  const runningJobId = tool && jobsStore.jobIdForToolId[tool.id];
+  if (runningJobId) {
+    return {
+      result: {
+        started: false,
+        alreadyRunning: true,
+        jobId: runningJobId,
+        note:
+          `A job for tool "${tool.name}" is already running. Wait for its ` +
+          "completion note in the transcript before starting another run.",
+      },
+    };
+  }
   if (!tool) {
     const workerTools = main.tools
       .filter((t) => t.values?.image?.image)
@@ -529,18 +543,26 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (input.visible != null) {
         delta.visible = input.visible;
       }
-      if (input.contrast != null) {
-        delta.contrast = input.contrast;
-      }
       if (input.name != null) {
         delta.name = input.name;
       }
-      if (Object.keys(delta).length === 0) {
+      if (Object.keys(delta).length === 0 && input.contrast == null) {
         throw new ToolExecutionError(
           "Provide at least one of color, visible, contrast, name",
         );
       }
-      await main.changeLayer({ layerId: layer.id, delta });
+      if (Object.keys(delta).length > 0) {
+        await main.changeLayer({ layerId: layer.id, delta });
+      }
+      if (input.contrast != null) {
+        // Match the UI default: the contrast slider saves a personal view
+        // override (saveContrastInView), not the shared configuration. A
+        // shared-scope contrast tool is deferred (spec: save_contrast).
+        await main.saveContrastInView({
+          layerId: layer.id,
+          contrast: input.contrast,
+        });
+      }
       const updated = main.getLayerFromId(layer.id)!;
       return {
         result: {
@@ -872,6 +894,11 @@ export function describeAgentToolCall(name: string, input: any): string {
 // Snapshot/restore of the view state the Tier-2 tools can touch, used for
 // the per-turn "revert view changes" affordance. Annotation edits are NOT
 // captured here — they ride the backend undo history instead.
+//
+// Shared vs personal state is captured separately: `layers` holds the
+// SHARED configuration values (never merged with per-view overrides, so a
+// revert can't bake a personal contrast into the collection), and
+// `viewContrasts` holds the user's personal per-view contrast overrides.
 export interface IViewStateSnapshot {
   location: { xy: number; z: number; time: number };
   layerMode: TLayerMode;
@@ -884,6 +911,7 @@ export interface IViewStateSnapshot {
     contrast: IContrast;
     name: string;
   }[];
+  viewContrasts: { [layerId: string]: IContrast };
   tagFilter: typeof filterStore.tagFilter;
   onlyCurrentFrame: boolean;
   selectedAnnotationIds: string[];
@@ -897,13 +925,14 @@ export function snapshotViewState(): IViewStateSnapshot {
       layerMode: main.layerMode,
       unroll: { xy: main.unrollXY, z: main.unrollZ, t: main.unrollT },
       cameraInfo: main.cameraInfo,
-      layers: main.layers.map((l) => ({
+      layers: (main.configuration?.layers ?? []).map((l) => ({
         id: l.id,
         color: l.color,
         visible: l.visible,
         contrast: l.contrast,
         name: l.name,
       })),
+      viewContrasts: main.datasetView?.layerContrasts ?? {},
       tagFilter: filterStore.tagFilter,
       onlyCurrentFrame: filterStore.onlyCurrentFrame,
       selectedAnnotationIds: [...annotationStore.selectedAnnotationIds],
@@ -924,7 +953,9 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   await main.setUnrollT(snapshot.unroll.t);
   let layersChanged = false;
   for (const saved of snapshot.layers) {
-    const layer = main.getLayerFromId(saved.id);
+    // Compare against the configuration layer, not the merged view (which
+    // folds in per-view contrast overrides restored separately below).
+    const layer = main.getConfigurationLayerFromId(saved.id);
     if (!layer) {
       continue;
     }
@@ -950,6 +981,7 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   if (layersChanged) {
     await main.syncConfiguration("layers");
   }
+  await main.setViewContrastOverrides(snapshot.viewContrasts);
   filterStore.setTagFilter(snapshot.tagFilter);
   filterStore.setOnlyCurrentFrame(snapshot.onlyCurrentFrame);
   annotationStore.setSelected(snapshot.selectedAnnotationIds);

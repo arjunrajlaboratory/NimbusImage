@@ -153,7 +153,7 @@ questions about *image content* (what's in the field of view) rather than
 | `set_location` | `{xy?, z?, time?}` (absolute or `{delta}`) | `main.setXY/setZ/setTime` |
 | `set_camera` | `{center?, zoom?}` or `{fit: "annotations" \| "selection" \| "full"}` | `main.setCameraInfo` / GeoJS map |
 | `set_layer_mode` | `{mode: "single"\|"multiple"\|"unroll", unroll?: {xy?, z?, t?}}` | `main.setLayerMode`, `setUnroll*` |
-| `update_layer` | `{layerId, color?, visible?, contrast?, name?, channel?}` | `main.changeLayer` |
+| `update_layer` | `{layerId, color?, visible?, contrast?, name?, channel?}` | `main.changeLayer`; contrast via `saveContrastInView` (personal, matching the UI slider) |
 | `set_layer_visibility` | `{visibleLayerIds: string[]}` (declarative — hides the rest) | `main.changeLayer` loop |
 | `save_contrast` | `{layerId, contrast, scope: "view"\|"configuration"}` | `saveContrastInView/Configuration` |
 | `select_annotations` | `{query: {tags?, shape?, channel?, currentFrameOnly?, ids?}, mode: "replace"\|"add"\|"remove"}` | `annotation.setSelected` etc. |
