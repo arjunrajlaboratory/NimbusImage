@@ -45,7 +45,7 @@
                   alt="Community logo"
                 />
                 <div>
-                  <h3 class="text-h5 mb-1">{{ community.title }}</h3>
+                  <h3 class="page-title mb-1">{{ community.title }}</h3>
                   <p class="mb-0">{{ community.description }}</p>
                 </div>
               </div>
@@ -247,7 +247,8 @@ defineExpose({
 
 .sample-dataset-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  border-color: var(--nimbus-border-strong);
+  background: var(--nimbus-glass-hover);
 }
 
 .text-truncate-3 {

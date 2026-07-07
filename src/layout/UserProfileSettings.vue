@@ -5,12 +5,12 @@
     </v-card-title>
     <v-card-text>
       <v-container>
-        <div>
-          <h3>Username:</h3>
+        <div class="mb-3">
+          <div class="panel-section-title mb-1">Username</div>
           <p>{{ store.userName }}</p>
         </div>
-        <div>
-          <h3>Girder domain:</h3>
+        <div class="mb-3">
+          <div class="panel-section-title mb-1">Girder domain</div>
           <p>{{ girderUrlFromApiRoot(store.girderRest.apiRoot) }}</p>
         </div>
         <v-btn variant="flat" color="error" size="small" @click="logout">
