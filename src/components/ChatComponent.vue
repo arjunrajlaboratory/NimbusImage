@@ -39,7 +39,7 @@
             </div>
             <div
               v-if="message.type === 'assistant'"
-              v-html="marked(message.content)"
+              v-html="renderMarkdown(message.content)"
             ></div>
             <div v-else>{{ message.content }}</div>
           </div>
@@ -122,6 +122,7 @@ import store from "@/store";
 import chatStore from "@/store/chat";
 import { IChatImage, IChatMessage, IGeoJSMap } from "@/store/model";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import html2canvas from "html2canvas";
 
 const emit = defineEmits<{
@@ -149,6 +150,12 @@ const firstMap = computed<IGeoJSMap | undefined>(() =>
 const visibleImagesInput = computed(() =>
   filterVisibleImages(imagesInput.value),
 );
+
+function renderMarkdown(text: string): string {
+  // Assistant messages are model-generated; sanitize so HTML smuggled
+  // through the model can't run in our origin.
+  return DOMPurify.sanitize(marked(text) as string);
+}
 
 function clearInputs() {
   textInput.value = "";

@@ -112,7 +112,13 @@ class AnalysisToolkit:
         return self._valuesByAnnotationId
 
     def annotation_count(self):
-        return len(self._getAnnotationsById())
+        if self._annotationsById is not None:
+            return len(self._annotationsById)
+        # Indexed count without loading documents; same pattern as the
+        # annotation_property_values count endpoint.
+        return self._annotationModel.collection.count_documents(
+            {"datasetId": self.datasetId}
+        )
 
     def _getAnnotationsById(self):
         if self._annotationsById is None:
@@ -404,21 +410,43 @@ class AnalysisToolkit:
     def _tool_get_histogram(self, toolInput):
         propertyPath = toolInput["property_path"]
         buckets = _clampBuckets(toolInput.get("buckets", 50))
-        rawBuckets = list(self._propertyValuesModel.histogram(
-            propertyPath, self.datasetId, buckets
-        ))
         result = [
             {
-                "min": _roundSignificant(bucket.get("min")),
-                "max": _roundSignificant(bucket.get("max")),
-                "count": bucket.get("count"),
+                "min": _roundSignificant(bucketMin),
+                "max": _roundSignificant(bucketMax),
+                "count": count,
             }
-            for bucket in rawBuckets
+            for bucketMin, bucketMax, count
+            in self._numericHistogramBuckets(propertyPath, buckets)
         ]
         summary = "histogram for %s: %d buckets" % (
             propertyPath, len(result)
         )
         return result, summary
+
+    def _numericHistogramBuckets(self, propertyPath, buckets):
+        """Run the $bucketAuto histogram and keep only buckets with
+        numeric bounds.
+
+        String-valued properties yield non-numeric min/max; raise a
+        recoverable ValueError instead of letting bucket math TypeError.
+        """
+        rawBuckets = list(self._propertyValuesModel.histogram(
+            propertyPath, self.datasetId, buckets
+        ))
+        numericBuckets = []
+        for bucket in rawBuckets:
+            bucketMin = _toNumeric(bucket.get("min"))
+            bucketMax = _toNumeric(bucket.get("max"))
+            if bucketMin is None or bucketMax is None:
+                continue
+            numericBuckets.append((bucketMin, bucketMax, bucket.get("count")))
+        if rawBuckets and not numericBuckets:
+            raise ValueError(
+                "Property path '%s' has no numeric values; it cannot be "
+                "histogrammed." % propertyPath
+            )
+        return numericBuckets
 
     def _tool_get_annotation_summary(self, toolInput):
         annotations = self._getAnnotationsById()
@@ -534,20 +562,15 @@ class AnalysisToolkit:
         buckets = _clampBuckets(toolInput.get("buckets", 50))
         xLabel = toolInput.get("x_label") or propertyPath
 
-        rawBuckets = list(self._propertyValuesModel.histogram(
-            propertyPath, self.datasetId, buckets
-        ))
         xCenters = []
         widths = []
         counts = []
-        for bucket in rawBuckets:
-            bucketMin = bucket.get("min")
-            bucketMax = bucket.get("max")
-            if bucketMin is None or bucketMax is None:
-                continue
+        for bucketMin, bucketMax, count in self._numericHistogramBuckets(
+            propertyPath, buckets
+        ):
             xCenters.append((bucketMin + bucketMax) / 2.0)
             widths.append(bucketMax - bucketMin)
-            counts.append(bucket.get("count"))
+            counts.append(count)
 
         trace = {
             "type": "bar",

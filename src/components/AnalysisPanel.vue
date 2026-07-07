@@ -26,11 +26,7 @@
           intensity vs area colored by tag and summarize the correlation."
         </div>
         <div class="analysis-results">
-          <div
-            v-for="run in [...runs].reverse()"
-            :key="run.id"
-            class="analysis-run"
-          >
+          <div v-for="run in reversedRuns" :key="run.id" class="analysis-run">
             <div class="user">{{ run.instructions }}</div>
             <template v-if="run.status === 'pending'">
               <div class="analysis-progress">
@@ -47,7 +43,10 @@
               <div class="error">{{ run.error }}</div>
             </template>
             <template v-else-if="run.result">
-              <div class="assistant" v-html="marked(run.result.summary)"></div>
+              <div
+                class="assistant"
+                v-html="renderMarkdown(run.result.summary)"
+              ></div>
               <analysis-plot
                 v-for="plot in run.result.plots"
                 :key="plot.id"
@@ -110,8 +109,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { logError } from "@/utils/log";
 import store from "@/store";
 import propertyStore from "@/store/properties";
@@ -134,8 +134,16 @@ const rootEl = ref<HTMLElement>();
 const instructions = ref("");
 const isRunning = ref(false);
 const runs = ref<IAnalysisRun[]>([]);
+// Newest run first in the results list.
+const reversedRuns = computed(() => [...runs.value].reverse());
 
 let nextRunId = 0;
+
+function renderMarkdown(text: string): string {
+  // The summary is model-generated; sanitize so HTML smuggled through the
+  // agent (e.g. via a crafted property name) can't run in our origin.
+  return DOMPurify.sanitize(marked(text) as string);
+}
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
