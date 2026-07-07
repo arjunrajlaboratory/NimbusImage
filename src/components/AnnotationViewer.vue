@@ -225,6 +225,9 @@ const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const lineScanAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 // First click of a segment linescan, waiting for the second click
 const lineScanSegmentStart = ref<IGeoJSPosition | null>(null);
+// Interaction layer option value to restore when the freehand linescan tool
+// releases its continuousCloseProximity override (null = no override active)
+const lineScanSavedCloseProximity = ref<number | boolean | null>(null);
 // Plain coordinate array, fully replaced on each set — shallowRef purely
 // because nothing reads its inner mutations, not because it's heavy.
 const dragOriginalCoordinates = shallowRef<IGeoJSPosition[] | null>(null);
@@ -2168,8 +2171,16 @@ function clearAnnotationMode() {
     geojs.event.actionmove,
     handleLineScanMouseMove,
   );
-  // Restore the geojs default changed by the freehand linescan mode
-  props.interactionLayer.options("continuousCloseProximity", 10);
+  // Restore the layer option overridden by the freehand linescan mode; the
+  // layer is created with its own value (see ImageViewer), so put back what
+  // was there rather than the geojs default
+  if (lineScanSavedCloseProximity.value !== null) {
+    props.interactionLayer.options(
+      "continuousCloseProximity",
+      lineScanSavedCloseProximity.value,
+    );
+    lineScanSavedCloseProximity.value = null;
+  }
 }
 
 function setupCircleDrawingMode() {
@@ -2260,7 +2271,11 @@ function setNewAnnotationMode() {
         props.interactionLayer.mode("point");
       } else {
         // Complete freehand lines as soon as the mouse is released instead
-        // of requiring a double click (the geojs default)
+        // of requiring a double click, whatever the layer is configured with
+        if (lineScanSavedCloseProximity.value === null) {
+          lineScanSavedCloseProximity.value =
+            props.interactionLayer.options("continuousCloseProximity") ?? null;
+        }
         props.interactionLayer.options("continuousCloseProximity", true);
         props.interactionLayer.mode("line");
       }
@@ -3245,6 +3260,10 @@ watch(selectedToolConfiguration, (toolConfiguration) => {
   } else {
     lineScanStore.setToolLineType(null);
     lineScanStore.clearLine();
+    // clearLine doesn't retrigger the points watcher when no line was ever
+    // published (points already null, e.g. a segment start without a
+    // preview), so clear the local state directly as well
+    clearLineScanState();
   }
 });
 
