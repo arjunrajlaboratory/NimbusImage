@@ -102,6 +102,7 @@ import {
   AnnotationShape,
   IAnnotationPipelineStep,
   IAnnotationSetup,
+  IPipelineStepBase,
   IPropertyPipelineStep,
   IWorkerInterface,
   IWorkerInterfaceValues,
@@ -129,8 +130,43 @@ const fetchingInterface = ref(false);
 // auto-wiring pushed down by PipelineBuilder).
 const step = computed(() => props.modelValue);
 
-function patchStep(patch: Partial<TPipelineStep>) {
-  emit("update:modelValue", { ...step.value, ...patch } as TPipelineStep);
+// Kind-narrowed views of the step (TPipelineStep is a discriminated union on
+// `kind`), so the per-kind computeds below need no `as` casts. The template
+// only renders each kind's widgets when the step is that kind, so the null
+// fallbacks in the getters are never user-visible.
+const annotationStepValue = computed<IAnnotationPipelineStep | null>(() =>
+  step.value.kind === "annotation" ? step.value : null,
+);
+const propertyStepValue = computed<IPropertyPipelineStep | null>(() =>
+  step.value.kind === "property" ? step.value : null,
+);
+
+// Common (non-discriminant) fields shared by every step kind. Omitting `kind`
+// keeps the patch from re-widening the discriminant when spread.
+type TStepPatch = Partial<Omit<IPipelineStepBase, "kind">>;
+
+function patchStep(patch: TStepPatch) {
+  // Branch so each spread is over a concrete member of the discriminated
+  // union (a spread over the union widens `kind` and breaks assignability).
+  if (step.value.kind === "annotation") {
+    emit("update:modelValue", { ...step.value, ...patch });
+  } else {
+    emit("update:modelValue", { ...step.value, ...patch });
+  }
+}
+
+function patchAnnotationStep(patch: Partial<IAnnotationPipelineStep>) {
+  if (step.value.kind !== "annotation") {
+    return;
+  }
+  emit("update:modelValue", { ...step.value, ...patch });
+}
+
+function patchPropertyStep(patch: Partial<IPropertyPipelineStep>) {
+  if (step.value.kind !== "property") {
+    return;
+  }
+  emit("update:modelValue", { ...step.value, ...patch });
 }
 
 const isAnnotation = computed(() => step.value.kind === "annotation");
@@ -161,40 +197,45 @@ const workerInterfaceValuesModel = computed({
     patchStep({ workerInterfaceValues: value }),
 });
 
-const annotationSetup = computed<IAnnotationSetup>(
-  () => (step.value as IAnnotationPipelineStep).annotation,
+const annotationSetup = computed<IAnnotationSetup | undefined>(
+  () => annotationStepValue.value?.annotation,
 );
 
 function onAnnotationSetupChange(value: IAnnotationSetup) {
-  patchStep({ annotation: value } as Partial<IAnnotationPipelineStep>);
+  patchAnnotationStep({ annotation: value });
 }
 
 const propertyShape = computed({
-  get: () => (step.value as IPropertyPipelineStep).shape,
-  set: (value: AnnotationShape) =>
-    patchStep({ shape: value } as Partial<IPropertyPipelineStep>),
+  get: () => propertyStepValue.value?.shape ?? AnnotationShape.Polygon,
+  set: (value: AnnotationShape) => patchPropertyStep({ shape: value }),
 });
 
 const inputTags = computed({
-  get: () => (step.value as IPropertyPipelineStep).inputTags.tags,
+  get: () => propertyStepValue.value?.inputTags.tags ?? [],
   set: (value: string[]) => {
-    const current = (step.value as IPropertyPipelineStep).inputTags;
+    const current = propertyStepValue.value;
+    if (!current) {
+      return;
+    }
     // A manual tag edit takes the step out of auto-wiring so PipelineBuilder
     // won't silently overwrite it on the next reorder/edit.
-    patchStep({
-      inputTags: { ...current, tags: value },
+    patchPropertyStep({
+      inputTags: { ...current.inputTags, tags: value },
       autoWired: false,
-    } as Partial<IPropertyPipelineStep>);
+    });
   },
 });
 
 const inputExclusive = computed({
-  get: () => (step.value as IPropertyPipelineStep).inputTags.exclusive,
+  get: () => propertyStepValue.value?.inputTags.exclusive ?? false,
   set: (value: boolean) => {
-    const current = (step.value as IPropertyPipelineStep).inputTags;
-    patchStep({
-      inputTags: { ...current, exclusive: value },
-    } as Partial<IPropertyPipelineStep>);
+    const current = propertyStepValue.value;
+    if (!current) {
+      return;
+    }
+    patchPropertyStep({
+      inputTags: { ...current.inputTags, exclusive: value },
+    });
   },
 });
 
@@ -254,7 +295,10 @@ async function onImageChange(newImage: string | null) {
     previous.workerInterfaceValues,
   );
   const labels = propertiesStore.workerImageList[img];
-  const patch: Partial<TPipelineStep> = { image: img, workerInterfaceValues };
+  const patch: TStepPatch = {
+    image: img,
+    workerInterfaceValues,
+  };
   if (labels?.interfaceName && !previous.name) {
     patch.name = labels.interfaceName;
   }

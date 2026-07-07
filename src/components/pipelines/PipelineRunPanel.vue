@@ -178,7 +178,13 @@
 
     <v-alert
       v-if="result"
-      :type="result.failed > 0 ? 'error' : 'success'"
+      :type="
+        result.failed > 0
+          ? 'error'
+          : result.cancelled > 0
+            ? 'warning'
+            : 'success'
+      "
       density="compact"
       class="mt-2"
     >
@@ -194,7 +200,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import store from "@/store";
 import pipelinesStore from "@/store/pipelines";
 import annotationStore from "@/store/annotation";
-import { logError } from "@/utils/log";
+import { useCollectionDatasetCount } from "@/utils/useCollectionDatasetCount";
 import {
   IErrorInfoList,
   IPipeline,
@@ -202,9 +208,6 @@ import {
   IProgressInfo,
   MessageType,
 } from "@/store/model";
-
-// Matches the limit used elsewhere (AnalyzeDialog / AnnotationWorkerMenu).
-const BATCH_DATASET_LIMIT = 50;
 
 const props = defineProps<{
   pipeline: IPipeline;
@@ -233,8 +236,12 @@ const lastRunWasBatch = ref(false);
 
 // Batch (across all datasets in the collection) state.
 const applyToAllDatasets = ref(false);
-const collectionDatasetCount = ref(0);
-const loadingDatasetCount = ref(false);
+const {
+  collectionDatasetCount,
+  fetchCollectionDatasetCount,
+  canApplyToAllDatasets,
+  batchDisabledReason,
+} = useCollectionDatasetCount();
 const batchProgress = ref<{
   total: number;
   completed: number;
@@ -247,40 +254,11 @@ const isRunning = computed(
   () => pipelinesStore.runningPipelineId === props.pipeline.id,
 );
 
-const canApplyToAllDatasets = computed(
-  () =>
-    store.selectedConfigurationId !== null &&
-    collectionDatasetCount.value > 1 &&
-    collectionDatasetCount.value <= BATCH_DATASET_LIMIT,
-);
-
-const batchDisabledReason = computed<string | null>(() => {
-  if (!store.selectedConfigurationId) return null;
-  if (loadingDatasetCount.value) return null;
-  if (collectionDatasetCount.value <= 1) return null;
-  if (collectionDatasetCount.value > BATCH_DATASET_LIMIT) {
-    return `Collection has more than ${BATCH_DATASET_LIMIT} datasets`;
-  }
-  return null;
-});
-
 const batchPercent = computed(() => {
   if (!batchProgress.value || batchProgress.value.total === 0) return 0;
   const { completed, failed, cancelled, total } = batchProgress.value;
   return ((completed + failed + cancelled) / total) * 100;
 });
-
-async function fetchCollectionDatasetCount() {
-  loadingDatasetCount.value = true;
-  try {
-    collectionDatasetCount.value = await store.getCollectionDatasetCount();
-  } catch (error) {
-    logError("Failed to fetch collection dataset count:", error);
-    collectionDatasetCount.value = 0;
-  } finally {
-    loadingDatasetCount.value = false;
-  }
-}
 
 watch(() => store.selectedConfigurationId, fetchCollectionDatasetCount);
 onMounted(fetchCollectionDatasetCount);

@@ -257,6 +257,7 @@ import propertiesStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
 import { getDefault } from "@/utils/workerInterface";
+import { useCollectionDatasetCount } from "@/utils/useCollectionDatasetCount";
 import { debounce } from "lodash";
 import { logError } from "@/utils/log";
 
@@ -296,10 +297,13 @@ const batchProgress = ref<{
   currentDatasetName: string;
 } | null>(null);
 const batchCancelFunction = ref<(() => void) | null>(null);
-const collectionDatasetCount = ref(0);
-const loadingDatasetCount = ref(false);
-
-const BATCH_DATASET_LIMIT = 50;
+const {
+  collectionDatasetCount,
+  loadingDatasetCount,
+  fetchCollectionDatasetCount,
+  canApplyToAllDatasets,
+  batchDisabledReason,
+} = useCollectionDatasetCount();
 
 onBeforeUnmount(() => {
   debouncedEditTool.flush();
@@ -332,30 +336,6 @@ const displayWorkerPreview = computed({
 
 const currentJobId = computed(() => {
   return props.tool ? jobsStore.jobIdForToolId[props.tool.id] : null;
-});
-
-const canApplyToAllDatasets = computed(() => {
-  return (
-    store.selectedConfigurationId !== null &&
-    collectionDatasetCount.value > 1 &&
-    collectionDatasetCount.value <= BATCH_DATASET_LIMIT
-  );
-});
-
-const batchDisabledReason = computed(() => {
-  if (!store.selectedConfigurationId) {
-    return null;
-  }
-  if (loadingDatasetCount.value) {
-    return null;
-  }
-  if (collectionDatasetCount.value <= 1) {
-    return null;
-  }
-  if (collectionDatasetCount.value > BATCH_DATASET_LIMIT) {
-    return `Collection has more than ${BATCH_DATASET_LIMIT} datasets`;
-  }
-  return null;
 });
 
 const batchProgressPercent = computed(() => {
@@ -522,18 +502,6 @@ function preview() {
     tool: props.tool,
     workerInterface: interfaceValues.value,
   });
-}
-
-async function fetchCollectionDatasetCount() {
-  loadingDatasetCount.value = true;
-  try {
-    collectionDatasetCount.value = await store.getCollectionDatasetCount();
-  } catch (error) {
-    logError("Failed to fetch collection dataset count:", error);
-    collectionDatasetCount.value = 0;
-  } finally {
-    loadingDatasetCount.value = false;
-  }
 }
 
 function populateInterfaceValues() {

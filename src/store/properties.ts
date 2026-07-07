@@ -746,9 +746,17 @@ export class Properties extends VuexModule {
 
   @Action
   async deleteProperty(propertyId: string) {
+    await this.deleteProperties([propertyId]);
+  }
+
+  // Batch variant: removes all the given properties with a single
+  // configuration sync instead of one per property.
+  @Action
+  async deleteProperties(propertyIds: string[]) {
     // TODO: temp another configuration could be using this property!
     // await this.propertiesAPI.deleteProperty(propertyId);
-    this.setProperties(this.properties.filter((p) => p.id !== propertyId));
+    const removedIds = new Set(propertyIds);
+    this.setProperties(this.properties.filter((p) => !removedIds.has(p.id)));
   }
 
   @Action

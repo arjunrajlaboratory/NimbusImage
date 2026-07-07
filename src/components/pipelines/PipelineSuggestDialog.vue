@@ -78,8 +78,7 @@
                   variant="flat"
                   color="primary"
                   size="small"
-                  :loading="usingIndex === index"
-                  @click="useSuggestion(suggestion, index)"
+                  @click="useSuggestion(suggestion)"
                 >
                   Use this
                 </v-btn>
@@ -123,7 +122,6 @@ const loading = ref(false);
 const hasSearched = ref(false);
 const error = ref<string | null>(null);
 const suggestions = ref<IPipeline[]>([]);
-const usingIndex = ref<number | null>(null);
 
 async function suggest() {
   loading.value = true;
@@ -141,20 +139,12 @@ async function suggest() {
   }
 }
 
-async function useSuggestion(suggestion: IPipeline, index: number) {
-  usingIndex.value = index;
-  error.value = null;
-  try {
-    await pipelinesStore.savePipeline(suggestion);
-    emit("use-suggestion", suggestion);
-    dialogOpen.value = false;
-  } catch (err) {
-    logError("Failed to save suggested pipeline:", err);
-    error.value =
-      "Failed to save the suggested pipeline. See the console for details.";
-  } finally {
-    usingIndex.value = null;
-  }
+// Hand the suggestion to the parent (which opens it in the builder) WITHOUT
+// persisting it — the builder's Save is the acceptance point, so closing the
+// builder discards an unwanted suggestion instead of leaving it in the list.
+function useSuggestion(suggestion: IPipeline) {
+  emit("use-suggestion", suggestion);
+  dialogOpen.value = false;
 }
 
 defineExpose({

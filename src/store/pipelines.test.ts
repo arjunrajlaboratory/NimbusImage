@@ -39,6 +39,7 @@ const h = vi.hoisted(() => ({
     submitPropertyJob: vi.fn(),
     createProperty: vi.fn(),
     deleteProperty: vi.fn().mockResolvedValue(undefined),
+    deleteProperties: vi.fn().mockResolvedValue(undefined),
     properties: [] as any[],
     fetchPropertyValues: vi.fn().mockResolvedValue(undefined),
     getWorkerInterface: vi.fn().mockReturnValue(null),
@@ -461,7 +462,7 @@ describe("deletePipeline", () => {
 
     await pipelinesStore.deletePipeline({ pipelineId: pipe.id });
 
-    expect(h.properties.deleteProperty).toHaveBeenCalledWith("prop-1");
+    expect(h.properties.deleteProperties).toHaveBeenCalledWith(["prop-1"]);
     expect(h.main.updateConfigurationPipelines).toHaveBeenCalledWith([]);
   });
 
@@ -476,7 +477,7 @@ describe("deletePipeline", () => {
       removeMaterializedProperties: false,
     });
 
-    expect(h.properties.deleteProperty).not.toHaveBeenCalled();
+    expect(h.properties.deleteProperties).not.toHaveBeenCalled();
     expect(h.main.updateConfigurationPipelines).toHaveBeenCalledWith([]);
   });
 
@@ -497,7 +498,7 @@ describe("deletePipeline", () => {
 
     await pipelinesStore.deletePipeline({ pipelineId: pipe.id });
 
-    expect(h.properties.deleteProperty).not.toHaveBeenCalled();
+    expect(h.properties.deleteProperties).not.toHaveBeenCalled();
     expect(h.main.updateConfigurationPipelines).toHaveBeenCalledWith([
       otherPipeline,
     ]);

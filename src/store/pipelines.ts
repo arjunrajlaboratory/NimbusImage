@@ -14,6 +14,7 @@ import annotations from "./annotation";
 import properties from "./properties";
 import { createProgressEventCallback, createErrorEventCallback } from "./jobs";
 import progress from "./progress";
+import { logError } from "@/utils/log";
 
 import {
   AnnotationShape,
@@ -33,6 +34,7 @@ import {
   IWorkerCatalogEntry,
   ISuggestedPipeline,
   ISuggestedPipelineStep,
+  MessageType,
   ProgressType,
   TPipelineStep,
 } from "./model";
@@ -229,12 +231,13 @@ export class Pipelines extends VuexModule {
           materializedPropertyIds.add(step.materializedPropertyId);
         }
       }
-      for (const propertyId of materializedPropertyIds) {
-        if (
-          !this.isMaterializedPropertyReferenced(propertyId, { pipelineId })
-        ) {
-          await properties.deleteProperty(propertyId);
-        }
+      const removableIds = [...materializedPropertyIds].filter(
+        (propertyId) =>
+          !this.isMaterializedPropertyReferenced(propertyId, { pipelineId }),
+      );
+      if (removableIds.length > 0) {
+        // Single batch call → one propertyIds config sync, not one per id.
+        await properties.deleteProperties(removableIds);
       }
     }
     await main.updateConfigurationPipelines(
@@ -488,6 +491,16 @@ export class Pipelines extends VuexModule {
           success = false;
         }
       } catch (error) {
+        // The errorCallback only surfaces errors the worker prints to its job
+        // log; a failed submission (HTTP error, property materialization
+        // failure) never reaches it, so surface it here.
+        logError(`Pipeline step "${step.name}" failed to submit:`, error);
+        errorInfo.errors.push({
+          title: step.name,
+          error: `Failed to submit job: ${error}`,
+          type: MessageType.ERROR,
+        });
+        onStepError?.(stepIndex, errorInfo);
         success = false;
       }
 
@@ -685,7 +698,13 @@ export class Pipelines extends VuexModule {
 
       if (isCancelled) {
         cancelled++;
-      } else if (result.failed === 0 && result.cancelled === 0) {
+      } else if (
+        result.succeeded > 0 &&
+        result.failed === 0 &&
+        result.cancelled === 0
+      ) {
+        // A child run that bailed out entirely (empty result, e.g. login
+        // expired mid-batch) must not count as a completed dataset.
         completed++;
       } else {
         failed++;
