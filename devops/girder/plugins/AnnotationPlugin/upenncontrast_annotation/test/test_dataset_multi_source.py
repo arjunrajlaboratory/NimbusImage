@@ -225,6 +225,10 @@ class TestDatasetMultiSourcePipeline:
             folder["_id"], user=admin, level=AccessType.READ
         )
         assert "dimensionLabels" not in reloadedFolder.get("meta", {})
+        # ... and must roll back the largeImage marks it needed to read
+        # tile metadata, leaving the items exactly as uploaded.
+        for item in Item().find({"folderId": folder["_id"]}):
+            assert "largeImage" not in item
 
     def testFullRunNonTranscode(self, admin, server, largeImageCapable):
         folder = self._makeDatasetFolder(admin, "full_run_dataset")
@@ -276,6 +280,32 @@ class TestDatasetMultiSourcePipeline:
         for item in sourceItems:
             assert "largeImage" not in item
         assert "largeImage" not in configItem
+
+    def testMarkingFailureRollsBackEarlierMarks(
+        self, admin, server, largeImageCapable
+    ):
+        """A mid-loop marking failure must not leave earlier items in
+        the same request marked as large images ("aaa_good.tif" sorts
+        before the failing file-less item, so it is marked first)."""
+        folder = utilities.createFolder(
+            admin, "partial_mark_dataset", upenn_utilities.datasetMetadata
+        )
+        goodItem = _uploadTiffItem(admin, folder, "aaa_good.tif")
+        Item().createItem("empty_item.tif", admin, folder)
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+        assert "empty_item.tif" in resp.json["message"]
+        reloaded = Item().load(
+            goodItem["_id"], user=admin, level=AccessType.READ, exc=True
+        )
+        assert "largeImage" not in reloaded
 
     def testSecondInvocationConflicts(self, admin, server, largeImageCapable):
         folder = self._makeDatasetFolder(admin, "conflict_dataset")

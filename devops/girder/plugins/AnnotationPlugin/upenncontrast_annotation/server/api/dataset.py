@@ -105,7 +105,7 @@ class Dataset(Resource):
         user = self.getCurrentUser()
         token = self.getCurrentToken()
 
-        self._markLargeImages(items, user, token)
+        newlyMarked = self._markLargeImages(items, user, token)
 
         itemNames = [item["name"] for item in items]
         tilesMetadata = [
@@ -134,6 +134,7 @@ class Dataset(Resource):
                 isMultiBandRGB, splitRGBBands,
             )
         except ValueError as e:
+            self._rollbackLargeImages(newlyMarked)
             raise RestException(str(e), code=400)
 
         transcode = (
@@ -142,6 +143,9 @@ class Dataset(Resource):
         )
 
         if dryRun:
+            # A dry run must not leave any state behind, including the
+            # largeImage marks needed to read the tile metadata above.
+            self._rollbackLargeImages(newlyMarked)
             return dict(result, transcode=transcode)
 
         newItem, newFile = self._uploadConfiguration(
@@ -204,11 +208,15 @@ class Dataset(Resource):
 
         Mirrors the frontend's assumption that every item in the folder
         is directly usable as a tile source (e.g. a TIFF); items that
-        already have a largeImage are left untouched.
+        already have a largeImage are left untouched. Returns the items
+        newly marked here, so dry runs and failed requests can roll the
+        marking back; a mid-loop failure rolls back its own partial
+        marks before raising.
         """
+        newlyMarked = []
         unmarked = [item for item in items if "largeImage" not in item]
         if not unmarked:
-            return
+            return newlyMarked
         # Batch-load the first file of each unmarked item (no per-item
         # childFiles queries; see CLAUDE.md on looped DB calls).
         firstFileByItemId = {}
@@ -220,6 +228,7 @@ class Dataset(Resource):
         for item in unmarked:
             file = firstFileByItemId.get(item["_id"])
             if file is None:
+                self._rollbackLargeImages(newlyMarked)
                 raise RestException(
                     'Item "%s" has no files and cannot be used as an '
                     "image source." % item["name"],
@@ -231,12 +240,20 @@ class Dataset(Resource):
                     createJob=False,
                 )
             except TileGeneralError as e:
+                self._rollbackLargeImages(newlyMarked)
                 raise RestException(
                     'Could not use item "%s" as a large image: %s' % (
                         item["name"], e
                     ),
                     code=400,
                 )
+            newlyMarked.append(item)
+        return newlyMarked
+
+    def _rollbackLargeImages(self, markedItems):
+        """Clear largeImage marks created earlier in this request."""
+        for item in markedItems:
+            self._imageItemModel.delete(item)
 
     def _uploadConfiguration(self, folder, config, user):
         """Upload the generated config JSON as a new item in the folder."""
