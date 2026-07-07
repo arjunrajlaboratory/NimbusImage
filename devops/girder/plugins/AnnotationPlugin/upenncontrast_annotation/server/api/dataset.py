@@ -24,6 +24,7 @@ from girder.api.describe import autoDescribeRoute, Description
 from girder.api.rest import Resource
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
+from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
 from girder.models.upload import Upload
@@ -90,17 +91,14 @@ class Dataset(Resource):
                 "Folder is not a contrastDataset.", code=400
             )
 
-        if Item().findOne({
-            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
-        }):
+        items = list(Item().find(
+            {"folderId": folder["_id"]}, sort=[("lowerName", 1)]
+        ))
+        if any(item["name"] == MULTI_SOURCE_ITEM_NAME for item in items):
             raise RestException(
                 "Dataset is already configured for multiple sources.",
                 code=409,
             )
-
-        items = list(Item().find(
-            {"folderId": folder["_id"]}, sort=[("lowerName", 1)]
-        ))
         if not items:
             raise RestException("Folder has no items.", code=400)
 
@@ -208,21 +206,34 @@ class Dataset(Resource):
         is directly usable as a tile source (e.g. a TIFF); items that
         already have a largeImage are left untouched.
         """
-        for item in items:
-            if "largeImage" in item:
-                continue
-            files = list(Item().childFiles(item, limit=1))
-            if not files:
-                continue
+        unmarked = [item for item in items if "largeImage" not in item]
+        if not unmarked:
+            return
+        # Batch-load the first file of each unmarked item (no per-item
+        # childFiles queries; see CLAUDE.md on looped DB calls).
+        firstFileByItemId = {}
+        for file in File().find(
+            {"itemId": {"$in": [item["_id"] for item in unmarked]}}
+        ):
+            firstFileByItemId.setdefault(file["itemId"], file)
+
+        for item in unmarked:
+            file = firstFileByItemId.get(item["_id"])
+            if file is None:
+                raise RestException(
+                    'Item "%s" has no files and cannot be used as an '
+                    "image source." % item["name"],
+                    code=400,
+                )
             try:
                 self._imageItemModel.createImageItem(
-                    item, files[0], user=user, token=token,
+                    item, file, user=user, token=token,
                     createJob=False,
                 )
             except TileGeneralError as e:
                 raise RestException(
                     'Could not use item "%s" as a large image: %s' % (
-                        item["name"], e.args[0]
+                        item["name"], e
                     ),
                     code=400,
                 )

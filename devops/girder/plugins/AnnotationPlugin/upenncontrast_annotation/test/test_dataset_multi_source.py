@@ -128,6 +128,21 @@ class TestDatasetMultiSourceValidation:
         )
         assertStatus(resp, 403)
 
+    def testRejectsItemWithNoFiles(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "fileless_dataset", upenn_utilities.datasetMetadata
+        )
+        Item().createItem("empty_item.tif", admin, folder)
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+        assert "empty_item.tif" in resp.json["message"]
+
     def testRejectsMalformedAssignments(self, admin, server):
         folder = utilities.createFolder(
             admin, "malformed_assignments", upenn_utilities.datasetMetadata
