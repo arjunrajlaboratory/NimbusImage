@@ -5,6 +5,7 @@ import os
 import anthropic
 from anthropic import Anthropic
 from bson import ObjectId
+from pymongo.errors import OperationFailure
 
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
@@ -218,8 +219,14 @@ class ClaudeAnalysisResource(Resource):
                 "tool_use_id": block.id,
                 "content": json.dumps(result),
             }
-        except ValueError as e:
-            errorMessage = str(e)
+        except (ValueError, KeyError, TypeError, OperationFailure) as e:
+            # Tool inputs come from the model and are not schema-guaranteed;
+            # a bad call must become an is_error tool_result the agent can
+            # recover from, not a 500 that discards the whole analysis.
+            if isinstance(e, KeyError):
+                errorMessage = "Missing required tool input field: %s" % e
+            else:
+                errorMessage = str(e)
             toolLog.append({
                 "tool": block.name,
                 "input": block.input,

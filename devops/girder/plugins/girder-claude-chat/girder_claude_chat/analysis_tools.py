@@ -11,7 +11,13 @@ logger = logging.getLogger(__name__)
 MAX_SAMPLE_ROWS = 500
 MAX_PLOT_POINTS = 50000
 MAX_BOX_POINTS = 20000
+MAX_HISTOGRAM_BUCKETS = 1000
 SIGNIFICANT_DIGITS = 6
+
+
+def _clampBuckets(buckets):
+    """Clamp a model-supplied bucket count to a range $bucketAuto accepts."""
+    return min(max(int(buckets), 1), MAX_HISTOGRAM_BUCKETS)
 
 
 def _roundSignificant(value, digits=SIGNIFICANT_DIGITS):
@@ -379,18 +385,15 @@ class AnalysisToolkit:
             else:
                 stats["std"] = 0.0
             sortedValues = sorted(values)
-            stats["p25"] = _roundSignificant(
-                statistics.quantiles(
+            if len(sortedValues) > 1:
+                quartiles = statistics.quantiles(
                     sortedValues, n=4, method="inclusive"
-                )[0]
-                if len(sortedValues) > 1 else sortedValues[0]
-            )
-            stats["p75"] = _roundSignificant(
-                statistics.quantiles(
-                    sortedValues, n=4, method="inclusive"
-                )[2]
-                if len(sortedValues) > 1 else sortedValues[0]
-            )
+                )
+                p25, p75 = quartiles[0], quartiles[2]
+            else:
+                p25 = p75 = sortedValues[0]
+            stats["p25"] = _roundSignificant(p25)
+            stats["p75"] = _roundSignificant(p75)
             result[path] = stats
             summaries.append("%s (n=%d)" % (path, len(values)))
         summary = "computed stats for %d path(s): %s" % (
@@ -400,7 +403,7 @@ class AnalysisToolkit:
 
     def _tool_get_histogram(self, toolInput):
         propertyPath = toolInput["property_path"]
-        buckets = int(toolInput.get("buckets", 50))
+        buckets = _clampBuckets(toolInput.get("buckets", 50))
         rawBuckets = list(self._propertyValuesModel.histogram(
             propertyPath, self.datasetId, buckets
         ))
@@ -528,7 +531,7 @@ class AnalysisToolkit:
     def _tool_create_histogram_plot(self, toolInput):
         propertyPath = toolInput["property_path"]
         title = toolInput["title"]
-        buckets = int(toolInput.get("buckets", 50))
+        buckets = _clampBuckets(toolInput.get("buckets", 50))
         xLabel = toolInput.get("x_label") or propertyPath
 
         rawBuckets = list(self._propertyValuesModel.histogram(
