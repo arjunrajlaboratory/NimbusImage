@@ -38,18 +38,7 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "query": { "$ref": "#/definitions/annotationQuery" },
-        "limit": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 200,
-          "description": "Maximum number of annotations to return (default 50)."
-        },
-        "offset": { "type": "integer", "minimum": 0 }
-      },
-      "additionalProperties": false,
-      "definitions": {
-        "annotationQuery": {
+        "query": {
           "type": "object",
           "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
           "properties": {
@@ -78,8 +67,16 @@
             }
           },
           "additionalProperties": false
-        }
-      }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum number of annotations to return (default 50)."
+        },
+        "offset": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
     }
   },
   {
@@ -219,31 +216,43 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "query": { "$ref": "#/definitions/annotationQuery" },
+        "query": {
+          "type": "object",
+          "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
+          "properties": {
+            "tags": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
+            },
+            "exclusive": {
+              "type": "boolean",
+              "description": "If true, annotations must have ALL the given tags."
+            },
+            "shape": {
+              "type": "string",
+              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+            },
+            "channel": { "type": "integer" },
+            "currentFrameOnly": {
+              "type": "boolean",
+              "description": "Only annotations at the current XY/Z/Time location."
+            },
+            "ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Explicit annotation ids."
+            }
+          },
+          "additionalProperties": false
+        },
         "mode": {
           "type": "string",
           "enum": ["replace", "add", "remove", "clear"]
         }
       },
       "required": ["mode"],
-      "additionalProperties": false,
-      "definitions": {
-        "annotationQuery": {
-          "type": "object",
-          "properties": {
-            "tags": { "type": "array", "items": { "type": "string" } },
-            "exclusive": { "type": "boolean" },
-            "shape": {
-              "type": "string",
-              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
-            },
-            "channel": { "type": "integer" },
-            "currentFrameOnly": { "type": "boolean" },
-            "ids": { "type": "array", "items": { "type": "string" } }
-          },
-          "additionalProperties": false
-        }
-      }
+      "additionalProperties": false
     }
   },
   {
@@ -255,7 +264,36 @@
         "target": {
           "oneOf": [
             { "type": "string", "enum": ["selection"] },
-            { "$ref": "#/definitions/annotationQuery" }
+            {
+              "type": "object",
+              "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
+              "properties": {
+                "tags": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
+                },
+                "exclusive": {
+                  "type": "boolean",
+                  "description": "If true, annotations must have ALL the given tags."
+                },
+                "shape": {
+                  "type": "string",
+                  "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+                },
+                "channel": { "type": "integer" },
+                "currentFrameOnly": {
+                  "type": "boolean",
+                  "description": "Only annotations at the current XY/Z/Time location."
+                },
+                "ids": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Explicit annotation ids."
+                }
+              },
+              "additionalProperties": false
+            }
           ]
         },
         "color": {
@@ -268,24 +306,7 @@
         }
       },
       "required": ["target", "color"],
-      "additionalProperties": false,
-      "definitions": {
-        "annotationQuery": {
-          "type": "object",
-          "properties": {
-            "tags": { "type": "array", "items": { "type": "string" } },
-            "exclusive": { "type": "boolean" },
-            "shape": {
-              "type": "string",
-              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
-            },
-            "channel": { "type": "integer" },
-            "currentFrameOnly": { "type": "boolean" },
-            "ids": { "type": "array", "items": { "type": "string" } }
-          },
-          "additionalProperties": false
-        }
-      }
+      "additionalProperties": false
     }
   },
   {
@@ -297,7 +318,36 @@
         "target": {
           "oneOf": [
             { "type": "string", "enum": ["selection"] },
-            { "$ref": "#/definitions/annotationQuery" }
+            {
+              "type": "object",
+              "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
+              "properties": {
+                "tags": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
+                },
+                "exclusive": {
+                  "type": "boolean",
+                  "description": "If true, annotations must have ALL the given tags."
+                },
+                "shape": {
+                  "type": "string",
+                  "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+                },
+                "channel": { "type": "integer" },
+                "currentFrameOnly": {
+                  "type": "boolean",
+                  "description": "Only annotations at the current XY/Z/Time location."
+                },
+                "ids": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Explicit annotation ids."
+                }
+              },
+              "additionalProperties": false
+            }
           ]
         },
         "tags": {
@@ -311,24 +361,7 @@
         }
       },
       "required": ["target", "tags", "mode"],
-      "additionalProperties": false,
-      "definitions": {
-        "annotationQuery": {
-          "type": "object",
-          "properties": {
-            "tags": { "type": "array", "items": { "type": "string" } },
-            "exclusive": { "type": "boolean" },
-            "shape": {
-              "type": "string",
-              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
-            },
-            "channel": { "type": "integer" },
-            "currentFrameOnly": { "type": "boolean" },
-            "ids": { "type": "array", "items": { "type": "string" } }
-          },
-          "additionalProperties": false
-        }
-      }
+      "additionalProperties": false
     }
   },
   {

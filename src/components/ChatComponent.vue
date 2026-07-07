@@ -39,7 +39,7 @@
             </div>
             <div
               v-if="message.type === 'assistant'"
-              v-html="marked(message.content)"
+              v-html="renderAssistantMarkdown(message.content)"
             ></div>
             <div v-else>{{ message.content }}</div>
           </div>
@@ -121,7 +121,7 @@ import { logError } from "@/utils/log";
 import store from "@/store";
 import chatStore from "@/store/chat";
 import { IChatImage, IChatMessage, IGeoJSMap } from "@/store/model";
-import { marked } from "marked";
+import { renderAssistantMarkdown } from "@/utils/renderMarkdown";
 import html2canvas from "html2canvas";
 
 const emit = defineEmits<{

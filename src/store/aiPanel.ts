@@ -78,6 +78,65 @@ export function setAgentPanelElement(element: HTMLElement | null) {
   panelElement = element;
 }
 
+const PRUNED_IMAGE_PLACEHOLDER =
+  "[screenshot from an earlier turn omitted — capture again if needed]";
+
+// Screenshots are large base64 blobs; left in wireMessages they would be
+// resent on every subsequent API call and grow the conversation without
+// bound. Called at the start of each new turn: every message currently in
+// wireMessages belongs to a previous turn, so we can safely replace image
+// blocks inside tool_result content with a short text placeholder. Only
+// user-role tool_result content is touched — assistant messages and
+// thinking blocks are never modified. Panel display items are separate
+// from wireMessages and are unaffected.
+function pruneOldScreenshots() {
+  for (const message of wireMessages) {
+    if (message.role !== "user") {
+      continue;
+    }
+    for (const block of message.content) {
+      if (block.type !== "tool_result" || !Array.isArray(block.content)) {
+        continue;
+      }
+      block.content = block.content.map((inner) =>
+        inner.type === "image"
+          ? { type: "text", text: PRUNED_IMAGE_PLACEHOLDER }
+          : inner,
+      );
+    }
+  }
+}
+
+// If the loop threw after an assistant message with tool_use blocks was
+// pushed but before the matching tool_result user message was appended, the
+// conversation is left with a dangling tool_use and every subsequent API
+// call 400s. Append synthetic error tool_results (one per tool_use id) so
+// the conversation stays valid. Assistant messages (including thinking
+// blocks) are never modified.
+function repairDanglingToolUse() {
+  const last = wireMessages[wireMessages.length - 1];
+  if (!last || last.role !== "assistant") {
+    return;
+  }
+  const toolUseBlocks = last.content.filter(
+    (block): block is IAgentToolUseBlock => block.type === "tool_use",
+  );
+  if (toolUseBlocks.length === 0) {
+    return;
+  }
+  wireMessages.push({
+    role: "user",
+    content: toolUseBlocks.map((block) => ({
+      type: "tool_result",
+      tool_use_id: block.id,
+      content: [
+        { type: "text", text: "Tool execution was interrupted by an error" },
+      ],
+      is_error: true,
+    })),
+  });
+}
+
 function toResultContent(
   result: any,
   images?: { data: string }[],
@@ -239,6 +298,9 @@ export class AiPanel extends VuexModule {
     turnSnapshot = snapshotViewState();
     this.setCanRevert(false);
 
+    // Drop base64 screenshots from earlier turns before this turn's calls.
+    pruneOldScreenshots();
+
     this.addItemImpl({ kind: "user", text: trimmed });
     wireMessages.push({
       role: "user",
@@ -253,6 +315,9 @@ export class AiPanel extends VuexModule {
       ],
     });
 
+    // Whether any assistant message was appended to wireMessages this turn;
+    // drives the failure-recovery in the catch block.
+    let assistantPushedThisTurn = false;
     try {
       let iteration = 0;
       for (; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -260,6 +325,7 @@ export class AiPanel extends VuexModule {
         // Push the assistant turn verbatim: thinking blocks must be sent
         // back unchanged on the next request.
         wireMessages.push({ role: "assistant", content: response.content });
+        assistantPushedThisTurn = true;
         for (const block of response.content) {
           if (block.type === "text" && block.text.trim()) {
             this.addItemImpl({ kind: "assistant", text: block.text });
@@ -299,6 +365,19 @@ export class AiPanel extends VuexModule {
           error?.message ??
           "Unknown agent error",
       });
+      if (assistantPushedThisTurn) {
+        // If the failure left a dangling tool_use with no tool_result,
+        // append synthetic error results so the conversation stays valid.
+        repairDanglingToolUse();
+      } else if (
+        wireMessages.length > 0 &&
+        wireMessages[wireMessages.length - 1].role === "user"
+      ) {
+        // The loop failed before any assistant turn; drop the user message
+        // we optimistically pushed so a retry starts clean and doesn't
+        // produce consecutive user messages or a stale interface-state block.
+        wireMessages.pop();
+      }
     } finally {
       this.setRunning(false);
       this.setStopRequested(false);
@@ -309,7 +388,14 @@ export class AiPanel extends VuexModule {
   private async executeToolUse(
     toolUse: IAgentToolUseBlock,
   ): Promise<IAgentToolResultBlock> {
-    const description = describeAgentToolCall(toolUse.name, toolUse.input);
+    // describeAgentToolCall runs on unvalidated model input; never let a
+    // formatting error abort the turn (which would strand this tool_use).
+    let description: string;
+    try {
+      description = describeAgentToolCall(toolUse.name, toolUse.input);
+    } catch {
+      description = toolUse.name;
+    }
     const itemIndex = this.items.length;
     const gated = isGatedTool(toolUse.name) && !this.autoApprove;
     this.addItemImpl({

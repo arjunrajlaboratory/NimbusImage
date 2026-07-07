@@ -64,6 +64,15 @@ function requireDataset() {
   return main.dataset;
 }
 
+// Mutating tools that sync configuration or hit the backend silently no-op
+// when logged out; fail loudly instead so the model doesn't report success
+// for a skipped operation.
+function requireLogin() {
+  if (!main.isLoggedIn) {
+    throw new ToolExecutionError("This action requires being logged in");
+  }
+}
+
 function resolveLayer(ref: string): IDisplayLayer {
   const layers = main.layers;
   const layer =
@@ -201,6 +210,7 @@ async function runWorkerTool(
   input: { toolId: string; workerInterfaceValues?: IWorkerInterfaceValues },
   context: IAgentToolContext,
 ): Promise<IToolExecutionResult> {
+  requireLogin();
   requireDataset();
   const tool: IToolConfiguration | undefined = main.tools.find(
     (t) => t.id === input.toolId,
@@ -487,6 +497,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       unrollZ?: boolean;
       unrollT?: boolean;
     }) => {
+      requireLogin();
       await main.setLayerMode(input.mode);
       if (input.unrollXY != null) {
         await main.setUnrollXY(input.unrollXY);
@@ -509,6 +520,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       contrast?: IContrast;
       name?: string;
     }) => {
+      requireLogin();
       const layer = resolveLayer(input.layer);
       const delta: Partial<IDisplayLayer> = {};
       if (input.color != null) {
@@ -546,6 +558,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
 
   set_layer_visibility: {
     execute: async (input: { visibleLayers: string[] }) => {
+      requireLogin();
       const visibleIds = new Set(
         input.visibleLayers.map((ref) => resolveLayer(ref).id),
       );
@@ -607,6 +620,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       color: string | null;
       randomize?: boolean;
     }) => {
+      requireLogin();
       const annotationIds = resolveAnnotationTargetIds(input.target);
       if (annotationIds.length > 0) {
         await annotationStore.colorAnnotationIds({
@@ -625,6 +639,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       tags: string[];
       mode: "add" | "remove" | "replace";
     }) => {
+      requireLogin();
       const annotationIds = resolveAnnotationTargetIds(input.target);
       if (annotationIds.length > 0) {
         const payload = { annotationIds, tags: input.tags };
@@ -702,6 +717,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
 
   undo: {
     execute: async () => {
+      requireLogin();
       await annotationStore.undoOrRedo(true);
       return { result: { done: true } };
     },
@@ -709,6 +725,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
 
   redo: {
     execute: async () => {
+      requireLogin();
       await annotationStore.undoOrRedo(false);
       return { result: { done: true } };
     },
@@ -736,18 +753,26 @@ export async function executeAgentTool(
   return entry.execute(input ?? {}, context);
 }
 
-// Human-readable one-liner for transcript cards and approval prompts
+// Human-readable one-liner for transcript cards and approval prompts.
+// Tool inputs come straight from the model and are not schema-enforced, so
+// this must never throw on malformed input: guard every field access that
+// assumes an array/shape. Callers additionally wrap this in try/catch.
 export function describeAgentToolCall(name: string, input: any): string {
+  const joinList = (value: any, sep = ", ") =>
+    Array.isArray(value) ? value.join(sep) : "";
   const query = (target: TAnnotationTarget | IAnnotationQuery | undefined) => {
     if (target === "selection") {
       return "the selected annotations";
     }
-    if (!target || Object.keys(target).length === 0) {
+    if (!target || typeof target !== "object") {
+      return "all annotations";
+    }
+    if (Object.keys(target).length === 0) {
       return "all annotations";
     }
     const parts: string[] = [];
     const q = target as IAnnotationQuery;
-    if (q.tags?.length) {
+    if (Array.isArray(q.tags) && q.tags.length) {
       parts.push(`tagged ${q.tags.join(q.exclusive ? " and " : " or ")}`);
     }
     if (q.shape) {
@@ -759,7 +784,7 @@ export function describeAgentToolCall(name: string, input: any): string {
     if (q.currentFrameOnly) {
       parts.push("in the current frame");
     }
-    if (q.ids) {
+    if (Array.isArray(q.ids)) {
       parts.push(`${q.ids.length} listed ids`);
     }
     return `annotations ${parts.join(", ") || "(all)"}`;
@@ -805,7 +830,7 @@ export function describeAgentToolCall(name: string, input: any): string {
       return `Update layer "${input?.layer}" (${changes})`;
     }
     case "set_layer_visibility":
-      return `Show only: ${(input?.visibleLayers ?? []).join(", ")}`;
+      return `Show only: ${joinList(input?.visibleLayers)}`;
     case "select_annotations":
       return input?.mode === "clear"
         ? "Clear the selection"
@@ -817,17 +842,20 @@ export function describeAgentToolCall(name: string, input: any): string {
     case "tag_annotations":
       return `${
         input?.mode === "remove" ? "Untag" : "Tag"
-      } ${query(input?.target)}: ${(input?.tags ?? []).join(", ")}`;
+      } ${query(input?.target)}: ${joinList(input?.tags)}`;
     case "set_annotation_filter":
       return input?.clearAll && !input?.tags
         ? "Clear annotation filters"
         : `Filter annotations${
-            input?.tags ? ` by tags ${input.tags.join(", ")}` : ""
+            input?.tags ? ` by tags ${joinList(input.tags)}` : ""
           }${input?.currentFrameOnly ? " (current frame)" : ""}`;
-    case "select_tool":
-      return input?.toolId == null
-        ? "Deselect the active tool"
-        : "Activate a tool";
+    case "select_tool": {
+      if (input?.toolId == null) {
+        return "Deselect the active tool";
+      }
+      const tool = main.tools.find((t) => t.id === input.toolId);
+      return `Activate tool "${tool?.name ?? input.toolId}"`;
+    }
     case "undo":
       return "Undo the last annotation change";
     case "redo":

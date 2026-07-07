@@ -9,8 +9,9 @@
 > Tier 3 currently ships `run_worker` only; `add_tool`, `compute_property`,
 > `create_annotations`/`delete_annotations`, `save_contrast`, `navigate`,
 > `set_display_options`, `get_property_summary` and the `fit` variant of
-> `set_camera` are not yet implemented. Streaming, token budgets and
-> IndexedDB persistence remain Phase 4.
+> `set_camera` are not yet implemented. The relay now enforces a per-user
+> request rate limit and a request body-size cap; streaming, per-user token
+> budgets and IndexedDB persistence remain Phase 4.
 >
 > This document specifies an
 > "AI panel" where a user converses with an agent that can *drive the

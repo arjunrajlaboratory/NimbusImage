@@ -46,7 +46,7 @@
             >
               <div
                 v-if="item.kind === 'assistant'"
-                v-html="marked(item.text)"
+                v-html="renderAssistantMarkdown(item.text)"
               ></div>
               <div v-else>{{ item.text }}</div>
             </div>
@@ -148,7 +148,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { marked } from "marked";
+import { renderAssistantMarkdown } from "@/utils/renderMarkdown";
 import aiPanelStore, {
   IAgentPanelItem,
   setAgentPanelElement,
@@ -224,6 +224,11 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  // Closing the panel while a gated tool is awaiting approval would suspend
+  // the run invisibly; treat the close as declining the pending action.
+  if (aiPanelStore.pendingApprovalIndex !== null) {
+    aiPanelStore.approvePendingTool(false);
+  }
   setAgentPanelElement(null);
 });
 </script>

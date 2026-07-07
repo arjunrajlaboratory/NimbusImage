@@ -1,12 +1,16 @@
 import json
 import os
 import logging
+import time
+from collections import defaultdict, deque
+from threading import Lock
 from anthropic import Anthropic, AnthropicError
 
 from girder import plugin
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
-from girder.api.rest import Resource, RestException
+from girder.api.rest import Resource
+from girder.exceptions import RestException
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -93,10 +97,28 @@ class ClaudeAgentResource(Resource):
     # much earlier.
     AGENT_MAX_MESSAGES = 400
 
+    # Abuse/cost protection (see AI_PANEL_SPEC.md §6.1 and
+    # API_RATE_LIMITING_AUDIT.md). The per-user request rate limit is a
+    # sliding window kept in an in-memory dict of deques. NOTE: this is a
+    # single-process limit only — if Girder runs multiple worker processes
+    # each keeps its own window, so the effective cap is
+    # RATE_LIMIT_MAX_REQUESTS times the process count. Adequate as a v1
+    # backstop; a shared store (Redis/Mongo) would be needed for a hard
+    # global cap.
+    RATE_LIMIT_WINDOW_SECONDS = 60
+    RATE_LIMIT_MAX_REQUESTS = 30
+    # Reject conversations whose JSON-serialized messages exceed this size
+    # (base64 screenshots dominate; the frontend prunes old ones).
+    MAX_BODY_BYTES = 25 * 1024 * 1024
+
     def __init__(self):
         super().__init__()
         self.resourceName = 'claude_agent'
         self.route('POST', (), self.agent_message)
+
+        # user id -> deque of recent request timestamps (monotonic)
+        self._request_times = defaultdict(deque)
+        self._rate_limit_lock = Lock()
 
         prompt_path = os.path.join(PLUGIN_DIR, 'agent_system_prompt.txt')
         try:
@@ -130,6 +152,26 @@ class ClaudeAgentResource(Resource):
                 'the claude_agent endpoint will not work'
             )
 
+    def _check_rate_limit(self, user_id):
+        """Enforce the per-user sliding-window request rate limit.
+
+        Raises RestException(code=429) when the caller has made more than
+        RATE_LIMIT_MAX_REQUESTS requests within the trailing window.
+        """
+        now = time.monotonic()
+        cutoff = now - self.RATE_LIMIT_WINDOW_SECONDS
+        with self._rate_limit_lock:
+            times = self._request_times[user_id]
+            while times and times[0] < cutoff:
+                times.popleft()
+            if len(times) >= self.RATE_LIMIT_MAX_REQUESTS:
+                raise RestException(
+                    'Rate limit exceeded: too many AI-panel requests. '
+                    'Please wait a moment and try again.',
+                    code=429,
+                )
+            times.append(now)
+
     @access.user
     @autoDescribeRoute(
         Description(
@@ -149,11 +191,19 @@ class ClaudeAgentResource(Resource):
             raise RestException(
                 'The claude_agent endpoint is not configured', code=503
             )
+        self._check_rate_limit(self.getCurrentUser()['_id'])
         messages = data.get('messages')
         if not isinstance(messages, list) or not messages:
             raise RestException('messages must be a non-empty list')
         if len(messages) > self.AGENT_MAX_MESSAGES:
             raise RestException('Conversation too long')
+        body_size = len(json.dumps(messages).encode('utf-8'))
+        if body_size > self.MAX_BODY_BYTES:
+            raise RestException(
+                'Conversation payload too large; clear the conversation '
+                'and start a new one.',
+                code=413,
+            )
         try:
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
