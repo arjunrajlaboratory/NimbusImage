@@ -20,9 +20,9 @@ import { logWarning } from "@/utils/log";
 import {
   IPlanarPoint,
   alignRingToReference,
-  overlapFraction,
   resampleClosedContour,
 } from "@/utils/contourLoft";
+import { computeLoftChains } from "@/utils/loftChainsWorkerClient";
 import type { VolumeGeometry } from "@/store/VolumeAPI";
 
 export interface IAnnotationsTo3DOptions {
@@ -267,94 +267,6 @@ interface IPrismEntry {
   tag: string;
 }
 
-// Pairs each polygon with at most one polygon on the next slice — greedy
-// best-overlap matching, like frame-to-frame tracking — and returns the
-// resulting chains. Only same-tag polygons on consecutive original slices
-// whose xy overlap reaches `minOverlapFraction` are linked; a chain of
-// length 1 falls back to a plain prism.
-function buildLoftChains(
-  entries: IPrismEntry[],
-  minOverlapFraction: number,
-): IPrismEntry[][] {
-  const bounds = new Map<IPrismEntry, [number, number, number, number]>();
-  for (const entry of entries) {
-    const xs = entry.polygon.map((point) => point.x);
-    const ys = entry.polygon.map((point) => point.y);
-    bounds.set(entry, [
-      Math.min(...xs),
-      Math.min(...ys),
-      Math.max(...xs),
-      Math.max(...ys),
-    ]);
-  }
-  const boundsIntersect = (a: IPrismEntry, b: IPrismEntry) => {
-    const [aMinX, aMinY, aMaxX, aMaxY] = bounds.get(a)!;
-    const [bMinX, bMinY, bMaxX, bMaxY] = bounds.get(b)!;
-    return aMinX <= bMaxX && bMinX <= aMaxX && aMinY <= bMaxY && bMinY <= aMaxY;
-  };
-
-  const byTagAndDepth = new Map<string, Map<number, IPrismEntry[]>>();
-  for (const entry of entries) {
-    const byDepth = byTagAndDepth.get(entry.tag) ?? new Map();
-    byTagAndDepth.set(entry.tag, byDepth);
-    byDepth.set(entry.originalDepth, [
-      ...(byDepth.get(entry.originalDepth) ?? []),
-      entry,
-    ]);
-  }
-
-  const nextOf = new Map<IPrismEntry, IPrismEntry>();
-  const hasPrevious = new Set<IPrismEntry>();
-  for (const byDepth of byTagAndDepth.values()) {
-    for (const [depth, sliceEntries] of byDepth) {
-      const nextSliceEntries = byDepth.get(depth + 1);
-      if (!nextSliceEntries) {
-        continue;
-      }
-      const candidates: {
-        lower: IPrismEntry;
-        upper: IPrismEntry;
-        overlap: number;
-      }[] = [];
-      for (const lower of sliceEntries) {
-        for (const upper of nextSliceEntries) {
-          if (!boundsIntersect(lower, upper)) {
-            continue;
-          }
-          const overlap = overlapFraction(lower.polygon, upper.polygon);
-          if (overlap > 0 && overlap >= minOverlapFraction) {
-            candidates.push({ lower, upper, overlap });
-          }
-        }
-      }
-      candidates.sort((a, b) => b.overlap - a.overlap);
-      for (const { lower, upper } of candidates) {
-        if (!nextOf.has(lower) && !hasPrevious.has(upper)) {
-          nextOf.set(lower, upper);
-          hasPrevious.add(upper);
-        }
-      }
-    }
-  }
-
-  const chains: IPrismEntry[][] = [];
-  for (const entry of entries) {
-    if (hasPrevious.has(entry)) {
-      continue;
-    }
-    const chain: IPrismEntry[] = [];
-    for (
-      let link: IPrismEntry | undefined = entry;
-      link !== undefined;
-      link = nextOf.get(link)
-    ) {
-      chain.push(link);
-    }
-    chains.push(chain);
-  }
-  return chains;
-}
-
 // Resampled ring sizes for lofted surfaces: enough points to keep blob
 // detail, bounded so huge SAM polygons don't explode the mesh.
 const LOFT_MIN_RING_SIZE = 24;
@@ -546,9 +458,9 @@ function buildPointsPolyData(
   return polyData;
 }
 
-export function annotationsTo3D(
+export async function annotationsTo3D(
   options: IAnnotationsTo3DOptions,
-): IAnnotationsTo3DResult {
+): Promise<IAnnotationsTo3DResult> {
   const axis = options.axis ?? "z";
   const currentZ = options.currentZ ?? 0;
   // Keep annotations in the current field of view; the depth axis spans all of
@@ -656,8 +568,19 @@ export function annotationsTo3D(
     usedAnnotationCount += 1;
   });
 
+  // Chain matching is the expensive part (pairwise polygon intersections);
+  // it runs in a web worker where available (see loftChainsWorkerClient.ts).
   const chains = options.loftSurfaces
-    ? buildLoftChains(prismEntries, options.loftOverlapFraction ?? 0)
+    ? (
+        await computeLoftChains(
+          prismEntries.map((entry) => ({
+            polygon: entry.polygon,
+            depth: entry.originalDepth,
+            group: entry.tag,
+          })),
+          options.loftOverlapFraction ?? 0,
+        )
+      ).map((indices) => indices.map((index) => prismEntries[index]))
     : prismEntries.map((entry) => [entry]);
   // Half the world-z distance between consecutive original slices, so lofted
   // surfaces span the full thickness of their first and last slices.

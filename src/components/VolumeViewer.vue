@@ -716,15 +716,21 @@ function addSegmentationActor(mapper: VtkMapper | VtkSphereMapper) {
   currentRenderer.addActor(actor);
 }
 
-function updateSegmentationActors() {
-  const currentRenderer = renderer();
-  clearSegmentationActors();
-  if (!currentRenderer || !activeGeometry || !showSegmentations.value) {
+// Bumped on every segmentation update; results of superseded async builds
+// are discarded instead of being applied out of order.
+let segmentationSerial = 0;
+
+async function updateSegmentationActors() {
+  const serial = ++segmentationSerial;
+  if (!renderer() || !activeGeometry || !showSegmentations.value) {
+    clearSegmentationActors();
     render();
     return;
   }
 
-  const result = annotationsTo3D({
+  // Async: the loft chain matching runs in a web worker. The previous actors
+  // stay on screen until the replacement is ready.
+  const result = await annotationsTo3D({
     annotations: filterStore.filteredAnnotations,
     geometry: activeGeometry,
     currentXY: store.xy,
@@ -737,6 +743,10 @@ function updateSegmentationActors() {
     loftSurfaces: loftSurfaces.value,
     loftOverlapFraction: loftOverlapPercent.value / 100,
   });
+  if (serial !== segmentationSerial || !renderer() || !activeGeometry) {
+    return;
+  }
+  clearSegmentationActors();
 
   if (result.surfacePolyData.getNumberOfCells() > 0) {
     // Smooth point normals make the extruded prisms shade like rounded

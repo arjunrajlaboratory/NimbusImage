@@ -49,8 +49,8 @@ function convert(annotations: IAnnotation[], delta = {}) {
 }
 
 describe("annotationsTo3D", () => {
-  it("extrudes current XY/time polygons into micrometer prism geometry", () => {
-    const result = convert([
+  it("extrudes current XY/time polygons into micrometer prism geometry", async () => {
+    const result = await convert([
       annotation({ id: "included" }),
       annotation({ id: "other-xy", location: { XY: 1, Z: 1, Time: 0 } }),
       annotation({ id: "unsupported", shape: AnnotationShape.Circle }),
@@ -73,16 +73,18 @@ describe("annotationsTo3D", () => {
     expect(Array.from(scalars.getData())).toEqual(Array(12).fill(0));
   });
 
-  it("extrudes rectangles like polygons", () => {
-    const result = convert([annotation({ shape: AnnotationShape.Rectangle })]);
+  it("extrudes rectangles like polygons", async () => {
+    const result = await convert([
+      annotation({ shape: AnnotationShape.Rectangle }),
+    ]);
 
     expect(result.usedCount).toBe(1);
     expect(result.surfacePolyData.getNumberOfCells()).toBe(12);
     expect(result.skippedByShape).toEqual({});
   });
 
-  it("turns point annotations into sphere centers at the slice depth", () => {
-    const result = convert([
+  it("turns point annotations into sphere centers at the slice depth", async () => {
+    const result = await convert([
       annotation({
         shape: AnnotationShape.Point,
         coordinates: [{ x: 2, y: 1 }],
@@ -104,8 +106,8 @@ describe("annotationsTo3D", () => {
     expect(result.pointRadius).toBeCloseTo(Math.hypot(16, 16, 15) / 50, 6);
   });
 
-  it("extrudes line annotations into ribbons through the slice", () => {
-    const result = convert([
+  it("extrudes line annotations into ribbons through the slice", async () => {
+    const result = await convert([
       annotation({
         shape: AnnotationShape.Line,
         coordinates: [
@@ -126,8 +128,8 @@ describe("annotationsTo3D", () => {
     expect(points.slice(9, 18)).toEqual([0, 0, 7.5, 2, 0, 7.5, 4, 0, 7.5]);
   });
 
-  it("assigns consistent tag scalars across shapes", () => {
-    const result = convert([
+  it("assigns consistent tag scalars across shapes", async () => {
+    const result = await convert([
       annotation({ id: "blob", tags: ["nucleus"] }),
       annotation({
         id: "spot",
@@ -145,8 +147,8 @@ describe("annotationsTo3D", () => {
     ).toEqual([1]);
   });
 
-  it("lofts overlapping same-tag polygons on adjacent slices", () => {
-    const result = convert(
+  it("lofts overlapping same-tag polygons on adjacent slices", async () => {
+    const result = await convert(
       [
         annotation({ id: "slice-0", location: { XY: 0, Z: 0, Time: 0 } }),
         annotation({ id: "slice-1", location: { XY: 0, Z: 1, Time: 0 } }),
@@ -167,7 +169,7 @@ describe("annotationsTo3D", () => {
     expect(points[points.length - 1]).toBe(7.5);
   });
 
-  it("keeps separate prisms when overlap is below the loft threshold", () => {
+  it("keeps separate prisms when overlap is below the loft threshold", async () => {
     const annotations = [
       annotation({ id: "slice-0", location: { XY: 0, Z: 0, Time: 0 } }),
       annotation({
@@ -183,13 +185,13 @@ describe("annotationsTo3D", () => {
       }),
     ];
 
-    const lofted = convert(annotations, {
+    const lofted = await convert(annotations, {
       loftSurfaces: true,
       loftOverlapFraction: 0.25,
     });
     expect(lofted.surfacePolyData.getNumberOfPoints()).toBe(96);
 
-    const separate = convert(annotations, {
+    const separate = await convert(annotations, {
       loftSurfaces: true,
       loftOverlapFraction: 0.75,
     });
@@ -197,8 +199,8 @@ describe("annotationsTo3D", () => {
     expect(separate.surfacePolyData.getNumberOfCells()).toBe(24);
   });
 
-  it("does not loft across z gaps or across different tags", () => {
-    const gapped = convert(
+  it("does not loft across z gaps or across different tags", async () => {
+    const gapped = await convert(
       [
         annotation({ id: "slice-0", location: { XY: 0, Z: 0, Time: 0 } }),
         annotation({ id: "slice-2", location: { XY: 0, Z: 2, Time: 0 } }),
@@ -207,7 +209,7 @@ describe("annotationsTo3D", () => {
     );
     expect(gapped.surfacePolyData.getNumberOfCells()).toBe(24);
 
-    const mixedTags = convert(
+    const mixedTags = await convert(
       [
         annotation({
           id: "slice-0",
@@ -225,8 +227,8 @@ describe("annotationsTo3D", () => {
     expect(mixedTags.surfacePolyData.getNumberOfCells()).toBe(24);
   });
 
-  it("uses numeric property values as per-cell scalars", () => {
-    const result = convert([annotation({ id: "ann-a" })], {
+  it("uses numeric property values as per-cell scalars", async () => {
+    const result = await convert([annotation({ id: "ann-a" })], {
       colorMode: "property",
       propertyPath: ["area"],
       propertyValues: { "ann-a": { area: 42 } },
@@ -238,8 +240,8 @@ describe("annotationsTo3D", () => {
     ).toEqual(Array(12).fill(42));
   });
 
-  it("falls back to neutral scalars when property values are missing", () => {
-    const result = convert(
+  it("falls back to neutral scalars when property values are missing", async () => {
+    const result = await convert(
       [
         annotation({ id: "ann-a", tags: ["tag-a"] }),
         annotation({

@@ -34,11 +34,16 @@ export function overlapFraction(a: IPlanarPoint[], b: IPlanarPoint[]): number {
   if (smallerArea === 0) {
     return 0;
   }
+  let intersection: [number, number][][][];
+  try {
+    intersection = polygonClipping.intersection([toRing(a)], [toRing(b)]);
+  } catch {
+    // polygon-clipping can fail on pathological rings (e.g. self-crossing
+    // hand annotations); treat those as non-overlapping.
+    return 0;
+  }
   let intersectionArea = 0;
-  for (const polygon of polygonClipping.intersection(
-    [toRing(a)],
-    [toRing(b)],
-  )) {
+  for (const polygon of intersection) {
     polygon.forEach((ring, ringIndex) => {
       // The first ring is the outer boundary; later rings are holes.
       const ringArea = polygonArea(ring.map(([x, y]) => ({ x, y })));
