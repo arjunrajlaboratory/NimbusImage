@@ -46,10 +46,13 @@ def _createAnnotations(datasetId, annotations):
     oldIds = [_oldAnnotationId(annotation) for annotation in annotations]
     docs = []
     for annotation in annotations:
+        # Null fields are dropped, not copied: exports contain e.g.
+        # "name": null for unnamed annotations, but the annotation
+        # schema only allows a string when the field is present.
         doc = {
             field: annotation[field]
             for field in ANNOTATION_IMPORT_FIELDS
-            if field in annotation
+            if annotation.get(field) is not None
         }
         doc["datasetId"] = datasetId
         docs.append(doc)

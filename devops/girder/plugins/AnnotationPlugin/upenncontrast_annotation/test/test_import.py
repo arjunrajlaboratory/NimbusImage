@@ -136,6 +136,34 @@ class TestDataImportEndpoint:
         assert connectionDocs[0]["parentId"] == parentAnn["_id"]
         assert connectionDocs[0]["childId"] == childAnn["_id"]
 
+    def testImportAnnotationWithNullName(self, admin, server):
+        """Exports carry "name": null for unnamed annotations; null
+        fields must be dropped since the schema only allows a string
+        when the field is present."""
+        dataset = self._makeDataset(admin)
+        annotation = annotationExportDict("old-ann-1")
+        annotation["name"] = None
+        annotation["color"] = None
+        body = {
+            "datasetId": str(dataset["_id"]),
+            "annotations": [annotation],
+        }
+
+        resp = server.request(
+            path="/annotation_import",
+            method="POST",
+            user=admin,
+            body=json.dumps(body),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        assert resp.json["annotationCount"] == 1
+
+        docs = list(Annotation().find({"datasetId": dataset["_id"]}))
+        assert len(docs) == 1
+        assert "name" not in docs[0]
+        assert "color" not in docs[0]
+
     def testImportPropertyValuesRemapping(self, admin, server):
         """propertyIdMap remaps property ids; unmapped ids are skipped."""
         dataset = self._makeDataset(admin)
