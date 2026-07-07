@@ -198,7 +198,9 @@ export type TSamSimilarityToolStateSymbol = typeof SamSimilarityToolStateSymbol;
 
 export interface ISamSimilarityExample {
   polarity: "foreground" | "background";
-  prompt: TSamPrompt;
+  // null for a circled example (§11 addendum, "Circle" input mode): its
+  // polygon (below) is authoritative and no decoder prompt was ever run.
+  prompt: TSamPrompt | null;
   // The decoded example outline in GCS (image) coords; null until the
   // example-decode node has processed this example (see
   // EXAMPLE_SEGMENTATION_TOOL.md §11.4).
@@ -234,6 +236,15 @@ export interface ISamSimilarityToolState {
   // panel (same pattern as IExampleSegmentationToolState.nextPolarity).
   nextPolarity: "foreground" | "background";
   status: ISamSimilarityStatus; // reactive mirror
+  // How the next example is captured; set by the tool menu panel (§11
+  // addendum, "Circle" input mode). "click" decodes a SAM prompt at the
+  // clicked/dragged point/box; "circle" rasterizes a freehand polygon
+  // directly (no decoder run).
+  exampleInputMode: "click" | "circle";
+  // Reactive mirror of the hover-preview decode node's output (GCS outline
+  // of the object under the cursor in "click" mode); null when idle,
+  // dragging, in "circle" mode, or between debounced decodes.
+  livePreview: IGeoJSPosition[] | null;
 }
 
 export const ConnectionToolStateSymbol: unique symbol = Symbol(

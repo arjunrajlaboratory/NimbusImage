@@ -76,6 +76,7 @@ import {
   scoreDescriptor,
 } from "@/utils/samSimilarity/embedding";
 import { dedupeProposalsAgainstAnnotations } from "@/utils/proposalDedupe";
+import { simpleCentroid } from "@/utils/annotation";
 
 // See §11.6: score(f) = max_i cos(f, positives[i]) - negativeWeight * max_j cos(f, negatives[j]).
 const NEGATIVE_WEIGHT = 0.5;
@@ -106,7 +107,15 @@ const DEFAULT_SIMPLIFICATION_TOLERANCE = 1;
 // Shape of the `examples` input node's elements: unlike the reactive
 // state's ISamSimilarityExample, the input carries no decoded polygon (that
 // is produced by the example-decode node and mirrored into state.examples).
-type TSamSimilarityExampleInput = Omit<ISamSimilarityExample, "polygon">;
+// Exactly one of `prompt`/`polygon` is set (enforced by this discriminated
+// union on `prompt`): a `prompt` example is decoded by SAM at
+// example-descriptor time ("Click" input mode); a `polygon` example (`prompt:
+// null`, "Circle" input mode) is already-final and rasterized directly onto
+// the embedding grid with no decoder run (§11 addendum).
+type TSamSimilarityExampleInput = { polarity: "foreground" | "background" } & (
+  | { prompt: TSamPrompt; polygon?: undefined }
+  | { prompt: null; polygon: IGeoJSPosition[] }
+);
 
 /** Median of a numeric array; 0 for an empty array. */
 function median(values: number[]): number {
@@ -360,6 +369,9 @@ export type TSamSimilarityNodes = {
     promptMode: ManualInputNode<TPromptMode>;
     sizeRange: ManualInputNode<TSizeRange>;
     simplificationTolerance: ManualInputNode<number>;
+    // Hover live-preview prompt (feature A, click mode only); debounced set
+    // by AnnotationViewer's mousemove handler / drag-preview path.
+    previewPrompt: ManualInputNode<TSamPrompt | TNoOutput>;
   };
   output: {
     proposals: ComputeNode<any, any>;
@@ -367,6 +379,9 @@ export type TSamSimilarityNodes = {
     // mirror decoded example polygons into state.examples using the same
     // onOutputUpdate pattern as every other mirror (see §11.7 deviations).
     examples: ComputeNode<any, any>;
+    // Hover live-preview outline (feature A), mirrored into
+    // state.livePreview the same way.
+    livePreview: ComputeNode<any, any>;
   };
   // Clears the descriptor cache and internal timings; re-arms the "no
   // examples yet" guard by clearing the examples input (same role as
@@ -428,6 +443,12 @@ function createSamSimilarityPipeline(
     DEFAULT_SIMPLIFICATION_TOLERANCE,
     true,
   );
+  // Hover live-preview prompt (feature A): debounced like samPipeline's own
+  // preview decoder graph (createSamPipelineDecoderNodes's previewNodes).
+  const previewPromptInputNode = new ManualInputNode<TSamPrompt | TNoOutput>(
+    NoOutput,
+    { type: "debounce", wait: 100 },
+  );
 
   // --- Encoder chain: mirrors samPipeline's createSamPipelineEncoderNodes,
   // built from the exported helpers rather than sharing a live SAM node
@@ -475,6 +496,73 @@ function createSamSimilarityPipeline(
     [modelNameNode],
   );
 
+  // --- Hover live-preview decode (feature A): decodes previewPromptInputNode
+  // and converts straight to a GCS outline, mirroring
+  // decodePromptToDisplayPolygon + displayToWorld + simplifyCoordinates from
+  // samPipeline's own preview decoder graph. Deliberately NOT added to
+  // `allNodes` below: allNodes drives status.phase's "computing" indicator,
+  // and a debounced hover preview firing on every mouse-move must not make
+  // the status line flicker into "Computing..." the way a real
+  // examples/candidates recompute does.
+  async function computePreviewOutlineInner(
+    previewPrompt: TSamPrompt,
+    canvasInfo: IProcessCanvasOutput,
+    encoderOutput: IEncoderOutput,
+    decoderSession: InferenceSession,
+    decoderContext: ISamDecoderContext,
+    mapEntry: IMapEntry,
+  ): Promise<IGeoJSPosition[]> {
+    const { polygonDisplay } = await decodePromptToDisplayPolygon(
+      model,
+      previewPrompt,
+      canvasInfo,
+      decoderContext,
+      decoderSession,
+      encoderOutput,
+      mapEntry,
+    );
+    const polygonGcs = displayToWorld(polygonDisplay, mapEntry);
+    return simplifyCoordinates(
+      polygonGcs,
+      readManualInputOr(
+        simplificationToleranceInputNode,
+        DEFAULT_SIMPLIFICATION_TOLERANCE,
+      ),
+    );
+  }
+  const computePreviewOutlineWithErrorReporting = withErrorReporting(
+    computePreviewOutlineInner,
+    reportError,
+  );
+  function computePreviewOutline(
+    previewPrompt: TSamPrompt | TNoOutput,
+    canvasInfo: IProcessCanvasOutput,
+    encoderOutput: IEncoderOutput,
+    decoderSession: InferenceSession,
+    decoderContext: ISamDecoderContext,
+    mapEntry: IMapEntry,
+  ): Promise<IGeoJSPosition[]> | TNoOutput {
+    if (previewPrompt === NoOutput) {
+      return NoOutput;
+    }
+    return computePreviewOutlineWithErrorReporting(
+      previewPrompt,
+      canvasInfo,
+      encoderOutput,
+      decoderSession,
+      decoderContext,
+      mapEntry,
+    );
+  }
+  const previewOutlineNode = createComputeNode(computePreviewOutline, [
+    previewPromptInputNode,
+    preprocessNode,
+    inferenceNode,
+    decoderSessionNode,
+    decoderContextNode,
+    geoJSMapInputNode,
+  ]);
+
   // --- Example-decode node: maintains exampleDescriptorCache keyed by
   // example object reference (ManualInputNode.setValue is always called
   // with a fresh array by callers, so reference identity is a reliable
@@ -496,20 +584,32 @@ function createSamSimilarityPipeline(
     for (const example of examples) {
       let entry = exampleDescriptorCache.get(example);
       if (!entry) {
-        const { polygonDisplay } = await decodePromptToDisplayPolygon(
-          model,
-          example.prompt,
-          canvasInfo,
-          decoderContext,
-          decoderSession,
-          encoderOutput,
-          mapEntry,
-        );
-        const cellMask = displayPolygonToCellMask(
-          polygonDisplay,
-          canvasInfo,
-          grid,
-        );
+        let polygonGcs: IGeoJSPosition[];
+        let cellMask: Uint8Array;
+        let promptAnchorGcs: IGeoJSPosition;
+        if (example.prompt === null) {
+          // Circled example (§11 addendum): the polygon is authoritative and
+          // already in GCS - skip the decoder entirely, just rasterize it
+          // onto the embedding grid (via display coords, same as a decoded
+          // mask) for the descriptor.
+          polygonGcs = example.polygon;
+          const polygonDisplay = mapEntry.map.gcsToDisplay(polygonGcs);
+          cellMask = displayPolygonToCellMask(polygonDisplay, canvasInfo, grid);
+          promptAnchorGcs = simpleCentroid(polygonGcs);
+        } else {
+          const { polygonDisplay } = await decodePromptToDisplayPolygon(
+            model,
+            example.prompt,
+            canvasInfo,
+            decoderContext,
+            decoderSession,
+            encoderOutput,
+            mapEntry,
+          );
+          cellMask = displayPolygonToCellMask(polygonDisplay, canvasInfo, grid);
+          polygonGcs = displayToWorld(polygonDisplay, mapEntry);
+          promptAnchorGcs = getPromptAnchorGcs(example.prompt);
+        }
         const descriptor = poolDescriptor(normalizedData, grid, cellMask);
         const selfSimilarity = descriptor
           ? meanMaskSimilarity(normalizedData, grid, cellMask, descriptor)
@@ -518,9 +618,9 @@ function createSamSimilarityPipeline(
           polarity: example.polarity,
           descriptor,
           selfSimilarity,
-          polygonGcs: displayToWorld(polygonDisplay, mapEntry),
+          polygonGcs,
           cellMask,
-          promptAnchorGcs: getPromptAnchorGcs(example.prompt),
+          promptAnchorGcs,
         };
         exampleDescriptorCache.set(example, entry);
       }
@@ -935,6 +1035,8 @@ function createSamSimilarityPipeline(
   );
 
   return {
+    // previewOutlineNode is intentionally excluded (see its declaration
+    // comment): it must not affect status.phase's "computing" indicator.
     allNodes: [
       screenshotNode,
       preprocessNode,
@@ -952,10 +1054,12 @@ function createSamSimilarityPipeline(
       promptMode: promptModeInputNode,
       sizeRange: sizeRangeInputNode,
       simplificationTolerance: simplificationToleranceInputNode,
+      previewPrompt: previewPromptInputNode,
     },
     output: {
       proposals: proposalsNode,
       examples: exampleDescriptorsNode,
+      livePreview: previewOutlineNode,
     },
     reset: async () => {
       exampleDescriptorCache.clear();
@@ -963,6 +1067,7 @@ function createSamSimilarityPipeline(
       timingsState.decodeMs = undefined;
       reportProgress(null);
       await examplesInputNode.setValue([], true);
+      await previewPromptInputNode.setValue(NoOutput, true);
     },
   };
 }
@@ -989,6 +1094,8 @@ export function createSamSimilarityToolStateFromToolConfiguration(
       progress: null,
       timings: {},
     } as ISamSimilarityStatus,
+    exampleInputMode: "click" as ISamSimilarityToolState["exampleInputMode"],
+    livePreview: null as ISamSimilarityToolState["livePreview"],
   }) as unknown as ISamSimilarityToolState;
 
   const reportError = (error: Error) => {
@@ -1056,6 +1163,19 @@ export function createSamSimilarityToolStateFromToolConfiguration(
       | TNoOutput;
     state.examples =
       !rawOutput || rawOutput === NoOutput ? [] : rawOutput.decodedExamples;
+  });
+
+  // Mirror the hover live-preview outline (feature A) into state.livePreview,
+  // same pattern as ISamAnnotationToolState.livePreview in samPipeline.ts.
+  const livePreviewOutputNode = nodes.output.livePreview;
+  livePreviewOutputNode.onOutputUpdate(() => {
+    const rawOutput = livePreviewOutputNode.output as
+      | IGeoJSPosition[]
+      | TNoOutput;
+    state.livePreview =
+      !rawOutput || rawOutput === NoOutput || rawOutput.length <= 0
+        ? null
+        : rawOutput;
   });
 
   // Proposals + status are reactive.

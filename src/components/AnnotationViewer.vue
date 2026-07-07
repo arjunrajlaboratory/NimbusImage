@@ -239,6 +239,11 @@ const exampleSegmentationProposalAnnotations = shallowRef<IGeoJSAnnotation[]>(
 // annotations above.
 const samSimilarityExampleAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
 const samSimilarityProposalAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
+// SimSAM hover live-preview outline (feature A), rendered the same way as
+// SAM's own samLivePreviewAnnotation above.
+const samSimilarityLivePreviewAnnotation = shallowRef<IGeoJSAnnotation | null>(
+  null,
+);
 const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 // Plain coordinate array, fully replaced on each set — shallowRef purely
 // because nothing reads its inner mutations, not because it's heavy.
@@ -380,6 +385,13 @@ const samSimilarityExamples = computed(
 
 const samSimilarityProposals = computed(
   () => samSimilarityToolState.value?.proposals ?? null,
+);
+
+// Reactive mirror of the hover live-preview outline (feature A). Gated on
+// mapEntry.map === props.map transitively via samSimilarityToolState (same
+// rationale as samLivePreviewOutput below).
+const samSimilarityLivePreview = computed(
+  () => samSimilarityToolState.value?.livePreview ?? null,
 );
 
 const toolHighlightedAnnotationIds = computed((): Set<string> => {
@@ -2002,7 +2014,10 @@ function addExampleSegmentationExample(annotation: IGeoJSAnnotation) {
 // mode is null (see setNewAnnotationMode's "samSimilarity" case).
 function addSamSimilarityExample(mouseState: IMouseState) {
   const state = samSimilarityToolState.value;
-  if (!state) {
+  // Click-mode only: in circle mode the polygon draw is the example input,
+  // and a shift-drag there must not additionally commit a box example
+  // through the captured-mouse-state path.
+  if (!state || state.exampleInputMode !== "click") {
     return;
   }
   const newPrompt = mouseStateToSamPrompt(mouseState);
@@ -2024,6 +2039,28 @@ function addSamSimilarityExample(mouseState: IMouseState) {
   state.nodes.input.examples.setValue([
     ...currentExamples,
     { polarity, prompt },
+  ]);
+  // The example just committed supersedes whatever the hover/drag preview
+  // was showing under the cursor.
+  state.nodes.input.previewPrompt.setValue(NoOutput, true);
+}
+
+// SAM-similarity circled example capture (feature B, "Circle" input mode):
+// fires only when exampleInputMode === "circle", since click mode leaves the
+// interaction layer in mode(null) (see setNewAnnotationMode) and never
+// produces interaction-layer annotation events.
+function addSamSimilarityCircleExample(annotation: IGeoJSAnnotation) {
+  const state = samSimilarityToolState.value;
+  if (!annotation || !state) {
+    return;
+  }
+  const coordinates = annotation.coordinates();
+  props.interactionLayer.removeAnnotation(annotation);
+  const currentExamples = readManualInputOr(state.nodes.input.examples, []);
+  // ManualInputNode-style: push a new array rather than mutating in place.
+  state.nodes.input.examples.setValue([
+    ...currentExamples,
+    { polarity: state.nextPolarity, prompt: null, polygon: coordinates },
   ]);
 }
 
@@ -2254,10 +2291,23 @@ function setNewAnnotationMode() {
       }
       break;
     case "samAnnotation":
-    case "samSimilarity":
       // Custom mouse capture, same as SAM's prompt flow above (points/boxes
       // via captured-mouse-state, not a GeoJS interaction annotation mode).
       props.interactionLayer.mode(null);
+      break;
+    case "samSimilarity":
+      if (samSimilarityToolState.value?.exampleInputMode === "circle") {
+        // Circle mode (feature B): freehand polygon draw IS the example
+        // input, mutually exclusive with click mode's raw mouse capture -
+        // GeoJS can't run polygon-draw mode and custom mouse capture at once.
+        props.interactionLayer.mode("polygon");
+      } else {
+        // Click mode: custom mouse capture, same as samAnnotation above.
+        // The hover live-preview (feature A) needs no extra wiring here: the
+        // captured-mouse-state hover/leave states already reach
+        // previewMouseState's samSimilarity branch.
+        props.interactionLayer.mode(null);
+      }
       break;
     case null:
     case undefined:
@@ -2348,6 +2398,11 @@ function handleInteractionAnnotationChange(evt: any) {
         case "exampleSegmentation":
           addExampleSegmentationExample(evt.annotation);
           break;
+        case "samSimilarity":
+          // Only reached in "circle" input mode - click mode leaves the
+          // interaction layer in mode(null) (see setNewAnnotationMode).
+          addSamSimilarityCircleExample(evt.annotation);
+          break;
         case "select":
           selectAnnotations(evt.annotation);
           break;
@@ -2405,9 +2460,25 @@ function previewMouseState(mouseState: IMouseState | null) {
 
   // SAM-similarity examples are single clicks/box-drags decoded on release;
   // unlike SAM's own live decoder-preview or the generic freehand-path
-  // preview below, no interactive outline is drawn while dragging.
+  // preview below, no interactive selectionAnnotation outline is drawn while
+  // dragging. The drag itself still feeds the debounced preview-decode node
+  // (feature A: "Dragging previews the box result"), reusing the same
+  // conversion addSamSimilarityExample uses to commit on release.
   if (samSimilarityToolState.value) {
     selectionAnnotation.value = null;
+    const state = samSimilarityToolState.value;
+    if (state.exampleInputMode === "click") {
+      const dragPrompt = mouseState && mouseStateToSamPrompt(mouseState);
+      if (dragPrompt) {
+        const previewPrompt: TSamPrompt =
+          dragPrompt.type === PromptType.backgroundPoint
+            ? { type: PromptType.foregroundPoint, point: dragPrompt.point }
+            : dragPrompt;
+        state.nodes.input.previewPrompt.setValue(previewPrompt);
+      } else {
+        state.nodes.input.previewPrompt.setValue(NoOutput);
+      }
+    }
     return;
   }
 
@@ -2720,6 +2791,55 @@ function onSamSimilarityProposalsChanged() {
       style,
     })),
   );
+}
+
+// SimSAM hover live-preview outline (feature A): rendered EXACTLY like
+// onSamLivePreviewOutputChanged (same style, same >70%-of-view skip guard),
+// so hovering feels consistent between the two SAM-based tools. Also clears
+// itself when samSimilarityLivePreview goes null - including on tool
+// deselect/switch, since samSimilarityToolState (and therefore this
+// computed) becomes null then too.
+function onSamSimilarityLivePreviewChanged() {
+  if (samSimilarityLivePreviewAnnotation.value) {
+    props.annotationLayer.removeAnnotation(
+      samSimilarityLivePreviewAnnotation.value,
+    );
+    samSimilarityLivePreviewAnnotation.value = null;
+  }
+
+  const vertices = samSimilarityLivePreview.value;
+  if (!vertices) {
+    return;
+  }
+
+  const viewBounds = props.map.bounds();
+  const srcWidth = viewBounds.right - viewBounds.left;
+  const srcHeight = viewBounds.bottom - viewBounds.top;
+
+  const xs = vertices.map((v) => v.x);
+  const ys = vertices.map((v) => v.y);
+  const width = Math.max(...xs) - Math.min(...xs);
+  const height = Math.max(...ys) - Math.min(...ys);
+
+  if (width > srcWidth * 0.7 || height > srcHeight * 0.7) {
+    return;
+  }
+
+  const style = {
+    fillOpacity: 0.1,
+    fillColor: "blue",
+    strokeColor: "white",
+    strokeOpacity: 0.5,
+    strokeWidth: 1,
+  };
+  const geoJsAnnotation = geojs.annotation.polygonAnnotation({
+    style,
+    vertices,
+  });
+  geoJsAnnotation.options("specialAnnotation", true);
+
+  samSimilarityLivePreviewAnnotation.value = markRaw(geoJsAnnotation);
+  props.annotationLayer.addAnnotation(samSimilarityLivePreviewAnnotation.value);
 }
 
 function onMousePathChanged(
@@ -3366,6 +3486,28 @@ watch(samSimilarityProposals, () => {
   onSamSimilarityProposalsChanged();
 });
 
+// SAM similarity hover live-preview outline (feature A)
+watch(samSimilarityLivePreview, () => {
+  onSamSimilarityLivePreviewChanged();
+});
+
+// SAM similarity example-input mode toggle (feature B): re-arm the
+// interaction mode (polygon draw vs raw mouse capture) live when the panel
+// switches between "Click" and "Circle", same trigger pattern as watchTool.
+// Also drop any lingering hover-preview outline: previewMouseState only
+// feeds (and clears) the preview node in click mode, so a preview from just
+// before the switch would otherwise stay rendered in circle mode.
+watch(
+  () => samSimilarityToolState.value?.exampleInputMode,
+  () => {
+    samSimilarityToolState.value?.nodes.input.previewPrompt.setValue(
+      NoOutput,
+      true,
+    );
+    refreshAnnotationMode();
+  },
+);
+
 // Captured mouse state — split into two cheap watchers instead of one
 // `{ deep: true }` watcher that recursively dirty-checks IMouseState (which
 // includes the entire IMapEntry → GeoJS map). Identity transitions handle
@@ -3477,6 +3619,7 @@ defineExpose({
   exampleSegmentationProposalAnnotations,
   samSimilarityExampleAnnotations,
   samSimilarityProposalAnnotations,
+  samSimilarityLivePreviewAnnotation,
   cursorAnnotation,
   lastCursorPosition,
   handlingPrimaryChange,
@@ -3516,6 +3659,7 @@ defineExpose({
   samSimilarityToolState,
   samSimilarityExamples,
   samSimilarityProposals,
+  samSimilarityLivePreview,
   toolHighlightedAnnotationIds,
   pendingStoreAnnotation,
   samMainOutput,
@@ -3579,6 +3723,7 @@ defineExpose({
   addAnnotationFromSnapping,
   addExampleSegmentationExample,
   addSamSimilarityExample,
+  addSamSimilarityCircleExample,
   handleAnnotationEdits,
   editPolygonAnnotation,
   handleNewROIFilter,
@@ -3612,6 +3757,7 @@ defineExpose({
   onExampleSegmentationProposalsChanged,
   onSamSimilarityExamplesChanged,
   onSamSimilarityProposalsChanged,
+  onSamSimilarityLivePreviewChanged,
   onMousePathChanged,
   renderWorkerPreview,
   onSamPromptsChanged,

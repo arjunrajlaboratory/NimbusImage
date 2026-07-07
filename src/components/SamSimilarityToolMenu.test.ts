@@ -40,6 +40,8 @@ function createSimilarityState(overrides: any = {}) {
     examples: [],
     proposals: [],
     nextPolarity: "foreground",
+    exampleInputMode: "click",
+    livePreview: null,
     status: {
       phase: "idle",
       putativeCount: 0,
@@ -56,6 +58,7 @@ function createSimilarityState(overrides: any = {}) {
         },
         simplificationTolerance: { output: 1, setValue: vi.fn() },
         examples: { output: [], setValue: vi.fn() },
+        previewPrompt: { output: undefined, setValue: vi.fn() },
       },
       reset: vi.fn().mockResolvedValue(undefined),
     },
@@ -241,6 +244,19 @@ describe("SamSimilarityToolMenu", () => {
     expect(similarityState.nodes.input.examples.setValue).toHaveBeenCalledWith([
       inputExamples[0],
     ]);
+  });
+
+  it("writes state.exampleInputMode when the input-mode toggle changes", () => {
+    const similarityState = createSimilarityState();
+    (store as any).selectedTool = { state: similarityState };
+
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    expect(vm.exampleInputMode).toBe("click");
+    vm.exampleInputMode = "circle";
+
+    expect(similarityState.exampleInputMode).toBe("circle");
   });
 
   it("clearAll resets the pipeline and clears the examples input node", async () => {

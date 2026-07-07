@@ -719,6 +719,23 @@ acceptable only as an explicit user action with progress + cancel.
 - Viewer wiring: example acquisition is SAM's existing mouse-prompt capture
   (not polygon mode); putative rendering reuses the AutoSeg proposal
   watcher pattern.
+- **Two example-input modes**, toggled by the panel (`state.exampleInputMode`,
+  default `"click"`), mutually exclusive because GeoJS can't run raw mouse
+  capture and its own polygon-draw interaction mode at the same time:
+  - **Click (SAM)** - the mode described above: shift+click/drag runs the
+    SAM decoder to turn the clicked object into a training example.
+  - **Circle** - freehand-draws a polygon (GeoJS `polygon` interaction mode,
+    same UX as AutoSeg's example circling) that becomes a training example
+    directly: its polygon is rasterized onto the embedding grid for the
+    descriptor, with **no decoder run**. The example's `prompt` is `null`
+    and its `polygon` is authoritative (vs. a click example, whose polygon
+    is the decoder's output).
+- **Hover live preview (Click mode only)**: as the mouse hovers over the
+  image, a debounced SAM decode previews the object outline under the
+  cursor - clicking then feels like "confirm what I see", mirroring SAM's
+  own live preview (`samPipeline.ts`'s second decoder graph). Dragging
+  (shift+drag) previews the box result instead of a point. No live preview
+  in Circle mode - the cursor is busy drawing the polygon.
 
 ### 11.6 Risks / open questions
 
@@ -818,3 +835,28 @@ departs from §11.3/§11.4 above:
   `createSamSimilarityToolStateFromToolConfiguration` catches that and
   returns an `IErrorToolState`, the same pattern as
   `createSamToolStateFromToolConfiguration`.
+- **Hover live-preview node excluded from `allNodes`.** The preview-decode
+  node (`previewOutlineNode`, fed by `input.previewPrompt`) is built the same
+  way as every other node in the pipeline, but is deliberately left out of
+  the `allNodes` array that `recomputeComputingPhase` polls for
+  `status.phase`. A debounced decode fires on essentially every hover, and
+  including it would make the status line flicker into "Computing..." on
+  mouse movement instead of only for real examples/candidates recomputes.
+  Its output is still mirrored into `state.livePreview` via the normal
+  `onOutputUpdate` pattern (`nodes.output.livePreview`), same as
+  `state.examples`/`state.proposals`.
+- **Circled examples skip the decoder entirely** (`example.prompt === null`
+  in `computeExampleDescriptors`): the polygon is converted GCS → display via
+  `mapEntry.map.gcsToDisplay`, then rasterized with the same
+  `displayPolygonToCellMask` → `poolDescriptor` → `meanMaskSimilarity` path a
+  decoded example would go through, with `polygonGcs` set to the input
+  polygon verbatim (no `displayToWorld` round-trip - it was never converted
+  away from GCS) and `promptAnchorGcs` set to its centroid
+  (`simpleCentroid`, from `@/utils/annotation`) rather than
+  `getPromptAnchorGcs` (which only accepts a `TSamPrompt`).
+- **`TSamSimilarityExampleInput`** is a discriminated union on `prompt`
+  (`{ prompt: TSamPrompt; polygon?: undefined }` for Click-mode examples vs.
+  `{ prompt: null; polygon: IGeoJSPosition[] }` for Circle-mode examples)
+  rather than the plain `Omit<ISamSimilarityExample, "polygon">` alias used
+  before this addendum, so the two input shapes - and which one skips the
+  decoder - are enforced at the type level.

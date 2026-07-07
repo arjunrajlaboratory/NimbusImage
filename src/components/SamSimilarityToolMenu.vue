@@ -17,6 +17,23 @@
       </div>
 
       <div class="mb-2">
+        <div class="text-caption mb-1">Add examples by:</div>
+        <v-btn-toggle
+          v-model="exampleInputMode"
+          mandatory
+          divided
+          density="comfortable"
+        >
+          <v-btn value="click" variant="outlined" color="primary" size="small">
+            Click (SAM)
+          </v-btn>
+          <v-btn value="circle" variant="outlined" color="primary" size="small">
+            Circle
+          </v-btn>
+        </v-btn-toggle>
+      </div>
+
+      <div class="mb-2">
         <div class="text-caption mb-1">Click marks:</div>
         <v-btn-toggle
           v-model="nextPolarity"
@@ -300,6 +317,16 @@ const nextPolarity = computed({
   },
 });
 
+const exampleInputMode = computed({
+  get: () => similarityState.value?.exampleInputMode ?? "click",
+  set: (value: "click" | "circle") => {
+    const state = similarityState.value;
+    if (state) {
+      state.exampleInputMode = value;
+    }
+  },
+});
+
 const similarityThresholdNode = computed(
   () => similarityState.value?.nodes.input.similarityThreshold ?? null,
 );
@@ -442,7 +469,8 @@ const toolValuesChangedImpl = () => {
   const modified =
     originalValues.similarityThreshold !== similarityThreshold.value ||
     originalValues.simplificationTolerance !== simplificationTolerance.value ||
-    originalValues.promptMode?.value !== promptMode.value;
+    originalValues.promptMode?.value !== promptMode.value ||
+    originalValues.exampleInputMode !== exampleInputMode.value;
   if (!modified) {
     return;
   }
@@ -451,6 +479,7 @@ const toolValuesChangedImpl = () => {
     similarityThreshold: similarityThreshold.value,
     simplificationTolerance: simplificationTolerance.value,
     promptMode: promptModeConfigValue(promptMode.value),
+    exampleInputMode: exampleInputMode.value,
   };
   const newTool = {
     ...props.toolConfiguration,
@@ -475,6 +504,10 @@ watch(promptMode, () => {
   toolValuesChanged();
 });
 
+watch(exampleInputMode, () => {
+  toolValuesChanged();
+});
+
 onMounted(() => {
   const configuredSimilarity = Number(
     props.toolConfiguration.values.similarityThreshold,
@@ -492,6 +525,11 @@ onMounted(() => {
     ?.value as TPromptMode | undefined;
   if (configuredPromptMode) {
     promptMode.value = configuredPromptMode;
+  }
+  const configuredExampleInputMode = props.toolConfiguration.values
+    .exampleInputMode as "click" | "circle" | undefined;
+  if (configuredExampleInputMode) {
+    exampleInputMode.value = configuredExampleInputMode;
   }
 });
 
@@ -511,6 +549,7 @@ defineExpose({
   autoMinPlaceholder,
   autoMaxPlaceholder,
   nextPolarity,
+  exampleInputMode,
   similarityThresholdNode,
   similarityThreshold,
   promptModeItems,
