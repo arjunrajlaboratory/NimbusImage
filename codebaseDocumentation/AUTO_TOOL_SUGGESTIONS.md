@@ -80,8 +80,12 @@ configuration until the user accepts it.
 - `src/components/ToolSuggestions.vue` — the floating panel (loading / error /
   list states, Add / Add all / Not now / dismiss).
 - `src/views/datasetView/Viewer.vue` — renders `<tool-suggestions />` and calls
-  `maybeSuggestForCurrentConfiguration()` after the map is ready (with a
-  `SUGGESTION_CAPTURE_DELAY_MS` delay to let tiles render).
+  `maybeSuggestForCurrentConfiguration()` when `ImageViewer` emits `layers-ready`
+  (fired on the layers' `onIdle` false→true transition, i.e. once the image has
+  actually finished rendering).
+- `src/components/ImageViewer.vue` — emits `layers-ready` when its `layersReady`
+  computed (derived from per-layer `onIdle` callbacks) first becomes true with
+  at least one layer present.
 
 ## Data flow
 
@@ -113,10 +117,10 @@ Viewer.vue (config changes, map ready, empty tools, unseen)
 
 ## Known rough edges / TODO for the polish pass
 
-1. **Screenshot timing.** We wait a fixed `SUGGESTION_CAPTURE_DELAY_MS` (1500ms)
-   after the map appears. Better: hook the layers' `onIdle` / the viewer's
-   `reset-complete` so we capture once tiles have actually rendered, instead of
-   guessing.
+1. ~~**Screenshot timing.** Fixed delay after the map appears.~~ **Done** — the
+   trigger is now driven by `ImageViewer`'s `layers-ready` event, which fires
+   off the layers' `onIdle` callbacks, so we capture once tiles have actually
+   rendered rather than guessing with a timer.
 2. **Trigger definition.** "New collection" is approximated as "configuration
    with zero tools that we haven't seen this session." That also fires for any
    pre-existing empty collection the user opens. If a stricter "just created"
