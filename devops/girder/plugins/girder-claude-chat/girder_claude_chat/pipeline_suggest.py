@@ -27,6 +27,8 @@ PIPELINE_SYSTEM_PROMPT = (
     '- Prefer parameter values within each interface element\'s '
     'declared min/max; otherwise omit the parameter and let the '
     'worker default apply.\n'
+    '- For property steps, shape must be one of point, line, or '
+    'polygon (other shapes cannot have properties computed on them).\n'
     '- Return between 1 and maxSuggestions pipelines, most useful '
     'first, each with a one-line rationale.'
 )

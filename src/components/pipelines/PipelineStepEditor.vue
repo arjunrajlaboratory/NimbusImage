@@ -100,6 +100,7 @@ import { logError } from "@/utils/log";
 import {
   AnnotationNames,
   AnnotationShape,
+  MATERIALIZABLE_PROPERTY_SHAPES,
   IAnnotationPipelineStep,
   IAnnotationSetup,
   IPipelineStepBase,
@@ -239,7 +240,9 @@ const inputExclusive = computed({
   },
 });
 
-const shapeItems = Object.values(AnnotationShape).map((value) => ({
+// Property steps materialize into a property document, whose shape must be one
+// the backend accepts (point/line/polygon) — offer only those.
+const shapeItems = MATERIALIZABLE_PROPERTY_SHAPES.map((value) => ({
   text: AnnotationNames[value],
   value,
 }));

@@ -18,6 +18,7 @@ import { logError } from "@/utils/log";
 
 import {
   AnnotationShape,
+  MATERIALIZABLE_PROPERTY_SHAPES,
   IAnnotationComputeJob,
   IAnnotationPipelineStep,
   IAnnotationProperty,
@@ -69,6 +70,15 @@ function convertSuggestion(suggestion: ISuggestedPipeline): IPipeline | null {
       ? (s as AnnotationShape)
       : AnnotationShape.Polygon;
   };
+  // Property steps must use a materializable shape; the model may suggest any
+  // shape, so clamp unsupported ones (rectangle/circle/ellipse/any) to Blob
+  // rather than create a property step that fails on compute.
+  const toPropertyShape = (s: string | undefined): AnnotationShape => {
+    const shape = toShape(s);
+    return MATERIALIZABLE_PROPERTY_SHAPES.includes(shape)
+      ? shape
+      : AnnotationShape.Polygon;
+  };
   const steps: TPipelineStep[] = suggestion.steps.map(
     (raw: ISuggestedPipelineStep) => {
       const base = {
@@ -82,7 +92,7 @@ function convertSuggestion(suggestion: ISuggestedPipeline): IPipeline | null {
         const step: IPropertyPipelineStep = {
           ...base,
           kind: "property",
-          shape: toShape(raw.shape),
+          shape: toPropertyShape(raw.shape),
           inputTags: {
             tags: raw.inputTags ?? [],
             exclusive: false,

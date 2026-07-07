@@ -1384,6 +1384,16 @@ export const AnnotationNames = {
   [AnnotationShape.Any]: "Any", // This was added to support the "Any" shape
 };
 
+// Shapes a computed property can be attached to. Must match the backend
+// annotation_property schema enum (server/models/property.py) — property
+// workers only operate on these, so a property step / materialized property
+// with any other shape would be rejected on compute.
+export const MATERIALIZABLE_PROPERTY_SHAPES: AnnotationShape[] = [
+  AnnotationShape.Point,
+  AnnotationShape.Line,
+  AnnotationShape.Polygon,
+];
+
 export interface IAnnotationLocation {
   XY: number;
   Z: number;

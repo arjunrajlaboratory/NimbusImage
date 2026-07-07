@@ -561,3 +561,57 @@ describe("runPipelineBatch", () => {
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
   });
 });
+
+describe("suggestPipelines", () => {
+  it("clamps property-step shapes to materializable shapes", async () => {
+    h.properties.workerImageList = {
+      "img/annotate": { isAnnotationWorker: "true" },
+      "img/prop": { isPropertyWorker: "true" },
+    };
+    h.main.chatAPI.suggestPipelines.mockResolvedValue([
+      {
+        name: "S",
+        rationale: "r",
+        steps: [
+          { kind: "annotation", image: "img/annotate", name: "seg" },
+          {
+            kind: "property",
+            image: "img/prop",
+            name: "metrics",
+            shape: "rectangle", // not materializable → clamp to polygon
+          },
+        ],
+      },
+    ]);
+
+    const result = await pipelinesStore.suggestPipelines("goal");
+
+    expect(result).toHaveLength(1);
+    const propertyStepResult = result[0].steps.find(
+      (s) => s.kind === "property",
+    ) as any;
+    expect(propertyStepResult.shape).toBe(AnnotationShape.Polygon);
+  });
+
+  it("drops steps whose image is not installed", async () => {
+    h.properties.workerImageList = {
+      "img/prop": { isPropertyWorker: "true" },
+    };
+    h.main.chatAPI.suggestPipelines.mockResolvedValue([
+      {
+        name: "S",
+        rationale: "r",
+        steps: [
+          { kind: "annotation", image: "not-installed", name: "seg" },
+          { kind: "property", image: "img/prop", name: "metrics" },
+        ],
+      },
+    ]);
+
+    const result = await pipelinesStore.suggestPipelines("goal");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].steps).toHaveLength(1);
+    expect(result[0].steps[0].image).toBe("img/prop");
+  });
+});
