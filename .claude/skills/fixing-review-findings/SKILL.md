@@ -38,7 +38,7 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 
 | Pattern | Where it recurs | Check |
 |---|---|---|
-| Public endpoint input validation missing | `@access.public` endpoints in AnnotationPlugin | Every `.get()`/`len()`/`int()` on request data type-checked via `server/helpers/validation.py` helpers; limits clamped to `MAX_*` (see nimbus-backend skill) |
+| Public endpoint input validation missing | `@access.public` endpoints in AnnotationPlugin | Every `.get()`/`len()`/`int()` on request data guarded by an inline `isinstance` check raising `RestException(code=400, ...)`; ids parsed with `ObjectId(...)`/`except InvalidId` → 400; limits clamped to a module-level `MAX_*` constant (see nimbus-backend skill) |
 | Malformed ObjectId → uncaught 500 | Any endpoint converting caller-supplied id strings | `except InvalidId` (from `bson.errors` — it is NOT a ValueError) → `RestException(400)` at the API boundary |
 | Stale selection driving bulk destructive actions | List/selection UIs with filters | Does the selected set survive a filter change and then feed a delete/tag/bulk action? |
 | Budget/lazy-mode bypass on select-all paths | Anything calling hydrate/fetch with a user-controlled id set | Is there a cap, or can one click request 700K items? |

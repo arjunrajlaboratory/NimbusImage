@@ -1,6 +1,6 @@
 ---
 name: nimbus-backend
-description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), public endpoint input validation (validation.py helpers, MAX_* clamps, bson InvalidId → 400), loading plugin changes into the running container (rebuild, not restart), and backend test patterns. Use this skill even for small backend changes."
+description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), public endpoint input validation (inline isinstance guards → RestException 400, MAX_* clamps, bson InvalidId → 400), loading plugin changes into the running container (rebuild, not restart), and backend test patterns. Use this skill even for small backend changes."
 ---
 
 # Nimbus Backend Development (Girder)
@@ -234,15 +234,25 @@ Convert ids once at the API boundary and pass ObjectIds down — don't convert d
 
 This is the single most-recurring review finding in this plugin: an `@access.public` endpoint calls `.get()` / `len()` / `int()` / indexes request data **without first checking its type**, so a malformed payload (JSON-array body, `filters.tags: "bad"`, scalar `annotationIds`, oversized `limit`) raises an uncaught `AttributeError`/`TypeError` → 500 instead of a clean 400 — and unbounded limits let unauthenticated callers force huge DB/serialization work.
 
-For any new or edited public endpoint, validate at the API boundary with the shared helpers in `server/helpers/validation.py`:
+There is **no shared validation helper module** in this plugin — validate inline at the API boundary with `isinstance` checks that raise `RestException(code=400, ...)` *before* you touch the data. Real example, `server/api/annotation.py::updateMultiple`:
 
-| Helper | Guards |
+```python
+if not isinstance(bodyJson, list):
+    raise RestException("Request body must be a JSON array.", code=400)
+for update in bodyJson:
+    if not isinstance(update, dict):
+        raise RestException("Each item must be a JSON object.", code=400)
+```
+
+Guard each kind of request-data access before performing it:
+
+| Access to guard | Guard before it |
 |---|---|
-| `requireObjectBody(body, name)` | body is a dict before any `.get()` |
-| `requireList(value, field)` | field is a list before `len()`/iteration |
-| `requireObjectId(value, field)` / `requireInt(value, field)` | parse-or-400 |
-| `validateListInputs(...)` | filters/sort/paths incl. nested `tags`/`location` shape |
-| `MAX_*` constants (`MAX_LIST_LIMIT`, `MAX_ANNOTATION_IDS`, …) | clamp counts/limits |
+| `.get()` on a body/object | `isinstance(body, dict)` → 400 |
+| `len()` / iteration on a field | `isinstance(value, list)` → 400 |
+| `ObjectId(id)` on caller-supplied ids | `try / except InvalidId` → 400 (see the bson section above) |
+| `int(param)` on a query param | `try / except (TypeError, ValueError)` → 400 |
+| unbounded counts / `limit` | clamp against a module-level `MAX_*` constant (pattern: `MAX_ZENODO_FILES` / `MAX_ZENODO_SIZE` in `server/api/zenodo.py`) |
 
 Rules: validation and `RestException` live in the API layer, never in models. Add a backend test per malformed-input case (malformed body → 400, not 500). When you fix one endpoint, sweep the other public endpoints in the same file for the identical gap — reviewers flag one instance per round.
 
