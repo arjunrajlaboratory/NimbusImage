@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { annotationsTo3D } from "@/utils/annotationsTo3D";
+import {
+  IAnnotationsTo3DOptions,
+  annotationsTo3D,
+} from "@/utils/annotationsTo3D";
 import { AnnotationShape, IAnnotation } from "@/store/model";
 import type { VolumeGeometry } from "@/store/VolumeAPI";
 
@@ -35,7 +38,10 @@ function annotation(delta: Partial<IAnnotation>): IAnnotation {
   };
 }
 
-function convert(annotations: IAnnotation[], delta = {}) {
+function convert(
+  annotations: IAnnotation[],
+  delta: Partial<IAnnotationsTo3DOptions> = {},
+) {
   return annotationsTo3D({
     annotations,
     geometry,

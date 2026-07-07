@@ -185,16 +185,17 @@
         <v-card-title>Loft overlap threshold</v-card-title>
         <v-card-text>
           <v-slider
-            v-model="loftOverlapPercent"
+            v-model="loftThresholdDraft"
             :min="0"
             :max="95"
             :step="5"
             density="comfortable"
             hide-details
+            @end="loftOverlapPercent = $event"
           >
             <template v-slot:append>
               <span class="loft-threshold-value">
-                {{ loftOverlapPercent }}%
+                {{ loftThresholdDraft }}%
               </span>
             </template>
           </v-slider>
@@ -308,7 +309,10 @@ import {
   VolumeGeometry,
   defaultTimeStepUm as computeDefaultTimeStepUm,
 } from "@/store/VolumeAPI";
-import { annotationsTo3D } from "@/utils/annotationsTo3D";
+import {
+  IAnnotationsTo3DResult,
+  annotationsTo3D,
+} from "@/utils/annotationsTo3D";
 import { convertLength } from "@/utils/conversion";
 import { layerToVolumeTransferFunction } from "@/utils/layerToVolumeTransferFunction";
 import { logError } from "@/utils/log";
@@ -416,6 +420,15 @@ const loftOverlapPercent = computed({
 });
 
 const loftDialog = ref(false);
+// Shown while dragging the threshold slider; committed to the store (which
+// queues a chain-matching job in the worker) only on release, so a drag
+// doesn't pile up one job per step.
+const loftThresholdDraft = ref(0);
+watch(loftDialog, (open) => {
+  if (open) {
+    loftThresholdDraft.value = loftOverlapPercent.value;
+  }
+});
 
 function propertyKey(path: string[]) {
   return path.join("\u0000");
@@ -729,20 +742,27 @@ async function updateSegmentationActors() {
   }
 
   // Async: the loft chain matching runs in a web worker. The previous actors
-  // stay on screen until the replacement is ready.
-  const result = await annotationsTo3D({
-    annotations: filterStore.filteredAnnotations,
-    geometry: activeGeometry,
-    currentXY: store.xy,
-    currentTime: store.time,
-    currentZ: store.z,
-    axis: axisMode.value,
-    colorMode: segmentationColorMode.value,
-    propertyPath: volumeViewStore.segmentationPropertyPath,
-    propertyValues: propertyStore.propertyValues,
-    loftSurfaces: loftSurfaces.value,
-    loftOverlapFraction: loftOverlapPercent.value / 100,
-  });
+  // stay on screen until the replacement is ready. Callers don't await this
+  // function, so failures are logged here instead of rejecting.
+  let result: IAnnotationsTo3DResult;
+  try {
+    result = await annotationsTo3D({
+      annotations: filterStore.filteredAnnotations,
+      geometry: activeGeometry,
+      currentXY: store.xy,
+      currentTime: store.time,
+      currentZ: store.z,
+      axis: axisMode.value,
+      colorMode: segmentationColorMode.value,
+      propertyPath: volumeViewStore.segmentationPropertyPath,
+      propertyValues: propertyStore.propertyValues,
+      loftSurfaces: loftSurfaces.value,
+      loftOverlapFraction: loftOverlapPercent.value / 100,
+    });
+  } catch (error) {
+    logError(error);
+    return;
+  }
   if (serial !== segmentationSerial || !renderer() || !activeGeometry) {
     return;
   }

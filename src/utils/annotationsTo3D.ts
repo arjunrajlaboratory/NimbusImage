@@ -118,26 +118,32 @@ function normalizedPolygon(points: IAnnotation["coordinates"]) {
   return result;
 }
 
+// World µm per source-image pixel in x and y.
+function sourcePixelSpacing(geometry: VolumeGeometry): [number, number] {
+  const [spacingX, spacingY] = geometry.spacing;
+  const [fetchedWidth, fetchedHeight] = geometry.dimensions;
+  const [sourceWidth, sourceHeight] = geometry.sourceSize;
+  return [
+    spacingX * (fetchedWidth / sourceWidth),
+    spacingY * (fetchedHeight / sourceHeight),
+  ];
+}
+
 // Converts source-image pixel coordinates and depth indices to world µm.
 interface IWorldTransform {
   toX(x: number): number;
   toY(y: number): number;
   zCenter(depthIndex: number): number;
-  spacingZ: number;
 }
 
 function makeWorldTransform(geometry: VolumeGeometry): IWorldTransform {
-  const [spacingX, spacingY, spacingZ] = geometry.spacing;
+  const spacingZ = geometry.spacing[2];
   const [originX, originY, originZ] = geometry.origin;
-  const [fetchedWidth, fetchedHeight] = geometry.dimensions;
-  const [sourceWidth, sourceHeight] = geometry.sourceSize;
-  const sourceSpacingX = spacingX * (fetchedWidth / sourceWidth);
-  const sourceSpacingY = spacingY * (fetchedHeight / sourceHeight);
+  const [sourceSpacingX, sourceSpacingY] = sourcePixelSpacing(geometry);
   return {
     toX: (x) => originX + x * sourceSpacingX,
     toY: (y) => originY + y * sourceSpacingY,
     zCenter: (depthIndex) => originZ + depthIndex * spacingZ,
-    spacingZ,
   };
 }
 
@@ -146,9 +152,7 @@ function makeWorldTransform(geometry: VolumeGeometry): IWorldTransform {
 function suggestedPointRadius(geometry: VolumeGeometry): number {
   const [spacingX, spacingY, spacingZ] = geometry.spacing;
   const [dimX, dimY, dimZ] = geometry.dimensions;
-  const [sourceWidth, sourceHeight] = geometry.sourceSize;
-  const sourceSpacingX = spacingX * (dimX / sourceWidth);
-  const sourceSpacingY = spacingY * (dimY / sourceHeight);
+  const [sourceSpacingX, sourceSpacingY] = sourcePixelSpacing(geometry);
   const diagonal = Math.hypot(
     dimX * spacingX,
     dimY * spacingY,
@@ -168,14 +172,15 @@ interface ISurfaceMesh {
 }
 
 function addPrism(
-  sourcePoints: { x: number; y: number }[],
+  sourcePoints: IPlanarPoint[],
   depthIndex: number,
   scalar: number,
+  halfThickness: number,
   world: IWorldTransform,
   mesh: ISurfaceMesh,
 ) {
-  const z0 = world.zCenter(depthIndex) - world.spacingZ / 2;
-  const z1 = z0 + world.spacingZ;
+  const z0 = world.zCenter(depthIndex) - halfThickness;
+  const z1 = world.zCenter(depthIndex) + halfThickness;
   const baseIndex = mesh.points.length / 3;
 
   for (const point of sourcePoints) {
@@ -220,14 +225,15 @@ function addPrism(
 // Extrudes a polyline through the slice thickness, producing a vertical
 // ribbon (two triangles per segment) that matches the prism walls visually.
 function addRibbon(
-  sourcePoints: { x: number; y: number }[],
+  sourcePoints: IPlanarPoint[],
   depthIndex: number,
   scalar: number,
+  halfThickness: number,
   world: IWorldTransform,
   mesh: ISurfaceMesh,
 ) {
-  const z0 = world.zCenter(depthIndex) - world.spacingZ / 2;
-  const z1 = z0 + world.spacingZ;
+  const z0 = world.zCenter(depthIndex) - halfThickness;
+  const z1 = world.zCenter(depthIndex) + halfThickness;
   const baseIndex = mesh.points.length / 3;
 
   for (const point of sourcePoints) {
@@ -372,7 +378,7 @@ interface ISegmentationItem {
   kind: TSegmentationKind;
   // Source-pixel coordinates: polygon vertices (prism), polyline vertices
   // (ribbon), or a single center (sphere).
-  planarPoints: { x: number; y: number }[];
+  planarPoints: IPlanarPoint[];
 }
 
 function classifyAnnotation(
@@ -515,8 +521,10 @@ export async function annotationsTo3D(
 
   // When the volume depth was subsampled, original depth index d maps to the
   // (possibly fractional) voxel position d / depthStride, keeping the
-  // annotation at its true physical depth.
+  // annotation at its true physical depth. All extrusions span one original
+  // slice (half of it on each side of the slice center).
   const depthStride = options.geometry.depthStride ?? 1;
+  const halfSliceThickness = options.geometry.spacing[2] / depthStride / 2;
   items.forEach((item, index) => {
     const originalDepth =
       axis === "z" ? item.annotation.location.Z : item.annotation.location.Time;
@@ -527,11 +535,11 @@ export async function annotationsTo3D(
       return;
     }
 
+    const tag = item.annotation.tags[0] ?? "untagged";
     let scalar = 0;
     if (canUsePropertyScalars) {
       scalar = propertyScalars[index] ?? 0;
     } else if (!neutralPropertyScalars) {
-      const tag = item.annotation.tags[0] ?? "untagged";
       if (!tagToScalar.has(tag)) {
         tagToScalar.set(tag, tagToScalar.size);
       }
@@ -548,11 +556,18 @@ export async function annotationsTo3D(
           originalDepth,
           depthIndex,
           scalar,
-          tag: item.annotation.tags[0] ?? "untagged",
+          tag,
         });
         break;
       case "ribbon":
-        addRibbon(item.planarPoints, depthIndex, scalar, world, surfaceMesh);
+        addRibbon(
+          item.planarPoints,
+          depthIndex,
+          scalar,
+          halfSliceThickness,
+          world,
+          surfaceMesh,
+        );
         break;
       case "sphere": {
         const center = item.planarPoints[0];
@@ -582,15 +597,13 @@ export async function annotationsTo3D(
         )
       ).map((indices) => indices.map((index) => prismEntries[index]))
     : prismEntries.map((entry) => [entry]);
-  // Half the world-z distance between consecutive original slices, so lofted
-  // surfaces span the full thickness of their first and last slices.
-  const halfSliceThickness = options.geometry.spacing[2] / depthStride / 2;
   for (const chain of chains) {
     if (chain.length === 1) {
       addPrism(
         chain[0].polygon,
         chain[0].depthIndex,
         chain[0].scalar,
+        halfSliceThickness,
         world,
         surfaceMesh,
       );
