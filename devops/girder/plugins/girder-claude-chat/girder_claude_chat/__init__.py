@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 # additional call sites in this plugin share a single source of truth.
 CLAUDE_MODEL = 'claude-sonnet-4-6'
 
-# The system prompt lives at the plugin root, one level above this package.
-# Resolve it relative to this module so it also works outside the Docker
-# image (local Girder, the plugin's own tox/pytest suite, etc.).
-SYSTEM_PROMPT_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..', 'system_prompt_2.txt')
+# The system prompt ships as package data alongside this module. Resolving
+# it relative to __file__ works for every install layout -- the Docker image
+# (editable install), a non-editable/packaged install (the plugin's own
+# tox/pytest suite), and a local non-Docker Girder.
+SYSTEM_PROMPT_PATH = os.path.join(
+    os.path.dirname(__file__), 'system_prompt_2.txt'
 )
 
 
