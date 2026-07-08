@@ -203,6 +203,49 @@ describe("createOnnxInferenceSession", () => {
     expect(cachePut).toHaveBeenCalledTimes(1);
   });
 
+  it("serializes InferenceSession.create so the backend only initializes once", async () => {
+    // Two distinct model paths (encoder + decoder) requested concurrently, as
+    // the SAM pipeline does. ORT's backend init is not reentrant, so the second
+    // create() must not start until the first has resolved.
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    let resolveFirstCreate!: (value: unknown) => void;
+    const firstCreate = new Promise((resolve) => {
+      resolveFirstCreate = resolve;
+    });
+    createMock
+      .mockReturnValueOnce(firstCreate)
+      .mockResolvedValueOnce({ fake: "decoder" });
+
+    const { createOnnxInferenceSession } = await importFreshModule();
+    const encoderPromise = createOnnxInferenceSession("/models/encoder.onnx");
+    const decoderPromise = createOnnxInferenceSession("/models/decoder.onnx");
+
+    // Let both downloads settle. Only the first create() should have started;
+    // the second is queued behind it even though its buffer is ready.
+    await flush();
+    expect(createMock).toHaveBeenCalledTimes(1);
+
+    // Finishing the first create() lets the second proceed.
+    resolveFirstCreate({ fake: "encoder" });
+    await expect(encoderPromise).resolves.toEqual({ fake: "encoder" });
+    await expect(decoderPromise).resolves.toEqual({ fake: "decoder" });
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed create does not wedge later session creation", async () => {
+    createMock
+      .mockRejectedValueOnce(new Error("create blew up"))
+      .mockResolvedValueOnce({ fake: "session" });
+
+    const { createOnnxInferenceSession } = await importFreshModule();
+    await expect(
+      createOnnxInferenceSession("/models/encoder.onnx"),
+    ).rejects.toThrow("create blew up");
+    // The chain must recover so the next model still loads.
+    const session = await createOnnxInferenceSession("/models/decoder.onnx");
+    expect(session).toEqual({ fake: "session" });
+  });
+
   it("does not cache failures: a retry after an error attempts a new fetch", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network down"));
     const { createOnnxInferenceSession } = await importFreshModule();

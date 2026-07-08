@@ -110,13 +110,37 @@ export async function warmModelCache(modelPath: string): Promise<void> {
   }
 }
 
+// onnxruntime-web lazily initializes its shared WASM/WebGPU backend on the
+// first InferenceSession.create() call, and that initialization is NOT
+// reentrant: if a second create() begins while the first is still initializing
+// the backend, ORT throws "multiple calls to 'initWasm()' detected." The SAM
+// pipeline creates the encoder and decoder sessions from two independent
+// compute nodes that fire concurrently, so their create() calls race. The
+// window is tiny on localhost (the .mjs/.wasm loaders are served instantly) but
+// wide in production (each is a network fetch), which is why this only surfaced
+// once deployed. Serialize create() so the backend initializes exactly once.
+let sessionCreateChain: Promise<unknown> = Promise.resolve();
+
 export async function createOnnxInferenceSession(
   modelPath: string,
   options?: InferenceSession.SessionOptions,
 ) {
   if (!(modelPath in sessionCache)) {
-    const sessionPromise = fetchModelBuffer(modelPath).then((buffer) =>
-      InferenceSession.create(buffer, options),
+    // Kick off the (slow) model download immediately so concurrent requests
+    // still fetch their models in parallel — only the backend init is gated.
+    const bufferPromise = fetchModelBuffer(modelPath);
+    // Chain the create() step behind any in-flight create so no two run at
+    // once. Once the first has fully initialized the backend, the rest are
+    // safe; serializing them all is the simplest way to guarantee that.
+    const sessionPromise = sessionCreateChain.then(() =>
+      bufferPromise.then((buffer) => InferenceSession.create(buffer, options)),
+    );
+    // Advance the chain regardless of this session's outcome (and without
+    // retaining the session object), so one failed create can't wedge the
+    // rest.
+    sessionCreateChain = sessionPromise.then(
+      () => {},
+      () => {},
     );
     // Don't cache failures: a transient network error would otherwise
     // permanently break the tool until the page is reloaded
