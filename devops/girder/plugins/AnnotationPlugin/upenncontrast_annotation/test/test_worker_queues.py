@@ -50,6 +50,28 @@ def test_missing_label_defaults_to_gpu_and_is_cached():
     assert client.images.get.call_count == 1
 
 
+@pytest.mark.parametrize("label", ["1", "yes"])
+def test_gpu_label_variants_route_to_gpu_queue(label):
+    with mock.patch.object(workerQueues, "_getDockerClient",
+                           return_value=clientWithLabels({"isGPUWorker": label})):
+        assert workerQueues.getQueueForImage("a/b:latest") == workerQueues.GPU_QUEUE
+
+
+@pytest.mark.parametrize("label", ["0", "no"])
+def test_cpu_label_variants_route_to_cpu_queue(label):
+    with mock.patch.object(workerQueues, "_getDockerClient",
+                           return_value=clientWithLabels({"isGPUWorker": label})):
+        assert workerQueues.getQueueForImage("a/b:latest") == workerQueues.CPU_QUEUE
+
+
+def test_garbage_label_defaults_to_gpu_and_is_cached():
+    client = clientWithLabels({"isGPUWorker": "maybe"})
+    with mock.patch.object(workerQueues, "_getDockerClient", return_value=client):
+        assert workerQueues.getQueueForImage("a/b:latest") == workerQueues.GPU_QUEUE
+        assert workerQueues.getQueueForImage("a/b:latest") == workerQueues.GPU_QUEUE
+    assert client.images.get.call_count == 1
+
+
 def test_docker_error_defaults_to_gpu_and_is_not_cached():
     client = mock.Mock()
     client.images.get.side_effect = RuntimeError("daemon unreachable")

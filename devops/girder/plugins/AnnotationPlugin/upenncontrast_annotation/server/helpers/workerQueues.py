@@ -29,7 +29,11 @@ _queueCache = {}
 def _getDockerClient():
     global _dockerClient
     if _dockerClient is None:
-        _dockerClient = docker.from_env()
+        # This lookup sits on Girder's interactive dispatch path (request thread).
+        # The docker SDK's default client timeout is ~60s; a wedged daemon would
+        # stall every uncached dispatch behind that instead of failing fast into
+        # the documented gpu fail-safe. Keep this short.
+        _dockerClient = docker.from_env(timeout=5)
     return _dockerClient
 
 
