@@ -2010,6 +2010,23 @@ const handleLineScanMouseMove = throttle(
   THROTTLE,
 );
 
+// Freehand only: pressing to start a new drag clears the previously completed
+// scan the moment the gesture begins, so the next line starts fresh without
+// first pressing Clear. Segment (point) mode is excluded on purpose — there a
+// left-drag pans the map, so clearing on mousedown would wipe the scan every
+// time the user pans. Segment restarts are cleared on the first click instead
+// (see handleLineScanAnnotationDone). Guarded on isComplete so it never fires
+// while a freehand drag is still in progress.
+function handleLineScanMouseDown() {
+  if (
+    selectedToolConfiguration.value?.type === "linescan" &&
+    !isLineScanSegmentTool.value &&
+    lineScanStore.isComplete
+  ) {
+    lineScanStore.clearLine();
+  }
+}
+
 function handleLineScanAnnotationDone(annotation: IGeoJSAnnotation) {
   const coordinates = annotation.coordinates().map(({ x, y }) => ({ x, y }));
   props.interactionLayer.removeAnnotation(annotation);
@@ -2019,6 +2036,11 @@ function handleLineScanAnnotationDone(annotation: IGeoJSAnnotation) {
       removeLineScanAnnotation();
       lineScanSegmentStart.value = coordinates[0];
       lineScanStore.setSegmentStartPlaced(true);
+      // Placing the first point of a new segment clears any previously
+      // completed scan so its graph doesn't linger. Keep a single-point line
+      // (not null) so the points watcher doesn't reset the segment start we
+      // just set.
+      lineScanStore.setLine({ points: [coordinates[0]], isComplete: false });
     } else {
       updateLineScanLine([lineScanSegmentStart.value, coordinates[0]], true);
       lineScanSegmentStart.value = null;
@@ -2171,6 +2193,7 @@ function clearAnnotationMode() {
     geojs.event.actionmove,
     handleLineScanMouseMove,
   );
+  props.interactionLayer.geoOff(geojs.event.mousedown, handleLineScanMouseDown);
   // Restore the layer option overridden by the freehand linescan mode; the
   // layer is created with its own value (see ImageViewer), so put back what
   // was there rather than the geojs default
@@ -2286,6 +2309,10 @@ function setNewAnnotationMode() {
       props.interactionLayer.geoOn(
         geojs.event.actionmove,
         handleLineScanMouseMove,
+      );
+      props.interactionLayer.geoOn(
+        geojs.event.mousedown,
+        handleLineScanMouseDown,
       );
       break;
     case "samAnnotation":
@@ -3513,6 +3540,7 @@ defineExpose({
   isLineScanSegmentTool,
   updateLineScanLine,
   handleLineScanMouseMove,
+  handleLineScanMouseDown,
   handleLineScanAnnotationDone,
   clearLineScanState,
   editPolygonAnnotation,

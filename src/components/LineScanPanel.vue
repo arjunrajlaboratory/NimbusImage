@@ -12,11 +12,21 @@
       />
       <v-spacer />
       <v-btn
+        v-if="lineScanStore.isActive"
+        variant="text"
+        size="x-small"
+        class="clear-btn"
+        title="Clear the line and graph (keep the tool active)"
+        @click="clear"
+      >
+        Clear
+      </v-btn>
+      <v-btn
         variant="text"
         icon
         size="x-small"
-        title="Dismiss line scan"
-        @click="dismiss"
+        title="Close line scan (deactivate the tool)"
+        @click="deactivate"
       >
         <v-icon size="16">mdi-close</v-icon>
       </v-btn>
@@ -335,8 +345,17 @@ function onChartMouseMove(event: MouseEvent) {
   hoverIndex.value = Math.max(0, Math.min(distances.value.length - 1, index));
 }
 
-function dismiss() {
+// Clear the current line and graph but keep the tool armed, ready to draw
+// again (the "Clear" button).
+function clear() {
   lineScanStore.clearLine();
+}
+
+// Deactivate the linescan tool entirely (the "X" button). Deselecting the
+// tool triggers the AnnotationViewer watcher that tears down the line state
+// and hides this panel.
+function deactivate() {
+  store.setSelectedToolId(null);
 }
 
 async function updateScans() {
@@ -460,6 +479,13 @@ watch(
 .panel-title {
   font-size: 13px;
   font-weight: 500;
+}
+
+.clear-btn {
+  min-width: auto;
+  padding: 0 8px;
+  font-size: 11px;
+  letter-spacing: normal;
 }
 
 .panel-controls {
