@@ -153,8 +153,13 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 <style lang="scss" scoped>
 .progress-container {
   position: absolute;
-  bottom: 50px;
-  left: 20px;
+  // Anchored to the top-center of the image viewer, just under the top
+  // toolbar / mode button group. The app bar (height ~64px) floats over the
+  // top of the viewer, so offset below it. Previously bottom-left, where the
+  // NAVIGATOR / LAYERS / TOOLS panel stack hid these notifications.
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 2000;
   display: flex;
   flex-direction: column;

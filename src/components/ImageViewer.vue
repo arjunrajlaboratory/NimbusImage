@@ -1656,11 +1656,17 @@ defineExpose({
 }
 .sam-status-area {
   position: absolute;
-  top: 4px;
-  left: 160px;
+  // Top-center, below the app bar / mode button group, matching the
+  // notification toasts (ProgressBarGroup). Previously top:4px left:160px,
+  // which tucked the help banner + "Encoding" spinner under the fixed toolbar
+  // (higher z-index) and the left NAVIGATOR / LAYERS / TOOLS panel stack.
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 200;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 4px;
   pointer-events: none;
 }
