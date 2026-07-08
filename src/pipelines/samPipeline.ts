@@ -679,11 +679,14 @@ export function createSamToolStateFromToolConfiguration(
   // Add a callback to update the loading message when computing
   // Do this only for nodes that take a long time to compute
   const { encoderNodes, decoderNodes, previewNodes } = nodes.allNodes;
+  // Prefix every status with "SAM" so users understand these transient
+  // messages belong to the Segment Anything tool (they surface in the
+  // in-viewer overlay and the SAM tool menu).
   const computingMessageMap: [ComputeNode<any, any>, string][] = [
-    [encoderNodes.sessionNode, "Creating encoder"],
-    [encoderNodes.inferenceNode, "Encoding"],
-    [decoderNodes.sessionNode, "Creating decoder"],
-    [previewNodes.sessionNode, "Creating decoder preview"],
+    [encoderNodes.sessionNode, "Creating SAM encoder…"],
+    [encoderNodes.inferenceNode, "SAM encoding…"],
+    [decoderNodes.sessionNode, "Creating SAM decoder…"],
+    [previewNodes.sessionNode, "Creating SAM preview…"],
   ];
   const recomputeLoadingMessage = () => {
     state.loadingMessages = computingMessageMap
