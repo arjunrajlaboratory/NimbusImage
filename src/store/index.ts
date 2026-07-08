@@ -82,7 +82,10 @@ export { default as store } from "./root";
 import { Debounce } from "@/utils/debounce";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
-import { createSamToolStateFromToolConfiguration } from "@/pipelines/samPipeline";
+import {
+  createSamToolStateFromToolConfiguration,
+  warmSamModelCache,
+} from "@/pipelines/samPipeline";
 import { createExampleSegmentationToolStateFromToolConfiguration } from "@/pipelines/exampleSegmentationPipeline";
 import { createSamSimilarityToolStateFromToolConfiguration } from "@/pipelines/samSimilarityPipeline";
 import { isEqual } from "lodash";
@@ -1114,6 +1117,15 @@ export class Main extends VuexModule {
     data: IDatasetConfiguration | null;
   }) {
     this.setConfigurationImpl({ id, data });
+    // Warm the SAM model cache in the background: encoder downloads are
+    // large, this way they are usually cached before a SAM tool is selected
+    const samModels = new Set(
+      (data?.tools ?? [])
+        .filter((tool) => tool.type === "samAnnotation")
+        .map((tool) => tool.values?.model?.value)
+        .filter(Boolean),
+    );
+    samModels.forEach(warmSamModelCache);
     this.context.dispatch("fetchProperties");
   }
 

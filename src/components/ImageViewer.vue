@@ -78,6 +78,7 @@
     />
     <div v-if="samToolActive" class="sam-status-area">
       <div v-if="showSamToolHelpAlert" class="sam-help-banner">
+        <span class="sam-help-label">SAM segmenter:</span>
         <div class="sam-help-text">
           <span><b>Shift + left click</b> positive point</span>
           <span class="sam-help-sep">|</span>
@@ -96,6 +97,7 @@
         </div>
       </div>
     </div>
+    <line-scan-panel />
     <div class="bottom-right-container">
       <v-btn
         v-if="submitPendingAnnotation"
@@ -240,6 +242,7 @@ import {
 import setFrameQuad, { ISetQuadStatus } from "@/utils/setFrameQuad";
 
 import AnnotationViewer from "@/components/AnnotationViewer.vue";
+import LineScanPanel from "@/components/LineScanPanel.vue";
 import ImageOverview from "@/components/ImageOverview.vue";
 import ScaleSettings from "@/components/ScaleSettings.vue";
 import ProgressBarGroup from "@/components/ProgressBarGroup.vue";
@@ -1681,11 +1684,17 @@ defineExpose({
 }
 .sam-status-area {
   position: absolute;
-  top: 4px;
-  left: 160px;
+  // Top-center, below the app bar / mode button group, matching the
+  // notification toasts (ProgressBarGroup). Previously top:4px left:160px,
+  // which tucked the help banner + "Encoding" spinner under the fixed toolbar
+  // (higher z-index) and the left NAVIGATOR / LAYERS / TOOLS panel stack.
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 200;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 4px;
   pointer-events: none;
 }
@@ -1699,6 +1708,12 @@ defineExpose({
   font-size: 12px;
   white-space: nowrap;
   pointer-events: auto;
+}
+.sam-help-label {
+  font-weight: 700;
+  color: rgb(var(--v-theme-primary));
+  margin-right: 10px;
+  white-space: nowrap;
 }
 .sam-help-text {
   display: flex;

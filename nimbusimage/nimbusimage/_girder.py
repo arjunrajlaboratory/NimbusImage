@@ -63,15 +63,17 @@ def create_client(
     api_key: str | None = None,
     username: str | None = None,
     password: str | None = None,
+    anonymous: bool = False,
 ) -> girder_client.GirderClient:
     """Create and authenticate a GirderClient.
 
     Connection modes (tried in order):
-    1. Explicit token
-    2. Explicit API key
-    3. Username + password
-    4. NI_API_KEY environment variable
-    5. NI_TOKEN environment variable
+    1. Anonymous (no authentication; public resources only)
+    2. Explicit token
+    3. Explicit API key
+    4. Username + password
+    5. NI_API_KEY environment variable
+    6. NI_TOKEN environment variable
 
     Args:
         api_url: Girder API URL (e.g., 'http://localhost:8080/api/v1').
@@ -79,6 +81,8 @@ def create_client(
         api_key: Girder API key (persistent, doesn't expire).
         username: Username for interactive auth.
         password: Password for interactive auth.
+        anonymous: Connect without credentials. Only public resources
+            are accessible.
 
     Returns:
         Authenticated GirderClient instance.
@@ -100,7 +104,15 @@ def create_client(
     # every request when it is set.
     gc._session = _build_retry_session()
 
-    if token is not None:
+    if anonymous:
+        if any(
+            credential is not None
+            for credential in (token, api_key, username, password)
+        ):
+            raise ValueError(
+                "anonymous=True cannot be combined with credentials"
+            )
+    elif token is not None:
         gc.setToken(token)
     elif api_key is not None:
         gc.authenticate(apiKey=api_key)

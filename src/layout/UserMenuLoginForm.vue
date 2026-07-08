@@ -33,8 +33,10 @@
     </v-form>
     <template v-else>
       <div class="text-center mb-8">
-        <h2 class="text-h5 font-weight-bold mb-2">Sign up for NimbusImage!</h2>
-        <p class="text-subtitle-1">Create a new account to get started.</p>
+        <h2 class="page-title mb-2">Sign up for NimbusImage!</h2>
+        <p class="text-body-2 text-medium-emphasis">
+          Create a new account to get started.
+        </p>
       </div>
       <v-form @submit.prevent="signUp" class="my-8">
         <v-text-field

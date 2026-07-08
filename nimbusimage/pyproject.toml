@@ -30,7 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 worker = ["large-image"]
-dev = ["pytest", "pytest-mock"]
+dev = ["pytest", "pytest-mock", "tifffile"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
 [project.urls]

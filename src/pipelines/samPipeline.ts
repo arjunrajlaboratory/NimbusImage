@@ -24,6 +24,7 @@ import {
 import {
   createOnnxInferenceSession,
   runOnnxSessionSerialized,
+  warmModelCache,
 } from "./onnxModels";
 import { InferenceSession, Tensor, TypedTensor } from "onnxruntime-web/webgpu";
 import geojs from "geojs";
@@ -113,15 +114,40 @@ export function createEncoderContext(model: TSamModel): ISamEncoderContext {
   };
 }
 
+function getSamModelPaths(model: TSamModel) {
+  const encoderExt = isSam2Model(model) ? "ort" : "onnx";
+  return {
+    encoder: `/onnx-models/sam/${model}/encoder.${encoderExt}`,
+    decoder: `/onnx-models/sam/${model}/decoder.onnx`,
+  };
+}
+
+/**
+ * Start downloading the model files for the given SAM model into the
+ * persistent model cache, without creating inference sessions.
+ * Call when a SAM tool is likely to be used soon: the encoder is large, so
+ * downloading it in the background hides most of the tool's loading time.
+ */
+export function warmSamModelCache(model: TSamModel) {
+  if (!("gpu" in navigator)) {
+    // SAM tools can't run without WebGPU: don't waste bandwidth
+    return;
+  }
+  const { encoder, decoder } = getSamModelPaths(model);
+  warmModelCache(encoder);
+  warmModelCache(decoder);
+}
+
 export function createEncoderSession(
   model: TSamModel,
 ): Promise<InferenceSession> {
-  const ext = isSam2Model(model) ? "ort" : "onnx";
-  const encoderPath = `/onnx-models/sam/${model}/encoder.${ext}`;
   const encoderOptions: InferenceSession.SessionOptions = {
     executionProviders: ["webgpu"],
   };
-  return createOnnxInferenceSession(encoderPath, encoderOptions);
+  return createOnnxInferenceSession(
+    getSamModelPaths(model).encoder,
+    encoderOptions,
+  );
 }
 
 export function createDecoderContext(): ISamDecoderContext {
@@ -140,9 +166,7 @@ export function createDecoderContext(): ISamDecoderContext {
 export function createDecoderSession(
   model: TSamModel,
 ): Promise<InferenceSession> {
-  const decoderPath = `/onnx-models/sam/${model}/decoder.onnx`;
-  const decoderOptions = {};
-  return createOnnxInferenceSession(decoderPath, decoderOptions);
+  return createOnnxInferenceSession(getSamModelPaths(model).decoder, {});
 }
 
 export async function screenshot({ map, imageLayers }: IMapEntry) {
@@ -193,21 +217,31 @@ export function processCanvas(
     scaledHeight = maxHeight; // = srcHeight * scale
   }
 
-  // Draw the input image
-  context.clearRect(0, 0, maxWidth, maxHeight);
+  // Draw the input image. Clear the target region first: the canvas is
+  // reused across screenshots, and transparent screenshot pixels would
+  // otherwise blend (source-over) with the previously drawn image.
+  context.clearRect(0, 0, scaledWidth, scaledHeight);
   context.drawImage(srcCanvas, 0, 0, scaledWidth, scaledHeight);
 
-  // Convert image to normalized float32 buffer
-  const imageData = context.getImageData(0, 0, maxWidth, maxHeight);
+  // Convert image to normalized float32 buffer.
+  // Only the region covered by the image is read back and normalized; the
+  // rest of the buffer stays 0, which matches the reference SAM
+  // preprocessing (normalize first, then pad with zeros).
+  const imageData = context.getImageData(0, 0, scaledWidth, scaledHeight);
   const rgbaBuffer = imageData.data;
   const nPixels = maxWidth * maxHeight;
+  buffer.fill(0);
   for (let channel = 0; channel < 3; ++channel) {
     const channelOffset = channel * nPixels;
     const mean = meanPerChannel[channel];
-    const std = stdPerChannel[channel];
-    for (let iPixel = 0; iPixel < nPixels; ++iPixel) {
-      buffer[channelOffset + iPixel] =
-        (rgbaBuffer[iPixel * 4 + channel] - mean) / std;
+    const stdInverse = 1 / stdPerChannel[channel];
+    for (let y = 0; y < scaledHeight; ++y) {
+      const srcRowOffset = y * scaledWidth;
+      const dstRowOffset = channelOffset + y * maxWidth;
+      for (let x = 0; x < scaledWidth; ++x) {
+        buffer[dstRowOffset + x] =
+          (rgbaBuffer[(srcRowOffset + x) * 4 + channel] - mean) * stdInverse;
+      }
     }
   }
 
@@ -649,11 +683,14 @@ export function createSamToolStateFromToolConfiguration(
   // Add a callback to update the loading message when computing
   // Do this only for nodes that take a long time to compute
   const { encoderNodes, decoderNodes, previewNodes } = nodes.allNodes;
+  // Prefix every status with "SAM" so users understand these transient
+  // messages belong to the Segment Anything tool (they surface in the
+  // in-viewer overlay and the SAM tool menu).
   const computingMessageMap: [ComputeNode<any, any>, string][] = [
-    [encoderNodes.sessionNode, "Creating encoder"],
-    [encoderNodes.inferenceNode, "Encoding"],
-    [decoderNodes.sessionNode, "Creating decoder"],
-    [previewNodes.sessionNode, "Creating decoder preview"],
+    [encoderNodes.sessionNode, "Creating SAM encoder…"],
+    [encoderNodes.inferenceNode, "SAM encoding…"],
+    [decoderNodes.sessionNode, "Creating SAM decoder…"],
+    [previewNodes.sessionNode, "Creating SAM preview…"],
   ];
   const recomputeLoadingMessage = () => {
     state.loadingMessages = computingMessageMap

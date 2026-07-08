@@ -96,6 +96,53 @@ The tool circles freehand example polygons on the image (foreground/background),
 
 A second variant of the same "circle a few examples, find the rest" idea has the type `samSimilarity` (shortName `SimSAM`, template description "Find similar objects (SAM, experimental, Chrome/WebGPU only)"). Instead of a pixel classifier, it reuses the SAM encoder embeddings (`src/pipelines/samPipeline.ts`, exported for this purpose) to build a descriptor per example mask, scores the rest of the embedding grid against it, and prompts the SAM decoder at the resulting similarity peaks (or a uniform grid in "thorough" mode). Its pipeline lives in `src/pipelines/samSimilarityPipeline.ts`, and its normative interfaces are documented in `codebaseDocumentation/EXAMPLE_SEGMENTATION_TOOL.md` §11.
 
+## Example: Line scan tool
+
+The line scan tool is a *measurement* tool: it never creates stored annotations.
+It plots the raw pixel intensities along a line in a panel at the bottom right
+of the viewer, updating live while the line is being drawn. The panel also
+shows the line length in pixels and, when the configuration has a physical
+pixel size (anything other than the 1 m placeholder default), in physical
+units.
+
+### The template
+
+This tool has the type `linescan`. Its submenu is a `select` of id `lineType`
+with two variants:
+- `freehand`: uses the GeoJS `"line"` annotation mode. The interaction layer
+  option `continuousCloseProximity` is set to `true` while this tool is active
+  so that a freehand drag completes as soon as the mouse is released (the GeoJS
+  default requires a double click). Clicking instead of dragging still builds a
+  multi-segment polyline, ended with a double or right click.
+- `segment`: uses the GeoJS `"point"` mode with the same two-click state
+  machine as the click-connect tool: the first click stores the segment start
+  (`lineScanSegmentStart`), mouse moves preview the segment, the second click
+  completes it.
+
+The second interface element (id `layer`) is of type `layerSelect`, a reusable
+interface type that stores an optional layer id (see `OptionalLayerSelect.vue`).
+It lets the user optionally pick a channel when creating the tool; the panel
+then defaults to showing just that channel, with a toggle to show all channels.
+
+### The logic
+
+The tool state is shared through the small `lineScan` store module
+(`src/store/lineScan.ts`): `AnnotationViewer.vue` publishes the line vertices
+(image pixel coordinates) while drawing — a throttled `mousemove` handler reads
+`interactionLayer.currentAnnotation` for the freehand preview — and
+`LineScanPanel.vue` (mounted in `ImageViewer.vue`) watches them, fetches the
+pixel data and renders the graph. Dismissing the panel clears the store, which
+the viewer watches to remove the displayed line.
+
+Intensities are *raw* values, not the styled/contrast-adjusted display: the
+panel fetches the bounding box of the line for each scanned layer's current
+frame through `GirderAPI.getRawRegion` (the large_image
+`/item/{id}/tiles/region` endpoint with `encoding=TIFF&tiffCompression=raw`,
+decoded by `src/utils/tiff.ts`), then bilinearly samples up to 400 points along
+the line (`src/utils/lineScan.ts`). One region request is made per scanned
+layer because every layer displays a different frame. Very large regions are
+downsampled by the server (capped at 2048 px per side).
+
 ## Featured Tools Configuration
 
 The file `public/config/featuredTools.json` configures which tools appear in the "Featured" section at the top of the tool selection dialog.

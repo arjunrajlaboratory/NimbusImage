@@ -53,6 +53,25 @@ Store modules still use `vuex-module-decorators` with `@Module`, `@Mutation`, an
 
 For advanced store patterns (routeMapper, form change detection, caching with batch loading): read `references/store-module-patterns.md`
 
+### Store Edits Break HMR — Hard-Reload
+
+Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.
+
+### Watching Getters That Rebuild Their Return Object
+
+`watch(() => someGetter, cb, { deep: true })` on a getter that returns a **new object on every read** fires on every dependency touch — including dependencies the getter reads but that don't change the output (`deep: true` skips the value comparison entirely). This shipped a real bug: a deep watch on `currentFilters` cleared the selection on every Z-scrub because the getter read `z` unconditionally. tsc/lint/reasoning all passed; only the live app caught it.
+
+```typescript
+// BAD: fires on every dependency touch
+watch(() => annotationListServer.currentFilters, cb, { deep: true });
+
+// GOOD: fires only when content genuinely changes; stringify's traversal
+// still registers the nested reactive deps
+watch(() => JSON.stringify(annotationListServer.currentFilters), cb);
+```
+
+Watch out for stringify cost on large objects.
+
 ## Vuetify 4 Patterns
 
 ### CSS Cascade Layers
@@ -363,6 +382,17 @@ For the full API, recorded fields, the load-order constraint (don't import store
 - Prefer Vuetify components over custom HTML
 - `!important` is rarely needed thanks to CSS Cascade Layers — only use for overriding `@girder/components` or non-Vuetify third-party styles
 - Keep custom colors as SCSS variables at the top of style blocks
+
+## Verification Gates
+
+Before claiming a frontend change done:
+
+1. `pnpm tsc` — type check
+2. `pnpm lint:ci` — zero warnings
+3. `pnpm test` — vitest. **Known artifact:** after a backend `tox` run, ~10 test FILES under `.tox/**` fail ("Failed to resolve import @playwright/test") — vitest's glob picks up girder's bundled specs. These are spurious; only failures outside `.tox/` paths are real. CI is unaffected (clean checkout).
+4. **In-browser verification for anything user-facing** — tsc/lint/vitest green does not mean the UI works (pointer-events, layering, watcher-firing, and store-corruption bugs all passed every static gate). See the in-browser-testing skill; remember to hard-reload after store edits.
+
+Component-level test patterns (AnnotationViewer harness, GeoJS mocks): see the nimbus-geojs skill and `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`.
 
 ## Codebase Documentation References
 
