@@ -73,6 +73,42 @@
       >
         <v-icon size="20">mdi-vector-polygon</v-icon>
       </v-btn>
+      <div
+        v-if="showSegmentations"
+        class="segmentation-opacity"
+        title="Segmentation opacity"
+      >
+        <v-icon size="16">mdi-opacity</v-icon>
+        <v-slider
+          v-model="segmentationOpacity"
+          :min="0.05"
+          :max="1"
+          :step="0.05"
+          density="compact"
+          hide-details
+        />
+      </div>
+      <v-btn
+        v-if="showSegmentations"
+        variant="text"
+        size="small"
+        icon
+        :color="loftSurfaces ? 'primary' : undefined"
+        title="Loft stacked annotations into smooth surfaces"
+        @click="loftSurfaces = !loftSurfaces"
+      >
+        <v-icon size="20">mdi-vector-curve</v-icon>
+      </v-btn>
+      <v-btn
+        v-if="showSegmentations && loftSurfaces"
+        variant="text"
+        size="small"
+        icon
+        title="Loft overlap threshold"
+        @click="loftDialog = true"
+      >
+        <v-icon size="20">mdi-tune-variant</v-icon>
+      </v-btn>
       <v-btn
         variant="text"
         size="small"
@@ -144,6 +180,40 @@
       <span>{{ statusText }}</span>
     </div>
 
+    <v-dialog v-model="loftDialog" max-width="420px">
+      <v-card>
+        <v-card-title>Loft overlap threshold</v-card-title>
+        <v-card-text>
+          <v-slider
+            v-model="loftThresholdDraft"
+            :min="0"
+            :max="95"
+            :step="5"
+            density="comfortable"
+            hide-details
+            @end="loftOverlapPercent = $event"
+          >
+            <template v-slot:append>
+              <span class="loft-threshold-value">
+                {{ loftThresholdDraft }}%
+              </span>
+            </template>
+          </v-slider>
+          <div class="loft-hint">
+            Annotations with the same tag on adjacent slices are joined into one
+            surface when their xy overlap is at least this fraction of the
+            smaller annotation. 0% joins on any overlap.
+          </div>
+        </v-card-text>
+        <v-card-actions class="button-bar">
+          <v-spacer />
+          <v-btn variant="text" size="small" @click="loftDialog = false">
+            Close
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="timeSpacingDialog" max-width="360px">
       <v-card>
         <v-card-title>Time depth spacing</v-card-title>
@@ -189,9 +259,15 @@
 <script setup lang="ts">
 import "@kitware/vtk.js/Rendering/Profiles/Geometry";
 import "@kitware/vtk.js/Rendering/Profiles/Volume";
+// Registers the OpenGL implementation of vtkSphereMapper (point spheres).
+import "@kitware/vtk.js/Rendering/Profiles/Molecule";
+import vtkPolyDataNormals from "@kitware/vtk.js/Filters/Core/PolyDataNormals";
 import vtkActor, {
   vtkActor as VtkActor,
 } from "@kitware/vtk.js/Rendering/Core/Actor";
+import vtkSphereMapper, {
+  vtkSphereMapper as VtkSphereMapper,
+} from "@kitware/vtk.js/Rendering/Core/SphereMapper";
 import vtkAxesActor from "@kitware/vtk.js/Rendering/Core/AxesActor";
 import vtkCubeAxesActor from "@kitware/vtk.js/Rendering/Core/CubeAxesActor";
 import vtkOrientationMarkerWidget, {
@@ -233,7 +309,10 @@ import {
   VolumeGeometry,
   defaultTimeStepUm as computeDefaultTimeStepUm,
 } from "@/store/VolumeAPI";
-import { annotationsTo3D } from "@/utils/annotationsTo3D";
+import {
+  IAnnotationsTo3DResult,
+  annotationsTo3D,
+} from "@/utils/annotationsTo3D";
 import { convertLength } from "@/utils/conversion";
 import { layerToVolumeTransferFunction } from "@/utils/layerToVolumeTransferFunction";
 import { logError } from "@/utils/log";
@@ -259,15 +338,19 @@ const volumeSource = new TileFrameVolumeSource(store.girderRestProxy, {
   getLayerHistogram: (images) => store.api.getLayerHistogram(images),
 });
 
-const SEGMENTATION_OPACITY = 0.55;
+interface ISegmentationPipeline {
+  actor: VtkActor;
+  mapper: VtkMapper | VtkSphereMapper;
+}
 
 let genericRenderWindow: VtkGenericRenderWindow | null = null;
 let orientationWidget: VtkOrientationMarkerWidget | null = null;
 let axesActor: ReturnType<typeof vtkAxesActor.newInstance> | null = null;
 let cubeAxesActor: VtkCubeAxesActor | null = null;
 let volumePipelines: IVolumePipeline[] = [];
-let segmentationActor: VtkActor | null = null;
-let segmentationMapper: VtkMapper | null = null;
+// Annotation rendering: one actor for extruded surfaces, one for point
+// spheres (only the ones with geometry are created).
+let segmentationPipelines: ISegmentationPipeline[] = [];
 let activeGeometry: VolumeGeometry | null = null;
 let activeAbortController: AbortController | null = null;
 let buildSerial = 0;
@@ -319,6 +402,32 @@ const showBoundingBox = computed({
 const segmentationColorMode = computed<TVolumeSegmentationColorMode>({
   get: () => volumeViewStore.segmentationColorMode,
   set: (value) => volumeViewStore.setSegmentationColorMode(value),
+});
+
+const segmentationOpacity = computed({
+  get: () => volumeViewStore.segmentationOpacity,
+  set: (value: number) => volumeViewStore.setSegmentationOpacity(value),
+});
+
+const loftSurfaces = computed({
+  get: () => volumeViewStore.loftSurfaces,
+  set: (value: boolean) => volumeViewStore.setLoftSurfaces(value),
+});
+
+const loftOverlapPercent = computed({
+  get: () => volumeViewStore.loftOverlapPercent,
+  set: (value: number) => volumeViewStore.setLoftOverlapPercent(value),
+});
+
+const loftDialog = ref(false);
+// Shown while dragging the threshold slider; committed to the store (which
+// queues a chain-matching job in the worker) only on release, so a drag
+// doesn't pile up one job per step.
+const loftThresholdDraft = ref(0);
+watch(loftDialog, (open) => {
+  if (open) {
+    loftThresholdDraft.value = loftOverlapPercent.value;
+  }
 });
 
 function propertyKey(path: string[]) {
@@ -449,15 +558,14 @@ function applyTransferFunction(pipeline: IVolumePipeline) {
   property.setShade(false);
 }
 
-function clearSegmentationActor() {
+function clearSegmentationActors() {
   const currentRenderer = renderer();
-  if (currentRenderer && segmentationActor) {
-    currentRenderer.removeActor(segmentationActor);
+  for (const pipeline of segmentationPipelines) {
+    currentRenderer?.removeActor(pipeline.actor);
+    pipeline.actor.delete();
+    pipeline.mapper.delete();
   }
-  segmentationActor?.delete();
-  segmentationMapper?.delete();
-  segmentationActor = null;
-  segmentationMapper = null;
+  segmentationPipelines = [];
 }
 
 function clearVolumeActors() {
@@ -546,7 +654,7 @@ async function rebuildVolume() {
   const serial = ++buildSerial;
   loading.value = true;
   statusText.value = "Building 3D";
-  clearSegmentationActor();
+  clearSegmentationActors();
   clearVolumeActors();
 
   if (visibleLayerStackImages.value.length === 0) {
@@ -574,7 +682,7 @@ async function rebuildVolume() {
     }
     volumes.forEach(addChannelVolume);
     activeGeometry = volumes[0]?.geometry ?? null;
-    updateSegmentationActor();
+    updateSegmentationActors();
     updateBoundingBox();
     // Reframe only when the volume geometry fundamentally changes (dataset or
     // depth axis); contrast / channel-visibility rebuilds keep the camera.
@@ -599,50 +707,106 @@ async function rebuildVolume() {
   }
 }
 
-function updateSegmentationActor() {
+function addSegmentationActor(mapper: VtkMapper | VtkSphereMapper) {
   const currentRenderer = renderer();
-  if (!currentRenderer || !activeGeometry) {
-    clearSegmentationActor();
-    render();
+  if (!currentRenderer) {
     return;
   }
-
-  clearSegmentationActor();
-  if (!showSegmentations.value) {
-    render();
-    return;
-  }
-
-  const result = annotationsTo3D({
-    annotations: filterStore.filteredAnnotations,
-    geometry: activeGeometry,
-    currentXY: store.xy,
-    currentTime: store.time,
-    currentZ: store.z,
-    axis: axisMode.value,
-    colorMode: segmentationColorMode.value,
-    propertyPath: volumeViewStore.segmentationPropertyPath,
-    propertyValues: propertyStore.propertyValues,
-  });
-  if (result.polyData.getNumberOfCells() === 0) {
-    render();
-    return;
-  }
-
-  segmentationMapper = vtkMapper.newInstance({ scalarVisibility: true });
-  segmentationMapper.setInputData(result.polyData);
-  segmentationMapper.setScalarModeToUseCellData();
-  segmentationMapper.setColorModeToMapScalars();
-  segmentationMapper.setLookupTable(result.lookupTable);
-  segmentationMapper.setScalarRange(result.scalarRange);
-
-  segmentationActor = vtkActor.newInstance();
-  segmentationActor.setMapper(segmentationMapper);
-  segmentationActor.getProperty().setOpacity(SEGMENTATION_OPACITY);
+  const actor = vtkActor.newInstance();
+  actor.setMapper(mapper);
+  const property = actor.getProperty();
+  property.setOpacity(segmentationOpacity.value);
   // Backface culling off: earcut cap triangulation has arbitrary winding, and
-  // the translucent prisms should render both faces.
-  segmentationActor.getProperty().setBackfaceCulling(false);
-  currentRenderer.addActor(segmentationActor);
+  // the translucent prisms/ribbons should render both faces.
+  property.setBackfaceCulling(false);
+  // Lit, slightly specular shading so annotations read as surfaces.
+  property.setInterpolationToPhong();
+  property.setAmbient(0.3);
+  property.setDiffuse(0.7);
+  property.setSpecular(0.15);
+  property.setSpecularPower(16);
+  segmentationPipelines.push(markRaw({ actor, mapper }));
+  currentRenderer.addActor(actor);
+}
+
+// Bumped on every segmentation update; results of superseded async builds
+// are discarded instead of being applied out of order.
+let segmentationSerial = 0;
+
+async function updateSegmentationActors() {
+  const serial = ++segmentationSerial;
+  if (!renderer() || !activeGeometry || !showSegmentations.value) {
+    clearSegmentationActors();
+    render();
+    return;
+  }
+
+  // Async: the loft chain matching runs in a web worker. The previous actors
+  // stay on screen until the replacement is ready. Callers don't await this
+  // function, so failures are logged here instead of rejecting.
+  let result: IAnnotationsTo3DResult;
+  try {
+    result = await annotationsTo3D({
+      annotations: filterStore.filteredAnnotations,
+      geometry: activeGeometry,
+      currentXY: store.xy,
+      currentTime: store.time,
+      currentZ: store.z,
+      axis: axisMode.value,
+      colorMode: segmentationColorMode.value,
+      propertyPath: volumeViewStore.segmentationPropertyPath,
+      propertyValues: propertyStore.propertyValues,
+      loftSurfaces: loftSurfaces.value,
+      loftOverlapFraction: loftOverlapPercent.value / 100,
+    });
+  } catch (error) {
+    logError(error);
+    return;
+  }
+  // Superseded, torn down, or hidden while the build was in flight
+  // (applyVisibility only toggles actors that already exist).
+  if (
+    serial !== segmentationSerial ||
+    !renderer() ||
+    !activeGeometry ||
+    !showSegmentations.value
+  ) {
+    return;
+  }
+  clearSegmentationActors();
+
+  if (result.surfacePolyData.getNumberOfCells() > 0) {
+    // Smooth point normals make the extruded prisms shade like rounded
+    // surfaces instead of flat unlit slabs.
+    const normalsFilter = vtkPolyDataNormals.newInstance();
+    normalsFilter.setInputData(result.surfacePolyData);
+    const mapper = vtkMapper.newInstance({ scalarVisibility: true });
+    mapper.setInputData(normalsFilter.getOutputData());
+    mapper.setScalarModeToUseCellData();
+    mapper.setColorModeToMapScalars();
+    mapper.setLookupTable(result.lookupTable);
+    mapper.setScalarRange(result.scalarRange);
+    addSegmentationActor(mapper);
+  }
+
+  if (result.pointsPolyData.getNumberOfPoints() > 0) {
+    // Point annotations render as small shaded spheres.
+    const mapper = vtkSphereMapper.newInstance();
+    mapper.setInputData(result.pointsPolyData);
+    mapper.setRadius(result.pointRadius);
+    mapper.setScalarModeToUsePointData();
+    mapper.setColorModeToMapScalars();
+    mapper.setLookupTable(result.lookupTable);
+    mapper.setScalarRange(result.scalarRange);
+    addSegmentationActor(mapper);
+  }
+  render();
+}
+
+function applySegmentationOpacity() {
+  segmentationPipelines.forEach((pipeline) =>
+    pipeline.actor.getProperty().setOpacity(segmentationOpacity.value),
+  );
   render();
 }
 
@@ -650,11 +814,11 @@ function applyVisibility() {
   volumePipelines.forEach((pipeline) =>
     pipeline.actor.setVisibility(showVolume.value),
   );
-  if (segmentationActor) {
-    segmentationActor.setVisibility(showSegmentations.value);
-  }
-  if (showSegmentations.value && !segmentationActor) {
-    updateSegmentationActor();
+  segmentationPipelines.forEach((pipeline) =>
+    pipeline.actor.setVisibility(showSegmentations.value),
+  );
+  if (showSegmentations.value && segmentationPipelines.length === 0) {
+    updateSegmentationActors();
   }
   render();
 }
@@ -722,7 +886,7 @@ onBeforeUnmount(() => {
   activeAbortController?.abort();
   resizeObserver?.disconnect();
   resizeObserver = null;
-  clearSegmentationActor();
+  clearSegmentationActors();
   clearVolumeActors();
   orientationWidget?.setEnabled(false);
   orientationWidget?.delete();
@@ -755,6 +919,8 @@ watch(showAxes, (value) => {
 });
 watch(showBoundingBox, updateBoundingBox);
 watch(colorKey, applyLayerColors);
+// Opacity only touches actor properties; the geometry is left alone.
+watch(segmentationOpacity, applySegmentationOpacity);
 // Segmentation-only inputs (these don't change the volume, so they don't go
 // through rebuildVolume). Navigation / axis changes update segmentations via
 // the rebuild instead.
@@ -764,9 +930,11 @@ watch(
     segmentationColorMode,
     selectedPropertyKey,
     () => propertyStore.propertyValues,
+    loftSurfaces,
+    loftOverlapPercent,
   ],
   () => {
-    updateSegmentationActor();
+    updateSegmentationActors();
   },
 );
 
@@ -778,11 +946,14 @@ defineExpose({
   showVolume,
   showSegmentations,
   segmentationColorMode,
+  segmentationOpacity,
+  loftSurfaces,
+  loftOverlapPercent,
   selectedPropertyKey,
   propertyItems,
   rebuildVolume,
   resetCamera,
-  updateSegmentationActor,
+  updateSegmentationActors,
   get genericRenderWindow() {
     return genericRenderWindow;
   },
@@ -831,10 +1002,30 @@ $gizmo-clearance: 130px;
   width: min(260px, 35vw);
 }
 
-.time-spacing-hint {
+.segmentation-opacity {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 110px;
+  padding: 0 4px;
+
+  .v-slider {
+    flex: 1;
+    margin-inline: 0;
+  }
+}
+
+.time-spacing-hint,
+.loft-hint {
   margin-top: 8px;
   font-size: 12px;
   opacity: 0.7;
+}
+
+.loft-threshold-value {
+  min-width: 40px;
+  text-align: right;
+  font-size: 13px;
 }
 
 .volume-status {

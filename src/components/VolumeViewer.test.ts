@@ -29,14 +29,27 @@ const h = vi.hoisted(() => {
     setEnabled: vi.fn(),
     delete: vi.fn(),
   };
-  const property = () => ({
-    setRGBTransferFunction: vi.fn(),
-    setScalarOpacity: vi.fn(),
-    setInterpolationTypeToLinear: vi.fn(),
-    setShade: vi.fn(),
-    setOpacity: vi.fn(),
-    setBackfaceCulling: vi.fn(),
-  });
+  // Every property created by an actor mock is recorded so tests can assert
+  // on e.g. opacity changes across all segmentation actors.
+  const properties: any[] = [];
+  const property = () => {
+    const instance = {
+      setRGBTransferFunction: vi.fn(),
+      setScalarOpacity: vi.fn(),
+      setInterpolationTypeToLinear: vi.fn(),
+      setInterpolationToPhong: vi.fn(),
+      setShade: vi.fn(),
+      setOpacity: vi.fn(),
+      setBackfaceCulling: vi.fn(),
+      setAmbient: vi.fn(),
+      setDiffuse: vi.fn(),
+      setSpecular: vi.fn(),
+      setSpecularPower: vi.fn(),
+    };
+    properties.push(instance);
+    return instance;
+  };
+  const sphereMappers: any[] = [];
   return {
     buildVolume: vi.fn(),
     annotationsTo3D: vi.fn(),
@@ -44,6 +57,8 @@ const h = vi.hoisted(() => {
     orientationWidget,
     cubeAxes,
     property,
+    properties,
+    sphereMappers,
   };
 });
 
@@ -83,14 +98,45 @@ vi.mock("@kitware/vtk.js/Rendering/Core/VolumeMapper", () => ({
     })),
   },
 }));
+vi.mock("@kitware/vtk.js/Rendering/Profiles/Molecule", () => ({}));
 vi.mock("@kitware/vtk.js/Rendering/Core/Actor", () => ({
   default: {
+    newInstance: vi.fn(() => {
+      // One stable property per actor, like the real vtkActor.
+      const property = h.property();
+      return {
+        setMapper: vi.fn(),
+        setVisibility: vi.fn(),
+        getProperty: vi.fn(() => property),
+        delete: vi.fn(),
+      };
+    }),
+  },
+}));
+vi.mock("@kitware/vtk.js/Filters/Core/PolyDataNormals", () => ({
+  default: {
     newInstance: vi.fn(() => ({
-      setMapper: vi.fn(),
-      setVisibility: vi.fn(),
-      getProperty: vi.fn(() => h.property()),
+      setInputData: vi.fn(),
+      getOutputData: vi.fn(() => ({})),
       delete: vi.fn(),
     })),
+  },
+}));
+vi.mock("@kitware/vtk.js/Rendering/Core/SphereMapper", () => ({
+  default: {
+    newInstance: vi.fn(() => {
+      const instance = {
+        setInputData: vi.fn(),
+        setRadius: vi.fn(),
+        setScalarModeToUsePointData: vi.fn(),
+        setColorModeToMapScalars: vi.fn(),
+        setLookupTable: vi.fn(),
+        setScalarRange: vi.fn(),
+        delete: vi.fn(),
+      };
+      h.sphereMappers.push(instance);
+      return instance;
+    }),
   },
 }));
 vi.mock("@kitware/vtk.js/Rendering/Core/Mapper", () => ({
@@ -168,6 +214,9 @@ vi.mock("@/store/volumeView", () => {
     showBoundingBox: false,
     segmentationColorMode: "tag",
     segmentationPropertyPath: [] as string[],
+    segmentationOpacity: 0.55,
+    loftSurfaces: true,
+    loftOverlapPercent: 0,
     timeStepUmOverride: null as number | null,
     setViewMode: (v: string) => (state.viewMode = v),
     setAxis: (v: string) => (state.axis = v),
@@ -179,6 +228,9 @@ vi.mock("@/store/volumeView", () => {
     setSegmentationColorMode: (v: string) => (state.segmentationColorMode = v),
     setSegmentationPropertyPath: (v: string[]) =>
       (state.segmentationPropertyPath = v),
+    setSegmentationOpacity: (v: number) => (state.segmentationOpacity = v),
+    setLoftSurfaces: (v: boolean) => (state.loftSurfaces = v),
+    setLoftOverlapPercent: (v: number) => (state.loftOverlapPercent = v),
     setTimeStepUmOverride: (v: number | null) => (state.timeStepUmOverride = v),
   });
   return { default: state };
@@ -200,6 +252,7 @@ vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));
 
 import volumeViewStore from "@/store/volumeView";
 import propertyStore from "@/store/properties";
+import filterStore from "@/store/filters";
 import VolumeViewer from "./VolumeViewer.vue";
 
 const fakeVolume = {
@@ -217,10 +270,12 @@ const fakeVolume = {
 
 function segResult() {
   return {
-    polyData: { getNumberOfCells: () => 1 },
+    surfacePolyData: { getNumberOfCells: () => 1 },
+    pointsPolyData: { getNumberOfPoints: () => 1 },
+    pointRadius: 2,
     lookupTable: {},
     scalarRange: [0, 1],
-    usedCount: 1,
+    usedCount: 2,
     skippedByShape: {},
   };
 }
@@ -256,6 +311,11 @@ beforeEach(() => {
   volumeViewStore.setShowBoundingBox(false);
   volumeViewStore.setShowSegmentations(true);
   volumeViewStore.setSegmentationColorMode("tag");
+  volumeViewStore.setSegmentationOpacity(0.55);
+  volumeViewStore.setLoftSurfaces(true);
+  volumeViewStore.setLoftOverlapPercent(0);
+  h.properties.length = 0;
+  h.sphereMappers.length = 0;
   h.cubeAxes.setVisibility.mockClear();
   h.buildVolume.mockReset().mockResolvedValue([fakeVolume]);
   h.annotationsTo3D.mockReset().mockImplementation(segResult);
@@ -343,5 +403,66 @@ describe("VolumeViewer", () => {
     expect((wrapper.vm as any).blendMode).toBe("composite");
     (wrapper.vm as any).blendMode = "mip";
     expect(volumeViewStore.blendMode).toBe("mip");
+  });
+
+  it("passes loft settings through and rebuilds segmentations on change", async () => {
+    await mountReady();
+    expect(h.annotationsTo3D.mock.calls[0][0]).toMatchObject({
+      loftSurfaces: true,
+      loftOverlapFraction: 0,
+    });
+    h.annotationsTo3D.mockClear();
+    h.buildVolume.mockClear();
+
+    volumeViewStore.setLoftOverlapPercent(50);
+    await nextTick();
+
+    expect(h.annotationsTo3D).toHaveBeenCalledTimes(1);
+    expect(h.annotationsTo3D.mock.calls[0][0]).toMatchObject({
+      loftOverlapFraction: 0.5,
+    });
+    expect(h.buildVolume).not.toHaveBeenCalled();
+  });
+
+  it("discards a segmentation build that finishes after segmentations were hidden", async () => {
+    await mountReady();
+    // Make the next build hang until we resolve it, like a slow worker job.
+    let resolveBuild!: (value: ReturnType<typeof segResult>) => void;
+    h.annotationsTo3D.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveBuild = resolve)),
+    );
+    (filterStore as any).filteredAnnotations = [{ id: "new" }];
+    await nextTick();
+
+    volumeViewStore.setShowSegmentations(false);
+    await nextTick();
+    h.renderer.addActor.mockClear();
+
+    resolveBuild(segResult());
+    await flushPromises();
+
+    expect(h.renderer.addActor).not.toHaveBeenCalled();
+  });
+
+  it("renders point annotations with a sphere mapper at the suggested radius", async () => {
+    await mountReady();
+    expect(h.sphereMappers).toHaveLength(1);
+    expect(h.sphereMappers[0].setRadius).toHaveBeenCalledWith(2);
+  });
+
+  it("applies opacity changes to actors without rebuilding anything", async () => {
+    await mountReady();
+    h.annotationsTo3D.mockClear();
+    h.buildVolume.mockClear();
+
+    volumeViewStore.setSegmentationOpacity(0.8);
+    await nextTick();
+
+    const opacityCalls = h.properties.flatMap((property) =>
+      property.setOpacity.mock.calls.map((call: number[]) => call[0]),
+    );
+    expect(opacityCalls).toContain(0.8);
+    expect(h.annotationsTo3D).not.toHaveBeenCalled();
+    expect(h.buildVolume).not.toHaveBeenCalled();
   });
 });
