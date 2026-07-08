@@ -20,17 +20,28 @@ async function importFreshModule() {
 
 function makeResponse(
   body: ArrayBuffer,
-  { ok = true, status = 200, statusText = "OK" } = {},
+  { ok = true, status = 200, statusText = "OK", contentType = "" } = {},
 ) {
   return {
     ok,
     status,
     statusText,
+    headers: {
+      get: (name: string) =>
+        name.toLowerCase() === "content-type" ? contentType : null,
+    },
     arrayBuffer: () => Promise.resolve(body),
     clone() {
-      return makeResponse(body, { ok, status, statusText });
+      return makeResponse(body, { ok, status, statusText, contentType });
     },
   };
+}
+
+// The 920-byte index.html the Vite dev server returns (at HTTP 200) for a
+// missing model path: begins with "<!DOCTYPE html".
+function makeHtmlShellResponse({ contentType = "text/html" } = {}) {
+  const html = new TextEncoder().encode("<!DOCTYPE html><html></html>");
+  return makeResponse(html.buffer, { contentType });
 }
 
 describe("createOnnxInferenceSession", () => {
@@ -38,6 +49,7 @@ describe("createOnnxInferenceSession", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let cacheMatch: ReturnType<typeof vi.fn>;
   let cachePut: ReturnType<typeof vi.fn>;
+  let cacheDelete: ReturnType<typeof vi.fn>;
   let cachesOpen: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -46,9 +58,12 @@ describe("createOnnxInferenceSession", () => {
     fetchMock = vi.fn().mockResolvedValue(makeResponse(modelBuffer));
     cacheMatch = vi.fn().mockResolvedValue(undefined);
     cachePut = vi.fn().mockResolvedValue(undefined);
-    cachesOpen = vi
-      .fn()
-      .mockResolvedValue({ match: cacheMatch, put: cachePut });
+    cacheDelete = vi.fn().mockResolvedValue(true);
+    cachesOpen = vi.fn().mockResolvedValue({
+      match: cacheMatch,
+      put: cachePut,
+      delete: cacheDelete,
+    });
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("caches", { open: cachesOpen });
   });
@@ -138,6 +153,54 @@ describe("createOnnxInferenceSession", () => {
     await expect(
       warmModelCache("/models/encoder.onnx"),
     ).resolves.toBeUndefined();
+  });
+
+  it("rejects and does not cache when the server returns the HTML app shell at 200", async () => {
+    // Vite answers a missing /onnx-models/... path with index.html at HTTP 200.
+    fetchMock.mockResolvedValue(makeHtmlShellResponse());
+    const { createOnnxInferenceSession } = await importFreshModule();
+    await expect(
+      createOnnxInferenceSession("/models/encoder.onnx"),
+    ).rejects.toThrow(/HTML app shell/);
+    expect(cachePut).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an HTML shell served with an empty content-type (byte sniff)", async () => {
+    fetchMock.mockResolvedValue(makeHtmlShellResponse({ contentType: "" }));
+    const { createOnnxInferenceSession } = await importFreshModule();
+    await expect(
+      createOnnxInferenceSession("/models/encoder.onnx"),
+    ).rejects.toThrow(/HTML app shell/);
+    expect(cachePut).not.toHaveBeenCalled();
+  });
+
+  it("self-heals a poisoned cache entry: drops the cached HTML and re-fetches", async () => {
+    cacheMatch.mockResolvedValue(makeHtmlShellResponse());
+    fetchMock.mockResolvedValue(makeResponse(modelBuffer));
+    const { createOnnxInferenceSession } = await importFreshModule();
+    const session = await createOnnxInferenceSession("/models/encoder.onnx");
+    expect(session).toEqual({ fake: "session" });
+    expect(cacheDelete).toHaveBeenCalledWith("/models/encoder.onnx");
+    expect(fetchMock).toHaveBeenCalledWith("/models/encoder.onnx");
+    expect(createMock).toHaveBeenCalledWith(modelBuffer, undefined);
+  });
+
+  it("warmModelCache does not store the HTML app shell", async () => {
+    fetchMock.mockResolvedValue(makeHtmlShellResponse());
+    const { warmModelCache } = await importFreshModule();
+    await warmModelCache("/models/encoder.onnx");
+    expect(cachePut).not.toHaveBeenCalled();
+  });
+
+  it("warmModelCache drops a poisoned cache entry and re-warms", async () => {
+    cacheMatch.mockResolvedValue(makeHtmlShellResponse());
+    fetchMock.mockResolvedValue(makeResponse(modelBuffer));
+    const { warmModelCache } = await importFreshModule();
+    await warmModelCache("/models/encoder.onnx");
+    expect(cacheDelete).toHaveBeenCalledWith("/models/encoder.onnx");
+    expect(fetchMock).toHaveBeenCalledWith("/models/encoder.onnx");
+    expect(cachePut).toHaveBeenCalledTimes(1);
   });
 
   it("does not cache failures: a retry after an error attempts a new fetch", async () => {

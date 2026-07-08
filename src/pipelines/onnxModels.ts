@@ -16,13 +16,45 @@ const MODEL_CACHE_NAME = "onnx-model-cache-v1";
 
 const sessionCache: Record<string, Promise<InferenceSession>> = {};
 
+// The Vite dev server — and some production SPA setups — answer a request for a
+// missing static file with the index.html app shell at HTTP 200 rather than a
+// 404. A bare `response.ok` check treats that HTML page as the model; once it
+// lands in the persistent cache the SAM tool is permanently broken (ONNX
+// Runtime reports "Failed to load model because protobuf parsing failed",
+// INVALID_PROTOBUF) until the cache is cleared. Detect the HTML shell so we
+// neither cache it nor feed it to InferenceSession.create.
+function isHtmlAppShell(
+  contentType: string | null,
+  buffer?: ArrayBuffer,
+): boolean {
+  if (contentType && contentType.toLowerCase().includes("text/html")) {
+    return true;
+  }
+  // Content-type is unreliable (the dev server serves the real models with an
+  // empty content-type), so also sniff the first byte when we have the body:
+  // an HTML document starts with "<" (0x3c); ONNX (protobuf) and ORT
+  // (flatbuffer) model files never do.
+  if (buffer && buffer.byteLength > 0) {
+    return new Uint8Array(buffer, 0, 1)[0] === 0x3c;
+  }
+  return false;
+}
+
 async function fetchModelBuffer(modelPath: string): Promise<ArrayBuffer> {
   let cache: Cache | null = null;
   try {
     cache = await caches.open(MODEL_CACHE_NAME);
     const cachedResponse = await cache.match(modelPath);
     if (cachedResponse) {
-      return await cachedResponse.arrayBuffer();
+      // Only trust the cheap content-type check here: re-reading the body of a
+      // hundreds-of-MB cached model just to sniff bytes would defeat the point
+      // of caching. A poisoned entry (the HTML shell) is always text/html.
+      if (!isHtmlAppShell(cachedResponse.headers.get("content-type"))) {
+        return await cachedResponse.arrayBuffer();
+      }
+      // Self-heal: drop a previously poisoned entry (cached before the model
+      // file existed) and re-fetch below instead of serving the shell forever.
+      await cache.delete(modelPath);
     }
   } catch {
     // Cache API unavailable (insecure context, storage restrictions...):
@@ -34,14 +66,23 @@ async function fetchModelBuffer(modelPath: string): Promise<ArrayBuffer> {
       `Failed to fetch ONNX model ${modelPath}: ${response.status} ${response.statusText}`,
     );
   }
-  if (cache) {
+  // Clone for the cache before consuming the body for validation/return.
+  const responseForCache = cache ? response.clone() : null;
+  const buffer = await response.arrayBuffer();
+  if (isHtmlAppShell(response.headers.get("content-type"), buffer)) {
+    throw new Error(
+      `ONNX model ${modelPath} was served as the HTML app shell instead of a ` +
+        `model file — is the model present at that path? Refusing to cache it.`,
+    );
+  }
+  if (cache && responseForCache) {
     try {
-      await cache.put(modelPath, response.clone());
+      await cache.put(modelPath, responseForCache);
     } catch {
       // Quota exceeded or similar: still return the fetched buffer
     }
   }
-  return await response.arrayBuffer();
+  return buffer;
 }
 
 /**
@@ -52,11 +93,16 @@ async function fetchModelBuffer(modelPath: string): Promise<ArrayBuffer> {
 export async function warmModelCache(modelPath: string): Promise<void> {
   try {
     const cache = await caches.open(MODEL_CACHE_NAME);
-    if (await cache.match(modelPath)) {
-      return;
+    const existing = await cache.match(modelPath);
+    if (existing) {
+      if (!isHtmlAppShell(existing.headers.get("content-type"))) {
+        return;
+      }
+      // Drop a poisoned entry so the fetch below can re-populate it.
+      await cache.delete(modelPath);
     }
     const response = await fetch(modelPath);
-    if (response.ok) {
+    if (response.ok && !isHtmlAppShell(response.headers.get("content-type"))) {
       await cache.put(modelPath, response);
     }
   } catch {
