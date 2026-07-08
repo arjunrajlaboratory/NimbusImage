@@ -45,6 +45,7 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import filterStore from "@/store/filters";
+import lineScanStore from "@/store/lineScan";
 
 import geojs from "geojs";
 import { snapCoordinates } from "@/utils/itk";
@@ -219,6 +220,14 @@ const samPromptAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
 const samUnsubmittedAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const samLivePreviewAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+// Line displayed on the interaction layer for the linescan tool (segment
+// preview and completed scans)
+const lineScanAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+// First click of a segment linescan, waiting for the second click
+const lineScanSegmentStart = ref<IGeoJSPosition | null>(null);
+// Interaction layer option value to restore when the freehand linescan tool
+// releases its continuousCloseProximity override (null = no override active)
+const lineScanSavedCloseProximity = ref<number | boolean | null>(null);
 // Plain coordinate array, fully replaced on each set — shallowRef purely
 // because nothing reads its inner mutations, not because it's heavy.
 const dragOriginalCoordinates = shallowRef<IGeoJSPosition[] | null>(null);
@@ -1913,6 +1922,136 @@ async function addAnnotationFromSnapping(annotation: IGeoJSAnnotation) {
   );
 }
 
+// ---- Linescan tool ----
+
+const isLineScanSegmentTool = computed(
+  () =>
+    selectedToolConfiguration.value?.type === "linescan" &&
+    selectedToolConfiguration.value.values.lineType?.value === "segment",
+);
+
+const lineScanDisplayStyle = {
+  strokeColor: "white",
+  strokeWidth: 2,
+  strokeOpacity: 0.9,
+  fill: false,
+};
+
+function removeLineScanAnnotation() {
+  if (lineScanAnnotation.value) {
+    props.interactionLayer.removeAnnotation(lineScanAnnotation.value);
+    lineScanAnnotation.value = null;
+  }
+}
+
+function clearLineScanState() {
+  removeLineScanAnnotation();
+  lineScanSegmentStart.value = null;
+  lineScanStore.setSegmentStartPlaced(false);
+}
+
+// Display the scanned line on the interaction layer and publish it to the
+// linescan store, where LineScanPanel picks it up to plot the intensities.
+// The display annotation is recreated on every update: addAnnotation converts
+// the image coordinates to map coordinates exactly once per added annotation,
+// so mutating an already-added annotation's coordinates in place would leave
+// them in the wrong coordinate space (drawn mirrored off-image).
+function updateLineScanLine(
+  coordinates: IGeoJSPosition[],
+  isComplete: boolean,
+) {
+  removeLineScanAnnotation();
+  const annotation = geojsAnnotationFactory(AnnotationShape.Line, coordinates, {
+    style: { ...lineScanDisplayStyle },
+  });
+  if (annotation) {
+    annotation.options("specialAnnotation", true);
+    lineScanAnnotation.value = markRaw(annotation);
+    props.interactionLayer.addAnnotation(annotation);
+  }
+  lineScanStore.setLine({
+    points: coordinates.map(({ x, y }) => ({ x, y })),
+    isComplete,
+  });
+}
+
+// Live updates while the line is being drawn: segment previews between the
+// two clicks, and freehand lines while the mouse button is held down.
+// Bound to both mousemove (segment previews) and actionmove (freehand drags:
+// geojs suppresses mousemove events while a drag action is active).
+const handleLineScanMouseMove = throttle(
+  (evt: { geo?: IGeoJSPosition; mouse?: IGeoJSMouseState }) => {
+    const geo = evt?.geo ?? evt?.mouse?.geo;
+    if (selectedToolConfiguration.value?.type !== "linescan" || !geo) {
+      return;
+    }
+    if (isLineScanSegmentTool.value) {
+      if (lineScanSegmentStart.value) {
+        updateLineScanLine([lineScanSegmentStart.value, geo], false);
+      }
+    } else {
+      // The layer always holds an empty in-create annotation while the tool
+      // is armed; fewer than 2 coordinates means no drag is in progress and
+      // the previously scanned line stays displayed
+      const coordinates =
+        props.interactionLayer.currentAnnotation?.coordinates() ?? [];
+      if (coordinates.length < 2) {
+        return;
+      }
+      // A new line is being drawn: geojs displays it while the drag is in
+      // progress, so only replace the previous scan display and plot data
+      removeLineScanAnnotation();
+      lineScanStore.setLine({
+        points: coordinates.map(({ x, y }) => ({ x, y })),
+        isComplete: false,
+      });
+    }
+  },
+  THROTTLE,
+);
+
+// Freehand only: pressing to start a new drag clears the previously completed
+// scan the moment the gesture begins, so the next line starts fresh without
+// first pressing Clear. Segment (point) mode is excluded on purpose — there a
+// left-drag pans the map, so clearing on mousedown would wipe the scan every
+// time the user pans. Segment restarts are cleared on the first click instead
+// (see handleLineScanAnnotationDone). Guarded on isComplete so it never fires
+// while a freehand drag is still in progress.
+function handleLineScanMouseDown() {
+  if (
+    selectedToolConfiguration.value?.type === "linescan" &&
+    !isLineScanSegmentTool.value &&
+    lineScanStore.isComplete
+  ) {
+    lineScanStore.clearLine();
+  }
+}
+
+function handleLineScanAnnotationDone(annotation: IGeoJSAnnotation) {
+  const coordinates = annotation.coordinates().map(({ x, y }) => ({ x, y }));
+  props.interactionLayer.removeAnnotation(annotation);
+  if (isLineScanSegmentTool.value) {
+    // Two-click segment: first click starts the line, second click ends it
+    if (lineScanSegmentStart.value === null) {
+      removeLineScanAnnotation();
+      lineScanSegmentStart.value = coordinates[0];
+      lineScanStore.setSegmentStartPlaced(true);
+      // Placing the first point of a new segment clears any previously
+      // completed scan so its graph doesn't linger. Keep a single-point line
+      // (not null) so the points watcher doesn't reset the segment start we
+      // just set.
+      lineScanStore.setLine({ points: [coordinates[0]], isComplete: false });
+    } else {
+      updateLineScanLine([lineScanSegmentStart.value, coordinates[0]], true);
+      lineScanSegmentStart.value = null;
+      lineScanStore.setSegmentStartPlaced(false);
+    }
+  } else if (coordinates.length >= 2) {
+    removeLineScanAnnotation();
+    updateLineScanLine(coordinates, true);
+  }
+}
+
 async function handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
   const selectedAnns = getSelectedAnnotationsFromAnnotation(selectAnnotation);
 
@@ -2049,6 +2188,22 @@ function clearAnnotationMode() {
     props.interactionLayer.geoOff(geojs.event.zoom, updateCursorAnnotation);
     cursorAnnotation.value = null;
   }
+  props.interactionLayer.geoOff(geojs.event.mousemove, handleLineScanMouseMove);
+  props.interactionLayer.geoOff(
+    geojs.event.actionmove,
+    handleLineScanMouseMove,
+  );
+  props.interactionLayer.geoOff(geojs.event.mousedown, handleLineScanMouseDown);
+  // Restore the layer option overridden by the freehand linescan mode; the
+  // layer is created with its own value (see ImageViewer), so put back what
+  // was there rather than the geojs default
+  if (lineScanSavedCloseProximity.value !== null) {
+    props.interactionLayer.options(
+      "continuousCloseProximity",
+      lineScanSavedCloseProximity.value,
+    );
+    lineScanSavedCloseProximity.value = null;
+  }
 }
 
 function setupCircleDrawingMode() {
@@ -2133,6 +2288,32 @@ function setNewAnnotationMode() {
       } else {
         props.interactionLayer.mode("line");
       }
+      break;
+    case "linescan":
+      if (isLineScanSegmentTool.value) {
+        props.interactionLayer.mode("point");
+      } else {
+        // Complete freehand lines as soon as the mouse is released instead
+        // of requiring a double click, whatever the layer is configured with
+        if (lineScanSavedCloseProximity.value === null) {
+          lineScanSavedCloseProximity.value =
+            props.interactionLayer.options("continuousCloseProximity") ?? null;
+        }
+        props.interactionLayer.options("continuousCloseProximity", true);
+        props.interactionLayer.mode("line");
+      }
+      props.interactionLayer.geoOn(
+        geojs.event.mousemove,
+        handleLineScanMouseMove,
+      );
+      props.interactionLayer.geoOn(
+        geojs.event.actionmove,
+        handleLineScanMouseMove,
+      );
+      props.interactionLayer.geoOn(
+        geojs.event.mousedown,
+        handleLineScanMouseDown,
+      );
       break;
     case "samAnnotation":
     case null:
@@ -2220,6 +2401,9 @@ function handleInteractionAnnotationChange(evt: any) {
           break;
         case "snap":
           addAnnotationFromSnapping(evt.annotation);
+          break;
+        case "linescan":
+          handleLineScanAnnotationDone(evt.annotation);
           break;
         case "select":
           selectAnnotations(evt.annotation);
@@ -2632,9 +2816,12 @@ function unbindInteractionEvents(layer: IGeoJSAnnotationLayer | undefined) {
     handleInteractionAnnotationChange,
   );
   layer.geoOff(geojs.event.annotation.state, handleInteractionAnnotationChange);
-  // handleTaggingClick is conditionally bound based on tool type; geoOff
-  // is a no-op when nothing matches, so always-detach is safe.
+  // handleTaggingClick and handleLineScanMouseMove are conditionally bound
+  // based on tool type; geoOff is a no-op when nothing matches, so
+  // always-detach is safe.
   layer.geoOff(geojs.event.mouseclick, handleTaggingClick);
+  layer.geoOff(geojs.event.mousemove, handleLineScanMouseMove);
+  layer.geoOff(geojs.event.actionmove, handleLineScanMouseMove);
 }
 
 function bindTimelapseEvents(
@@ -3084,6 +3271,40 @@ watch(selectedToolConfiguration, () => {
   watchTool();
 });
 
+// Linescan tool selection: publish the tool state the panel needs (channel
+// layer, line type) and drop any ongoing scan when switching to another tool
+watch(selectedToolConfiguration, (toolConfiguration) => {
+  if (toolConfiguration?.type === "linescan") {
+    lineScanStore.setToolLayerId(toolConfiguration.values.layer ?? null);
+    lineScanStore.setToolLineType(
+      toolConfiguration.values.lineType?.value === "segment"
+        ? "segment"
+        : "freehand",
+    );
+    // A segment started with the previously selected tool can't be finished
+    lineScanSegmentStart.value = null;
+    lineScanStore.setSegmentStartPlaced(false);
+  } else {
+    lineScanStore.setToolLineType(null);
+    lineScanStore.clearLine();
+    // clearLine doesn't retrigger the points watcher when no line was ever
+    // published (points already null, e.g. a segment start without a
+    // preview), so clear the local state directly as well
+    clearLineScanState();
+  }
+});
+
+// Linescan dismissal (panel close button, tool switch): remove the displayed
+// line and reset the segment state
+watch(
+  () => lineScanStore.points,
+  (points) => {
+    if (points === null) {
+      clearLineScanState();
+    }
+  },
+);
+
 // ROI filter
 watch(roiFilter, () => {
   watchFilter();
@@ -3193,6 +3414,8 @@ onBeforeUnmount(() => {
   unbindAnnotationEvents(props.annotationLayer);
   unbindInteractionEvents(props.interactionLayer);
   unbindTimelapseEvents(props.timelapseLayer);
+  lineScanStore.setToolLineType(null);
+  lineScanStore.clearLine();
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
   }
@@ -3311,6 +3534,15 @@ defineExpose({
   addAnnotationFromGeoJsAnnotation,
   addAnnotationFromSnapping,
   handleAnnotationEdits,
+  // Linescan tool
+  lineScanAnnotation,
+  lineScanSegmentStart,
+  isLineScanSegmentTool,
+  updateLineScanLine,
+  handleLineScanMouseMove,
+  handleLineScanMouseDown,
+  handleLineScanAnnotationDone,
+  clearLineScanState,
   editPolygonAnnotation,
   handleNewROIFilter,
   updateCursorAnnotation,

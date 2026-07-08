@@ -55,6 +55,41 @@ class TestNimbusClientInit:
             with pytest.raises(ValueError, match="api_url must be provided"):
                 NimbusClient()
 
+    def test_connect_anonymous(self):
+        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+            mock_gc = MagicMock()
+            MockGC.return_value = mock_gc
+
+            NimbusClient(
+                api_url="http://localhost:8080/api/v1",
+                anonymous=True,
+            )
+            mock_gc.authenticate.assert_not_called()
+            mock_gc.setToken.assert_not_called()
+
+    def test_connect_anonymous_ignores_env_credentials(self):
+        """anonymous=True must not silently authenticate from env vars."""
+        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+            mock_gc = MagicMock()
+            MockGC.return_value = mock_gc
+
+            with patch.dict(os.environ, {
+                "NI_API_URL": "http://env:8080/api/v1",
+                "NI_API_KEY": "envkey",
+            }):
+                NimbusClient(anonymous=True)
+            mock_gc.authenticate.assert_not_called()
+            mock_gc.setToken.assert_not_called()
+
+    def test_connect_anonymous_with_credentials_raises(self):
+        with patch("nimbusimage._girder.girder_client.GirderClient"):
+            with pytest.raises(ValueError, match="anonymous"):
+                NimbusClient(
+                    api_url="http://localhost:8080/api/v1",
+                    anonymous=True,
+                    token="tok123",
+                )
+
 
 class TestNimbusClientProperties:
     def test_girder_escape_hatch(self, mock_gc):
