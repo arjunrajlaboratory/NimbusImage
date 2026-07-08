@@ -128,12 +128,25 @@ export async function createOnnxInferenceSession(
   if (!(modelPath in sessionCache)) {
     // Kick off the (slow) model download immediately so concurrent requests
     // still fetch their models in parallel — only the backend init is gated.
-    const bufferPromise = fetchModelBuffer(modelPath);
+    // Settle it into a promise that never rejects on its own: the create()
+    // step below is queued behind sessionCreateChain, so a bare fetch promise
+    // could reject while still waiting its turn — before any handler is
+    // attached — which the runtime reports as an unhandled rejection. Re-throw
+    // inside the chain, where sessionPromise's consumers handle it.
+    const bufferSettled = fetchModelBuffer(modelPath).then(
+      (buffer) => ({ ok: true as const, buffer }),
+      (error) => ({ ok: false as const, error }),
+    );
     // Chain the create() step behind any in-flight create so no two run at
     // once. Once the first has fully initialized the backend, the rest are
     // safe; serializing them all is the simplest way to guarantee that.
     const sessionPromise = sessionCreateChain.then(() =>
-      bufferPromise.then((buffer) => InferenceSession.create(buffer, options)),
+      bufferSettled.then((result) => {
+        if (!result.ok) {
+          throw result.error;
+        }
+        return InferenceSession.create(result.buffer, options);
+      }),
     );
     // Advance the chain regardless of this session's outcome (and without
     // retaining the session object), so one failed create can't wedge the
