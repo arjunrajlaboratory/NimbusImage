@@ -916,7 +916,8 @@ The analysis system's flexibility comes from combining these measurement types w
    - Draw objects on any Z-plane
    - Count across Z-planes with "Count points across all z-slices" option
    - Use maximum intensity projections for visualization (Layer → Advanced options)
-   
+   - For a true interactive 3D volume rendering (rotate, zoom, view segmentations as extruded shapes), use the 3D Volume Rendering view—see "3D Volume Rendering" in the Visualization section
+
 4. **3D Measurements**:
    - Distance measurements consider Z-dimension when "Measure across Z" is enabled
    - Intensity measurements can use Z-projection methods
@@ -1030,6 +1031,49 @@ Customize visualization with flexible layer controls:
 **Unrolling Layers**:
 - Click "Unroll" next to Layers to view channels as montage
 - Shows all channels simultaneously for comparison
+
+## 3D Volume Rendering
+NimbusImage can render your image stack as an interactive 3D volume instead of a flat 2D slice:
+
+**Switching Between 2D and 3D**:
+- Click the cube icon in the top app bar to toggle between the standard 2D viewer and the 3D volume view
+- Your layers, annotations, and tools are unaffected when switching back to 2D
+
+**What You See in 3D**:
+- Each currently visible channel/layer is rendered as its own semi-transparent volume, colored to match that layer's assigned color—multi-channel overlays work in 3D just as in 2D
+- Polygon-based objects (blobs) can be overlaid as extruded 3D "Segmentations." Point, line, and rectangle objects are not currently shown in the 3D view
+
+**Depth Axis: Z vs. Time**:
+- A two-button toggle at the left of the 3D toolbar sets what the volume's "depth" dimension represents:
+  - **Z** (z-axis icon): the depth axis is your z-stack, giving a true 3D reconstruction of the sample at the current timepoint
+  - **Clock icon**: the depth axis is Time instead of Z, so a timelapse is displayed as a spatial volume—the current z-slice is held fixed and successive timepoints are stacked like slices of a volume. This is only enabled for datasets with more than one timepoint
+- When Time is selected as the depth axis, an extra button (up/down arrows icon) opens a "Time depth spacing" dialog. Since time doesn't have a physical depth, this dialog lets you set how many micrometers apart each timepoint should appear (defaults to 5× the pixel size, but you can enter a custom value, or "Reset to default")
+
+**Toolbar Buttons**:
+- **Depth axis toggle** (z-axis / clock icons): switch between Z and Time as the volume's depth dimension, as above
+- **Time depth spacing** (up/down arrow icon, only shown when Time is the depth axis): opens the spacing dialog described above
+- **Blend mode toggle** (layers icon / bell-curve icon): controls how overlapping voxels along each viewing ray are combined
+  - **Composite**: normal semi-transparent volume blending, good for seeing overall 3D shape and structure
+  - **Maximum intensity**: shows only the brightest voxel along each ray (a live, rotatable maximum-intensity projection)—good for sparse bright objects like spots, since dim surrounding signal doesn't obscure them
+- **Volume** (cube icon): show/hide the rendered image volume itself
+- **Segmentations** (polygon icon): show/hide the extruded 3D polygon annotation overlay
+- **Reset camera** (fit-to-page icon): reframes the view to fit the current volume
+- **Orientation axes** (axis-arrow icon): toggles a small XYZ orientation gizmo in the bottom-right corner that rotates with the camera, so you can always tell which way is up
+- **Scaled bounding box** (grid icon): toggles a box with micrometer-labeled tick marks around the volume, useful for judging physical scale
+- **Segmentation color mode toggle** (tag icon / scatter-plot icon): choose whether 3D segmentations are colored by tag or by a computed property; selecting "property" reveals a dropdown to pick which property to color by
+
+**Navigation Controls**:
+- Rotate: click and drag
+- Zoom: scroll wheel
+- Pan: right-click/shift-drag
+
+**Contrast in 3D**:
+- Percentile-based contrast is computed by sampling across the entire volume rather than a single slice, so the display stays stable while rotating or scrubbing through the volume—contrast may therefore look slightly different from the 2D view at any single slice
+
+**Performance Notes for Large Data**:
+- To keep rendering responsive, very large volumes are automatically downsampled: deep z-stacks or long timelapses are capped to a fixed number of planes (subsampled evenly if the stack is deeper), and very high-resolution images are reduced in XY as well
+- This means the 3D view may show lower resolution than the full-resolution 2D view for very large datasets—this is expected, not an error
+- 3D rendering relies on the browser's WebGL support; use Chrome for best compatibility
 
 ## Snapshots
 Create, manage, and export visual bookmarks:
