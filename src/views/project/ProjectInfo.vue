@@ -139,8 +139,8 @@
       <v-card-text>
         <v-progress-linear v-if="loadingDatasets" indeterminate />
         <div v-else-if="allDatasetItems.length === 0" class="text-center pa-4">
-          <v-icon size="48" color="grey">mdi-folder-outline</v-icon>
-          <div class="text-body-2 text-grey mt-2">
+          <v-icon size="48" color="secondary">mdi-folder-outline</v-icon>
+          <div class="text-body-2 text-medium-emphasis mt-2">
             No datasets in this project yet.
           </div>
         </div>
@@ -148,8 +148,8 @@
           v-else-if="datasetFilter && filteredDatasetItems.length === 0"
           class="text-center pa-4"
         >
-          <v-icon size="48" color="grey">mdi-magnify</v-icon>
-          <div class="text-body-2 text-grey mt-2">
+          <v-icon size="48" color="secondary">mdi-magnify</v-icon>
+          <div class="text-body-2 text-medium-emphasis mt-2">
             No datasets match "{{ datasetFilter }}"
           </div>
         </div>
@@ -163,7 +163,10 @@
                 class="font-weight-medium d-flex align-center flex-wrap"
               >
                 <span>{{ item.info?.name || "Loading..." }}</span>
-                <span v-if="item.info?.size" class="ml-2 text-grey text-body-2">
+                <span
+                  v-if="item.info?.size"
+                  class="ml-2 text-medium-emphasis text-body-2"
+                >
                   ({{ formatSize(item.info.size) }})
                 </span>
                 <v-chip
@@ -171,8 +174,7 @@
                   :key="collId"
                   size="x-small"
                   class="ml-2"
-                  color="#4baeff"
-                  text-color="white"
+                  color="collection"
                   :to="{
                     name: 'configuration',
                     params: { configurationId: collId },
@@ -253,8 +255,10 @@
       <v-card-text>
         <v-progress-linear v-if="loadingCollections" indeterminate />
         <div v-else-if="collectionItems.length === 0" class="text-center pa-4">
-          <v-icon size="48" color="grey">mdi-folder-multiple-outline</v-icon>
-          <div class="text-body-2 text-grey mt-2">
+          <v-icon size="48" color="secondary"
+            >mdi-folder-multiple-outline</v-icon
+          >
+          <div class="text-body-2 text-medium-emphasis mt-2">
             No collections in this project yet.
           </div>
         </div>
@@ -262,8 +266,8 @@
           v-else-if="collectionFilter && filteredCollectionItems.length === 0"
           class="text-center pa-4"
         >
-          <v-icon size="48" color="grey">mdi-magnify</v-icon>
-          <div class="text-body-2 text-grey mt-2">
+          <v-icon size="48" color="secondary">mdi-magnify</v-icon>
+          <div class="text-body-2 text-medium-emphasis mt-2">
             No collections match "{{ collectionFilter }}"
           </div>
         </div>
@@ -318,7 +322,7 @@
                   {{ datasetInfoCache[dv.datasetId]?.name || "Loading..." }}
                   <span
                     v-if="datasetInfoCache[dv.datasetId]?.size"
-                    class="ml-2 text-grey"
+                    class="ml-2 text-medium-emphasis"
                   >
                     ({{
                       formatSize(datasetInfoCache[dv.datasetId]?.size || 0)
@@ -1211,7 +1215,7 @@ defineExpose({
 
 // Only add hover effect to group headers as they are clickable
 :deep(.v-list-group__header:hover) {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: var(--nimbus-glass-hover);
 }
 
 // Ensure list item actions align properly with content

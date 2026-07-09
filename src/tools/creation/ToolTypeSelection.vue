@@ -125,6 +125,7 @@ const categoryClassMap: { [key: string]: string } = {
   "Image Processing": "category-processing",
   "Tagging tools": "category-tagging",
   "Annotation Edits": "category-edits",
+  "Line scan tools": "category-measurement",
 };
 
 const hiddenToolTexts = new Set<string>([
@@ -415,6 +416,7 @@ $color-conversion: #fb923c;
 $color-processing: #f472b6;
 $color-tagging: #fbbf24;
 $color-edits: #f87171;
+$color-measurement: #2dd4bf;
 $color-other: #94a3b8;
 $color-featured: #fbbf24; // Gold for featured
 
@@ -600,6 +602,9 @@ $color-featured: #fbbf24; // Gold for featured
 }
 .category-edits {
   @include category-colors($color-edits);
+}
+.category-measurement {
+  @include category-colors($color-measurement);
 }
 .category-other {
   @include category-colors($color-other);

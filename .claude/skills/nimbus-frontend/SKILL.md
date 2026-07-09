@@ -53,6 +53,25 @@ Store modules still use `vuex-module-decorators` with `@Module`, `@Mutation`, an
 
 For advanced store patterns (routeMapper, form change detection, caching with batch loading): read `references/store-module-patterns.md`
 
+### Store Edits Break HMR — Hard-Reload
+
+Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.
+
+### Watching Getters That Rebuild Their Return Object
+
+`watch(() => someGetter, cb, { deep: true })` on a getter that returns a **new object on every read** fires on every dependency touch — including dependencies the getter reads but that don't change the output (`deep: true` skips the value comparison entirely). This shipped a real bug: a deep watch on `currentFilters` cleared the selection on every Z-scrub because the getter read `z` unconditionally. tsc/lint/reasoning all passed; only the live app caught it.
+
+```typescript
+// BAD: fires on every dependency touch
+watch(() => annotationListServer.currentFilters, cb, { deep: true });
+
+// GOOD: fires only when content genuinely changes; stringify's traversal
+// still registers the nested reactive deps
+watch(() => JSON.stringify(annotationListServer.currentFilters), cb);
+```
+
+Watch out for stringify cost on large objects.
+
 ## Vuetify 4 Patterns
 
 ### CSS Cascade Layers
@@ -145,6 +164,41 @@ Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed di
 ```
 
 **The `#item` slot name did NOT change** (contrary to some sources claiming rename to `#internalItem`).
+
+### `v-select` shows `[object Object]` — set `item-title` to match the item key
+
+Vuetify's `VSelect` defaults to `item-title="title"` and `item-value="value"`. If your items are objects keyed differently, the selected display renders the raw object as **`[object Object]`** (selection still works because `item-value` happens to match).
+
+This bit the tool-creation form: every `select` interface element in `public/config/templates.json` uses `{ text, value }` items, but the generic `VSelect` in `ToolConfigurationItem.vue` set no `item-title`, so **every non-submenu select in the Add-tool dialog** rendered `[object Object]`. Fix: pass `item-title="text"` (the app's convention) for select elements.
+
+```vue
+<!-- BAD: items are { text, value } but VSelect looks for `.title` -->
+<v-select :items="[{ text: 'Point prompts', value: 'point' }]" />  <!-- [object Object] -->
+
+<!-- GOOD -->
+<v-select :items="items" item-title="text" item-value="value" />
+```
+
+When you add a non-submenu `select` to a tool template, or render options in a `v-select`, always confirm `item-title` matches the item objects' label key.
+
+### Don't `v-model` a computed that reads a non-reactive pipeline node
+
+`ComputeNode.output` / `ManualInputNode.output` (in `src/pipelines/computePipeline.ts`) is a **plain field, not a Vue ref** (pipeline nodes are `markRaw`'d for perf). A `computed` whose getter reads `node.output` registers **no reactive dependency**, so it never re-evaluates when the node's value changes. Bind a control's `v-model` to such a computed and the control **snaps back to its stale value** on the next render — e.g. a dropdown that "looks selected" but always displays the old option, or a slider that jumps back.
+
+```ts
+// BAD: getter reads node.output (non-reactive) → v-model display reverts
+const promptMode = computed({
+  get: () => promptModeNode.value?.output ?? "point",
+  set: (v) => promptModeNode.value?.setValue(v),
+});
+
+// GOOD: a reactive ref is the UI source of truth; push into the node on change,
+// and seed the ref from config/state on mount + when the tool state changes.
+const promptMode = ref<TPromptMode>("point");
+watch(promptMode, (v) => segState.value?.nodes.input.promptMode.setValue(v));
+```
+
+Reactive **state** fields (from `reactive(...)` in the tool-state factory) are fine to read in computeds — only raw `markRaw`'d node `.output` reads are the trap.
 
 ### VRow Density
 
@@ -357,12 +411,48 @@ Quick API: `__nimbusMem.enable()`, `snapshot('label')`, `print()`, `compare('a',
 
 For the full API, recorded fields, the load-order constraint (don't import stores at top level — register from `main.ts`), instructions for adding new counters or auto-snapshot points, and the cherry-pick procedure for cross-branch comparison: read `codebaseDocumentation/MEMORY_DEBUGGING.md`.
 
+## ONNX / SAM Pipeline (`src/pipelines/onnxModels.ts`, `samPipeline.ts`)
+
+The SAM tools run ONNX models (`onnxruntime-web`, WebGPU) whose WASM loaders and model files are fetched from `/onnx-wasm/` and `/onnx-models/`. Three failure modes here have bitten us in **production only** — they pass locally because the Vite dev server serves assets instantly and with correct MIME types.
+
+- **`.mjs` served as `text/plain` (prod nginx).** Modern `onnxruntime-web` dynamically `import()`s `.mjs` WASM loaders (e.g. `ort-wasm-simd-threaded.asyncify.mjs`) from `env.wasm.wasmPaths`. Production static files are served by **nginx in the AWSDeploy repo** (`templates/startup_haproxy.tftpl`), which uses stock `include mime.types;`. Stock `mime.types` maps `.js` but **not `.mjs`**, so `.mjs` falls through to `text/plain` and the browser refuses the ES-module import (*"Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of text/plain"*). `.wasm` is unaffected (it *is* in stock `mime.types` as `application/wasm`), which is why pre-`.mjs` versions never hit this. Fix lives in **AWSDeploy** (`types { text/javascript mjs; }`), not in this repo — don't add a frontend workaround. Also: `env.wasm.wasmPaths` must be **root-absolute** (`/onnx-wasm/`), or the loader specifier resolves against the current SPA route path.
+
+- **Concurrent session creation → `multiple calls to 'initWasm()' detected`.** onnxruntime-web initializes its shared WASM/WebGPU backend lazily on the first `InferenceSession.create()`, and that init is **not reentrant**. The SAM pipeline creates the encoder (`samPipeline.ts` `createEncoderSession`) and decoder (`createDecoderSession`) sessions from two independent `ComputeNode`s that fire on the same tick, so both creates race the backend init. The window is sub-millisecond locally (loaders served instantly) but wide in prod (each is a network fetch), so it fails deterministically **only when deployed**. `createOnnxInferenceSession` **serializes the `create()` step** through a module-level promise chain so the backend initializes exactly once — keep it that way. Model *downloads* stay parallel; only `create()` is gated. (Pipeline-node compute errors log `this.fun.name`, which is **minified** in prod — `[f2n]`/`[p2n]` are the mangled session-creation functions, not meaningful names.)
+
+- **HTML-shell cache poisoning.** A missing model path is answered with the `index.html` app shell at HTTP 200 (SPA fallback); caching that permanently breaks the tool (*"Failed to load model because protobuf parsing failed"*, INVALID_PROTOBUF). `fetchModelBuffer`/`warmModelCache` detect it (content-type + first byte `0x3c` `<`) and self-heal by dropping the poisoned cache entry.
+
+**General promise pattern (Codex P2, PR #1237):** when you start an async op eagerly but defer its consumer behind a chain — `chain.then(() => started.then(...))` — the `started` promise can reject *before* any handler is attached, which the runtime reports as an **unhandled rejection** (noise in the console and in Sentry) even though a later handler eventually catches it. Settle it into a non-rejecting result the instant it starts, then re-throw inside the chain:
+
+```typescript
+const settled = started.then(
+  (value) => ({ ok: true as const, value }),
+  (error) => ({ ok: false as const, error }),
+);
+const gated = chain.then(() =>
+  settled.then((r) => {
+    if (!r.ok) throw r.error;
+    return use(r.value);
+  }),
+);
+```
+
 ## Style Guidelines
 
 - Use scoped SCSS: `<style lang="scss" scoped>`
 - Prefer Vuetify components over custom HTML
 - `!important` is rarely needed thanks to CSS Cascade Layers — only use for overriding `@girder/components` or non-Vuetify third-party styles
 - Keep custom colors as SCSS variables at the top of style blocks
+
+## Verification Gates
+
+Before claiming a frontend change done:
+
+1. `pnpm tsc` — type check
+2. `pnpm lint:ci` — zero warnings
+3. `pnpm test` — vitest. **Known artifact:** after a backend `tox` run, ~10 test FILES under `.tox/**` fail ("Failed to resolve import @playwright/test") — vitest's glob picks up girder's bundled specs. These are spurious; only failures outside `.tox/` paths are real. CI is unaffected (clean checkout).
+4. **In-browser verification for anything user-facing** — tsc/lint/vitest green does not mean the UI works (pointer-events, layering, watcher-firing, and store-corruption bugs all passed every static gate). See the in-browser-testing skill; remember to hard-reload after store edits.
+
+Component-level test patterns (AnnotationViewer harness, GeoJS mocks): see the nimbus-geojs skill and `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`.
 
 ## Codebase Documentation References
 
