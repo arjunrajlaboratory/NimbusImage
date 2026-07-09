@@ -86,6 +86,7 @@ import {
   polygonToCellMask,
   scoreDescriptor,
 } from "@/utils/samSimilarity/embedding";
+import { rasterizePolygon } from "@/utils/exampleSegmentation/rasterize";
 import { dedupeProposalsAgainstAnnotations } from "@/utils/proposalDedupe";
 import { simpleCentroid } from "@/utils/annotation";
 import { ExampleSegmentationWorkerClient } from "@/utils/exampleSegmentation/workerClient";
@@ -397,6 +398,31 @@ function cellPolygonIntersectsValidGrid(
   );
 }
 
+// True if the mask sets any cell inside the valid (on-screen, non-padding)
+// region of the grid.
+function maskHasCellInValidGrid(
+  mask: Uint8Array,
+  grid: IEmbeddingGrid,
+): boolean {
+  for (let row = 0; row < grid.validGridHeight; ++row) {
+    const rowOffset = row * grid.gridWidth;
+    for (let col = 0; col < grid.validGridWidth; ++col) {
+      if (mask[rowOffset + col]) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Current-encode cell mask for an example, or null when the example isn't
+// meaningfully in view. Unlike displayPolygonToCellMask (which delegates to
+// polygonToCellMask), this deliberately does NOT use the centroid-clamp
+// fallback: rasterizePolygon clips out-of-bounds points, and the sub-cell
+// fallback below only fires when the centroid genuinely lands in the valid
+// grid. So an example whose bounding box merely grazes the grid - the case the
+// cheap AABB pre-check can't rule out - returns null instead of a fabricated
+// clamped edge cell that would poison overlap dedupe / box sizing.
 function displayPolygonToVisibleCellMask(
   polygonDisplay: IGeoJSPosition[],
   canvasInfo: IProcessCanvasOutput,
@@ -406,7 +432,30 @@ function displayPolygonToVisibleCellMask(
   if (!cellPolygonIntersectsValidGrid(cellPoints, grid)) {
     return null;
   }
-  return polygonToCellMask(cellPoints, grid.gridWidth, grid.gridHeight);
+  const mask = rasterizePolygon(cellPoints, grid.gridWidth, grid.gridHeight);
+  if (maskHasCellInValidGrid(mask, grid)) {
+    return mask;
+  }
+  // Sub-cell polygon (too small to cover a cell center): mark its centroid
+  // cell, but only when that centroid falls inside the valid grid.
+  let sumX = 0;
+  let sumY = 0;
+  for (const point of cellPoints) {
+    sumX += point.x;
+    sumY += point.y;
+  }
+  const cellX = Math.floor(sumX / cellPoints.length);
+  const cellY = Math.floor(sumY / cellPoints.length);
+  if (
+    cellX < 0 ||
+    cellY < 0 ||
+    cellX >= grid.validGridWidth ||
+    cellY >= grid.validGridHeight
+  ) {
+    return null;
+  }
+  mask[cellY * grid.gridWidth + cellX] = 1;
+  return mask;
 }
 
 /** Model-input px (0..1024ish) -> GCS, inverse of the processCanvas scale. */
@@ -923,6 +972,13 @@ function createObjectSegmentationPipeline(
           exampleCellMasks.push(currentCellMask);
           exampleBoxCellMasks.push(currentCellMask);
         } else {
+          // Off-screen example: fall back to the capture-time mask so box
+          // sizing still has a sample. KNOWN LIMITATION: that mask is in the
+          // cell scale of the encode where the example was captured, so if the
+          // user has since zoomed, medianExampleBoxHalfExtentPx can mix cell
+          // scales across on-screen (current) and off-screen (captured) masks
+          // and mis-size the prompt box. Acceptable for a sizing heuristic;
+          // see EXAMPLE_SEGMENTATION_TOOL.md §11.3 step 4b.
           exampleBoxCellMasks.push(entry.captureCellMask);
         }
         exampleAreasGcs.push(polygonAreaGcs(entry.polygonGcs));
@@ -1383,10 +1439,13 @@ function createObjectSegmentationPipeline(
     [downscaleNode],
   );
 
-  // Retrain vs re-predict: retrain only when the example SET changed
-  // (add/undo/clear/polarity), detected by raw-examples reference identity -
-  // NOT when only the screenshot changed (pan), which re-predicts with the
-  // cached forest. Coordinates come from the resolved polygons so SAM-clicked
+  // Retrain vs re-predict: the forest is retrained whenever the training-set
+  // reference changes (examplesChanged below) and re-predicts with the cached
+  // forest otherwise. The user's example set changes by reference only on
+  // add/undo/clear/polarity, but the hybrid SAM-proposal set is re-sent as a
+  // fresh array each encode (and SAM re-runs on pan), so in classifier and
+  // samThenClassifier modes the forest is intentionally retrained on every
+  // re-encode/pan. Coordinates come from the resolved polygons so SAM-clicked
   // examples train the classifier just like circled ones.
   let lastClassifierExamples: TObjectSegmentationExampleInput[] | null = null;
   let lastHybridTraining: IGeoJSPosition[][] | null = null;
@@ -1455,9 +1514,11 @@ function createObjectSegmentationPipeline(
     }
     const hybridPolygons =
       applicationMethod === "samThenClassifier" ? hybridTraining.proposals : [];
-    // Retrain when either the user's examples OR the SAM-proposal training set
-    // (hybrid mode) changes; a pan (only workerImage changed) re-predicts with
-    // the cached forest.
+    // Retrain when the user's examples, the hybrid SAM-proposal training set,
+    // or the application method changes. hybridPolygons is a fresh array each
+    // encode (the `: []` literal in plain classifier mode, genuinely-new SAM
+    // proposals in hybrid mode), so this is intentionally true on every
+    // re-encode/pan - the forest retrains rather than re-predicting.
     const examplesChanged =
       rawExamples !== lastClassifierExamples ||
       hybridPolygons !== lastHybridTraining ||

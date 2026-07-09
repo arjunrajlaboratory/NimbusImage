@@ -817,6 +817,13 @@ departs from §11.3/§11.4 above:
   current mask is produced, avoiding the centroid-clamp fallback that would
   otherwise turn an old example into a bogus edge-cell mask. Box prompt sizing
   falls back to the captured mask when no current mask is available.
+  *Known limitation:* the captured mask is in the cell scale of the encode
+  where the example was captured, so when some foreground examples are on-screen
+  (current scale) and others are off-screen (captured scale) after a zoom
+  change, `medianExampleBoxHalfExtentPx` takes a median across mixed cell scales
+  and can mis-size the prompt box. Accepted as-is because box sizing is only a
+  prompt heuristic; if it bites in practice, scale the captured mask by the
+  zoom ratio or surface the examples' capture zoom in the panel.
 - **Thorough "grid" mode uses a 16x16 uniform point grid** (256 decode
   runs), not the 32x32 grid mentioned in §11.4's "Decoder budget" note.
 - **`TSamSimilarityNodes.output`** additionally exposes `examples` (the

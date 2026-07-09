@@ -112,3 +112,47 @@ renamed to `objectSegmentationPipeline.ts`. No other pipeline uses
   dedupe, and avoids clamping off-screen examples into current edge cells.
 - **D:** Accept as-is / by-design; document the limitation. Staleness only bites
   when the user pans/zooms between placing examples and a re-run.
+
+---
+
+## Review round 2 — Codex commit `da3098e9` ("stabilize hybrid and roaming examples")
+
+Codex reworked both fixes. Reviewed per `/branch-review`; accepted with three
+follow-ups (all in commit after this review). Codex's P2a hardening and P2b
+off-screen handling are improvements over the round-1 versions.
+
+- **P2a (hardened, accepted).** Beyond the round-1 `reportPartialProposals` gate
+  (kept), the hybrid-training input is now a tagged `{ ready, proposals }` value:
+  pending while SAM recomputes, ready once `samProposals` settles (incl.
+  ready-empty). `classifierTrainPredict` returns `NoOutput` in `samThenClassifier`
+  until ready, so Accept can commit neither SAM partials nor a
+  classifier-trained-on-user-examples-only intermediate. Correct.
+
+- **P2b switched Option A → Option C (accepted by user).** Codex froze the
+  captured descriptor/self-similarity (durable appearance signature) and
+  recomputes only current-view geometry masks, splitting `exampleCellMasks`
+  (current-view, overlap dedupe) from `exampleBoxCellMasks` (box sizing, with
+  captured-mask fallback for off-screen). This also fixes a latent bug the
+  round-1 Option A had: `polygonToCellMask`'s centroid-clamp fallback would have
+  pooled a garbage edge-cell descriptor for off-screen examples.
+
+- **Finding 1 (Medium, perf) — WON'T FIX (user decision).** Plain classifier
+  mode retrains the forest on every pan because `hybridPolygons` is a fresh `[]`
+  each call. User prefers this (always-fresh predictions). Behavior kept; the two
+  stale "re-predict with cached forest on pan" comments corrected to describe the
+  intentional retrain-on-every-pan.
+
+- **Finding 2 (Low) — DOCUMENTED.** Box sizing can median across mixed cell
+  scales (on-screen current masks + off-screen captured masks) after a zoom.
+  Accepted as a heuristic limitation; code comment + `EXAMPLE_SEGMENTATION_TOOL.md`
+  §11.3-4b note added.
+
+- **Finding 3 (Nit) — FIXED.** `displayPolygonToVisibleCellMask` no longer relies
+  on `polygonToCellMask`'s centroid clamp (the AABB pre-check alone couldn't rule
+  it out). It now rasterizes via `rasterizePolygon` (which clips out-of-bounds),
+  requires coverage inside the valid grid, and only uses a centroid-cell fallback
+  when that centroid lands in the valid grid — so a bounding-box that merely
+  grazes the grid returns `null` instead of a fabricated edge-cell mask. Shared
+  `polygonToCellMask` (and its clamp test) left unchanged.
+
+Gates after follow-ups: tsc + lint:ci + 2241 vitest tests green.
