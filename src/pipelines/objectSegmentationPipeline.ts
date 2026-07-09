@@ -353,12 +353,59 @@ function displayPolygonToCellMask(
   canvasInfo: IProcessCanvasOutput,
   grid: IEmbeddingGrid,
 ): Uint8Array {
+  return polygonToCellMask(
+    displayPolygonToCellPoints(polygonDisplay, canvasInfo),
+    grid.gridWidth,
+    grid.gridHeight,
+  );
+}
+
+function displayPolygonToCellPoints(
+  polygonDisplay: IGeoJSPosition[],
+  canvasInfo: IProcessCanvasOutput,
+): { x: number; y: number }[] {
   const xScale = canvasInfo.scaledWidth / canvasInfo.srcWidth;
   const yScale = canvasInfo.scaledHeight / canvasInfo.srcHeight;
-  const cellPoints = polygonDisplay.map(({ x, y }) => ({
+  return polygonDisplay.map(({ x, y }) => ({
     x: (x * xScale) / MODEL_INPUT_CELL_PX,
     y: (y * yScale) / MODEL_INPUT_CELL_PX,
   }));
+}
+
+function cellPolygonIntersectsValidGrid(
+  points: { x: number; y: number }[],
+  grid: IEmbeddingGrid,
+): boolean {
+  if (points.length === 0) {
+    return false;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return (
+    maxX >= 0 &&
+    maxY >= 0 &&
+    minX < grid.validGridWidth &&
+    minY < grid.validGridHeight
+  );
+}
+
+function displayPolygonToVisibleCellMask(
+  polygonDisplay: IGeoJSPosition[],
+  canvasInfo: IProcessCanvasOutput,
+  grid: IEmbeddingGrid,
+): Uint8Array | null {
+  const cellPoints = displayPolygonToCellPoints(polygonDisplay, canvasInfo);
+  if (!cellPolygonIntersectsValidGrid(cellPoints, grid)) {
+    return null;
+  }
   return polygonToCellMask(cellPoints, grid.gridWidth, grid.gridHeight);
 }
 
@@ -443,10 +490,9 @@ function cellMaskBoundingBox(
 
 /**
  * Half-width/height (in model-input px) of a box sized to the median
- * foreground example's bounding box, derived from cached cellMasks (§11.3
- * step 4b). Using cellMask bounding boxes rather than the examples' display
- * polygons keeps the size embedding-space (grid cells), which stays valid
- * across re-encodes/zoom levels the way cached descriptors already do.
+ * foreground example's bounding box (§11.3 step 4b). Masks come from the
+ * current encode for visible examples, with captured masks as the fallback for
+ * examples outside the current viewport.
  */
 function medianExampleBoxHalfExtentPx(
   cellMasks: Uint8Array[],
@@ -471,16 +517,16 @@ function medianExampleBoxHalfExtentPx(
   };
 }
 
-// Only viewpoint-invariant data is cached per example. The expensive part -
-// the SAM decode that turns a prompt into an object outline - produces a GCS
-// (world-coordinate) polygon that survives pan/zoom, so it is cached and never
-// re-decoded. Grid-space quantities (cellMask, descriptor, selfSimilarity) are
-// NOT cached: they are tied to a specific embedding grid and must be recomputed
-// against the current encode each time (see computeExampleDescriptors).
+// The cache stores the expensive prompt decode plus the example's captured
+// appearance descriptor. The descriptor is intentionally reused across
+// pan/zoom: it is the reference object signature. Current-view masks are
+// recomputed separately only for geometry tasks such as example-overlap dedupe.
 interface IExampleDescriptorCacheEntry {
-  polarity: "foreground" | "background";
   polygonGcs: IGeoJSPosition[];
   promptAnchorGcs: IGeoJSPosition;
+  descriptor: Float32Array | null;
+  selfSimilarity: number;
+  captureCellMask: Uint8Array;
 }
 
 interface IExampleDescriptorsOutput {
@@ -490,7 +536,8 @@ interface IExampleDescriptorsOutput {
   // examples only, of each example's own mask-mean similarity to its own
   // descriptor.
   meanSelfSimilarity: number;
-  exampleCellMasks: Uint8Array[]; // foreground only - "already segmented" dedupe set
+  exampleCellMasks: Uint8Array[]; // foreground only, current view - "already segmented" dedupe set
+  exampleBoxCellMasks: Uint8Array[]; // foreground only - box-prompt sizing basis
   exampleAreasGcs: number[]; // foreground only - auto size-range basis
   examplePromptAnchorsGcs: IGeoJSPosition[]; // foreground only
   decodedExamples: IObjectSegmentationExample[]; // full input order, incl. background
@@ -510,6 +557,21 @@ interface IProposalsResult {
   timings: IObjectSegmentationStatus["timings"];
 }
 
+interface IHybridTrainingInput {
+  ready: boolean;
+  proposals: IGeoJSPosition[][];
+}
+
+function hybridTrainingPending(): IHybridTrainingInput {
+  return { ready: false, proposals: [] };
+}
+
+function hybridTrainingReady(
+  proposals: IGeoJSPosition[][] = [],
+): IHybridTrainingInput {
+  return { ready: true, proposals };
+}
+
 export type TObjectSegmentationNodes = {
   allNodes: ComputeNode<any, any>[];
   input: {
@@ -523,7 +585,7 @@ export type TObjectSegmentationNodes = {
     gridSize: ManualInputNode<number>;
     // SAM-proposal training polygons for the chained "samThenClassifier" mode;
     // populated by the state factory's SAM-proposals mirror.
-    hybridTraining: ManualInputNode<IGeoJSPosition[][]>;
+    hybridTraining: ManualInputNode<IHybridTrainingInput>;
     sizeRange: ManualInputNode<TSizeRange>;
     simplificationTolerance: ManualInputNode<number>;
     // Hover live-preview prompt (SAM selection modes only); debounced set by
@@ -599,12 +661,13 @@ function createObjectSegmentationPipeline(
   );
   // Grid density for grid prompt mode (gridSize x gridSize scan points).
   const gridSizeInputNode = new ManualInputNode<number>(DEFAULT_GRID_SCAN_SIZE);
-  // Extra foreground training polygons for the classifier, in GCS. Populated
-  // (by the state factory's SAM-proposals mirror) only in the chained
-  // "samThenClassifier" mode - the SAM proposals become classifier training.
-  // A ManualInputNode with a real [] default so it never blocks the classifier
-  // branch in the other modes.
-  const hybridTrainingInputNode = new ManualInputNode<IGeoJSPosition[][]>([]);
+  // Extra foreground training polygons for the classifier, in GCS. In chained
+  // "samThenClassifier" mode this is marked pending while SAM is still finding
+  // proposals, so the classifier cannot publish an intermediate user-examples
+  // only result. In plain classifier mode the value is ignored.
+  const hybridTrainingInputNode = new ManualInputNode<IHybridTrainingInput>(
+    hybridTrainingReady(),
+  );
   const similarityThresholdInputNode = new ManualInputNode<number>(NoOutput, {
     type: "debounce",
     wait: 100,
@@ -749,14 +812,12 @@ function createObjectSegmentationPipeline(
   // per-element cache key, same convention as
   // exampleSegmentationPipeline.ts's lastExamples check).
   //
-  // The cache holds only viewpoint-invariant data (the SAM-decoded object
-  // outline in GCS, plus its polarity and prompt anchor), so the expensive
-  // decode runs once per example and survives pans/re-encodes. The grid-space
-  // geometry - cellMask, descriptor, selfSimilarity - is NOT cached: it is
-  // tied to the current embedding grid and is recomputed from the cached GCS
-  // polygon on every encode. Reusing a prior encode's cellMask/descriptor here
-  // would size prompts and dedupe candidates against a grid that no longer
-  // matches the view after a pan/zoom (§11.4).
+  // The cache holds the SAM-decoded object outline in GCS plus the example's
+  // descriptor from the encode where it was captured. That descriptor is the
+  // durable appearance signature used by the SAM-similarity branch after
+  // pan/zoom. Current-view cell masks are recomputed below only when the GCS
+  // polygon intersects the current encode, so off-screen examples cannot be
+  // clamped into bogus edge cells.
   async function computeExampleDescriptors(
     examples: TObjectSegmentationExampleInput[],
     embeddingGridState: IEmbeddingGridState,
@@ -775,13 +836,15 @@ function createObjectSegmentationPipeline(
       if (!exampleDescriptorCache.has(example)) {
         let polygonGcs: IGeoJSPosition[];
         let promptAnchorGcs: IGeoJSPosition;
+        let polygonDisplay: IGeoJSPosition[];
         if (example.prompt === null) {
           // Circled example (§11 addendum): the polygon is authoritative and
           // already in GCS - skip the decoder entirely.
           polygonGcs = example.polygon;
           promptAnchorGcs = simpleCentroid(polygonGcs);
+          polygonDisplay = mapEntry.map.gcsToDisplay(polygonGcs);
         } else {
-          const { polygonDisplay } = await decodePromptToDisplayPolygon(
+          const decoded = await decodePromptToDisplayPolygon(
             model,
             example.prompt,
             canvasInfo,
@@ -790,13 +853,34 @@ function createObjectSegmentationPipeline(
             encoderOutput,
             mapEntry,
           );
+          polygonDisplay = decoded.polygonDisplay;
           polygonGcs = displayToWorld(polygonDisplay, mapEntry);
           promptAnchorGcs = getPromptAnchorGcs(example.prompt);
         }
+        const captureCellMask = displayPolygonToCellMask(
+          polygonDisplay,
+          canvasInfo,
+          grid,
+        );
+        const descriptor = poolDescriptor(
+          normalizedData,
+          grid,
+          captureCellMask,
+        );
+        const selfSimilarity = descriptor
+          ? meanMaskSimilarity(
+              normalizedData,
+              grid,
+              captureCellMask,
+              descriptor,
+            )
+          : 0;
         exampleDescriptorCache.set(example, {
-          polarity: example.polarity,
           polygonGcs,
           promptAnchorGcs,
+          descriptor,
+          selfSimilarity,
+          captureCellMask,
         });
       }
       const entry = exampleDescriptorCache.get(
@@ -809,14 +893,13 @@ function createObjectSegmentationPipeline(
       });
     }
 
-    // Pass 2: recompute grid-space geometry against the CURRENT encode.
-    // Rasterize each cached GCS polygon through the current view transform onto
-    // the current embedding grid, then pool its descriptor - so box sizing and
-    // overlap dedupe downstream always use masks that match this grid.
+    // Pass 2: reuse captured descriptors for matching, and recompute only
+    // geometry masks that are meaningful in the CURRENT encode.
     const positives: Float32Array[] = [];
     const negatives: Float32Array[] = [];
     const foregroundSelfSimilarities: number[] = [];
     const exampleCellMasks: Uint8Array[] = [];
+    const exampleBoxCellMasks: Uint8Array[] = [];
     const exampleAreasGcs: number[] = [];
     const examplePromptAnchorsGcs: IGeoJSPosition[] = [];
     for (const example of examples) {
@@ -824,26 +907,28 @@ function createObjectSegmentationPipeline(
       const entry = exampleDescriptorCache.get(
         example,
       ) as IExampleDescriptorCacheEntry;
+      if (!entry.descriptor) {
+        continue;
+      }
       const polygonDisplay = mapEntry.map.gcsToDisplay(entry.polygonGcs);
-      const cellMask = displayPolygonToCellMask(
+      const currentCellMask = displayPolygonToVisibleCellMask(
         polygonDisplay,
         canvasInfo,
         grid,
       );
-      const descriptor = poolDescriptor(normalizedData, grid, cellMask);
-      if (!descriptor) {
-        continue; // empty mask on this grid; nothing to pool
-      }
-      if (entry.polarity === "foreground") {
-        positives.push(descriptor);
-        foregroundSelfSimilarities.push(
-          meanMaskSimilarity(normalizedData, grid, cellMask, descriptor),
-        );
-        exampleCellMasks.push(cellMask);
+      if (example.polarity === "foreground") {
+        positives.push(entry.descriptor);
+        foregroundSelfSimilarities.push(entry.selfSimilarity);
+        if (currentCellMask) {
+          exampleCellMasks.push(currentCellMask);
+          exampleBoxCellMasks.push(currentCellMask);
+        } else {
+          exampleBoxCellMasks.push(entry.captureCellMask);
+        }
         exampleAreasGcs.push(polygonAreaGcs(entry.polygonGcs));
         examplePromptAnchorsGcs.push(entry.promptAnchorGcs);
       } else {
-        negatives.push(descriptor);
+        negatives.push(entry.descriptor);
       }
     }
     const meanSelfSimilarity =
@@ -857,6 +942,7 @@ function createObjectSegmentationPipeline(
       negatives,
       meanSelfSimilarity,
       exampleCellMasks,
+      exampleBoxCellMasks,
       exampleAreasGcs,
       examplePromptAnchorsGcs,
       decodedExamples,
@@ -933,7 +1019,7 @@ function createObjectSegmentationPipeline(
     const boxHalfExtent =
       promptMode === "box"
         ? medianExampleBoxHalfExtentPx(
-            exampleDescriptors.exampleCellMasks,
+            exampleDescriptors.exampleBoxCellMasks,
             grid,
           )
         : null;
@@ -1304,6 +1390,7 @@ function createObjectSegmentationPipeline(
   // examples train the classifier just like circled ones.
   let lastClassifierExamples: TObjectSegmentationExampleInput[] | null = null;
   let lastHybridTraining: IGeoJSPosition[][] | null = null;
+  let lastClassifierApplicationMethod: TObjectApplicationMethod | null = null;
   async function classifierTrainPredictAsync(
     descriptors: IExampleDescriptorsOutput,
     hybridTraining: IGeoJSPosition[][],
@@ -1358,28 +1445,36 @@ function createObjectSegmentationPipeline(
   function classifierTrainPredict(
     rawExamples: TObjectSegmentationExampleInput[],
     descriptors: IExampleDescriptorsOutput,
-    hybridTraining: IGeoJSPosition[][],
+    hybridTraining: IHybridTrainingInput,
     workerImage: IWorkerImageInfo,
     mapEntry: IMapEntry,
+    applicationMethod: TObjectApplicationMethod,
   ): Promise<ISegmentationResultResponse> | TNoOutput {
+    if (applicationMethod === "samThenClassifier" && !hybridTraining.ready) {
+      return NoOutput;
+    }
+    const hybridPolygons =
+      applicationMethod === "samThenClassifier" ? hybridTraining.proposals : [];
     // Retrain when either the user's examples OR the SAM-proposal training set
     // (hybrid mode) changes; a pan (only workerImage changed) re-predicts with
     // the cached forest.
     const examplesChanged =
       rawExamples !== lastClassifierExamples ||
-      hybridTraining !== lastHybridTraining;
+      hybridPolygons !== lastHybridTraining ||
+      applicationMethod !== lastClassifierApplicationMethod;
     lastClassifierExamples = rawExamples;
-    lastHybridTraining = hybridTraining;
+    lastHybridTraining = hybridPolygons;
+    lastClassifierApplicationMethod = applicationMethod;
     if (
       rawExamples.length === 0 &&
-      hybridTraining.length === 0 &&
+      hybridPolygons.length === 0 &&
       !classifierModelState.trained
     ) {
       return NoOutput;
     }
     return classifierTrainPredictWithErrorReporting(
       descriptors,
-      hybridTraining,
+      hybridPolygons,
       examplesChanged,
       workerImage,
       mapEntry,
@@ -1391,6 +1486,7 @@ function createObjectSegmentationPipeline(
     hybridTrainingInputNode,
     setImageNode,
     geoJSMapInputNode,
+    applicationMethodInputNode,
   ]);
 
   async function classifierPostprocess(
@@ -1520,10 +1616,11 @@ function createObjectSegmentationPipeline(
       timingsState.postprocessMs = undefined;
       lastClassifierExamples = null;
       lastHybridTraining = null;
+      lastClassifierApplicationMethod = null;
       classifierModelState.trained = false;
       reportProgress(null);
       await workerClient.reset();
-      await hybridTrainingInputNode.setValue([], true);
+      await hybridTrainingInputNode.setValue(hybridTrainingReady(), true);
       await examplesInputNode.setValue([], true);
       await previewPromptInputNode.setValue(NoOutput, true);
     },
@@ -1707,14 +1804,21 @@ export function createObjectSegmentationToolStateFromToolConfiguration(
   // training set until SAM settles).
   const samProposalsNode = nodes.output.samProposals;
   samProposalsNode.onOutputUpdate(() => {
-    if (state.applicationMethod !== "samThenClassifier") {
+    if (nodes.input.applicationMethod.output !== "samThenClassifier") {
       return;
     }
     const rawOutput = samProposalsNode.output as IProposalsResult | TNoOutput;
     if (!rawOutput || rawOutput === NoOutput) {
+      nodes.input.hybridTraining.setValue(
+        samProposalsNode.isComputing
+          ? hybridTrainingPending()
+          : hybridTrainingReady(),
+      );
       return;
     }
-    nodes.input.hybridTraining.setValue(rawOutput.proposals);
+    nodes.input.hybridTraining.setValue(
+      hybridTrainingReady(rawOutput.proposals),
+    );
   });
 
   // Mirror the applicationMethod input into reactive state, and clear stale
@@ -1733,8 +1837,11 @@ export function createObjectSegmentationToolStateFromToolConfiguration(
       state.applicationMethod = method;
       state.proposals = null;
       mergeStatus({ putativeCount: 0, progress: null });
+      if (method === "samThenClassifier") {
+        nodes.input.hybridTraining.setValue(hybridTrainingPending());
+      }
       if (wasHybrid && method !== "samThenClassifier") {
-        nodes.input.hybridTraining.setValue([]);
+        nodes.input.hybridTraining.setValue(hybridTrainingReady());
       }
     }
   });

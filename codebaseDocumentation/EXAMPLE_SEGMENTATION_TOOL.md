@@ -704,8 +704,12 @@ decodeCandidates ──► verify+NMS+sizeFilter(τ_accept, sizeRange)
   new view. Same roam-and-accept workflow as AutoSeg, with the same caveat
   that embeddings are computed on the styled render, plus a new one: SAM
   embeddings are not fully scale-invariant, so matching degrades if the user
-  zooms far from the zoom level the examples were taken at. Surface the
-  examples' capture zoom in the panel if this bites in practice.
+  zooms far from the zoom level the examples were taken at. The implementation
+  keeps the captured descriptor for matching, but recomputes current-view
+  masks only for geometry tasks (example-overlap dedupe and box sizing) when
+  the example polygon intersects the active encode. Off-screen examples keep
+  matching by descriptor and must not be clamped into fake edge-cell masks.
+  Surface the examples' capture zoom in the panel if this bites in practice.
 
 **Decoder budget**: K = 64 point candidates × ~20–50 ms ≈ 1.3–3.2 s per
 viewport on WebGPU, serialized. Stream results into the putative overlay as
@@ -803,13 +807,16 @@ departs from §11.3/§11.4 above:
   therefore runs immediately at decode/example-decode time, using the same
   `mapEntry` value that produced the screenshot for that run - exactly
   mirroring `samPipeline.ts`'s own decoder chain ordering.
-- **Box-prompt sizing (§11.3 step 4b)** is derived from the *cached
-  embedding-grid cellMask* bounding boxes of foreground examples (median
-  width/height in cells x 16), not from their display-space polygons. Cell
-  masks are embedding-space and already the thing that survives re-encodes
-  in the descriptor cache, so this keeps box sizing correct across
-  pans/zooms without re-deriving it from a screenshot-epoch-specific
-  polygon.
+- **Descriptor cache vs. current-view masks (§11.3 step 4b / §11.4).** The
+  per-example cache stores the SAM-decoded GCS polygon, prompt anchor, captured
+  descriptor, captured self-similarity, and captured cell mask. The captured
+  descriptor/self-similarity are reused for matching after pan/zoom. On each
+  encode, the cached GCS polygon is projected into the current view only for
+  geometry tasks: if it intersects the valid embedding grid, its current mask is
+  used for example-overlap dedupe and box sizing; if it is off-screen, no
+  current mask is produced, avoiding the centroid-clamp fallback that would
+  otherwise turn an old example into a bogus edge-cell mask. Box prompt sizing
+  falls back to the captured mask when no current mask is available.
 - **Thorough "grid" mode uses a 16x16 uniform point grid** (256 decode
   runs), not the 32x32 grid mentioned in §11.4's "Decoder budget" note.
 - **`TSamSimilarityNodes.output`** additionally exposes `examples` (the
@@ -1003,8 +1010,11 @@ every object SAM found**, and shows the classifier's result. Wiring: the SAM
 branch runs as usual; the state factory's `samProposals` mirror pushes SAM's
 proposal polygons into a `hybridTraining` `ManualInputNode` (only in this mode);
 `trainPredict` adds those polygons as extra foreground training. `hybridTraining`
-defaults to `[]` (a real value, so it never blocks the classifier branch in the
-other modes), and is reset to `[]` on leaving the chained mode or on tool reset.
+is a tagged `{ ready, proposals }` value: it is marked pending while the SAM
+branch is recomputing, so the classifier cannot publish or be accepted as a
+user-examples-only intermediate result. Once SAM settles, it becomes ready with
+SAM's proposals (possibly an empty array). Plain classifier mode ignores the
+hybrid proposals and leaving chained mode resets the input to ready/empty.
 Verified: 2 examples → SAM found 10 → classifier trained on 12 → 6 final
 proposals.
 
