@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Claude model used for all chat completions. Centralized here so that
 # additional call sites in this plugin share a single source of truth.
-CLAUDE_MODEL = 'claude-sonnet-4-6'
+CLAUDE_MODEL = 'claude-sonnet-5'
 
 # The system prompt ships as package data alongside this module. Resolving
 # it relative to __file__ works for every install layout -- the Docker image
@@ -72,7 +72,7 @@ class ClaudeChatResource(Resource):
         try:
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
-                max_tokens=4096,
+                max_tokens=8192,
                 system=[
                     {
                         'type': 'text',
@@ -82,7 +82,13 @@ class ClaudeChatResource(Resource):
                 ],
                 messages=messages
             )
-            return {'response': response.content[0].text}
+            # Sonnet 5 may include non-text content blocks before the answer.
+            text = ''.join(
+                block.text
+                for block in response.content
+                if block.type == 'text'
+            )
+            return {'response': text}
         except APIError as e:
             logger.error(
                 f'Anthropic API error: {str(e)}', exc_info=True
