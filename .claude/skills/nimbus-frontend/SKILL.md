@@ -411,6 +411,31 @@ Quick API: `__nimbusMem.enable()`, `snapshot('label')`, `print()`, `compare('a',
 
 For the full API, recorded fields, the load-order constraint (don't import stores at top level — register from `main.ts`), instructions for adding new counters or auto-snapshot points, and the cherry-pick procedure for cross-branch comparison: read `codebaseDocumentation/MEMORY_DEBUGGING.md`.
 
+## ONNX / SAM Pipeline (`src/pipelines/onnxModels.ts`, `samPipeline.ts`)
+
+The SAM tools run ONNX models (`onnxruntime-web`, WebGPU) whose WASM loaders and model files are fetched from `/onnx-wasm/` and `/onnx-models/`. Three failure modes here have bitten us in **production only** — they pass locally because the Vite dev server serves assets instantly and with correct MIME types.
+
+- **`.mjs` served as `text/plain` (prod nginx).** Modern `onnxruntime-web` dynamically `import()`s `.mjs` WASM loaders (e.g. `ort-wasm-simd-threaded.asyncify.mjs`) from `env.wasm.wasmPaths`. Production static files are served by **nginx in the AWSDeploy repo** (`templates/startup_haproxy.tftpl`), which uses stock `include mime.types;`. Stock `mime.types` maps `.js` but **not `.mjs`**, so `.mjs` falls through to `text/plain` and the browser refuses the ES-module import (*"Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of text/plain"*). `.wasm` is unaffected (it *is* in stock `mime.types` as `application/wasm`), which is why pre-`.mjs` versions never hit this. Fix lives in **AWSDeploy** (`types { text/javascript mjs; }`), not in this repo — don't add a frontend workaround. Also: `env.wasm.wasmPaths` must be **root-absolute** (`/onnx-wasm/`), or the loader specifier resolves against the current SPA route path.
+
+- **Concurrent session creation → `multiple calls to 'initWasm()' detected`.** onnxruntime-web initializes its shared WASM/WebGPU backend lazily on the first `InferenceSession.create()`, and that init is **not reentrant**. The SAM pipeline creates the encoder (`samPipeline.ts` `createEncoderSession`) and decoder (`createDecoderSession`) sessions from two independent `ComputeNode`s that fire on the same tick, so both creates race the backend init. The window is sub-millisecond locally (loaders served instantly) but wide in prod (each is a network fetch), so it fails deterministically **only when deployed**. `createOnnxInferenceSession` **serializes the `create()` step** through a module-level promise chain so the backend initializes exactly once — keep it that way. Model *downloads* stay parallel; only `create()` is gated. (Pipeline-node compute errors log `this.fun.name`, which is **minified** in prod — `[f2n]`/`[p2n]` are the mangled session-creation functions, not meaningful names.)
+
+- **HTML-shell cache poisoning.** A missing model path is answered with the `index.html` app shell at HTTP 200 (SPA fallback); caching that permanently breaks the tool (*"Failed to load model because protobuf parsing failed"*, INVALID_PROTOBUF). `fetchModelBuffer`/`warmModelCache` detect it (content-type + first byte `0x3c` `<`) and self-heal by dropping the poisoned cache entry.
+
+**General promise pattern (Codex P2, PR #1237):** when you start an async op eagerly but defer its consumer behind a chain — `chain.then(() => started.then(...))` — the `started` promise can reject *before* any handler is attached, which the runtime reports as an **unhandled rejection** (noise in the console and in Sentry) even though a later handler eventually catches it. Settle it into a non-rejecting result the instant it starts, then re-throw inside the chain:
+
+```typescript
+const settled = started.then(
+  (value) => ({ ok: true as const, value }),
+  (error) => ({ ok: false as const, error }),
+);
+const gated = chain.then(() =>
+  settled.then((r) => {
+    if (!r.ok) throw r.error;
+    return use(r.value);
+  }),
+);
+```
+
 ## Style Guidelines
 
 - Use scoped SCSS: `<style lang="scss" scoped>`
