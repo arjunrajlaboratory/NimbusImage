@@ -471,12 +471,15 @@ function medianExampleBoxHalfExtentPx(
   };
 }
 
+// Only viewpoint-invariant data is cached per example. The expensive part -
+// the SAM decode that turns a prompt into an object outline - produces a GCS
+// (world-coordinate) polygon that survives pan/zoom, so it is cached and never
+// re-decoded. Grid-space quantities (cellMask, descriptor, selfSimilarity) are
+// NOT cached: they are tied to a specific embedding grid and must be recomputed
+// against the current encode each time (see computeExampleDescriptors).
 interface IExampleDescriptorCacheEntry {
   polarity: "foreground" | "background";
-  descriptor: Float32Array | null;
-  selfSimilarity: number;
   polygonGcs: IGeoJSPosition[];
-  cellMask: Uint8Array;
   promptAnchorGcs: IGeoJSPosition;
 }
 
@@ -744,9 +747,16 @@ function createObjectSegmentationPipeline(
   // example object reference (ManualInputNode.setValue is always called
   // with a fresh array by callers, so reference identity is a reliable
   // per-element cache key, same convention as
-  // exampleSegmentationPipeline.ts's lastExamples check). Cached entries
-  // survive pans/re-encodes: descriptors are embedding-space vectors, not
-  // pixel coordinates (§11.4).
+  // exampleSegmentationPipeline.ts's lastExamples check).
+  //
+  // The cache holds only viewpoint-invariant data (the SAM-decoded object
+  // outline in GCS, plus its polarity and prompt anchor), so the expensive
+  // decode runs once per example and survives pans/re-encodes. The grid-space
+  // geometry - cellMask, descriptor, selfSimilarity - is NOT cached: it is
+  // tied to the current embedding grid and is recomputed from the cached GCS
+  // polygon on every encode. Reusing a prior encode's cellMask/descriptor here
+  // would size prompts and dedupe candidates against a grid that no longer
+  // matches the view after a pan/zoom (§11.4).
   async function computeExampleDescriptors(
     examples: TObjectSegmentationExampleInput[],
     embeddingGridState: IEmbeddingGridState,
@@ -758,20 +768,17 @@ function createObjectSegmentationPipeline(
   ): Promise<IExampleDescriptorsOutput> {
     const { grid, normalizedData } = embeddingGridState;
     const decodedExamples: IObjectSegmentationExample[] = [];
+    // Pass 1: ensure each example's viewpoint-invariant outline is cached. Only
+    // the SAM decode (prompt examples) is expensive; circled examples are
+    // already authoritative GCS polygons and need no decode.
     for (const example of examples) {
-      let entry = exampleDescriptorCache.get(example);
-      if (!entry) {
+      if (!exampleDescriptorCache.has(example)) {
         let polygonGcs: IGeoJSPosition[];
-        let cellMask: Uint8Array;
         let promptAnchorGcs: IGeoJSPosition;
         if (example.prompt === null) {
           // Circled example (§11 addendum): the polygon is authoritative and
-          // already in GCS - skip the decoder entirely, just rasterize it
-          // onto the embedding grid (via display coords, same as a decoded
-          // mask) for the descriptor.
+          // already in GCS - skip the decoder entirely.
           polygonGcs = example.polygon;
-          const polygonDisplay = mapEntry.map.gcsToDisplay(polygonGcs);
-          cellMask = displayPolygonToCellMask(polygonDisplay, canvasInfo, grid);
           promptAnchorGcs = simpleCentroid(polygonGcs);
         } else {
           const { polygonDisplay } = await decodePromptToDisplayPolygon(
@@ -783,24 +790,18 @@ function createObjectSegmentationPipeline(
             encoderOutput,
             mapEntry,
           );
-          cellMask = displayPolygonToCellMask(polygonDisplay, canvasInfo, grid);
           polygonGcs = displayToWorld(polygonDisplay, mapEntry);
           promptAnchorGcs = getPromptAnchorGcs(example.prompt);
         }
-        const descriptor = poolDescriptor(normalizedData, grid, cellMask);
-        const selfSimilarity = descriptor
-          ? meanMaskSimilarity(normalizedData, grid, cellMask, descriptor)
-          : 0;
-        entry = {
+        exampleDescriptorCache.set(example, {
           polarity: example.polarity,
-          descriptor,
-          selfSimilarity,
           polygonGcs,
-          cellMask,
           promptAnchorGcs,
-        };
-        exampleDescriptorCache.set(example, entry);
+        });
       }
+      const entry = exampleDescriptorCache.get(
+        example,
+      ) as IExampleDescriptorCacheEntry;
       decodedExamples.push({
         polarity: example.polarity,
         prompt: example.prompt,
@@ -808,6 +809,10 @@ function createObjectSegmentationPipeline(
       });
     }
 
+    // Pass 2: recompute grid-space geometry against the CURRENT encode.
+    // Rasterize each cached GCS polygon through the current view transform onto
+    // the current embedding grid, then pool its descriptor - so box sizing and
+    // overlap dedupe downstream always use masks that match this grid.
     const positives: Float32Array[] = [];
     const negatives: Float32Array[] = [];
     const foregroundSelfSimilarities: number[] = [];
@@ -815,21 +820,30 @@ function createObjectSegmentationPipeline(
     const exampleAreasGcs: number[] = [];
     const examplePromptAnchorsGcs: IGeoJSPosition[] = [];
     for (const example of examples) {
-      // Guaranteed set by the loop above.
+      // Guaranteed set by pass 1.
       const entry = exampleDescriptorCache.get(
         example,
       ) as IExampleDescriptorCacheEntry;
-      if (!entry.descriptor) {
-        continue; // decoder produced an empty mask; nothing to pool
+      const polygonDisplay = mapEntry.map.gcsToDisplay(entry.polygonGcs);
+      const cellMask = displayPolygonToCellMask(
+        polygonDisplay,
+        canvasInfo,
+        grid,
+      );
+      const descriptor = poolDescriptor(normalizedData, grid, cellMask);
+      if (!descriptor) {
+        continue; // empty mask on this grid; nothing to pool
       }
       if (entry.polarity === "foreground") {
-        positives.push(entry.descriptor);
-        foregroundSelfSimilarities.push(entry.selfSimilarity);
-        exampleCellMasks.push(entry.cellMask);
+        positives.push(descriptor);
+        foregroundSelfSimilarities.push(
+          meanMaskSimilarity(normalizedData, grid, cellMask, descriptor),
+        );
+        exampleCellMasks.push(cellMask);
         exampleAreasGcs.push(polygonAreaGcs(entry.polygonGcs));
         examplePromptAnchorsGcs.push(entry.promptAnchorGcs);
       } else {
-        negatives.push(entry.descriptor);
+        negatives.push(descriptor);
       }
     }
     const meanSelfSimilarity =
@@ -1565,7 +1579,18 @@ export function createObjectSegmentationToolStateFromToolConfiguration(
   const reportProgress = (progress: { done: number; total: number } | null) => {
     mergeStatus({ progress });
   };
+  // Streaming SAM partials (pushed from decodeCandidatesInner every
+  // PROGRESS_STREAM_INTERVAL candidates) are the SAM branch's early preview.
+  // Mirror them into the displayed/committable proposal state only when SAM is
+  // the displayed branch — the same gate the samProposals mirror uses below.
+  // In "samThenClassifier" the SAM proposals are merely the classifier's
+  // training input and the displayed final output must be the classifier's, so
+  // streaming them here would let the user Accept intermediate SAM results
+  // before the classifier has run.
   const reportPartialProposals = (partial: IProposalsResult) => {
+    if (state.applicationMethod !== "samSimilarity") {
+      return;
+    }
     state.proposals = partial.proposals;
     mergeStatus({
       putativeCount: partial.proposals.length,
