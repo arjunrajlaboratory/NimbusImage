@@ -8,12 +8,12 @@ vi.mock("file-selector", () => ({
 }));
 
 import { fromEvent } from "file-selector";
-import { getFilesFromDrop } from "./fileUpload";
+import { getFilesFromDrop, filterFilesByAccept } from "./fileUpload";
 
 const mockFromEvent = vi.mocked(fromEvent);
 
-function makeFile(name: string): File {
-  return new File(["content"], name);
+function makeFile(name: string, type = ""): File {
+  return new File(["content"], name, { type });
 }
 
 const dropEvent = { type: "drop" } as unknown as DragEvent;
@@ -57,5 +57,40 @@ describe("getFilesFromDrop", () => {
   it("returns an empty array when nothing is extracted", async () => {
     mockFromEvent.mockResolvedValue([]);
     expect(await getFilesFromDrop(dropEvent)).toEqual([]);
+  });
+});
+
+describe("filterFilesByAccept", () => {
+  const files = [
+    makeFile("image.tif", "image/tiff"),
+    makeFile("photo.PNG", "image/png"),
+    makeFile("notes.csv", "text/csv"),
+    makeFile("readme.txt", "text/plain"),
+  ];
+
+  it("returns all files when accept is empty or undefined", () => {
+    expect(filterFilesByAccept(files)).toEqual(files);
+    expect(filterFilesByAccept(files, "")).toEqual(files);
+    expect(filterFilesByAccept(files, "  ")).toEqual(files);
+  });
+
+  it("filters by extension tokens (case-insensitively)", () => {
+    const result = filterFilesByAccept(files, ".tif,.png");
+    expect(result.map((f) => f.name)).toEqual(["image.tif", "photo.PNG"]);
+  });
+
+  it("filters by wildcard MIME tokens", () => {
+    const result = filterFilesByAccept(files, "image/*");
+    expect(result.map((f) => f.name)).toEqual(["image.tif", "photo.PNG"]);
+  });
+
+  it("filters by exact MIME tokens", () => {
+    const result = filterFilesByAccept(files, "text/csv");
+    expect(result.map((f) => f.name)).toEqual(["notes.csv"]);
+  });
+
+  it("keeps a file that matches any of several tokens", () => {
+    const result = filterFilesByAccept(files, ".tif, text/plain");
+    expect(result.map((f) => f.name)).toEqual(["image.tif", "readme.txt"]);
   });
 });

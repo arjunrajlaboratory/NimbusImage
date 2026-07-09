@@ -46,7 +46,11 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { getFilesFromDrop, selectFilesFromFolder } from "@/utils/fileUpload";
+import {
+  getFilesFromDrop,
+  selectFilesFromFolder,
+  filterFilesByAccept,
+} from "@/utils/fileUpload";
 
 const props = withDefaults(
   defineProps<{
@@ -84,12 +88,20 @@ function onChange(event: Event) {
 
 async function onDrop(event: DragEvent) {
   dropzoneClass.value = null;
-  const dropped = await getFilesFromDrop(event);
+  // Folders and drag-and-drop bypass the input's `accept` attribute, so honor
+  // it here to keep unsupported files out of the dataset.
+  const dropped = filterFilesByAccept(
+    await getFilesFromDrop(event),
+    props.accept,
+  );
   files.value = props.multiple ? dropped : dropped.slice(0, 1);
 }
 
 async function selectFolder() {
-  const folderFiles = await selectFilesFromFolder();
+  const folderFiles = filterFilesByAccept(
+    await selectFilesFromFolder(),
+    props.accept,
+  );
   if (folderFiles.length > 0) {
     files.value = folderFiles;
   }

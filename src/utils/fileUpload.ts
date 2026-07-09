@@ -38,6 +38,40 @@ export async function getFilesFromDrop(event: DragEvent): Promise<File[]> {
   return toSortedFiles(await fromEvent(event));
 }
 
+function matchesAcceptToken(file: File, token: string): boolean {
+  if (token.startsWith(".")) {
+    // Extension token, e.g. ".tif"
+    return file.name.toLowerCase().endsWith(token.toLowerCase());
+  }
+  const type = file.type.toLowerCase();
+  if (token.endsWith("/*")) {
+    // Wildcard MIME token, e.g. "image/*"
+    return type.startsWith(token.slice(0, token.indexOf("/") + 1));
+  }
+  // Exact MIME token, e.g. "image/png"
+  return type === token;
+}
+
+/**
+ * Filter files against an HTML `accept` attribute string (comma-separated
+ * extensions and/or MIME types, e.g. ".tif,.png,image/*"). An empty/undefined
+ * accept means "accept everything". This mirrors the constraint the native
+ * file input applies, which browsers do NOT enforce for folder selection or
+ * drag-and-drop, so callers must apply it themselves for those paths.
+ */
+export function filterFilesByAccept(files: File[], accept?: string): File[] {
+  const tokens = (accept ?? "")
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    return files;
+  }
+  return files.filter((file) =>
+    tokens.some((token) => matchesAcceptToken(file, token)),
+  );
+}
+
 /**
  * Open a native file/folder picker and resolve with the selected files,
  * sorted by name. Resolves with an empty array if the dialog is dismissed.
