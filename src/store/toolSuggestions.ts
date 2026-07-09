@@ -16,6 +16,7 @@ import {
   IToolConfiguration,
   IToolSuggestion,
   IToolSuggestionCatalogEntry,
+  IToolSuggestionLayerContext,
   IToolTemplate,
   TToolSuggestionStatus,
 } from "./model";
@@ -30,6 +31,7 @@ import {
 // codebaseDocumentation/AUTO_TOOL_SUGGESTIONS.md); keep it easy to disable
 // while it is being refined.
 const AUTO_SUGGEST_ENABLED = true;
+const TOOL_SUGGESTIONS_PANEL_SELECTOR = "[data-tool-suggestions-panel]";
 
 // Manual (non-worker) tools we can offer. Currently just a blob tool, matching
 // the "suggest a blob tool if you see blobs" requirement.
@@ -57,23 +59,29 @@ function buildDefaultCoordinateAssignments(
   };
 }
 
+function getToolSuggestionsPanel(): HTMLElement | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  return document.querySelector(TOOL_SUGGESTIONS_PANEL_SELECTOR);
+}
+
 // Resolve a channel name (as the model referred to it) to a configuration
 // layer id, so a suggested tool runs on the right channel.
 function layerIdForChannelName(channelName?: string): string | undefined {
   if (!channelName || !main.dataset) {
     return undefined;
   }
-  let matchChannel: number | undefined;
-  for (const [channel, name] of main.dataset.channelNames.entries()) {
-    if (name === channelName) {
-      matchChannel = channel;
-      break;
+  const trimmedChannelName = channelName.trim();
+  for (const layer of main.layers) {
+    const resolvedChannelName =
+      main.dataset.channelNames.get(layer.channel) ||
+      `Channel ${layer.channel}`;
+    if (resolvedChannelName === trimmedChannelName) {
+      return layer.id;
     }
   }
-  if (matchChannel === undefined) {
-    return undefined;
-  }
-  return main.layers.find((layer) => layer.channel === matchChannel)?.id;
+  return undefined;
 }
 
 function buildAnnotationSetup(
@@ -88,6 +96,22 @@ function buildAnnotationSetup(
   };
 }
 
+function toolNameForSuggestion(
+  entry: IToolSuggestionCatalogEntry,
+  suggestion: IToolSuggestion,
+  layerId?: string,
+) {
+  const baseName = entry.name.trim();
+  const channelName = suggestion.channelName?.trim();
+  if (!channelName || !layerId) {
+    return baseName;
+  }
+  if (baseName.toLowerCase().startsWith(`${channelName.toLowerCase()} `)) {
+    return baseName;
+  }
+  return `${channelName} ${baseName}`;
+}
+
 // Build a concrete IToolConfiguration from a catalog entry + suggestion, using
 // the same templates the manual tool-creation UI uses.
 function buildToolConfiguration(
@@ -98,6 +122,7 @@ function buildToolConfiguration(
   const layerId = layerIdForChannelName(suggestion.channelName);
   const shape = entry.defaultShape ?? AnnotationShape.Point;
   const annotationSetup = buildAnnotationSetup(shape, layerId);
+  const toolName = toolNameForSuggestion(entry, suggestion, layerId);
 
   if (entry.kind === "worker") {
     const template = templates.find((t) => t.type === "segmentation");
@@ -114,7 +139,7 @@ function buildToolConfiguration(
     };
     return {
       id: uuidv4(),
-      name: entry.name,
+      name: toolName,
       hotkey: null,
       type: "segmentation",
       template: computedTemplate,
@@ -133,7 +158,7 @@ function buildToolConfiguration(
   }
   return {
     id: uuidv4(),
-    name: entry.name,
+    name: toolName,
     hotkey: null,
     type: "create",
     template,
@@ -163,6 +188,22 @@ function buildCatalog(): IToolSuggestionCatalogEntry[] {
     });
   }
   return catalog;
+}
+
+function buildLayerContext(): IToolSuggestionLayerContext[] {
+  const dataset = main.dataset;
+  if (!dataset) {
+    return [];
+  }
+  return main.layers.map((layer) => ({
+    id: layer.id,
+    name: layer.name,
+    channel: layer.channel,
+    channelName:
+      dataset.channelNames.get(layer.channel) || `Channel ${layer.channel}`,
+    color: layer.color,
+    visible: layer.visible,
+  }));
 }
 
 @Module({ dynamic: true, store, name: "toolSuggestions" })
@@ -272,10 +313,14 @@ export class ToolSuggestions extends VuexModule {
       await properties.fetchWorkerImageList();
 
       const map = main.maps[0]?.map;
-      const [interfaceShot, viewportShot] = await Promise.all([
-        captureInterfaceScreenshot(),
-        captureViewportScreenshot(map),
-      ]);
+      const viewportShot = await captureViewportScreenshot(map);
+      // Tool suggestions only need the rendered image. Avoid html2canvas's
+      // full-DOM clone in the common case because browser extensions can inject
+      // unsupported CSS into that clone and spam the console. Keep a fallback
+      // for unusual cases where GeoJS can't produce a viewport screenshot.
+      const interfaceShot = viewportShot
+        ? null
+        : await captureInterfaceScreenshot(getToolSuggestionsPanel());
 
       const images: { media_type: string; data: string }[] = [];
       for (const shot of [viewportShot, interfaceShot]) {
@@ -294,12 +339,22 @@ export class ToolSuggestions extends VuexModule {
       }
 
       const catalog = buildCatalog();
-      const channels = main.dataset
-        ? [...main.dataset.channelNames.values()]
-        : [];
+      const currentDataset = main.dataset;
+      if (!currentDataset) {
+        this.setStatus("idle");
+        this.setSuggestions([]);
+        return;
+      }
+      const channels = [...currentDataset.channelNames.values()];
+      const layers = buildLayerContext();
 
       const rawSuggestions: IToolSuggestion[] =
-        await main.chatAPI.getToolSuggestions({ images, catalog, channels });
+        await main.chatAPI.getToolSuggestions({
+          images,
+          catalog,
+          channels,
+          layers,
+        });
 
       // If the user switched collections while the request was in flight,
       // discard the result: it was computed for the old configuration's

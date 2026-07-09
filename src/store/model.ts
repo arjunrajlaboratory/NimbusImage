@@ -2113,6 +2113,17 @@ export interface IToolSuggestionCatalogEntry {
   defaultShape?: AnnotationShape;
 }
 
+// Display-layer context sent with the screenshot so Claude can map rendered
+// colors in the composite image back to the dataset's channel names.
+export interface IToolSuggestionLayerContext {
+  id: string;
+  name: string;
+  channel: number;
+  channelName: string;
+  color: string;
+  visible: boolean;
+}
+
 // A raw suggestion as returned by the backend (references a catalog entry by
 // id and, optionally, a channel to run on).
 export interface IToolSuggestion {

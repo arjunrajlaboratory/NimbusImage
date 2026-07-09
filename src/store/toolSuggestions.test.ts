@@ -176,6 +176,7 @@ const manualBlobEntry: IToolSuggestionCatalogEntry = {
 describe("toolSuggestions store", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    document.body.innerHTML = "";
     await toolSuggestions.clear();
 
     Object.assign(main, {
@@ -299,8 +300,18 @@ describe("toolSuggestions store", () => {
     beforeEach(() => {
       main.dataset = makeDataset();
       (main as any).layers = [
-        makeLayer({ id: "layer-0", channel: 0 }),
-        makeLayer({ id: "layer-1", channel: 1 }),
+        makeLayer({
+          id: "layer-0",
+          name: "DAPI",
+          channel: 0,
+          color: "#007FFF",
+        }),
+        makeLayer({
+          id: "layer-1",
+          name: "GFP",
+          channel: 1,
+          color: "#00FF28",
+        }),
       ];
       main.toolTemplateList = [segmentationTemplate, createTemplate];
       main.maps = [{ map: {} }] as any;
@@ -337,6 +348,27 @@ describe("toolSuggestions store", () => {
       expect(properties.fetchWorkerImageList).toHaveBeenCalled();
     });
 
+    it("does not capture the full interface when the viewport screenshot succeeds", async () => {
+      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([]);
+
+      await toolSuggestions.suggestForCurrentConfiguration();
+
+      expect(captureViewportScreenshot).toHaveBeenCalled();
+      expect(captureInterfaceScreenshot).not.toHaveBeenCalled();
+    });
+
+    it("falls back to an interface screenshot when no viewport screenshot is available", async () => {
+      const panel = document.createElement("div");
+      panel.setAttribute("data-tool-suggestions-panel", "");
+      document.body.appendChild(panel);
+      (captureViewportScreenshot as any).mockResolvedValue(null);
+      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([]);
+
+      await toolSuggestions.suggestForCurrentConfiguration();
+
+      expect(captureInterfaceScreenshot).toHaveBeenCalledWith(panel);
+    });
+
     it("discards results if the configuration changed during the request", async () => {
       main.configuration = makeConfiguration({ id: "cfg-a" });
       // While the request is in flight, the user navigates to another
@@ -362,6 +394,7 @@ describe("toolSuggestions store", () => {
         },
         {
           toolId: "manual:blob",
+          channelName: "GFP",
           reason: "Looks like blobs",
           confidence: "medium",
         },
@@ -380,6 +413,7 @@ describe("toolSuggestions store", () => {
       );
       expect(workerResolved).toBeDefined();
       expect(workerResolved!.tool.type).toBe("segmentation");
+      expect(workerResolved!.tool.name).toBe("DAPI Cellpose-SAM");
       expect(workerResolved!.tool.values.image.image).toBe("cellpose:latest");
       expect(
         workerResolved!.tool.template.interface.some(
@@ -395,16 +429,82 @@ describe("toolSuggestions store", () => {
       );
       expect(blobResolved).toBeDefined();
       expect(blobResolved!.tool.type).toBe("create");
+      expect(blobResolved!.tool.name).toBe("GFP Blob");
+      expect(
+        blobResolved!.tool.values.annotation.coordinateAssignments.layer,
+      ).toBe("layer-1");
       expect(blobResolved!.tool.values.image).toBeUndefined();
 
       // Catalog + channels sent to the backend.
       const callArgs = (main.chatAPI.getToolSuggestions as any).mock
         .calls[0][0];
       expect(callArgs.channels).toEqual(["DAPI", "GFP"]);
+      expect(callArgs.layers).toEqual([
+        {
+          id: "layer-0",
+          name: "DAPI",
+          channel: 0,
+          channelName: "DAPI",
+          color: "#007FFF",
+          visible: true,
+        },
+        {
+          id: "layer-1",
+          name: "GFP",
+          channel: 1,
+          channelName: "GFP",
+          color: "#00FF28",
+          visible: true,
+        },
+      ]);
       expect(callArgs.catalog.map((entry: any) => entry.id)).toEqual(
         expect.arrayContaining(["manual:blob", "worker:cellpose:latest"]),
       );
-      expect(callArgs.images).toHaveLength(2);
+      expect(callArgs.images).toHaveLength(1);
+    });
+
+    it("resolves synthetic Channel N names for unnamed channels", async () => {
+      main.dataset = makeDataset({
+        channels: [0, 3],
+        channelNames: new Map([[0, "DAPI"]]),
+      });
+      (main as any).layers = [
+        makeLayer({
+          id: "layer-3",
+          name: "Channel 3",
+          channel: 3,
+          color: "#FFFF00",
+        }),
+      ];
+      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([
+        {
+          toolId: "manual:blob",
+          channelName: "Channel 3",
+          reason: "Looks like blobs",
+          confidence: "medium",
+        },
+      ]);
+
+      await toolSuggestions.suggestForCurrentConfiguration();
+
+      expect(toolSuggestions.suggestions).toHaveLength(1);
+      expect(toolSuggestions.suggestions[0].tool.name).toBe("Channel 3 Blob");
+      expect(
+        toolSuggestions.suggestions[0].tool.values.annotation
+          .coordinateAssignments.layer,
+      ).toBe("layer-3");
+      const callArgs = (main.chatAPI.getToolSuggestions as any).mock
+        .calls[0][0];
+      expect(callArgs.layers).toEqual([
+        {
+          id: "layer-3",
+          name: "Channel 3",
+          channel: 3,
+          channelName: "Channel 3",
+          color: "#FFFF00",
+          visible: true,
+        },
+      ]);
     });
 
     it("drops suggestions that don't match any catalog entry", async () => {

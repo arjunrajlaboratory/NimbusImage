@@ -11,10 +11,11 @@
 When a user opens a **freshly created collection** (a configuration with no
 tools yet), NimbusImage:
 
-1. Takes two screenshots — the whole interface and the image in the viewport
-   (the same two pictures the NimbusChat assistant already sends Claude).
-2. Sends them, plus a catalog of the tools it can set up and the dataset's
-   channel names, to a backend endpoint.
+1. Takes a screenshot of the image in the viewport.
+2. Sends it, plus a catalog of the tools it can set up, the dataset's channel
+   names, and display-layer metadata (layer color + visibility), to a backend
+   endpoint. The layer metadata lets Claude map rendered colors back to channel
+   names without cloning the full browser UI.
 3. Claude (Sonnet 5) looks at the image and returns a structured list of
    suggested tools (e.g. Cellpose-SAM on the nuclear channel if it sees nuclei,
    a blob tool if it sees blobs, Piscis if it sees spots).
@@ -38,8 +39,8 @@ configuration until the user accepts it.
   the response instead of assuming `content[0]` is text (Sonnet 5 runs adaptive
   thinking by default, so a thinking block can come first).
 - `ClaudeSuggestToolsResource` (new endpoint, `POST /claude_suggest_tools`) —
-  takes `{ images, catalog, channels }`, builds a single user message with the
-  image blocks + a text description, and uses a **forced tool call**
+  takes `{ images, catalog, channels, layers }`, builds a single user message
+  with the image blocks + a text description, and uses a **forced tool call**
   (`tool_choice = {type: 'tool', name: 'suggest_tools'}`) to get structured
   output. Thinking is disabled here because forced `tool_choice` is incompatible
   with extended thinking. Returns `{ suggestions: [...] }`.
@@ -52,12 +53,12 @@ configuration until the user accepts it.
 
 - `src/utils/interfaceCapture.ts` — shared screenshot helpers
   (`captureInterfaceScreenshot`, `captureViewportScreenshot`,
-  `dataUrlToBase64`). **Note:** `ChatComponent.vue` still has its own copies of
-  the first two; a cleanup could switch it to import these.
+  `dataUrlToBase64`) used by both chat and automatic tool suggestions.
   (The name is `interfaceCapture` because `utils/screenshot.ts` already exists
   and is about image *download* URLs, unrelated to this.)
-- `src/store/ChatAPI.ts` — `getToolSuggestions({ images, catalog, channels })`
-  posts to `claude_suggest_tools` and returns the raw suggestions.
+- `src/store/ChatAPI.ts` —
+  `getToolSuggestions({ images, catalog, channels, layers })` posts to
+  `claude_suggest_tools` and returns the raw suggestions.
 - `src/store/model.ts` — new types: `IToolSuggestionCatalogEntry`,
   `IToolSuggestion`, `IResolvedToolSuggestion`, `TToolSuggestionStatus`.
 - `src/store/toolSuggestions.ts` — new Vuex module. This is the brain:
@@ -73,8 +74,10 @@ configuration until the user accepts it.
     if: feature enabled, configuration + dataset present, configuration has **no
     tools**, and we haven't already suggested for this configuration id this
     session (`seenConfigurationIds`).
-  - `suggestForCurrentConfiguration()` — captures screenshots, calls the API,
-    resolves suggestions.
+  - `suggestForCurrentConfiguration()` — captures the viewport screenshot,
+    sends display-layer context, calls the API, resolves suggestions. It only
+    falls back to a full-interface screenshot if the viewport screenshot is not
+    available, because `html2canvas` can trip on browser-extension CSS.
   - `acceptSuggestion()` / `acceptAllSuggestions()` — call
     `main.addToolToConfiguration()`.
 - `src/components/ToolSuggestions.vue` — the floating panel (loading / error /
@@ -92,9 +95,10 @@ configuration until the user accepts it.
 ```
 Viewer.vue (config changes, map ready, empty tools, unseen)
   -> toolSuggestions.maybeSuggestForCurrentConfiguration()
-     -> capture 2 screenshots (interfaceCapture.ts)
+     -> capture viewport screenshot (interfaceCapture.ts)
      -> buildCatalog() from worker images + manual tools
-     -> ChatAPI.getToolSuggestions({ images, catalog, channels })
+     -> buildLayerContext() from current display layers
+     -> ChatAPI.getToolSuggestions({ images, catalog, channels, layers })
         -> POST /claude_suggest_tools
            -> Sonnet 5 forced tool call -> { suggestions: [{toolId, channelName, reason, confidence}] }
      -> resolve each suggestion -> IResolvedToolSuggestion { suggestion, catalogEntry, tool }

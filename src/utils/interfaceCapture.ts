@@ -3,13 +3,9 @@ import { IChatImage, IGeoJSMap } from "@/store/model";
 import { logError } from "@/utils/log";
 
 // Screenshot helpers shared between the chat assistant (ChatComponent.vue) and
-// the automatic tool-suggestion flow (store/toolSuggestions.ts). Both need to
-// send Claude a picture of the whole interface plus a picture of just the
-// image in the viewport.
-//
-// NOTE: ChatComponent.vue currently has its own copies of the first two
-// functions. It predates this util; a follow-up could switch it over to these
-// to remove the duplication.
+// the automatic tool-suggestion flow (store/toolSuggestions.ts). Chat uses both
+// the interface and viewport captures; tool suggestions prefer the viewport
+// capture and send structured layer context instead of cloning the whole DOM.
 
 /**
  * Capture the whole application interface as a PNG data URL.

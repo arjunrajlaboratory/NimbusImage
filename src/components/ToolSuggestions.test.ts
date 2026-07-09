@@ -11,6 +11,7 @@ vi.mock("@/store/toolSuggestions", () => ({
     dismissed: false,
     acceptSuggestion: vi.fn(),
     acceptAllSuggestions: vi.fn(),
+    suggestForCurrentConfiguration: vi.fn(),
     setDismissed: vi.fn(),
   },
 }));
@@ -139,6 +140,14 @@ describe("ToolSuggestions.vue", () => {
       const wrapper = mountComponent();
       (wrapper.vm as any).dismiss();
       expect(toolSuggestionsStore.setDismissed).toHaveBeenCalledWith(true);
+    });
+
+    it("refresh() reruns suggestions for the current configuration", () => {
+      const wrapper = mountComponent();
+      (wrapper.vm as any).refresh();
+      expect(
+        toolSuggestionsStore.suggestForCurrentConfiguration,
+      ).toHaveBeenCalledTimes(1);
     });
   });
 

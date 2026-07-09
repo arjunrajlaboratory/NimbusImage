@@ -4,6 +4,7 @@ import {
   IChatMessage,
   IToolSuggestion,
   IToolSuggestionCatalogEntry,
+  IToolSuggestionLayerContext,
 } from "./model";
 import { dataUrlToBase64 } from "@/utils/interfaceCapture";
 
@@ -82,6 +83,13 @@ function toChatMessage(item: any): IChatMessage | null {
   return null;
 }
 
+function errorFromResponse(error: unknown, fallbackMessage: string): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error(typeof error === "string" ? error : fallbackMessage);
+}
+
 export default class ChatAPI {
   private readonly client: RestClientInstance;
 
@@ -100,19 +108,20 @@ export default class ChatAPI {
       return null;
     }
     if ("error" in data) {
-      throw data.error;
+      throw errorFromResponse(data.error, "Claude chat request failed.");
     }
     return toChatMessage(data);
   }
 
-  // Ask Claude which tools to suggest for a freshly opened dataset, given
-  // screenshots of the interface + viewport, the catalog of tools the frontend
-  // can set up, and the dataset's channel names. Returns raw suggestions that
-  // reference the catalog by id (see store/toolSuggestions.ts for resolution).
+  // Ask Claude which tools to suggest for a freshly opened dataset, given a
+  // screenshot of the rendered viewport, display-layer context, and the catalog
+  // of tools the frontend can set up. Returns raw suggestions that reference
+  // the catalog by id (see store/toolSuggestions.ts for resolution).
   async getToolSuggestions(params: {
     images: { media_type: string; data: string }[];
     catalog: IToolSuggestionCatalogEntry[];
     channels: string[];
+    layers: IToolSuggestionLayerContext[];
   }): Promise<IToolSuggestion[]> {
     const response = await this.client.post("claude_suggest_tools", params);
     const { data } = response;
@@ -120,7 +129,7 @@ export default class ChatAPI {
       return [];
     }
     if ("error" in data) {
-      throw data.error;
+      throw errorFromResponse(data.error, "Claude tool suggestion failed.");
     }
     return data.suggestions ?? [];
   }

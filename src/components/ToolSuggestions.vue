@@ -2,6 +2,7 @@
   <v-card
     v-if="visible"
     class="tool-suggestions"
+    data-tool-suggestions-panel
     :data-tour="undefined"
     elevation="8"
   >
@@ -11,6 +12,17 @@
       >
       <span class="suggestions-title">Suggested tools</span>
       <v-spacer />
+      <v-btn
+        icon
+        variant="text"
+        size="small"
+        aria-label="Refresh suggestions"
+        :disabled="status === 'loading'"
+        :loading="status === 'loading'"
+        @click="refresh"
+      >
+        <v-icon size="small">mdi-refresh</v-icon>
+      </v-btn>
       <v-btn
         icon
         variant="text"
@@ -86,7 +98,10 @@
       </template>
     </v-card-text>
 
-    <v-card-actions v-if="status === 'done' && suggestions.length > 0">
+    <v-card-actions
+      v-if="status === 'done' && suggestions.length > 0"
+      class="suggestions-actions"
+    >
       <v-spacer />
       <v-btn variant="text" size="small" @click="dismiss">Not now</v-btn>
       <v-btn variant="flat" color="primary" size="small" @click="acceptAll">
@@ -149,6 +164,10 @@ function acceptAll() {
   toolSuggestionsStore.acceptAllSuggestions();
 }
 
+function refresh() {
+  toolSuggestionsStore.suggestForCurrentConfiguration();
+}
+
 function dismiss() {
   toolSuggestionsStore.setDismissed(true);
 }
@@ -161,6 +180,7 @@ defineExpose({
   visible,
   accept,
   acceptAll,
+  refresh,
   confidenceColor,
 });
 </script>
@@ -169,11 +189,15 @@ defineExpose({
 .tool-suggestions {
   position: absolute;
   right: 16px;
-  bottom: 16px;
-  z-index: 5;
+  bottom: 96px;
+  z-index: 1003;
   width: 340px;
   max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 128px);
   border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
 }
 
 .suggestions-header {
@@ -189,6 +213,7 @@ defineExpose({
 
 .suggestions-body {
   padding: 8px 12px;
+  overflow-y: auto;
 }
 
 .suggestions-loading {
@@ -242,5 +267,10 @@ defineExpose({
 .suggestion-reason {
   font-size: 0.78rem;
   opacity: 0.75;
+}
+
+.suggestions-actions {
+  flex: 0 0 auto;
+  padding: 4px 12px 12px;
 }
 </style>

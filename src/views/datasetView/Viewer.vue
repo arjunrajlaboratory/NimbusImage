@@ -39,6 +39,7 @@ function datasetChanged() {
 }
 
 function configurationChanged() {
+  toolSuggestionsStore.clear();
   propertiesStore.fetchProperties();
 }
 
@@ -81,6 +82,7 @@ defineExpose({
   dataset,
   configuration,
   volumeViewMode,
+  configurationChanged,
   handleResetComplete,
   handleLayersReady,
 });

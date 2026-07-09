@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 # Claude model used for all chat completions. Centralized here so that
 # additional call sites in this plugin share a single source of truth.
 CLAUDE_MODEL = 'claude-sonnet-5'
+MAX_TOOL_SUGGESTION_IMAGES = 2
+MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS = 12 * 1024 * 1024
 
 # The system prompt ships as package data alongside this module. Resolving
 # it relative to __file__ works for every install layout -- the Docker image
@@ -30,11 +32,13 @@ SYSTEM_PROMPT_PATH = os.path.join(
 # mapping what it sees to the catalog of tools the frontend passes in.
 SUGGEST_TOOLS_SYSTEM_PROMPT = (
     'You are an assistant embedded in NimbusImage, a scientific image '
-    'annotation platform. You are shown two screenshots of a freshly '
-    'opened microscopy dataset: one of the whole application interface '
-    'and one of the image itself in the viewport. You are also given the '
-    'list of annotation tools that are available to set up for this '
-    'dataset (the "catalog") and the names of the image channels.\n\n'
+    'annotation platform. You are shown screenshot(s) of a freshly opened '
+    'microscopy dataset, usually the rendered image viewport. You are also '
+    'given the list of annotation tools that are available to set up for '
+    'this dataset (the "catalog"), the names of the image channels, and '
+    'the displayed layer metadata. Layer metadata includes each layer color '
+    'and visibility; use it to map colored signal in the rendered image back '
+    'to the correct channelName.\n\n'
     'Your job is to look at the image and suggest which tools to set up '
     'so the user can get started quickly. Guidance:\n'
     '- If you see nuclei, suggest a Cellpose-SAM tool on the nuclear '
@@ -100,6 +104,25 @@ SUGGEST_TOOLS_TOOL = {
 }
 
 
+def _make_anthropic_client(endpoint_name):
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if api_key:
+        return Anthropic(api_key=api_key)
+    logger.error(
+        "Can't create an Anthropic client without an API key, "
+        'the %s endpoint will not work',
+        endpoint_name
+    )
+    return None
+
+
+def _list_param(data, name):
+    value = data.get(name, [])
+    if not isinstance(value, list):
+        raise RestException(f'{name} must be a list', code=400)
+    return value
+
+
 class ClaudeChatResource(Resource):
     def __init__(self):
         super().__init__()
@@ -117,16 +140,7 @@ class ClaudeChatResource(Resource):
             )
             self.system_prompt = ''
 
-        # Create client
-        api_key = os.environ.get('ANTHROPIC_API_KEY')
-        if api_key:
-            self.client = Anthropic(api_key=api_key)
-        else:
-            self.client = None
-            logger.error(
-                "Can't create an Anthropic client without an API key,"
-                'the claude_chat endpoint will not work'
-            )
+        self.client = _make_anthropic_client('claude_chat')
 
     @access.user
     @autoDescribeRoute(
@@ -174,10 +188,10 @@ class ClaudeChatResource(Resource):
 class ClaudeSuggestToolsResource(Resource):
     """Suggest annotation tools for a freshly opened dataset.
 
-    The frontend captures two screenshots (interface + viewport), builds a
-    catalog of the tools it knows how to set up, and posts them here. We ask
-    Claude to look at the image and pick which tools to suggest, returning a
-    structured list via a forced tool call.
+    The frontend captures a rendered viewport screenshot, builds a catalog of
+    the tools it knows how to set up, and posts display-layer context here. We
+    ask Claude to look at the image and pick which tools to suggest, returning
+    a structured list via a forced tool call.
     """
 
     def __init__(self):
@@ -185,15 +199,7 @@ class ClaudeSuggestToolsResource(Resource):
         self.resourceName = 'claude_suggest_tools'
         self.route('POST', (), self.suggest_tools)
 
-        api_key = os.environ.get('ANTHROPIC_API_KEY')
-        if api_key:
-            self.client = Anthropic(api_key=api_key)
-        else:
-            self.client = None
-            logger.error(
-                "Can't create an Anthropic client without an API key, "
-                'the claude_suggest_tools endpoint will not work'
-            )
+        self.client = _make_anthropic_client('claude_suggest_tools')
 
     @access.user
     @autoDescribeRoute(
@@ -207,17 +213,41 @@ class ClaudeSuggestToolsResource(Resource):
         return self.suggest_tools_imp(data)
 
     def _build_user_content(self, data):
+        if not isinstance(data, dict):
+            raise RestException(
+                'Request body must be a JSON object', code=400
+            )
         # images: [{media_type, data}] base64 (no data-url prefix)
         # catalog: [{id, name, kind, description, defaultShape}]
         # channels: [str]
-        images = data.get('images', [])
-        catalog = data.get('catalog', [])
-        channels = data.get('channels', [])
+        # layers: [{id, name, channel, channelName, color, visible}]
+        images = _list_param(data, 'images')
+        catalog = _list_param(data, 'catalog')
+        channels = _list_param(data, 'channels')
+        layers = _list_param(data, 'layers')
+
+        if len(images) > MAX_TOOL_SUGGESTION_IMAGES:
+            raise RestException(
+                'images contains too many screenshots', code=400
+            )
 
         content = []
         for image in images:
+            if not isinstance(image, dict):
+                raise RestException('images entries must be objects', code=400)
             media_type = image.get('media_type', 'image/png')
             image_data = image.get('data')
+            if not isinstance(media_type, str):
+                raise RestException(
+                    'image media_type must be a string', code=400
+                )
+            if image_data is not None and not isinstance(image_data, str):
+                raise RestException('image data must be a string', code=400)
+            if (
+                image_data and
+                len(image_data) > MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS
+            ):
+                raise RestException('image data is too large', code=400)
             if not image_data:
                 continue
             content.append({
@@ -236,13 +266,17 @@ class ClaudeSuggestToolsResource(Resource):
                 '(JSON):\n' + json.dumps(catalog) +
                 '\n\nThe image channels are (JSON):\n' +
                 json.dumps(channels) +
-                '\n\nLook at the screenshots and call suggest_tools with your '
-                'suggestions.'
+                '\n\nThe displayed layers are (JSON):\n' +
+                json.dumps(layers) +
+                '\n\nUse the displayed layer colors and visibility to map '
+                'colored objects in the screenshot(s) to channelName. Then '
+                'call suggest_tools with your suggestions.'
             ),
         })
         return content
 
     def suggest_tools_imp(self, data):
+        content = self._build_user_content(data)
         if self.client is None:
             raise RestException(
                 'Claude tool suggestions are not configured '
@@ -263,7 +297,7 @@ class ClaudeSuggestToolsResource(Resource):
                 messages=[
                     {
                         'role': 'user',
-                        'content': self._build_user_content(data),
+                        'content': content,
                     }
                 ],
             )
