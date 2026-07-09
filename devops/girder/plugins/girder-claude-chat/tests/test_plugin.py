@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 from girder.api.rest import RestException
 
-from girder_claude_chat import ClaudeChatResource, CLAUDE_MODEL
+from girder_claude_chat import (
+    ClaudeChatResource, ClaudeSuggestToolsResource, CLAUDE_MODEL
+)
 
 
 @pytest.mark.plugin('girder_claude_chat')
@@ -51,3 +53,58 @@ def testClaudeChatUsesSonnet5AndCollectsTextBlocks(monkeypatch):
     assert fake_messages.create_kwargs['model'] == CLAUDE_MODEL
     assert fake_messages.create_kwargs['model'] == 'claude-sonnet-5'
     assert fake_messages.create_kwargs['max_tokens'] == 8192
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testSuggestToolsIncludesLayerContext(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeSuggestToolsResource()
+
+    content = resource._build_user_content({
+        'images': [],
+        'catalog': [{'id': 'manual:blob', 'name': 'Blob'}],
+        'channels': ['DAPI', 'TRITC'],
+        'layers': [
+            {
+                'id': 'layer-0',
+                'name': 'TRITC',
+                'channel': 1,
+                'channelName': 'TRITC',
+                'color': '#FFFF00',
+                'visible': True,
+            },
+        ],
+    })
+
+    text = content[-1]['text']
+    assert 'The displayed layers are (JSON)' in text
+    assert '"channelName": "TRITC"' in text
+    assert '"color": "#FFFF00"' in text
+    assert 'map colored objects' in text
+
+
+@pytest.mark.plugin('girder_claude_chat')
+@pytest.mark.parametrize(
+    ('payload', 'message'),
+    [
+        (None, 'Request body must be a JSON object'),
+        ({'images': 'not-a-list'}, 'images must be a list'),
+        ({'images': ['not-an-object']}, 'images entries must be objects'),
+        (
+            {'images': [{'data': 'AAAA'}, {'data': 'BBBB'}, {'data': 'CCCC'}]},
+            'images contains too many screenshots',
+        ),
+        ({'catalog': {}}, 'catalog must be a list'),
+        ({'channels': {}}, 'channels must be a list'),
+        ({'layers': {}}, 'layers must be a list'),
+    ],
+)
+def testSuggestToolsRejectsMalformedRequests(monkeypatch, payload, message):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeSuggestToolsResource()
+
+    with pytest.raises(RestException) as excinfo:
+        resource.suggest_tools_imp(payload)
+
+    assert excinfo.value.code == 400
+    assert message in str(excinfo.value)

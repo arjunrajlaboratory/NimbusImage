@@ -26,9 +26,17 @@ vi.mock("@/store/properties", () => ({
   },
 }));
 
+vi.mock("@/store/toolSuggestions", () => ({
+  default: {
+    clear: vi.fn(),
+    maybeSuggestForCurrentConfiguration: vi.fn(),
+  },
+}));
+
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
+import toolSuggestionsStore from "@/store/toolSuggestions";
 import Viewer from "./Viewer.vue";
 
 function mountComponent() {
@@ -59,6 +67,26 @@ describe("Viewer", () => {
   it("mounted calls fetchProperties", () => {
     mountComponent();
     expect(propertiesStore.fetchProperties).toHaveBeenCalled();
+  });
+
+  it("configurationChanged clears stale tool suggestions and fetches properties", () => {
+    const wrapper = mountComponent();
+    vi.clearAllMocks();
+
+    (wrapper.vm as any).configurationChanged();
+
+    expect(toolSuggestionsStore.clear).toHaveBeenCalled();
+    expect(propertiesStore.fetchProperties).toHaveBeenCalled();
+  });
+
+  it("handleLayersReady asks for tool suggestions", () => {
+    const wrapper = mountComponent();
+
+    (wrapper.vm as any).handleLayersReady();
+
+    expect(
+      toolSuggestionsStore.maybeSuggestForCurrentConfiguration,
+    ).toHaveBeenCalled();
   });
 
   it("handleResetComplete sets shouldResetMaps false", () => {
