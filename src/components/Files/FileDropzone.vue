@@ -16,11 +16,22 @@
         <v-icon size="50px">mdi-file-upload</v-icon>
         <div class="text-body-1 font-weight-medium mt-3">
           <template v-if="multiple">
-            Drag files here or click to select them
+            Drag files or a folder here or click to select them
           </template>
           <template v-else> Drag a file here or click to select one </template>
         </div>
       </slot>
+      <div v-if="multiple && directory" class="mt-2" style="z-index: 2">
+        <v-btn
+          variant="text"
+          size="small"
+          color="primary"
+          @click.stop="selectFolder"
+        >
+          <v-icon start>mdi-folder-upload</v-icon>
+          Select a folder instead
+        </v-btn>
+      </div>
       <slot name="afterMessage"></slot>
     </v-row>
     <input
@@ -35,6 +46,10 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import {
+  getFilesFromDataTransfer,
+  selectFilesFromFolder,
+} from "@/utils/fileUpload";
 
 const props = withDefaults(
   defineProps<{
@@ -42,12 +57,14 @@ const props = withDefaults(
     message?: string;
     multiple?: boolean;
     accept?: string;
+    directory?: boolean;
   }>(),
   {
     modelValue: () => [],
     message: "",
     multiple: true,
     accept: undefined,
+    directory: true,
   },
 );
 
@@ -68,13 +85,20 @@ function onChange(event: Event) {
   files.value = [...fileList];
 }
 
-function onDrop(event: DragEvent) {
+async function onDrop(event: DragEvent) {
   dropzoneClass.value = null;
-  const dropped = [...(event.dataTransfer?.files || [])];
+  const dropped = await getFilesFromDataTransfer(event.dataTransfer);
   files.value = props.multiple ? dropped : dropped.slice(0, 1);
 }
 
-defineExpose({ dropzoneClass, onDrop });
+async function selectFolder() {
+  const folderFiles = await selectFilesFromFolder();
+  if (folderFiles.length > 0) {
+    files.value = folderFiles;
+  }
+}
+
+defineExpose({ dropzoneClass, onDrop, selectFolder });
 </script>
 
 <style lang="scss" scoped>
