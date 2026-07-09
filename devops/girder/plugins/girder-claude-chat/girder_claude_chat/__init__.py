@@ -244,8 +244,8 @@ class ClaudeSuggestToolsResource(Resource):
             if image_data is not None and not isinstance(image_data, str):
                 raise RestException('image data must be a string', code=400)
             if (
-                image_data and
-                len(image_data) > MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS
+                image_data
+                and len(image_data) > MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS
             ):
                 raise RestException('image data is too large', code=400)
             if not image_data:
@@ -263,11 +263,12 @@ class ClaudeSuggestToolsResource(Resource):
             'type': 'text',
             'text': (
                 'Here is the catalog of tools available to set up '
-                '(JSON):\n' + json.dumps(catalog) +
-                '\n\nThe image channels are (JSON):\n' +
-                json.dumps(channels) +
-                '\n\nThe displayed layers are (JSON):\n' +
-                json.dumps(layers) +
+                '(JSON):\n'
+                f'{json.dumps(catalog)}'
+                '\n\nThe image channels are (JSON):\n'
+                f'{json.dumps(channels)}'
+                '\n\nThe displayed layers are (JSON):\n'
+                f'{json.dumps(layers)}'
                 '\n\nUse the displayed layer colors and visibility to map '
                 'colored objects in the screenshot(s) to channelName. Then '
                 'call suggest_tools with your suggestions.'
