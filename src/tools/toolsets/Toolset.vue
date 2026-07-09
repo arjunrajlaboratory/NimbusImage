@@ -51,6 +51,9 @@
                 </template>
               </div>
             </template>
+            <!-- The unified "Segment similar objects" tool exposes its
+                 options in the bottom-right ObjectSegmentationPanel (mounted
+                 by ImageViewer), so here it renders as a plain tool-item. -->
             <template v-else>
               <tool-item
                 :tool="tool"

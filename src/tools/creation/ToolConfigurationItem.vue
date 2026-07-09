@@ -15,6 +15,7 @@
               v-model="componentValue"
               ref="innerComponent"
               return-object
+              :item-title="item.type === 'select' ? 'text' : undefined"
               @update:model-value="changed"
               density="compact"
             >

@@ -165,6 +165,41 @@ Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed di
 
 **The `#item` slot name did NOT change** (contrary to some sources claiming rename to `#internalItem`).
 
+### `v-select` shows `[object Object]` — set `item-title` to match the item key
+
+Vuetify's `VSelect` defaults to `item-title="title"` and `item-value="value"`. If your items are objects keyed differently, the selected display renders the raw object as **`[object Object]`** (selection still works because `item-value` happens to match).
+
+This bit the tool-creation form: every `select` interface element in `public/config/templates.json` uses `{ text, value }` items, but the generic `VSelect` in `ToolConfigurationItem.vue` set no `item-title`, so **every non-submenu select in the Add-tool dialog** rendered `[object Object]`. Fix: pass `item-title="text"` (the app's convention) for select elements.
+
+```vue
+<!-- BAD: items are { text, value } but VSelect looks for `.title` -->
+<v-select :items="[{ text: 'Point prompts', value: 'point' }]" />  <!-- [object Object] -->
+
+<!-- GOOD -->
+<v-select :items="items" item-title="text" item-value="value" />
+```
+
+When you add a non-submenu `select` to a tool template, or render options in a `v-select`, always confirm `item-title` matches the item objects' label key.
+
+### Don't `v-model` a computed that reads a non-reactive pipeline node
+
+`ComputeNode.output` / `ManualInputNode.output` (in `src/pipelines/computePipeline.ts`) is a **plain field, not a Vue ref** (pipeline nodes are `markRaw`'d for perf). A `computed` whose getter reads `node.output` registers **no reactive dependency**, so it never re-evaluates when the node's value changes. Bind a control's `v-model` to such a computed and the control **snaps back to its stale value** on the next render — e.g. a dropdown that "looks selected" but always displays the old option, or a slider that jumps back.
+
+```ts
+// BAD: getter reads node.output (non-reactive) → v-model display reverts
+const promptMode = computed({
+  get: () => promptModeNode.value?.output ?? "point",
+  set: (v) => promptModeNode.value?.setValue(v),
+});
+
+// GOOD: a reactive ref is the UI source of truth; push into the node on change,
+// and seed the ref from config/state on mount + when the tool state changes.
+const promptMode = ref<TPromptMode>("point");
+watch(promptMode, (v) => segState.value?.nodes.input.promptMode.setValue(v));
+```
+
+Reactive **state** fields (from `reactive(...)` in the tool-state factory) are fine to read in computeds — only raw `markRaw`'d node `.output` reads are the trap.
+
 ### VRow Density
 
 `dense` prop is deprecated. Use `density="comfortable"`:

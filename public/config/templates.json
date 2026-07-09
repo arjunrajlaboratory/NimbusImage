@@ -325,6 +325,95 @@
     ]
   },
   {
+    "name": "Segment similar objects (experimental, Chrome/WebGPU only)",
+    "type": "objectSegmentation",
+    "shortName": "Similar",
+    "description": "Mark a few example objects (shift-click with SAM, shift-drag a box, or shift-drag a freehand circle) and find similar objects across the current view using SAM similarity or an in-browser classifier. Choose the selection and application methods in the panel. Works on what is displayed: zoom and adjust contrast first.",
+    "interface": [
+      {
+        "id": "model",
+        "type": "select",
+        "meta": {
+          "items": [
+            {
+              "text": "SAM1 ViT-B",
+              "value": "vit_b",
+              "description": "Original SAM model, click or drag to segment objects with AI"
+            },
+            {
+              "text": "SAM2 Hiera Base+",
+              "value": "sam2_hiera_base_plus",
+              "description": "SAM2 base+ model, better quality segmentation"
+            },
+            {
+              "text": "SAM2 Hiera Large",
+              "value": "sam2_hiera_large",
+              "description": "SAM2 large model, best quality segmentation"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Annotation Configuration",
+        "id": "annotation",
+        "type": "annotation",
+        "meta": {
+          "hideShape": true,
+          "defaultShape": "polygon"
+        }
+      },
+      {
+        "name": "Detection threshold",
+        "id": "threshold",
+        "type": "text",
+        "meta": {
+          "value": "0.5",
+          "type": "number"
+        }
+      },
+      {
+        "name": "Prompt mode",
+        "id": "promptMode",
+        "type": "select",
+        "meta": {
+          "items": [
+            {
+              "text": "Point prompts",
+              "value": "point"
+            },
+            {
+              "text": "Box prompts",
+              "value": "box"
+            },
+            {
+              "text": "Thorough grid scan",
+              "value": "grid",
+              "description": "Scans a uniform grid of points across the view - much slower, use only if similar objects are being missed"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Grid points per side (grid mode)",
+        "id": "gridSize",
+        "type": "text",
+        "meta": {
+          "value": "16",
+          "type": "number"
+        }
+      },
+      {
+        "name": "Simplification",
+        "id": "simplificationTolerance",
+        "type": "text",
+        "meta": {
+          "value": "1",
+          "type": "number"
+        }
+      }
+    ]
+  },
+  {
     "name": "Annotation Connections",
     "type": "connection",
     "shortName": "Connection",
