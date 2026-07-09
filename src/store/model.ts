@@ -63,8 +63,7 @@ export type TToolType =
   | "edit"
   | "segmentation"
   | "samAnnotation"
-  | "exampleSegmentation"
-  | "samSimilarity"
+  | "objectSegmentation"
   | "tagging"
   | "linescan";
 
@@ -149,102 +148,98 @@ export interface ISamAnnotationToolState {
   livePreview: IGeoJSPosition[] | null;
 }
 
-export const ExampleSegmentationToolStateSymbol: unique symbol = Symbol(
-  "Example segmentation tool state",
+export const ObjectSegmentationToolStateSymbol: unique symbol = Symbol(
+  "ObjectSegmentationToolState",
 );
 
-export type TExampleSegmentationToolStateSymbol =
-  typeof ExampleSegmentationToolStateSymbol;
+export type TObjectSegmentationToolStateSymbol =
+  typeof ObjectSegmentationToolStateSymbol;
 
-export interface IExampleSegmentationExample {
+// How the user picks a training/example object.
+//  - "samClick": shift-click a point; SAM decodes the object under it.
+//  - "samBox":   shift-drag a box; SAM decodes the object inside it.
+//  - "circle":   shift-drag a freehand lasso; the polygon IS the example
+//                (no decoder run).
+export type TObjectSelectionMode = "samClick" | "samBox" | "circle";
+
+// How examples are propagated to the rest of the image.
+//  - "samSimilarity":     SAM-embedding similarity search over candidate prompts.
+//  - "classifier":        in-browser random-forest classifier (web worker).
+//  - "samThenClassifier": chained - run SAM similarity, then train the
+//                         classifier on the examples + SAM proposals and show
+//                         the classifier's result.
+export type TObjectApplicationMethod =
+  | "samSimilarity"
+  | "classifier"
+  | "samThenClassifier";
+
+// Where matches are searched. "image" (whole-image) is not yet implemented;
+// only "viewport" (the currently displayed view) is available for now.
+export type TObjectSegmentationScope = "viewport" | "image";
+
+export interface IObjectSegmentationExample {
   polarity: "foreground" | "background";
-  coordinates: IGeoJSPosition[]; // GCS (image) coords of the circled polygon
+  // null for a circled example: its polygon (below) is authoritative and no
+  // decoder prompt was ever run.
+  prompt: TSamPrompt | null;
+  // The resolved example outline in GCS (image) coords - the given polygon
+  // for a circled example, or the SAM-decoded mask for a prompt example.
+  // null until the example-resolve node has processed this example. Both
+  // application methods consume this: the classifier trains on these
+  // polygons, so a SAM-clicked example can feed the classifier too.
+  polygon: IGeoJSPosition[] | null;
 }
 
-export interface IExampleSegmentationStatus {
+export interface IObjectSegmentationStatus {
   phase: "idle" | "computing" | "ready" | "error";
   error?: string;
   putativeCount: number; // proposals.length after all filtering
+  // SAM candidate-decode progress ("Scanning candidates … 23/64"). null when
+  // no SAM decode run is in flight (and always null for the classifier).
+  progress: { done: number; total: number } | null;
+  // Superset of both methods' timings: SAM (encode/decode) + classifier
+  // (features/train/predict/postprocess).
   timings: {
+    encodeMs?: number;
+    decodeMs?: number;
     featuresMs?: number;
     trainMs?: number;
     predictMs?: number;
     postprocessMs?: number;
   };
-  // Auto size range derived from foreground example areas (spec §4.4 step 3),
-  // surfaced so the tool menu panel can show it as size filter placeholders.
-  // Undefined until the first postprocess result arrives; null if the worker
-  // couldn't compute one (e.g. no foreground examples yet).
-  autoSizeRange?: { min: number; max: number } | null;
-}
-
-export interface IExampleSegmentationToolState {
-  type: TExampleSegmentationToolStateSymbol;
-  nodes: TExampleSegmentationNodes; // markRaw'd pipeline nodes
-  // Reactive mirror of nodes.input.geoJSMap.output, same pattern as
-  // ISamAnnotationToolState.mapEntry (see comment above).
-  mapEntry: IMapEntry | null;
-  examples: IExampleSegmentationExample[]; // reactive mirror of the examples input node
-  proposals: IGeoJSPosition[][] | null; // GCS polygons, post-dedupe; null = nothing computed
-  status: IExampleSegmentationStatus; // reactive mirror
-  // Polarity applied to the next circled example; set by the tool menu panel.
-  nextPolarity: "foreground" | "background";
-}
-
-export const SamSimilarityToolStateSymbol: unique symbol = Symbol(
-  "SamSimilarityToolState",
-);
-
-export type TSamSimilarityToolStateSymbol = typeof SamSimilarityToolStateSymbol;
-
-export interface ISamSimilarityExample {
-  polarity: "foreground" | "background";
-  // null for a circled example (§11 addendum, "Circle" input mode): its
-  // polygon (below) is authoritative and no decoder prompt was ever run.
-  prompt: TSamPrompt | null;
-  // The decoded example outline in GCS (image) coords; null until the
-  // example-decode node has processed this example (see
-  // EXAMPLE_SEGMENTATION_TOOL.md §11.4).
-  polygon: IGeoJSPosition[] | null;
-}
-
-export interface ISamSimilarityStatus {
-  phase: "idle" | "computing" | "ready" | "error";
-  error?: string;
-  putativeCount: number; // proposals.length after all filtering
-  // Candidate-decode progress (§11.4: "Stream results ... every ~8
-  // candidates" / "show '23/64 candidates' in the status line"). null when
-  // no decode run is in flight.
-  progress: { done: number; total: number } | null;
-  timings: { encodeMs?: number; decodeMs?: number };
   // Auto size range derived from foreground example areas, surfaced so the
-  // tool menu panel can display the size filter placeholders (same pattern
-  // as IExampleSegmentationStatus.autoSizeRange).
+  // panel can display the size-filter placeholders.
   autoSizeRange?: { min: number; max: number } | null;
 }
 
-export interface ISamSimilarityToolState {
-  type: TSamSimilarityToolStateSymbol;
-  nodes: TSamSimilarityNodes; // markRaw'd pipeline nodes
+export interface IObjectSegmentationToolState {
+  type: TObjectSegmentationToolStateSymbol;
+  nodes: TObjectSegmentationNodes; // markRaw'd pipeline nodes
   // Reactive mirror of nodes.input.geoJSMap.output, same pattern as
   // ISamAnnotationToolState.mapEntry.
   mapEntry: IMapEntry | null;
-  // Reactive mirror of the examples input node, with decoded polygons filled
-  // in by the example-decode node (same array order as the input).
-  examples: ISamSimilarityExample[];
+  // Reactive mirror of the examples input node, with resolved polygons filled
+  // in by the example-resolve node (same array order as the input).
+  examples: IObjectSegmentationExample[];
   proposals: IGeoJSPosition[][] | null; // GCS polygons, post-dedupe; null = nothing computed
-  // Polarity applied to the next SAM-prompted example; set by the tool menu
-  // panel (same pattern as IExampleSegmentationToolState.nextPolarity).
+  // Polarity applied to the next example; set by the panel.
   nextPolarity: "foreground" | "background";
-  status: ISamSimilarityStatus; // reactive mirror
-  // How the next example is captured; set by the tool menu panel (§11
-  // addendum, "Circle" input mode). "click" decodes a SAM prompt at the
-  // clicked/dragged point/box; "circle" rasterizes a freehand polygon
-  // directly (no decoder run).
-  exampleInputMode: "click" | "circle";
-  // Reactive mirror of the hover-preview decode node's output (GCS outline
-  // of the object under the cursor in "click" mode); null when idle,
-  // dragging, in "circle" mode, or between debounced decodes.
+  status: IObjectSegmentationStatus; // reactive mirror
+  // Transient per-node progress labels for the in-viewer overlay (e.g. "SAM
+  // encoding…", "SAM segmenting…", "Training classifier…"), same overlay as
+  // ISamAnnotationToolState.loadingMessages.
+  loadingMessages: string[];
+  // How the next example is captured; set by the panel. Reactive so the
+  // AnnotationViewer interaction/preview routing can switch live.
+  selectionMode: TObjectSelectionMode;
+  // How examples are propagated; set by the panel. Reactive mirror of the
+  // applicationMethod input node (which gates the two pipeline branches).
+  applicationMethod: TObjectApplicationMethod;
+  // Search scope; set by the panel. Only "viewport" is functional for now.
+  scope: TObjectSegmentationScope;
+  // Reactive mirror of the hover-preview decode node's output (GCS outline of
+  // the object under the cursor in a SAM selection mode); null when idle,
+  // dragging, in circle mode, or between debounced decodes.
   livePreview: IGeoJSPosition[] | null;
 }
 
@@ -287,8 +282,7 @@ export interface IErrorToolState {
 
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
-  exampleSegmentation: IExampleSegmentationToolState | IErrorToolState;
-  samSimilarity: ISamSimilarityToolState | IErrorToolState;
+  objectSegmentation: IObjectSegmentationToolState | IErrorToolState;
   connection: IConnectionToolState;
   // Edit tool can have CombineToolState when action is "combine_click"
   edit: ICombineToolState | IBaseToolState;
@@ -1966,8 +1960,7 @@ import { ISetQuadStatus } from "@/utils/setFrameQuad";
 import type { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
 import type { TSamNodes } from "@/pipelines/samPipeline";
-import type { TExampleSegmentationNodes } from "@/pipelines/exampleSegmentationPipeline";
-import type { TSamSimilarityNodes } from "@/pipelines/samSimilarityPipeline";
+import type { TObjectSegmentationNodes } from "@/pipelines/objectSegmentationPipeline";
 
 // TODO: It's kind of weird to have this function here.
 export function newLayer(

@@ -76,8 +76,8 @@
       @centerChange="setCenter"
       @cornersChange="setCorners"
     />
-    <div v-if="samToolActive" class="sam-status-area">
-      <div v-if="showSamToolHelpAlert" class="sam-help-banner">
+    <div v-if="samStatusAreaActive" class="sam-status-area">
+      <div v-if="showSamToolHelpAlert && samToolActive" class="sam-help-banner">
         <span class="sam-help-label">SAM segmenter:</span>
         <div class="sam-help-text">
           <span><b>Shift + left click</b> positive point</span>
@@ -98,6 +98,7 @@
       </div>
     </div>
     <line-scan-panel />
+    <object-segmentation-panel />
     <div class="bottom-right-container">
       <v-btn
         v-if="submitPendingAnnotation"
@@ -229,11 +230,9 @@ import {
   IGeoJSPoint2D,
   IMouseState,
   SamAnnotationToolStateSymbol,
-  ExampleSegmentationToolStateSymbol,
-  SamSimilarityToolStateSymbol,
+  ObjectSegmentationToolStateSymbol,
   ISamAnnotationToolState,
-  IExampleSegmentationToolState,
-  ISamSimilarityToolState,
+  IObjectSegmentationToolState,
   IGeoJSMap,
   ProgressType,
   IGeoJSActionRecord,
@@ -243,6 +242,7 @@ import setFrameQuad, { ISetQuadStatus } from "@/utils/setFrameQuad";
 
 import AnnotationViewer from "@/components/AnnotationViewer.vue";
 import LineScanPanel from "@/components/LineScanPanel.vue";
+import ObjectSegmentationPanel from "@/components/ObjectSegmentationPanel.vue";
 import ImageOverview from "@/components/ImageOverview.vue";
 import ScaleSettings from "@/components/ScaleSettings.vue";
 import ProgressBarGroup from "@/components/ProgressBarGroup.vue";
@@ -360,10 +360,24 @@ const showSamToolHelpAlert = ref(false);
 const samToolActive = computed(
   () => selectedToolType.value === SamAnnotationToolStateSymbol,
 );
+const objectSegmentationToolActive = computed(
+  () => selectedToolType.value === ObjectSegmentationToolStateSymbol,
+);
+// The status area hosts the loading overlay for both SAM-family tools (the
+// SAM annotation tool and the unified object-segmentation tool); the help
+// banner inside it is variant per tool.
+const samStatusAreaActive = computed(
+  () => samToolActive.value || objectSegmentationToolActive.value,
+);
 const samLoadingMessages = computed(() => {
   const state = selectedTool.value?.state;
-  if (state?.type !== SamAnnotationToolStateSymbol) return [];
-  return (state as { loadingMessages: string[] }).loadingMessages ?? [];
+  if (
+    state?.type === SamAnnotationToolStateSymbol ||
+    state?.type === ObjectSegmentationToolStateSymbol
+  ) {
+    return (state as { loadingMessages: string[] }).loadingMessages ?? [];
+  }
+  return [];
 });
 // IMapEntry contains heavy GeoJS map + layers — shallowRef tracks identity
 // so the SAM watcher fires on swap, but skips deep-walking the GeoJS tree.
@@ -1399,21 +1413,16 @@ function toggleViewLock() {
   });
 }
 
-// SAM, example-segmentation, and SAM-similarity tool states are all fed the
-// current map through an input node named `geoJSMap` (samPipeline.ts /
-// exampleSegmentationPipeline.ts / samSimilarityPipeline.ts). Factored into
-// one type guard so the map-feeding watcher below doesn't need to duplicate
-// itself per tool type.
+// The SAM annotation tool and the unified object-segmentation tool are both
+// fed the current map through an input node named `geoJSMap` (samPipeline.ts /
+// objectSegmentationPipeline.ts). Factored into one type guard so the
+// map-feeding watcher below doesn't need to duplicate itself per tool type.
 function hasGeoJSMapInput(
   toolState: TToolState | null | undefined,
-): toolState is
-  | ISamAnnotationToolState
-  | IExampleSegmentationToolState
-  | ISamSimilarityToolState {
+): toolState is ISamAnnotationToolState | IObjectSegmentationToolState {
   return (
     toolState?.type === SamAnnotationToolStateSymbol ||
-    toolState?.type === ExampleSegmentationToolStateSymbol ||
-    toolState?.type === SamSimilarityToolStateSymbol
+    toolState?.type === ObjectSegmentationToolStateSymbol
   );
 }
 

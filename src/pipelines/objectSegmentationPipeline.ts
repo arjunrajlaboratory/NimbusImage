@@ -1,22 +1,32 @@
 /**
- * Compute pipeline for the SAM-embedding similarity segmentation tool
- * ("Variant B" / shortName "SimSAM"). See
- * codebaseDocumentation/EXAMPLE_SEGMENTATION_TOOL.md §11 for the full spec
- * (normative unless a deviation is called out in §11.7, appended by this
- * implementation).
+ * Compute pipeline for the unified "Segment similar objects" tool. The user
+ * picks example objects by one of several SELECTION methods (SAM click, SAM
+ * box, freehand circle) and propagates them to the rest of the current view
+ * by one of two APPLICATION methods (SAM-embedding similarity search, or an
+ * in-browser random-forest classifier). Any selection method combines with
+ * any application method because both branches consume the same resolved
+ * example set.
  *
- * Structure mirrors src/pipelines/exampleSegmentationPipeline.ts (state
- * factory, status phases, error reporting, dedupe, reset) and reuses
- * src/pipelines/samPipeline.ts's encoder/decoder machinery (exported for
- * this purpose) rather than sharing a live SAM tool instance - this pipeline
- * builds its own encoder/decoder node chain from the exported helpers.
+ * See codebaseDocumentation/EXAMPLE_SEGMENTATION_TOOL.md (§11 for the SAM
+ * similarity core, §4 for the classifier core, §12 for the unification).
+ * Reuses samPipeline.ts's encoder/decoder machinery and
+ * exampleSegmentation.worker.ts's classifier (via workerClient) rather than
+ * sharing live tool instances - this pipeline builds its own node chains.
  *
- * Node graph (§11.4):
+ * Node graph:
  *   geoJSMap -> screenshot -> processCanvas -> runEncoder -> embeddingGrid
- *   (examples + embeddingGrid + decoder) -> exampleDescriptors
+ *   (examples + embeddingGrid + decoder) -> exampleDescriptors   [SHARED: resolves
+ *       every example to a GCS polygon, decoding SAM prompts; both branches use it]
+ *   -- SAM branch (applicationMethod === "samSimilarity") --
  *   (exampleDescriptors + embeddingGrid + promptMode) -> candidates
- *   (candidates + decoder + exampleDescriptors) -> decodeCandidates [staleness/progress/streaming, see below]
- *   (decodeCandidates + exampleDescriptors + threshold/size/simplification) -> proposals
+ *   (candidates + decoder + exampleDescriptors) -> decodeCandidates [staleness/progress/streaming]
+ *   (decodeCandidates + exampleDescriptors + threshold/size/simplification) -> samProposals
+ *   -- Classifier branch (applicationMethod === "classifier") --
+ *   screenshot -> downscale -> setImage (worker)
+ *   (exampleDescriptors.decodedExamples + setImage) -> trainPredict -> postprocess -> classifierProposals
+ * Each branch's first gated node returns NoOutput when its method is inactive,
+ * so only the active branch computes. The state factory mirrors whichever
+ * branch's proposals node is active into state.proposals.
  */
 import { markRaw, reactive } from "vue";
 import geojs from "geojs";
@@ -26,12 +36,13 @@ import {
   IErrorToolState,
   IGeoJSPosition,
   IMapEntry,
-  ISamSimilarityExample,
-  ISamSimilarityStatus,
-  ISamSimilarityToolState,
+  IObjectSegmentationExample,
+  IObjectSegmentationStatus,
+  IObjectSegmentationToolState,
   IToolConfiguration,
   PromptType,
-  SamSimilarityToolStateSymbol,
+  ObjectSegmentationToolStateSymbol,
+  TObjectApplicationMethod,
   TSamPrompt,
 } from "@/store/model";
 import {
@@ -77,6 +88,13 @@ import {
 } from "@/utils/samSimilarity/embedding";
 import { dedupeProposalsAgainstAnnotations } from "@/utils/proposalDedupe";
 import { simpleCentroid } from "@/utils/annotation";
+import { ExampleSegmentationWorkerClient } from "@/utils/exampleSegmentation/workerClient";
+import {
+  IPostprocessParams,
+  ISegmentationResultResponse,
+  IWorkerExample,
+  IWorkerPoint,
+} from "@/utils/exampleSegmentation/types";
 
 // See §11.6: score(f) = max_i cos(f, positives[i]) - negativeWeight * max_j cos(f, negatives[j]).
 const NEGATIVE_WEIGHT = 0.5;
@@ -92,7 +110,11 @@ const NMS_IOU_MAX = 0.6;
 const EXAMPLE_OVERLAP_IOU_MAX = 0.5;
 const SIZE_AUTO_MIN_FACTOR = 0.25;
 const SIZE_AUTO_MAX_FACTOR = 4;
-const GRID_SCAN_SIZE = 16;
+const DEFAULT_GRID_SCAN_SIZE = 16;
+// Guardrails for the user-configurable grid density (grid prompt mode): the
+// scan decodes gridSize^2 points, so cap it to keep decode time sane.
+const MIN_GRID_SCAN_SIZE = 2;
+const MAX_GRID_SCAN_SIZE = 48;
 // "Stream results ... every ~8 candidates" (§11.4).
 const PROGRESS_STREAM_INTERVAL = 8;
 const MODEL_INPUT_CELL_PX = 16;
@@ -105,14 +127,16 @@ const DEFAULT_SIZE_RANGE: TSizeRange = { min: null, max: null };
 const DEFAULT_SIMPLIFICATION_TOLERANCE = 1;
 
 // Shape of the `examples` input node's elements: unlike the reactive
-// state's ISamSimilarityExample, the input carries no decoded polygon (that
+// state's IObjectSegmentationExample, the input carries no decoded polygon (that
 // is produced by the example-decode node and mirrored into state.examples).
 // Exactly one of `prompt`/`polygon` is set (enforced by this discriminated
 // union on `prompt`): a `prompt` example is decoded by SAM at
 // example-descriptor time ("Click" input mode); a `polygon` example (`prompt:
 // null`, "Circle" input mode) is already-final and rasterized directly onto
 // the embedding grid with no decoder run (§11 addendum).
-type TSamSimilarityExampleInput = { polarity: "foreground" | "background" } & (
+type TObjectSegmentationExampleInput = {
+  polarity: "foreground" | "background";
+} & (
   | { prompt: TSamPrompt; polygon?: undefined }
   | { prompt: null; polygon: IGeoJSPosition[] }
 );
@@ -162,19 +186,140 @@ interface IEmbeddingGridState {
   normalizedData: Float32Array;
 }
 
+// ---- Classifier branch helpers (ported from exampleSegmentationPipeline.ts) ----
+
+// All classifier worker computation happens in this "working" resolution.
+const MAX_WORKING_DIMENSION = 1024;
+
+interface IWorkingImage {
+  rgba: ArrayBuffer;
+  width: number;
+  height: number;
+  srcWidth: number;
+  srcHeight: number;
+  // display (screenshot canvas) -> working (downscaled) pixel scale
+  xScale: number;
+  yScale: number;
+}
+
+interface IWorkerImageInfo {
+  width: number;
+  height: number;
+  srcWidth: number;
+  srcHeight: number;
+  xScale: number;
+  yScale: number;
+}
+
 /**
- * Wraps the encoder's image_embed tensor (1, C, H, W) into an IEmbeddingGrid
- * and pre-normalizes its cells (§11.2/§11.3 step 2). validGridWidth/Height
- * are derived from the processCanvas output's scaledWidth/scaledHeight (the
- * source image occupies the top-left scaledWidth x scaledHeight of the
- * padded model input; everything beyond that is padding, see samPipeline.ts
- * processCanvas), clamped to the tensor's own grid dimensions.
+ * Downscales the screenshot canvas so its long side is at most
+ * MAX_WORKING_DIMENSION and extracts its RGBA pixels (classifier spec §3).
+ */
+function downscaleScreenshot(canvas: HTMLCanvasElement): IWorkingImage {
+  const srcWidth = canvas.width;
+  const srcHeight = canvas.height;
+  const longSide = Math.max(srcWidth, srcHeight);
+  const scale =
+    longSide > MAX_WORKING_DIMENSION ? MAX_WORKING_DIMENSION / longSide : 1;
+  const width = Math.max(1, Math.round(srcWidth * scale));
+  const height = Math.max(1, Math.round(srcHeight * scale));
+
+  const workingCanvas = document.createElement("canvas");
+  workingCanvas.width = width;
+  workingCanvas.height = height;
+  const context = workingCanvas.getContext("2d", {
+    alpha: false,
+    willReadFrequently: true,
+  });
+  if (!context) {
+    throw new Error("Can't create canvas context for object segmentation");
+  }
+  context.drawImage(canvas, 0, 0, width, height);
+  const imageData = context.getImageData(0, 0, width, height);
+
+  return {
+    rgba: imageData.data.buffer,
+    width,
+    height,
+    srcWidth,
+    srcHeight,
+    xScale: width / srcWidth,
+    yScale: height / srcHeight,
+  };
+}
+
+function toWorkerImageInfo(workingImage: IWorkingImage): IWorkerImageInfo {
+  const { width, height, srcWidth, srcHeight, xScale, yScale } = workingImage;
+  return { width, height, srcWidth, srcHeight, xScale, yScale };
+}
+
+/**
+ * Converts a resolved example's GCS polygon into working-pixel coordinates
+ * for the classifier worker. Unlike exampleSegmentationPipeline's version
+ * (which read a raw circled polygon), this reads the resolved `polygon`, so a
+ * SAM-clicked or boxed example feeds the classifier just as a circled one does.
+ */
+function resolvedExampleToWorkerCoords(
+  polygonGcs: IGeoJSPosition[],
+  polarity: "foreground" | "background",
+  { map }: IMapEntry,
+  workerImage: IWorkerImageInfo,
+): IWorkerExample {
+  const displayPoints = map.gcsToDisplay(polygonGcs);
+  return {
+    polarity,
+    points: displayPoints.map(({ x, y }) => ({
+      x: x * workerImage.xScale,
+      y: y * workerImage.yScale,
+    })),
+  };
+}
+
+/** Converts a worker contour (working coords) back to a simplified GCS polygon. */
+function convertContourToGcs(
+  contour: IWorkerPoint[],
+  { map }: IMapEntry,
+  workerImage: IWorkerImageInfo,
+  simplificationTolerance: number,
+): IGeoJSPosition[] {
+  const displayPoints: IGeoJSPosition[] = contour.map(({ x, y }) => ({
+    x: x / workerImage.xScale,
+    y: y / workerImage.yScale,
+  }));
+  return simplifyCoordinates(
+    map.displayToGcs(displayPoints),
+    simplificationTolerance,
+  );
+}
+
+/**
+ * Wraps the encoder's grid embedding tensor (1, C, H, W) into an
+ * IEmbeddingGrid and pre-normalizes its cells (§11.2/§11.3 step 2).
+ * validGridWidth/Height are derived from the processCanvas output's
+ * scaledWidth/scaledHeight (the source image occupies the top-left
+ * scaledWidth x scaledHeight of the padded model input; everything beyond
+ * that is padding, see samPipeline.ts processCanvas), clamped to the
+ * tensor's own grid dimensions.
+ *
+ * The grid embedding is named differently per model family (see
+ * SAM2_MIGRATION.md): SAM2's encoder emits `image_embed` (alongside
+ * high_res_feats_*), while SAM1/vit_b emits the equivalent tensor as
+ * `image_embeddings`. Both are the same 64x64x256-style grid this tool
+ * operates on, so we accept either name.
  */
 function computeEmbeddingGridState(
   encoderOutput: IEncoderOutput,
   canvasInfo: IProcessCanvasOutput,
 ): IEmbeddingGridState {
-  const embedTensor = encoderOutput.image_embed;
+  const embedTensor =
+    encoderOutput.image_embed ?? encoderOutput.image_embeddings;
+  if (!embedTensor) {
+    throw new Error(
+      "SAM encoder produced no grid embedding tensor " +
+        `(expected image_embed or image_embeddings; got keys: ` +
+        `${Object.keys(encoderOutput).join(", ")})`,
+    );
+  }
   const channels = embedTensor.dims[1];
   const gridHeight = embedTensor.dims[2];
   const gridWidth = embedTensor.dims[3];
@@ -345,7 +490,7 @@ interface IExampleDescriptorsOutput {
   exampleCellMasks: Uint8Array[]; // foreground only - "already segmented" dedupe set
   exampleAreasGcs: number[]; // foreground only - auto size-range basis
   examplePromptAnchorsGcs: IGeoJSPosition[]; // foreground only
-  decodedExamples: ISamSimilarityExample[]; // full input order, incl. background
+  decodedExamples: IObjectSegmentationExample[]; // full input order, incl. background
 }
 
 interface IScoredCandidate {
@@ -357,30 +502,41 @@ interface IScoredCandidate {
 interface IProposalsResult {
   proposals: IGeoJSPosition[][];
   autoSizeRange: { min: number; max: number } | null;
-  timings: { encodeMs?: number; decodeMs?: number };
+  // Superset covering both branches (SAM encode/decode + classifier
+  // features/train/predict/postprocess), matching the reactive status shape.
+  timings: IObjectSegmentationStatus["timings"];
 }
 
-export type TSamSimilarityNodes = {
+export type TObjectSegmentationNodes = {
   allNodes: ComputeNode<any, any>[];
   input: {
     geoJSMap: ManualInputNode<IMapEntry | TNoOutput>;
-    examples: ManualInputNode<TSamSimilarityExampleInput[]>;
+    examples: ManualInputNode<TObjectSegmentationExampleInput[]>;
+    // Gates the two propagation branches (see the branch-gate nodes).
+    applicationMethod: ManualInputNode<TObjectApplicationMethod>;
     similarityThreshold: ManualInputNode<number>;
     promptMode: ManualInputNode<TPromptMode>;
+    // Grid density for grid prompt mode (gridSize x gridSize scan points).
+    gridSize: ManualInputNode<number>;
+    // SAM-proposal training polygons for the chained "samThenClassifier" mode;
+    // populated by the state factory's SAM-proposals mirror.
+    hybridTraining: ManualInputNode<IGeoJSPosition[][]>;
     sizeRange: ManualInputNode<TSizeRange>;
     simplificationTolerance: ManualInputNode<number>;
-    // Hover live-preview prompt (feature A, click mode only); debounced set
-    // by AnnotationViewer's mousemove handler / drag-preview path.
+    // Hover live-preview prompt (SAM selection modes only); debounced set by
+    // AnnotationViewer's mousemove handler / drag-preview path.
     previewPrompt: ManualInputNode<TSamPrompt | TNoOutput>;
   };
   output: {
-    proposals: ComputeNode<any, any>;
-    // Not in the original §11.4 sketch: exposed so the state factory can
-    // mirror decoded example polygons into state.examples using the same
-    // onOutputUpdate pattern as every other mirror (see §11.7 deviations).
+    // The two propagation branches' proposal nodes; the state factory mirrors
+    // whichever matches the active applicationMethod into state.proposals.
+    samProposals: ComputeNode<any, any>;
+    classifierProposals: ComputeNode<any, any>;
+    // Exposed so the state factory can mirror resolved example polygons into
+    // state.examples using the same onOutputUpdate pattern as every other
+    // mirror.
     examples: ComputeNode<any, any>;
-    // Hover live-preview outline (feature A), mirrored into
-    // state.livePreview the same way.
+    // Hover live-preview outline, mirrored into state.livePreview the same way.
     livePreview: ComputeNode<any, any>;
   };
   // Clears the descriptor cache and internal timings; re-arms the "no
@@ -389,26 +545,36 @@ export type TSamSimilarityNodes = {
   reset: () => Promise<void>;
 };
 
-function createSamSimilarityPipeline(
-  toolConfiguration: IToolConfiguration<"samSimilarity">,
+function createObjectSegmentationPipeline(
+  toolConfiguration: IToolConfiguration<"objectSegmentation">,
   model: TSamModel,
   reportError: (error: Error) => void,
   reportProgress: (progress: { done: number; total: number } | null) => void,
   reportPartialProposals: (partial: IProposalsResult) => void,
-): TSamSimilarityNodes {
+  reportLoadingMessages: (messages: string[]) => void,
+): TObjectSegmentationNodes {
   if (!("gpu" in navigator)) {
+    // The tool requires WebGPU for both application methods in v1 (the SAM
+    // encoder resolves example prompts even when the classifier propagates
+    // them). See EXAMPLE_SEGMENTATION_TOOL.md §12.
     throw new Error(
-      "Can't initialize SAM similarity tool: WebGPU not available",
+      "Can't initialize the segmentation tool: WebGPU not available " +
+        "(Chrome only for now)",
     );
   }
 
   // Per-pipeline-instance state (must not be module-level: multiple tool
   // instances/configurations can coexist).
   const exampleDescriptorCache = new Map<
-    TSamSimilarityExampleInput,
+    TObjectSegmentationExampleInput,
     IExampleDescriptorCacheEntry
   >();
-  const timingsState: { encodeMs?: number; decodeMs?: number } = {};
+  const timingsState: IObjectSegmentationStatus["timings"] = {};
+  // Classifier branch worker + its "has a trained model" guard (mirrors
+  // exampleSegmentationPipeline's modelState). Constructed eagerly but idle
+  // until the classifier branch runs setImage/trainPredict.
+  const workerClient = new ExampleSegmentationWorkerClient();
+  const classifierModelState = { trained: false };
 
   const modelNameNode = new ManualInputNode(model);
   const geoJSMapInputNode = new ManualInputNode<IMapEntry | TNoOutput>(
@@ -419,12 +585,23 @@ function createSamSimilarityPipeline(
       options: { leading: false, trailing: true },
     },
   );
-  const examplesInputNode = new ManualInputNode<TSamSimilarityExampleInput[]>(
-    [],
-  );
+  const examplesInputNode = new ManualInputNode<
+    TObjectSegmentationExampleInput[]
+  >([]);
+  // Which application method is active; gates the two propagation branches.
+  const applicationMethodInputNode =
+    new ManualInputNode<TObjectApplicationMethod>("samSimilarity");
   const promptModeInputNode = new ManualInputNode<TPromptMode>(
     DEFAULT_PROMPT_MODE,
   );
+  // Grid density for grid prompt mode (gridSize x gridSize scan points).
+  const gridSizeInputNode = new ManualInputNode<number>(DEFAULT_GRID_SCAN_SIZE);
+  // Extra foreground training polygons for the classifier, in GCS. Populated
+  // (by the state factory's SAM-proposals mirror) only in the chained
+  // "samThenClassifier" mode - the SAM proposals become classifier training.
+  // A ManualInputNode with a real [] default so it never blocks the classifier
+  // branch in the other modes.
+  const hybridTrainingInputNode = new ManualInputNode<IGeoJSPosition[][]>([]);
   const similarityThresholdInputNode = new ManualInputNode<number>(NoOutput, {
     type: "debounce",
     wait: 100,
@@ -571,7 +748,7 @@ function createSamSimilarityPipeline(
   // survive pans/re-encodes: descriptors are embedding-space vectors, not
   // pixel coordinates (§11.4).
   async function computeExampleDescriptors(
-    examples: TSamSimilarityExampleInput[],
+    examples: TObjectSegmentationExampleInput[],
     embeddingGridState: IEmbeddingGridState,
     canvasInfo: IProcessCanvasOutput,
     decoderSession: InferenceSession,
@@ -580,7 +757,7 @@ function createSamSimilarityPipeline(
     mapEntry: IMapEntry,
   ): Promise<IExampleDescriptorsOutput> {
     const { grid, normalizedData } = embeddingGridState;
-    const decodedExamples: ISamSimilarityExample[] = [];
+    const decodedExamples: IObjectSegmentationExample[] = [];
     for (const example of examples) {
       let entry = exampleDescriptorCache.get(example);
       if (!entry) {
@@ -695,19 +872,24 @@ function createSamSimilarityPipeline(
     canvasInfo: IProcessCanvasOutput,
     promptMode: TPromptMode,
     mapEntry: IMapEntry,
+    gridSize: number,
   ): TSamPrompt[] {
     const { grid, normalizedData } = embeddingGridState;
 
     if (promptMode === "grid") {
-      // Thorough mode: uniform grid scan, no similarity pre-filter -
-      // candidates are filtered after decoding (§11.3 step 4c).
+      // Thorough mode: uniform gridSize x gridSize scan, no similarity
+      // pre-filter - candidates are filtered after decoding (§11.3 step 4c).
+      const scan = Math.max(
+        MIN_GRID_SCAN_SIZE,
+        Math.min(MAX_GRID_SCAN_SIZE, Math.round(gridSize)),
+      );
       const prompts: TSamPrompt[] = [];
       const regionWidthPx = grid.validGridWidth * MODEL_INPUT_CELL_PX;
       const regionHeightPx = grid.validGridHeight * MODEL_INPUT_CELL_PX;
-      for (let row = 0; row < GRID_SCAN_SIZE; ++row) {
-        for (let col = 0; col < GRID_SCAN_SIZE; ++col) {
-          const modelX = ((col + 0.5) / GRID_SCAN_SIZE) * regionWidthPx;
-          const modelY = ((row + 0.5) / GRID_SCAN_SIZE) * regionHeightPx;
+      for (let row = 0; row < scan; ++row) {
+        for (let col = 0; col < scan; ++col) {
+          const modelX = ((col + 0.5) / scan) * regionWidthPx;
+          const modelY = ((row + 0.5) / scan) * regionHeightPx;
           prompts.push({
             type: PromptType.foregroundPoint,
             point: modelInputPxToGcs(modelX, modelY, canvasInfo, mapEntry),
@@ -778,7 +960,19 @@ function createSamSimilarityPipeline(
     canvasInfo: IProcessCanvasOutput,
     promptMode: TPromptMode,
     mapEntry: IMapEntry,
+    applicationMethod: TObjectApplicationMethod,
+    gridSize: number,
   ): Promise<TSamPrompt[]> | TNoOutput {
+    // Branch gate: the entire SAM candidate/decode/proposals tail hangs off
+    // this node, so returning NoOutput here idles it whenever SAM isn't part
+    // of the active method. SAM runs for "samSimilarity" and for the chained
+    // "samThenClassifier" (whose classifier trains on the SAM proposals).
+    if (
+      applicationMethod !== "samSimilarity" &&
+      applicationMethod !== "samThenClassifier"
+    ) {
+      return NoOutput;
+    }
     if (exampleDescriptors.positives.length === 0) {
       return NoOutput;
     }
@@ -788,6 +982,7 @@ function createSamSimilarityPipeline(
       canvasInfo,
       promptMode,
       mapEntry,
+      gridSize,
     );
   }
   const candidatesNode = createComputeNode(generateCandidatePrompts, [
@@ -796,6 +991,8 @@ function createSamSimilarityPipeline(
     preprocessNode,
     promptModeInputNode,
     geoJSMapInputNode,
+    applicationMethodInputNode,
+    gridSizeInputNode,
   ]);
 
   /**
@@ -1034,6 +1231,233 @@ function createSamSimilarityPipeline(
     ],
   );
 
+  // --- Classifier branch (applicationMethod === "classifier"). Reuses the
+  // shared screenshotNode and the resolved example polygons from
+  // exampleDescriptorsNode; only the propagation step differs from the SAM
+  // branch. Ported from exampleSegmentationPipeline.ts.
+  function currentPostprocessParams(): IPostprocessParams {
+    const threshold = readManualInputOr(
+      similarityThresholdInputNode,
+      DEFAULT_SIMILARITY_THRESHOLD,
+    );
+    const sizeRange = readManualInputOr(sizeRangeInputNode, DEFAULT_SIZE_RANGE);
+    return { threshold, minArea: sizeRange.min, maxArea: sizeRange.max };
+  }
+
+  const downscaleWithErrorReporting = withErrorReporting(
+    downscaleScreenshot,
+    reportError,
+  );
+  // Not wrapped in withErrorReporting at the call site: the gate's NoOutput
+  // early-return must reach ComputeNode as the literal sentinel (same reason
+  // as generateCandidatePrompts above).
+  function gatedDownscale(
+    canvas: HTMLCanvasElement,
+    applicationMethod: TObjectApplicationMethod,
+  ): Promise<IWorkingImage> | TNoOutput {
+    // Branch gate: idles the whole classifier tail (setImage/train/predict/
+    // proposals) when the classifier isn't part of the active method, and
+    // avoids the worker doing feature extraction it won't use. The classifier
+    // runs for "classifier" and for the chained "samThenClassifier".
+    if (
+      applicationMethod !== "classifier" &&
+      applicationMethod !== "samThenClassifier"
+    ) {
+      return NoOutput;
+    }
+    return downscaleWithErrorReporting(canvas);
+  }
+  const downscaleNode = createComputeNode(gatedDownscale, [
+    screenshotNode,
+    applicationMethodInputNode,
+  ]);
+  const setImageNode = createComputeNode(
+    withErrorReporting(async (workingImage: IWorkingImage) => {
+      await workerClient.setImage(
+        workingImage.rgba,
+        workingImage.width,
+        workingImage.height,
+      );
+      return toWorkerImageInfo(workingImage);
+    }, reportError),
+    [downscaleNode],
+  );
+
+  // Retrain vs re-predict: retrain only when the example SET changed
+  // (add/undo/clear/polarity), detected by raw-examples reference identity -
+  // NOT when only the screenshot changed (pan), which re-predicts with the
+  // cached forest. Coordinates come from the resolved polygons so SAM-clicked
+  // examples train the classifier just like circled ones.
+  let lastClassifierExamples: TObjectSegmentationExampleInput[] | null = null;
+  let lastHybridTraining: IGeoJSPosition[][] | null = null;
+  async function classifierTrainPredictAsync(
+    descriptors: IExampleDescriptorsOutput,
+    hybridTraining: IGeoJSPosition[][],
+    examplesChanged: boolean,
+    workerImage: IWorkerImageInfo,
+    mapEntry: IMapEntry,
+  ): Promise<ISegmentationResultResponse> {
+    let workerExamples: IWorkerExample[] = [];
+    if (examplesChanged) {
+      workerExamples = descriptors.decodedExamples
+        .filter((ex) => ex.polygon && ex.polygon.length >= 3)
+        .map((ex) =>
+          resolvedExampleToWorkerCoords(
+            ex.polygon as IGeoJSPosition[],
+            ex.polarity,
+            mapEntry,
+            workerImage,
+          ),
+        );
+      // Chained "samThenClassifier": SAM's proposals become extra foreground
+      // training, so the classifier generalizes from everything SAM found.
+      for (const polygon of hybridTraining) {
+        if (polygon && polygon.length >= 3) {
+          workerExamples.push(
+            resolvedExampleToWorkerCoords(
+              polygon,
+              "foreground",
+              mapEntry,
+              workerImage,
+            ),
+          );
+        }
+      }
+    }
+    const response = await workerClient.trainPredict(
+      workerExamples,
+      currentPostprocessParams(),
+    );
+    classifierModelState.trained = response.hasModel;
+    timingsState.featuresMs = response.timings.featuresMs;
+    timingsState.trainMs = response.timings.trainMs;
+    timingsState.predictMs = response.timings.predictMs;
+    timingsState.postprocessMs = response.timings.postprocessMs;
+    return response;
+  }
+  const classifierTrainPredictWithErrorReporting = withErrorReporting(
+    classifierTrainPredictAsync,
+    reportError,
+  );
+  // Not async: the early-return branch must resolve to the literal NoOutput
+  // sentinel (see exampleSegmentationPipeline's trainPredict).
+  function classifierTrainPredict(
+    rawExamples: TObjectSegmentationExampleInput[],
+    descriptors: IExampleDescriptorsOutput,
+    hybridTraining: IGeoJSPosition[][],
+    workerImage: IWorkerImageInfo,
+    mapEntry: IMapEntry,
+  ): Promise<ISegmentationResultResponse> | TNoOutput {
+    // Retrain when either the user's examples OR the SAM-proposal training set
+    // (hybrid mode) changes; a pan (only workerImage changed) re-predicts with
+    // the cached forest.
+    const examplesChanged =
+      rawExamples !== lastClassifierExamples ||
+      hybridTraining !== lastHybridTraining;
+    lastClassifierExamples = rawExamples;
+    lastHybridTraining = hybridTraining;
+    if (
+      rawExamples.length === 0 &&
+      hybridTraining.length === 0 &&
+      !classifierModelState.trained
+    ) {
+      return NoOutput;
+    }
+    return classifierTrainPredictWithErrorReporting(
+      descriptors,
+      hybridTraining,
+      examplesChanged,
+      workerImage,
+      mapEntry,
+    );
+  }
+  const classifierTrainPredictNode = createComputeNode(classifierTrainPredict, [
+    examplesInputNode,
+    exampleDescriptorsNode,
+    hybridTrainingInputNode,
+    setImageNode,
+    geoJSMapInputNode,
+  ]);
+
+  async function classifierPostprocess(
+    _trainResult: ISegmentationResultResponse,
+    threshold: number,
+    sizeRange: TSizeRange,
+  ): Promise<ISegmentationResultResponse> {
+    return workerClient.postprocess({
+      threshold,
+      minArea: sizeRange.min,
+      maxArea: sizeRange.max,
+    });
+  }
+  const classifierPostprocessNode = createComputeNode(
+    withErrorReporting(classifierPostprocess, reportError),
+    [
+      classifierTrainPredictNode,
+      similarityThresholdInputNode,
+      sizeRangeInputNode,
+    ],
+  );
+
+  async function classifierComputeProposals(
+    postprocessResult: ISegmentationResultResponse,
+    workerImage: IWorkerImageInfo,
+    mapEntry: IMapEntry,
+    simplificationTolerance: number,
+  ): Promise<IProposalsResult> {
+    const gcsPolygons = postprocessResult.contours.map((contour) =>
+      convertContourToGcs(
+        contour,
+        mapEntry,
+        workerImage,
+        simplificationTolerance,
+      ),
+    );
+    const proposals = await dedupeProposalsAgainstAnnotations(
+      gcsPolygons,
+      toolConfiguration,
+    );
+    return {
+      proposals,
+      autoSizeRange: postprocessResult.autoSizeRange,
+      timings: { ...timingsState },
+    };
+  }
+  const classifierProposalsNode = createComputeNode(
+    withErrorReporting(classifierComputeProposals, reportError),
+    [
+      classifierPostprocessNode,
+      setImageNode,
+      geoJSMapInputNode,
+      simplificationToleranceInputNode,
+    ],
+  );
+
+  // In-viewer progress labels: mirror samPipeline's loadingMessages pattern,
+  // mapping the long-running nodes to user-facing strings so the encode and
+  // segment phases surface as "as we do normally" overlay notifications. The
+  // order here is the display order (roughly the compute order). previewOutline
+  // is deliberately excluded, same rationale as its exclusion from allNodes.
+  const computingMessageMap: [ComputeNode<any, any>, string][] = [
+    [sessionNode, "Loading SAM encoder…"],
+    [decoderSessionNode, "Loading SAM decoder…"],
+    [inferenceNode, "SAM encoding…"],
+    [exampleDescriptorsNode, "Analyzing examples…"],
+    [decodeCandidatesNode, "SAM segmenting…"],
+    [classifierTrainPredictNode, "Training classifier…"],
+    [classifierProposalsNode, "Classifying…"],
+  ];
+  const recomputeLoadingMessages = () => {
+    reportLoadingMessages(
+      computingMessageMap
+        .filter(([node]) => node.isComputing)
+        .map(([, message]) => message),
+    );
+  };
+  computingMessageMap.forEach(([node]) => {
+    node.onOutputUpdate(recomputeLoadingMessages);
+  });
+
   return {
     // previewOutlineNode is intentionally excluded (see its declaration
     // comment): it must not affect status.phase's "computing" indicator.
@@ -1046,18 +1470,29 @@ function createSamSimilarityPipeline(
       candidatesNode,
       decodeCandidatesNode,
       proposalsNode,
+      downscaleNode,
+      setImageNode,
+      classifierTrainPredictNode,
+      classifierPostprocessNode,
+      classifierProposalsNode,
     ],
     input: {
       geoJSMap: geoJSMapInputNode,
       examples: examplesInputNode,
+      applicationMethod: applicationMethodInputNode,
       similarityThreshold: similarityThresholdInputNode,
       promptMode: promptModeInputNode,
+      gridSize: gridSizeInputNode,
+      hybridTraining: hybridTrainingInputNode,
       sizeRange: sizeRangeInputNode,
       simplificationTolerance: simplificationToleranceInputNode,
       previewPrompt: previewPromptInputNode,
     },
     output: {
-      proposals: proposalsNode,
+      // SAM-branch and classifier-branch proposal nodes; the state factory
+      // mirrors whichever matches the active applicationMethod.
+      samProposals: proposalsNode,
+      classifierProposals: classifierProposalsNode,
       examples: exampleDescriptorsNode,
       livePreview: previewOutlineNode,
     },
@@ -1065,16 +1500,25 @@ function createSamSimilarityPipeline(
       exampleDescriptorCache.clear();
       timingsState.encodeMs = undefined;
       timingsState.decodeMs = undefined;
+      timingsState.featuresMs = undefined;
+      timingsState.trainMs = undefined;
+      timingsState.predictMs = undefined;
+      timingsState.postprocessMs = undefined;
+      lastClassifierExamples = null;
+      lastHybridTraining = null;
+      classifierModelState.trained = false;
       reportProgress(null);
+      await workerClient.reset();
+      await hybridTrainingInputNode.setValue([], true);
       await examplesInputNode.setValue([], true);
       await previewPromptInputNode.setValue(NoOutput, true);
     },
   };
 }
 
-export function createSamSimilarityToolStateFromToolConfiguration(
-  configuration: IToolConfiguration<"samSimilarity">,
-): ISamSimilarityToolState | IErrorToolState {
+export function createObjectSegmentationToolStateFromToolConfiguration(
+  configuration: IToolConfiguration<"objectSegmentation">,
+): IObjectSegmentationToolState | IErrorToolState {
   const model: TSamModel = configuration.values.model.value;
 
   // reactive() ensures that pipeline callbacks (which capture `state` in
@@ -1082,21 +1526,25 @@ export function createSamSimilarityToolStateFromToolConfiguration(
   // same rationale as createSamToolStateFromToolConfiguration /
   // createExampleSegmentationToolStateFromToolConfiguration.
   const state = reactive({
-    type: SamSimilarityToolStateSymbol as typeof SamSimilarityToolStateSymbol,
-    nodes: null as unknown as TSamSimilarityNodes,
-    mapEntry: null as ISamSimilarityToolState["mapEntry"],
-    examples: [] as ISamSimilarityExample[],
-    proposals: null as ISamSimilarityToolState["proposals"],
-    nextPolarity: "foreground" as ISamSimilarityToolState["nextPolarity"],
+    type: ObjectSegmentationToolStateSymbol as typeof ObjectSegmentationToolStateSymbol,
+    nodes: null as unknown as TObjectSegmentationNodes,
+    mapEntry: null as IObjectSegmentationToolState["mapEntry"],
+    examples: [] as IObjectSegmentationExample[],
+    proposals: null as IObjectSegmentationToolState["proposals"],
+    nextPolarity: "foreground" as IObjectSegmentationToolState["nextPolarity"],
     status: {
       phase: "idle",
       putativeCount: 0,
       progress: null,
       timings: {},
-    } as ISamSimilarityStatus,
-    exampleInputMode: "click" as ISamSimilarityToolState["exampleInputMode"],
-    livePreview: null as ISamSimilarityToolState["livePreview"],
-  }) as unknown as ISamSimilarityToolState;
+    } as IObjectSegmentationStatus,
+    selectionMode: "samClick" as IObjectSegmentationToolState["selectionMode"],
+    applicationMethod:
+      "samSimilarity" as IObjectSegmentationToolState["applicationMethod"],
+    scope: "viewport" as IObjectSegmentationToolState["scope"],
+    livePreview: null as IObjectSegmentationToolState["livePreview"],
+    loadingMessages: [] as string[],
+  }) as unknown as IObjectSegmentationToolState;
 
   const reportError = (error: Error) => {
     state.status = {
@@ -1111,7 +1559,7 @@ export function createSamSimilarityToolStateFromToolConfiguration(
   // dropped here (not spread) so a stale message from a previous failed run
   // can never leak into a subsequent successful one - reportError is the
   // only place that sets it.
-  const mergeStatus = (overrides: Partial<ISamSimilarityStatus>) => {
+  const mergeStatus = (overrides: Partial<IObjectSegmentationStatus>) => {
     state.status = { ...state.status, error: undefined, ...overrides };
   };
   const reportProgress = (progress: { done: number; total: number } | null) => {
@@ -1125,18 +1573,22 @@ export function createSamSimilarityToolStateFromToolConfiguration(
       timings: partial.timings,
     });
   };
+  const reportLoadingMessages = (messages: string[]) => {
+    state.loadingMessages = messages;
+  };
 
-  let nodes: TSamSimilarityNodes;
+  let nodes: TObjectSegmentationNodes;
   try {
     // markRaw prevents Vue 3 from wrapping pipeline nodes in reactive
     // Proxies - see createSamToolStateFromToolConfiguration for why.
     nodes = markRaw(
-      createSamSimilarityPipeline(
+      createObjectSegmentationPipeline(
         configuration,
         model,
         reportError,
         reportProgress,
         reportPartialProposals,
+        reportLoadingMessages,
       ),
     );
   } catch (error) {
@@ -1161,8 +1613,16 @@ export function createSamSimilarityToolStateFromToolConfiguration(
     const rawOutput = examplesOutputNode.output as
       | IExampleDescriptorsOutput
       | TNoOutput;
-    state.examples =
-      !rawOutput || rawOutput === NoOutput ? [] : rawOutput.decodedExamples;
+    // Ignore the transient NoOutput that ComputeNode publishes at the START of
+    // every recompute (and when a parent is momentarily NoOutput). Clearing
+    // state.examples on it made the example outlines flicker away on every
+    // re-encode / method switch and only reappear once the recompute settled.
+    // A genuine clear produces a real output with decodedExamples: [] (the
+    // examples input is emptied), which still updates correctly.
+    if (!rawOutput || rawOutput === NoOutput) {
+      return;
+    }
+    state.examples = rawOutput.decodedExamples;
   });
 
   // Mirror the hover live-preview outline (feature A) into state.livePreview,
@@ -1178,22 +1638,80 @@ export function createSamSimilarityToolStateFromToolConfiguration(
         : rawOutput;
   });
 
-  // Proposals + status are reactive.
-  const proposalsNode = nodes.output.proposals;
-  proposalsNode.onOutputUpdate(() => {
-    const rawOutput = proposalsNode.output as IProposalsResult | TNoOutput;
-    if (!rawOutput || rawOutput === NoOutput) {
-      state.proposals = null;
+  // Proposals + status are reactive. Both branches' proposal nodes are
+  // mirrored, but each mirror only writes when the active method displays that
+  // branch - so the idle branch (which publishes NoOutput while gated off)
+  // can't clear the displayed proposals. The SAM branch is displayed only in
+  // "samSimilarity"; the classifier branch is displayed in "classifier" AND in
+  // the chained "samThenClassifier" (whose final output is the classifier's).
+  const makeProposalsMirror = (
+    proposalsNode: ComputeNode<any, any>,
+    displayedFor: (method: TObjectApplicationMethod) => boolean,
+  ) => {
+    proposalsNode.onOutputUpdate(() => {
+      if (!displayedFor(state.applicationMethod)) {
+        return;
+      }
+      const rawOutput = proposalsNode.output as IProposalsResult | TNoOutput;
+      if (!rawOutput || rawOutput === NoOutput) {
+        state.proposals = null;
+        return;
+      }
+      state.proposals = rawOutput.proposals;
+      mergeStatus({
+        phase: "ready",
+        progress: null,
+        putativeCount: rawOutput.proposals.length,
+        autoSizeRange: rawOutput.autoSizeRange,
+        timings: rawOutput.timings,
+      });
+    });
+  };
+  makeProposalsMirror(
+    nodes.output.samProposals,
+    (method) => method === "samSimilarity",
+  );
+  makeProposalsMirror(
+    nodes.output.classifierProposals,
+    (method) => method === "classifier" || method === "samThenClassifier",
+  );
+
+  // Chained "samThenClassifier": feed the SAM branch's proposals into the
+  // classifier's hybrid-training input so the classifier trains on everything
+  // SAM found. Ignore the transient NoOutput at recompute start (keep the last
+  // training set until SAM settles).
+  const samProposalsNode = nodes.output.samProposals;
+  samProposalsNode.onOutputUpdate(() => {
+    if (state.applicationMethod !== "samThenClassifier") {
       return;
     }
-    state.proposals = rawOutput.proposals;
-    mergeStatus({
-      phase: "ready",
-      progress: null,
-      putativeCount: rawOutput.proposals.length,
-      autoSizeRange: rawOutput.autoSizeRange,
-      timings: rawOutput.timings,
-    });
+    const rawOutput = samProposalsNode.output as IProposalsResult | TNoOutput;
+    if (!rawOutput || rawOutput === NoOutput) {
+      return;
+    }
+    nodes.input.hybridTraining.setValue(rawOutput.proposals);
+  });
+
+  // Mirror the applicationMethod input into reactive state, and clear stale
+  // proposals on a method switch so the previous branch's results don't linger
+  // while the newly-active branch recomputes. Leaving the chained mode also
+  // clears the hybrid-training set so the classifier stops training on SAM
+  // proposals.
+  const applicationMethodNode = nodes.input.applicationMethod;
+  applicationMethodNode.onOutputUpdate(() => {
+    const method = applicationMethodNode.output;
+    if (method === NoOutput) {
+      return;
+    }
+    if (state.applicationMethod !== method) {
+      const wasHybrid = state.applicationMethod === "samThenClassifier";
+      state.applicationMethod = method;
+      state.proposals = null;
+      mergeStatus({ putativeCount: 0, progress: null });
+      if (wasHybrid && method !== "samThenClassifier") {
+        nodes.input.hybridTraining.setValue([]);
+      }
+    }
   });
 
   // Registered after the mirrors above so that, when a node's output update

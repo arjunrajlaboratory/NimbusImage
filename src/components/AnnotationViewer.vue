@@ -84,12 +84,9 @@ import {
   CombineToolStateSymbol,
   IGeoJSMouseState,
   TrackPositionType,
-  ExampleSegmentationToolStateSymbol,
-  IExampleSegmentationToolState,
-  IExampleSegmentationExample,
-  SamSimilarityToolStateSymbol,
-  ISamSimilarityToolState,
-  ISamSimilarityExample,
+  ObjectSegmentationToolStateSymbol,
+  IObjectSegmentationToolState,
+  IObjectSegmentationExample,
   PromptType,
 } from "../store/model";
 
@@ -226,25 +223,17 @@ const selectionAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const samPromptAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
 const samUnsubmittedAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const samLivePreviewAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
-// Example-segmentation ("AutoSeg") tool: circled training-example outlines
-// and putative proposal polygons, drawn the same way as SAM's prompt/output
+// Unified "Segment similar objects" tool: resolved example outlines and
+// putative proposal polygons, drawn the same way as SAM's prompt/output
 // annotations above.
-const exampleSegmentationExampleAnnotations = shallowRef<IGeoJSAnnotation[]>(
+const objectSegmentationExampleAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
+const objectSegmentationProposalAnnotations = shallowRef<IGeoJSAnnotation[]>(
   [],
 );
-const exampleSegmentationProposalAnnotations = shallowRef<IGeoJSAnnotation[]>(
-  [],
-);
-// SAM-similarity ("SimSAM") tool: decoded example outlines and putative
-// proposal polygons, rendered the same way as AutoSeg's example/proposal
-// annotations above.
-const samSimilarityExampleAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
-const samSimilarityProposalAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
-// SimSAM hover live-preview outline (feature A), rendered the same way as
+// Hover live-preview outline (SAM selection modes), rendered the same way as
 // SAM's own samLivePreviewAnnotation above.
-const samSimilarityLivePreviewAnnotation = shallowRef<IGeoJSAnnotation | null>(
-  null,
-);
+const objectSegmentationLivePreviewAnnotation =
+  shallowRef<IGeoJSAnnotation | null>(null);
 const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 // Line displayed on the interaction layer for the linescan tool (segment
 // preview and completed scans)
@@ -349,10 +338,10 @@ const samPrompts = computed((): TSamPrompt[] => {
   return prompts === undefined || prompts === NoOutput ? [] : prompts;
 });
 
-const exampleSegmentationToolState = computed(
-  (): IExampleSegmentationToolState | null => {
+const objectSegmentationToolState = computed(
+  (): IObjectSegmentationToolState | null => {
     const state = selectedToolState.value;
-    if (!(state?.type === ExampleSegmentationToolStateSymbol)) {
+    if (!(state?.type === ObjectSegmentationToolStateSymbol)) {
       return null;
     }
     // Read from the reactive mapEntry property instead of the raw pipeline
@@ -365,42 +354,20 @@ const exampleSegmentationToolState = computed(
   },
 );
 
-const exampleSegmentationExamples = computed(
-  (): IExampleSegmentationExample[] =>
-    exampleSegmentationToolState.value?.examples ?? [],
+const objectSegmentationExamples = computed(
+  (): IObjectSegmentationExample[] =>
+    objectSegmentationToolState.value?.examples ?? [],
 );
 
-const exampleSegmentationProposals = computed(
-  () => exampleSegmentationToolState.value?.proposals ?? null,
-);
-
-const samSimilarityToolState = computed((): ISamSimilarityToolState | null => {
-  const state = selectedToolState.value;
-  if (!(state?.type === SamSimilarityToolStateSymbol)) {
-    return null;
-  }
-  // Read from the reactive mapEntry property instead of the raw pipeline
-  // node output, same rationale as samToolState above.
-  const mapEntry = state.mapEntry;
-  if (!mapEntry || mapEntry.map !== props.map) {
-    return null;
-  }
-  return state;
-});
-
-const samSimilarityExamples = computed(
-  (): ISamSimilarityExample[] => samSimilarityToolState.value?.examples ?? [],
-);
-
-const samSimilarityProposals = computed(
-  () => samSimilarityToolState.value?.proposals ?? null,
+const objectSegmentationProposals = computed(
+  () => objectSegmentationToolState.value?.proposals ?? null,
 );
 
 // Reactive mirror of the hover live-preview outline (feature A). Gated on
-// mapEntry.map === props.map transitively via samSimilarityToolState (same
+// mapEntry.map === props.map transitively via objectSegmentationToolState (same
 // rationale as samLivePreviewOutput below).
-const samSimilarityLivePreview = computed(
-  () => samSimilarityToolState.value?.livePreview ?? null,
+const objectSegmentationLivePreview = computed(
+  () => objectSegmentationToolState.value?.livePreview ?? null,
 );
 
 const toolHighlightedAnnotationIds = computed((): Set<string> => {
@@ -2002,31 +1969,16 @@ async function addAnnotationFromSnapping(annotation: IGeoJSAnnotation) {
   );
 }
 
-function addExampleSegmentationExample(annotation: IGeoJSAnnotation) {
-  const state = exampleSegmentationToolState.value;
-  if (!annotation || !state) {
-    return;
-  }
-  const coordinates = annotation.coordinates();
-  props.interactionLayer.removeAnnotation(annotation);
-  const newExample: IExampleSegmentationExample = {
-    polarity: state.nextPolarity,
-    coordinates,
-  };
-  // ManualInputNode-style: push a new array rather than mutating in place.
-  state.nodes.input.examples.setValue([...state.examples, newExample]);
-}
-
-// SAM-similarity ("SimSAM") example capture: called from consumeMouseState
-// (custom mouse-capture path, same as SAM's own prompt flow) rather than
-// from an interaction-layer annotation event, since this tool's interaction
-// mode is null (see setNewAnnotationMode's "samSimilarity" case).
-function addSamSimilarityExample(mouseState: IMouseState) {
-  const state = samSimilarityToolState.value;
-  // Click-mode only: in circle mode the polygon draw is the example input,
-  // and a shift-drag there must not additionally commit a box example
-  // through the captured-mouse-state path.
-  if (!state || state.exampleInputMode !== "click") {
+// SAM-prompt example capture (samClick / samBox selection modes): called
+// from consumeMouseState (the shift-gated custom mouse-capture path, same as
+// SAM's own prompt flow), since the unified tool leaves the interaction layer
+// in mode(null) for every selection mode (see setNewAnnotationMode's
+// "objectSegmentation" case). A drag becomes a box prompt in either SAM mode.
+function addObjectSegmentationExample(mouseState: IMouseState) {
+  const state = objectSegmentationToolState.value;
+  // Not in circle mode: there the captured path is the polygon example, not
+  // a SAM prompt (see addObjectSegmentationCircleExample).
+  if (!state || state.selectionMode === "circle") {
     return;
   }
   const newPrompt = mouseStateToSamPrompt(mouseState);
@@ -2054,22 +2006,24 @@ function addSamSimilarityExample(mouseState: IMouseState) {
   state.nodes.input.previewPrompt.setValue(NoOutput, true);
 }
 
-// SAM-similarity circled example capture (feature B, "Circle" input mode):
-// fires only when exampleInputMode === "circle", since click mode leaves the
-// interaction layer in mode(null) (see setNewAnnotationMode) and never
-// produces interaction-layer annotation events.
-function addSamSimilarityCircleExample(annotation: IGeoJSAnnotation) {
-  const state = samSimilarityToolState.value;
-  if (!annotation || !state) {
+// Freehand-lasso example capture (circle selection mode): the captured
+// shift-drag path IS the example polygon (authoritative GCS coords, no
+// decoder prompt). Also called from consumeMouseState - circle mode no longer
+// uses a GeoJS polygon-draw interaction (so plain drag still pans).
+function addObjectSegmentationCircleExample(mouseState: IMouseState) {
+  const state = objectSegmentationToolState.value;
+  if (!state || state.selectionMode !== "circle") {
     return;
   }
-  const coordinates = annotation.coordinates();
-  props.interactionLayer.removeAnnotation(annotation);
+  const polygon = mouseState.path;
+  if (polygon.length < 3) {
+    return;
+  }
   const currentExamples = readManualInputOr(state.nodes.input.examples, []);
   // ManualInputNode-style: push a new array rather than mutating in place.
   state.nodes.input.examples.setValue([
     ...currentExamples,
-    { polarity: state.nextPolarity, prompt: null, polygon: coordinates },
+    { polarity: state.nextPolarity, prompt: null, polygon: [...polygon] },
   ]);
 }
 
@@ -2414,11 +2368,6 @@ function setNewAnnotationMode() {
     case "segmentation":
       props.interactionLayer.mode(null);
       break;
-    case "exampleSegmentation":
-      // Freehand circling of training examples, same UX as the snap tool's
-      // polygon branch above.
-      props.interactionLayer.mode("polygon");
-      break;
     case "connection":
       if (
         selectedToolConfiguration.value.values.action.value.endsWith("click")
@@ -2476,19 +2425,14 @@ function setNewAnnotationMode() {
       // via captured-mouse-state, not a GeoJS interaction annotation mode).
       props.interactionLayer.mode(null);
       break;
-    case "samSimilarity":
-      if (samSimilarityToolState.value?.exampleInputMode === "circle") {
-        // Circle mode (feature B): freehand polygon draw IS the example
-        // input, mutually exclusive with click mode's raw mouse capture -
-        // GeoJS can't run polygon-draw mode and custom mouse capture at once.
-        props.interactionLayer.mode("polygon");
-      } else {
-        // Click mode: custom mouse capture, same as samAnnotation above.
-        // The hover live-preview (feature A) needs no extra wiring here: the
-        // captured-mouse-state hover/leave states already reach
-        // previewMouseState's samSimilarity branch.
-        props.interactionLayer.mode(null);
-      }
+    case "objectSegmentation":
+      // Every selection mode (samClick, samBox, circle) uses the shift-gated
+      // custom mouse capture with mode(null), same as samAnnotation. GeoJS
+      // polygon-draw mode is deliberately NOT used even for circle: it would
+      // consume plain drags and break panning. The freehand lasso is captured
+      // as the shift-drag path in consumeMouseState instead, and the hover
+      // live-preview reaches previewMouseState's objectSegmentation branch.
+      props.interactionLayer.mode(null);
       break;
     case null:
     case undefined:
@@ -2576,14 +2520,10 @@ function handleInteractionAnnotationChange(evt: any) {
         case "snap":
           addAnnotationFromSnapping(evt.annotation);
           break;
-        case "exampleSegmentation":
-          addExampleSegmentationExample(evt.annotation);
-          break;
-        case "samSimilarity":
-          // Only reached in "circle" input mode - click mode leaves the
-          // interaction layer in mode(null) (see setNewAnnotationMode).
-          addSamSimilarityCircleExample(evt.annotation);
-          break;
+        // objectSegmentation is intentionally absent: it uses mode(null) for
+        // every selection mode, so it never produces interaction-layer
+        // annotation events - all its example capture goes through
+        // consumeMouseState (the shift-gated custom mouse path).
         case "linescan":
           handleLineScanAnnotationDone(evt.annotation);
           break;
@@ -2642,30 +2582,6 @@ function previewMouseState(mouseState: IMouseState | null) {
     props.interactionLayer.removeAnnotation(selectionAnnotation.value);
   }
 
-  // SAM-similarity examples are single clicks/box-drags decoded on release;
-  // unlike SAM's own live decoder-preview or the generic freehand-path
-  // preview below, no interactive selectionAnnotation outline is drawn while
-  // dragging. The drag itself still feeds the debounced preview-decode node
-  // (feature A: "Dragging previews the box result"), reusing the same
-  // conversion addSamSimilarityExample uses to commit on release.
-  if (samSimilarityToolState.value) {
-    selectionAnnotation.value = null;
-    const state = samSimilarityToolState.value;
-    if (state.exampleInputMode === "click") {
-      const dragPrompt = mouseState && mouseStateToSamPrompt(mouseState);
-      if (dragPrompt) {
-        const previewPrompt: TSamPrompt =
-          dragPrompt.type === PromptType.backgroundPoint
-            ? { type: PromptType.foregroundPoint, point: dragPrompt.point }
-            : dragPrompt;
-        state.nodes.input.previewPrompt.setValue(previewPrompt);
-      } else {
-        state.nodes.input.previewPrompt.setValue(NoOutput);
-      }
-    }
-    return;
-  }
-
   const previewBaseStyle = {
     fillOpacity: 0,
     strokeColor: "white",
@@ -2673,6 +2589,43 @@ function previewMouseState(mouseState: IMouseState | null) {
     strokeWidth: 2,
     closed: true,
   };
+
+  // Unified tool preview: SAM selection modes (samClick/samBox) feed the
+  // debounced preview-decode node so the object under the cursor / box is
+  // outlined; circle mode draws the freehand lasso path as a polyline (the
+  // path itself becomes the example on release).
+  const objSegState = objectSegmentationToolState.value;
+  if (objSegState) {
+    selectionAnnotation.value = null;
+    if (objSegState.selectionMode === "circle") {
+      const vertices = mouseState?.path ?? [];
+      if (vertices.length > 1) {
+        selectionAnnotation.value = markRaw(
+          geojs.annotation.lineAnnotation({
+            style: previewBaseStyle,
+            vertices,
+          }),
+        );
+      }
+      objSegState.nodes.input.previewPrompt.setValue(NoOutput);
+    } else {
+      const dragPrompt = mouseState && mouseStateToSamPrompt(mouseState);
+      if (dragPrompt) {
+        const previewPrompt: TSamPrompt =
+          dragPrompt.type === PromptType.backgroundPoint
+            ? { type: PromptType.foregroundPoint, point: dragPrompt.point }
+            : dragPrompt;
+        objSegState.nodes.input.previewPrompt.setValue(previewPrompt);
+      } else {
+        objSegState.nodes.input.previewPrompt.setValue(NoOutput);
+      }
+    }
+    if (selectionAnnotation.value) {
+      selectionAnnotation.value.options("specialAnnotation", true);
+      props.interactionLayer.addAnnotation(selectionAnnotation.value);
+    }
+    return;
+  }
 
   if (samToolState.value) {
     const previewPrompt = mouseState && mouseStateToSamPrompt(mouseState);
@@ -2728,8 +2681,15 @@ function consumeMouseState(mouseState: IMouseState) {
           : [...currentPrompts, newPrompt];
       promptNode.setValue(newPrompts);
     }
-  } else if (samSimilarityToolState.value) {
-    addSamSimilarityExample(mouseState);
+  } else if (objectSegmentationToolState.value) {
+    // Route the captured shift-gesture by selection mode: circle mode commits
+    // the freehand path as a polygon example; SAM modes decode a point/box
+    // prompt. (Both leave mode(null), so plain drag still pans.)
+    if (objectSegmentationToolState.value.selectionMode === "circle") {
+      addObjectSegmentationCircleExample(mouseState);
+    } else {
+      addObjectSegmentationExample(mouseState);
+    }
   } else {
     let annotation;
     if (
@@ -2899,6 +2859,12 @@ function replacePreviewPolygons(
     props.annotationLayer.addAnnotation(markedAnnotation);
     newAnnotations.push(markedAnnotation);
   }
+  // add/removeAnnotation don't reliably force a render on their own (GeoJS
+  // gates draws on modified()); without this, re-added example/proposal
+  // outlines can sit in the layer invisibly until some other interaction
+  // triggers a draw (the "reappear after clicking around" symptom).
+  props.annotationLayer.modified();
+  props.annotationLayer.draw();
   return newAnnotations;
 }
 
@@ -2928,32 +2894,11 @@ function proposalPreviewStyle() {
   };
 }
 
-function onExampleSegmentationExamplesChanged() {
-  exampleSegmentationExampleAnnotations.value = replacePreviewPolygons(
-    exampleSegmentationExampleAnnotations.value,
-    exampleSegmentationExamples.value.map((example) => ({
-      vertices: example.coordinates,
-      style: exampleOutlineStyle(example.polarity),
-    })),
-  );
-}
-
-function onExampleSegmentationProposalsChanged() {
-  const style = proposalPreviewStyle();
-  exampleSegmentationProposalAnnotations.value = replacePreviewPolygons(
-    exampleSegmentationProposalAnnotations.value,
-    (exampleSegmentationProposals.value ?? []).map((proposal) => ({
-      vertices: proposal,
-      style,
-    })),
-  );
-}
-
 // Examples without a decoded polygon yet (decode still in flight) are skipped.
-function onSamSimilarityExamplesChanged() {
-  samSimilarityExampleAnnotations.value = replacePreviewPolygons(
-    samSimilarityExampleAnnotations.value,
-    samSimilarityExamples.value.flatMap((example) =>
+function onObjectSegmentationExamplesChanged() {
+  objectSegmentationExampleAnnotations.value = replacePreviewPolygons(
+    objectSegmentationExampleAnnotations.value,
+    objectSegmentationExamples.value.flatMap((example) =>
       example.polygon
         ? [
             {
@@ -2966,11 +2911,11 @@ function onSamSimilarityExamplesChanged() {
   );
 }
 
-function onSamSimilarityProposalsChanged() {
+function onObjectSegmentationProposalsChanged() {
   const style = proposalPreviewStyle();
-  samSimilarityProposalAnnotations.value = replacePreviewPolygons(
-    samSimilarityProposalAnnotations.value,
-    (samSimilarityProposals.value ?? []).map((proposal) => ({
+  objectSegmentationProposalAnnotations.value = replacePreviewPolygons(
+    objectSegmentationProposalAnnotations.value,
+    (objectSegmentationProposals.value ?? []).map((proposal) => ({
       vertices: proposal,
       style,
     })),
@@ -2980,18 +2925,18 @@ function onSamSimilarityProposalsChanged() {
 // SimSAM hover live-preview outline (feature A): rendered EXACTLY like
 // onSamLivePreviewOutputChanged (same style, same >70%-of-view skip guard),
 // so hovering feels consistent between the two SAM-based tools. Also clears
-// itself when samSimilarityLivePreview goes null - including on tool
-// deselect/switch, since samSimilarityToolState (and therefore this
+// itself when objectSegmentationLivePreview goes null - including on tool
+// deselect/switch, since objectSegmentationToolState (and therefore this
 // computed) becomes null then too.
-function onSamSimilarityLivePreviewChanged() {
-  if (samSimilarityLivePreviewAnnotation.value) {
+function onObjectSegmentationLivePreviewChanged() {
+  if (objectSegmentationLivePreviewAnnotation.value) {
     props.annotationLayer.removeAnnotation(
-      samSimilarityLivePreviewAnnotation.value,
+      objectSegmentationLivePreviewAnnotation.value,
     );
-    samSimilarityLivePreviewAnnotation.value = null;
+    objectSegmentationLivePreviewAnnotation.value = null;
   }
 
-  const vertices = samSimilarityLivePreview.value;
+  const vertices = objectSegmentationLivePreview.value;
   if (!vertices) {
     return;
   }
@@ -3022,8 +2967,10 @@ function onSamSimilarityLivePreviewChanged() {
   });
   geoJsAnnotation.options("specialAnnotation", true);
 
-  samSimilarityLivePreviewAnnotation.value = markRaw(geoJsAnnotation);
-  props.annotationLayer.addAnnotation(samSimilarityLivePreviewAnnotation.value);
+  objectSegmentationLivePreviewAnnotation.value = markRaw(geoJsAnnotation);
+  props.annotationLayer.addAnnotation(
+    objectSegmentationLivePreviewAnnotation.value,
+  );
 }
 
 function onMousePathChanged(
@@ -3687,29 +3634,19 @@ watch(samLivePreviewOutput, () => {
   onSamLivePreviewOutputChanged();
 });
 
-// Example segmentation training examples
-watch(exampleSegmentationExamples, () => {
-  onExampleSegmentationExamplesChanged();
+// Unified tool resolved examples
+watch(objectSegmentationExamples, () => {
+  onObjectSegmentationExamplesChanged();
 });
 
-// Example segmentation putative proposals
-watch(exampleSegmentationProposals, () => {
-  onExampleSegmentationProposalsChanged();
-});
-
-// SAM similarity decoded examples
-watch(samSimilarityExamples, () => {
-  onSamSimilarityExamplesChanged();
-});
-
-// SAM similarity putative proposals
-watch(samSimilarityProposals, () => {
-  onSamSimilarityProposalsChanged();
+// Unified tool putative proposals
+watch(objectSegmentationProposals, () => {
+  onObjectSegmentationProposalsChanged();
 });
 
 // SAM similarity hover live-preview outline (feature A)
-watch(samSimilarityLivePreview, () => {
-  onSamSimilarityLivePreviewChanged();
+watch(objectSegmentationLivePreview, () => {
+  onObjectSegmentationLivePreviewChanged();
 });
 
 // SAM similarity example-input mode toggle (feature B): re-arm the
@@ -3719,9 +3656,9 @@ watch(samSimilarityLivePreview, () => {
 // feeds (and clears) the preview node in click mode, so a preview from just
 // before the switch would otherwise stay rendered in circle mode.
 watch(
-  () => samSimilarityToolState.value?.exampleInputMode,
+  () => objectSegmentationToolState.value?.selectionMode,
   () => {
-    samSimilarityToolState.value?.nodes.input.previewPrompt.setValue(
+    objectSegmentationToolState.value?.nodes.input.previewPrompt.setValue(
       NoOutput,
       true,
     );
@@ -3838,11 +3775,9 @@ defineExpose({
   samPromptAnnotations,
   samUnsubmittedAnnotation,
   samLivePreviewAnnotation,
-  exampleSegmentationExampleAnnotations,
-  exampleSegmentationProposalAnnotations,
-  samSimilarityExampleAnnotations,
-  samSimilarityProposalAnnotations,
-  samSimilarityLivePreviewAnnotation,
+  objectSegmentationExampleAnnotations,
+  objectSegmentationProposalAnnotations,
+  objectSegmentationLivePreviewAnnotation,
   cursorAnnotation,
   lastCursorPosition,
   handlingPrimaryChange,
@@ -3876,13 +3811,10 @@ defineExpose({
   selectedToolState,
   samToolState,
   samPrompts,
-  exampleSegmentationToolState,
-  exampleSegmentationExamples,
-  exampleSegmentationProposals,
-  samSimilarityToolState,
-  samSimilarityExamples,
-  samSimilarityProposals,
-  samSimilarityLivePreview,
+  objectSegmentationToolState,
+  objectSegmentationExamples,
+  objectSegmentationProposals,
+  objectSegmentationLivePreview,
   toolHighlightedAnnotationIds,
   pendingStoreAnnotation,
   samMainOutput,
@@ -3944,9 +3876,8 @@ defineExpose({
   handleAnnotationCombine,
   addAnnotationFromGeoJsAnnotation,
   addAnnotationFromSnapping,
-  addExampleSegmentationExample,
-  addSamSimilarityExample,
-  addSamSimilarityCircleExample,
+  addObjectSegmentationExample,
+  addObjectSegmentationCircleExample,
   handleAnnotationEdits,
   // Linescan tool
   lineScanAnnotation,
@@ -3985,11 +3916,9 @@ defineExpose({
   pendingAnnotationChanged,
   onSamMainOutputChanged,
   onSamLivePreviewOutputChanged,
-  onExampleSegmentationExamplesChanged,
-  onExampleSegmentationProposalsChanged,
-  onSamSimilarityExamplesChanged,
-  onSamSimilarityProposalsChanged,
-  onSamSimilarityLivePreviewChanged,
+  onObjectSegmentationExamplesChanged,
+  onObjectSegmentationProposalsChanged,
+  onObjectSegmentationLivePreviewChanged,
   onMousePathChanged,
   renderWorkerPreview,
   onSamPromptsChanged,

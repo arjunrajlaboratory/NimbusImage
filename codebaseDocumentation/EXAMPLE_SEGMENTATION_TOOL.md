@@ -6,10 +6,21 @@ and similar objects across the viewport are outlined as *putative* annotations.
 An info panel shows the number of putative annotations; clicking **Accept**
 commits them in bulk.
 
-Status: **implemented** (see "Implementation notes / deviations" at the end
-for where the code intentionally departs from this spec). This document was
-the implementation contract; interfaces below are normative unless a
-deviation is listed.
+Status: **implemented**, then **unified** (see §12). This document was the
+implementation contract; interfaces below are normative unless a deviation is
+listed.
+
+> **Update (2026-07) — the two tools are now one.** The AutoSeg classifier
+> (§1–§10) and the SAM-embedding similarity variant "SimSAM" (§11) shipped as
+> two separate tools, then were **merged into a single "Segment similar
+> objects" tool** (`TToolType` `"objectSegmentation"`). §1–§11 remain accurate
+> as **algorithm** references, but their *integration* details — file names,
+> tool types, tool menus, `AnnotationViewer` wiring — are **superseded by
+> §12**, which describes the current architecture. In particular
+> `src/pipelines/samSimilarityPipeline.ts`, `src/pipelines/exampleSegmentationPipeline.ts`,
+> `ExampleSegmentationToolMenu.vue`, and `SamSimilarityToolMenu.vue` no longer
+> exist, and the `"exampleSegmentation"` / `"samSimilarity"` tool types were
+> removed. Read §12 first.
 
 ---
 
@@ -860,3 +871,187 @@ departs from §11.3/§11.4 above:
   rather than the plain `Omit<ISamSimilarityExample, "polygon">` alias used
   before this addendum, so the two input shapes - and which one skips the
   decoder - are enforced at the type level.
+
+---
+
+## 12. Unification: the "Segment similar objects" tool
+
+§1–§11 describe two tools that shipped separately (the AutoSeg classifier and
+the SimSAM similarity search). They were then merged into **one** tool so the
+user can mix and match *how they pick examples* with *how those examples are
+propagated*. This section is the current-state architecture and supersedes the
+integration details in §5 and §11.5.
+
+### 12.1 What the user gets
+
+One tool, "Segment similar objects" (`shortName: "Similar"`,
+`TToolType` `"objectSegmentation"`), with two independent runtime choices set
+in a floating panel:
+
+- **Select examples by** — `samClick` (shift-click, SAM decodes the object
+  under the point), `samBox` (shift-drag a box, SAM decodes inside it), or
+  `circle` (shift-drag a freehand lasso; the polygon *is* the example, no
+  decoder run).
+- **Find matches with** — `samSimilarity` (SAM-embedding similarity, §11),
+  `classifier` (in-browser random forest, §4), or `samThenClassifier` (chained,
+  see §12.6).
+
+Any selection method combines with any application method, because both
+application branches consume the **same resolved example set** (each example
+reduced to a GCS polygon). A SAM-clicked example therefore trains the
+classifier just as a circled one does.
+
+The tool requires **WebGPU** (Chrome) in v1 — even classifier mode, because the
+SAM encoder is what resolves prompt (click/box) examples into polygons. Without
+WebGPU the state factory throws and the tool renders an error state.
+
+### 12.2 Files (old → current)
+
+| Before (deleted) | Now |
+|---|---|
+| `src/pipelines/samSimilarityPipeline.ts` + `src/pipelines/exampleSegmentationPipeline.ts` | `src/pipelines/objectSegmentationPipeline.ts` (one DAG) |
+| `SamSimilarityToolMenu.vue` + `ExampleSegmentationToolMenu.vue` (inline left-panel menus) | `src/components/ObjectSegmentationPanel.vue` (bottom-right floating panel, mounted by `ImageViewer.vue`) |
+| `TToolType` `"exampleSegmentation"`, `"samSimilarity"` | `TToolType` `"objectSegmentation"` |
+| `ISamSimilarityToolState`, `IExampleSegmentationToolState`, `*Status`, `*Example`, symbols | `IObjectSegmentationToolState`, `IObjectSegmentationStatus`, `IObjectSegmentationExample`, `ObjectSegmentationToolStateSymbol` |
+
+Unchanged and still consumed as-is: `samPipeline.ts` (encoder/decoder helpers),
+`src/utils/samSimilarity/embedding.ts`, `src/utils/exampleSegmentation/*` +
+`src/workers/exampleSegmentation.worker.ts` (classifier worker), and
+`src/utils/proposalDedupe.ts` / `proposalAccept.ts`.
+
+Both old tool types were branch-only (never on `master`), so there is no
+migration path — dev datasets that still hold old-typed tools should have them
+recreated as the unified tool.
+
+### 12.3 Unified pipeline (`objectSegmentationPipeline.ts`)
+
+```
+geoJSMap → screenshot → processCanvas → runEncoder → embeddingGrid
+(examples + embeddingGrid + decoder) → exampleDescriptors   [SHARED: resolves every
+    example to a GCS polygon — decodes SAM prompts, passes circles through —
+    and also pools SAM descriptors for the similarity branch]
+
+── SAM branch (applicationMethod ∈ {samSimilarity, samThenClassifier}) ──
+(exampleDescriptors + embeddingGrid + promptMode + gridSize) → candidates
+    → decodeCandidates [staleness/progress/streaming] → samProposals
+
+── Classifier branch (applicationMethod ∈ {classifier, samThenClassifier}) ──
+screenshot → downscale → setImage(worker)
+(exampleDescriptors.decodedExamples + hybridTraining + setImage) → trainPredict
+    → postprocess → classifierProposals
+```
+
+Key mechanics:
+
+- **Branch gating via `NoOutput`.** `candidates` returns `NoOutput` unless SAM
+  is part of the active method; `downscale` returns `NoOutput` unless the
+  classifier is. A `ComputeNode` never runs while any parent is `NoOutput`, so
+  the inactive branch idles with no wasted decode / worker work.
+- **One example resolution feeds both branches.** `exampleDescriptors`'
+  `decodedExamples` (GCS polygons, foreground + background) is the classifier's
+  training geometry; its pooled `positives`/`negatives` descriptors drive the
+  SAM similarity map.
+- **Which proposals are shown.** The state factory mirrors *both* branches'
+  proposal nodes into `state.proposals`, but each mirror writes only when the
+  active method displays it: `samProposals` for `samSimilarity`;
+  `classifierProposals` for `classifier` **and** `samThenClassifier` (the chain's
+  final output is the classifier's).
+- **`applicationMethod` is a `ManualInputNode`** (it gates the branches) mirrored
+  into reactive `state.applicationMethod`; switching it clears
+  `state.proposals` so the previous branch's results don't linger.
+
+### 12.4 Interaction & the pan fix
+
+Every selection mode uses `interactionLayer.mode(null)` — GeoJS polygon-draw
+mode is never used, even for circle. All example capture goes through
+`ImageViewer.vue`'s **shift-gated** custom mouse capture (`isMouseStartEvent`:
+`shiftKey && buttons !== 0`), and the GeoJS pan action's modifiers are set to
+`shift:false`. Result: **plain click/drag pans and wheel zooms; shift-click /
+shift-drag / shift-lasso selects** — matching the regular SAM tool. This fixed
+the old "can't pan while the tool is active" problem, which was really the
+circle mode's `mode("polygon")` swallowing the drag.
+
+`AnnotationViewer.consumeMouseState` routes the captured gesture on
+`state.selectionMode`: `circle` commits `mouseState.path` as a polygon example;
+`samClick`/`samBox` decode a point/box prompt (a drag becomes a box in either
+SAM mode). `previewMouseState` feeds the hover-preview decode node in SAM modes
+and draws the freehand lasso polyline in circle mode.
+
+### 12.5 The panel (`ObjectSegmentationPanel.vue`)
+
+A singleton bottom-right `v-card` (cloned from `LineScanPanel.vue`;
+`position: absolute; bottom/right: 10px; z-index: 200`) that `ImageViewer.vue`
+renders and gates on `store.selectedTool.configuration.type === "objectSegmentation"`.
+Hosts the selection/application/polarity/scope toggles, threshold, size range,
+prompt mode (+ grid density in grid mode), simplification, status/progress, and
+Undo/Clear/Accept. Choices persist into `configuration.values` (debounced
+`editToolInConfiguration`) and restore via `initFromConfig` on mount and on tool
+re-selection.
+
+**Reactivity rule (important):** the panel's node-backed controls bind
+`v-model` to **reactive `ref`s** that push into the pipeline input nodes via
+watchers — never to a `computed` that reads `node.output`. `ComputeNode.output`
+is a plain, `markRaw`'d, non-reactive field, so a computed reading it never
+re-evaluates and the control snaps back to its stale value (this was the
+"prompt-mode dropdown always shows Point prompts" bug). See the nimbus-frontend
+skill for the general rule.
+
+### 12.6 Chained mode: `samThenClassifier`
+
+Runs SAM similarity, then trains the classifier on the user's examples **plus
+every object SAM found**, and shows the classifier's result. Wiring: the SAM
+branch runs as usual; the state factory's `samProposals` mirror pushes SAM's
+proposal polygons into a `hybridTraining` `ManualInputNode` (only in this mode);
+`trainPredict` adds those polygons as extra foreground training. `hybridTraining`
+defaults to `[]` (a real value, so it never blocks the classifier branch in the
+other modes), and is reset to `[]` on leaving the chained mode or on tool reset.
+Verified: 2 examples → SAM found 10 → classifier trained on 12 → 6 final
+proposals.
+
+### 12.7 Grid density
+
+Grid prompt mode scans a `gridSize × gridSize` uniform point grid.
+`gridSize` is a `ManualInputNode` (template default 16, clamped 2–48) surfaced
+as a "Grid points" panel field shown only in grid mode.
+
+### 12.8 Notifications
+
+Long-running nodes map to in-viewer overlay strings via `reportLoadingMessages`
+→ `state.loadingMessages`, surfaced by the shared `.sam-status-area` overlay in
+`ImageViewer.vue` (same overlay as the SAM annotation tool): "Loading SAM
+encoder/decoder…", "SAM encoding…", "Analyzing examples…", "SAM segmenting…"
+(with `n/N` candidate progress in the panel status line), "Training classifier…",
+"Classifying…".
+
+### 12.9 Bugs fixed during unification
+
+- **`image_embed` vs `image_embeddings`** — the SAM1/vit_b encoder names its
+  grid embedding `image_embeddings`; SAM2 names it `image_embed`.
+  `computeEmbeddingGridState` accepts either (`?? `), fixing the original
+  "Cannot read properties of undefined (reading 'dims')" crash.
+- **Examples flickering away on re-encode / method switch** — the
+  `state.examples` mirror ignores the transient `NoOutput` a `ComputeNode`
+  publishes at the start of each recompute (only a real output with
+  `decodedExamples: []` clears them), and `replacePreviewPolygons` now calls
+  `annotationLayer.modified()` + `draw()` so re-added outlines render without
+  needing an interaction.
+- **`[object Object]` in tool-creation dropdowns** — `VSelect` defaults to
+  `item-title="title"`, but template select items use `{ text, value }`;
+  `ToolConfigurationItem.vue` now passes `item-title="text"` for `select`
+  elements.
+
+### 12.10 Scope (viewport only, for now)
+
+Both branches operate on a screenshot of the **current viewport**. The panel's
+"Apply to" toggle carries a disabled "Whole image" option and a `scope` state
+field as forward-looking plumbing; whole-image scanning (a camera/tile sweep, or
+pulling the full-resolution region from the backend) is deferred. See §9.
+
+### 12.11 Testing
+
+Unit tests for the algorithm cores are unchanged (`embedding.test.ts`,
+`features/forest/postprocess/rasterize.test.ts`). `AnnotationViewer.test.ts`
+covers the interaction routing. Everything is gated behind in-browser
+verification (`localhost:5173`): each selection × application combination, pan
+with plain drag, the grid-points field, and the chained mode were exercised
+against a live dataset.

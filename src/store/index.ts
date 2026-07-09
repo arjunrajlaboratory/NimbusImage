@@ -86,8 +86,7 @@ import {
   createSamToolStateFromToolConfiguration,
   warmSamModelCache,
 } from "@/pipelines/samPipeline";
-import { createExampleSegmentationToolStateFromToolConfiguration } from "@/pipelines/exampleSegmentationPipeline";
-import { createSamSimilarityToolStateFromToolConfiguration } from "@/pipelines/samSimilarityPipeline";
+import { createObjectSegmentationToolStateFromToolConfiguration } from "@/pipelines/objectSegmentationPipeline";
 import { isEqual } from "lodash";
 import { logError, logWarning } from "@/utils/log";
 
@@ -819,14 +818,9 @@ export class Main extends VuexModule {
             configuration as IToolConfiguration<"samAnnotation">,
           );
           break;
-        case "exampleSegmentation":
-          state = createExampleSegmentationToolStateFromToolConfiguration(
-            configuration as IToolConfiguration<"exampleSegmentation">,
-          );
-          break;
-        case "samSimilarity":
-          state = createSamSimilarityToolStateFromToolConfiguration(
-            configuration as IToolConfiguration<"samSimilarity">,
+        case "objectSegmentation":
+          state = createObjectSegmentationToolStateFromToolConfiguration(
+            configuration as IToolConfiguration<"objectSegmentation">,
           );
           break;
         case "connection":
@@ -1121,7 +1115,10 @@ export class Main extends VuexModule {
     // large, this way they are usually cached before a SAM tool is selected
     const samModels = new Set(
       (data?.tools ?? [])
-        .filter((tool) => tool.type === "samAnnotation")
+        .filter(
+          (tool) =>
+            tool.type === "samAnnotation" || tool.type === "objectSegmentation",
+        )
         .map((tool) => tool.values?.model?.value)
         .filter(Boolean),
     );
