@@ -63,12 +63,14 @@ export default defineConfig(({ _, mode }) => {
           dest: joinAndNormalizePath("pipelines"),
         },
         {
+          // Both the .wasm binaries and their .mjs loaders: onnxruntime-web
+          // dynamically imports the loader from env.wasm.wasmPaths at runtime.
           src: joinAndNormalizePath(
             __dirname,
             "node_modules",
             "onnxruntime-web",
             "dist",
-            "*.wasm",
+            "ort-wasm-simd-threaded*.{wasm,mjs}",
           ),
           dest: joinAndNormalizePath("onnx-wasm"),
         },

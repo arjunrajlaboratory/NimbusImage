@@ -63,7 +63,9 @@ export type TToolType =
   | "edit"
   | "segmentation"
   | "samAnnotation"
-  | "tagging";
+  | "objectSegmentation"
+  | "tagging"
+  | "linescan";
 
 export interface IToolTemplateInterface {
   id: string;
@@ -146,6 +148,101 @@ export interface ISamAnnotationToolState {
   livePreview: IGeoJSPosition[] | null;
 }
 
+export const ObjectSegmentationToolStateSymbol: unique symbol = Symbol(
+  "ObjectSegmentationToolState",
+);
+
+export type TObjectSegmentationToolStateSymbol =
+  typeof ObjectSegmentationToolStateSymbol;
+
+// How the user picks a training/example object.
+//  - "samClick": shift-click a point; SAM decodes the object under it.
+//  - "samBox":   shift-drag a box; SAM decodes the object inside it.
+//  - "circle":   shift-drag a freehand lasso; the polygon IS the example
+//                (no decoder run).
+export type TObjectSelectionMode = "samClick" | "samBox" | "circle";
+
+// How examples are propagated to the rest of the image.
+//  - "samSimilarity":     SAM-embedding similarity search over candidate prompts.
+//  - "classifier":        in-browser random-forest classifier (web worker).
+//  - "samThenClassifier": chained - run SAM similarity, then train the
+//                         classifier on the examples + SAM proposals and show
+//                         the classifier's result.
+export type TObjectApplicationMethod =
+  | "samSimilarity"
+  | "classifier"
+  | "samThenClassifier";
+
+// Where matches are searched. "image" (whole-image) is not yet implemented;
+// only "viewport" (the currently displayed view) is available for now.
+export type TObjectSegmentationScope = "viewport" | "image";
+
+export interface IObjectSegmentationExample {
+  polarity: "foreground" | "background";
+  // null for a circled example: its polygon (below) is authoritative and no
+  // decoder prompt was ever run.
+  prompt: TSamPrompt | null;
+  // The resolved example outline in GCS (image) coords - the given polygon
+  // for a circled example, or the SAM-decoded mask for a prompt example.
+  // null until the example-resolve node has processed this example. Both
+  // application methods consume this: the classifier trains on these
+  // polygons, so a SAM-clicked example can feed the classifier too.
+  polygon: IGeoJSPosition[] | null;
+}
+
+export interface IObjectSegmentationStatus {
+  phase: "idle" | "computing" | "ready" | "error";
+  error?: string;
+  putativeCount: number; // proposals.length after all filtering
+  // SAM candidate-decode progress ("Scanning candidates … 23/64"). null when
+  // no SAM decode run is in flight (and always null for the classifier).
+  progress: { done: number; total: number } | null;
+  // Superset of both methods' timings: SAM (encode/decode) + classifier
+  // (features/train/predict/postprocess).
+  timings: {
+    encodeMs?: number;
+    decodeMs?: number;
+    featuresMs?: number;
+    trainMs?: number;
+    predictMs?: number;
+    postprocessMs?: number;
+  };
+  // Auto size range derived from foreground example areas, surfaced so the
+  // panel can display the size-filter placeholders.
+  autoSizeRange?: { min: number; max: number } | null;
+}
+
+export interface IObjectSegmentationToolState {
+  type: TObjectSegmentationToolStateSymbol;
+  nodes: TObjectSegmentationNodes; // markRaw'd pipeline nodes
+  // Reactive mirror of nodes.input.geoJSMap.output, same pattern as
+  // ISamAnnotationToolState.mapEntry.
+  mapEntry: IMapEntry | null;
+  // Reactive mirror of the examples input node, with resolved polygons filled
+  // in by the example-resolve node (same array order as the input).
+  examples: IObjectSegmentationExample[];
+  proposals: IGeoJSPosition[][] | null; // GCS polygons, post-dedupe; null = nothing computed
+  // Polarity applied to the next example; set by the panel.
+  nextPolarity: "foreground" | "background";
+  status: IObjectSegmentationStatus; // reactive mirror
+  // Transient per-node progress labels for the in-viewer overlay (e.g. "SAM
+  // encoding…", "SAM segmenting…", "Training classifier…"), same overlay as
+  // ISamAnnotationToolState.loadingMessages.
+  loadingMessages: string[];
+  // How the next example is captured; set by the panel. Reactive so the
+  // AnnotationViewer interaction/preview routing can switch live.
+  selectionMode: TObjectSelectionMode;
+  // How examples are propagated; set by the panel. Reactive mirror of the
+  // applicationMethod input node (which gates the two pipeline branches).
+  applicationMethod: TObjectApplicationMethod;
+  // Search scope; set by the panel. Only "viewport" is functional for now.
+  scope: TObjectSegmentationScope;
+  // Reactive mirror of the hover-preview decode node's output (GCS outline of
+  // the object under the cursor in a SAM selection mode); null when idle,
+  // dragging, in circle mode, or between debounced decodes.
+  livePreview: IGeoJSPosition[] | null;
+}
+
 export const ConnectionToolStateSymbol: unique symbol = Symbol(
   "ConnectionToolState",
 );
@@ -185,6 +282,7 @@ export interface IErrorToolState {
 
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
+  objectSegmentation: IObjectSegmentationToolState | IErrorToolState;
   connection: IConnectionToolState;
   // Edit tool can have CombineToolState when action is "combine_click"
   edit: ICombineToolState | IBaseToolState;
@@ -901,6 +999,12 @@ export interface IGeoJSAnnotationLayer extends IGeoJSLayer {
     arg?: string | null,
     editAnnotation?: IGeoJSAnnotation,
   ) => string | null | IGeoJSAnnotationLayer;
+  // The annotation currently being created or edited, if any
+  currentAnnotation: IGeoJSAnnotation | null;
+  options: (() => IObject) &
+    ((key: string) => any) &
+    ((key: string, value: any) => IGeoJSAnnotationLayer) &
+    ((values: IObject) => IGeoJSAnnotationLayer);
 }
 
 // https://opengeoscience.github.io/geojs/apidocs/geo.html#.point2D
@@ -1856,6 +1960,7 @@ import { ISetQuadStatus } from "@/utils/setFrameQuad";
 import type { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
 import type { TSamNodes } from "@/pipelines/samPipeline";
+import type { TObjectSegmentationNodes } from "@/pipelines/objectSegmentationPipeline";
 
 // TODO: It's kind of weird to have this function here.
 export function newLayer(

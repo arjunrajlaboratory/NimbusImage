@@ -32,9 +32,11 @@
         v-if="!loading && filteredProjects.length === 0"
         class="text-center pa-4"
       >
-        <v-icon size="64" color="grey">mdi-folder-star</v-icon>
-        <div class="text-h6 text-grey mt-2">No projects found</div>
-        <div class="text-body-2 text-grey">
+        <v-icon size="64" color="secondary">mdi-folder-star</v-icon>
+        <div class="text-body-1 font-weight-medium text-medium-emphasis mt-2">
+          No projects found
+        </div>
+        <div class="text-body-2 text-medium-emphasis">
           {{
             searchQuery
               ? "Try adjusting your search terms"
@@ -51,7 +53,7 @@
           @click="navigateToProject(project)"
         >
           <template #prepend>
-            <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
+            <v-icon color="project" size="24">mdi-folder-star</v-icon>
           </template>
 
           <v-list-item-title class="project-title">
@@ -73,20 +75,20 @@
               <v-chip
                 size="x-small"
                 variant="outlined"
-                color="grey"
+                color="secondary"
                 class="mr-1"
               >
                 {{ project.meta.datasets.length }} dataset{{
                   project.meta.datasets.length !== 1 ? "s" : ""
                 }}
               </v-chip>
-              <v-chip size="x-small" variant="outlined" color="grey">
+              <v-chip size="x-small" variant="outlined" color="secondary">
                 {{ project.meta.collections.length }} collection{{
                   project.meta.collections.length !== 1 ? "s" : ""
                 }}
               </v-chip>
               <v-spacer />
-              <span class="text-caption text-grey">
+              <span class="text-caption text-medium-emphasis">
                 Updated {{ formatDateString(project.updated) }}
               </span>
             </div>
@@ -399,6 +401,6 @@ defineExpose({
 
 .project-title {
   font-weight: 500;
-  color: #8e24aa;
+  color: rgb(var(--v-theme-project));
 }
 </style>

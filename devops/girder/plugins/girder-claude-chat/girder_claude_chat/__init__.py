@@ -1,13 +1,13 @@
 import json
 import os
 import logging
-from anthropic import Anthropic, AnthropicError
+
+from anthropic import Anthropic, APIError
 
 from girder import plugin
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
-from girder.api.rest import Resource
-from girder.exceptions import RestException
+from girder.api.rest import Resource, RestException
 
 from .rate_limit import SlidingWindowRateLimiter
 
@@ -15,13 +15,22 @@ from .rate_limit import SlidingWindowRateLimiter
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Single point of model configuration for the whole plugin
+# Claude model used for all chat completions. Centralized here so that
+# additional call sites in this plugin share a single source of truth.
 CLAUDE_MODEL = 'claude-sonnet-5'
 
-# The plugin sources are copied here in the Girder image (see
-# devops/girder/Dockerfile); prompt and tool definition files live next to
-# the package so they can be edited without touching code.
-PLUGIN_DIR = '/src/girder-claude-chat'
+PACKAGE_DIR = os.path.dirname(__file__)
+
+# The system prompt ships as package data alongside this module. Resolving
+# it relative to __file__ works for every install layout -- the Docker image
+# (editable install), a non-editable/packaged install (the plugin's own
+# tox/pytest suite), and a local non-Docker Girder.
+SYSTEM_PROMPT_PATH = os.path.join(
+    PACKAGE_DIR, 'system_prompt_2.txt'
+)
+
+# Agent prompt and tool definitions currently live at the plugin root.
+PLUGIN_DIR = os.path.dirname(PACKAGE_DIR)
 
 
 class ClaudeChatResource(Resource):
@@ -32,11 +41,13 @@ class ClaudeChatResource(Resource):
 
         # Load system prompt
         try:
-            with open('/src/girder-claude-chat/system_prompt_2.txt', 'r') as f:
+            with open(SYSTEM_PROMPT_PATH, 'r') as f:
                 self.system_prompt = f.read().strip()
             logger.info('Successfully loaded system prompt')
         except IOError:
-            logger.error('Failed to load system prompt')
+            logger.error(
+                'Failed to load system prompt from %s', SYSTEM_PROMPT_PATH
+            )
             self.system_prompt = ''
 
         # Create client
@@ -44,6 +55,7 @@ class ClaudeChatResource(Resource):
         if api_key:
             self.client = Anthropic(api_key=api_key)
         else:
+            self.client = None
             logger.error(
                 "Can't create an Anthropic client without an API key,"
                 'the claude_chat endpoint will not work'
@@ -58,12 +70,17 @@ class ClaudeChatResource(Resource):
         return self.query_claude_imp(data)
 
     def query_claude_imp(self, data):
+        if self.client is None:
+            raise RestException(
+                'Claude chat is not configured (no ANTHROPIC_API_KEY)',
+                code=503
+            )
         messages = data.get('messages', [])
         logger.debug(f'Processing {len(messages)} messages')
         try:
             response = self.client.messages.create(
-                model='claude-sonnet-4-6',
-                max_tokens=4096,
+                model=CLAUDE_MODEL,
+                max_tokens=8192,
                 system=[
                     {
                         'type': 'text',
@@ -73,10 +90,16 @@ class ClaudeChatResource(Resource):
                 ],
                 messages=messages
             )
-            return {'response': response.content[0].text}
-        except Exception as e:
+            # Sonnet 5 may include non-text content blocks before the answer.
+            text = ''.join(
+                block.text
+                for block in response.content
+                if block.type == 'text'
+            )
+            return {'response': text}
+        except APIError as e:
             logger.error(
-                f'Error in full chat endpoint: {str(e)}', exc_info=True
+                f'Anthropic API error: {str(e)}', exc_info=True
             )
             return {'error': str(e)}
 
@@ -223,7 +246,7 @@ class ClaudeAgentResource(Resource):
                 tools=self.tools,
                 messages=messages,
             )
-        except AnthropicError as e:
+        except APIError as e:
             logger.error(f'Error in agent endpoint: {str(e)}', exc_info=True)
             return {'error': str(e)}
         return {
