@@ -1,20 +1,29 @@
 import os
 import json
 import logging
-from anthropic import Anthropic
+
+from anthropic import Anthropic, APIError
 
 from girder import plugin
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
-from girder.api.rest import Resource
+from girder.api.rest import Resource, RestException
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# The model used for every Claude call in this plugin. Kept in one place so
-# there is a single spot to bump when migrating to a newer Claude model.
+# Claude model used for all chat completions. Centralized here so that
+# additional call sites in this plugin share a single source of truth.
 CLAUDE_MODEL = 'claude-sonnet-5'
+
+# The system prompt ships as package data alongside this module. Resolving
+# it relative to __file__ works for every install layout -- the Docker image
+# (editable install), a non-editable/packaged install (the plugin's own
+# tox/pytest suite), and a local non-Docker Girder.
+SYSTEM_PROMPT_PATH = os.path.join(
+    os.path.dirname(__file__), 'system_prompt_2.txt'
+)
 
 # System prompt for the tool-suggestion endpoint. It is deliberately terse:
 # the real work is describing the image (which the vision model does well) and
@@ -99,11 +108,13 @@ class ClaudeChatResource(Resource):
 
         # Load system prompt
         try:
-            with open('/src/girder-claude-chat/system_prompt_2.txt', 'r') as f:
+            with open(SYSTEM_PROMPT_PATH, 'r') as f:
                 self.system_prompt = f.read().strip()
             logger.info('Successfully loaded system prompt')
         except IOError:
-            logger.error('Failed to load system prompt')
+            logger.error(
+                'Failed to load system prompt from %s', SYSTEM_PROMPT_PATH
+            )
             self.system_prompt = ''
 
         # Create client
@@ -111,6 +122,7 @@ class ClaudeChatResource(Resource):
         if api_key:
             self.client = Anthropic(api_key=api_key)
         else:
+            self.client = None
             logger.error(
                 "Can't create an Anthropic client without an API key,"
                 'the claude_chat endpoint will not work'
@@ -125,6 +137,11 @@ class ClaudeChatResource(Resource):
         return self.query_claude_imp(data)
 
     def query_claude_imp(self, data):
+        if self.client is None:
+            raise RestException(
+                'Claude chat is not configured (no ANTHROPIC_API_KEY)',
+                code=503
+            )
         messages = data.get('messages', [])
         logger.debug(f'Processing {len(messages)} messages')
         try:
@@ -140,18 +157,16 @@ class ClaudeChatResource(Resource):
                 ],
                 messages=messages
             )
-            # Sonnet 5 runs adaptive thinking by default, so the content
-            # array may start with a thinking block — collect text blocks
-            # instead of assuming content[0] is text.
+            # Sonnet 5 may include non-text content blocks before the answer.
             text = ''.join(
                 block.text
                 for block in response.content
                 if block.type == 'text'
             )
             return {'response': text}
-        except Exception as e:
+        except APIError as e:
             logger.error(
-                f'Error in full chat endpoint: {str(e)}', exc_info=True
+                f'Anthropic API error: {str(e)}', exc_info=True
             )
             return {'error': str(e)}
 
@@ -229,7 +244,11 @@ class ClaudeSuggestToolsResource(Resource):
 
     def suggest_tools_imp(self, data):
         if self.client is None:
-            return {'error': 'Anthropic client is not configured'}
+            raise RestException(
+                'Claude tool suggestions are not configured '
+                '(no ANTHROPIC_API_KEY)',
+                code=503
+            )
         try:
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
@@ -252,7 +271,7 @@ class ClaudeSuggestToolsResource(Resource):
                 if block.type == 'tool_use' and block.name == 'suggest_tools':
                     return {'suggestions': block.input.get('suggestions', [])}
             return {'suggestions': []}
-        except Exception as e:
+        except APIError as e:
             logger.error(
                 f'Error in suggest_tools endpoint: {str(e)}', exc_info=True
             )

@@ -13,6 +13,7 @@ from nimbusimage.client import NimbusClient
 from nimbusimage.collections import Collection
 from nimbusimage.coordinates import attach_geometry_methods
 from nimbusimage.dataset import Dataset
+from nimbusimage.images import LineScanResult
 from nimbusimage.jobs import Job
 from nimbusimage.filters import (
     filter_by_tags,
@@ -39,6 +40,7 @@ def connect(
     api_key: str | None = None,
     username: str | None = None,
     password: str | None = None,
+    anonymous: bool = False,
 ) -> NimbusClient:
     """Connect to a NimbusImage server.
 
@@ -50,13 +52,16 @@ def connect(
             session tokens). Recommended for automation.
         username: Username for interactive auth.
         password: Password for interactive auth.
+        anonymous: Connect without credentials. Only public
+            datasets are accessible (e.g., for measurements on
+            published data).
 
     Returns:
         Authenticated NimbusClient.
     """
     return NimbusClient(
         api_url=api_url, token=token, api_key=api_key,
-        username=username, password=password,
+        username=username, password=password, anonymous=anonymous,
     )
 
 
@@ -93,6 +98,7 @@ __all__ = [
     "Dataset",
     "Job",
     "WorkerContext",
+    "LineScanResult",
     # Data models
     "Annotation",
     "Connection",
