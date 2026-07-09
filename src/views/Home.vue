@@ -520,7 +520,7 @@ import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import RecentDatasets from "@/components/RecentDatasets.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
 import {
-  getFilesFromDataTransfer,
+  getFilesFromDrop,
   selectFiles,
   selectFilesFromFolder,
 } from "@/utils/fileUpload";
@@ -1033,7 +1033,7 @@ function beginUpload(files: File[]) {
 
 async function handleDrop(event: DragEvent) {
   isDragging.value = false;
-  beginUpload(await getFilesFromDataTransfer(event.dataTransfer));
+  beginUpload(await getFilesFromDrop(event));
 }
 
 async function openFileSelector() {

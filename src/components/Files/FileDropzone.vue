@@ -46,10 +46,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import {
-  getFilesFromDataTransfer,
-  selectFilesFromFolder,
-} from "@/utils/fileUpload";
+import { getFilesFromDrop, selectFilesFromFolder } from "@/utils/fileUpload";
 
 const props = withDefaults(
   defineProps<{
@@ -87,7 +84,7 @@ function onChange(event: Event) {
 
 async function onDrop(event: DragEvent) {
   dropzoneClass.value = null;
-  const dropped = await getFilesFromDataTransfer(event.dataTransfer);
+  const dropped = await getFilesFromDrop(event);
   files.value = props.multiple ? dropped : dropped.slice(0, 1);
 }
 

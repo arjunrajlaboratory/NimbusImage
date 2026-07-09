@@ -1,101 +1,42 @@
-import { describe, it, expect } from "vitest";
-import { getFilesFromDataTransfer } from "./fileUpload";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// The folder-traversal itself is delegated to (and tested by) `file-selector`.
+// These tests cover the logic this module adds on top: extracting File objects
+// from whatever `fromEvent` returns and sorting them by natural name order.
+vi.mock("file-selector", () => ({
+  fromEvent: vi.fn(),
+}));
+
+import { fromEvent } from "file-selector";
+import { getFilesFromDrop } from "./fileUpload";
+
+const mockFromEvent = vi.mocked(fromEvent);
 
 function makeFile(name: string): File {
   return new File(["content"], name);
 }
 
-// Minimal fakes for the File and Directory Entries API used by folder drops.
-function fileEntry(name: string): FileSystemFileEntry {
-  return {
-    isFile: true,
-    isDirectory: false,
-    name,
-    file: (resolve: (file: File) => void) => resolve(makeFile(name)),
-  } as unknown as FileSystemFileEntry;
-}
+const dropEvent = { type: "drop" } as unknown as DragEvent;
 
-function directoryEntry(
-  name: string,
-  children: FileSystemEntry[],
-): FileSystemDirectoryEntry {
-  return {
-    isFile: false,
-    isDirectory: true,
-    name,
-    createReader: () => {
-      let returned = false;
-      return {
-        // Return all children on the first call, then an empty batch to signal
-        // the end, mirroring the real readEntries contract.
-        readEntries: (resolve: (entries: FileSystemEntry[]) => void) => {
-          resolve(returned ? [] : children);
-          returned = true;
-        },
-      };
-    },
-  } as unknown as FileSystemDirectoryEntry;
-}
-
-function dataTransfer(
-  entries: (FileSystemEntry | null)[],
-  files: File[],
-): DataTransfer {
-  const items = entries.map((entry) => ({
-    webkitGetAsEntry: () => entry,
-  }));
-  return { items, files } as unknown as DataTransfer;
-}
-
-describe("getFilesFromDataTransfer", () => {
-  it("returns an empty array for a null DataTransfer", async () => {
-    expect(await getFilesFromDataTransfer(null)).toEqual([]);
+describe("getFilesFromDrop", () => {
+  beforeEach(() => {
+    mockFromEvent.mockReset();
   });
 
-  it("falls back to plain files when the entries API is unavailable", async () => {
-    const file = makeFile("plain.tif");
-    const dt = { files: [file] } as unknown as DataTransfer;
-    expect(await getFilesFromDataTransfer(dt)).toEqual([file]);
+  it("returns the files extracted from the drop event", async () => {
+    mockFromEvent.mockResolvedValue([makeFile("a.tif"), makeFile("b.tif")]);
+    const files = await getFilesFromDrop(dropEvent);
+    expect(mockFromEvent).toHaveBeenCalledWith(dropEvent);
+    expect(files.map((f) => f.name)).toEqual(["a.tif", "b.tif"]);
   });
 
-  it("returns dropped top-level files", async () => {
-    const dt = dataTransfer([fileEntry("a.tif")], [makeFile("a.tif")]);
-    const files = await getFilesFromDataTransfer(dt);
-    expect(files.map((f) => f.name)).toEqual(["a.tif"]);
-  });
-
-  it("recurses into dropped folders, including nested subfolders", async () => {
-    const tree = directoryEntry("root", [
-      fileEntry("a.tif"),
-      fileEntry("b.tif"),
-      directoryEntry("nested", [fileEntry("c.tif")]),
+  it("sorts files in natural (numeric-aware) name order", async () => {
+    mockFromEvent.mockResolvedValue([
+      makeFile("frame10.tif"),
+      makeFile("frame2.tif"),
+      makeFile("frame1.tif"),
     ]);
-    const dt = dataTransfer([tree], []);
-    const files = await getFilesFromDataTransfer(dt);
-    expect(files.map((f) => f.name).sort()).toEqual([
-      "a.tif",
-      "b.tif",
-      "c.tif",
-    ]);
-  });
-
-  it("handles a mix of dropped files and folders", async () => {
-    const dt = dataTransfer(
-      [fileEntry("top.tif"), directoryEntry("folder", [fileEntry("in.tif")])],
-      [],
-    );
-    const files = await getFilesFromDataTransfer(dt);
-    expect(files.map((f) => f.name).sort()).toEqual(["in.tif", "top.tif"]);
-  });
-
-  it("returns files in natural (numeric-aware) name order", async () => {
-    const tree = directoryEntry("root", [
-      fileEntry("frame10.tif"),
-      fileEntry("frame2.tif"),
-      fileEntry("frame1.tif"),
-    ]);
-    const dt = dataTransfer([tree], []);
-    const files = await getFilesFromDataTransfer(dt);
+    const files = await getFilesFromDrop(dropEvent);
     // Natural sort keeps frame2 before frame10 (a plain lexical sort would not).
     expect(files.map((f) => f.name)).toEqual([
       "frame1.tif",
@@ -104,11 +45,17 @@ describe("getFilesFromDataTransfer", () => {
     ]);
   });
 
-  it("sorts the plain-files fallback by name", async () => {
-    const dt = {
-      files: [makeFile("b.tif"), makeFile("a.tif")],
-    } as unknown as DataTransfer;
-    const files = await getFilesFromDataTransfer(dt);
-    expect(files.map((f) => f.name)).toEqual(["a.tif", "b.tif"]);
+  it("drops non-File entries (e.g. DataTransferItem) defensively", async () => {
+    mockFromEvent.mockResolvedValue([
+      makeFile("real.tif"),
+      { kind: "file" } as unknown as DataTransferItem,
+    ]);
+    const files = await getFilesFromDrop(dropEvent);
+    expect(files.map((f) => f.name)).toEqual(["real.tif"]);
+  });
+
+  it("returns an empty array when nothing is extracted", async () => {
+    mockFromEvent.mockResolvedValue([]);
+    expect(await getFilesFromDrop(dropEvent)).toEqual([]);
   });
 });
