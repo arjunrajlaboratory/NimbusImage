@@ -21,7 +21,7 @@
           <template v-else> Drag a file here or click to select one </template>
         </div>
       </slot>
-      <div v-if="multiple && directory" class="mt-2" style="z-index: 2">
+      <div v-if="multiple && directory" class="mt-2 folder-select-action">
         <v-btn
           variant="text"
           size="small"
@@ -147,6 +147,13 @@ $img: linear-gradient(
     opacity: 0;
     z-index: 1;
     cursor: pointer;
+  }
+
+  // Raise the folder button above the invisible full-cover .file-input
+  // (z-index: 1) so clicks reach the button instead of opening the file
+  // dialog. It is a flex item of the message row, so z-index applies.
+  .folder-select-action {
+    z-index: 2;
   }
 }
 

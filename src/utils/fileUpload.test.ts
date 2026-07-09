@@ -87,4 +87,28 @@ describe("getFilesFromDataTransfer", () => {
     const files = await getFilesFromDataTransfer(dt);
     expect(files.map((f) => f.name).sort()).toEqual(["in.tif", "top.tif"]);
   });
+
+  it("returns files in natural (numeric-aware) name order", async () => {
+    const tree = directoryEntry("root", [
+      fileEntry("frame10.tif"),
+      fileEntry("frame2.tif"),
+      fileEntry("frame1.tif"),
+    ]);
+    const dt = dataTransfer([tree], []);
+    const files = await getFilesFromDataTransfer(dt);
+    // Natural sort keeps frame2 before frame10 (a plain lexical sort would not).
+    expect(files.map((f) => f.name)).toEqual([
+      "frame1.tif",
+      "frame2.tif",
+      "frame10.tif",
+    ]);
+  });
+
+  it("sorts the plain-files fallback by name", async () => {
+    const dt = {
+      files: [makeFile("b.tif"), makeFile("a.tif")],
+    } as unknown as DataTransfer;
+    const files = await getFilesFromDataTransfer(dt);
+    expect(files.map((f) => f.name)).toEqual(["a.tif", "b.tif"]);
+  });
 });

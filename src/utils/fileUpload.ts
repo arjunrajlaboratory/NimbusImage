@@ -36,6 +36,19 @@ function fileFromEntry(entry: FileSystemFileEntry): Promise<File> {
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
 
+// Sort files by name using natural (numeric-aware) ordering so image sequences
+// like frame1, frame2, frame10 come back in the expected order. Files gathered
+// from a folder drop or a folder picker have no inherent order, so we sort them
+// for deterministic dataset naming and dimension assignment.
+function sortByName(files: File[]): File[] {
+  return files.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
+}
+
 async function filesFromEntry(entry: FileSystemEntry): Promise<File[]> {
   if (entry.isFile) {
     return [await fileFromEntry(entry as FileSystemFileEntry)];
@@ -69,7 +82,7 @@ export async function getFilesFromDataTransfer(
     typeof items[0].webkitGetAsEntry === "function";
 
   if (!supportsEntries) {
-    return [...dataTransfer.files];
+    return sortByName([...dataTransfer.files]);
   }
 
   // webkitGetAsEntry() must be called synchronously while the drop event is
@@ -84,31 +97,72 @@ export async function getFilesFromDataTransfer(
   }
 
   if (entries.length === 0) {
-    return [...dataTransfer.files];
+    return sortByName([...dataTransfer.files]);
   }
 
   const files = await Promise.all(entries.map(filesFromEntry));
-  return files.flat();
+  return sortByName(files.flat());
 }
 
 /**
- * Open a native folder picker and resolve with every file contained in the
- * chosen folder (recursively). Resolves with an empty array if the user
- * cancels the dialog.
+ * Open a native file/folder picker and resolve with the selected files,
+ * sorted by name. Resolves with an empty array if the dialog is dismissed.
+ *
+ * Creates a fresh detached <input> on every call: calling .click() on a
+ * newly-created, unattached input avoids Chrome's issue where a programmatic
+ * .click() on an existing DOM-attached input can be silently blocked.
  */
-export function selectFilesFromFolder(): Promise<File[]> {
+function openFilePicker(
+  options: { directory?: boolean } = {},
+): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    // `webkitdirectory` turns the picker into a folder chooser. It is not in
-    // the standard HTMLInputElement typings, so set it via attribute.
-    input.setAttribute("webkitdirectory", "");
-    input.addEventListener("change", () => {
-      resolve([...(input.files ?? [])]);
-    });
-    // Some browsers fire `cancel` when the dialog is dismissed; resolve empty.
-    input.addEventListener("cancel", () => resolve([]));
+    if (options.directory) {
+      // `webkitdirectory` turns the picker into a folder chooser. It is not in
+      // the standard HTMLInputElement typings, so set it via attribute.
+      input.setAttribute("webkitdirectory", "");
+    }
+
+    let settled = false;
+    const settle = (files: File[]) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.removeEventListener("focus", onCancel, true);
+      resolve(sortByName(files));
+    };
+
+    // The `change` event fires with the selection once the dialog closes.
+    input.addEventListener("change", () => settle([...(input.files ?? [])]));
+    // The `cancel` event fires when the dialog is dismissed (modern browsers).
+    input.addEventListener("cancel", () => settle([]));
+    // Fallback for browsers without `cancel`: when the dialog closes the window
+    // regains focus. If no `change` fired shortly after, treat it as a cancel
+    // so the promise always settles. `change` populates input.files before it
+    // fires, so it always wins the race when a selection was made.
+    const onCancel = () => window.setTimeout(() => settle([]), 500);
+    window.addEventListener("focus", onCancel, true);
+
     input.click();
   });
+}
+
+/**
+ * Open a native file picker (multiple files) and resolve with the selected
+ * files, sorted by name.
+ */
+export function selectFiles(): Promise<File[]> {
+  return openFilePicker();
+}
+
+/**
+ * Open a native folder picker and resolve with every file contained in the
+ * chosen folder (recursively), sorted by name. Resolves with an empty array if
+ * the user cancels the dialog.
+ */
+export function selectFilesFromFolder(): Promise<File[]> {
+  return openFilePicker({ directory: true });
 }

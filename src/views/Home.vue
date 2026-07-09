@@ -521,6 +521,7 @@ import RecentDatasets from "@/components/RecentDatasets.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
 import {
   getFilesFromDataTransfer,
+  selectFiles,
   selectFilesFromFolder,
 } from "@/utils/fileUpload";
 import { formatDateNumber, formatDate } from "@/utils/date";
@@ -1022,49 +1023,25 @@ function comprehensiveUpload(
   router.push({ name: "newdataset" });
 }
 
-async function handleDrop(event: DragEvent) {
-  isDragging.value = false;
-  const files = await getFilesFromDataTransfer(event.dataTransfer);
+function beginUpload(files: File[]) {
   if (files.length > 0) {
     pendingFiles.value = files;
     initializeUploadDialog();
     showUploadDialog.value = true;
   }
+}
+
+async function handleDrop(event: DragEvent) {
+  isDragging.value = false;
+  beginUpload(await getFilesFromDataTransfer(event.dataTransfer));
+}
+
+async function openFileSelector() {
+  beginUpload(await selectFiles());
 }
 
 async function openFolderSelector() {
-  const files = await selectFilesFromFolder();
-  if (files.length > 0) {
-    pendingFiles.value = files;
-    initializeUploadDialog();
-    showUploadDialog.value = true;
-  }
-}
-
-function openFileSelector() {
-  // Create a temporary <input type="file"> on each click.
-  // Calling .click() on a freshly-created, detached input avoids Chrome's
-  // issue where programmatic .click() on an existing DOM-attached input
-  // (inside Vuetify's <v-card>) is silently blocked.
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
-  input.addEventListener("change", handleFileSelect);
-  input.click();
-}
-
-function handleFileSelect(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-
-  if (files.length > 0) {
-    pendingFiles.value = files;
-    initializeUploadDialog();
-    showUploadDialog.value = true;
-  }
-
-  // Reset the input
-  input.value = "";
+  beginUpload(await selectFilesFromFolder());
 }
 
 function initializeUploadDialog() {
@@ -1344,7 +1321,7 @@ defineExpose({
   handleDrop,
   openFileSelector,
   openFolderSelector,
-  handleFileSelect,
+  beginUpload,
   initializeUploadDialog,
   handleAcceptDefaults,
   handleConfigureDataset,
