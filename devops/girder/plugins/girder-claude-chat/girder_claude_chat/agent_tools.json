@@ -398,6 +398,33 @@
     }
   },
   {
+    "name": "create_tool",
+    "description": "Add a new annotation tool to the current collection's toolset (e.g. 'set up a DAPI blob tool'). Provide EITHER manualShape for a hand-drawing tool OR workerImage for an automated worker tool (from list_workers), not both. Optionally bind it to a channel with channelName and give it a name. Gated: the user approves before the tool is created. The tool is added but NOT activated; use select_tool to make it active, or run_worker to run a worker tool.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "manualShape": {
+          "type": "string",
+          "enum": ["polygon", "point", "line"],
+          "description": "For a manual hand-drawing tool: the annotation shape. 'polygon' is a blob outline."
+        },
+        "workerImage": {
+          "type": "string",
+          "description": "For an automated worker tool: the worker Docker image, as returned by list_workers."
+        },
+        "channelName": {
+          "type": "string",
+          "description": "Bind the tool to this channel, matching one of the dataset's channel names."
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional custom tool name; a channel-prefixed default (e.g. 'DAPI Blob') is used otherwise."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "undo",
     "description": "Undo the most recent annotation change in this dataset (create/edit/delete/tag/color). Does not affect view state such as camera or layer settings.",
     "input_schema": {

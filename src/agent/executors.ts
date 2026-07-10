@@ -19,6 +19,11 @@ import {
   captureViewportScreenshot,
 } from "@/utils/interfaceCapture";
 import { getDefault } from "@/utils/workerInterface";
+import {
+  MANUAL_CATALOG,
+  buildCatalog,
+  buildToolConfiguration,
+} from "@/tools/creation/toolFromCatalog";
 
 // Executors for the AI-panel agent tools (see
 // codebaseDocumentation/AI_PANEL_SPEC.md). Each executor is a thin wrapper
@@ -826,6 +831,71 @@ const registry: { [name: string]: IAgentToolEntry } = {
     },
   },
 
+  create_tool: {
+    // Adds a tool to the shared collection toolset, so it is gated like
+    // run_worker. Does not auto-select the new tool (the model can call
+    // select_tool) and is not part of the revert snapshot (config, not view).
+    gated: true,
+    execute: async (input: {
+      manualShape?: string;
+      workerImage?: string;
+      channelName?: string;
+      name?: string;
+    }) => {
+      requireLogin();
+      if (!main.configuration) {
+        throw new ToolExecutionError("No collection is open to add a tool to");
+      }
+      const hasManual = input.manualShape != null;
+      const hasWorker = input.workerImage != null;
+      if (hasManual === hasWorker) {
+        throw new ToolExecutionError(
+          "Provide exactly one of manualShape or workerImage",
+        );
+      }
+      let entry;
+      if (hasManual) {
+        entry = MANUAL_CATALOG.find(
+          (e) => e.defaultShape === input.manualShape,
+        );
+        if (!entry) {
+          throw new ToolExecutionError(
+            `Unsupported manualShape "${input.manualShape}"; use one of: ` +
+              MANUAL_CATALOG.map((e) => e.defaultShape).join(", "),
+          );
+        }
+      } else {
+        entry = buildCatalog().find(
+          (e) => e.kind === "worker" && e.image === input.workerImage,
+        );
+        if (!entry) {
+          throw new ToolExecutionError(
+            `Unknown worker image "${input.workerImage}"; use list_workers ` +
+              "to see the available worker images",
+          );
+        }
+      }
+      const tool = buildToolConfiguration(entry, {
+        channelName: input.channelName,
+        name: input.name,
+      });
+      if (!tool) {
+        throw new ToolExecutionError(
+          "Could not build the requested tool (missing tool template)",
+        );
+      }
+      await main.addToolToConfiguration(tool);
+      return {
+        result: {
+          toolId: tool.id,
+          name: tool.name,
+          type: tool.type,
+          channelName: input.channelName ?? null,
+        },
+      };
+    },
+  },
+
   undo: {
     execute: async () => {
       requireLogin();
@@ -966,6 +1036,17 @@ export function describeAgentToolCall(name: string, input: any): string {
       }
       const tool = main.tools.find((t) => t.id === input.toolId);
       return `Activate tool "${tool?.name ?? input.toolId}"`;
+    }
+    case "create_tool": {
+      const kind =
+        typeof input?.workerImage === "string"
+          ? `worker (${input.workerImage})`
+          : `manual ${input?.manualShape ?? "annotation"}`;
+      const channel =
+        typeof input?.channelName === "string"
+          ? ` on ${input.channelName}`
+          : "";
+      return `Set up a ${kind} tool${channel}`;
     }
     case "undo":
       return "Undo the last annotation change";

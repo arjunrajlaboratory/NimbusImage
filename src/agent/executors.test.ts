@@ -55,7 +55,46 @@ vi.mock("@/store", () => ({
     saveContrastInView: vi.fn(),
     setViewContrastOverrides: vi.fn(),
     setSelectedToolId: vi.fn(),
+    addToolToConfiguration: vi.fn(),
   },
+}));
+
+vi.mock("@/tools/creation/toolFromCatalog", () => ({
+  MANUAL_CATALOG: [
+    {
+      id: "manual:blob",
+      name: "Blob",
+      kind: "manual",
+      defaultShape: "polygon",
+    },
+    {
+      id: "manual:point",
+      name: "Point",
+      kind: "manual",
+      defaultShape: "point",
+    },
+    { id: "manual:line", name: "Line", kind: "manual", defaultShape: "line" },
+  ],
+  buildCatalog: vi.fn(() => [
+    {
+      id: "manual:blob",
+      name: "Blob",
+      kind: "manual",
+      defaultShape: "polygon",
+    },
+    {
+      id: "worker:img:1",
+      name: "Cellpose",
+      kind: "worker",
+      image: "img:1",
+      defaultShape: "polygon",
+    },
+  ]),
+  buildToolConfiguration: vi.fn((entry: any, opts: any) => ({
+    id: "tool-new",
+    name: opts?.name ?? entry.name,
+    type: entry.kind === "worker" ? "segmentation" : "create",
+  })),
 }));
 
 vi.mock("@/store/annotation", () => ({
@@ -179,6 +218,7 @@ describe("describeAgentToolCall", () => {
     "tag_annotations",
     "set_annotation_filter",
     "select_tool",
+    "create_tool",
     "run_worker",
     "unknown_tool",
   ];
@@ -437,6 +477,72 @@ describe("executeAgentTool", () => {
     // Omitting the query is a legitimate "select all".
     await executeAgentTool("select_annotations", { mode: "replace" }, context);
     expect(mockAnnotations.setSelected).toHaveBeenCalledWith(["a1", "a2"]);
+  });
+
+  it("creates a manual tool bound to a channel", async () => {
+    const { result } = await executeAgentTool(
+      "create_tool",
+      { manualShape: "polygon", channelName: "DAPI", name: "DAPI Blob" },
+      context,
+    );
+    expect(mockMain.addToolToConfiguration).toHaveBeenCalledTimes(1);
+    expect(result.type).toBe("create");
+    expect(result.toolId).toBe("tool-new");
+    expect(result.channelName).toBe("DAPI");
+  });
+
+  it("creates a worker tool by image", async () => {
+    const { result } = await executeAgentTool(
+      "create_tool",
+      { workerImage: "img:1", channelName: "DAPI" },
+      context,
+    );
+    expect(mockMain.addToolToConfiguration).toHaveBeenCalledTimes(1);
+    expect(result.type).toBe("segmentation");
+  });
+
+  it("rejects providing both or neither of manualShape/workerImage", async () => {
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        { manualShape: "point", workerImage: "img:1" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    await expect(
+      executeAgentTool("create_tool", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown worker image", async () => {
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        { workerImage: "does-not-exist" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsupported manual shape", async () => {
+    await expect(
+      executeAgentTool("create_tool", { manualShape: "rectangle" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("requires being logged in to create a tool", async () => {
+    mockMain.isLoggedIn = false;
+    await expect(
+      executeAgentTool("create_tool", { manualShape: "point" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("gates create_tool", () => {
+    expect(isGatedTool("create_tool")).toBe(true);
   });
 
   it("does not double-submit a worker whose job is already running", async () => {
