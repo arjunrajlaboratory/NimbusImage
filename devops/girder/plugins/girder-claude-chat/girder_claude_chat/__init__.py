@@ -349,7 +349,17 @@ class ClaudeAgentResource(Resource):
         ) as stream:
             response = stream.get_final_message()
         return {
-            'content': [block.model_dump() for block in response.content],
+            # Streaming returns ParsedTextBlocks with an output-only
+            # `parsed_output` field (marked __api_exclude__). These blocks are
+            # sent back verbatim as the next turn's assistant message, so drop
+            # the API-excluded fields or the request 400s ("Extra inputs are
+            # not permitted"). Mirrors the SDK's own request serialization.
+            'content': [
+                block.model_dump(
+                    exclude=getattr(block, '__api_exclude__', None)
+                )
+                for block in response.content
+            ],
             'stop_reason': response.stop_reason,
             'usage': {
                 'input_tokens': response.usage.input_tokens,

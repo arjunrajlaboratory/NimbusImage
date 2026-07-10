@@ -80,7 +80,9 @@ def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
 
     final_message = SimpleNamespace(
         content=[
-            SimpleNamespace(model_dump=lambda: {'type': 'text', 'text': 'ok'}),
+            SimpleNamespace(
+                model_dump=lambda exclude=None: {'type': 'text', 'text': 'ok'},
+            ),
         ],
         stop_reason='end_turn',
         usage=SimpleNamespace(input_tokens=11, output_tokens=7),
@@ -126,6 +128,56 @@ def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
     # The bump the whole change is about; also keeps us above the non-streaming
     # ceiling so streaming stays mandatory.
     assert resource.AGENT_MAX_TOKENS > 21333
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAgentEndpointStripsApiExcludedBlockFields(monkeypatch):
+    # The streaming API returns ParsedTextBlocks carrying an output-only
+    # `parsed_output` field (marked __api_exclude__). Those content blocks are
+    # echoed straight back as the assistant turn on the next request, so they
+    # must be serialized without parsed_output or the API rejects the request
+    # with "Extra inputs are not permitted".
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeAgentResource()
+
+    class FakeParsedTextBlock:
+        __api_exclude__ = {'parsed_output'}
+
+        def model_dump(self, exclude=None):
+            data = {
+                'type': 'text',
+                'text': 'ok',
+                'parsed_output': {'anything': 1},
+            }
+            for key in exclude or set():
+                data.pop(key, None)
+            return data
+
+    final_message = SimpleNamespace(
+        content=[FakeParsedTextBlock()],
+        stop_reason='end_turn',
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get_final_message(self):
+            return final_message
+
+    class FakeMessages:
+        def stream(self, **kwargs):
+            return FakeStream()
+
+    resource.client = SimpleNamespace(messages=FakeMessages())
+
+    result = resource._stream_agent_response([{'role': 'user', 'content': 'x'}])
+    assert result['content'] == [{'type': 'text', 'text': 'ok'}]
+    assert 'parsed_output' not in result['content'][0]
 
 
 @pytest.mark.plugin('girder_claude_chat')
