@@ -123,11 +123,60 @@ function queryAnnotations(query: IAnnotationQuery = {}): IAnnotation[] {
   return annotations;
 }
 
-function resolveAnnotationTargetIds(target: TAnnotationTarget): string[] {
+// Model tool inputs are not schema-enforced at runtime. Validate an annotation
+// query so a malformed one can't silently fall through to the empty (match-all)
+// query — which for destructive tools (color/tag) would edit every annotation.
+function validateAnnotationQuery(query: { [key: string]: unknown }) {
+  for (const [key, value] of Object.entries(query)) {
+    switch (key) {
+      case "ids":
+      case "tags":
+        if (
+          !Array.isArray(value) ||
+          value.some((item) => typeof item !== "string")
+        ) {
+          throw new ToolExecutionError(
+            `query.${key} must be an array of strings`,
+          );
+        }
+        break;
+      case "exclusive":
+      case "currentFrameOnly":
+        if (typeof value !== "boolean") {
+          throw new ToolExecutionError(`query.${key} must be a boolean`);
+        }
+        break;
+      case "shape":
+        if (typeof value !== "string") {
+          throw new ToolExecutionError("query.shape must be a string");
+        }
+        break;
+      case "channel":
+        if (typeof value !== "number") {
+          throw new ToolExecutionError("query.channel must be a number");
+        }
+        break;
+      default:
+        throw new ToolExecutionError(`Unknown query field "${key}"`);
+    }
+  }
+}
+
+// Resolve an edit target to concrete annotation ids. `target` comes straight
+// from the model, so reject anything that isn't the string "selection" or a
+// valid query object rather than defaulting a missing/garbage target to "all".
+function resolveAnnotationTargetIds(target: unknown): string[] {
   if (target === "selection") {
     return [...annotationStore.selectedAnnotationIds];
   }
-  return queryAnnotations(target).map((a) => a.id);
+  if (target === null || typeof target !== "object" || Array.isArray(target)) {
+    throw new ToolExecutionError(
+      'target must be "selection" or a query object (e.g. ' +
+        '{"tags":["nucleus"]}); refusing to default to all annotations',
+    );
+  }
+  validateAnnotationQuery(target as { [key: string]: unknown });
+  return queryAnnotations(target as IAnnotationQuery).map((a) => a.id);
 }
 
 function countBy<T>(items: T[], key: (item: T) => string | string[]) {
@@ -647,6 +696,20 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (input.mode === "clear") {
         annotationStore.setSelected([]);
       } else {
+        // A missing query legitimately means "all" for selection (reversible),
+        // but a provided one must be a valid object, not garbage.
+        if (input.query !== undefined) {
+          if (
+            input.query === null ||
+            typeof input.query !== "object" ||
+            Array.isArray(input.query)
+          ) {
+            throw new ToolExecutionError(
+              'query must be an object (e.g. {"tags":["nucleus"]})',
+            );
+          }
+          validateAnnotationQuery(input.query as { [key: string]: unknown });
+        }
         const ids = queryAnnotations(input.query).map((a) => a.id);
         if (input.mode === "replace") {
           annotationStore.setSelected(ids);
@@ -926,6 +989,12 @@ export function describeAgentToolCall(name: string, input: any): string {
 // revert can't bake a personal contrast into the collection), and
 // `viewContrasts` holds the user's personal per-view contrast overrides.
 export interface IViewStateSnapshot {
+  // Identity of the dataset/collection/view this snapshot belongs to, so a
+  // turn's tool execution and its revert can detect that the user navigated
+  // elsewhere and refuse to act on the wrong dataset (see AI_PANEL_REVIEW #1).
+  datasetId: string | null;
+  configurationId: string | null;
+  datasetViewId: string | null;
   location: { xy: number; z: number; time: number };
   layerMode: TLayerMode;
   unroll: { xy: boolean; z: boolean; t: boolean };
@@ -944,9 +1013,33 @@ export interface IViewStateSnapshot {
   selectedToolId: string | null;
 }
 
+// The dataset/collection/view currently loaded in the viewer.
+function currentViewIdentity() {
+  return {
+    datasetId: main.dataset?.id ?? null,
+    configurationId: main.configuration?.id ?? null,
+    datasetViewId: main.datasetView?.id ?? null,
+  };
+}
+
+// True if the active dataset/collection/view differs from the snapshot's —
+// i.e. the user navigated away since the snapshot was taken. Tool execution
+// and revert use this to avoid mutating a dataset with another's context.
+export function viewIdentityChangedSince(
+  snapshot: IViewStateSnapshot,
+): boolean {
+  const current = currentViewIdentity();
+  return (
+    snapshot.datasetId !== current.datasetId ||
+    snapshot.configurationId !== current.configurationId ||
+    snapshot.datasetViewId !== current.datasetViewId
+  );
+}
+
 export function snapshotViewState(): IViewStateSnapshot {
   return JSON.parse(
     JSON.stringify({
+      ...currentViewIdentity(),
       location: { xy: main.xy, z: main.z, time: main.time },
       layerMode: main.layerMode,
       unroll: { xy: main.unrollXY, z: main.unrollZ, t: main.unrollT },
@@ -968,6 +1061,12 @@ export function snapshotViewState(): IViewStateSnapshot {
 }
 
 export async function restoreViewState(snapshot: IViewStateSnapshot) {
+  if (viewIdentityChangedSince(snapshot)) {
+    throw new ToolExecutionError(
+      "The active dataset changed since these view changes were made; " +
+        "not reverting to avoid altering a different dataset.",
+    );
+  }
   await main.setXY(snapshot.location.xy);
   await main.setZ(snapshot.location.z);
   await main.setTime(snapshot.location.time);

@@ -116,6 +116,7 @@ import {
   restoreViewState,
   snapshotViewState,
   ToolExecutionError,
+  viewIdentityChangedSince,
 } from "./executors";
 
 const mockMain = main as any;
@@ -345,6 +346,99 @@ describe("executeAgentTool", () => {
     expect(mockAnnotations.colorAnnotationIds).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed edit targets instead of hitting all annotations", async () => {
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1" }),
+      makeAnnotation({ id: "a2" }),
+    ];
+    // Missing target (schema requires it, but model input is not enforced).
+    await expect(
+      executeAgentTool("color_annotations", { color: "#ffffff" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // A garbage string that is not "selection".
+    await expect(
+      executeAgentTool(
+        "tag_annotations",
+        { target: "everything", tags: ["x"], mode: "add" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // An object with only an unrecognized field would otherwise match all.
+    await expect(
+      executeAgentTool(
+        "color_annotations",
+        { target: { foo: 1 }, color: "#ffffff" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // A recognized field of the wrong type.
+    await expect(
+      executeAgentTool(
+        "color_annotations",
+        { target: { tags: "nucleus" }, color: "#ffffff" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.colorAnnotationIds).not.toHaveBeenCalled();
+    expect(mockAnnotations.addTagsByAnnotationIds).not.toHaveBeenCalled();
+  });
+
+  it("still resolves valid edit targets: selection, query, explicit all", async () => {
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1", tags: ["nucleus"] }),
+      makeAnnotation({ id: "a2", tags: [] }),
+    ];
+    mockAnnotations.selectedAnnotationIds = new Set(["a2"]);
+
+    await executeAgentTool(
+      "color_annotations",
+      { target: "selection", color: "#ffffff" },
+      context,
+    );
+    expect(mockAnnotations.colorAnnotationIds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ annotationIds: ["a2"] }),
+    );
+
+    await executeAgentTool(
+      "color_annotations",
+      { target: { tags: ["nucleus"] }, color: "#ffffff" },
+      context,
+    );
+    expect(mockAnnotations.colorAnnotationIds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ annotationIds: ["a1"] }),
+    );
+
+    // An explicit empty query is a legitimate "all annotations" request.
+    await executeAgentTool(
+      "color_annotations",
+      { target: {}, color: "#ffffff" },
+      context,
+    );
+    expect(mockAnnotations.colorAnnotationIds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ annotationIds: ["a1", "a2"] }),
+    );
+  });
+
+  it("validates select_annotations queries but allows omitting for all", async () => {
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1" }),
+      makeAnnotation({ id: "a2" }),
+    ];
+    // Garbage query is rejected rather than silently selecting everything.
+    await expect(
+      executeAgentTool(
+        "select_annotations",
+        { mode: "replace", query: "everything" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.setSelected).not.toHaveBeenCalled();
+
+    // Omitting the query is a legitimate "select all".
+    await executeAgentTool("select_annotations", { mode: "replace" }, context);
+    expect(mockAnnotations.setSelected).toHaveBeenCalledWith(["a1", "a2"]);
+  });
+
   it("does not double-submit a worker whose job is already running", async () => {
     mockMain.tools = [
       { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
@@ -428,5 +522,54 @@ describe("snapshotViewState / restoreViewState", () => {
       expect.objectContaining({ layerId: "l1", sync: false }),
     );
     expect(mockMain.syncConfiguration).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("view identity binding (finding #1)", () => {
+  beforeEach(() => {
+    mockMain.dataset = {
+      id: "ds1",
+      name: "Dataset",
+      xy: [0],
+      z: [0],
+      time: [0],
+      channels: [0],
+      channelNames: new Map([[0, "DAPI"]]),
+      width: 10,
+      height: 10,
+    };
+    mockMain.configuration = { id: "conf1", name: "Collection", layers: [] };
+    mockMain.datasetView = { id: "view1", layerContrasts: {} };
+  });
+
+  it("snapshotViewState captures dataset/config/view identity", () => {
+    const snapshot = snapshotViewState();
+    expect(snapshot.datasetId).toBe("ds1");
+    expect(snapshot.configurationId).toBe("conf1");
+    expect(snapshot.datasetViewId).toBe("view1");
+  });
+
+  it("viewIdentityChangedSince detects a dataset switch", () => {
+    const snapshot = snapshotViewState();
+    expect(viewIdentityChangedSince(snapshot)).toBe(false);
+    mockMain.dataset = { ...mockMain.dataset, id: "ds2" };
+    expect(viewIdentityChangedSince(snapshot)).toBe(true);
+  });
+
+  it("restoreViewState refuses to revert after the dataset changed", async () => {
+    const snapshot = snapshotViewState();
+    // Simulate the user navigating to a different dataset mid-response.
+    mockMain.dataset = { ...mockMain.dataset, id: "ds2" };
+    await expect(restoreViewState(snapshot)).rejects.toBeInstanceOf(
+      ToolExecutionError,
+    );
+    // Must not write the old dataset's contrast into the new dataset's view.
+    expect(mockMain.setViewContrastOverrides).not.toHaveBeenCalled();
+  });
+
+  it("restoreViewState proceeds when identity is unchanged", async () => {
+    const snapshot = snapshotViewState();
+    await restoreViewState(snapshot);
+    expect(mockMain.setViewContrastOverrides).toHaveBeenCalled();
   });
 });

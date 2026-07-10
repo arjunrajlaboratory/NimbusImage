@@ -31,8 +31,13 @@ SYSTEM_PROMPT_PATH = os.path.join(
     PACKAGE_DIR, 'system_prompt_2.txt'
 )
 
-# Agent prompt and tool definitions currently live at the plugin root.
-PLUGIN_DIR = os.path.dirname(PACKAGE_DIR)
+# The AI-panel agent's system prompt and tool schema ship as package data too
+# (same reasoning as SYSTEM_PROMPT_PATH). They must live inside the package,
+# not at the plugin root: a non-editable install (tox sdist, PyPI) does not
+# ship root-level files, which would leave the toolset empty and 503 the
+# claude_agent endpoint.
+AGENT_PROMPT_PATH = os.path.join(PACKAGE_DIR, 'agent_system_prompt.txt')
+AGENT_TOOLS_PATH = os.path.join(PACKAGE_DIR, 'agent_tools.json')
 
 # System prompt for the tool-suggestion endpoint. It is deliberately terse:
 # the real work is describing the image (which the vision model does well) and
@@ -228,18 +233,16 @@ class ClaudeAgentResource(Resource):
             self.RATE_LIMIT_MAX_REQUESTS, self.RATE_LIMIT_WINDOW_SECONDS
         )
 
-        prompt_path = os.path.join(PLUGIN_DIR, 'agent_system_prompt.txt')
         try:
-            with open(prompt_path, 'r') as f:
+            with open(AGENT_PROMPT_PATH, 'r') as f:
                 self.system_prompt = f.read().strip()
             logger.info('Successfully loaded agent system prompt')
         except IOError:
             logger.error('Failed to load agent system prompt')
             self.system_prompt = ''
 
-        tools_path = os.path.join(PLUGIN_DIR, 'agent_tools.json')
         try:
-            with open(tools_path, 'r') as f:
+            with open(AGENT_TOOLS_PATH, 'r') as f:
                 self.tools = json.load(f)
             logger.info('Loaded %d agent tool definitions', len(self.tools))
         except (IOError, ValueError):

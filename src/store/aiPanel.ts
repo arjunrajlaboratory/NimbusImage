@@ -22,6 +22,7 @@ import {
   IViewStateSnapshot,
   restoreViewState,
   snapshotViewState,
+  viewIdentityChangedSince,
 } from "@/agent/executors";
 import {
   pruneOldScreenshots,
@@ -81,6 +82,10 @@ let panelElement: HTMLElement | null = null;
 // job finishing minutes after its conversation was cleared) are dropped
 // instead of landing in an unrelated conversation.
 let conversationGeneration = 0;
+// Identity of the last authenticated user the conversation belonged to, so a
+// login/logout (client-side, no page reload) clears the prior user's history.
+// `undefined` until the first check runs.
+let lastKnownUserId: string | null | undefined = undefined;
 
 export function setAgentPanelElement(element: HTMLElement | null) {
   panelElement = element;
@@ -209,6 +214,16 @@ export class AiPanel extends VuexModule {
     if (!turnSnapshot) {
       return;
     }
+    if (viewIdentityChangedSince(turnSnapshot)) {
+      // The user navigated to a different dataset since the last turn;
+      // reverting would alter the wrong dataset's view.
+      this.setCanRevert(false);
+      this.addItemImpl({
+        kind: "error",
+        text: "Can't revert: you've switched to a different dataset since those changes were made.",
+      });
+      return;
+    }
     try {
       await restoreViewState(turnSnapshot);
       this.setCanRevert(false);
@@ -226,8 +241,8 @@ export class AiPanel extends VuexModule {
   }
 
   @Action
-  clearConversation() {
-    if (this.running) {
+  clearConversation(force = false) {
+    if (this.running && !force) {
       return;
     }
     wireMessages = [];
@@ -235,6 +250,25 @@ export class AiPanel extends VuexModule {
     conversationGeneration++;
     this.clearItemsImpl();
     this.setCanRevert(false);
+    // A forced clear during an in-flight run (e.g. the authenticated user
+    // changed) also stops the loop, which checks the generation and bails
+    // without pushing anything into the fresh conversation.
+    if (this.running) {
+      this.setStopRequested(true);
+    }
+  }
+
+  // Clear the conversation when the authenticated user changes, so one user's
+  // prompts, annotation results and interface metadata are never sent to the
+  // backend as part of another user's session. Wired to a watcher on the
+  // logged-in user in App.vue. No-op when the identity is unchanged.
+  @Action
+  handleAuthenticatedUserChange(userId: string | null) {
+    if (userId === lastKnownUserId) {
+      return;
+    }
+    lastKnownUserId = userId;
+    this.clearConversation(true);
   }
 
   @Action
@@ -247,6 +281,10 @@ export class AiPanel extends VuexModule {
     this.setStopRequested(false);
     turnSnapshot = snapshotViewState();
     this.setCanRevert(false);
+    // If the conversation is cleared mid-run (e.g. the user logs out/in),
+    // conversationGeneration is bumped; the loop below bails on any mismatch
+    // so a stale response is never pushed into the fresh conversation.
+    const generationAtStart = conversationGeneration;
 
     // Drop base64 screenshots from earlier turns before this turn's calls.
     pruneOldScreenshots(wireMessages);
@@ -275,6 +313,11 @@ export class AiPanel extends VuexModule {
       let iteration = 0;
       for (; iteration < MAX_TOOL_ITERATIONS; iteration++) {
         const response = await main.agentAPI.postAgentMessage(wireMessages);
+        if (conversationGeneration !== generationAtStart) {
+          // Cleared/cancelled during the API call (e.g. user changed); discard
+          // this response rather than mutating the fresh conversation.
+          return;
+        }
         // Push the assistant turn verbatim: thinking blocks must be sent
         // back unchanged on the next request.
         wireMessages.push({ role: "assistant", content: response.content });
@@ -297,11 +340,39 @@ export class AiPanel extends VuexModule {
           (block: TAgentContentBlock): block is IAgentToolUseBlock =>
             block.type === "tool_use",
         );
+        if (turnSnapshot && viewIdentityChangedSince(turnSnapshot)) {
+          // The user navigated to a different dataset while this response was
+          // in flight. Don't run the tools against the wrong dataset; close
+          // out the pending tool calls so the wire history stays valid, tell
+          // the user, and stop.
+          wireMessages.push({
+            role: "user",
+            content: toolUses.map((toolUse) => ({
+              type: "tool_result",
+              tool_use_id: toolUse.id,
+              content: toResultContent({
+                declined: true,
+                reason:
+                  "Aborted: the active dataset changed; not executing " +
+                  "against a different dataset than the request targeted.",
+              }),
+            })),
+          });
+          this.addItemImpl({
+            kind: "error",
+            text: "You switched datasets mid-response, so I stopped without running the pending actions. Send a new message to continue on this dataset.",
+          });
+          break;
+        }
         // Sequential on purpose: UI actions are order-dependent (e.g. move,
         // then screenshot).
         const results: IAgentToolResultBlock[] = [];
         for (const toolUse of toolUses) {
           results.push(await this.executeToolUse(toolUse));
+        }
+        if (conversationGeneration !== generationAtStart) {
+          // Cleared/cancelled while tools ran; drop the results.
+          return;
         }
         wireMessages.push({ role: "user", content: results });
         if (this.stopRequested) {

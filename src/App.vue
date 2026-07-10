@@ -363,6 +363,7 @@
           </template>
         </v-tooltip>
         <v-tooltip
+          v-if="canUseAiPanel"
           text="Open the Nimbus AI panel: an assistant that can drive the interface for you"
         >
           <template v-slot:activator="{ props: activatorProps }">
@@ -381,7 +382,10 @@
     </v-app-bar>
 
     <chat-component v-if="chatbotOpen" @close="chatbotOpen = false" />
-    <ai-panel v-if="aiPanelOpen" @close="aiPanelOpen = false" />
+    <ai-panel
+      v-if="aiPanelOpen && canUseAiPanel"
+      @close="aiPanelOpen = false"
+    />
 
     <v-main>
       <router-view />
@@ -495,6 +499,7 @@ import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
+import aiPanelStore from "@/store/aiPanel";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import ChatComponent from "@/components/ChatComponent.vue";
@@ -539,6 +544,16 @@ const analyzePanel = ref(false);
 const chatbotOpen = ref(false);
 const aiPanelOpen = ref(false);
 
+// The AI panel is gated behind a build-time flag (enabled unless explicitly
+// set to "false") and requires a logged-in user: the claude_agent endpoint is
+// @access.user, so anonymous users would only hit 401s. Deployments without
+// the plugin/API key can disable it entirely with the flag. See
+// AI_PANEL_SPEC.md §7 and AI_PANEL_REVIEW.md finding #6.
+const aiPanelFeatureEnabled = import.meta.env.VITE_AI_PANEL_ENABLED !== "false";
+const canUseAiPanel = computed(
+  () => aiPanelFeatureEnabled && store.isLoggedIn && !!store.girderUser,
+);
+
 // The chat and AI panels render as floating cards at the same screen
 // position (bottom right), so they are mutually exclusive: opening one
 // closes the other.
@@ -550,11 +565,31 @@ function toggleChatbot() {
 }
 
 function toggleAiPanel() {
+  if (!canUseAiPanel.value) {
+    return;
+  }
   aiPanelOpen.value = !aiPanelOpen.value;
   if (aiPanelOpen.value) {
     chatbotOpen.value = false;
   }
 }
+
+// Clear the AI-panel conversation whenever the authenticated user changes.
+// Login/logout is client-side (no page reload), so the module-level wire
+// history would otherwise carry one user's prompts and results into the next
+// user's session. See codebaseDocumentation/AI_PANEL_REVIEW.md finding #4.
+watch(
+  () => store.girderUser?._id ?? null,
+  (userId) => aiPanelStore.handleAuthenticatedUserChange(userId),
+  { immediate: true },
+);
+
+// Close the panel if the gate closes under it (e.g. the user logs out).
+watch(canUseAiPanel, (usable) => {
+  if (!usable) {
+    aiPanelOpen.value = false;
+  }
+});
 
 // Left-zone palettes (dissolved left sidebar). Open by default.
 const navigatorPanel = ref(true);
@@ -1013,6 +1048,7 @@ defineExpose({
   analyzePanel,
   chatbotOpen,
   aiPanelOpen,
+  canUseAiPanel,
   isUploadLoading,
   helpPanelIsOpen,
   appHotkeys,

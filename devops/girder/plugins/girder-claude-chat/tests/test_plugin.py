@@ -57,6 +57,19 @@ def testClaudeChatUsesSonnet5AndCollectsTextBlocks(monkeypatch):
 
 
 @pytest.mark.plugin('girder_claude_chat')
+def testAgentEndpointLoadsPackagedAssets(monkeypatch):
+    # The agent system prompt and tool schema must ship INSIDE the installed
+    # package (loaded from PACKAGE_DIR), not the plugin source root. A
+    # non-editable install (like this tox distribution) otherwise gets an
+    # empty toolset and the endpoint 503s. Regression guard: this runs against
+    # the installed distribution, so it fails if the assets are not packaged.
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeAgentResource()
+    assert resource.system_prompt, 'agent system prompt not packaged'
+    assert len(resource.tools) > 0, 'agent tool definitions not packaged'
+
+
+@pytest.mark.plugin('girder_claude_chat')
 def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
     # AGENT_MAX_TOKENS is above the SDK's non-streaming ceiling (~21k), so the
     # agent endpoint must use the streaming API (client.messages.stream) or the
