@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 # Claude model used for all chat completions. Centralized here so that
 # additional call sites in this plugin share a single source of truth.
 CLAUDE_MODEL = 'claude-sonnet-5'
+MAX_TOOL_SUGGESTION_IMAGES = 2
+MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS = 12 * 1024 * 1024
 
 PACKAGE_DIR = os.path.dirname(__file__)
 
@@ -31,6 +33,101 @@ SYSTEM_PROMPT_PATH = os.path.join(
 
 # Agent prompt and tool definitions currently live at the plugin root.
 PLUGIN_DIR = os.path.dirname(PACKAGE_DIR)
+
+# System prompt for the tool-suggestion endpoint. It is deliberately terse:
+# the real work is describing the image (which the vision model does well) and
+# mapping what it sees to the catalog of tools the frontend passes in.
+SUGGEST_TOOLS_SYSTEM_PROMPT = (
+    'You are an assistant embedded in NimbusImage, a scientific image '
+    'annotation platform. You are shown screenshot(s) of a freshly opened '
+    'microscopy dataset, usually the rendered image viewport. You are also '
+    'given the list of annotation tools that are available to set up for '
+    'this dataset (the "catalog"), the names of the image channels, and '
+    'the displayed layer metadata. Layer metadata includes each layer color '
+    'and visibility; use it to map colored signal in the rendered image back '
+    'to the correct channelName.\n\n'
+    'Your job is to look at the image and suggest which tools to set up '
+    'so the user can get started quickly. Guidance:\n'
+    '- If you see nuclei, suggest a Cellpose-SAM tool on the nuclear '
+    'channel.\n'
+    '- If you see roughly circular blobs / cells, suggest a blob '
+    '(polygon) annotation tool.\n'
+    '- If you see punctate spots (e.g. single-molecule FISH), suggest a '
+    'Piscis spot-detection tool on the spot channel.\n'
+    'Only suggest tools that exist in the catalog, referenced by their '
+    'exact toolId. When a tool should run on a particular channel, set '
+    'channelName to one of the provided channel names. Prefer a small, '
+    'high-signal set of suggestions (usually 1-3) over an exhaustive '
+    'list. If the image is empty or you are unsure, return an empty list.'
+)
+
+# Forced tool schema: makes Claude return a structured, validated list of
+# suggestions instead of free-form prose we would have to parse.
+SUGGEST_TOOLS_TOOL = {
+    'name': 'suggest_tools',
+    'description': (
+        'Report the annotation tools to suggest for this dataset.'
+    ),
+    'input_schema': {
+        'type': 'object',
+        'properties': {
+            'suggestions': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'toolId': {
+                            'type': 'string',
+                            'description': (
+                                'The exact id of a tool from the catalog.'
+                            ),
+                        },
+                        'channelName': {
+                            'type': 'string',
+                            'description': (
+                                'The channel this tool should run on, '
+                                'matching one of the provided channel '
+                                'names. Omit if not channel-specific.'
+                            ),
+                        },
+                        'reason': {
+                            'type': 'string',
+                            'description': (
+                                'One short sentence on what was seen in the '
+                                'image that justifies this suggestion.'
+                            ),
+                        },
+                        'confidence': {
+                            'type': 'string',
+                            'enum': ['low', 'medium', 'high'],
+                        },
+                    },
+                    'required': ['toolId', 'reason'],
+                },
+            },
+        },
+        'required': ['suggestions'],
+    },
+}
+
+
+def _make_anthropic_client(endpoint_name):
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if api_key:
+        return Anthropic(api_key=api_key)
+    logger.error(
+        "Can't create an Anthropic client without an API key, "
+        'the %s endpoint will not work',
+        endpoint_name
+    )
+    return None
+
+
+def _list_param(data, name):
+    value = data.get(name, [])
+    if not isinstance(value, list):
+        raise RestException(f'{name} must be a list', code=400)
+    return value
 
 
 class ClaudeChatResource(Resource):
@@ -50,16 +147,7 @@ class ClaudeChatResource(Resource):
             )
             self.system_prompt = ''
 
-        # Create client
-        api_key = os.environ.get('ANTHROPIC_API_KEY')
-        if api_key:
-            self.client = Anthropic(api_key=api_key)
-        else:
-            self.client = None
-            logger.error(
-                "Can't create an Anthropic client without an API key,"
-                'the claude_chat endpoint will not work'
-            )
+        self.client = _make_anthropic_client('claude_chat')
 
     @access.user
     @autoDescribeRoute(
@@ -259,9 +347,138 @@ class ClaudeAgentResource(Resource):
         }
 
 
+class ClaudeSuggestToolsResource(Resource):
+    """Suggest annotation tools for a freshly opened dataset.
+
+    The frontend captures a rendered viewport screenshot, builds a catalog of
+    the tools it knows how to set up, and posts display-layer context here. We
+    ask Claude to look at the image and pick which tools to suggest, returning
+    a structured list via a forced tool call.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.resourceName = 'claude_suggest_tools'
+        self.route('POST', (), self.suggest_tools)
+
+        self.client = _make_anthropic_client('claude_suggest_tools')
+
+    @access.user
+    @autoDescribeRoute(
+        Description(
+            'Suggest annotation tools for a dataset based on screenshots'
+        )
+        .jsonParam('data', 'Suggestion request', paramType='body',
+                   required=True)
+    )
+    def suggest_tools(self, data):
+        return self.suggest_tools_imp(data)
+
+    def _build_user_content(self, data):
+        if not isinstance(data, dict):
+            raise RestException(
+                'Request body must be a JSON object', code=400
+            )
+        # images: [{media_type, data}] base64 (no data-url prefix)
+        # catalog: [{id, name, kind, description, defaultShape}]
+        # channels: [str]
+        # layers: [{id, name, channel, channelName, color, visible}]
+        images = _list_param(data, 'images')
+        catalog = _list_param(data, 'catalog')
+        channels = _list_param(data, 'channels')
+        layers = _list_param(data, 'layers')
+
+        if len(images) > MAX_TOOL_SUGGESTION_IMAGES:
+            raise RestException(
+                'images contains too many screenshots', code=400
+            )
+
+        content = []
+        for image in images:
+            if not isinstance(image, dict):
+                raise RestException('images entries must be objects', code=400)
+            media_type = image.get('media_type', 'image/png')
+            image_data = image.get('data')
+            if not isinstance(media_type, str):
+                raise RestException(
+                    'image media_type must be a string', code=400
+                )
+            if image_data is not None and not isinstance(image_data, str):
+                raise RestException('image data must be a string', code=400)
+            if (
+                image_data
+                and len(image_data) > MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS
+            ):
+                raise RestException('image data is too large', code=400)
+            if not image_data:
+                continue
+            content.append({
+                'type': 'image',
+                'source': {
+                    'type': 'base64',
+                    'media_type': media_type,
+                    'data': image_data,
+                },
+            })
+
+        content.append({
+            'type': 'text',
+            'text': (
+                'Here is the catalog of tools available to set up '
+                '(JSON):\n'
+                f'{json.dumps(catalog)}'
+                '\n\nThe image channels are (JSON):\n'
+                f'{json.dumps(channels)}'
+                '\n\nThe displayed layers are (JSON):\n'
+                f'{json.dumps(layers)}'
+                '\n\nUse the displayed layer colors and visibility to map '
+                'colored objects in the screenshot(s) to channelName. Then '
+                'call suggest_tools with your suggestions.'
+            ),
+        })
+        return content
+
+    def suggest_tools_imp(self, data):
+        content = self._build_user_content(data)
+        if self.client is None:
+            raise RestException(
+                'Claude tool suggestions are not configured '
+                '(no ANTHROPIC_API_KEY)',
+                code=503
+            )
+        try:
+            response = self.client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=2048,
+                # Structured extraction, not reasoning — disable thinking
+                # so we can force the tool call (forced tool_choice is
+                # incompatible with extended thinking).
+                thinking={'type': 'disabled'},
+                system=SUGGEST_TOOLS_SYSTEM_PROMPT,
+                tools=[SUGGEST_TOOLS_TOOL],
+                tool_choice={'type': 'tool', 'name': 'suggest_tools'},
+                messages=[
+                    {
+                        'role': 'user',
+                        'content': content,
+                    }
+                ],
+            )
+            for block in response.content:
+                if block.type == 'tool_use' and block.name == 'suggest_tools':
+                    return {'suggestions': block.input.get('suggestions', [])}
+            return {'suggestions': []}
+        except APIError as e:
+            logger.error(
+                f'Error in suggest_tools endpoint: {str(e)}', exc_info=True
+            )
+            return {'error': str(e)}
+
+
 class GirderClaudeChatPlugin(plugin.GirderPlugin):
     DISPLAY_NAME = 'Claude Chat'
 
     def load(self, info):
         info['apiRoot'].claude_chat = ClaudeChatResource()
         info['apiRoot'].claude_agent = ClaudeAgentResource()
+        info['apiRoot'].claude_suggest_tools = ClaudeSuggestToolsResource()

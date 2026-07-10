@@ -879,6 +879,23 @@ export class Main extends VuexModule {
     }
   }
 
+  // Add several tools at once with a single configuration sync, instead of one
+  // sync per tool (used by "Add all" in the tool suggestions panel).
+  @Action
+  addToolsToConfiguration(tools: IToolConfiguration[]) {
+    if (!this.configuration || tools.length === 0) {
+      return;
+    }
+    this.setConfigurationTools([...this.configuration.tools, ...tools]);
+    for (const tool of tools) {
+      const image = tool.values?.image?.image;
+      if (image) {
+        this.context.dispatch("requestWorkerInterface", image);
+      }
+    }
+    this.syncConfiguration("tools");
+  }
+
   /**
    * Helper function to create a notification when user is not logged in
    */

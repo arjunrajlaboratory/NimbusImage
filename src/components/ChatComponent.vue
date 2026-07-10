@@ -122,7 +122,10 @@ import store from "@/store";
 import chatStore from "@/store/chat";
 import { IChatImage, IChatMessage, IGeoJSMap } from "@/store/model";
 import { renderAssistantMarkdown } from "@/utils/renderMarkdown";
-import html2canvas from "html2canvas";
+import {
+  captureInterfaceScreenshot,
+  captureViewportScreenshot as captureViewportScreenshotUtil,
+} from "@/utils/interfaceCapture";
 
 const emit = defineEmits<{
   (e: "close"): void;
@@ -161,7 +164,7 @@ async function sendMessage(visible: boolean = true, customInput?: string) {
     return;
   }
 
-  const interfaceScreenshot = await captureInterfaceScreenshot();
+  const interfaceScreenshot = await captureInterfaceScreenshot(rootEl.value);
   if (interfaceScreenshot) {
     imagesInput.value.unshift(interfaceScreenshot);
   }
@@ -253,32 +256,8 @@ async function refreshChat() {
   isRefreshing.value = false;
 }
 
-async function captureInterfaceScreenshot(): Promise<IChatImage | null> {
-  try {
-    const el = rootEl.value!;
-    const canvas = await html2canvas(document.body, {
-      ignoreElements: (element) => {
-        return element === el || el.contains(element);
-      },
-    });
-    const imageData = canvas.toDataURL("image/png");
-    return { data: imageData, type: "image/png", visible: false };
-  } catch (error) {
-    logError("Error capturing screenshot:", error);
-    return null;
-  }
-}
-
 async function captureViewportScreenshot(): Promise<IChatImage | null> {
-  const map = firstMap.value;
-  if (!map) {
-    return null;
-  }
-  const layers = map
-    .layers()
-    .filter((layer: any) => layer.node().css("visibility") !== "hidden");
-  const image = await map.screenshot(layers);
-  return { data: image, type: "image/png", visible: false };
+  return captureViewportScreenshotUtil(firstMap.value);
 }
 
 function filterVisibleImages(images: IChatImage[]) {

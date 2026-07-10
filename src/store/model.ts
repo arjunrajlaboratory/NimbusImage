@@ -2097,6 +2097,52 @@ export interface IChatMessage {
   visible?: boolean;
 }
 
+// --- Automatic tool suggestions (see codebaseDocumentation/AUTO_TOOL_SUGGESTIONS.md) ---
+
+// One entry in the catalog of tools the frontend knows how to set up. Sent to
+// the backend so Claude can pick from tools that actually exist for this
+// dataset, and reused on the way back to build the concrete IToolConfiguration.
+export interface IToolSuggestionCatalogEntry {
+  id: string;
+  name: string;
+  kind: "worker" | "manual";
+  description: string;
+  // Worker tools only: the docker image to instantiate.
+  image?: string;
+  // Default annotation shape used when building the tool configuration.
+  defaultShape?: AnnotationShape;
+}
+
+// Display-layer context sent with the screenshot so Claude can map rendered
+// colors in the composite image back to the dataset's channel names.
+export interface IToolSuggestionLayerContext {
+  id: string;
+  name: string;
+  channel: number;
+  channelName: string;
+  color: string;
+  visible: boolean;
+}
+
+// A raw suggestion as returned by the backend (references a catalog entry by
+// id and, optionally, a channel to run on).
+export interface IToolSuggestion {
+  toolId: string;
+  channelName?: string;
+  reason: string;
+  confidence?: "low" | "medium" | "high";
+}
+
+// A suggestion after the frontend has resolved it against the catalog and
+// built a ready-to-add tool configuration.
+export interface IResolvedToolSuggestion {
+  suggestion: IToolSuggestion;
+  catalogEntry: IToolSuggestionCatalogEntry;
+  tool: IToolConfiguration;
+}
+
+export type TToolSuggestionStatus = "idle" | "loading" | "done" | "error";
+
 export const TaggingToolStateSymbol: unique symbol = Symbol("TaggingToolState");
 
 export type TTaggingToolStateSymbol = typeof TaggingToolStateSymbol;

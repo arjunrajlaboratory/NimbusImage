@@ -324,6 +324,9 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: "reset-complete"): void;
+  // Fired when all image layers have finished loading (every layer idle).
+  // Driven by the layers' onIdle callbacks via the layersReady computed.
+  (e: "layers-ready"): void;
 }>();
 
 // ---- Template Refs ----
@@ -1451,6 +1454,16 @@ watch([readyLayersCount, readyLayersTotal], () => {
     total: readyLayersTotal.value,
     title: "Preparing layers",
   });
+});
+
+// Emit once each time the layers finish loading (false -> true transition,
+// and only when there is at least one layer — layersReady is trivially true
+// with zero layers). Consumers use this to act on a fully rendered image
+// (e.g. the tool-suggestion screenshot).
+watch(layersReady, (ready, wasReady) => {
+  if (ready && !wasReady && readyLayersTotal.value > 0) {
+    emit("layers-ready");
+  }
 });
 
 watch(mouseMap, () => {

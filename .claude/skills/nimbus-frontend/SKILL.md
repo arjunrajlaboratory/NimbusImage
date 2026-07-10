@@ -436,6 +436,16 @@ const gated = chain.then(() =>
 );
 ```
 
+## Native File / Folder Pickers (`src/utils/fileUpload.ts`)
+
+Folder upload (picker button + drag-and-drop) is centralized in `src/utils/fileUpload.ts`: `selectFiles()`, `selectFilesFromFolder()`, `getFilesFromDrop(event)`, and `filterFilesByAccept(files, accept)`. Extraction is delegated to the `file-selector` library (recurses into dropped folders, normalizes `<input>` change events). Two traps here each shipped as a silent "pick a folder and nothing happens":
+
+- **Never use a window-`focus` timeout to detect dialog cancellation.** The detached-`<input>` trick (`document.createElement('input'); input.click()`) needs to know when the dialog closes. A tempting fallback is "when the window regains focus, wait Nms; if no `change` fired, treat as cancel." This **loses a race for `webkitdirectory` folder picks**: Chrome interposes an *"Upload N files to this site?"* confirmation, and `input.files` isn't populated (no `change`) until the user accepts it — often **seconds** after the window already refocused when the OS dialog closed. The focus-timeout fires in that gap and resolves with an empty selection, discarding the real folder (measured live: focus at +4.5s, timeout resolves `[]` at +5.0s, real `change` ignored at +7.0s). Regular single-file picks have no confirmation dialog, so `change` wins the race there — which is why the bug looks like "only folders are broken." **No focus heuristic can ever work for folders** because focus returns before the files are known. Rely on the standardized `cancel` event (dismissal) + `change` (selection); both are supported in every browser we target (Chrome 113+, Firefox 91+, Safari 16.4+), so no fallback is needed.
+
+- **A picker promise that never resolves is indistinguishable from "nothing happened."** `file-selector`'s `fromEvent` can reject (an unreadable directory entry, a `getAsFileSystemHandle` failure). If the `await fromEvent(...)` inside the picker's settle handler throws *after* the `settled` guard is set, `resolve()` is never called and every `await selectFilesFromFolder()` **hangs forever**; on the drop path it surfaces as an unhandled rejection. Wrap extraction in try/catch → `logError(...)` + resolve/return `[]` so an error degrades to "no selection."
+
+- **`accept` filtering is caller-applied for folder/DnD only.** The native `<input :accept>` is enforced by the browser for click-to-select, but folder selection and drag-and-drop **bypass it entirely** — that's why `filterFilesByAccept` exists and is called on those two paths (not on the native `onChange`). Caveat: folder/DnD files frequently have an empty `file.type` (browsers assign no MIME to `.tif`/`.nd2`/`.czi`), so **prefer extension tokens** (`.tif,.nd2`) over MIME tokens (`image/*`) in any `accept` you pass — a MIME token silently drops empty-`type` files.
+
 ## Style Guidelines
 
 - Use scoped SCSS: `<style lang="scss" scoped>`
