@@ -53,9 +53,35 @@ vi.mock("@/store", () => ({
     changeLayer: vi.fn(),
     syncConfiguration: vi.fn(),
     saveContrastInView: vi.fn(),
+    saveContrastInConfiguration: vi.fn(),
+    saveScaleInConfiguration: vi.fn(),
+    scales: {
+      pixelSize: { value: 1, unit: "µm" },
+      zStep: { value: 1, unit: "µm" },
+      tStep: { value: 1, unit: "s" },
+    },
     setViewContrastOverrides: vi.fn(),
     setSelectedToolId: vi.fn(),
     addToolToConfiguration: vi.fn(),
+    drawAnnotations: true,
+    annotationOpacity: 0.5,
+    showScalebar: true,
+    scalebarColor: "#ffffff",
+    backgroundColor: "black",
+    drawAnnotationConnections: true,
+    setDrawAnnotations: vi.fn(),
+    setAnnotationOpacity: vi.fn(),
+    setShowScalebar: vi.fn(),
+    setScalebarColor: vi.fn(),
+    setBackgroundColor: vi.fn(),
+    setDrawAnnotationConnections: vi.fn(),
+  },
+}));
+
+vi.mock("@/store/volumeView", () => ({
+  default: {
+    viewMode: "2d",
+    setViewMode: vi.fn(),
   },
 }));
 
@@ -119,8 +145,10 @@ vi.mock("@/store/filters", () => ({
     tagFilter: { id: "tagFilter", exclusive: false, enabled: false, tags: [] },
     onlyCurrentFrame: false,
     filteredAnnotations: [],
+    propertyFilters: [] as any[],
     setTagFilter: vi.fn(),
     setOnlyCurrentFrame: vi.fn(),
+    updatePropertyFilter: vi.fn(),
   },
 }));
 
@@ -156,7 +184,10 @@ import main from "@/store";
 import annotationStore from "@/store/annotation";
 import jobsStore from "@/store/jobs";
 import propertyStore from "@/store/properties";
+import volumeViewStore from "@/store/volumeView";
+import filterStore from "@/store/filters";
 import {
+  annotationsBoundingBox,
   describeAgentToolCall,
   executeAgentTool,
   isGatedTool,
@@ -170,6 +201,8 @@ const mockMain = main as any;
 const mockAnnotations = annotationStore as any;
 const mockJobs = jobsStore as any;
 const mockProperties = propertyStore as any;
+const mockVolumeView = volumeViewStore as any;
+const mockFilters = filterStore as any;
 
 const context = { panelElement: null, notify: vi.fn() };
 
@@ -202,6 +235,14 @@ beforeEach(() => {
   mockProperties.computedPropertyPaths = [];
   mockProperties.propertyStatuses = {};
   mockProperties.getWorkerInterface = vi.fn(() => ({}));
+  mockMain.drawAnnotations = true;
+  mockMain.annotationOpacity = 0.5;
+  mockMain.showScalebar = true;
+  mockMain.scalebarColor = "#ffffff";
+  mockMain.backgroundColor = "black";
+  mockMain.drawAnnotationConnections = true;
+  mockVolumeView.viewMode = "2d";
+  mockFilters.propertyFilters = [];
 });
 
 describe("describeAgentToolCall", () => {
@@ -228,6 +269,9 @@ describe("describeAgentToolCall", () => {
     "set_layer_mode",
     "update_layer",
     "set_layer_visibility",
+    "set_display_options",
+    "set_view_mode",
+    "set_scale",
     "select_annotations",
     "color_annotations",
     "tag_annotations",
@@ -577,6 +621,245 @@ describe("executeAgentTool", () => {
     expect(result.alreadyRunning).toBe(true);
     expect(result.jobId).toBe("job42");
     expect(mockAnnotations.computeAnnotationsWithWorker).not.toHaveBeenCalled();
+  });
+});
+
+describe("annotationsBoundingBox", () => {
+  it("computes a padded box and returns null when empty", () => {
+    expect(annotationsBoundingBox([])).toBeNull();
+    const box = annotationsBoundingBox(
+      [
+        makeAnnotation({ coordinates: [{ x: 10, y: 20 }] }),
+        makeAnnotation({
+          coordinates: [
+            { x: 30, y: 60 },
+            { x: 0, y: 0 },
+          ],
+        }),
+      ],
+      0.1,
+    );
+    // raw box x:[0,30] y:[0,60]; pad 10% -> x±3, y±6
+    expect(box).toEqual({ left: -3, top: -6, right: 33, bottom: 66 });
+  });
+
+  it("applies a minimum pad so a single point still frames", () => {
+    const box = annotationsBoundingBox(
+      [makeAnnotation({ coordinates: [{ x: 100, y: 100 }] })],
+      0.1,
+      20,
+    );
+    expect(box).toEqual({ left: 80, top: 80, right: 120, bottom: 120 });
+  });
+});
+
+describe("set_camera fit", () => {
+  it("errors when the map is not ready", async () => {
+    mockMain.maps = [];
+    await expect(
+      executeAgentTool("set_camera", { fit: "full" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+});
+
+describe("update_layer contrast scope", () => {
+  const layer = {
+    id: "l1",
+    name: "DAPI",
+    color: "#0000ff",
+    visible: true,
+    contrast: { mode: "percentile", blackPoint: 0, whitePoint: 100 },
+  };
+  const contrast = { mode: "percentile", blackPoint: 5, whitePoint: 95 } as any;
+
+  beforeEach(() => {
+    mockMain.layers = [layer];
+    mockMain.getLayerFromId = vi.fn(() => layer);
+  });
+
+  it("defaults contrast to the personal view", async () => {
+    await executeAgentTool("update_layer", { layer: "l1", contrast }, context);
+    expect(mockMain.saveContrastInView).toHaveBeenCalledWith({
+      layerId: "l1",
+      contrast,
+    });
+    expect(mockMain.saveContrastInConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("saves to the shared configuration when scope is configuration", async () => {
+    await executeAgentTool(
+      "update_layer",
+      { layer: "l1", contrast, contrastScope: "configuration" },
+      context,
+    );
+    expect(mockMain.saveContrastInConfiguration).toHaveBeenCalledWith({
+      layerId: "l1",
+      contrast,
+    });
+    expect(mockMain.saveContrastInView).not.toHaveBeenCalled();
+  });
+});
+
+describe("display + view mode tools", () => {
+  it("set_display_options applies only the provided settings", async () => {
+    await executeAgentTool(
+      "set_display_options",
+      { drawAnnotations: false, annotationOpacity: 0.8 },
+      context,
+    );
+    expect(mockMain.setDrawAnnotations).toHaveBeenCalledWith(false);
+    expect(mockMain.setAnnotationOpacity).toHaveBeenCalledWith(0.8);
+    expect(mockMain.setShowScalebar).not.toHaveBeenCalled();
+    expect(mockMain.setBackgroundColor).not.toHaveBeenCalled();
+  });
+
+  it("set_display_options rejects an out-of-range opacity", async () => {
+    await expect(
+      executeAgentTool(
+        "set_display_options",
+        { annotationOpacity: 5 },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.setAnnotationOpacity).not.toHaveBeenCalled();
+  });
+
+  it("set_display_options requires at least one option", async () => {
+    await expect(
+      executeAgentTool("set_display_options", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("set_view_mode switches 2D/3D and rejects other values", async () => {
+    await executeAgentTool("set_view_mode", { mode: "3d" }, context);
+    expect(mockVolumeView.setViewMode).toHaveBeenCalledWith("3d");
+    await expect(
+      executeAgentTool("set_view_mode", { mode: "sideways" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("view snapshot captures and restores display options + view mode", async () => {
+    mockMain.drawAnnotations = false;
+    mockMain.annotationOpacity = 0.3;
+    mockVolumeView.viewMode = "3d";
+    const snapshot = snapshotViewState();
+    expect(snapshot.displayOptions.drawAnnotations).toBe(false);
+    expect(snapshot.displayOptions.annotationOpacity).toBe(0.3);
+    expect(snapshot.viewMode).toBe("3d");
+
+    await restoreViewState(snapshot);
+    expect(mockMain.setDrawAnnotations).toHaveBeenCalledWith(false);
+    expect(mockMain.setAnnotationOpacity).toHaveBeenCalledWith(0.3);
+    expect(mockVolumeView.setViewMode).toHaveBeenCalledWith("3d");
+  });
+});
+
+describe("set_scale", () => {
+  it("sets pixel size / z-step in the configuration", async () => {
+    await executeAgentTool(
+      "set_scale",
+      {
+        pixelSize: { value: 0.65, unit: "µm" },
+        zStep: { value: 2, unit: "µm" },
+      },
+      context,
+    );
+    expect(mockMain.saveScaleInConfiguration).toHaveBeenCalledWith({
+      itemId: "pixelSize",
+      scale: { value: 0.65, unit: "µm" },
+    });
+    expect(mockMain.saveScaleInConfiguration).toHaveBeenCalledWith({
+      itemId: "zStep",
+      scale: { value: 2, unit: "µm" },
+    });
+  });
+
+  it("rejects a non-positive value", async () => {
+    await expect(
+      executeAgentTool(
+        "set_scale",
+        { pixelSize: { value: 0, unit: "µm" } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.saveScaleInConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("rejects a length unit on the time step and vice versa", async () => {
+    await expect(
+      executeAgentTool(
+        "set_scale",
+        { tStep: { value: 1, unit: "µm" } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    await expect(
+      executeAgentTool(
+        "set_scale",
+        { pixelSize: { value: 1, unit: "s" } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("requires at least one dimension", async () => {
+    await expect(
+      executeAgentTool("set_scale", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+});
+
+describe("set_annotation_filter property filters", () => {
+  it("adds a range property filter from a propertyPath", async () => {
+    await executeAgentTool(
+      "set_annotation_filter",
+      { propertyFilters: [{ propertyPath: ["prop1", "area"], min: 100 }] },
+      context,
+    );
+    expect(mockFilters.updatePropertyFilter).toHaveBeenCalledTimes(1);
+    const filter = mockFilters.updatePropertyFilter.mock.calls[0][0];
+    expect(filter).toMatchObject({
+      propertyPath: ["prop1", "area"],
+      enabled: true,
+      valuesOrRange: "range",
+    });
+    expect(filter.range.min).toBe(100);
+    expect(filter.range.max).toBe(Number.MAX_VALUE);
+  });
+
+  it("rejects a property filter with neither min nor max", async () => {
+    await expect(
+      executeAgentTool(
+        "set_annotation_filter",
+        { propertyFilters: [{ propertyPath: ["prop1", "area"] }] },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockFilters.updatePropertyFilter).not.toHaveBeenCalled();
+  });
+
+  it("rejects a property filter with a bad propertyPath", async () => {
+    await expect(
+      executeAgentTool(
+        "set_annotation_filter",
+        { propertyFilters: [{ propertyPath: [], min: 1 }] },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("clearPropertyFilters disables active property filters", async () => {
+    mockFilters.propertyFilters = [
+      { id: "p", enabled: true, propertyPath: ["prop1", "area"], range: {} },
+    ];
+    await executeAgentTool(
+      "set_annotation_filter",
+      { clearPropertyFilters: true },
+      context,
+    );
+    expect(mockFilters.updatePropertyFilter).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false }),
+    );
   });
 });
 

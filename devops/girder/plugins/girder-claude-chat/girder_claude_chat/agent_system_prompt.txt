@@ -47,6 +47,13 @@ How to work:
   the user what went wrong.
 - Colors are hex strings like "#4477FF". When the user names a color, pick a
   sensible hex value.
+- Viewer display: set_display_options toggles annotation drawing/opacity, the
+  scalebar, background color and connection lines; set_view_mode switches 2D/3D;
+  set_camera with fit ("annotations"/"selection"/"full") frames the view. To
+  measure in real units, set_scale records pixel size / z-step / time step.
+- To show only annotations matching a measurement, first get_property_values
+  (which returns each propertyPath), then pass that propertyPath with a min/max
+  to set_annotation_filter's propertyFilters.
 - Layer and annotation references: use ids when you have them; layer tools
   also accept exact layer names.
 

@@ -3,6 +3,7 @@ import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
+import volumeViewStore from "@/store/volumeView";
 import {
   AnnotationShape,
   IAnnotation,
@@ -13,6 +14,7 @@ import {
   IProgressInfo,
   IToolConfiguration,
   IWorkerInterfaceValues,
+  PropertyFilterMode,
   TLayerMode,
 } from "@/store/model";
 import {
@@ -221,6 +223,53 @@ async function resolveWorkerInterfaceValues(
     }
   }
   return values;
+}
+
+// The viewer display options the agent can toggle (all local view state,
+// captured in the per-turn snapshot so "revert view changes" restores them).
+function currentDisplayOptions() {
+  return {
+    drawAnnotations: main.drawAnnotations,
+    annotationOpacity: main.annotationOpacity,
+    showScalebar: main.showScalebar,
+    scalebarColor: main.scalebarColor,
+    backgroundColor: main.backgroundColor,
+    drawAnnotationConnections: main.drawAnnotationConnections,
+  };
+}
+
+// Axis-aligned bounding box (in image-pixel coordinates) of the given
+// annotations, padded by a fraction of its span with a minimum absolute pad
+// (so a single point still frames sensibly). Returns null if there are no
+// coordinates. Pure — the GeoJS camera application lives in the executor.
+export function annotationsBoundingBox(
+  annotations: IAnnotation[],
+  padFraction = 0,
+  minPad = 0,
+): { left: number; top: number; right: number; bottom: number } | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const annotation of annotations) {
+    for (const point of annotation.coordinates) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+  }
+  if (!Number.isFinite(minX)) {
+    return null;
+  }
+  const padX = Math.max((maxX - minX) * padFraction, minPad);
+  const padY = Math.max((maxY - minY) * padFraction, minPad);
+  return {
+    left: minX - padX,
+    top: minY - padY,
+    right: maxX + padX,
+    bottom: maxY + padY,
+  };
 }
 
 function countBy<T>(items: T[], key: (item: T) => string | string[]) {
@@ -581,13 +630,41 @@ const registry: { [name: string]: IAgentToolEntry } = {
     execute: async (input: {
       center?: { x: number; y: number };
       zoom?: number;
+      fit?: "annotations" | "selection" | "full";
     }) => {
       requireDataset();
-      await main.setCameraInfo({
-        ...main.cameraInfo,
-        center: input.center ?? main.cameraInfo.center,
-        zoom: input.zoom ?? main.cameraInfo.zoom,
-      });
+      if (input.fit) {
+        const map = main.maps[0]?.map;
+        if (!map) {
+          throw new ToolExecutionError("The viewer map is not ready yet");
+        }
+        if (input.fit === "full") {
+          // Same path as the viewer's "recenter and fit" button.
+          map.bounds(map.maxBounds(undefined, null), null);
+        } else {
+          const targets =
+            input.fit === "selection"
+              ? annotationStore.annotations.filter((a) =>
+                  annotationStore.selectedAnnotationIds.has(a.id),
+                )
+              : annotationStore.annotations;
+          const bounds = annotationsBoundingBox(targets, 0.1, 20);
+          if (!bounds) {
+            throw new ToolExecutionError(
+              input.fit === "selection"
+                ? "No annotations are selected to fit the view to"
+                : "There are no annotations to fit the view to",
+            );
+          }
+          map.bounds(bounds, null);
+        }
+      } else {
+        await main.setCameraInfo({
+          ...main.cameraInfo,
+          center: input.center ?? main.cameraInfo.center,
+          zoom: input.zoom ?? main.cameraInfo.zoom,
+        });
+      }
       return {
         result: {
           camera: {
@@ -596,6 +673,119 @@ const registry: { [name: string]: IAgentToolEntry } = {
           },
         },
       };
+    },
+  },
+
+  set_display_options: {
+    execute: async (input: {
+      drawAnnotations?: boolean;
+      annotationOpacity?: number;
+      showScalebar?: boolean;
+      scalebarColor?: string;
+      backgroundColor?: string;
+      drawAnnotationConnections?: boolean;
+    }) => {
+      let changed = false;
+      if (input.drawAnnotations != null) {
+        main.setDrawAnnotations(input.drawAnnotations);
+        changed = true;
+      }
+      if (input.annotationOpacity != null) {
+        if (
+          typeof input.annotationOpacity !== "number" ||
+          input.annotationOpacity < 0 ||
+          input.annotationOpacity > 1
+        ) {
+          throw new ToolExecutionError(
+            "annotationOpacity must be a number between 0 and 1",
+          );
+        }
+        main.setAnnotationOpacity(input.annotationOpacity);
+        changed = true;
+      }
+      if (input.showScalebar != null) {
+        main.setShowScalebar(input.showScalebar);
+        changed = true;
+      }
+      if (input.scalebarColor != null) {
+        main.setScalebarColor(input.scalebarColor);
+        changed = true;
+      }
+      if (input.backgroundColor != null) {
+        main.setBackgroundColor(input.backgroundColor);
+        changed = true;
+      }
+      if (input.drawAnnotationConnections != null) {
+        main.setDrawAnnotationConnections(input.drawAnnotationConnections);
+        changed = true;
+      }
+      if (!changed) {
+        throw new ToolExecutionError(
+          "Provide at least one display option to change",
+        );
+      }
+      return { result: { displayOptions: currentDisplayOptions() } };
+    },
+  },
+
+  set_view_mode: {
+    execute: async (input: { mode: "2d" | "3d" }) => {
+      if (input.mode !== "2d" && input.mode !== "3d") {
+        throw new ToolExecutionError('mode must be "2d" or "3d"');
+      }
+      volumeViewStore.setViewMode(input.mode);
+      return { result: { viewMode: volumeViewStore.viewMode } };
+    },
+  },
+
+  set_scale: {
+    execute: async (input: {
+      pixelSize?: { value: number; unit: string };
+      zStep?: { value: number; unit: string };
+      tStep?: { value: number; unit: string };
+    }) => {
+      requireLogin();
+      if (!main.configuration) {
+        throw new ToolExecutionError("No collection is open to set scales on");
+      }
+      const LENGTH_UNITS = ["nm", "µm", "mm", "m"];
+      const TIME_UNITS = ["ms", "s", "m", "h", "d"];
+      const apply = (
+        itemId: "pixelSize" | "zStep" | "tStep",
+        scale: { value: number; unit: string },
+        units: string[],
+      ) => {
+        if (typeof scale.value !== "number" || !(scale.value > 0)) {
+          throw new ToolExecutionError(
+            `${itemId} value must be a positive number`,
+          );
+        }
+        if (!units.includes(scale.unit)) {
+          throw new ToolExecutionError(
+            `${itemId} unit must be one of: ${units.join(", ")}`,
+          );
+        }
+        main.saveScaleInConfiguration({ itemId, scale: scale as any });
+      };
+      let changed = false;
+      if (input.pixelSize) {
+        apply("pixelSize", input.pixelSize, LENGTH_UNITS);
+        changed = true;
+      }
+      if (input.zStep) {
+        apply("zStep", input.zStep, LENGTH_UNITS);
+        changed = true;
+      }
+      if (input.tStep) {
+        apply("tStep", input.tStep, TIME_UNITS);
+        changed = true;
+      }
+      if (!changed) {
+        throw new ToolExecutionError(
+          "Provide at least one of pixelSize, zStep, tStep",
+        );
+      }
+      return { result: { scales: main.scales } };
     },
   },
 
@@ -627,6 +817,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       color?: string;
       visible?: boolean;
       contrast?: IContrast;
+      contrastScope?: "view" | "configuration";
       name?: string;
     }) => {
       requireLogin();
@@ -650,13 +841,20 @@ const registry: { [name: string]: IAgentToolEntry } = {
         await main.changeLayer({ layerId: layer.id, delta });
       }
       if (input.contrast != null) {
-        // Match the UI default: the contrast slider saves a personal view
-        // override (saveContrastInView), not the shared configuration. A
-        // shared-scope contrast tool is deferred (spec: save_contrast).
-        await main.saveContrastInView({
-          layerId: layer.id,
-          contrast: input.contrast,
-        });
+        // Default matches the UI slider: a personal view override. Pass
+        // contrastScope "configuration" to change the shared collection
+        // instead (persisted for everyone using the collection).
+        if (input.contrastScope === "configuration") {
+          await main.saveContrastInConfiguration({
+            layerId: layer.id,
+            contrast: input.contrast,
+          });
+        } else {
+          await main.saveContrastInView({
+            layerId: layer.id,
+            contrast: input.contrast,
+          });
+        }
       }
       const updated = main.getLayerFromId(layer.id)!;
       return {
@@ -791,6 +989,12 @@ const registry: { [name: string]: IAgentToolEntry } = {
       tags?: string[];
       exclusive?: boolean;
       currentFrameOnly?: boolean;
+      propertyFilters?: {
+        propertyPath: string[];
+        min?: number;
+        max?: number;
+      }[];
+      clearPropertyFilters?: boolean;
       clearAll?: boolean;
     }) => {
       if (input.clearAll) {
@@ -801,6 +1005,14 @@ const registry: { [name: string]: IAgentToolEntry } = {
           tags: [],
         });
         filterStore.setOnlyCurrentFrame(false);
+      }
+      if (input.clearAll || input.clearPropertyFilters) {
+        // No bulk clear exists; disable each active property filter in place.
+        for (const filter of filterStore.propertyFilters) {
+          if (filter.enabled) {
+            filterStore.updatePropertyFilter({ ...filter, enabled: false });
+          }
+        }
       }
       if (input.tags) {
         filterStore.setTagFilter({
@@ -813,6 +1025,34 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (input.currentFrameOnly != null) {
         filterStore.setOnlyCurrentFrame(input.currentFrameOnly);
       }
+      for (const pf of input.propertyFilters ?? []) {
+        if (
+          !Array.isArray(pf.propertyPath) ||
+          pf.propertyPath.length === 0 ||
+          pf.propertyPath.some((key) => typeof key !== "string")
+        ) {
+          throw new ToolExecutionError(
+            "each propertyFilter needs a non-empty propertyPath (string " +
+              "array from get_property_values)",
+          );
+        }
+        if (pf.min == null && pf.max == null) {
+          throw new ToolExecutionError(
+            "each propertyFilter needs a min and/or max",
+          );
+        }
+        filterStore.updatePropertyFilter({
+          id: pf.propertyPath.join("/"),
+          exclusive: false,
+          enabled: true,
+          propertyPath: pf.propertyPath,
+          range: {
+            min: pf.min ?? -Number.MAX_VALUE,
+            max: pf.max ?? Number.MAX_VALUE,
+          },
+          valuesOrRange: PropertyFilterMode.Range,
+        });
+      }
       return {
         result: {
           tagFilter: {
@@ -821,6 +1061,12 @@ const registry: { [name: string]: IAgentToolEntry } = {
             exclusive: filterStore.tagFilter.exclusive,
           },
           currentFrameOnly: filterStore.onlyCurrentFrame,
+          propertyFilters: filterStore.propertyFilters
+            .filter((filter) => filter.enabled)
+            .map((filter) => ({
+              propertyPath: filter.propertyPath,
+              range: filter.range,
+            })),
           filteredCount: filterStore.filteredAnnotations.length,
         },
       };
@@ -1064,6 +1310,8 @@ const registry: { [name: string]: IAgentToolEntry } = {
           propertyId,
           property: nameOf(propertyId),
           path: path.slice(1).join(".") || nameOf(propertyId),
+          // Full path (incl. propertyId) to pass to set_annotation_filter.
+          propertyPath: path,
           count: values.length,
           mean: sum / values.length,
           min: Math.min(...values),
@@ -1226,6 +1474,16 @@ export function describeAgentToolCall(name: string, input: any): string {
           : "";
       return `Set up a ${kind} tool${channel}`;
     }
+    case "set_camera":
+      return typeof input?.fit === "string"
+        ? `Fit the view to ${input.fit}`
+        : "Move the camera";
+    case "set_display_options":
+      return "Change viewer display options";
+    case "set_view_mode":
+      return `Switch to ${input?.mode === "3d" ? "3D" : "2D"} view`;
+    case "set_scale":
+      return "Set the image scale / physical units";
     case "list_properties":
       return "List the property definitions";
     case "create_property": {
@@ -1286,6 +1544,8 @@ export interface IViewStateSnapshot {
   onlyCurrentFrame: boolean;
   selectedAnnotationIds: string[];
   selectedToolId: string | null;
+  displayOptions: ReturnType<typeof currentDisplayOptions>;
+  viewMode: string;
 }
 
 // The dataset/collection/view currently loaded in the viewer.
@@ -1331,6 +1591,8 @@ export function snapshotViewState(): IViewStateSnapshot {
       onlyCurrentFrame: filterStore.onlyCurrentFrame,
       selectedAnnotationIds: [...annotationStore.selectedAnnotationIds],
       selectedToolId: main.selectedTool?.configuration.id ?? null,
+      displayOptions: currentDisplayOptions(),
+      viewMode: volumeViewStore.viewMode,
     }),
   );
 }
@@ -1386,5 +1648,17 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   filterStore.setOnlyCurrentFrame(snapshot.onlyCurrentFrame);
   annotationStore.setSelected(snapshot.selectedAnnotationIds);
   await main.setSelectedToolId(snapshot.selectedToolId);
+  const display = snapshot.displayOptions;
+  if (display) {
+    main.setDrawAnnotations(display.drawAnnotations);
+    main.setAnnotationOpacity(display.annotationOpacity);
+    main.setShowScalebar(display.showScalebar);
+    main.setScalebarColor(display.scalebarColor);
+    main.setBackgroundColor(display.backgroundColor);
+    main.setDrawAnnotationConnections(display.drawAnnotationConnections);
+  }
+  if (snapshot.viewMode === "2d" || snapshot.viewMode === "3d") {
+    volumeViewStore.setViewMode(snapshot.viewMode);
+  }
   await main.setCameraInfo(snapshot.cameraInfo);
 }

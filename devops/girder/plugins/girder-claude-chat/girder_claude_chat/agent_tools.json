@@ -127,7 +127,7 @@
   },
   {
     "name": "set_camera",
-    "description": "Pan and/or zoom the viewer camera. Provide center (image pixel coordinates) and/or zoom (GeoJS zoom level; current value and bounds come from get_interface_state; +1 doubles magnification). Visible immediately; reversible.",
+    "description": "Pan and/or zoom the viewer camera. Either provide center (image pixel coordinates) and/or zoom (GeoJS zoom level; +1 doubles magnification), OR provide fit to frame the view: 'annotations' (all annotations), 'selection' (the selected ones), or 'full' (the whole image). Visible immediately; reversible.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -140,7 +140,12 @@
           "required": ["x", "y"],
           "additionalProperties": false
         },
-        "zoom": { "type": "number" }
+        "zoom": { "type": "number" },
+        "fit": {
+          "type": "string",
+          "enum": ["annotations", "selection", "full"],
+          "description": "Zoom/pan to frame these; ignores center/zoom if set."
+        }
       },
       "additionalProperties": false
     }
@@ -165,7 +170,7 @@
   },
   {
     "name": "update_layer",
-    "description": "Change one display layer: color (hex), visibility, contrast (black/white points), or name. Color, visibility and name change the shared collection; contrast is saved as the user's personal view override (same as the contrast slider in the UI). Refer to the layer by its id or its exact name from get_interface_state. Visible immediately; reversible.",
+    "description": "Change one display layer: color (hex), visibility, contrast (black/white points), or name. Color, visibility and name change the shared collection; contrast defaults to the user's personal view override (like the contrast slider), or set contrastScope to 'configuration' to change the shared collection. Refer to the layer by its id or its exact name from get_interface_state. Visible immediately; reversible.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -188,6 +193,11 @@
           "required": ["mode", "blackPoint", "whitePoint"],
           "additionalProperties": false
         },
+        "contrastScope": {
+          "type": "string",
+          "enum": ["view", "configuration"],
+          "description": "Where to save contrast: 'view' (personal, default) or 'configuration' (shared collection)."
+        },
         "name": { "type": "string" }
       },
       "required": ["layer"],
@@ -207,6 +217,77 @@
         }
       },
       "required": ["visibleLayers"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_display_options",
+    "description": "Change viewer display options. Provide any subset: drawAnnotations (show/hide annotation overlays), annotationOpacity (0-1), showScalebar, scalebarColor (hex), backgroundColor (hex or name), drawAnnotationConnections. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "drawAnnotations": { "type": "boolean" },
+        "annotationOpacity": {
+          "type": "number",
+          "description": "Annotation overlay opacity, 0 (transparent) to 1 (opaque)."
+        },
+        "showScalebar": { "type": "boolean" },
+        "scalebarColor": { "type": "string", "description": "Hex color." },
+        "backgroundColor": {
+          "type": "string",
+          "description": "Hex color or CSS color name."
+        },
+        "drawAnnotationConnections": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_view_mode",
+    "description": "Switch the viewer between 2D and 3D (volume) rendering. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["2d", "3d"] }
+      },
+      "required": ["mode"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_scale",
+    "description": "Set the dataset's physical scale in the collection so measurements use real units. Provide any of pixelSize / zStep (length units: nm, µm, mm, m) and tStep (time units: ms, s, m, h, d). Applies to the shared collection.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "pixelSize": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "number" },
+            "unit": { "type": "string", "enum": ["nm", "µm", "mm", "m"] }
+          },
+          "required": ["value", "unit"],
+          "additionalProperties": false
+        },
+        "zStep": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "number" },
+            "unit": { "type": "string", "enum": ["nm", "µm", "mm", "m"] }
+          },
+          "required": ["value", "unit"],
+          "additionalProperties": false
+        },
+        "tStep": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "number" },
+            "unit": { "type": "string", "enum": ["ms", "s", "m", "h", "d"] }
+          },
+          "required": ["value", "unit"],
+          "additionalProperties": false
+        }
+      },
       "additionalProperties": false
     }
   },
@@ -366,7 +447,7 @@
   },
   {
     "name": "set_annotation_filter",
-    "description": "Configure which annotations are shown in the viewer and annotation browser: filter by tags and/or restrict to the current frame. Use clearAll to remove the tag filter and frame restriction. Visible immediately; reversible.",
+    "description": "Configure which annotations are shown in the viewer and annotation browser: filter by tags, restrict to the current frame, and/or filter by computed property value ranges (e.g. 'area > 100'). Use clearAll to remove all filters, or clearPropertyFilters for just the property ones. Visible immediately; reversible.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -377,9 +458,31 @@
         },
         "exclusive": { "type": "boolean" },
         "currentFrameOnly": { "type": "boolean" },
+        "propertyFilters": {
+          "type": "array",
+          "description": "Keep only annotations whose property value is within [min, max]. Use the propertyPath from get_property_values.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "propertyPath": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Full property value path from get_property_values."
+              },
+              "min": { "type": "number" },
+              "max": { "type": "number" }
+            },
+            "required": ["propertyPath"],
+            "additionalProperties": false
+          }
+        },
+        "clearPropertyFilters": {
+          "type": "boolean",
+          "description": "Disable all active property-value filters."
+        },
         "clearAll": {
           "type": "boolean",
-          "description": "Disable the tag filter and current-frame restriction."
+          "description": "Disable the tag filter, current-frame restriction, and property filters."
         }
       },
       "additionalProperties": false
