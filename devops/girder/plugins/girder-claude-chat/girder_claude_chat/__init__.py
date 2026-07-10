@@ -247,15 +247,7 @@ class ClaudeAgentResource(Resource):
             # the prefix makes each loop iteration cheap.
             self.tools[-1]['cache_control'] = {'type': 'ephemeral'}
 
-        api_key = os.environ.get('ANTHROPIC_API_KEY')
-        if api_key:
-            self.client = Anthropic(api_key=api_key)
-        else:
-            self.client = None
-            logger.error(
-                "Can't create an Anthropic client without an API key,"
-                'the claude_agent endpoint will not work'
-            )
+        self.client = _make_anthropic_client('claude_agent')
 
     def _check_rate_limit(self, user_id):
         """Raise RestException(429) when the user exceeds the rate limit."""
