@@ -8,6 +8,7 @@
 // their in-folder `path`/`relativePath`. We add natural-order sorting on top so
 // image sequences upload deterministically.
 import { fromEvent, FileWithPath } from "file-selector";
+import { logError } from "@/utils/log";
 
 // Sort files by name using natural (numeric-aware) ordering so image sequences
 // like frame1, frame2, frame10 come back in the expected order. Files gathered
@@ -35,7 +36,15 @@ function toSortedFiles(items: (FileWithPath | DataTransferItem)[]): File[] {
  * returning them sorted by name.
  */
 export async function getFilesFromDrop(event: DragEvent): Promise<File[]> {
-  return toSortedFiles(await fromEvent(event));
+  try {
+    return toSortedFiles(await fromEvent(event));
+  } catch (error) {
+    // file-selector can reject on exotic drops (e.g. a directory entry it
+    // cannot read). Degrade to "nothing dropped" rather than leaving the
+    // async drop handler with an unhandled rejection.
+    logError("Failed to read dropped files", error);
+    return [];
+  }
 }
 
 function matchesAcceptToken(file: File, token: string): boolean {
@@ -99,20 +108,29 @@ function openFilePicker(
         return;
       }
       settled = true;
-      window.removeEventListener("focus", onCancel, true);
-      resolve(event ? toSortedFiles(await fromEvent(event)) : []);
+      try {
+        resolve(event ? toSortedFiles(await fromEvent(event)) : []);
+      } catch (error) {
+        // Never leave the picker promise unresolved: an error extracting the
+        // selection must still settle (as "no selection"), or every caller
+        // awaiting selectFiles()/selectFilesFromFolder() would hang forever.
+        logError("Failed to read selected files", error);
+        resolve([]);
+      }
     };
 
     // The `change` event fires with the selection once the dialog closes.
     input.addEventListener("change", (event) => settle(event));
-    // The `cancel` event fires when the dialog is dismissed (modern browsers).
+    // The `cancel` event fires when the dialog is dismissed. It is supported in
+    // every browser we target (Chrome 113+, Firefox 91+, Safari 16.4+).
+    //
+    // We deliberately do NOT add a window-`focus` fallback to force settlement.
+    // For a folder pick, the window regains focus the moment the OS dialog
+    // closes, but `input.files` is not populated until the user accepts
+    // Chrome's "Upload N files?" confirmation, which fires `change` seconds
+    // later. A focus-triggered timeout would settle with an empty selection in
+    // that gap and silently discard the chosen folder.
     input.addEventListener("cancel", () => settle(null));
-    // Fallback for browsers without `cancel`: when the dialog closes the window
-    // regains focus. If no `change` fired shortly after, treat it as a cancel
-    // so the promise always settles. `change` populates input.files before it
-    // fires, so it always wins the race when a selection was made.
-    const onCancel = () => window.setTimeout(() => settle(null), 500);
-    window.addEventListener("focus", onCancel, true);
 
     input.click();
   });
