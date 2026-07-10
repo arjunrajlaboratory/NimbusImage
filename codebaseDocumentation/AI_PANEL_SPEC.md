@@ -1,17 +1,40 @@
 # AI Panel — Agent-Driven Interface Control (Design Spec)
 
-> **Status: Option A implemented on this branch (first pass).** What exists:
-> the `POST /claude_agent` relay endpoint with server-held system prompt and
-> tool definitions (`girder-claude-chat/agent_tools.json`), the executor
-> registry (`src/agent/executors.ts`), the agent-loop store
+> **Status: Option A implemented and substantially expanded on this branch.**
+> What exists: the `POST /claude_agent` relay endpoint with server-held system
+> prompt and tool definitions (`girder-claude-chat/agent_tools.json`), the
+> executor registry (`src/agent/executors.ts`), the agent-loop store
 > (`src/store/aiPanel.ts`), and the panel UI (`src/components/AiPanel.vue`)
 > with transcript cards, Run/Cancel gating, stop, and per-turn view revert.
-> Tier 3 currently ships `run_worker` only; `add_tool`, `compute_property`,
-> `create_annotations`/`delete_annotations`, `save_contrast`, `navigate`,
-> `set_display_options`, `get_property_summary` and the `fit` variant of
-> `set_camera` are not yet implemented. The relay now enforces a per-user
-> request rate limit and a request body-size cap; streaming, per-user token
-> budgets and IndexedDB persistence remain Phase 4.
+> The panel is gated behind login + a `VITE_AI_PANEL_ENABLED` build flag.
+>
+> **Tool surface as built (~28 tools)** — beyond the original Tier tables
+> below, the following were since implemented and verified live:
+> - **`create_tool`** — add a manual (blob/point/line) or worker tool to the
+>   toolset (gated).
+> - **Property chain** — `list_properties`, `create_property` (gated),
+>   `compute_property` (gated), `get_property_values` (summary stats).
+> - **`set_display_options`** (draw/opacity/scalebar/background/connections),
+>   **`set_view_mode`** (2D/3D), **`set_scale`** (pixel/z/time units).
+> - **`set_camera` `fit`** ("annotations"/"selection"/"full"),
+>   **`update_layer` `contrastScope`** (view vs shared configuration),
+>   property-value filters in **`set_annotation_filter`**.
+>
+> Still **not** implemented (deliberately deferred): `create_annotations` /
+> `delete_annotations` (bulk data mutation) and `navigate` between
+> datasets/collections.
+>
+> **Key infrastructure changes on this branch:** the relay now **streams**
+> (`client.messages.stream`) with a 32k output cap and strips SDK
+> output-only fields (`parsed_output`) so multi-turn tool loops don't 400;
+> per-user rate limit + request body-size cap; conversation cleared on
+> authenticated-user change and tool execution/revert bound to the
+> originating dataset. Per-user token budgets and IndexedDB persistence
+> remain future work.
+>
+> Per-feature design docs: `docs/superpowers/specs/2026-07-10-ai-panel-*.md`
+> (create-tool, property-computation, view-settings). Code-review tracker:
+> `codebaseDocumentation/AI_PANEL_REVIEW.md`.
 >
 > This document specifies an
 > "AI panel" where a user converses with an agent that can *drive the
