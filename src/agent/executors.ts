@@ -42,6 +42,11 @@ export interface IToolExecutionResult {
   images?: IChatImage[];
 }
 
+// Above this many matching annotations, list_annotations returns a hint
+// steering the model toward get_annotation_summary rather than paging through
+// (and echoing back) the whole set. Purely advisory — the data is unchanged.
+const LARGE_ANNOTATION_RESULT = 200;
+
 // Thrown by executors for expected failures (bad references, missing
 // dataset). The message is sent to the model as an error tool result so it
 // can correct its call.
@@ -383,32 +388,53 @@ const registry: { [name: string]: IAgentToolEntry } = {
       const matching = queryAnnotations(input.query);
       const offset = input.offset ?? 0;
       const limit = input.limit ?? 50;
-      return {
-        result: {
-          totalMatching: matching.length,
-          offset,
-          annotations: matching.slice(offset, offset + limit).map((a) => {
-            const n = a.coordinates.length || 1;
-            const centroid = a.coordinates.reduce(
-              (acc, p) => ({ x: acc.x + p.x / n, y: acc.y + p.y / n }),
-              { x: 0, y: 0 },
-            );
-            return {
-              id: a.id,
-              name: a.name,
-              shape: a.shape,
-              tags: a.tags,
-              channel: a.channel,
-              location: a.location,
-              color: a.color,
-              centroid: {
-                x: Math.round(centroid.x),
-                y: Math.round(centroid.y),
-              },
-            };
-          }),
-        },
+      const annotations = matching.slice(offset, offset + limit).map((a) => {
+        const n = a.coordinates.length || 1;
+        const centroid = a.coordinates.reduce(
+          (acc, p) => ({ x: acc.x + p.x / n, y: acc.y + p.y / n }),
+          { x: 0, y: 0 },
+        );
+        return {
+          id: a.id,
+          name: a.name,
+          shape: a.shape,
+          tags: a.tags,
+          channel: a.channel,
+          location: a.location,
+          color: a.color,
+          centroid: {
+            x: Math.round(centroid.x),
+            y: Math.round(centroid.y),
+          },
+        };
+      });
+      const hasMore = offset + limit < matching.length;
+      const result: {
+        totalMatching: number;
+        offset: number;
+        returned: number;
+        hasMore: boolean;
+        annotations: typeof annotations;
+        nextOffset?: number;
+        hint?: string;
+      } = {
+        totalMatching: matching.length,
+        offset,
+        returned: annotations.length,
+        hasMore,
+        annotations,
       };
+      if (hasMore) {
+        result.nextOffset = offset + limit;
+      }
+      if (matching.length > LARGE_ANNOTATION_RESULT) {
+        result.hint =
+          `${matching.length} annotations match. If you only need counts ` +
+          "or a breakdown by tag/shape/channel, call get_annotation_summary " +
+          "instead of paging through them all. Do not list every annotation " +
+          "back to the user; summarize and mention notable examples.";
+      }
+      return { result };
     },
   },
 

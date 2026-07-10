@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from girder.api.rest import RestException
 
 from girder_claude_chat import (
-    ClaudeChatResource, ClaudeSuggestToolsResource, CLAUDE_MODEL
+    ClaudeAgentResource, ClaudeChatResource, ClaudeSuggestToolsResource,
+    CLAUDE_MODEL
 )
 
 
@@ -53,6 +54,65 @@ def testClaudeChatUsesSonnet5AndCollectsTextBlocks(monkeypatch):
     assert fake_messages.create_kwargs['model'] == CLAUDE_MODEL
     assert fake_messages.create_kwargs['model'] == 'claude-sonnet-5'
     assert fake_messages.create_kwargs['max_tokens'] == 8192
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
+    # AGENT_MAX_TOKENS is above the SDK's non-streaming ceiling (~21k), so the
+    # agent endpoint must use the streaming API (client.messages.stream) or the
+    # SDK raises "Streaming is required...". It still aggregates server-side and
+    # returns one JSON response with the same shape as before.
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeAgentResource()
+
+    final_message = SimpleNamespace(
+        content=[
+            SimpleNamespace(model_dump=lambda: {'type': 'text', 'text': 'ok'}),
+        ],
+        stop_reason='end_turn',
+        usage=SimpleNamespace(input_tokens=11, output_tokens=7),
+    )
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get_final_message(self):
+            return final_message
+
+    class FakeMessages:
+        stream_kwargs = None
+
+        def stream(self, **kwargs):
+            self.stream_kwargs = kwargs
+            return FakeStream()
+
+        def create(self, **kwargs):
+            raise AssertionError(
+                'agent endpoint must stream, not call create (max_tokens '
+                'exceeds the non-streaming ceiling)'
+            )
+
+    fake_messages = FakeMessages()
+    resource.client = SimpleNamespace(messages=fake_messages)
+
+    result = resource._stream_agent_response(
+        [{'role': 'user', 'content': 'hi'}]
+    )
+
+    assert result == {
+        'content': [{'type': 'text', 'text': 'ok'}],
+        'stop_reason': 'end_turn',
+        'usage': {'input_tokens': 11, 'output_tokens': 7},
+    }
+    assert fake_messages.stream_kwargs['model'] == CLAUDE_MODEL
+    assert fake_messages.stream_kwargs['max_tokens'] == resource.AGENT_MAX_TOKENS
+    # The bump the whole change is about; also keeps us above the non-streaming
+    # ceiling so streaming stays mandatory.
+    assert resource.AGENT_MAX_TOKENS > 21333
 
 
 @pytest.mark.plugin('girder_claude_chat')

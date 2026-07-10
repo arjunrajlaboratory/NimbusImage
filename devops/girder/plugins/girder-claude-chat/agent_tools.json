@@ -34,7 +34,7 @@
   },
   {
     "name": "list_annotations",
-    "description": "List annotations matching a query, with id, name, shape, tags, channel, location, color and centroid. Results are paged; use limit/offset for more. Read-only.",
+    "description": "List annotations matching a query, with id, name, shape, tags, channel, location, color and centroid. Use this to inspect specific annotations, not to enumerate a whole dataset: for counts or a breakdown by tag/shape/channel, prefer get_annotation_summary. Results are paged (default 50, max 200); the result reports totalMatching, hasMore and nextOffset, so page further only when you need those specific items. Read-only.",
     "input_schema": {
       "type": "object",
       "properties": {

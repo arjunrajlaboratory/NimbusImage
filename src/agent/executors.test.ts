@@ -261,6 +261,52 @@ describe("executeAgentTool", () => {
     expect(paged.result.annotations.map((a: any) => a.id)).toEqual(["a2"]);
   });
 
+  it("reports paging state so the model can page deliberately", async () => {
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1" }),
+      makeAnnotation({ id: "a2" }),
+      makeAnnotation({ id: "a3" }),
+    ];
+
+    // A page that does not reach the end signals more pages and where to
+    // resume.
+    const firstPage = await executeAgentTool(
+      "list_annotations",
+      { limit: 2, offset: 0 },
+      context,
+    );
+    expect(firstPage.result.returned).toBe(2);
+    expect(firstPage.result.hasMore).toBe(true);
+    expect(firstPage.result.nextOffset).toBe(2);
+
+    // A page that reaches the end has no more pages and omits nextOffset.
+    const lastPage = await executeAgentTool(
+      "list_annotations",
+      { limit: 2, offset: 2 },
+      context,
+    );
+    expect(lastPage.result.returned).toBe(1);
+    expect(lastPage.result.hasMore).toBe(false);
+    expect(lastPage.result.nextOffset).toBeUndefined();
+  });
+
+  it("hints toward get_annotation_summary for large result sets", async () => {
+    // Small result sets carry no hint: enumerating them is fine.
+    mockAnnotations.annotations = [makeAnnotation({ id: "a1" })];
+    const small = await executeAgentTool("list_annotations", {}, context);
+    expect(small.result.hint).toBeUndefined();
+
+    // Large result sets nudge the model to summarize instead of paging
+    // through everything and echoing it back.
+    mockAnnotations.annotations = Array.from({ length: 250 }, (_unused, i) =>
+      makeAnnotation({ id: `a${i}` }),
+    );
+    const large = await executeAgentTool("list_annotations", {}, context);
+    expect(large.result.totalMatching).toBe(250);
+    expect(typeof large.result.hint).toBe("string");
+    expect(large.result.hint).toContain("get_annotation_summary");
+  });
+
   it("routes contrast to the personal view, other fields to the config", async () => {
     const layer = {
       id: "l1",

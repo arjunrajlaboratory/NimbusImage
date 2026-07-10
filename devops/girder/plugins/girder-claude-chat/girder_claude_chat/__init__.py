@@ -202,7 +202,10 @@ class ClaudeAgentResource(Resource):
     calls are executed by the frontend against the user's own session.
     """
 
-    AGENT_MAX_TOKENS = 8192
+    # Output-token cap per round trip. Sized so the model can finish a
+    # normal answer without truncation (stop_reason 'max_tokens'); the
+    # frontend surfaces a "response was cut short" notice when it is hit.
+    AGENT_MAX_TOKENS = 32000
     # Backstop against runaway conversations; the frontend caps the loop
     # much earlier.
     AGENT_MAX_MESSAGES = 400
@@ -313,22 +316,35 @@ class ClaudeAgentResource(Resource):
             )
         self._add_message_cache_breakpoint(messages)
         try:
-            response = self.client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=self.AGENT_MAX_TOKENS,
-                system=[
-                    {
-                        'type': 'text',
-                        'text': self.system_prompt,
-                        'cache_control': {'type': 'ephemeral'},
-                    }
-                ],
-                tools=self.tools,
-                messages=messages,
-            )
+            return self._stream_agent_response(messages)
         except APIError as e:
             logger.error(f'Error in agent endpoint: {str(e)}', exc_info=True)
             return {'error': str(e)}
+
+    def _stream_agent_response(self, messages):
+        """Call the model and shape the response for the frontend.
+
+        Uses the streaming API because AGENT_MAX_TOKENS exceeds the SDK's
+        non-streaming ceiling (~21k tokens, above which client.messages.create
+        raises "Streaming is required for operations that may take longer than
+        10 minutes"). We still aggregate the whole message server-side and
+        return it in one response, so the wire contract is unchanged: the
+        browser owns the tool loop and never sees a token stream.
+        """
+        with self.client.messages.stream(
+            model=CLAUDE_MODEL,
+            max_tokens=self.AGENT_MAX_TOKENS,
+            system=[
+                {
+                    'type': 'text',
+                    'text': self.system_prompt,
+                    'cache_control': {'type': 'ephemeral'},
+                }
+            ],
+            tools=self.tools,
+            messages=messages,
+        ) as stream:
+            response = stream.get_final_message()
         return {
             'content': [block.model_dump() for block in response.content],
             'stop_reason': response.stop_reason,
