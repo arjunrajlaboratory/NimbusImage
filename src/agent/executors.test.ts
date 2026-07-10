@@ -226,6 +226,7 @@ beforeEach(() => {
   mockMain.isLoggedIn = true;
   mockMain.tools = [];
   mockMain.layers = [];
+  mockMain.maps = [];
   mockAnnotations.annotations = [];
   mockAnnotations.selectedAnnotationIds = new Set();
   mockJobs.jobIdForToolId = {};
@@ -659,6 +660,45 @@ describe("set_camera fit", () => {
     await expect(
       executeAgentTool("set_camera", { fit: "full" }, context),
     ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("fits to annotations with y-negated (map gcs is y-up) bounds", async () => {
+    const boundsFn = vi.fn();
+    mockMain.maps = [
+      {
+        map: {
+          bounds: boundsFn,
+          maxBounds: vi.fn(() => ({
+            left: 0,
+            right: 1024,
+            top: 0,
+            bottom: -1024,
+          })),
+        },
+      },
+    ];
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1", coordinates: [{ x: 100, y: 200 }] }),
+      makeAnnotation({ id: "a2", coordinates: [{ x: 300, y: 600 }] }),
+    ];
+    await executeAgentTool("set_camera", { fit: "annotations" }, context);
+    expect(boundsFn).toHaveBeenCalledTimes(1);
+    const arg = boundsFn.mock.calls[0][0];
+    // pixel bbox x:[100,300] (pad 20) -> left 80, right 320
+    // pixel bbox y:[200,600] (pad 40) -> negated: top -160, bottom -640
+    expect(arg).toEqual({ left: 80, right: 320, top: -160, bottom: -640 });
+    // valid GeoJS y-up bounds: top must be greater than bottom
+    expect(arg.top).toBeGreaterThan(arg.bottom);
+  });
+
+  it("fit=full applies maxBounds directly (already map gcs)", async () => {
+    const boundsFn = vi.fn();
+    const maxB = { left: 0, right: 1024, top: 0, bottom: -1024 };
+    mockMain.maps = [
+      { map: { bounds: boundsFn, maxBounds: vi.fn(() => maxB) } },
+    ];
+    await executeAgentTool("set_camera", { fit: "full" }, context);
+    expect(boundsFn).toHaveBeenCalledWith(maxB, null);
   });
 });
 

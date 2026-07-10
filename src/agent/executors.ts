@@ -656,7 +656,18 @@ const registry: { [name: string]: IAgentToolEntry } = {
                 : "There are no annotations to fit the view to",
             );
           }
-          map.bounds(bounds, null);
+          // Annotation coordinates are image-pixel (y increases downward), but
+          // the GeoJS map gcs is y-up (gcs y = -pixel y). Negate y so the
+          // bounds are valid (top > bottom) instead of "Invalid bounds".
+          map.bounds(
+            {
+              left: bounds.left,
+              right: bounds.right,
+              top: -bounds.top,
+              bottom: -bounds.bottom,
+            },
+            null,
+          );
         }
       } else {
         await main.setCameraInfo({
