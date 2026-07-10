@@ -130,6 +130,13 @@ vi.mock("@/store/properties", () => ({
     getWorkerInterface: vi.fn(() => null),
     fetchWorkerInterface: vi.fn(),
     fetchWorkerImageList: vi.fn(),
+    properties: [] as any[],
+    propertyValues: {} as any,
+    computedPropertyPaths: [] as string[][],
+    propertyStatuses: {} as any,
+    fetchPropertyValues: vi.fn(),
+    createProperty: vi.fn(),
+    computeProperty: vi.fn(),
   },
 }));
 
@@ -148,6 +155,7 @@ vi.mock("@/utils/interfaceCapture", () => ({
 import main from "@/store";
 import annotationStore from "@/store/annotation";
 import jobsStore from "@/store/jobs";
+import propertyStore from "@/store/properties";
 import {
   describeAgentToolCall,
   executeAgentTool,
@@ -161,6 +169,7 @@ import {
 const mockMain = main as any;
 const mockAnnotations = annotationStore as any;
 const mockJobs = jobsStore as any;
+const mockProperties = propertyStore as any;
 
 const context = { panelElement: null, notify: vi.fn() };
 
@@ -187,6 +196,12 @@ beforeEach(() => {
   mockAnnotations.annotations = [];
   mockAnnotations.selectedAnnotationIds = new Set();
   mockJobs.jobIdForToolId = {};
+  mockProperties.workerImageList = {};
+  mockProperties.properties = [];
+  mockProperties.propertyValues = {};
+  mockProperties.computedPropertyPaths = [];
+  mockProperties.propertyStatuses = {};
+  mockProperties.getWorkerInterface = vi.fn(() => ({}));
 });
 
 describe("describeAgentToolCall", () => {
@@ -219,6 +234,10 @@ describe("describeAgentToolCall", () => {
     "set_annotation_filter",
     "select_tool",
     "create_tool",
+    "list_properties",
+    "create_property",
+    "compute_property",
+    "get_property_values",
     "run_worker",
     "unknown_tool",
   ];
@@ -558,6 +577,156 @@ describe("executeAgentTool", () => {
     expect(result.alreadyRunning).toBe(true);
     expect(result.jobId).toBe("job42");
     expect(mockAnnotations.computeAnnotationsWithWorker).not.toHaveBeenCalled();
+  });
+});
+
+describe("property tools", () => {
+  it("gates create_property and compute_property, not the read tools", () => {
+    expect(isGatedTool("create_property")).toBe(true);
+    expect(isGatedTool("compute_property")).toBe(true);
+    expect(isGatedTool("list_properties")).toBe(false);
+    expect(isGatedTool("get_property_values")).toBe(false);
+  });
+
+  it("list_properties returns existing definitions with computed status", async () => {
+    mockProperties.properties = [
+      {
+        id: "prop1",
+        name: "DAPI Intensity",
+        image: "prop:1",
+        shape: "polygon",
+        tags: { tags: ["nucleus"], exclusive: false },
+      },
+    ];
+    mockProperties.computedPropertyPaths = [["prop1", "mean"]];
+    const { result } = await executeAgentTool("list_properties", {}, context);
+    expect(result.properties).toHaveLength(1);
+    expect(result.properties[0]).toMatchObject({
+      id: "prop1",
+      name: "DAPI Intensity",
+      image: "prop:1",
+      shape: "polygon",
+      computed: true,
+    });
+  });
+
+  it("create_property builds a config and calls createProperty", async () => {
+    mockProperties.workerImageList = {
+      "prop:1": { isPropertyWorker: "x", interfaceName: "Intensity" },
+    };
+    mockProperties.getWorkerInterface = vi.fn(() => ({}));
+    mockProperties.createProperty = vi.fn(async (config: any) => ({
+      id: "prop-new",
+      ...config,
+    }));
+
+    const { result } = await executeAgentTool(
+      "create_property",
+      {
+        propertyWorkerImage: "prop:1",
+        shape: "polygon",
+        tags: ["nucleus"],
+        name: "DAPI Intensity",
+      },
+      context,
+    );
+    expect(mockProperties.createProperty).toHaveBeenCalledTimes(1);
+    const config = mockProperties.createProperty.mock.calls[0][0];
+    expect(config).toMatchObject({
+      name: "DAPI Intensity",
+      image: "prop:1",
+      shape: "polygon",
+      tags: { tags: ["nucleus"], exclusive: false },
+    });
+    expect(result.propertyId).toBe("prop-new");
+  });
+
+  it("create_property rejects a non-property worker image", async () => {
+    mockProperties.workerImageList = {
+      "seg:1": { isAnnotationWorker: "x" },
+    };
+    await expect(
+      executeAgentTool(
+        "create_property",
+        { propertyWorkerImage: "seg:1", shape: "polygon" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockProperties.createProperty).not.toHaveBeenCalled();
+  });
+
+  it("compute_property runs an existing property by id", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    mockProperties.computeProperty = vi.fn(async () => ({ jobId: "job1" }));
+    const { result } = await executeAgentTool(
+      "compute_property",
+      { propertyId: "prop1" },
+      context,
+    );
+    expect(mockProperties.computeProperty).toHaveBeenCalledTimes(1);
+    expect(mockProperties.computeProperty.mock.calls[0][0].property.id).toBe(
+      "prop1",
+    );
+    expect(result.started).toBe(true);
+  });
+
+  it("compute_property rejects an unknown property id", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    await expect(
+      executeAgentTool("compute_property", { propertyId: "nope" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockProperties.computeProperty).not.toHaveBeenCalled();
+  });
+
+  it("get_property_values summarizes computed values as stats", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1" }),
+      makeAnnotation({ id: "a2" }),
+      makeAnnotation({ id: "a3" }),
+    ];
+    mockProperties.propertyValues = {
+      a1: { prop1: { mean: 10 } },
+      a2: { prop1: { mean: 20 } },
+      a3: { prop1: { mean: 30 } },
+    };
+    mockProperties.computedPropertyPaths = [["prop1", "mean"]];
+
+    const { result } = await executeAgentTool(
+      "get_property_values",
+      {},
+      context,
+    );
+    expect(mockProperties.fetchPropertyValues).toHaveBeenCalled();
+    expect(result.stats).toHaveLength(1);
+    expect(result.stats[0]).toMatchObject({
+      propertyId: "prop1",
+      property: "Intensity",
+      count: 3,
+      mean: 20,
+      min: 10,
+      max: 30,
+    });
+  });
+
+  it("get_property_values filters by annotation query", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1", tags: ["nucleus"] }),
+      makeAnnotation({ id: "a2", tags: [] }),
+    ];
+    mockProperties.propertyValues = {
+      a1: { prop1: { mean: 10 } },
+      a2: { prop1: { mean: 100 } },
+    };
+    mockProperties.computedPropertyPaths = [["prop1", "mean"]];
+
+    const { result } = await executeAgentTool(
+      "get_property_values",
+      { query: { tags: ["nucleus"] } },
+      context,
+    );
+    expect(result.stats[0]).toMatchObject({ count: 1, mean: 10 });
   });
 });
 

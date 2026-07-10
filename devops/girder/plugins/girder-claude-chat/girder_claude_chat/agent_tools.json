@@ -425,6 +425,85 @@
     }
   },
   {
+    "name": "list_properties",
+    "description": "List the annotation property definitions (measurements) set up in this collection, with id, name, worker image, the annotation shape they apply to, tags, and whether they have been computed. Read-only. Use to find a property id to compute or read, and to avoid creating duplicates.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_property",
+    "description": "Define a new annotation property (measurement) computed by a property worker (e.g. intensity, morphology). Pass propertyWorkerImage (a worker from list_workers whose isPropertyWorker is true) and the annotation shape it applies to; optionally restrict to tags, set worker parameters (get_worker_interface shows them), and name it. Gated: the user approves. This only defines the property — call compute_property to actually compute values.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyWorkerImage": {
+          "type": "string",
+          "description": "The property-worker Docker image (from list_workers, isPropertyWorker true)."
+        },
+        "shape": {
+          "type": "string",
+          "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"],
+          "description": "The annotation shape this property applies to."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Only apply to annotations having these tags. Omit for all."
+        },
+        "exclusive": {
+          "type": "boolean",
+          "description": "If true, annotations must have ALL the given tags."
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional property name; the worker's name is used otherwise."
+        },
+        "workerInterfaceValues": {
+          "type": "object",
+          "description": "Worker parameter overrides (see get_worker_interface); defaults are used for anything omitted."
+        }
+      },
+      "required": ["propertyWorkerImage", "shape"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "compute_property",
+    "description": "Compute an existing property definition's values for this dataset's annotations. Pass the propertyId (from list_properties or create_property). Gated: the user approves. Starts a background job; values populate as it runs — read them with get_property_values.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyId": {
+          "type": "string",
+          "description": "The id of the property to compute (from list_properties/create_property)."
+        }
+      },
+      "required": ["propertyId"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_property_values",
+    "description": "Read computed property values as summary statistics (count, mean, min, max) per property value path — not a per-annotation dump. Optionally restrict to one propertyId and/or filter the annotations with a query (same shape as list_annotations). Read-only. Use to answer questions like 'what's the mean intensity of my nuclei?'.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyId": {
+          "type": "string",
+          "description": "Restrict to a single property (from list_properties). Omit for all computed properties."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query): only summarize values for matching annotations."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "undo",
     "description": "Undo the most recent annotation change in this dataset (create/edit/delete/tag/color). Does not affect view state such as camera or layer settings.",
     "input_schema": {

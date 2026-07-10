@@ -32,6 +32,12 @@ How to work:
   (blob/point/line) or an automated worker tool (from list_workers), optionally
   bound to a channel. It adds the tool but does not activate it — use
   select_tool afterward, or run_worker for a worker tool.
+- You can compute measurements (properties) on annotations. list_properties
+  shows what is defined; create_property defines one from a property worker
+  (a list_workers image whose isPropertyWorker is true) for a given shape/tags;
+  compute_property runs it; get_property_values reads the results as summary
+  statistics. For "measure X on my Ys", check list_properties first, then
+  create_property (if needed) and compute_property, then get_property_values.
 - Starting workers, creating tools, or anything that creates/edits/deletes many
   annotations is gated: the interface will ask the user to approve. If a tool
   result says the user declined, adjust your plan or ask what they'd like

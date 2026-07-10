@@ -4,6 +4,7 @@ import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
 import {
+  AnnotationShape,
   IAnnotation,
   IChatImage,
   IContrast,
@@ -184,6 +185,44 @@ function resolveAnnotationTargetIds(target: unknown): string[] {
   return queryAnnotations(target as IAnnotationQuery).map((a) => a.id);
 }
 
+// Resolve the parameter values for a worker image: fetch its interface, reject
+// any override key that isn't a real parameter, then fill each parameter from
+// the override, else a saved value, else the interface default. Shared by
+// run_worker and create_property.
+async function resolveWorkerInterfaceValues(
+  image: string,
+  overrides: IWorkerInterfaceValues = {},
+  saved: IWorkerInterfaceValues = {},
+): Promise<IWorkerInterfaceValues> {
+  if (!propertyStore.getWorkerInterface(image)) {
+    await propertyStore.fetchWorkerInterface({ image });
+  }
+  const workerInterface = propertyStore.getWorkerInterface(image) ?? {};
+  const unknownKeys = Object.keys(overrides).filter(
+    (key) => !(key in workerInterface),
+  );
+  if (unknownKeys.length > 0) {
+    throw new ToolExecutionError(
+      `Unknown worker parameters: ${unknownKeys.join(", ")}. ` +
+        `Valid parameters: ${Object.keys(workerInterface).join(", ")}`,
+    );
+  }
+  const values: IWorkerInterfaceValues = {};
+  for (const id in workerInterface) {
+    if (id in overrides) {
+      values[id] = overrides[id];
+    } else if (id in saved) {
+      values[id] = saved[id];
+    } else {
+      values[id] = getDefault(
+        workerInterface[id].type,
+        workerInterface[id].default,
+      );
+    }
+  }
+  return values;
+}
+
 function countBy<T>(items: T[], key: (item: T) => string | string[]) {
   const counts: { [key: string]: number } = {};
   for (const item of items) {
@@ -306,35 +345,11 @@ async function runWorkerTool(
     );
   }
 
-  if (!propertyStore.getWorkerInterface(image)) {
-    await propertyStore.fetchWorkerInterface({ image });
-  }
-  const workerInterface = propertyStore.getWorkerInterface(image) ?? {};
-
-  const overrides = input.workerInterfaceValues ?? {};
-  const unknownKeys = Object.keys(overrides).filter(
-    (key) => !(key in workerInterface),
+  const values = await resolveWorkerInterfaceValues(
+    image,
+    input.workerInterfaceValues ?? {},
+    tool.values?.workerInterfaceValues ?? {},
   );
-  if (unknownKeys.length > 0) {
-    throw new ToolExecutionError(
-      `Unknown worker parameters: ${unknownKeys.join(", ")}. ` +
-        `Valid parameters: ${Object.keys(workerInterface).join(", ")}`,
-    );
-  }
-  const saved = tool.values?.workerInterfaceValues ?? {};
-  const values: IWorkerInterfaceValues = {};
-  for (const id in workerInterface) {
-    if (id in overrides) {
-      values[id] = overrides[id];
-    } else if (id in saved) {
-      values[id] = saved[id];
-    } else {
-      values[id] = getDefault(
-        workerInterface[id].type,
-        workerInterface[id].default,
-      );
-    }
-  }
 
   const progressInfo: IProgressInfo = {};
   const errorInfo: IErrorInfoList = { errors: [] };
@@ -896,6 +911,169 @@ const registry: { [name: string]: IAgentToolEntry } = {
     },
   },
 
+  list_properties: {
+    execute: async () => ({
+      result: {
+        properties: propertyStore.properties.map((property) => ({
+          id: property.id,
+          name: property.name,
+          image: property.image,
+          shape: property.shape,
+          tags: property.tags?.tags ?? [],
+          // A property is "computed" if any value path for it exists.
+          computed: propertyStore.computedPropertyPaths.some(
+            (path) => path[0] === property.id,
+          ),
+        })),
+      },
+    }),
+  },
+
+  create_property: {
+    // Defines a measurement in the shared collection, so it is gated.
+    gated: true,
+    execute: async (input: {
+      propertyWorkerImage?: string;
+      shape?: string;
+      tags?: string[];
+      exclusive?: boolean;
+      name?: string;
+      workerInterfaceValues?: IWorkerInterfaceValues;
+    }) => {
+      requireLogin();
+      requireDataset();
+      const image = input.propertyWorkerImage;
+      if (typeof image !== "string" || !image) {
+        throw new ToolExecutionError("propertyWorkerImage is required");
+      }
+      if (typeof input.shape !== "string") {
+        throw new ToolExecutionError(
+          "shape is required (e.g. polygon, point, line)",
+        );
+      }
+      if (Object.keys(propertyStore.workerImageList).length === 0) {
+        await propertyStore.fetchWorkerImageList();
+      }
+      if (propertyStore.workerImageList[image]?.isPropertyWorker == null) {
+        throw new ToolExecutionError(
+          `"${image}" is not a property worker; use list_workers and pick ` +
+            "one whose isPropertyWorker is true",
+        );
+      }
+      const workerInterface = await resolveWorkerInterfaceValues(
+        image,
+        input.workerInterfaceValues ?? {},
+      );
+      const property = await propertyStore.createProperty({
+        name:
+          input.name ??
+          propertyStore.workerImageList[image]?.interfaceName ??
+          "Property",
+        image,
+        tags: { tags: input.tags ?? [], exclusive: input.exclusive ?? false },
+        shape: input.shape as AnnotationShape,
+        workerInterface,
+      });
+      if (!property) {
+        throw new ToolExecutionError("Failed to create the property");
+      }
+      return {
+        result: {
+          propertyId: property.id,
+          name: property.name,
+          image: property.image,
+          shape: property.shape,
+        },
+      };
+    },
+  },
+
+  compute_property: {
+    // Starts a compute job, so it is gated like run_worker.
+    gated: true,
+    execute: async (input: { propertyId?: string }) => {
+      requireLogin();
+      requireDataset();
+      const property = propertyStore.properties.find(
+        (p) => p.id === input.propertyId,
+      );
+      if (!property) {
+        throw new ToolExecutionError(
+          `No property with id "${input.propertyId}"; use list_properties ` +
+            "or create_property first",
+        );
+      }
+      const errorInfo: IErrorInfoList = { errors: [] };
+      await propertyStore.computeProperty({ property, errorInfo });
+      return {
+        result: {
+          propertyId: property.id,
+          name: property.name,
+          started: true,
+          note:
+            "Computation started; values populate as the job runs. Use " +
+            "get_property_values to read the results.",
+        },
+      };
+    },
+  },
+
+  get_property_values: {
+    execute: async (input: { propertyId?: string; query?: unknown }) => {
+      await propertyStore.fetchPropertyValues();
+      let allowedIds: Set<string> | null = null;
+      if (input.query !== undefined) {
+        if (
+          input.query === null ||
+          typeof input.query !== "object" ||
+          Array.isArray(input.query)
+        ) {
+          throw new ToolExecutionError("query must be a query object");
+        }
+        validateAnnotationQuery(input.query as { [key: string]: unknown });
+        allowedIds = new Set(
+          queryAnnotations(input.query as IAnnotationQuery).map((a) => a.id),
+        );
+      }
+      const nameOf = (id: string) =>
+        propertyStore.properties.find((p) => p.id === id)?.name ?? id;
+      const stats = [];
+      for (const path of propertyStore.computedPropertyPaths) {
+        const propertyId = path[0];
+        if (input.propertyId && propertyId !== input.propertyId) {
+          continue;
+        }
+        const values: number[] = [];
+        for (const annotationId in propertyStore.propertyValues) {
+          if (allowedIds && !allowedIds.has(annotationId)) {
+            continue;
+          }
+          let value: any = propertyStore.propertyValues[annotationId];
+          for (const key of path) {
+            value = value?.[key];
+          }
+          if (typeof value === "number" && !Number.isNaN(value)) {
+            values.push(value);
+          }
+        }
+        if (values.length === 0) {
+          continue;
+        }
+        const sum = values.reduce((acc, n) => acc + n, 0);
+        stats.push({
+          propertyId,
+          property: nameOf(propertyId),
+          path: path.slice(1).join(".") || nameOf(propertyId),
+          count: values.length,
+          mean: sum / values.length,
+          min: Math.min(...values),
+          max: Math.max(...values),
+        });
+      }
+      return { result: { stats } };
+    },
+  },
+
   undo: {
     execute: async () => {
       requireLogin();
@@ -1048,6 +1226,22 @@ export function describeAgentToolCall(name: string, input: any): string {
           : "";
       return `Set up a ${kind} tool${channel}`;
     }
+    case "list_properties":
+      return "List the property definitions";
+    case "create_property": {
+      const shape =
+        typeof input?.shape === "string" ? ` on ${input.shape}` : "";
+      const named = typeof input?.name === "string" ? ` "${input.name}"` : "";
+      return `Set up property${named}${shape}`;
+    }
+    case "compute_property": {
+      const property = propertyStore.properties.find(
+        (p) => p.id === input?.propertyId,
+      );
+      return `Compute property "${property?.name ?? input?.propertyId ?? ""}"`;
+    }
+    case "get_property_values":
+      return "Summarize computed property values";
     case "undo":
       return "Undo the last annotation change";
     case "redo":
