@@ -680,6 +680,24 @@ describe("read_help_topic", () => {
       executeAgentTool("read_help_topic", {}, context),
     ).rejects.toBeInstanceOf(ToolExecutionError);
   });
+
+  it("surfaces the backend's valid-slug list on an unknown topic", async () => {
+    mockMain.agentAPI = {
+      getHelpTopic: vi.fn(async () => {
+        throw {
+          response: {
+            data: {
+              message:
+                "Unknown help topic. Available: workflows, troubleshooting",
+            },
+          },
+        };
+      }),
+    };
+    await expect(
+      executeAgentTool("read_help_topic", { topic: "bogus" }, context),
+    ).rejects.toThrow(/Available: workflows, troubleshooting/);
+  });
 });
 
 describe("annotationsBoundingBox", () => {

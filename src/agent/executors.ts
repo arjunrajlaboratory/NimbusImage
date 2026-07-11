@@ -618,7 +618,19 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (typeof input.topic !== "string" || !input.topic) {
         throw new ToolExecutionError("topic is required");
       }
-      const markdown = await main.agentAPI.getHelpTopic(input.topic);
+      let markdown: string;
+      try {
+        markdown = await main.agentAPI.getHelpTopic(input.topic);
+      } catch (error: any) {
+        // The backend 400 carries a helpful "Unknown help topic. Available: …"
+        // in its response body; surface it so the model can retry with a
+        // valid slug (see AI_PANEL_SPEC.md).
+        throw new ToolExecutionError(
+          error?.response?.data?.message ??
+            error?.message ??
+            `Could not fetch help topic "${input.topic}"`,
+        );
+      }
       return { result: { topic: input.topic, markdown } };
     },
   },

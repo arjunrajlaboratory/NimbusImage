@@ -2090,13 +2090,6 @@ export interface IChatImage {
   visible?: boolean;
 }
 
-export interface IChatMessage {
-  type: "user" | "assistant" | "system" | "error";
-  content: string;
-  images?: IChatImage[];
-  visible?: boolean;
-}
-
 // --- Automatic tool suggestions (see codebaseDocumentation/AUTO_TOOL_SUGGESTIONS.md) ---
 
 // One entry in the catalog of tools the frontend knows how to set up. Sent to
