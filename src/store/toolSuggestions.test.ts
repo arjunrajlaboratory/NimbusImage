@@ -263,7 +263,9 @@ describe("toolSuggestions store", () => {
       await toolSuggestions.maybeSuggestForCurrentConfiguration();
 
       expect(toolSuggestions.seenConfigurationIds).toContain("cfg-fresh");
-      expect(main.toolSuggestionsAPI.getToolSuggestions).toHaveBeenCalledTimes(1);
+      expect(main.toolSuggestionsAPI.getToolSuggestions).toHaveBeenCalledTimes(
+        1,
+      );
       expect(toolSuggestions.status).toBe("done");
     });
 
@@ -373,10 +375,14 @@ describe("toolSuggestions store", () => {
       main.configuration = makeConfiguration({ id: "cfg-a" });
       // While the request is in flight, the user navigates to another
       // collection; the resolved suggestions must be dropped.
-      (main.toolSuggestionsAPI.getToolSuggestions as any).mockImplementation(async () => {
-        main.configuration = makeConfiguration({ id: "cfg-b" });
-        return [{ toolId: "manual:blob", reason: "blobs", confidence: "high" }];
-      });
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockImplementation(
+        async () => {
+          main.configuration = makeConfiguration({ id: "cfg-b" });
+          return [
+            { toolId: "manual:blob", reason: "blobs", confidence: "high" },
+          ];
+        },
+      );
 
       await toolSuggestions.suggestForCurrentConfiguration();
 
