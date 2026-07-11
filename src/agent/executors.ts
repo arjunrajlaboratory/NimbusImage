@@ -60,6 +60,16 @@ export interface IToolExecutionResult {
 // (and echoing back) the whole set. Purely advisory — the data is unchanged.
 const LARGE_ANNOTATION_RESULT = 200;
 
+// Hard cap on how many annotations a single list_annotations call serializes
+// into the tool result. list_annotations is the only tool that puts raw
+// annotation rows into the model's context; every other path (color/tag/select
+// by query, get_annotation_summary, get_property_values) works on queries and
+// aggregates. Without a cap a model that ignores the summary hint could ask for
+// a limit of a million and blow the context window on a large dataset. Ties to
+// LARGE_ANNOTATION_RESULT: above this many matches, summarize instead of paging,
+// and you cannot pull more than this many rows per call regardless.
+const MAX_LIST_ANNOTATIONS = LARGE_ANNOTATION_RESULT;
+
 // Thrown by executors for expected failures (bad references, missing
 // dataset). The message is sent to the model as an error tool result so it
 // can correct its call.
@@ -509,8 +519,16 @@ const registry: { [name: string]: IAgentToolEntry } = {
       offset?: number;
     }) => {
       const matching = queryAnnotations(input.query);
-      const offset = input.offset ?? 0;
-      const limit = input.limit ?? 50;
+      // Model input is unvalidated: coerce to sane non-negative numbers and
+      // clamp the page size to MAX_LIST_ANNOTATIONS so a single call can never
+      // serialize an unbounded set into context.
+      const offset =
+        typeof input.offset === "number" && input.offset > 0
+          ? Math.floor(input.offset)
+          : 0;
+      const requestedLimit =
+        typeof input.limit === "number" && input.limit > 0 ? input.limit : 50;
+      const limit = Math.min(requestedLimit, MAX_LIST_ANNOTATIONS);
       const annotations = matching.slice(offset, offset + limit).map((a) => {
         const n = a.coordinates.length || 1;
         const centroid = a.coordinates.reduce(

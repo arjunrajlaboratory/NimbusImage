@@ -72,7 +72,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 200,
-          "description": "Maximum number of annotations to return (default 50)."
+          "description": "Maximum number of annotations to return (default 50, hard-capped at 200). For larger match sets, page with offset or call get_annotation_summary for counts and breakdowns instead of listing them all."
         },
         "offset": { "type": "integer", "minimum": 0 }
       },

@@ -296,6 +296,43 @@ Each agent turn is assembled as:
    the agent decides it needs eyes. This keeps token cost proportional to
    need; image blocks are the dominant cost in the current chat.
 
+### 4.1 Scaling: keeping large datasets out of context
+
+The tool surface is deliberately designed so the **raw annotation/property set
+never enters the model's context**, even for datasets with millions of objects:
+
+- **Mutations are query-based, not list-based.** `color_annotations`,
+  `tag_annotations`, and `select_annotations` take a *query* (`{tags:[…]}`,
+  `{shape:…}`, `"selection"`) — never a list. The executor resolves the query
+  in the browser and returns only a count (`{affectedCount}`); the write goes to
+  the batch backend endpoint. "Randomly color the annotations" over a million
+  objects costs the model a single tool call and a single number back.
+- **Reads return aggregates.** `get_annotation_summary` returns counts by
+  tag/shape/channel; `get_property_values` returns per-property
+  `{count, mean, min, max}`, not raw values; `get_interface_state` returns
+  counts plus the tag list.
+- **`list_annotations` is the only raw-row path, and it is hard-capped** at
+  `MAX_LIST_ANNOTATIONS` (200) rows per call regardless of the requested `limit`
+  (`src/agent/executors.ts`), with a hint steering the model to
+  `get_annotation_summary` above that. So no single call can blow the context
+  window.
+
+**The real ceiling is not the agent** — it is that `queryAnnotations` filters
+`annotationStore.annotations`, i.e. the frontend already holds every annotation
+in browser memory (a pre-existing app-wide limit, ~tens of thousands before it
+hurts). The agent inherits that ceiling; it does not add one.
+
+**Future (defer until there is real demand):** when datasets genuinely outgrow
+the in-memory set, query/mutation resolution must move **server-side** — a
+backend endpoint that resolves a query to matching ids or applies the mutation
+directly, so the browser never materializes the whole set. That same server-side
+foundation is what a **managed-agent / code-execution** capability (Option B,
+§5) would build on: for complex actions that *cannot* be expressed as a query
+(e.g. "color each cell by distance to the nearest vessel", "cluster the spots
+and color by cluster"), run contained code on the backend rather than curated
+tools. Neither is needed now — the query-based surface already scales for the
+common asks, and if/when we must move to the backend we can do it then.
+
 ## 5. Architecture options
 
 The central question: **where does the agent loop run?** Three options,

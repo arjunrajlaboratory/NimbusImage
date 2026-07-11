@@ -433,6 +433,22 @@ describe("executeAgentTool", () => {
     expect(large.result.hint).toContain("get_annotation_summary");
   });
 
+  it("caps a single list_annotations page so it can't dump an unbounded set", async () => {
+    mockAnnotations.annotations = Array.from({ length: 5000 }, (_unused, i) =>
+      makeAnnotation({ id: `a${i}` }),
+    );
+    // A model ignoring the summary hint and asking for a huge page must still
+    // get at most the hard cap (200), with paging state pointing to the rest.
+    const result = (
+      await executeAgentTool("list_annotations", { limit: 1000000 }, context)
+    ).result;
+    expect(result.returned).toBe(200);
+    expect(result.annotations.length).toBe(200);
+    expect(result.totalMatching).toBe(5000);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextOffset).toBe(200);
+  });
+
   it("routes contrast to the personal view, other fields to the config", async () => {
     const layer = {
       id: "l1",
