@@ -81,4 +81,14 @@ export default class AgentAPI {
     }
     return data as IAgentResponse;
   }
+
+  async getHelpTopic(topic: string): Promise<string> {
+    const { data } = await this.client.get("claude_agent/help", {
+      params: { topic },
+    });
+    if (!data || typeof data.markdown !== "string") {
+      throw new Error(`No help topic "${topic}"`);
+    }
+    return data.markdown;
+  }
 }

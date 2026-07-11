@@ -640,5 +640,19 @@
       "required": ["toolId"],
       "additionalProperties": false
     }
+  },
+  {
+    "name": "read_help_topic",
+    "description": "Read NimbusImage documentation on a topic — how a feature works, or how the user can do something themselves in the UI. Call this before explaining a workflow you are unsure about. The available topic slugs are listed in the system prompt.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "The topic slug to read (e.g. \"workflows\", \"image-processing\"). Must be one of the slugs listed in the system prompt."
+        }
+      },
+      "required": ["topic"]
+    }
   }
 ]

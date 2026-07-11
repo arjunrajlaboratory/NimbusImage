@@ -75,6 +75,7 @@ vi.mock("@/store", () => ({
     setScalebarColor: vi.fn(),
     setBackgroundColor: vi.fn(),
     setDrawAnnotationConnections: vi.fn(),
+    agentAPI: { getHelpTopic: vi.fn() },
   },
 }));
 
@@ -288,6 +289,7 @@ describe("describeAgentToolCall", () => {
     "create_property",
     "compute_property",
     "get_property_values",
+    "read_help_topic",
     "run_worker",
     "unknown_tool",
   ];
@@ -655,6 +657,28 @@ describe("executeAgentTool", () => {
     expect(result.alreadyRunning).toBe(true);
     expect(result.jobId).toBe("job42");
     expect(mockAnnotations.computeAnnotationsWithWorker).not.toHaveBeenCalled();
+  });
+});
+
+describe("read_help_topic", () => {
+  it("returns a topic's markdown", async () => {
+    mockMain.agentAPI = {
+      getHelpTopic: vi.fn(async () => "# Workflows\nStep one…"),
+    };
+    const { result } = await executeAgentTool(
+      "read_help_topic",
+      { topic: "workflows" },
+      context,
+    );
+    expect(mockMain.agentAPI.getHelpTopic).toHaveBeenCalledWith("workflows");
+    expect(result.topic).toBe("workflows");
+    expect(result.markdown).toContain("Workflows");
+  });
+
+  it("requires a topic string", async () => {
+    await expect(
+      executeAgentTool("read_help_topic", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 });
 

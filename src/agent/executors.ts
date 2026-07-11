@@ -613,6 +613,16 @@ const registry: { [name: string]: IAgentToolEntry } = {
     },
   },
 
+  read_help_topic: {
+    execute: async (input: { topic?: string }) => {
+      if (typeof input.topic !== "string" || !input.topic) {
+        throw new ToolExecutionError("topic is required");
+      }
+      const markdown = await main.agentAPI.getHelpTopic(input.topic);
+      return { result: { topic: input.topic, markdown } };
+    },
+  },
+
   set_location: {
     execute: async (input: { xy?: number; z?: number; time?: number }) => {
       const dataset = requireDataset();
@@ -1519,6 +1529,8 @@ export function describeAgentToolCall(name: string, input: any): string {
       return "List available workers";
     case "get_worker_interface":
       return `Read parameters of ${input?.image}`;
+    case "read_help_topic":
+      return `Read help on "${input?.topic ?? ""}"`;
     case "set_location": {
       const parts: string[] = [];
       if (input?.xy != null) {
