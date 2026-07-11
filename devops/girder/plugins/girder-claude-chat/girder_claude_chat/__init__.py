@@ -23,19 +23,13 @@ MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS = 12 * 1024 * 1024
 
 PACKAGE_DIR = os.path.dirname(__file__)
 
-# The system prompt ships as package data alongside this module. Resolving
-# it relative to __file__ works for every install layout -- the Docker image
-# (editable install), a non-editable/packaged install (the plugin's own
-# tox/pytest suite), and a local non-Docker Girder.
-SYSTEM_PROMPT_PATH = os.path.join(
-    PACKAGE_DIR, 'system_prompt_2.txt'
-)
-
-# The AI-panel agent's system prompt and tool schema ship as package data too
-# (same reasoning as SYSTEM_PROMPT_PATH). They must live inside the package,
-# not at the plugin root: a non-editable install (tox sdist, PyPI) does not
-# ship root-level files, which would leave the toolset empty and 503 the
-# claude_agent endpoint.
+# The AI-panel agent's system prompt and tool schema ship as package data.
+# Resolving them relative to __file__ works for every install layout -- the
+# Docker image (editable install), a non-editable/packaged install (the
+# plugin's own tox/pytest suite), and a local non-Docker Girder. They must
+# live inside the package, not at the plugin root: a non-editable install
+# (tox sdist, PyPI) does not ship root-level files, which would leave the
+# toolset empty and 503 the claude_agent endpoint.
 AGENT_PROMPT_PATH = os.path.join(PACKAGE_DIR, 'agent_system_prompt.txt')
 AGENT_TOOLS_PATH = os.path.join(PACKAGE_DIR, 'agent_tools.json')
 
@@ -140,68 +134,6 @@ def _list_param(data, name):
     if not isinstance(value, list):
         raise RestException(f'{name} must be a list', code=400)
     return value
-
-
-class ClaudeChatResource(Resource):
-    def __init__(self):
-        super().__init__()
-        self.resourceName = 'claude_chat'
-        self.route('POST', (), self.query_claude)
-
-        # Load system prompt
-        try:
-            with open(SYSTEM_PROMPT_PATH, 'r') as f:
-                self.system_prompt = f.read().strip()
-            logger.info('Successfully loaded system prompt')
-        except IOError:
-            logger.error(
-                'Failed to load system prompt from %s', SYSTEM_PROMPT_PATH
-            )
-            self.system_prompt = ''
-
-        self.client = _make_anthropic_client('claude_chat')
-
-    @access.user
-    @autoDescribeRoute(
-        Description('Send a full chat structure to Claude and get a response')
-        .jsonParam('data', 'Chat structure', paramType='body', required=True)
-    )
-    def query_claude(self, data):
-        return self.query_claude_imp(data)
-
-    def query_claude_imp(self, data):
-        if self.client is None:
-            raise RestException(
-                'Claude chat is not configured (no ANTHROPIC_API_KEY)',
-                code=503
-            )
-        messages = data.get('messages', [])
-        logger.debug(f'Processing {len(messages)} messages')
-        try:
-            response = self.client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=8192,
-                system=[
-                    {
-                        'type': 'text',
-                        'text': self.system_prompt,
-                        'cache_control': {'type': 'ephemeral'}
-                    }
-                ],
-                messages=messages
-            )
-            # Sonnet 5 may include non-text content blocks before the answer.
-            text = ''.join(
-                block.text
-                for block in response.content
-                if block.type == 'text'
-            )
-            return {'response': text}
-        except APIError as e:
-            logger.error(
-                f'Anthropic API error: {str(e)}', exc_info=True
-            )
-            return {'error': str(e)}
 
 
 class ClaudeAgentResource(Resource):
@@ -563,6 +495,5 @@ class GirderClaudeChatPlugin(plugin.GirderPlugin):
     DISPLAY_NAME = 'Claude Chat'
 
     def load(self, info):
-        info['apiRoot'].claude_chat = ClaudeChatResource()
         info['apiRoot'].claude_agent = ClaudeAgentResource()
         info['apiRoot'].claude_suggest_tools = ClaudeSuggestToolsResource()
