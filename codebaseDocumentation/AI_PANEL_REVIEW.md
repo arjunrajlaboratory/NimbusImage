@@ -183,3 +183,88 @@ allowed list immediately above). tsc-covered; no runtime test.
 
 **Gates:** `pnpm tsc` clean · eslint clean · vitest `executors.test.ts` 58/58 ·
 rate_limit tests 6/6 · flake8 clean.
+
+---
+
+# Round 3 — external review 2026-07-10 (2×P1, 5×P2)
+
+Seven findings from an external review. All verified real and current before
+fixing. Two P1s held approval; both fixed.
+
+## [R3-1] Dataset identity checked only once per tool batch (P1)
+**Location:** `src/store/aiPanel.ts` (sendUserMessage tool loop)
+**Status:** fixed (pending commit)
+
+The pre-loop `viewIdentityChangedSince` check ran once; switching datasets while
+the first async tool ran let later tools in the same response execute against
+the new dataset. Folded the check **into** the per-tool loop: once identity
+changes, the remaining tools are declined (with valid tool_results so the wire
+stays consistent) instead of executed. Test: aiPanel "stops running later tools
+when the dataset changes mid-batch".
+
+## [R3-2] "Auto-approve worker runs" auto-approves every gated action (P1)
+**Location:** `src/components/AiPanel.vue` (auto-approve switch)
+**Status:** fixed (pending commit)
+
+The label implied a narrow scope, but the toggle bypasses confirmation for all
+gated tools (worker runs, property computation, tool/property/scale creation).
+Relabeled to "Auto-approve all actions" with a tooltip listing exactly what it
+covers. Copy/markup only; tsc + lint cover it.
+
+## [R3-3] Revert omitted property filters (P2)
+**Location:** `src/agent/executors.ts` (snapshot/restore)
+**Status:** fixed (pending commit)
+
+`set_annotation_filter` can add/clear property filters, but the snapshot only
+captured tag + current-frame filters, so "Revert view changes" reported success
+while property filters stayed altered. Added `propertyFilters` to
+`IViewStateSnapshot`; restore disables filters added since the snapshot and
+re-applies the captured ones. Test: "reverts property filters added or changed
+during the turn". Sweep: audited all VIEW_STATE_TOOLS against the snapshot — this
+was the only omission.
+
+## [R3-4] Forced conversation clear could hang at an approval prompt (P2)
+**Location:** `src/store/aiPanel.ts` (clearConversation)
+**Status:** fixed (pending commit)
+
+A forced clear (e.g. account change) set `stopRequested` but didn't resolve
+`approvalResolver`, leaving the loop suspended on a pending approval. Now
+resolves it as declined (same as `requestStop`). Test: "resolves a pending
+approval so a forced clear doesn't hang the loop". Sweep: `requestStop` and the
+panel `onBeforeUnmount` already resolved it; this was the last gap.
+
+## [R3-5] compute_property reported success when no job started (P2)
+**Location:** `src/agent/executors.ts` (compute_property)
+**Status:** fixed (pending commit)
+
+Discarded `computeProperty`'s nullable return and always reported `started:
+true`, and lacked run_worker's existing-job guard (allowing duplicate expensive
+jobs). Now guards on `jobsStore.jobIdForPropertyId` and throws when the job
+didn't start. Tests: "does not double-submit a running property job",
+"reports failure when no job starts". Sweep: run_worker was the only other
+job-starter and already correct.
+
+## [R3-6] Property worker not validated against the requested shape (P2)
+**Location:** `src/agent/executors.ts` (create_property)
+**Status:** fixed (pending commit)
+
+Checked only `isPropertyWorker`, letting the agent define an unusable property
+whose worker doesn't operate on the chosen shape. Now mirrors
+`PropertyCreation.vue`'s filter: `annotationShape` must equal the shape or be
+`AnnotationShape.Any`. Tests: shape-mismatch rejection + `any`-shape acceptance;
+updated the existing create_property test to declare a matching shape.
+
+## [R3-7] Unknown channel names silently created a channel-0 tool (P2)
+**Location:** `src/agent/executors.ts` (create_tool)
+**Status:** fixed (pending commit)
+
+An unresolved `channelName` left the tool unbound (worker exec defaults to
+channel 0) while the result echoed the requested channel as if it bound. Now
+rejects an unresolved channelName, listing the available channels. Test:
+"rejects a channelName that doesn't resolve to a layer". **Sweep note:** the
+auto tool-suggestion flow (`toolSuggestions.ts`) shares `buildToolConfiguration`
+and has the same silent channel-0 behavior, but it predates this branch and is
+user-confirmed in a panel — left as-is, noted here.
+
+**Gates:** `pnpm tsc` clean · eslint clean · vitest executors 64/64 + aiPanel
+7/7 + wireConversation 7/7.

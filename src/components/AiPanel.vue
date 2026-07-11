@@ -129,17 +129,27 @@
           </v-btn>
         </div>
         <div class="panel-options">
-          <v-switch
-            v-model="autoApprove"
-            density="compact"
-            hide-details
-            color="warning"
-            class="auto-approve-switch"
+          <v-tooltip
+            text="Skip the confirmation for every action that needs approval: worker runs, property computation, and tool / property / scale creation."
+            location="top"
           >
-            <template v-slot:label>
-              <span class="auto-approve-label"> Auto-approve worker runs </span>
+            <template v-slot:activator="{ props: activatorProps }">
+              <v-switch
+                v-bind="activatorProps"
+                v-model="autoApprove"
+                density="compact"
+                hide-details
+                color="warning"
+                class="auto-approve-switch"
+              >
+                <template v-slot:label>
+                  <span class="auto-approve-label">
+                    Auto-approve all actions
+                  </span>
+                </template>
+              </v-switch>
             </template>
-          </v-switch>
+          </v-tooltip>
         </div>
       </v-card-actions>
     </v-card>

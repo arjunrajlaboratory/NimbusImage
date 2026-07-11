@@ -257,6 +257,12 @@ export class AiPanel extends VuexModule {
     // without pushing anything into the fresh conversation.
     if (this.running) {
       this.setStopRequested(true);
+      // A gated tool may be blocking the loop on the approval promise; resolve
+      // it as declined (same as requestStop) so the loop unwinds immediately
+      // instead of hanging until the user happens to press Stop.
+      if (approvalResolver) {
+        approvalResolver(false);
+      }
     }
   }
 
@@ -342,41 +348,45 @@ export class AiPanel extends VuexModule {
           (block: TAgentContentBlock): block is IAgentToolUseBlock =>
             block.type === "tool_use",
         );
-        if (turnSnapshot && viewIdentityChangedSince(turnSnapshot)) {
-          // The user navigated to a different dataset while this response was
-          // in flight. Don't run the tools against the wrong dataset; close
-          // out the pending tool calls so the wire history stays valid, tell
-          // the user, and stop.
-          wireMessages.push({
-            role: "user",
-            content: toolUses.map((toolUse) => ({
-              type: "tool_result",
-              tool_use_id: toolUse.id,
-              content: toResultContent({
-                declined: true,
-                reason:
-                  "Aborted: the active dataset changed; not executing " +
-                  "against a different dataset than the request targeted.",
-              }),
-            })),
-          });
-          this.addItemImpl({
-            kind: "error",
-            text: "You switched datasets mid-response, so I stopped without running the pending actions. Send a new message to continue on this dataset.",
-          });
-          break;
-        }
         // Sequential on purpose: UI actions are order-dependent (e.g. move,
-        // then screenshot).
+        // then screenshot). Recheck the dataset identity before EACH tool: the
+        // user can navigate to a different dataset while an earlier async tool
+        // runs, so later tools must not execute against the new one. Once it
+        // changes, decline the remaining tools (with valid tool_results so the
+        // wire history stays consistent) rather than acting on the wrong data.
         const results: IAgentToolResultBlock[] = [];
+        let datasetChanged = false;
         for (const toolUse of toolUses) {
-          results.push(await this.executeToolUse(toolUse));
+          if (turnSnapshot && viewIdentityChangedSince(turnSnapshot)) {
+            datasetChanged = true;
+          }
+          results.push(
+            datasetChanged
+              ? {
+                  type: "tool_result",
+                  tool_use_id: toolUse.id,
+                  content: toResultContent({
+                    declined: true,
+                    reason:
+                      "Aborted: the active dataset changed; not executing " +
+                      "against a different dataset than the request targeted.",
+                  }),
+                }
+              : await this.executeToolUse(toolUse),
+          );
         }
         if (conversationGeneration !== generationAtStart) {
           // Cleared/cancelled while tools ran; drop the results.
           return;
         }
         wireMessages.push({ role: "user", content: results });
+        if (datasetChanged) {
+          this.addItemImpl({
+            kind: "error",
+            text: "You switched datasets mid-response, so I stopped without running all the pending actions. Send a new message to continue on this dataset.",
+          });
+          break;
+        }
         if (this.stopRequested) {
           this.addItemImpl({ kind: "info", text: "Stopped." });
           break;

@@ -12,6 +12,7 @@ import {
   IDisplayLayer,
   IErrorInfoList,
   IProgressInfo,
+  IPropertyAnnotationFilter,
   IScaleInformation,
   IToolConfiguration,
   IWorkerInterfaceValues,
@@ -29,6 +30,7 @@ import {
   MANUAL_CATALOG,
   buildCatalog,
   buildToolConfiguration,
+  layerIdForChannelName,
 } from "@/tools/creation/toolFromCatalog";
 
 // Executors for the AI-panel agent tools (see
@@ -1163,6 +1165,27 @@ const registry: { [name: string]: IAgentToolEntry } = {
           );
         }
       }
+      // A channelName that doesn't resolve to a layer would leave the tool
+      // unbound, and worker execution silently defaults that to channel 0 —
+      // while the result echoes the requested channel as if it bound. Reject
+      // it instead so the model picks a real channel.
+      if (
+        input.channelName != null &&
+        !layerIdForChannelName(input.channelName)
+      ) {
+        const available = main.layers
+          .map(
+            (l) =>
+              main.dataset?.channelNames.get(l.channel) ??
+              `Channel ${l.channel}`,
+          )
+          .join(", ");
+        throw new ToolExecutionError(
+          `No channel named "${input.channelName}". Available channels: ${
+            available || "none"
+          }`,
+        );
+      }
       const tool = buildToolConfiguration(entry, {
         channelName: input.channelName,
         name: input.name,
@@ -1227,10 +1250,23 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (Object.keys(propertyStore.workerImageList).length === 0) {
         await propertyStore.fetchWorkerImageList();
       }
-      if (propertyStore.workerImageList[image]?.isPropertyWorker == null) {
+      const labels = propertyStore.workerImageList[image];
+      if (labels?.isPropertyWorker == null) {
         throw new ToolExecutionError(
           `"${image}" is not a property worker; use list_workers and pick ` +
             "one whose isPropertyWorker is true",
+        );
+      }
+      // Mirror PropertyCreation.vue's filter: a property worker only applies to
+      // its declared annotationShape (or AnnotationShape.Any). Otherwise the
+      // created property definition is unusable.
+      const workerShape = labels.annotationShape || null;
+      if (workerShape !== input.shape && workerShape !== AnnotationShape.Any) {
+        throw new ToolExecutionError(
+          `Property worker "${image}" operates on shape "${
+            workerShape ?? "none"
+          }", not "${input.shape}". Pick a worker whose annotationShape is ` +
+            `"${input.shape}" or "any" (see list_workers).`,
         );
       }
       const workerInterface = await resolveWorkerInterfaceValues(
@@ -1276,13 +1312,43 @@ const registry: { [name: string]: IAgentToolEntry } = {
             "or create_property first",
         );
       }
+      const runningJobId = jobsStore.jobIdForPropertyId[property.id];
+      if (runningJobId) {
+        return {
+          result: {
+            started: false,
+            alreadyRunning: true,
+            jobId: runningJobId,
+            propertyId: property.id,
+            note:
+              `Property "${property.name}" is already computing (job ` +
+              `${runningJobId}). Wait for it before starting another run.`,
+          },
+        };
+      }
       const errorInfo: IErrorInfoList = { errors: [] };
-      await propertyStore.computeProperty({ property, errorInfo });
+      // computeProperty returns null when the job never started (no dataset,
+      // or job creation failed); don't report success in that case.
+      const computeJob = await propertyStore.computeProperty({
+        property,
+        errorInfo,
+      });
+      if (!computeJob) {
+        const errors = errorInfo.errors
+          .map((e) => e.error || e.warning || e.info)
+          .filter(Boolean);
+        throw new ToolExecutionError(
+          `Failed to start computing "${property.name}"${
+            errors.length ? `: ${errors.join("; ")}` : "."
+          }`,
+        );
+      }
       return {
         result: {
           propertyId: property.id,
           name: property.name,
           started: true,
+          jobId: computeJob.jobId,
           note:
             "Computation started; values populate as the job runs. Use " +
             "get_property_values to read the results.",
@@ -1583,6 +1649,7 @@ export interface IViewStateSnapshot {
   viewContrasts: { [layerId: string]: IContrast };
   tagFilter: typeof filterStore.tagFilter;
   onlyCurrentFrame: boolean;
+  propertyFilters: IPropertyAnnotationFilter[];
   selectedAnnotationIds: string[];
   selectedToolId: string | null;
   displayOptions: ReturnType<typeof currentDisplayOptions>;
@@ -1630,6 +1697,7 @@ export function snapshotViewState(): IViewStateSnapshot {
       viewContrasts: main.datasetView?.layerContrasts ?? {},
       tagFilter: filterStore.tagFilter,
       onlyCurrentFrame: filterStore.onlyCurrentFrame,
+      propertyFilters: filterStore.propertyFilters,
       selectedAnnotationIds: [...annotationStore.selectedAnnotationIds],
       selectedToolId: main.selectedTool?.configuration.id ?? null,
       displayOptions: currentDisplayOptions(),
@@ -1687,6 +1755,20 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   await main.setViewContrastOverrides(snapshot.viewContrasts);
   filterStore.setTagFilter(snapshot.tagFilter);
   filterStore.setOnlyCurrentFrame(snapshot.onlyCurrentFrame);
+  // Restore property filters: disable any added since the snapshot (matching
+  // set_annotation_filter's clear, which disables rather than removes), then
+  // re-apply the snapshot's filters. updatePropertyFilter keys by propertyPath.
+  const snapshotPaths = new Set(
+    snapshot.propertyFilters.map((filter) => filter.propertyPath.join("/")),
+  );
+  for (const current of [...filterStore.propertyFilters]) {
+    if (current.enabled && !snapshotPaths.has(current.propertyPath.join("/"))) {
+      filterStore.updatePropertyFilter({ ...current, enabled: false });
+    }
+  }
+  for (const saved of snapshot.propertyFilters) {
+    filterStore.updatePropertyFilter(saved);
+  }
   annotationStore.setSelected(snapshot.selectedAnnotationIds);
   await main.setSelectedToolId(snapshot.selectedToolId);
   const display = snapshot.displayOptions;

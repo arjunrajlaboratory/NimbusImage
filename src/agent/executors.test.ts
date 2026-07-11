@@ -121,6 +121,9 @@ vi.mock("@/tools/creation/toolFromCatalog", () => ({
     name: opts?.name ?? entry.name,
     type: entry.kind === "worker" ? "segmentation" : "create",
   })),
+  layerIdForChannelName: vi.fn((name?: string) =>
+    name === "DAPI" ? "layer-dapi" : undefined,
+  ),
 }));
 
 vi.mock("@/store/annotation", () => ({
@@ -171,6 +174,7 @@ vi.mock("@/store/properties", () => ({
 vi.mock("@/store/jobs", () => ({
   default: {
     jobIdForToolId: {} as { [toolId: string]: string },
+    jobIdForPropertyId: {} as { [propertyId: string]: string },
   },
 }));
 
@@ -230,6 +234,7 @@ beforeEach(() => {
   mockAnnotations.annotations = [];
   mockAnnotations.selectedAnnotationIds = new Set();
   mockJobs.jobIdForToolId = {};
+  mockJobs.jobIdForPropertyId = {};
   mockProperties.workerImageList = {};
   mockProperties.properties = [];
   mockProperties.propertyValues = {};
@@ -611,6 +616,20 @@ describe("executeAgentTool", () => {
     expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
   });
 
+  it("rejects a channelName that doesn't resolve to a layer", async () => {
+    // The mocked layerIdForChannelName only resolves "DAPI"; an unknown channel
+    // must error rather than silently create a channel-0 tool.
+    mockMain.layers = [{ id: "l0", name: "DAPI", channel: 0 }];
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        { manualShape: "polygon", channelName: "Nonexistent" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
   it("requires being logged in to create a tool", async () => {
     mockMain.isLoggedIn = false;
     await expect(
@@ -949,7 +968,11 @@ describe("property tools", () => {
 
   it("create_property builds a config and calls createProperty", async () => {
     mockProperties.workerImageList = {
-      "prop:1": { isPropertyWorker: "x", interfaceName: "Intensity" },
+      "prop:1": {
+        isPropertyWorker: "x",
+        interfaceName: "Intensity",
+        annotationShape: "polygon",
+      },
     };
     mockProperties.getWorkerInterface = vi.fn(() => ({}));
     mockProperties.createProperty = vi.fn(async (config: any) => ({
@@ -992,6 +1015,38 @@ describe("property tools", () => {
     expect(mockProperties.createProperty).not.toHaveBeenCalled();
   });
 
+  it("create_property rejects a worker whose shape doesn't match", async () => {
+    // Worker operates on points; asking for a polygon property is unusable.
+    mockProperties.workerImageList = {
+      "prop:1": { isPropertyWorker: "x", annotationShape: "point" },
+    };
+    await expect(
+      executeAgentTool(
+        "create_property",
+        { propertyWorkerImage: "prop:1", shape: "polygon" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockProperties.createProperty).not.toHaveBeenCalled();
+  });
+
+  it("create_property accepts an 'any'-shape property worker", async () => {
+    mockProperties.workerImageList = {
+      "prop:any": { isPropertyWorker: "x", annotationShape: "any" },
+    };
+    mockProperties.getWorkerInterface = vi.fn(() => ({}));
+    mockProperties.createProperty = vi.fn(async (config: any) => ({
+      id: "prop-any",
+      ...config,
+    }));
+    const { result } = await executeAgentTool(
+      "create_property",
+      { propertyWorkerImage: "prop:any", shape: "polygon" },
+      context,
+    );
+    expect(result.propertyId).toBe("prop-any");
+  });
+
   it("compute_property runs an existing property by id", async () => {
     mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
     mockProperties.computeProperty = vi.fn(async () => ({ jobId: "job1" }));
@@ -1013,6 +1068,29 @@ describe("property tools", () => {
       executeAgentTool("compute_property", { propertyId: "nope" }, context),
     ).rejects.toBeInstanceOf(ToolExecutionError);
     expect(mockProperties.computeProperty).not.toHaveBeenCalled();
+  });
+
+  it("compute_property does not double-submit a running property job", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    mockJobs.jobIdForPropertyId = { prop1: "job99" };
+    mockProperties.computeProperty = vi.fn();
+    const { result } = await executeAgentTool(
+      "compute_property",
+      { propertyId: "prop1" },
+      context,
+    );
+    expect(result.alreadyRunning).toBe(true);
+    expect(result.jobId).toBe("job99");
+    expect(mockProperties.computeProperty).not.toHaveBeenCalled();
+  });
+
+  it("compute_property reports failure when no job starts", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    // computeProperty returns null when job creation fails.
+    mockProperties.computeProperty = vi.fn(async () => null);
+    await expect(
+      executeAgentTool("compute_property", { propertyId: "prop1" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 
   it("get_property_values summarizes computed values as stats", async () => {
@@ -1163,6 +1241,41 @@ describe("snapshotViewState / restoreViewState", () => {
       expect.objectContaining({ layerId: "l1", sync: false }),
     );
     expect(mockMain.syncConfiguration).toHaveBeenCalledTimes(1);
+  });
+
+  it("reverts property filters added or changed during the turn", async () => {
+    const savedFilter = {
+      id: "p1/area",
+      enabled: true,
+      exclusive: false,
+      propertyPath: ["p1", "area"],
+      range: { min: 10, max: 20 },
+    };
+    mockFilters.propertyFilters = [savedFilter];
+    const snapshot = snapshotViewState();
+
+    // During the turn the model added a second property filter.
+    mockFilters.propertyFilters = [
+      savedFilter,
+      {
+        id: "p2/mean",
+        enabled: true,
+        exclusive: false,
+        propertyPath: ["p2", "mean"],
+        range: { min: 0, max: 5 },
+      },
+    ];
+
+    await restoreViewState(snapshot);
+
+    // The filter added during the turn is disabled, and the snapshot's filter
+    // is re-applied.
+    expect(mockFilters.updatePropertyFilter).toHaveBeenCalledWith(
+      expect.objectContaining({ propertyPath: ["p2", "mean"], enabled: false }),
+    );
+    expect(mockFilters.updatePropertyFilter).toHaveBeenCalledWith(
+      expect.objectContaining({ propertyPath: ["p1", "area"], enabled: true }),
+    );
   });
 });
 
