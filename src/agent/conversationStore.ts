@@ -12,6 +12,10 @@ const DB_NAME = "AgentConversationDB";
 const STORE_NAME = "conversation";
 const RECORD_KEY = "current";
 
+// Cache the single IDBDatabase connection to avoid leaking new connections
+// on each conversation save/load.
+let dbPromise: Promise<IDBDatabase> | null = null;
+
 export interface IStoredAgentConversation {
   userId: string;
   items: IAgentPanelItem[];
@@ -20,14 +24,23 @@ export interface IStoredAgentConversation {
 }
 
 function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) {
+    return dbPromise;
+  }
+
+  dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      dbPromise = null;
+      reject(request.error);
+    };
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = () => {
       request.result.createObjectStore(STORE_NAME);
     };
   });
+
+  return dbPromise;
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
