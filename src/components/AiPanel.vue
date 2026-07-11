@@ -24,7 +24,7 @@
             variant="text"
             size="small"
             :disabled="running"
-            @click="aiPanelStore.clearConversation()"
+            @click="aiPanelStore.clearConversationAndStorage()"
           >
             <v-icon size="small">mdi-refresh</v-icon>
           </v-btn>

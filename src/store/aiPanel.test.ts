@@ -26,6 +26,12 @@ vi.mock("@/agent/executors", () => ({
   viewIdentityChangedSince: vi.fn(() => false),
 }));
 
+vi.mock("@/agent/conversationStore", () => ({
+  loadStoredConversation: vi.fn(async () => null),
+  saveStoredConversation: vi.fn(async () => {}),
+  clearStoredConversation: vi.fn(async () => {}),
+}));
+
 // Mocked relative to the module under test, same directory, so it resolves to
 // the same "./index" aiPanel.ts imports.
 vi.mock("./index", () => ({
@@ -42,12 +48,20 @@ import {
   restoreViewState,
   viewIdentityChangedSince,
 } from "@/agent/executors";
+import {
+  loadStoredConversation,
+  saveStoredConversation,
+  clearStoredConversation,
+} from "@/agent/conversationStore";
 
 const postAgentMessage = (main as any).agentAPI.postAgentMessage;
 const mockExecuteAgentTool = executeAgentTool as any;
 const mockIsGatedTool = isGatedTool as any;
 const mockRestoreViewState = restoreViewState as any;
 const mockViewIdentityChangedSince = viewIdentityChangedSince as any;
+const mockLoad = loadStoredConversation as any;
+const mockSave = saveStoredConversation as any;
+const mockClearStore = clearStoredConversation as any;
 
 // Yield to the event loop until `cond` holds (or we give up), for driving the
 // module-level async loop to a known point (e.g. a pending approval).
@@ -221,5 +235,65 @@ describe("AI panel forced clear (finding P2-D)", () => {
     await turn;
     expect(aiPanel.running).toBe(false);
     expect(aiPanel.pendingApprovalIndex).toBeNull();
+  });
+});
+
+describe("AI panel persistence", () => {
+  // handleAuthenticatedUserChange no-ops when userId === lastKnownUserId, and
+  // lastKnownUserId is module-level state that outlives the outer
+  // beforeEach's clearConversation(true) call (which only resets the
+  // in-memory conversation, not the last-known identity). Without this reset,
+  // "restores a stored conversation for the same user" would inherit
+  // lastKnownUserId === "userA" from the previous test and its
+  // handleAuthenticatedUserChange("userA") call would be treated as a no-op,
+  // never reaching the restore branch. Force a null identity first so every
+  // test's own handleAuthenticatedUserChange call is a genuine transition.
+  beforeEach(async () => {
+    await aiPanel.handleAuthenticatedUserChange(null);
+  });
+
+  it("saves the conversation after a completed turn", async () => {
+    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.sendUserMessage("remember this");
+    expect(mockSave).toHaveBeenCalled();
+    const saved = mockSave.mock.calls.at(-1)[0];
+    expect(saved.userId).toBe("userA");
+    expect(JSON.stringify(saved.wireMessages)).toContain("remember this");
+  });
+
+  it("restores a stored conversation for the same user", async () => {
+    mockLoad.mockResolvedValueOnce({
+      userId: "userA",
+      items: [{ kind: "assistant", text: "restored line" }],
+      wireMessages: [
+        { role: "user", content: [{ type: "text", text: "old prompt" }] },
+      ],
+      updatedAt: 1,
+    });
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    expect(aiPanel.items.some((i) => i.text === "restored line")).toBe(true);
+    // The restored wire history is resent on the next turn.
+    await aiPanel.sendUserMessage("new prompt");
+    expect(lastSentPayload()).toContain("old prompt");
+  });
+
+  it("wipes storage when a different user logs in", async () => {
+    mockLoad.mockResolvedValueOnce({
+      userId: "userA",
+      items: [{ kind: "user", text: "A's data" }],
+      wireMessages: [],
+      updatedAt: 1,
+    });
+    await aiPanel.handleAuthenticatedUserChange("userB");
+    expect(mockClearStore).toHaveBeenCalled();
+    expect(aiPanel.items.some((i) => i.text === "A's data")).toBe(false);
+  });
+
+  it("clearConversationAndStorage wipes the store", async () => {
+    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.sendUserMessage("something");
+    await aiPanel.clearConversationAndStorage();
+    expect(mockClearStore).toHaveBeenCalled();
+    expect(aiPanel.items).toHaveLength(0);
   });
 });

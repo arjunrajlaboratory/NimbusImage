@@ -28,6 +28,11 @@ import {
   pruneOldScreenshots,
   repairDanglingToolUse,
 } from "@/agent/wireConversation";
+import {
+  clearStoredConversation,
+  loadStoredConversation,
+  saveStoredConversation,
+} from "@/agent/conversationStore";
 import { dataUrlToBase64 } from "@/utils/interfaceCapture";
 
 // AI panel: conversational agent that drives the interface through the tool
@@ -191,6 +196,11 @@ export class AiPanel extends VuexModule {
     this.items = [];
   }
 
+  @Mutation
+  private setItems(items: IAgentPanelItem[]) {
+    this.items = items;
+  }
+
   @Action
   requestStop() {
     if (!this.running) {
@@ -266,17 +276,38 @@ export class AiPanel extends VuexModule {
     }
   }
 
+  // The explicit "clear" button: wipe both memory and persistence.
+  @Action
+  async clearConversationAndStorage() {
+    this.clearConversation();
+    await clearStoredConversation();
+  }
+
   // Clear the conversation when the authenticated user changes, so one user's
   // prompts, annotation results and interface metadata are never sent to the
   // backend as part of another user's session. Wired to a watcher on the
   // logged-in user in App.vue. No-op when the identity is unchanged.
   @Action
-  handleAuthenticatedUserChange(userId: string | null) {
+  async handleAuthenticatedUserChange(userId: string | null) {
     if (userId === lastKnownUserId) {
       return;
     }
     lastKnownUserId = userId;
+    // Drop the in-memory conversation (also stops any in-flight run).
     this.clearConversation(true);
+    if (!userId) {
+      await clearStoredConversation();
+      return;
+    }
+    const stored = await loadStoredConversation();
+    if (stored && stored.userId === userId) {
+      // Same user (e.g. a page reload): rehydrate the conversation.
+      wireMessages = stored.wireMessages;
+      this.setItems(stored.items);
+    } else {
+      // A different user's conversation must never surface here.
+      await clearStoredConversation();
+    }
   }
 
   @Action
@@ -431,6 +462,19 @@ export class AiPanel extends VuexModule {
     } finally {
       this.setRunning(false);
       this.setStopRequested(false);
+      // Persist only if this turn's conversation is still the active one
+      // (not cleared or switched to another user mid-run).
+      if (conversationGeneration === generationAtStart && lastKnownUserId) {
+        // Drop screenshots before writing — same treatment they get at the
+        // start of the next turn, so base64 blobs never hit disk.
+        pruneOldScreenshots(wireMessages);
+        await saveStoredConversation({
+          userId: lastKnownUserId,
+          items: [...this.items],
+          wireMessages,
+          updatedAt: Date.now(),
+        });
+      }
     }
   }
 
