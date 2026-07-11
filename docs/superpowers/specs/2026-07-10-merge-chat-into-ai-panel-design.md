@@ -74,9 +74,13 @@ layout.
   - `workflows.md` — segmentation & analysis, similar-object search, RNA spots
   - `sharing-projects-zenodo.md` — sharing, projects, Zenodo publishing
 
-The base agent prompt lists the available topic slugs + one-line descriptions
-(built by the backend from the `help/` dir at load) so the model knows what it
-can pull. The terse **`claude_suggest_tools`** system prompt is unrelated and
+The base agent prompt lists the available topic slugs (built by the backend
+from the `help/` dir at load) so the model knows what it can pull. **As built,
+the index is bare slugs, not slug+description** — the slugs (`image-processing`,
+`troubleshooting`, `annotation-tools`, …) are self-descriptive enough for topic
+selection, and one-line descriptions would add always-on prompt tokens for
+marginal routing benefit (deliberate simplification, confirmed in the final
+review). The terse **`claude_suggest_tools`** system prompt is unrelated and
 stays as-is.
 
 ## New tool: `read_help_topic`
