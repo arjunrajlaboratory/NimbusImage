@@ -52,7 +52,7 @@
 
 ---
 
-## Task A1: Curate the prompt into concepts core + help topics
+## Task 1: Curate the prompt into concepts core + help topics (Phase A)
 
 **Files:**
 - Create: `devops/girder/plugins/girder-claude-chat/girder_claude_chat/concepts_core.md`
@@ -106,7 +106,7 @@ git commit -m "Split chat knowledge base into concepts core + help topics"
 
 ---
 
-## Task A2: Backend — load knowledge, assemble prompt, serve topics
+## Task 2: Backend — load knowledge, assemble prompt, serve topics (Phase A)
 
 **Files:**
 - Modify: `devops/girder/plugins/girder-claude-chat/girder_claude_chat/__init__.py`
@@ -114,7 +114,7 @@ git commit -m "Split chat knowledge base into concepts core + help topics"
 - Test: `devops/girder/plugins/girder-claude-chat/tests/test_plugin.py`
 
 **Interfaces:**
-- Consumes: `concepts_core.md` and `help/*.md` from Task A1.
+- Consumes: `concepts_core.md` and `help/*.md` from Task 1.
 - Produces: `ClaudeAgentResource.help_topics: dict[str, str]`; `ClaudeAgentResource.get_help_topic_markdown(topic) -> str` (raises `RestException(400)` on unknown); a `GET /api/v1/claude_agent/help?topic=<slug>` route returning `{'topic', 'markdown'}`; the concepts core + topic index folded into `self.system_prompt`.
 
 - [ ] **Step 1: Write the failing test** in `tests/test_plugin.py` (append):
@@ -275,7 +275,7 @@ git commit -m "Serve help topics and fold concepts core into the agent prompt"
 
 ---
 
-## Task A3: Frontend — `read_help_topic` tool
+## Task 3: Frontend — `read_help_topic` tool (Phase A)
 
 **Files:**
 - Modify: `devops/girder/plugins/girder-claude-chat/girder_claude_chat/agent_tools.json`
@@ -284,7 +284,7 @@ git commit -m "Serve help topics and fold concepts core into the agent prompt"
 - Test: `src/agent/executors.test.ts`
 
 **Interfaces:**
-- Consumes: `GET claude_agent/help?topic=` from Task A2.
+- Consumes: `GET claude_agent/help?topic=` from Task 2.
 - Produces: `AgentAPI.getHelpTopic(topic: string): Promise<string>`; a `read_help_topic` registry executor returning `{ topic, markdown }`.
 
 - [ ] **Step 1: Add the tool schema** — append this object as the **last** element of the array in `agent_tools.json` (the backend puts the cache breakpoint on the last tool, so order matters — last is correct):
@@ -391,7 +391,7 @@ git commit -m "Add read_help_topic agent tool"
 
 ---
 
-## Task B1: `conversationStore.ts` — IndexedDB persistence
+## Task 4: `conversationStore.ts` — IndexedDB persistence (Phase B)
 
 **Files:**
 - Create: `src/agent/conversationStore.ts`
@@ -562,7 +562,7 @@ git commit -m "Add IndexedDB conversation store for the AI panel"
 
 ---
 
-## Task B2: Wire persistence into `aiPanel.ts`
+## Task 5: Wire persistence into `aiPanel.ts` (Phase B)
 
 **Files:**
 - Modify: `src/store/aiPanel.ts`
@@ -570,7 +570,7 @@ git commit -m "Add IndexedDB conversation store for the AI panel"
 - Test: `src/store/aiPanel.test.ts`
 
 **Interfaces:**
-- Consumes: `loadStoredConversation` / `saveStoredConversation` / `clearStoredConversation` (Task B1), `pruneOldScreenshots` (existing).
+- Consumes: `loadStoredConversation` / `saveStoredConversation` / `clearStoredConversation` (Task 4), `pruneOldScreenshots` (existing).
 - Produces: `AiPanel.setItems(items)`, `AiPanel.clearConversationAndStorage()`; `handleAuthenticatedUserChange` and `sendUserMessage` become persistence-aware.
 
 - [ ] **Step 1: Write the failing tests** in `src/store/aiPanel.test.ts`. Add a `conversationStore` mock near the other `vi.mock` calls:
@@ -781,7 +781,7 @@ git commit -m "Persist the AI-panel conversation per user via IndexedDB"
 
 ---
 
-## Task C1: Relocate `getToolSuggestions`, delete `ChatAPI.ts`
+## Task 6: Relocate `getToolSuggestions`, delete `ChatAPI.ts` (Phase C)
 
 **Files:**
 - Create: `src/store/ToolSuggestionsAPI.ts`
@@ -883,7 +883,7 @@ git commit -m "Move getToolSuggestions to ToolSuggestionsAPI; drop ChatAPI"
 
 ---
 
-## Task C2: Delete the chat component and store, clean up `App.vue`
+## Task 7: Delete the chat component and store, clean up `App.vue` (Phase C)
 
 **Files:**
 - Delete: `src/components/ChatComponent.vue`, `src/store/chat.ts`
@@ -935,7 +935,7 @@ git commit -m "Remove Nimbus Chat component and store; AI panel is the sole surf
 
 ---
 
-## Task C3: Remove the `claude_chat` backend endpoint
+## Task 8: Remove the `claude_chat` backend endpoint (Phase C)
 
 **Files:**
 - Modify: `devops/girder/plugins/girder-claude-chat/girder_claude_chat/__init__.py`
@@ -998,6 +998,6 @@ Then, to exercise it live: `docker compose build girder && docker compose up -d 
 
 ## Self-review notes
 
-- **Spec coverage:** knowledge hybrid (A1–A3), walkthroughs kept as `interface-navigation` (A1), backend package for topics (A2, setup.py), persist both transcript + wire (B2), screenshots pruned before write (B2 step 7), snapshot/revert not persisted (unchanged — B2 touches neither), single-record wipe-on-different-user (B2 steps 5), backend-DB deferral (no task — correct), chat removal + `getToolSuggestions` relocation (C1–C3). All covered.
-- **Naming consistency:** `getHelpTopic` (AgentAPI) ↔ `read_help_topic` (tool/executor) ↔ `get_help_topic` / `get_help_topic_markdown` (backend) are intentionally distinct layers; `loadStoredConversation`/`saveStoredConversation`/`clearStoredConversation` used identically in B1 and B2; `clearConversationAndStorage` defined in B2 step 6 and referenced in B2 step 8.
-- **Ordering:** Phase A and B are independent; Phase C must come last (C1 before C2/C3 so `toolSuggestionsAPI` exists before `ChatAPI` is deleted).
+- **Spec coverage:** knowledge hybrid (Tasks 1–3), walkthroughs kept as `interface-navigation` (Task 1), backend package for topics (Task 2, setup.py), persist both transcript + wire (Task 5), screenshots pruned before write (Task 5 step 7), snapshot/revert not persisted (unchanged — Task 5 touches neither), single-record wipe-on-different-user (Task 5 step 5), backend-DB deferral (no task — correct), chat removal + `getToolSuggestions` relocation (Tasks 6–8). All covered.
+- **Naming consistency:** `getHelpTopic` (AgentAPI) ↔ `read_help_topic` (tool/executor) ↔ `get_help_topic` / `get_help_topic_markdown` (backend) are intentionally distinct layers; `loadStoredConversation`/`saveStoredConversation`/`clearStoredConversation` used identically in Tasks 4 and 5; `clearConversationAndStorage` defined in Task 5 step 6 and referenced in Task 5 step 8.
+- **Ordering:** Phases A and B are independent; Phase C must come last (Task 6 before Tasks 7/8 so `toolSuggestionsAPI` exists before `ChatAPI` is deleted).
