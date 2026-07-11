@@ -250,6 +250,9 @@ describe("AI panel persistence", () => {
   // test's own handleAuthenticatedUserChange call is a genuine transition.
   beforeEach(async () => {
     await aiPanel.handleAuthenticatedUserChange(null);
+    mockSave.mockClear();
+    mockLoad.mockClear();
+    mockClearStore.mockClear();
   });
 
   it("saves the conversation after a completed turn", async () => {
@@ -295,5 +298,39 @@ describe("AI panel persistence", () => {
     await aiPanel.clearConversationAndStorage();
     expect(mockClearStore).toHaveBeenCalled();
     expect(aiPanel.items).toHaveLength(0);
+  });
+
+  it("restores after a reload (null fire then the same user) without wiping", async () => {
+    // The module-level `lastKnownUserId` this describe's own beforeEach
+    // leaves behind is already `null` (not `undefined`), which makes
+    // `handleAuthenticatedUserChange(null)` a guaranteed no-op regardless of
+    // Fix 1 (userId === lastKnownUserId short-circuits before the wipe
+    // branch). The real boot bug only reproduces on the very first call ever
+    // made against the module, when lastKnownUserId is still `undefined` --
+    // so exercise a genuinely fresh module instance here (same pattern as
+    // src/pipelines/onnxModels.test.ts) instead of the already-imported
+    // `aiPanel` singleton the other tests in this file share.
+    vi.resetModules();
+    const { default: freshAiPanel } = await import("./aiPanel");
+    const {
+      loadStoredConversation: freshLoad,
+      clearStoredConversation: freshClear,
+    } = (await import("@/agent/conversationStore")) as any;
+
+    // Boot fires the watcher with null first (identity not yet resolved),
+    // then again with the real id once the user fetch resolves.
+    await freshAiPanel.handleAuthenticatedUserChange(null);
+    expect(freshClear).not.toHaveBeenCalled(); // the null fire must NOT wipe
+
+    freshLoad.mockResolvedValueOnce({
+      userId: "userA",
+      items: [{ kind: "assistant", text: "from before reload" }],
+      wireMessages: [],
+      updatedAt: 1,
+    });
+    await freshAiPanel.handleAuthenticatedUserChange("userA");
+    expect(
+      freshAiPanel.items.some((i: any) => i.text === "from before reload"),
+    ).toBe(true);
   });
 });

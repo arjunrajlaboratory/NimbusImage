@@ -292,11 +292,18 @@ export class AiPanel extends VuexModule {
     if (userId === lastKnownUserId) {
       return;
     }
+    const previousUserId = lastKnownUserId;
     lastKnownUserId = userId;
     // Drop the in-memory conversation (also stops any in-flight run).
     this.clearConversation(true);
     if (!userId) {
-      await clearStoredConversation();
+      // Only a genuine logout (transition FROM a known user) wipes storage.
+      // The first boot fire is `null` before the async user fetch resolves;
+      // treating that as a logout would erase the returning user's saved
+      // conversation before we ever learn their id.
+      if (previousUserId) {
+        await clearStoredConversation();
+      }
       return;
     }
     const stored = await loadStoredConversation();
