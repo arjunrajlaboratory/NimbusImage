@@ -19,9 +19,15 @@ chat entirely, leaving one entry point.
 
 ## Decisions (confirmed with user)
 
-1. **Knowledge = hybrid.** A small curated *concepts core* is concatenated into
-   the cached agent system prompt (always on); the depth lives in per-topic
-   `.md` files fetched on demand by a new **`read_help_topic`** tool.
+1. **Knowledge = hybrid, but near-lossless.** A small *concepts core* is
+   concatenated into the cached agent system prompt (always on); the depth lives
+   in per-topic `.md` files fetched on demand by a new **`read_help_topic`**
+   tool. The split is a **reorganization, not a compression** — the topic files
+   preserve the original `system_prompt_2.txt` prose essentially verbatim (only
+   dropping genuine duplication and re-pointing "click here" UI directions where
+   the agent now has a tool). We are not trying to shrink the knowledge base;
+   progressive disclosure just controls *when* it enters context, not *how much*
+   of it exists.
 2. **Keep the walkthroughs.** The procedural "how do I do this myself in the UI"
    content is *not* dropped — it becomes one of the help topics, so a user who
    wants to learn to do it by hand still gets a real answer. It just stays out
@@ -29,23 +35,32 @@ chat entirely, leaving one entry point.
    behavior.
 3. **Topic files live in the backend package** (single source of truth, shipped
    the same way as `agent_system_prompt.txt` / `agent_tools.json`).
-4. **Persist both** the display transcript and the wire history, so a reloaded
-   conversation is continuable (the model still remembers).
+4. **Persist both** the display transcript and the wire history to browser-local
+   IndexedDB, so a reloaded conversation is continuable (the model still
+   remembers).
 5. **Cut screenshots before persisting** (reuse `pruneOldScreenshots`).
 6. **Do not persist** `turnSnapshot` / `canRevert` — session-only.
-7. **One conversation per user** (keyed by user id). Chosen for simplicity and
-   because the chatbot will likely extend across the whole interface later, not
-   stay dataset-bound.
+7. **Single stored conversation, wiped when a different user logs in.** One slot,
+   tagged with the owning user id; the same user (incl. after a reload) restores
+   it, a different user wipes it. No per-user history map.
+8. **Durable/backend persistence is explicitly deferred.** Storing conversations
+   server-side (cross-device, shareable, in Mongo) is a plausible future want but
+   out of scope here — browser-local IndexedDB is all v1 needs.
 
 ## Knowledge architecture
 
-`system_prompt_2.txt` becomes *source material*, curated and split, then deleted:
+`system_prompt_2.txt` is **split, not summarized**: its sections move into the
+files below with their prose intact. Nothing is deleted except literal
+duplication; the source file is removed only once its content lives in the new
+layout.
 
-- **Concepts core → agent system prompt** (backend, cached prefix, ~1–2k
-  tokens): the vocabulary the agent needs — objects, connections, properties,
-  tags, datasets vs collections, what a property/annotation worker is. Derived
-  from the prompt's "Core Concepts" section.
-- **Depth → `help/*.md` topic files** (backend package), each self-contained:
+- **Concepts core → agent system prompt** (backend, cached prefix): the
+  vocabulary the agent needs to reason and to route to topics — objects,
+  connections, properties, tags, datasets vs collections, what a property/
+  annotation worker is. This is the prompt's "Core Concepts" section carried
+  over, lightly trimmed; keep it faithful rather than terse.
+- **Depth → `help/*.md` topic files** (backend package), each a near-verbatim
+  slice of the original, self-contained:
   - `file-formats.md` — supported formats, uploading
   - `interface-navigation.md` — navigating the UI, basic viewing/manipulation,
     tool-creation UI (the **kept walkthroughs**, decision #2)
@@ -85,22 +100,24 @@ topics a conversation pulls; acceptable for v1.
 ## Persistence
 
 New unit `src/agent/conversationStore.ts` — a small, testable IndexedDB wrapper
-(own DB, e.g. `AgentConversationDB`, one object store keyed by user id). No
-Vuex reactivity (native IDB objects break under proxies, same constraint chat
-had). Record: `{ userId, items, wireMessages, updatedAt }`.
+(own DB, e.g. `AgentConversationDB`, a **single** stored record, not a per-user
+map). No Vuex reactivity (native IDB objects break under proxies, same
+constraint chat had). Record: `{ userId, items, wireMessages, updatedAt }`.
 
-- **Save**: after each completed turn in `sendUserMessage` and after
-  `clearConversation`; `pruneOldScreenshots(wireMessages)` runs before write so
-  base64 images never hit disk.
-- **Load**: `handleAuthenticatedUserChange(userId)` stops clearing blindly —
-  when the id changes it loads that user's persisted conversation into the
-  in-memory `items` + `wireMessages` (or empties them if none), so switching
-  accounts swaps histories instead of just wiping.
-- **Clear button** wipes the in-memory conversation **and** the persisted record
-  for the current user (explicit user intent).
+- **Save**: after each completed turn in `sendUserMessage`; `pruneOldScreenshots
+  (wireMessages)` runs before write so base64 images never hit disk. The record
+  is tagged with the current user id.
+- **Restore + wipe rule**: on load (and whenever `handleAuthenticatedUserChange`
+  fires), compare the stored record's `userId` to the current user. Same user →
+  restore `items` + `wireMessages` into memory. Different user (or no stored
+  record) → wipe the record and start empty. So a reload by the same user keeps
+  the conversation; a different user logging in clears it (decision #7).
+- **Clear button** wipes the in-memory conversation **and** the stored record.
 - **Not persisted**: `turnSnapshot`, `canRevert`, pending approvals — restoring
   them stale is meaningless; on reload `canRevert` is false.
 - Login-gated (`canUseAiPanel` requires a user), so there is no anonymous bucket.
+- **Deferred (decision #8):** durable server-side storage in Mongo. IndexedDB is
+  the whole persistence story for v1; no backend schema, endpoint, or migration.
 
 ## Removals & relocations
 
@@ -118,8 +135,9 @@ had). Record: `{ userId, items, wireMessages, updatedAt }`.
 
 - `conversationStore.ts`: save/load/clear round-trips against a fake/in-memory
   IndexedDB; screenshot pruning on write.
-- `aiPanel.ts`: user-change loads the right persisted conversation; clear wipes
-  persistence; a persisted wire history is resent verbatim on the next turn.
+- `aiPanel.ts`: same-user restore rehydrates `items` + `wireMessages`; a
+  different-user id wipes the stored record; clear wipes persistence; a restored
+  wire history is resent verbatim on the next turn.
 - `read_help_topic` executor: returns topic text; unknown slug → `ToolExecution
   Error` with the valid slugs.
 - Backend: `help` route returns known topics, 400s on unknown/malformed slug,
@@ -135,12 +153,14 @@ plugin package — needs a `docker compose build girder && up -d` to go live
 
 ## Open items / risks
 
-- **Curation quality** is the real work: faithfully compressing the concepts
-  core and splitting topics without losing accuracy. Worth a human read of the
-  generated `help/*.md` against the original.
-- **Persistence semantics** (switch-user load vs clear-button wipe vs per-turn
-  save) are the fiddliest part; the implementation plan should pin the exact
-  `handleAuthenticatedUserChange` / `clearConversation` control flow.
+- **Faithful split** is the real work: moving `system_prompt_2.txt` into the
+  concepts core + topics without losing content (decision #1 — reorganize, don't
+  compress). Worth a human read of the generated `help/*.md` against the original
+  to confirm nothing was silently dropped.
+- **Persistence semantics** (same-user restore vs different-user wipe vs per-turn
+  save vs clear-button wipe) are the fiddliest part; the implementation plan
+  should pin the exact `handleAuthenticatedUserChange` / `clearConversation`
+  control flow, including the load-then-identity-check order on first mount.
 - Continuing a persisted conversation after reloading on a *different* dataset
   relies on the existing dataset-identity guards (round-1 finding #1 / round-3
   R3-1) — no new mechanism needed, but worth a live check.
