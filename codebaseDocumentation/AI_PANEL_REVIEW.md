@@ -125,3 +125,61 @@ button need the same treatment (the spec says "same as chat today")?
   turn's dataset.
 - #3 → sweep for any other runtime asset loaded from `PLUGIN_DIR` rather than
   `PACKAGE_DIR`.
+
+---
+
+# Round 2 — /branch-review 2026-07-10 (post view/settings + property tools)
+
+Second review round after the view/settings, property-chain, and `create_tool`
+tools landed. All five verified real and current before fixing.
+
+## [R2-1] `get_property_values` RangeError on large datasets
+**Location:** `src/agent/executors.ts` (get_property_values stats loop)
+**Severity:** Medium · **Status:** fixed (pending commit)
+
+`Math.min(...values)` / `Math.max(...values)` spread an uncapped per-annotation
+array, throwing `RangeError` past the engine's argument limit (~65k) — reachable
+on the large datasets this tool targets. Replaced with a single-pass loop
+computing sum/min/max. Test: "get_property_values handles a very large value set
+without RangeError" (200k values). Sweep: only spread-on-unbounded-array in the
+branch diff (`git diff master…HEAD | grep 'Math\.(min|max)\(\.\.\.'`).
+
+## [R2-2] `set_scale` mutated shared config but was not gated or revertable
+**Location:** `src/agent/executors.ts` (set_scale entry), `src/store/aiPanel.ts` (VIEW_STATE_TOOLS)
+**Severity:** Medium · **Status:** fixed (pending commit) — decided: **gate it** (2026-07-10)
+
+`set_scale` changes the shared collection's physical units for every user and
+reprojects every physical-unit measurement, yet was neither gated nor captured
+by the per-turn revert snapshot (scales are configuration, not view state). Per
+the user's decision, added `gated: true` so it requires confirmation like the
+other shared-config mutators (`create_tool`, `create_property`). Spec "as-built"
+note updated. Test: `isGatedTool("set_scale") === true`.
+
+## [R2-3] Duplicate `case "set_camera"` made the fit label dead code
+**Location:** `src/agent/executors.ts` (describeAgentToolCall)
+**Severity:** Low · **Status:** fixed (pending commit)
+
+Two `case "set_camera"` labels; the second (fit-aware) was unreachable, so a
+`{fit}` call rendered "Move the camera" instead of "Fit the view to …". Merged
+`fit` into the first case and deleted the duplicate. Test: describeAgentToolCall
+set_camera fit/zoom. Sweep: no other duplicate switch labels in executors.ts.
+
+## [R2-4] Rate limiter never evicted idle keys
+**Location:** `devops/girder/plugins/girder-claude-chat/girder_claude_chat/rate_limit.py`
+**Severity:** Nit · **Status:** fixed (pending commit)
+
+`_request_times` (defaultdict keyed by user id) kept stale timestamps for
+abandoned keys forever — a slow, single-process leak. Added `_sweep_expired`,
+run at most once per window from `check()`. Tests: `testEvictsIdleKeys`,
+`testActiveKeyIsNotEvicted` (existing 4 still pass).
+
+## [R2-5] `scale as any` discarded the validated unit type
+**Location:** `src/agent/executors.ts` (set_scale apply)
+**Severity:** Nit · **Status:** fixed (pending commit)
+
+Replaced `scale as any` with a narrowing cast to
+`IScaleInformation<TUnitLength | TUnitTime>` (the unit is validated against the
+allowed list immediately above). tsc-covered; no runtime test.
+
+**Gates:** `pnpm tsc` clean · eslint clean · vitest `executors.test.ts` 58/58 ·
+rate_limit tests 6/6 · flake8 clean.

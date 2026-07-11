@@ -15,7 +15,10 @@
 > - **Property chain** — `list_properties`, `create_property` (gated),
 >   `compute_property` (gated), `get_property_values` (summary stats).
 > - **`set_display_options`** (draw/opacity/scalebar/background/connections),
->   **`set_view_mode`** (2D/3D), **`set_scale`** (pixel/z/time units).
+>   **`set_view_mode`** (2D/3D), **`set_scale`** (pixel/z/time units — **gated**:
+>   it mutates the shared collection for every user and is not captured by the
+>   per-turn revert snapshot, so unlike the other Tier-2 view tools it requires
+>   confirmation).
 > - **`set_camera` `fit`** ("annotations"/"selection"/"full"),
 >   **`update_layer` `contrastScope`** (view vs shared configuration),
 >   property-value filters in **`set_annotation_filter`**.

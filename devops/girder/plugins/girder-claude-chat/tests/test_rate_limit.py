@@ -30,3 +30,25 @@ def testKeysAreIndependent():
     assert limiter.check('alice', now=0.0)
     assert not limiter.check('alice', now=1.0)
     assert limiter.check('bob', now=1.0)
+
+
+def testEvictsIdleKeys():
+    # A key that goes idle past the window must not linger in the map forever;
+    # a later request for a different key triggers a sweep that drops it.
+    limiter = SlidingWindowRateLimiter(max_requests=2, window_seconds=60)
+    assert limiter.check('alice', now=0.0)
+    assert 'alice' in limiter._request_times
+    # A request past alice's window (and past the sweep interval) evicts her.
+    assert limiter.check('bob', now=61.0)
+    assert 'alice' not in limiter._request_times
+    assert 'bob' in limiter._request_times
+
+
+def testActiveKeyIsNotEvicted():
+    # A key still inside its window survives sweeps triggered by other keys.
+    limiter = SlidingWindowRateLimiter(max_requests=5, window_seconds=60)
+    assert limiter.check('alice', now=0.0)
+    assert limiter.check('alice', now=59.0)
+    # now=61 triggers a sweep; alice's newest request (t=59) is still in-window.
+    assert limiter.check('bob', now=61.0)
+    assert 'alice' in limiter._request_times

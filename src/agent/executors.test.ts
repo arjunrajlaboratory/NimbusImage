@@ -302,6 +302,16 @@ describe("describeAgentToolCall", () => {
       "My Blob Tool",
     );
   });
+
+  it("describes a set_camera fit as fitting the view", () => {
+    expect(describeAgentToolCall("set_camera", { fit: "annotations" })).toBe(
+      "Fit the view to annotations",
+    );
+    // A zoom-only call keeps its own description.
+    expect(describeAgentToolCall("set_camera", { zoom: 3 })).toBe(
+      "Zoom to level 3",
+    );
+  });
 });
 
 describe("isGatedTool", () => {
@@ -309,6 +319,10 @@ describe("isGatedTool", () => {
     expect(isGatedTool("run_worker")).toBe(true);
     expect(isGatedTool("set_location")).toBe(false);
     expect(isGatedTool("get_interface_state")).toBe(false);
+  });
+
+  it("gates set_scale (mutates the shared collection, not revertable)", () => {
+    expect(isGatedTool("set_scale")).toBe(true);
   });
 });
 
@@ -1050,6 +1064,35 @@ describe("property tools", () => {
       context,
     );
     expect(result.stats[0]).toMatchObject({ count: 1, mean: 10 });
+  });
+
+  it("get_property_values handles a very large value set without RangeError", async () => {
+    // Spreading an uncapped array into Math.min/max throws past the engine's
+    // argument limit (~65k). Use enough values to exceed it comfortably.
+    const count = 200000;
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    const annotations: any[] = [];
+    const propertyValues: { [id: string]: any } = {};
+    for (let i = 0; i < count; i++) {
+      const id = `a${i}`;
+      annotations.push(makeAnnotation({ id }));
+      propertyValues[id] = { prop1: { mean: i } };
+    }
+    mockAnnotations.annotations = annotations;
+    mockProperties.propertyValues = propertyValues;
+    mockProperties.computedPropertyPaths = [["prop1", "mean"]];
+
+    const { result } = await executeAgentTool(
+      "get_property_values",
+      {},
+      context,
+    );
+    expect(result.stats[0]).toMatchObject({
+      count,
+      min: 0,
+      max: count - 1,
+      mean: (count - 1) / 2,
+    });
   });
 });
 

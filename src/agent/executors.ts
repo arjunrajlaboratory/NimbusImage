@@ -12,10 +12,13 @@ import {
   IDisplayLayer,
   IErrorInfoList,
   IProgressInfo,
+  IScaleInformation,
   IToolConfiguration,
   IWorkerInterfaceValues,
   PropertyFilterMode,
   TLayerMode,
+  TUnitLength,
+  TUnitTime,
 } from "@/store/model";
 import {
   captureInterfaceScreenshot,
@@ -750,6 +753,11 @@ const registry: { [name: string]: IAgentToolEntry } = {
   },
 
   set_scale: {
+    // Changes the shared collection's physical units for every user and
+    // reprojects every physical-unit measurement, and is not captured by the
+    // per-turn view snapshot (scales are configuration, not view state), so
+    // it is gated like the other shared-configuration mutators.
+    gated: true,
     execute: async (input: {
       pixelSize?: { value: number; unit: string };
       zStep?: { value: number; unit: string };
@@ -776,7 +784,15 @@ const registry: { [name: string]: IAgentToolEntry } = {
             `${itemId} unit must be one of: ${units.join(", ")}`,
           );
         }
-        main.saveScaleInConfiguration({ itemId, scale: scale as any });
+        // scale.unit was just validated against the allowed unit list, so the
+        // narrowing cast to the branded unit type is sound here.
+        main.saveScaleInConfiguration({
+          itemId,
+          scale: {
+            value: scale.value,
+            unit: scale.unit as TUnitLength | TUnitTime,
+          } as IScaleInformation<TUnitLength | TUnitTime>,
+        });
       };
       let changed = false;
       if (input.pixelSize) {
@@ -1316,7 +1332,22 @@ const registry: { [name: string]: IAgentToolEntry } = {
         if (values.length === 0) {
           continue;
         }
-        const sum = values.reduce((acc, n) => acc + n, 0);
+        // Single pass rather than sum-reduce + Math.min(...values): `values`
+        // has one entry per matching annotation and is uncapped, so spreading
+        // it into Math.min/max throws RangeError past the engine's argument
+        // limit (~65k) — reachable on the large datasets this tool targets.
+        let sum = 0;
+        let min = Infinity;
+        let max = -Infinity;
+        for (const value of values) {
+          sum += value;
+          if (value < min) {
+            min = value;
+          }
+          if (value > max) {
+            max = value;
+          }
+        }
         stats.push({
           propertyId,
           property: nameOf(propertyId),
@@ -1325,8 +1356,8 @@ const registry: { [name: string]: IAgentToolEntry } = {
           propertyPath: path,
           count: values.length,
           mean: sum / values.length,
-          min: Math.min(...values),
-          max: Math.max(...values),
+          min,
+          max,
         });
       }
       return { result: { stats } };
@@ -1436,6 +1467,9 @@ export function describeAgentToolCall(name: string, input: any): string {
       return `Move to ${parts.join(", ") || "current location"}`;
     }
     case "set_camera":
+      if (typeof input?.fit === "string") {
+        return `Fit the view to ${input.fit}`;
+      }
       return input?.zoom != null && input?.center == null
         ? `Zoom to level ${input.zoom}`
         : "Move the camera";
@@ -1485,10 +1519,6 @@ export function describeAgentToolCall(name: string, input: any): string {
           : "";
       return `Set up a ${kind} tool${channel}`;
     }
-    case "set_camera":
-      return typeof input?.fit === "string"
-        ? `Fit the view to ${input.fit}`
-        : "Move the camera";
     case "set_display_options":
       return "Change viewer display options";
     case "set_view_mode":
