@@ -49,6 +49,6 @@ def testActiveKeyIsNotEvicted():
     limiter = SlidingWindowRateLimiter(max_requests=5, window_seconds=60)
     assert limiter.check('alice', now=0.0)
     assert limiter.check('alice', now=59.0)
-    # now=61 triggers a sweep; alice's newest request (t=59) is still in-window.
+    # now=61 triggers a sweep; alice's newest request (t=59) is in-window.
     assert limiter.check('bob', now=61.0)
     assert 'alice' in limiter._request_times

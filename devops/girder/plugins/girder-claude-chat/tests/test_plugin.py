@@ -26,8 +26,8 @@ def testAgentEndpointLoadsPackagedAssets(monkeypatch):
 def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
     # AGENT_MAX_TOKENS is above the SDK's non-streaming ceiling (~21k), so the
     # agent endpoint must use the streaming API (client.messages.stream) or the
-    # SDK raises "Streaming is required...". It still aggregates server-side and
-    # returns one JSON response with the same shape as before.
+    # SDK raises "Streaming is required...". It still aggregates server-side
+    # and returns one JSON response with the same shape as before.
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
     resource = ClaudeAgentResource()
 
@@ -77,7 +77,10 @@ def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
         'usage': {'input_tokens': 11, 'output_tokens': 7},
     }
     assert fake_messages.stream_kwargs['model'] == CLAUDE_MODEL
-    assert fake_messages.stream_kwargs['max_tokens'] == resource.AGENT_MAX_TOKENS
+    assert (
+        fake_messages.stream_kwargs['max_tokens']
+        == resource.AGENT_MAX_TOKENS
+    )
     # The bump the whole change is about; also keeps us above the non-streaming
     # ceiling so streaming stays mandatory.
     assert resource.AGENT_MAX_TOKENS > 21333
@@ -128,7 +131,9 @@ def testAgentEndpointStripsApiExcludedBlockFields(monkeypatch):
 
     resource.client = SimpleNamespace(messages=FakeMessages())
 
-    result = resource._stream_agent_response([{'role': 'user', 'content': 'x'}])
+    result = resource._stream_agent_response(
+        [{'role': 'user', 'content': 'x'}]
+    )
     assert result['content'] == [{'type': 'text', 'text': 'ok'}]
     assert 'parsed_output' not in result['content'][0]
 
