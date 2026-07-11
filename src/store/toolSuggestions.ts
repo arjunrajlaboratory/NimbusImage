@@ -197,7 +197,7 @@ export class ToolSuggestions extends VuexModule {
       const layers = buildLayerContext();
 
       const rawSuggestions: IToolSuggestion[] =
-        await main.chatAPI.getToolSuggestions({
+        await main.toolSuggestionsAPI.getToolSuggestions({
           images,
           catalog,
           channels,

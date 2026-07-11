@@ -23,7 +23,7 @@ vi.mock("./index", () => ({
     layers: [] as any[],
     toolTemplateList: [] as any[],
     maps: [] as any[],
-    chatAPI: { getToolSuggestions: vi.fn() },
+    toolSuggestionsAPI: { getToolSuggestions: vi.fn() },
     addToolToConfiguration: vi.fn(),
     addToolsToConfiguration: vi.fn(),
   },
@@ -185,7 +185,7 @@ describe("toolSuggestions store", () => {
       layers: [],
       toolTemplateList: [],
       maps: [],
-      chatAPI: { getToolSuggestions: vi.fn() },
+      toolSuggestionsAPI: { getToolSuggestions: vi.fn() },
       addToolToConfiguration: vi.fn(),
       addToolsToConfiguration: vi.fn(),
     });
@@ -203,7 +203,7 @@ describe("toolSuggestions store", () => {
 
       await toolSuggestions.maybeSuggestForCurrentConfiguration();
 
-      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(main.toolSuggestionsAPI.getToolSuggestions).not.toHaveBeenCalled();
     });
 
     it("is a no-op when there is no dataset", async () => {
@@ -212,7 +212,7 @@ describe("toolSuggestions store", () => {
 
       await toolSuggestions.maybeSuggestForCurrentConfiguration();
 
-      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(main.toolSuggestionsAPI.getToolSuggestions).not.toHaveBeenCalled();
     });
 
     it("is a no-op when the configuration already has tools", async () => {
@@ -224,7 +224,7 @@ describe("toolSuggestions store", () => {
 
       await toolSuggestions.maybeSuggestForCurrentConfiguration();
 
-      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(main.toolSuggestionsAPI.getToolSuggestions).not.toHaveBeenCalled();
       expect(toolSuggestions.seenConfigurationIds).not.toContain(
         "cfg-with-tools",
       );
@@ -237,7 +237,7 @@ describe("toolSuggestions store", () => {
 
       await toolSuggestions.maybeSuggestForCurrentConfiguration();
 
-      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(main.toolSuggestionsAPI.getToolSuggestions).not.toHaveBeenCalled();
     });
 
     it("marks the configuration seen and runs suggestForCurrentConfiguration otherwise", async () => {
@@ -258,12 +258,12 @@ describe("toolSuggestions store", () => {
         media_type: "image/png",
         data: "AAAA",
       });
-      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([]);
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockResolvedValue([]);
 
       await toolSuggestions.maybeSuggestForCurrentConfiguration();
 
       expect(toolSuggestions.seenConfigurationIds).toContain("cfg-fresh");
-      expect(main.chatAPI.getToolSuggestions).toHaveBeenCalledTimes(1);
+      expect(main.toolSuggestionsAPI.getToolSuggestions).toHaveBeenCalledTimes(1);
       expect(toolSuggestions.status).toBe("done");
     });
 
@@ -285,7 +285,7 @@ describe("toolSuggestions store", () => {
         media_type: "image/png",
         data: "AAAA",
       });
-      (main.chatAPI.getToolSuggestions as any).mockRejectedValue(
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockRejectedValue(
         new Error("boom"),
       );
 
@@ -341,7 +341,7 @@ describe("toolSuggestions store", () => {
     });
 
     it("loads the worker image list before building the catalog", async () => {
-      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([]);
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockResolvedValue([]);
 
       await toolSuggestions.suggestForCurrentConfiguration();
 
@@ -349,7 +349,7 @@ describe("toolSuggestions store", () => {
     });
 
     it("does not capture the full interface when the viewport screenshot succeeds", async () => {
-      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([]);
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockResolvedValue([]);
 
       await toolSuggestions.suggestForCurrentConfiguration();
 
@@ -362,7 +362,7 @@ describe("toolSuggestions store", () => {
       panel.setAttribute("data-tool-suggestions-panel", "");
       document.body.appendChild(panel);
       (captureViewportScreenshot as any).mockResolvedValue(null);
-      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([]);
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockResolvedValue([]);
 
       await toolSuggestions.suggestForCurrentConfiguration();
 
@@ -373,7 +373,7 @@ describe("toolSuggestions store", () => {
       main.configuration = makeConfiguration({ id: "cfg-a" });
       // While the request is in flight, the user navigates to another
       // collection; the resolved suggestions must be dropped.
-      (main.chatAPI.getToolSuggestions as any).mockImplementation(async () => {
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockImplementation(async () => {
         main.configuration = makeConfiguration({ id: "cfg-b" });
         return [{ toolId: "manual:blob", reason: "blobs", confidence: "high" }];
       });
@@ -385,7 +385,7 @@ describe("toolSuggestions store", () => {
     });
 
     it("sets status loading then done, and resolves suggestions from the catalog", async () => {
-      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockResolvedValue([
         {
           toolId: "worker:cellpose:latest",
           channelName: "DAPI",
@@ -436,7 +436,7 @@ describe("toolSuggestions store", () => {
       expect(blobResolved!.tool.values.image).toBeUndefined();
 
       // Catalog + channels sent to the backend.
-      const callArgs = (main.chatAPI.getToolSuggestions as any).mock
+      const callArgs = (main.toolSuggestionsAPI.getToolSuggestions as any).mock
         .calls[0][0];
       expect(callArgs.channels).toEqual(["DAPI", "GFP"]);
       expect(callArgs.layers).toEqual([
@@ -476,7 +476,7 @@ describe("toolSuggestions store", () => {
           color: "#FFFF00",
         }),
       ];
-      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockResolvedValue([
         {
           toolId: "manual:blob",
           channelName: "Channel 3",
@@ -493,7 +493,7 @@ describe("toolSuggestions store", () => {
         toolSuggestions.suggestions[0].tool.values.annotation
           .coordinateAssignments.layer,
       ).toBe("layer-3");
-      const callArgs = (main.chatAPI.getToolSuggestions as any).mock
+      const callArgs = (main.toolSuggestionsAPI.getToolSuggestions as any).mock
         .calls[0][0];
       expect(callArgs.layers).toEqual([
         {
@@ -508,7 +508,7 @@ describe("toolSuggestions store", () => {
     });
 
     it("drops suggestions that don't match any catalog entry", async () => {
-      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockResolvedValue([
         { toolId: "worker:unknown-image", reason: "?", confidence: "low" },
       ]);
 
@@ -519,7 +519,7 @@ describe("toolSuggestions store", () => {
     });
 
     it("sets status to error when the API call throws", async () => {
-      (main.chatAPI.getToolSuggestions as any).mockRejectedValue(
+      (main.toolSuggestionsAPI.getToolSuggestions as any).mockRejectedValue(
         new Error("network down"),
       );
 
@@ -538,7 +538,7 @@ describe("toolSuggestions store", () => {
       await toolSuggestions.suggestForCurrentConfiguration();
 
       expect(toolSuggestions.status).toBe("error");
-      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(main.toolSuggestionsAPI.getToolSuggestions).not.toHaveBeenCalled();
     });
 
     it("is a no-op when there is no dataset", async () => {
@@ -546,7 +546,7 @@ describe("toolSuggestions store", () => {
 
       await toolSuggestions.suggestForCurrentConfiguration();
 
-      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(main.toolSuggestionsAPI.getToolSuggestions).not.toHaveBeenCalled();
       expect(toolSuggestions.status).toBe("idle");
     });
   });
