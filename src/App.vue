@@ -346,23 +346,6 @@
         <server-status />
         <user-menu />
         <v-tooltip
-          text="Open NimbusImage chat for help with solving your particular image analysis problems"
-        >
-          <template v-slot:activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              :data-tour="TOUR_ANCHORS.chatButton"
-              v-tour-trigger="TOUR_TRIGGERS.chatButton"
-              variant="text"
-              icon
-              size="small"
-              @click="toggleChatbot"
-            >
-              <v-icon>mdi-chat</v-icon>
-            </v-btn>
-          </template>
-        </v-tooltip>
-        <v-tooltip
           v-if="canUseAiPanel"
           text="Open the Nimbus AI panel: an assistant that can drive the interface for you"
         >
@@ -381,7 +364,6 @@
       </div>
     </v-app-bar>
 
-    <chat-component v-if="chatbotOpen" @close="chatbotOpen = false" />
     <ai-panel
       v-if="aiPanelOpen && canUseAiPanel"
       @close="aiPanelOpen = false"
@@ -502,7 +484,6 @@ import volumeViewStore from "@/store/volumeView";
 import aiPanelStore from "@/store/aiPanel";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
-import ChatComponent from "@/components/ChatComponent.vue";
 import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
 import { IGirderFolder } from "@/girder";
@@ -525,7 +506,6 @@ void LayersPanel;
 void Toolset;
 void HelpPanel;
 void BreadCrumbs;
-void ChatComponent;
 void AiPanel;
 
 const route = useRoute();
@@ -541,7 +521,6 @@ const annotationPanel = ref(false);
 const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analyzePanel = ref(false);
-const chatbotOpen = ref(false);
 const aiPanelOpen = ref(false);
 
 // The AI panel is gated behind a build-time flag (enabled unless explicitly
@@ -554,24 +533,11 @@ const canUseAiPanel = computed(
   () => aiPanelFeatureEnabled && store.isLoggedIn && !!store.girderUser,
 );
 
-// The chat and AI panels render as floating cards at the same screen
-// position (bottom right), so they are mutually exclusive: opening one
-// closes the other.
-function toggleChatbot() {
-  chatbotOpen.value = !chatbotOpen.value;
-  if (chatbotOpen.value) {
-    aiPanelOpen.value = false;
-  }
-}
-
 function toggleAiPanel() {
   if (!canUseAiPanel.value) {
     return;
   }
   aiPanelOpen.value = !aiPanelOpen.value;
-  if (aiPanelOpen.value) {
-    chatbotOpen.value = false;
-  }
 }
 
 // Clear the AI-panel conversation whenever the authenticated user changes.
@@ -1046,7 +1012,6 @@ defineExpose({
   toolsPanel,
   layersPanel,
   analyzePanel,
-  chatbotOpen,
   aiPanelOpen,
   canUseAiPanel,
   isUploadLoading,

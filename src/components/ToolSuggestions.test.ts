@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
 
-// Mock the toolSuggestions store, following the ChatComponent.test.ts
-// approach: a plain mutable object the tests reassign before each mount.
+// Mock the toolSuggestions store: a plain mutable object the tests
+// reassign before each mount.
 vi.mock("@/store/toolSuggestions", () => ({
   default: {
     status: "idle",
