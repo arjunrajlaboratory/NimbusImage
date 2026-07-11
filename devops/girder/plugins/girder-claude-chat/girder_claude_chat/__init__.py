@@ -39,6 +39,13 @@ SYSTEM_PROMPT_PATH = os.path.join(
 AGENT_PROMPT_PATH = os.path.join(PACKAGE_DIR, 'agent_system_prompt.txt')
 AGENT_TOOLS_PATH = os.path.join(PACKAGE_DIR, 'agent_tools.json')
 
+# NimbusImage domain knowledge for the agent: a compact "core concepts"
+# primer that is always in context, plus a directory of deeper per-topic
+# help articles the model can fetch on demand via read_help_topic /
+# GET claude_agent/help?topic=<slug>. Same PACKAGE_DIR reasoning as above.
+CONCEPTS_CORE_PATH = os.path.join(PACKAGE_DIR, 'concepts_core.md')
+HELP_DIR = os.path.join(PACKAGE_DIR, 'help')
+
 # System prompt for the tool-suggestion endpoint. It is deliberately terse:
 # the real work is describing the image (which the vision model does well) and
 # mapping what it sees to the catalog of tools the frontend passes in.
@@ -228,18 +235,14 @@ class ClaudeAgentResource(Resource):
         super().__init__()
         self.resourceName = 'claude_agent'
         self.route('POST', (), self.agent_message)
+        self.route('GET', ('help',), self.get_help_topic)
 
         self._rate_limiter = SlidingWindowRateLimiter(
             self.RATE_LIMIT_MAX_REQUESTS, self.RATE_LIMIT_WINDOW_SECONDS
         )
 
-        try:
-            with open(AGENT_PROMPT_PATH, 'r') as f:
-                self.system_prompt = f.read().strip()
-            logger.info('Successfully loaded agent system prompt')
-        except IOError:
-            logger.error('Failed to load agent system prompt')
-            self.system_prompt = ''
+        self.help_topics = self._load_help_topics()
+        self.system_prompt = self._assemble_system_prompt()
 
         try:
             with open(AGENT_TOOLS_PATH, 'r') as f:
@@ -254,6 +257,55 @@ class ClaudeAgentResource(Resource):
             self.tools[-1]['cache_control'] = {'type': 'ephemeral'}
 
         self.client = _make_anthropic_client('claude_agent')
+
+    def _read_text(self, path):
+        try:
+            with open(path, 'r') as f:
+                return f.read().strip()
+        except IOError:
+            logger.error('Failed to read %s', path)
+            return ''
+
+    def _load_help_topics(self):
+        """Load help/<slug>.md into a {slug: markdown} dict."""
+        topics = {}
+        if not os.path.isdir(HELP_DIR):
+            logger.error('Help topic directory missing: %s', HELP_DIR)
+            return topics
+        for name in sorted(os.listdir(HELP_DIR)):
+            if name.endswith('.md'):
+                topics[name[:-3]] = self._read_text(
+                    os.path.join(HELP_DIR, name)
+                )
+        logger.info('Loaded %d help topics', len(topics))
+        return topics
+
+    def _assemble_system_prompt(self):
+        """Combine the base prompt, concepts core, and topic index."""
+        base = self._read_text(AGENT_PROMPT_PATH)
+        concepts = self._read_text(CONCEPTS_CORE_PATH)
+        index = ''
+        if self.help_topics:
+            slugs = '\n'.join(
+                '- ' + slug for slug in sorted(self.help_topics)
+            )
+            index = (
+                'When you need deeper detail on how a NimbusImage feature '
+                'works, or how the user can do something themselves in the '
+                'UI, call read_help_topic with one of these topics:\n'
+                + slugs
+            )
+        return '\n\n'.join(part for part in [base, concepts, index] if part)
+
+    def get_help_topic_markdown(self, topic):
+        """Return a topic's markdown, or raise RestException(400)."""
+        if not isinstance(topic, str) or topic not in self.help_topics:
+            raise RestException(
+                'Unknown help topic. Available: '
+                + ', '.join(sorted(self.help_topics)),
+                code=400,
+            )
+        return self.help_topics[topic]
 
     def _check_rate_limit(self, user_id):
         """Raise RestException(429) when the user exceeds the rate limit."""
@@ -323,6 +375,17 @@ class ClaudeAgentResource(Resource):
         except APIError as e:
             logger.error(f'Error in agent endpoint: {str(e)}', exc_info=True)
             return {'error': str(e)}
+
+    @access.user
+    @autoDescribeRoute(
+        Description('Fetch a NimbusImage help topic as markdown.')
+        .param('topic', 'Help topic slug', required=True)
+    )
+    def get_help_topic(self, topic):
+        return {
+            'topic': topic,
+            'markdown': self.get_help_topic_markdown(topic),
+        }
 
     def _stream_agent_response(self, messages):
         """Call the model and shape the response for the frontend.

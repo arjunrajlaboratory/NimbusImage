@@ -233,3 +233,23 @@ def testSuggestToolsRejectsMalformedRequests(monkeypatch, payload, message):
 
     assert excinfo.value.code == 400
     assert message in str(excinfo.value)
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAgentHelpTopicsPackagedAndValidated(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeAgentResource()
+    # Help topics ship inside the package and load.
+    assert resource.help_topics, 'help topics not packaged'
+    # The concepts core is folded into the cached system prompt.
+    assert 'object' in resource.system_prompt.lower()
+    # The topic index lists slugs so the model can choose one.
+    a_slug = sorted(resource.help_topics)[0]
+    assert a_slug in resource.system_prompt
+    # A known topic returns markdown; unknown/garbage 400s.
+    assert resource.get_help_topic_markdown(a_slug)
+    with pytest.raises(RestException) as excinfo:
+        resource.get_help_topic_markdown('does-not-exist')
+    assert excinfo.value.code == 400
+    with pytest.raises(RestException):
+        resource.get_help_topic_markdown(123)
