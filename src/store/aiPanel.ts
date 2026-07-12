@@ -93,6 +93,13 @@ let panelElement: HTMLElement | null = null;
 // job finishing minutes after its conversation was cleared) are dropped
 // instead of landing in an unrelated conversation.
 let conversationGeneration = 0;
+// Bumped once per hydration attempt, by handleAuthenticatedUserChange only, to
+// decide which invocation owns releasing the `hydrating` guard. Kept separate
+// from conversationGeneration (which clearConversation also bumps): a plain
+// clear during an in-flight hydration must not make that hydration mistake the
+// bump for a newer hydration and skip releasing the guard — that would strand
+// `hydrating` true and block every future send.
+let hydrationGeneration = 0;
 // Identity of the last authenticated user the conversation belonged to, so a
 // login/logout (client-side, no page reload) clears the prior user's history.
 // `undefined` until the first check runs.
@@ -322,6 +329,7 @@ export class AiPanel extends VuexModule {
     // generation now so we can tell, after the await, whether a newer change
     // superseded this one.
     const generationAtChange = conversationGeneration;
+    const hydrationAtChange = ++hydrationGeneration;
     hydrating = true;
     try {
       const stored = await loadStoredConversation();
@@ -345,9 +353,11 @@ export class AiPanel extends VuexModule {
         await clearStoredConversation();
       }
     } finally {
-      // Only release the guard if we're still the current change; a newer
-      // in-flight change owns it until it settles.
-      if (conversationGeneration === generationAtChange) {
+      // Release the guard unless a newer hydration started while we awaited —
+      // that newer one owns it and its own finally will release it. Gated on
+      // hydrationGeneration, not conversationGeneration, so a plain clear (which
+      // bumps only conversationGeneration) can't leave `hydrating` stuck true.
+      if (hydrationGeneration === hydrationAtChange) {
         hydrating = false;
       }
     }

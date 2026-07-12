@@ -30,6 +30,7 @@ vi.mock("@/agent/conversationStore", () => ({
   loadStoredConversation: vi.fn(async () => null),
   saveStoredConversation: vi.fn(async () => {}),
   clearStoredConversation: vi.fn(async () => {}),
+  selectPlotsForStorage: vi.fn(() => []),
 }));
 
 // Mocked relative to the module under test, same directory, so it resolves to
@@ -400,5 +401,29 @@ describe("AI panel persistence", () => {
     await aiPanel.sendUserMessage("now it works");
     expect(postAgentMessage).toHaveBeenCalled();
     expect(lastSentPayload()).toContain("now it works");
+  });
+
+  it("releases the hydration guard when cleared mid-load", async () => {
+    // A plain clearConversation during the hydration await bumps
+    // conversationGeneration. The guard release keys off a dedicated hydration
+    // counter, not conversationGeneration -- otherwise this in-flight hydration
+    // mistakes the clear for a newer hydration, skips releasing `hydrating`,
+    // and strands it true so every later send is silently swallowed.
+    let resolveLoad: (value: any) => void = () => {};
+    mockLoad.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+
+    const change = aiPanel.handleAuthenticatedUserChange("userCleared");
+    aiPanel.clearConversation(); // bumps conversationGeneration mid-hydration
+    resolveLoad(null);
+    await change;
+
+    // The guard must be released, so a subsequent send is not swallowed.
+    await aiPanel.sendUserMessage("after the clear");
+    expect(postAgentMessage).toHaveBeenCalled();
+    expect(lastSentPayload()).toContain("after the clear");
   });
 });
