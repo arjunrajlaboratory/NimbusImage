@@ -33,6 +33,14 @@ import {
 const AUTO_SUGGEST_ENABLED = true;
 const TOOL_SUGGESTIONS_PANEL_SELECTOR = "[data-tool-suggestions-panel]";
 
+// A collection counts as "freshly created" for this long after its creation
+// timestamp. Auto-suggest only fires inside this window, so reopening or
+// reloading an established collection never re-triggers it. The in-session
+// `seenConfigurationIds` guard prevents duplicates within a single session, so
+// this window only needs to distinguish "just created" from "opened again
+// later" — a comfortable value is fine.
+const RECENT_COLLECTION_WINDOW_MS = 5 * 60 * 1000;
+
 // Manual (non-worker) tools we can offer. Currently just a blob tool, matching
 // the "suggest a blob tool if you see blobs" requirement.
 const MANUAL_CATALOG: IToolSuggestionCatalogEntry[] = [
@@ -264,8 +272,9 @@ export class ToolSuggestions extends VuexModule {
   }
 
   // Run suggestions for the current configuration if it looks like a freshly
-  // opened collection: it exists, has no tools yet, and we haven't already
-  // suggested for it this session. Safe to call on every configuration change.
+  // created collection: it exists, was created within the recency window, has
+  // no tools yet, and we haven't already suggested for it this session. Safe to
+  // call on every configuration change.
   @Action
   async maybeSuggestForCurrentConfiguration() {
     if (!AUTO_SUGGEST_ENABLED) {
@@ -276,6 +285,17 @@ export class ToolSuggestions extends VuexModule {
       return;
     }
     if (configuration.tools.length > 0) {
+      return;
+    }
+    // Only auto-suggest for freshly created collections. Anything older than
+    // the window is an existing collection being reopened/reloaded, not a new
+    // one, so it should not re-trigger suggestions. Fail closed (skip) when the
+    // creation timestamp is missing or unparseable: the `!(age < window)` form
+    // treats a NaN age as "not recent".
+    const createdMs = configuration.created
+      ? new Date(configuration.created).getTime()
+      : NaN;
+    if (!(Date.now() - createdMs < RECENT_COLLECTION_WINDOW_MS)) {
       return;
     }
     if (this.seenConfigurationIds.includes(configuration.id)) {

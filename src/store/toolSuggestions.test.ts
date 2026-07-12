@@ -120,6 +120,9 @@ function makeConfiguration(
     id: "config-1",
     name: "Config",
     description: "",
+    // Default to a just-created collection so the recency-window guard treats
+    // configs as fresh unless a test overrides `created` with an older value.
+    created: new Date().toISOString(),
     compatibility: {
       xyDimensions: "one",
       zDimensions: "one",
@@ -227,6 +230,35 @@ describe("toolSuggestions store", () => {
       expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
       expect(toolSuggestions.seenConfigurationIds).not.toContain(
         "cfg-with-tools",
+      );
+    });
+
+    it("is a no-op when the collection was created outside the recency window", async () => {
+      main.configuration = makeConfiguration({
+        id: "cfg-old",
+        // 10 minutes ago — older than the 5-minute window.
+        created: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      });
+      main.dataset = makeDataset();
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(toolSuggestions.seenConfigurationIds).not.toContain("cfg-old");
+    });
+
+    it("is a no-op when the collection has no creation timestamp (fail closed)", async () => {
+      main.configuration = makeConfiguration({
+        id: "cfg-no-created",
+        created: undefined,
+      });
+      main.dataset = makeDataset();
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(toolSuggestions.seenConfigurationIds).not.toContain(
+        "cfg-no-created",
       );
     });
 

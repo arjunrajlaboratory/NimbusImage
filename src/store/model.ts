@@ -519,6 +519,11 @@ export interface IDatasetConfiguration extends IDatasetConfigurationBase {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  // ISO creation timestamp from the underlying Girder document. Surfaced so
+  // consumers can tell a freshly created collection from an existing one being
+  // reopened (see toolSuggestions auto-suggest gating). Optional because not
+  // every construction path has the raw document in hand.
+  readonly created?: string;
 }
 
 export interface IDatasetViewBase {
