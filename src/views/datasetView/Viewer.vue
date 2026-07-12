@@ -26,11 +26,24 @@ import volumeViewStore from "@/store/volumeView";
 import toolSuggestionsStore from "@/store/toolSuggestions";
 
 const shouldResetMaps = ref(false);
+// Whether the image for the current configuration has finished rendering at
+// least once (ImageViewer emitted layers-ready). Reset when the configuration
+// changes. Used to re-attempt tool suggestions if their prerequisites only
+// become ready after the image already rendered (see suggestPrerequisitesReady).
+const layersHaveRendered = ref(false);
 
 const dataset = computed(() => store.dataset);
 const configuration = computed(() => store.configuration);
 // Read-only: the 2D/3D toggle lives in the top app bar (App.vue).
 const volumeViewMode = computed(() => volumeViewStore.viewMode);
+
+// Auto tool-suggestions need the user logged in (worker catalog) and the tool
+// templates loaded. Both load asynchronously at startup and can arrive after
+// the first layers-ready on a direct datasetView load, so track readiness to
+// re-trigger once it flips true.
+const suggestPrerequisitesReady = computed(
+  () => store.isLoggedIn && store.toolTemplateList.length > 0,
+);
 
 function datasetChanged() {
   if (dataset.value && dataset.value.time.length <= 1) {
@@ -40,6 +53,8 @@ function datasetChanged() {
 
 function configurationChanged() {
   toolSuggestionsStore.clear();
+  // New configuration: its image hasn't rendered yet.
+  layersHaveRendered.value = false;
   propertiesStore.fetchProperties();
 }
 
@@ -64,12 +79,25 @@ function handleResetComplete() {
 // we've already suggested for this session, so acting on every layers-ready is
 // safe.
 function handleLayersReady() {
+  layersHaveRendered.value = true;
   toolSuggestionsStore.maybeSuggestForCurrentConfiguration();
+}
+
+// If the suggestion prerequisites (login, tool templates) only become ready
+// AFTER the image already rendered, the layers-ready that would have triggered
+// suggestions has already passed and won't fire again on its own. Re-attempt
+// here. maybeSuggest is self-guarding and idempotent, so a redundant call when
+// already suggested/persisted is a no-op.
+function retrySuggestWhenReady(ready: boolean) {
+  if (ready && layersHaveRendered.value) {
+    toolSuggestionsStore.maybeSuggestForCurrentConfiguration();
+  }
 }
 
 watch(dataset, datasetChanged);
 watch(configuration, configurationChanged);
 watch([dataset, configuration], fetchAnnotationData);
+watch(suggestPrerequisitesReady, retrySuggestWhenReady);
 
 onMounted(() => {
   datasetChanged();
@@ -79,12 +107,15 @@ onMounted(() => {
 
 defineExpose({
   shouldResetMaps,
+  layersHaveRendered,
   dataset,
   configuration,
   volumeViewMode,
+  suggestPrerequisitesReady,
   configurationChanged,
   handleResetComplete,
   handleLayersReady,
+  retrySuggestWhenReady,
 });
 </script>
 
