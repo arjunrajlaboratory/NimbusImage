@@ -20,10 +20,8 @@
             class="mb-2 text-center"
           />
           <div class="text-center mb-8">
-            <h2 class="text-h5 font-weight-bold mb-2">
-              Welcome to NimbusImage!
-            </h2>
-            <p class="text-subtitle-1">
+            <h2 class="page-title mb-2">Welcome to NimbusImage!</h2>
+            <p class="text-body-2 text-medium-emphasis">
               A cloud-based image analysis platform from the Raj Lab at the
               University of Pennsylvania and Kitware
             </p>

@@ -14,12 +14,21 @@ vi.mock("@/store", () => ({
 
 vi.mock("@/store/annotation", () => ({ default: {} }));
 vi.mock("@/store/properties", () => ({ default: {} }));
+vi.mock("@/store/toolSuggestions", () => ({
+  default: {
+    status: "idle",
+    dismissed: false,
+    setDismissed: vi.fn(),
+    suggestForCurrentConfiguration: vi.fn(),
+  },
+}));
 
 vi.mock("vuedraggable", () => ({
   default: { name: "draggable", template: "<div><slot /></div>" },
 }));
 
 import store from "@/store";
+import toolSuggestionsStore from "@/store/toolSuggestions";
 import Toolset from "./Toolset.vue";
 
 function mountComponent() {
@@ -44,6 +53,8 @@ describe("Toolset", () => {
     (store as any).tools = [];
     (store as any).configuration = { tools: [] };
     (store as any).isLoggedIn = true;
+    (toolSuggestionsStore as any).status = "idle";
+    (toolSuggestionsStore as any).dismissed = false;
   });
 
   it("toolsetTools returns tools from configuration", () => {
@@ -182,6 +193,47 @@ describe("Toolset", () => {
     expect(vm.selectedToolType).toEqual(toolType);
     expect(vm.toolTypeDialogOpen).toBe(false);
     expect(vm.toolCreationDialogOpen).toBe(true);
+  });
+
+  it("openToolSuggestions clears dismissal and reruns AI suggestions", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    vm.openToolSuggestions();
+
+    expect(toolSuggestionsStore.setDismissed).toHaveBeenCalledWith(false);
+    expect(
+      toolSuggestionsStore.suggestForCurrentConfiguration,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("openToolSuggestions does not start a duplicate request while loading", () => {
+    (toolSuggestionsStore as any).status = "loading";
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    vm.openToolSuggestions();
+
+    expect(toolSuggestionsStore.setDismissed).toHaveBeenCalledWith(false);
+    expect(
+      toolSuggestionsStore.suggestForCurrentConfiguration,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("triggerToolSuggestionsGlow shows a transient AI button glow", () => {
+    vi.useFakeTimers();
+    try {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+
+      vm.triggerToolSuggestionsGlow();
+
+      expect(vm.toolSuggestionsGlow).toBe(true);
+      vi.advanceTimersByTime(1800);
+      expect(vm.toolSuggestionsGlow).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("onToolCreationDone closes dialog and clears selectedToolType", () => {

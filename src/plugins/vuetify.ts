@@ -67,6 +67,10 @@ const vuetify = createVuetify({
           success: "#27a644",
           warning: "#d4a72c",
           info: "#5b9bd5",
+          // Resource accents shared across chips/icons app-wide
+          dataset: "#e57373",
+          collection: "#4baeff",
+          project: "#8e24aa",
         },
       },
       light: {
@@ -84,6 +88,10 @@ const vuetify = createVuetify({
           success: "#16a34a",
           warning: "#ca8a04",
           info: "#2563eb",
+          // Resource accents shared across chips/icons app-wide
+          dataset: "#e57373",
+          collection: "#1e88e5",
+          project: "#8e24aa",
         },
       },
     },

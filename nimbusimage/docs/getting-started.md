@@ -25,7 +25,14 @@ client = ni.connect("http://localhost:8080/api/v1", username="admin", password="
 
 # Option 3: Environment variables (NI_API_URL, NI_TOKEN)
 client = ni.connect()
+
+# Option 4: Anonymous — public datasets only, no credentials needed
+client = ni.connect("http://localhost:8080/api/v1", anonymous=True)
 ```
+
+Anonymous connections can read and measure **public** datasets (for
+example, running `ds.images.line_scan(...)` on published data) but cannot
+access private resources.
 
 ## Working with datasets
 

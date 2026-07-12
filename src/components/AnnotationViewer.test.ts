@@ -147,6 +147,7 @@ const mockAnnotationLayer = () => {
     geoOn: vi.fn(),
     geoOff: vi.fn(),
     mode: vi.fn(),
+    options: vi.fn(),
     currentAnnotation: null,
     map: vi.fn(() => ({
       unitsPerPixel: vi.fn().mockReturnValue(1),
@@ -385,6 +386,7 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import filterStore from "@/store/filters";
+import lineScanStore from "@/store/lineScan";
 import {
   pointDistance,
   getAnnotationStyleFromBaseStyle,
@@ -4866,6 +4868,73 @@ describe("AnnotationViewer", () => {
         for (const spy of spies) {
           expect(spy).toHaveBeenCalled();
         }
+      });
+    });
+
+    describe("linescan auto-restart on next gesture", () => {
+      const armTool = (type: string, lineType?: "freehand" | "segment") => {
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t1",
+            type,
+            values: lineType ? { lineType: { value: lineType } } : {},
+          },
+          state: {},
+        } as any;
+      };
+      const completedLine = {
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 10 },
+        ],
+        isComplete: true,
+      };
+
+      beforeEach(() => {
+        lineScanStore.clearLine();
+      });
+
+      it("clears a completed freehand scan on mousedown", () => {
+        wrapper = mountComponent();
+        armTool("linescan", "freehand");
+        lineScanStore.setLine(completedLine);
+        expect(lineScanStore.points).not.toBeNull();
+
+        (wrapper.vm as any).handleLineScanMouseDown();
+
+        expect(lineScanStore.points).toBeNull();
+      });
+
+      it("does NOT clear a completed segment scan on mousedown (a segment left-drag pans the map)", () => {
+        wrapper = mountComponent();
+        armTool("linescan", "segment");
+        lineScanStore.setLine(completedLine);
+
+        (wrapper.vm as any).handleLineScanMouseDown();
+
+        // Segment restarts are cleared on the first click, not on mousedown,
+        // so panning never wipes the scan.
+        expect(lineScanStore.points).not.toBeNull();
+      });
+
+      it("leaves an in-progress (incomplete) freehand scan untouched on mousedown", () => {
+        wrapper = mountComponent();
+        armTool("linescan", "freehand");
+        lineScanStore.setLine({ ...completedLine, isComplete: false });
+
+        (wrapper.vm as any).handleLineScanMouseDown();
+
+        expect(lineScanStore.points).not.toBeNull();
+      });
+
+      it("does nothing when a non-linescan tool is active", () => {
+        wrapper = mountComponent();
+        armTool("create");
+        lineScanStore.setLine(completedLine);
+
+        (wrapper.vm as any).handleLineScanMouseDown();
+
+        expect(lineScanStore.points).not.toBeNull();
       });
     });
   });

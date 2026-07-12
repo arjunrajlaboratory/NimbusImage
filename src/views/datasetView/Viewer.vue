@@ -6,8 +6,10 @@
       class="main"
       :should-reset-maps="shouldResetMaps"
       @reset-complete="handleResetComplete"
+      @layers-ready="handleLayersReady"
     />
     <volume-viewer v-else class="main" />
+    <tool-suggestions />
   </div>
 </template>
 
@@ -15,11 +17,13 @@
 import { ref, computed, watch, onMounted } from "vue";
 import ImageViewer from "@/components/ImageViewer.vue";
 import VolumeViewer from "@/components/VolumeViewer.vue";
+import ToolSuggestions from "@/components/ToolSuggestions.vue";
 
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
+import toolSuggestionsStore from "@/store/toolSuggestions";
 
 const shouldResetMaps = ref(false);
 
@@ -35,6 +39,7 @@ function datasetChanged() {
 }
 
 function configurationChanged() {
+  toolSuggestionsStore.clear();
   propertiesStore.fetchProperties();
 }
 
@@ -57,6 +62,15 @@ function handleResetComplete() {
   shouldResetMaps.value = false;
 }
 
+// When the image finishes rendering (ImageViewer emits layers-ready, driven by
+// the layers' onIdle callbacks), ask the backend to suggest tools. The store
+// guards against re-running for a configuration that already has tools or that
+// we've already suggested for this session, so acting on every layers-ready is
+// safe.
+function handleLayersReady() {
+  toolSuggestionsStore.maybeSuggestForCurrentConfiguration();
+}
+
 watch(dataset, datasetChanged);
 watch(configuration, configurationChanged);
 watch([dataset, configuration], fetchAnnotationData);
@@ -72,7 +86,9 @@ defineExpose({
   dataset,
   configuration,
   volumeViewMode,
+  configurationChanged,
   handleResetComplete,
+  handleLayersReady,
 });
 </script>
 

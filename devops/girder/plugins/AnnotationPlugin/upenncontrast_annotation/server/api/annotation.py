@@ -339,7 +339,7 @@ class Annotation(Resource):
         .errorResponse()
     )
     def find(self, params):
-        limit, offset, sort = self.getPagingParameters(params, "lowerName")
+        limit, offset, sort = self.getPagingParameters(params, "_id")
 
         # First, check dataset permissions explicitly
         datasetId = ObjectId(params["datasetId"])

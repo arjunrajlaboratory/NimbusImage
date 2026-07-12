@@ -561,3 +561,54 @@ class TestInlinePropertiesField:
             {"annotationId": result["_id"]}
         ))
         assert values == []
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestFindDefaultSort:
+    """The GET /upenn_annotation find route must default its sort to _id.
+
+    The route declares ``pagingParams(defaultSort="_id")`` and hints the
+    ``(datasetId, _id)`` index, so the handler's default must match. If it
+    defaults to a field the hinted index doesn't provide (e.g. ``lowerName``),
+    MongoDB performs a blocking in-memory sort, and the ``afterId`` cursor —
+    which advances on ``_id > afterId`` and uses ``page[-1]._id`` as the next
+    cursor — is only stable by accident (real annotation docs simply lack
+    that field, so the null keys happen to emit in ``_id`` order).
+    """
+
+    def testFindDefaultsToIdSort(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        datasetId = str(folder["_id"])
+
+        # Create several annotations and record their _ids ascending.
+        ids = [
+            Annotation().create(
+                upenn_utilities.getSampleAnnotation(folder["_id"])
+            )["_id"]
+            for _ in range(5)
+        ]
+        idsAscending = sorted(ids)
+
+        # Give each doc a `lowerName` whose ascending order is the REVERSE of
+        # _id order. Real annotations have no lowerName, so a lowerName-default
+        # sort returns them in _id order by accident; injecting a contradictory
+        # lowerName exposes which field the route actually sorts by.
+        for rank, annotationId in enumerate(idsAscending):
+            Annotation().update(
+                {"_id": annotationId},
+                {"$set": {"lowerName": "%03d" % (len(idsAscending) - rank)}},
+            )
+
+        resp = server.request(
+            path="/upenn_annotation",
+            method="GET",
+            user=admin,
+            params={"datasetId": datasetId},
+        )
+        assertStatusOk(resp)
+
+        returnedIds = [doc["_id"] for doc in resp.json]
+        assert returnedIds == [str(i) for i in idsAscending]

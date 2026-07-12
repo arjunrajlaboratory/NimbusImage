@@ -90,21 +90,47 @@ export function geojsAnnotationFactory(
 ) {
   const annotationOptions = { ...options };
 
+  // TEMPORARY WORKAROUND for an upstream GeoJS bug:
+  // https://github.com/OpenGeoscience/geojs/issues/1486
+  // Our viewer is a 2D parallel-projection map, but annotation coordinates
+  // carry a `z` equal to the Z-slice index they were drawn on. GeoJS's polygon
+  // *fill* feature zeroes vertex z before building its geometry, but its *line*
+  // feature (which draws the stroke) computes its float-precision `origin` from
+  // the un-zeroed coordinates and only zeroes the per-vertex z afterward
+  // (webgl/lineFeature.js). The origin's z is then re-applied via the modelView
+  // translation, pushing the stroke outside the fixed parallel clipbounds
+  // (near:1 / far:-1, i.e. visible z ~[-1, 3]). The result: polygon/line strokes
+  // silently vanish for annotations on higher Z-slices while the fill still
+  // renders. Flattening z to 0 here keeps strokes inside the clip volume; z is
+  // not used for 2D rendering (the slice is tracked via location/channel).
+  // Remove once GeoJS zeroes the line feature's origin z like the polygon does.
+  //
+  // This runs once per annotation and is a hot path at high annotation counts,
+  // so build the flattened array with an indexed loop and an explicit object
+  // literal rather than map()/spread, which allocate a closure and copy every
+  // property per vertex.
+  const numCoordinates = coordinates.length;
+  const flatCoordinates: IGeoJSPosition[] = new Array(numCoordinates);
+  for (let i = 0; i < numCoordinates; i++) {
+    const coordinate = coordinates[i];
+    flatCoordinates[i] = { x: coordinate.x, y: coordinate.y, z: 0 };
+  }
+
   switch (shape) {
     case AnnotationShape.Point:
-      annotationOptions.position = coordinates[0];
+      annotationOptions.position = flatCoordinates[0];
       return geojs.annotation.pointAnnotation(annotationOptions);
 
     case AnnotationShape.Polygon:
-      annotationOptions.vertices = coordinates;
+      annotationOptions.vertices = flatCoordinates;
       return geojs.annotation.polygonAnnotation(annotationOptions);
 
     case AnnotationShape.Line:
-      annotationOptions.vertices = coordinates;
+      annotationOptions.vertices = flatCoordinates;
       return geojs.annotation.lineAnnotation(annotationOptions);
 
     case AnnotationShape.Rectangle:
-      annotationOptions.corners = coordinates;
+      annotationOptions.corners = flatCoordinates;
       return geojs.annotation.rectangleAnnotation(annotationOptions);
 
     default:

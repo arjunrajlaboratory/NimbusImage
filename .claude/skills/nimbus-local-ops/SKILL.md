@@ -169,7 +169,7 @@ curl -s "$URL"
 
 **Gotcha: Finding datasets** — Datasets are Girder folders with `meta.subtype: 'contrastDataset'`. They may be owned by any user, so listing a specific user's folders won't find all datasets. Use MongoDB directly for discovery:
 ```bash
-docker exec upenncontrast-mongodb-1 mongosh girder --eval \
+docker exec nimbusimage-mongodb-1 mongosh girder --eval \
   "db.folder.find({'meta.subtype': 'contrastDataset'}, {name: 1}).limit(5).toArray()" --quiet
 ```
 
@@ -180,7 +180,7 @@ For full endpoint details with request/response examples: read `references/api-e
 Connect to MongoDB inside the Docker container:
 
 ```bash
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "QUERY" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "QUERY" --quiet
 ```
 
 ### Collection-to-Resource Mapping
@@ -201,16 +201,16 @@ docker exec upenncontrast-mongodb-1 mongosh girder --eval "QUERY" --quiet
 
 ```bash
 # Count annotations
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.upenn_annotation.countDocuments()" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.upenn_annotation.countDocuments()" --quiet
 
 # Count annotations in a dataset
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.upenn_annotation.countDocuments({datasetId: ObjectId('DATASET_ID')})" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.upenn_annotation.countDocuments({datasetId: ObjectId('DATASET_ID')})" --quiet
 
 # List all datasets (folders with contrastDataset subtype)
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.folder.find({'meta.subtype': 'contrastDataset'}, {name: 1}).toArray()" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.folder.find({'meta.subtype': 'contrastDataset'}, {name: 1}).toArray()" --quiet
 
 # List collections
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.getCollectionNames()" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.getCollectionNames()" --quiet
 ```
 
 For detailed query recipes: read `references/mongo-recipes.md`
@@ -238,15 +238,17 @@ docker logs girder --tail 50
 # Follow logs in real-time
 docker logs girder -f
 
-# Restart a service
+# Restart a service (does NOT load plugin code changes — see warning below)
 docker compose restart girder
 
-# Rebuild and restart
+# Rebuild and restart — REQUIRED after editing backend plugin code
 docker compose build girder && docker compose up -d girder
 
 # Check container status
 docker ps
 ```
+
+**Warning — restart is not enough for plugin code.** The `girder` image bakes in the AnnotationPlugin (no source volume mount), so `docker compose restart girder` serves **stale code**: a newly added route returns `{"message": "No matching route ..."}` while old routes work, which looks like a routing bug. After any edit under `devops/girder/plugins/AnnotationPlugin/`, run the build+up pair (fast — cached layers, ~7s downtime). Note that `tox` tests the plugin *source* directly, so a green tox proves nothing about what the running container serves.
 
 The `docker-compose.yaml` is at the repository root.
 
@@ -266,7 +268,7 @@ docker logs girder -f 2>&1 | grep "upenn_annotation"
 
 ```bash
 # Check recent jobs
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.job.find({}, {title: 1, status: 1, updated: 1}).sort({updated: -1}).limit(5).toArray()" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.job.find({}, {title: 1, status: 1, updated: 1}).sort({updated: -1}).limit(5).toArray()" --quiet
 ```
 
 Job status codes: 0=inactive, 1=queued, 2=running, 3=success, 4=error, 5=cancelled
