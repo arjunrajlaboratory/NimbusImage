@@ -204,7 +204,7 @@ import {
   ToolExecutionError,
   viewIdentityChangedSince,
 } from "./executors";
-import { MAX_PLOT_POINTS, MAX_SAMPLE_ROWS } from "./analysis";
+import { MAX_BOX_POINTS, MAX_PLOT_POINTS, MAX_SAMPLE_ROWS } from "./analysis";
 import { clearPlots, getPlot } from "./plotRegistry";
 
 const mockMain = main as any;
@@ -1415,6 +1415,20 @@ describe("data analysis tools", () => {
       ).rejects.toThrow(/prop1\.missing.*get_property_values/s);
     });
 
+    it("aborts if the dataset changed during the property-value fetch", async () => {
+      seedValues({ a1: 1, a2: 2 });
+      // The user navigated to a different dataset while fetchPropertyValues
+      // was in flight; the tool must not analyze the now-current dataset.
+      const changedContext = { ...context, hasViewIdentityChanged: () => true };
+      await expect(
+        executeAgentTool(
+          "get_property_histogram",
+          { propertyPath: ["prop1", "mean"] },
+          changedContext,
+        ),
+      ).rejects.toThrow(/active dataset changed/);
+    });
+
     it("excludes property values orphaned by deleted annotations", async () => {
       // Two live annotations, but propertyValues also carries a value for
       // "ghost" — an annotation that was deleted (the backend leaves such
@@ -1700,6 +1714,29 @@ describe("data analysis tools", () => {
           context,
         ),
       ).rejects.toBeInstanceOf(ToolExecutionError);
+    });
+
+    it("uses exact precomputed stats above the point cap, not a downsample", async () => {
+      // 0..MAX_BOX_POINTS inclusive => MAX_BOX_POINTS+1 values, over the cap.
+      const values: { [id: string]: number } = {};
+      for (let i = 0; i <= MAX_BOX_POINTS; i++) {
+        values[`a${i}`] = i;
+      }
+      seedValues(values);
+      const { result } = await executeAgentTool(
+        "create_box_plot",
+        { propertyPaths: [["prop1", "mean"]], title: "big" },
+        context,
+      );
+      const trace = (getPlot(result.plotId)!.data as any[])[0];
+      // No raw y array (that path would have been downsampled); exact quartiles
+      // computed from the full data instead.
+      expect(trace.y).toBeUndefined();
+      expect(trace.q1).toEqual([5000]);
+      expect(trace.median).toEqual([10000]);
+      expect(trace.q3).toEqual([15000]);
+      expect(trace.lowerfence).toEqual([0]);
+      expect(trace.upperfence).toEqual([MAX_BOX_POINTS]);
     });
 
     it("groups one box per first tag when groupByTag is set", async () => {

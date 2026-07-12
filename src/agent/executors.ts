@@ -248,6 +248,20 @@ function liveAnnotationIdSet(): Set<string> {
   );
 }
 
+// Analysis executors await fetchPropertyValues before reading the global
+// annotation/property stores. If the user switched datasets during that await,
+// the fetch resolves for the old dataset and the stores now hold the new one —
+// so re-check identity afterward and abort before producing a stat or plot for
+// a dataset the request didn't target (mirrors run_worker's post-await check).
+function assertDatasetUnchanged(context: IAgentToolContext) {
+  if (context.hasViewIdentityChanged?.()) {
+    throw new ToolExecutionError(
+      "Aborted: the active dataset changed while loading property values; " +
+        "not analyzing a different dataset than the request targeted.",
+    );
+  }
+}
+
 // Collect [annotationId, value] pairs for one property value path. Iterates the
 // query's matches when a query was given (queryAnnotations already restricts to
 // live annotations), else every live annotation — never the raw propertyValues
@@ -1540,8 +1554,12 @@ const registry: { [name: string]: IAgentToolEntry } = {
   },
 
   get_property_values: {
-    execute: async (input: { propertyId?: string; query?: unknown }) => {
+    execute: async (
+      input: { propertyId?: string; query?: unknown },
+      context: IAgentToolContext,
+    ) => {
       await propertyStore.fetchPropertyValues();
+      assertDatasetUnchanged(context);
       const allowedIds = resolveQueryToIdSet(input.query);
       const nameOf = (id: string) =>
         propertyStore.properties.find((p) => p.id === id)?.name ?? id;
@@ -1581,13 +1599,17 @@ const registry: { [name: string]: IAgentToolEntry } = {
   },
 
   get_property_histogram: {
-    execute: async (input: {
-      propertyPath?: unknown;
-      buckets?: number;
-      query?: unknown;
-    }) => {
+    execute: async (
+      input: {
+        propertyPath?: unknown;
+        buckets?: number;
+        query?: unknown;
+      },
+      context: IAgentToolContext,
+    ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
+      assertDatasetUnchanged(context);
       const path = validatePropertyPath(input.propertyPath, "propertyPath");
       const allowedIds = resolveQueryToIdSet(input.query);
       const values = collectPathValues(path, allowedIds).map(([, v]) => v);
@@ -1610,13 +1632,17 @@ const registry: { [name: string]: IAgentToolEntry } = {
   },
 
   get_sample_values: {
-    execute: async (input: {
-      propertyPaths?: unknown;
-      n?: number;
-      query?: unknown;
-    }) => {
+    execute: async (
+      input: {
+        propertyPaths?: unknown;
+        n?: number;
+        query?: unknown;
+      },
+      context: IAgentToolContext,
+    ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
+      assertDatasetUnchanged(context);
       if (
         !Array.isArray(input.propertyPaths) ||
         input.propertyPaths.length === 0
@@ -1659,17 +1685,21 @@ const registry: { [name: string]: IAgentToolEntry } = {
   },
 
   create_scatter_plot: {
-    execute: async (input: {
-      xPropertyPath?: unknown;
-      yPropertyPath?: unknown;
-      title?: unknown;
-      xLabel?: string;
-      yLabel?: string;
-      colorByTag?: boolean;
-      query?: unknown;
-    }) => {
+    execute: async (
+      input: {
+        xPropertyPath?: unknown;
+        yPropertyPath?: unknown;
+        title?: unknown;
+        xLabel?: string;
+        yLabel?: string;
+        colorByTag?: boolean;
+        query?: unknown;
+      },
+      context: IAgentToolContext,
+    ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
+      assertDatasetUnchanged(context);
       const xPath = validatePropertyPath(input.xPropertyPath, "xPropertyPath");
       const yPath = validatePropertyPath(input.yPropertyPath, "yPropertyPath");
       const title = requirePlotTitle(input.title);
@@ -1740,15 +1770,19 @@ const registry: { [name: string]: IAgentToolEntry } = {
   },
 
   create_histogram_plot: {
-    execute: async (input: {
-      propertyPath?: unknown;
-      title?: unknown;
-      buckets?: number;
-      xLabel?: string;
-      query?: unknown;
-    }) => {
+    execute: async (
+      input: {
+        propertyPath?: unknown;
+        title?: unknown;
+        buckets?: number;
+        xLabel?: string;
+        query?: unknown;
+      },
+      context: IAgentToolContext,
+    ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
+      assertDatasetUnchanged(context);
       const path = validatePropertyPath(input.propertyPath, "propertyPath");
       const title = requirePlotTitle(input.title);
       const allowedIds = resolveQueryToIdSet(input.query);
@@ -1786,14 +1820,18 @@ const registry: { [name: string]: IAgentToolEntry } = {
   },
 
   create_box_plot: {
-    execute: async (input: {
-      propertyPaths?: unknown;
-      title?: unknown;
-      groupByTag?: boolean;
-      query?: unknown;
-    }) => {
+    execute: async (
+      input: {
+        propertyPaths?: unknown;
+        title?: unknown;
+        groupByTag?: boolean;
+        query?: unknown;
+      },
+      context: IAgentToolContext,
+    ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
+      assertDatasetUnchanged(context);
       if (
         !Array.isArray(input.propertyPaths) ||
         input.propertyPaths.length === 0
@@ -1807,11 +1845,28 @@ const registry: { [name: string]: IAgentToolEntry } = {
       );
       const title = requirePlotTitle(input.title);
       const allowedIds = resolveQueryToIdSet(input.query);
-      const boxTrace = (name: string, values: number[]) => ({
-        type: "box",
-        name,
-        y: downsample(values, MAX_BOX_POINTS)[0],
-      });
+      // At/below the cap: hand Plotly the raw points so it draws exact
+      // quartiles and individual outliers. Above it: shipping every point is
+      // wasteful and an every-kth downsample silently shifts the box's
+      // quartiles/outliers, so pass EXACT precomputed statistics from the full
+      // data instead — the box stays accurate (individual outlier dots are
+      // omitted), never a silent approximation.
+      const boxTrace = (name: string, values: number[]) => {
+        if (values.length <= MAX_BOX_POINTS) {
+          return { type: "box", name, y: values };
+        }
+        const s = computeStats(values);
+        return {
+          type: "box",
+          name,
+          q1: [s.p25],
+          median: [s.median],
+          q3: [s.p75],
+          lowerfence: [s.min],
+          upperfence: [s.max],
+          mean: [s.mean],
+        };
+      };
       let data: unknown[];
       if (input.groupByTag) {
         if (paths.length !== 1) {
