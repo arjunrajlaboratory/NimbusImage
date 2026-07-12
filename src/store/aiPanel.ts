@@ -32,7 +32,9 @@ import {
   clearStoredConversation,
   loadStoredConversation,
   saveStoredConversation,
+  selectPlotsForStorage,
 } from "@/agent/conversationStore";
+import { clearPlots, listPlots, restorePlots } from "@/agent/plotRegistry";
 import { dataUrlToBase64 } from "@/utils/interfaceCapture";
 
 // AI panel: conversational agent that drives the interface through the tool
@@ -49,13 +51,15 @@ export type TAgentToolStatus =
   | "declined";
 
 export interface IAgentPanelItem {
-  kind: "user" | "assistant" | "tool" | "info" | "error";
+  kind: "user" | "assistant" | "tool" | "info" | "error" | "plot";
   // Message text; for tool items, a human-readable action description
   text: string;
   toolName?: string;
   status?: TAgentToolStatus;
   // Short outcome note for tool items (e.g. "42 annotations affected")
   detail?: string;
+  // For plot items: id into the plot registry (src/agent/plotRegistry.ts)
+  plotId?: string;
 }
 
 // Upper bound on model round-trips per user message; the backend has a
@@ -135,6 +139,9 @@ function toolResultDetail(result: any): string | undefined {
   }
   if (typeof result.filteredCount === "number") {
     return `${result.filteredCount} annotations pass the filter`;
+  }
+  if (typeof result.pointCount === "number") {
+    return `${result.pointCount.toLocaleString()} points`;
   }
   if (result.jobId) {
     return "job started";
@@ -263,6 +270,7 @@ export class AiPanel extends VuexModule {
     }
     wireMessages = [];
     turnSnapshot = null;
+    clearPlots();
     conversationGeneration++;
     this.clearItemsImpl();
     this.setCanRevert(false);
@@ -330,6 +338,7 @@ export class AiPanel extends VuexModule {
       if (stored && stored.userId === userId) {
         // Same user (e.g. a page reload): rehydrate the conversation.
         wireMessages = stored.wireMessages;
+        restorePlots(stored.plots ?? []);
         this.setItems(stored.items);
       } else {
         // A different user's conversation must never surface here.
@@ -508,6 +517,7 @@ export class AiPanel extends VuexModule {
           userId: lastKnownUserId,
           items: [...this.items],
           wireMessages,
+          plots: selectPlotsForStorage(this.items, listPlots()),
           updatedAt: Date.now(),
         });
       }
@@ -602,7 +612,7 @@ export class AiPanel extends VuexModule {
       // Late notifications (e.g. worker completion) reference this
       // conversation; drop them if it has been cleared in the meantime.
       const generation = conversationGeneration;
-      const { result, images } = await executeAgentTool(
+      const { result, images, plots } = await executeAgentTool(
         toolUse.name,
         toolUse.input,
         {
@@ -622,6 +632,11 @@ export class AiPanel extends VuexModule {
         index: itemIndex,
         changes: { status: "done", detail: toolResultDetail(result) },
       });
+      // Each created plot gets its own transcript item, rendered by
+      // AiPanelPlot from the plot registry.
+      for (const plot of plots ?? []) {
+        this.addItemImpl({ kind: "plot", plotId: plot.id, text: plot.title });
+      }
       if (VIEW_STATE_TOOLS.has(toolUse.name)) {
         this.setCanRevert(true);
       }

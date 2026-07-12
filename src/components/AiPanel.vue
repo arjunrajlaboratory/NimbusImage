@@ -39,7 +39,13 @@
             Ask me to drive the interface: move to a location, recolor layers or
             annotations, filter annotations, run workers…
           </div>
-          <template v-for="(item, index) in reversedItems" :key="index">
+          <!-- Plot items key by plotId so appends (which shift indices in
+               the reversed array) don't remount — and re-render — every
+               chart. -->
+          <template
+            v-for="(item, index) in reversedItems"
+            :key="item.plotId ?? index"
+          >
             <div
               v-if="item.kind === 'user' || item.kind === 'assistant'"
               :class="item.kind"
@@ -89,6 +95,11 @@
                 </v-btn>
               </span>
             </div>
+            <ai-panel-plot
+              v-else-if="item.kind === 'plot' && item.plotId"
+              :plot-id="item.plotId"
+              class="plot-item"
+            />
             <div v-else :class="item.kind">{{ item.text }}</div>
           </template>
         </div>
@@ -158,6 +169,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import AiPanelPlot from "./AiPanelPlot.vue";
 import { renderAssistantMarkdown } from "@/utils/renderMarkdown";
 import aiPanelStore, {
   IAgentPanelItem,
@@ -382,6 +394,11 @@ onBeforeUnmount(() => {
 
 .tool-detail {
   opacity: 0.7;
+}
+
+.plot-item {
+  align-self: stretch;
+  width: 100%;
 }
 
 .tool-approval-actions {

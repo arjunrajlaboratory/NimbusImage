@@ -26,7 +26,18 @@ import {
   captureViewportScreenshot,
 } from "@/utils/interfaceCapture";
 import { getDefault } from "@/utils/workerInterface";
-import type { IAgentPlot } from "./plotRegistry";
+import { registerPlot, type IAgentPlot } from "./plotRegistry";
+import {
+  MAX_BOX_POINTS,
+  MAX_HISTOGRAM_BUCKETS,
+  MAX_PLOT_POINTS,
+  MAX_SAMPLE_ROWS,
+  computeStats,
+  downsample,
+  resolvePathValue,
+  roundSignificant,
+  uniformHistogram,
+} from "./analysis";
 import {
   MANUAL_CATALOG,
   buildCatalog,
@@ -209,6 +220,101 @@ function resolveAnnotationTargetIds(target: unknown): string[] {
   }
   validateAnnotationQuery(target as { [key: string]: unknown });
   return queryAnnotations(target as IAnnotationQuery).map((a) => a.id);
+}
+
+// Resolve a (model-supplied, unvalidated) `query` to the set of annotation ids
+// it matches, or null when no query was given (meaning "all annotations").
+// Shared by every property/analysis tool that accepts the list_annotations
+// query shape.
+function resolveQueryToIdSet(query: unknown): Set<string> | null {
+  if (query === undefined) {
+    return null;
+  }
+  if (query === null || typeof query !== "object" || Array.isArray(query)) {
+    throw new ToolExecutionError("query must be a query object");
+  }
+  validateAnnotationQuery(query as { [key: string]: unknown });
+  return new Set(queryAnnotations(query as IAnnotationQuery).map((a) => a.id));
+}
+
+// Collect [annotationId, value] pairs for one property value path from the
+// in-memory propertyValues map, restricted to allowedIds when non-null. Only
+// finite-numeric leaves are kept (resolvePathValue drops the rest).
+function collectPathValues(
+  path: string[],
+  allowedIds: Set<string> | null,
+): [string, number][] {
+  const pairs: [string, number][] = [];
+  for (const annotationId in propertyStore.propertyValues) {
+    if (allowedIds && !allowedIds.has(annotationId)) {
+      continue;
+    }
+    const value = resolvePathValue(
+      propertyStore.propertyValues[annotationId],
+      path,
+    );
+    if (value !== null) {
+      pairs.push([annotationId, value]);
+    }
+  }
+  return pairs;
+}
+
+// Validate a model-supplied property value path: a non-empty array of strings,
+// the same currency get_property_values returns as `propertyPath`.
+function validatePropertyPath(value: unknown, field: string): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some((segment) => typeof segment !== "string")
+  ) {
+    throw new ToolExecutionError(
+      `${field} must be a non-empty array of strings (a propertyPath as ` +
+        "returned by get_property_values)",
+    );
+  }
+  return value as string[];
+}
+
+// The human-facing name for a property value path (what users see elsewhere in
+// the app), falling back to the dotted path when the property is unnamed.
+function propertyPathLabel(path: string[]): string {
+  return propertyStore.getFullNameFromPath(path) ?? path.join(".");
+}
+
+// A model-supplied plot title must be a non-empty string.
+function requirePlotTitle(value: unknown): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ToolExecutionError("title is required (a non-empty string)");
+  }
+  return value;
+}
+
+// Bucket count for the histogram tools: default 50, floored, clamped to
+// [1, MAX_HISTOGRAM_BUCKETS].
+function clampHistogramBuckets(value: unknown): number {
+  const requested =
+    typeof value === "number" && value > 0 ? Math.floor(value) : 50;
+  return Math.min(Math.max(1, requested), MAX_HISTOGRAM_BUCKETS);
+}
+
+// Map each annotation id to its first tag (or "untagged") for tag-grouped
+// plots. Built once per plot call rather than searching annotations per point.
+function buildFirstTagMap(): Map<string, string> {
+  const firstTags = new Map<string, string>();
+  for (const annotation of annotationStore.annotations) {
+    firstTags.set(annotation.id, annotation.tags?.[0] ?? "untagged");
+  }
+  return firstTags;
+}
+
+// Map each annotation id to its full tag list, for sample rows.
+function buildTagsMap(): Map<string, string[]> {
+  const tags = new Map<string, string[]>();
+  for (const annotation of annotationStore.annotations) {
+    tags.set(annotation.id, annotation.tags ?? []);
+  }
+  return tags;
 }
 
 // Resolve the parameter values for a worker image: fetch its interface, reject
@@ -1426,20 +1532,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
   get_property_values: {
     execute: async (input: { propertyId?: string; query?: unknown }) => {
       await propertyStore.fetchPropertyValues();
-      let allowedIds: Set<string> | null = null;
-      if (input.query !== undefined) {
-        if (
-          input.query === null ||
-          typeof input.query !== "object" ||
-          Array.isArray(input.query)
-        ) {
-          throw new ToolExecutionError("query must be a query object");
-        }
-        validateAnnotationQuery(input.query as { [key: string]: unknown });
-        allowedIds = new Set(
-          queryAnnotations(input.query as IAnnotationQuery).map((a) => a.id),
-        );
-      }
+      const allowedIds = resolveQueryToIdSet(input.query);
       const nameOf = (id: string) =>
         propertyStore.properties.find((p) => p.id === id)?.name ?? id;
       const stats = [];
@@ -1448,51 +1541,316 @@ const registry: { [name: string]: IAgentToolEntry } = {
         if (input.propertyId && propertyId !== input.propertyId) {
           continue;
         }
-        const values: number[] = [];
-        for (const annotationId in propertyStore.propertyValues) {
-          if (allowedIds && !allowedIds.has(annotationId)) {
-            continue;
-          }
-          let value: any = propertyStore.propertyValues[annotationId];
-          for (const key of path) {
-            value = value?.[key];
-          }
-          if (typeof value === "number" && !Number.isNaN(value)) {
-            values.push(value);
-          }
-        }
+        const values = collectPathValues(path, allowedIds).map(([, v]) => v);
         if (values.length === 0) {
           continue;
         }
-        // Single pass rather than sum-reduce + Math.min(...values): `values`
-        // has one entry per matching annotation and is uncapped, so spreading
-        // it into Math.min/max throws RangeError past the engine's argument
-        // limit (~65k) — reachable on the large datasets this tool targets.
-        let sum = 0;
-        let min = Infinity;
-        let max = -Infinity;
-        for (const value of values) {
-          sum += value;
-          if (value < min) {
-            min = value;
-          }
-          if (value > max) {
-            max = value;
-          }
-        }
+        // computeStats loops internally (sort + reductions), never spreading
+        // `values` into Math.min/max — that would throw RangeError past the
+        // engine's ~65k argument limit on the large datasets this tool targets.
+        const s = computeStats(values);
         stats.push({
           propertyId,
           property: nameOf(propertyId),
           path: path.slice(1).join(".") || nameOf(propertyId),
-          // Full path (incl. propertyId) to pass to set_annotation_filter.
+          // Full path (incl. propertyId) to pass to set_annotation_filter and
+          // the analysis/plot tools.
           propertyPath: path,
-          count: values.length,
-          mean: sum / values.length,
-          min,
-          max,
+          count: s.count,
+          mean: roundSignificant(s.mean),
+          std: roundSignificant(s.std),
+          min: roundSignificant(s.min),
+          max: roundSignificant(s.max),
+          median: roundSignificant(s.median),
+          p25: roundSignificant(s.p25),
+          p75: roundSignificant(s.p75),
         });
       }
       return { result: { stats } };
+    },
+  },
+
+  get_property_histogram: {
+    execute: async (input: {
+      propertyPath?: unknown;
+      buckets?: number;
+      query?: unknown;
+    }) => {
+      requireDataset();
+      await propertyStore.fetchPropertyValues();
+      const path = validatePropertyPath(input.propertyPath, "propertyPath");
+      const allowedIds = resolveQueryToIdSet(input.query);
+      const values = collectPathValues(path, allowedIds).map(([, v]) => v);
+      if (values.length === 0) {
+        throw new ToolExecutionError(
+          `No numeric values for property value path "${path.join(".")}"; ` +
+            "call get_property_values to see the available propertyPaths.",
+        );
+      }
+      const buckets = uniformHistogram(
+        values,
+        clampHistogramBuckets(input.buckets),
+      ).map((bucket) => ({
+        min: roundSignificant(bucket.min),
+        max: roundSignificant(bucket.max),
+        count: bucket.count,
+      }));
+      return { result: { buckets, totalCount: values.length } };
+    },
+  },
+
+  get_sample_values: {
+    execute: async (input: {
+      propertyPaths?: unknown;
+      n?: number;
+      query?: unknown;
+    }) => {
+      requireDataset();
+      await propertyStore.fetchPropertyValues();
+      if (
+        !Array.isArray(input.propertyPaths) ||
+        input.propertyPaths.length === 0
+      ) {
+        throw new ToolExecutionError(
+          "propertyPaths must be a non-empty array of property value paths",
+        );
+      }
+      const paths = input.propertyPaths.map((path) =>
+        validatePropertyPath(path, "propertyPaths[]"),
+      );
+      const allowedIds = resolveQueryToIdSet(input.query);
+      const matchingIds: string[] = [];
+      for (const annotationId in propertyStore.propertyValues) {
+        if (allowedIds && !allowedIds.has(annotationId)) {
+          continue;
+        }
+        matchingIds.push(annotationId);
+      }
+      const requestedN =
+        typeof input.n === "number" && input.n > 0 ? Math.floor(input.n) : 20;
+      const n = Math.min(Math.max(1, requestedN), MAX_SAMPLE_ROWS);
+      const [sampledIds] = downsample(matchingIds, n);
+      const tagsById = buildTagsMap();
+      const rows = sampledIds.map((annotationId) => {
+        const row: { [key: string]: unknown } = {
+          annotationId,
+          tags: tagsById.get(annotationId) ?? [],
+        };
+        for (const path of paths) {
+          row[path.join(".")] = roundSignificant(
+            resolvePathValue(propertyStore.propertyValues[annotationId], path),
+          );
+        }
+        return row;
+      });
+      return { result: { rows, totalMatching: matchingIds.length } };
+    },
+  },
+
+  create_scatter_plot: {
+    execute: async (input: {
+      xPropertyPath?: unknown;
+      yPropertyPath?: unknown;
+      title?: unknown;
+      xLabel?: string;
+      yLabel?: string;
+      colorByTag?: boolean;
+      query?: unknown;
+    }) => {
+      requireDataset();
+      await propertyStore.fetchPropertyValues();
+      const xPath = validatePropertyPath(input.xPropertyPath, "xPropertyPath");
+      const yPath = validatePropertyPath(input.yPropertyPath, "yPropertyPath");
+      const title = requirePlotTitle(input.title);
+      const allowedIds = resolveQueryToIdSet(input.query);
+      const xValues = new Map(collectPathValues(xPath, allowedIds));
+      const yValues = new Map(collectPathValues(yPath, allowedIds));
+      const sharedIds: string[] = [];
+      for (const id of xValues.keys()) {
+        if (yValues.has(id)) {
+          sharedIds.push(id);
+        }
+      }
+      if (sharedIds.length === 0) {
+        throw new ToolExecutionError(
+          `No annotations have a numeric value on both "${xPath.join(".")}" (${
+            xValues.size
+          } values) and "${yPath.join(".")}" (${yValues.size} values).`,
+        );
+      }
+      const [ids, downsampled] = downsample(sharedIds, MAX_PLOT_POINTS);
+      const plotTitle = downsampled ? `${title} (downsampled)` : title;
+      // Full precision here (unlike the model-visible tool result): plot traces
+      // render for the user and are never sent back to the model.
+      const makeTrace = (name: string, traceIds: string[]) => ({
+        type: "scattergl",
+        mode: "markers",
+        name,
+        x: traceIds.map((id) => xValues.get(id)),
+        y: traceIds.map((id) => yValues.get(id)),
+        marker: { size: 5, opacity: 0.7 },
+      });
+      let data: unknown[];
+      if (input.colorByTag) {
+        const firstTags = buildFirstTagMap();
+        const groups = new Map<string, string[]>();
+        for (const id of ids) {
+          const tag = firstTags.get(id) ?? "untagged";
+          const group = groups.get(tag);
+          if (group) {
+            group.push(id);
+          } else {
+            groups.set(tag, [id]);
+          }
+        }
+        data = Array.from(groups.entries()).map(([tag, tagIds]) =>
+          makeTrace(tag, tagIds),
+        );
+      } else {
+        data = [makeTrace(title, ids)];
+      }
+      const layout = {
+        title: plotTitle,
+        xaxis: { title: input.xLabel ?? propertyPathLabel(xPath) },
+        yaxis: { title: input.yLabel ?? propertyPathLabel(yPath) },
+        hovermode: "closest",
+      };
+      const plot = registerPlot({ title: plotTitle, data, layout });
+      return {
+        result: {
+          plotId: plot.id,
+          title: plotTitle,
+          pointCount: ids.length,
+          downsampled,
+        },
+        plots: [plot],
+      };
+    },
+  },
+
+  create_histogram_plot: {
+    execute: async (input: {
+      propertyPath?: unknown;
+      title?: unknown;
+      buckets?: number;
+      xLabel?: string;
+      query?: unknown;
+    }) => {
+      requireDataset();
+      await propertyStore.fetchPropertyValues();
+      const path = validatePropertyPath(input.propertyPath, "propertyPath");
+      const title = requirePlotTitle(input.title);
+      const allowedIds = resolveQueryToIdSet(input.query);
+      const values = collectPathValues(path, allowedIds).map(([, v]) => v);
+      if (values.length === 0) {
+        throw new ToolExecutionError(
+          `No numeric values for property value path "${path.join(".")}"; ` +
+            "call get_property_values to see the available propertyPaths.",
+        );
+      }
+      const histogram = uniformHistogram(
+        values,
+        clampHistogramBuckets(input.buckets),
+      );
+      const trace = {
+        type: "bar",
+        name: title,
+        x: histogram.map((bucket) => (bucket.min + bucket.max) / 2),
+        y: histogram.map((bucket) => bucket.count),
+        width: histogram.map((bucket) => bucket.max - bucket.min),
+      };
+      const layout = {
+        title,
+        xaxis: { title: input.xLabel ?? propertyPathLabel(path) },
+        yaxis: { title: "count" },
+        hovermode: "closest",
+        bargap: 0,
+      };
+      const plot = registerPlot({ title, data: [trace], layout });
+      return {
+        result: { plotId: plot.id, title, bucketCount: histogram.length },
+        plots: [plot],
+      };
+    },
+  },
+
+  create_box_plot: {
+    execute: async (input: {
+      propertyPaths?: unknown;
+      title?: unknown;
+      groupByTag?: boolean;
+      query?: unknown;
+    }) => {
+      requireDataset();
+      await propertyStore.fetchPropertyValues();
+      if (
+        !Array.isArray(input.propertyPaths) ||
+        input.propertyPaths.length === 0
+      ) {
+        throw new ToolExecutionError(
+          "propertyPaths must be a non-empty array of property value paths",
+        );
+      }
+      const paths = input.propertyPaths.map((path) =>
+        validatePropertyPath(path, "propertyPaths[]"),
+      );
+      const title = requirePlotTitle(input.title);
+      const allowedIds = resolveQueryToIdSet(input.query);
+      const boxTrace = (name: string, values: number[]) => ({
+        type: "box",
+        name,
+        y: downsample(values, MAX_BOX_POINTS)[0],
+      });
+      let data: unknown[];
+      if (input.groupByTag) {
+        if (paths.length !== 1) {
+          throw new ToolExecutionError(
+            "groupByTag requires exactly one propertyPath (one box per tag)",
+          );
+        }
+        const path = paths[0];
+        const firstTags = buildFirstTagMap();
+        const groups = new Map<string, number[]>();
+        for (const [id, value] of collectPathValues(path, allowedIds)) {
+          const tag = firstTags.get(id) ?? "untagged";
+          const group = groups.get(tag);
+          if (group) {
+            group.push(value);
+          } else {
+            groups.set(tag, [value]);
+          }
+        }
+        if (groups.size === 0) {
+          throw new ToolExecutionError(
+            `No numeric values for property value path "${path.join(".")}"; ` +
+              "call get_property_values to see the available propertyPaths.",
+          );
+        }
+        data = Array.from(groups.entries()).map(([tag, values]) =>
+          boxTrace(tag, values),
+        );
+      } else {
+        data = [];
+        for (const path of paths) {
+          const values = collectPathValues(path, allowedIds).map(([, v]) => v);
+          if (values.length === 0) {
+            continue;
+          }
+          data.push(boxTrace(propertyPathLabel(path), values));
+        }
+        if (data.length === 0) {
+          throw new ToolExecutionError(
+            "None of the given property value paths have numeric values; " +
+              "call get_property_values to see the available propertyPaths.",
+          );
+        }
+      }
+      const layout = { title, hovermode: "closest" };
+      const plot = registerPlot({ title, data, layout });
+      return {
+        result: { plotId: plot.id, title, traceCount: data.length },
+        plots: [plot],
+      };
     },
   },
 
@@ -1675,6 +2033,29 @@ export function describeAgentToolCall(name: string, input: any): string {
     }
     case "get_property_values":
       return "Summarize computed property values";
+    case "get_property_histogram": {
+      const path = Array.isArray(input?.propertyPath)
+        ? input.propertyPath.join(".")
+        : "";
+      return `Read histogram of ${path}`;
+    }
+    case "get_sample_values": {
+      const n =
+        typeof input?.n === "number" && input.n > 0 ? Math.floor(input.n) : 20;
+      return `Read up to ${n} sample values`;
+    }
+    case "create_scatter_plot":
+      return `Create scatter plot "${
+        typeof input?.title === "string" ? input.title : ""
+      }"`;
+    case "create_histogram_plot":
+      return `Create histogram plot "${
+        typeof input?.title === "string" ? input.title : ""
+      }"`;
+    case "create_box_plot":
+      return `Create box plot "${
+        typeof input?.title === "string" ? input.title : ""
+      }"`;
     case "undo":
       return "Undo the last annotation change";
     case "redo":
