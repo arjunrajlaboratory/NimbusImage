@@ -93,6 +93,10 @@ let conversationGeneration = 0;
 // login/logout (client-side, no page reload) clears the prior user's history.
 // `undefined` until the first check runs.
 let lastKnownUserId: string | null | undefined = undefined;
+// True while handleAuthenticatedUserChange is awaiting a stored conversation.
+// Sends are blocked until it settles so a turn started mid-load can't be
+// clobbered when the stored wire history lands (and vice versa).
+let hydrating = false;
 
 export function setAgentPanelElement(element: HTMLElement | null) {
   panelElement = element;
@@ -306,21 +310,46 @@ export class AiPanel extends VuexModule {
       }
       return;
     }
-    const stored = await loadStoredConversation();
-    if (stored && stored.userId === userId) {
-      // Same user (e.g. a page reload): rehydrate the conversation.
-      wireMessages = stored.wireMessages;
-      this.setItems(stored.items);
-    } else {
-      // A different user's conversation must never surface here.
-      await clearStoredConversation();
+    // Block sends until this load settles (see `hydrating`). Capture the
+    // generation now so we can tell, after the await, whether a newer change
+    // superseded this one.
+    const generationAtChange = conversationGeneration;
+    hydrating = true;
+    try {
+      const stored = await loadStoredConversation();
+      // A newer user change (or any clear) during the await bumps the
+      // generation or moves lastKnownUserId. If either happened, this load is
+      // stale: a rapid A->B switch must never restore A's transcript into B's
+      // session.
+      if (
+        conversationGeneration !== generationAtChange ||
+        lastKnownUserId !== userId
+      ) {
+        return;
+      }
+      if (stored && stored.userId === userId) {
+        // Same user (e.g. a page reload): rehydrate the conversation.
+        wireMessages = stored.wireMessages;
+        this.setItems(stored.items);
+      } else {
+        // A different user's conversation must never surface here.
+        await clearStoredConversation();
+      }
+    } finally {
+      // Only release the guard if we're still the current change; a newer
+      // in-flight change owns it until it settles.
+      if (conversationGeneration === generationAtChange) {
+        hydrating = false;
+      }
     }
   }
 
   @Action
   async sendUserMessage(text: string) {
     const trimmed = text.trim();
-    if (this.running || !trimmed) {
+    // `hydrating`: a user change is still restoring the stored conversation;
+    // starting a turn now could be clobbered when that history lands.
+    if (this.running || hydrating || !trimmed) {
       return;
     }
     this.setRunning(true);
@@ -545,6 +574,28 @@ export class AiPanel extends VuexModule {
         };
       }
       this.updateItemImpl({ index: itemIndex, changes: { status: "running" } });
+      // Re-check identity after the approval await: the loop's pre-tool check
+      // ran before the prompt opened, and the user may have navigated to a
+      // different dataset while it was open. Never execute a gated action
+      // against a dataset the request didn't target. (Non-gated tools don't
+      // await here, so the loop's pre-check already covers them.)
+      if (turnSnapshot && viewIdentityChangedSince(turnSnapshot)) {
+        this.updateItemImpl({
+          index: itemIndex,
+          changes: { status: "declined", detail: "dataset changed" },
+        });
+        return {
+          type: "tool_result",
+          tool_use_id: toolUse.id,
+          content: toResultContent({
+            declined: true,
+            reason:
+              "Aborted: the active dataset changed while awaiting approval; " +
+              "not executing against a different dataset than the request " +
+              "targeted.",
+          }),
+        };
+      }
     }
 
     try {
@@ -561,6 +612,10 @@ export class AiPanel extends VuexModule {
               this.addItemImpl({ kind: "info", text });
             }
           },
+          // Lets a tool that awaits before mutating (e.g. run_worker) re-check
+          // identity immediately before it acts.
+          hasViewIdentityChanged: () =>
+            turnSnapshot != null && viewIdentityChangedSince(turnSnapshot),
         },
       );
       this.updateItemImpl({

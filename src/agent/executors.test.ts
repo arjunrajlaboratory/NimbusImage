@@ -449,6 +449,22 @@ describe("executeAgentTool", () => {
     expect(result.nextOffset).toBe(200);
   });
 
+  it("floors a fractional page limit so pagination can't stall", async () => {
+    mockAnnotations.annotations = Array.from({ length: 3 }, (_unused, i) =>
+      makeAnnotation({ id: `a${i}` }),
+    );
+    // limit: 0.5 previously sliced to zero rows yet reported a fractional
+    // nextOffset (0.5) that normalized back to 0 -> an infinite stall.
+    const result = (
+      await executeAgentTool("list_annotations", { limit: 0.5 }, context)
+    ).result;
+    expect(result.returned).toBe(1);
+    expect(result.annotations.length).toBe(1);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextOffset).toBe(1);
+    expect(Number.isInteger(result.nextOffset)).toBe(true);
+  });
+
   it("routes contrast to the personal view, other fields to the config", async () => {
     const layer = {
       id: "l1",
@@ -673,6 +689,47 @@ describe("executeAgentTool", () => {
     expect(result.alreadyRunning).toBe(true);
     expect(result.jobId).toBe("job42");
     expect(mockAnnotations.computeAnnotationsWithWorker).not.toHaveBeenCalled();
+  });
+
+  it("does not submit a worker job if the dataset changed during setup", async () => {
+    mockMain.tools = [
+      { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
+    ];
+    mockJobs.jobIdForToolId = {};
+    // The active dataset changed while the worker interface was being fetched;
+    // the job must not be submitted against the new dataset.
+    await expect(
+      executeAgentTool(
+        "run_worker",
+        { toolId: "t1" },
+        {
+          ...context,
+          hasViewIdentityChanged: () => true,
+        },
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.computeAnnotationsWithWorker).not.toHaveBeenCalled();
+  });
+
+  it("submits the worker job when the dataset is unchanged", async () => {
+    mockMain.tools = [
+      { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
+    ];
+    mockJobs.jobIdForToolId = {};
+    mockAnnotations.computeAnnotationsWithWorker = vi.fn(async () => ({
+      jobId: "job7",
+    }));
+    const { result } = await executeAgentTool(
+      "run_worker",
+      { toolId: "t1" },
+      {
+        ...context,
+        hasViewIdentityChanged: () => false,
+      },
+    );
+    expect(result.started).toBe(true);
+    expect(result.jobId).toBe("job7");
+    expect(mockAnnotations.computeAnnotationsWithWorker).toHaveBeenCalled();
   });
 });
 

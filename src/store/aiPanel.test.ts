@@ -106,12 +106,12 @@ beforeEach(() => {
 
 describe("AI panel conversation isolation across users", () => {
   it("clears the conversation when the authenticated user changes", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     await aiPanel.sendUserMessage("secret from A");
     expect(lastSentPayload()).toContain("secret from A");
 
     // A different user logs in: the prior history must be dropped.
-    aiPanel.handleAuthenticatedUserChange("userB");
+    await aiPanel.handleAuthenticatedUserChange("userB");
     await aiPanel.sendUserMessage("hello from B");
 
     const sent = lastSentPayload();
@@ -120,11 +120,11 @@ describe("AI panel conversation isolation across users", () => {
   });
 
   it("keeps the conversation when the same user is re-observed", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     await aiPanel.sendUserMessage("first from A");
 
     // Same identity (e.g. an unrelated reactive tick) must not clear.
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     await aiPanel.sendUserMessage("second from A");
 
     const sent = lastSentPayload();
@@ -133,7 +133,7 @@ describe("AI panel conversation isolation across users", () => {
   });
 
   it("does not leak a response that arrives after a user change mid-run", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
 
     // The API call for A's turn resolves only after B has logged in.
     let resolveA: (value: any) => void = () => {};
@@ -143,7 +143,7 @@ describe("AI panel conversation isolation across users", () => {
       }),
     );
     const aTurn = aiPanel.sendUserMessage("secret from A");
-    aiPanel.handleAuthenticatedUserChange("userB");
+    await aiPanel.handleAuthenticatedUserChange("userB");
     resolveA(terminalResponse("late reply for A"));
     await aTurn;
 
@@ -158,7 +158,7 @@ describe("AI panel conversation isolation across users", () => {
 
 describe("AI panel dataset binding (finding #1)", () => {
   it("aborts the turn without running tools when the dataset changes", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     postAgentMessage.mockResolvedValueOnce(
       toolUseResponse("color_annotations"),
     );
@@ -176,7 +176,7 @@ describe("AI panel dataset binding (finding #1)", () => {
   });
 
   it("stops running later tools when the dataset changes mid-batch", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     postAgentMessage.mockResolvedValueOnce({
       content: [
         { type: "tool_use", id: "tu1", name: "set_location", input: {} },
@@ -202,7 +202,7 @@ describe("AI panel dataset binding (finding #1)", () => {
   });
 
   it("does not revert when the dataset changed since the last turn", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     await aiPanel.sendUserMessage("do something"); // sets the turn snapshot
     mockViewIdentityChangedSince.mockReturnValue(true);
 
@@ -215,11 +215,31 @@ describe("AI panel dataset binding (finding #1)", () => {
       ),
     ).toBe(true);
   });
+
+  it("declines a gated tool approved after the dataset changed", async () => {
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    mockIsGatedTool.mockReturnValue(true);
+    aiPanel.setAutoApprove(false);
+    postAgentMessage.mockResolvedValueOnce(toolUseResponse("run_worker"));
+
+    // The loop parks on the approval promise for the gated tool.
+    const turn = aiPanel.sendUserMessage("run the worker");
+    await waitFor(() => aiPanel.pendingApprovalIndex !== null);
+
+    // The user navigates to a different dataset while the prompt is open, then
+    // approves. The tool must be declined, not run against the new dataset.
+    mockViewIdentityChangedSince.mockReturnValue(true);
+    aiPanel.approvePendingTool(true);
+    await turn;
+
+    expect(mockExecuteAgentTool).not.toHaveBeenCalled();
+    expect(lastSentPayload()).toContain("active dataset changed");
+  });
 });
 
 describe("AI panel forced clear (finding P2-D)", () => {
   it("resolves a pending approval so a forced clear doesn't hang the loop", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     mockIsGatedTool.mockReturnValue(true);
     aiPanel.setAutoApprove(false);
     postAgentMessage.mockResolvedValueOnce(toolUseResponse("run_worker"));
@@ -256,7 +276,7 @@ describe("AI panel persistence", () => {
   });
 
   it("saves the conversation after a completed turn", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     await aiPanel.sendUserMessage("remember this");
     expect(mockSave).toHaveBeenCalled();
     const saved = mockSave.mock.calls.at(-1)[0];
@@ -293,7 +313,7 @@ describe("AI panel persistence", () => {
   });
 
   it("clearConversationAndStorage wipes the store", async () => {
-    aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userA");
     await aiPanel.sendUserMessage("something");
     await aiPanel.clearConversationAndStorage();
     expect(mockClearStore).toHaveBeenCalled();
@@ -332,5 +352,53 @@ describe("AI panel persistence", () => {
     expect(
       freshAiPanel.items.some((i: any) => i.text === "from before reload"),
     ).toBe(true);
+  });
+
+  it("does not restore an earlier user's conversation after a rapid switch", async () => {
+    // A's stored-conversation load resolves only AFTER B has logged in.
+    let resolveA: (value: any) => void = () => {};
+    mockLoad
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveA = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(null);
+
+    const aChange = aiPanel.handleAuthenticatedUserChange("userA");
+    await aiPanel.handleAuthenticatedUserChange("userB"); // B settles first
+    // A's load now resolves with A's transcript; it is stale and must be
+    // discarded rather than surfacing in B's session.
+    resolveA({
+      userId: "userA",
+      items: [{ kind: "assistant", text: "A private line" }],
+      wireMessages: [],
+      updatedAt: 1,
+    });
+    await aChange;
+
+    expect(aiPanel.items.some((i) => i.text === "A private line")).toBe(false);
+  });
+
+  it("blocks sending until hydration finishes", async () => {
+    let resolveLoad: (value: any) => void = () => {};
+    mockLoad.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+
+    const change = aiPanel.handleAuthenticatedUserChange("userA");
+    // A send while the stored conversation is still loading must be a no-op,
+    // so it can't be clobbered when that history lands.
+    await aiPanel.sendUserMessage("typed too early");
+    expect(postAgentMessage).not.toHaveBeenCalled();
+
+    // Once hydration settles, sending works again.
+    resolveLoad(null);
+    await change;
+    await aiPanel.sendUserMessage("now it works");
+    expect(postAgentMessage).toHaveBeenCalled();
+    expect(lastSentPayload()).toContain("now it works");
   });
 });

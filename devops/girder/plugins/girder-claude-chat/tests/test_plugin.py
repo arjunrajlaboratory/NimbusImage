@@ -211,3 +211,31 @@ def testAgentHelpTopicsPackagedAndValidated(monkeypatch):
     assert excinfo.value.code == 400
     with pytest.raises(RestException):
         resource.get_help_topic_markdown(123)
+
+
+@pytest.mark.plugin('girder_claude_chat')
+@pytest.mark.parametrize(
+    'payload',
+    [
+        None,                    # body was JSON null
+        'just a string',         # body was a bare string
+        {},                      # object without "messages"
+        {'messages': 'x'},       # messages not a list
+        {'messages': []},        # messages empty
+        {'messages': ['x']},     # message entries not objects
+    ],
+)
+def testAgentRejectsMalformedBodies(payload):
+    # A malformed body must produce a clean 400, not an uncaught 500 from an
+    # AttributeError in _parse_agent_messages/_add_message_cache_breakpoint.
+    with pytest.raises(RestException) as excinfo:
+        ClaudeAgentResource._parse_agent_messages(payload)
+    assert excinfo.value.code == 400
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAgentParsesValidBody():
+    messages = [{'role': 'user', 'content': 'hi'}]
+    assert ClaudeAgentResource._parse_agent_messages(
+        {'messages': messages}
+    ) == messages

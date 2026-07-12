@@ -249,6 +249,24 @@ class ClaudeAgentResource(Resource):
             )
 
     @staticmethod
+    def _parse_agent_messages(data):
+        """Validate the request body and return its messages list.
+
+        The body must be a JSON object with a non-empty ``messages`` list of
+        objects (Anthropic wire format). Malformed input (``null``, a bare
+        string, or a list of non-objects) raises a 400 rather than crashing
+        later with an AttributeError.
+        """
+        if not isinstance(data, dict):
+            raise RestException('Request body must be a JSON object')
+        messages = data.get('messages')
+        if not isinstance(messages, list) or not messages:
+            raise RestException('messages must be a non-empty list')
+        if not all(isinstance(m, dict) for m in messages):
+            raise RestException('messages entries must be objects')
+        return messages
+
+    @staticmethod
     def _add_message_cache_breakpoint(messages):
         """Mark the end of the conversation as a prompt-cache breakpoint.
 
@@ -289,9 +307,7 @@ class ClaudeAgentResource(Resource):
                 'The claude_agent endpoint is not configured', code=503
             )
         self._check_rate_limit(self.getCurrentUser()['_id'])
-        messages = data.get('messages')
-        if not isinstance(messages, list) or not messages:
-            raise RestException('messages must be a non-empty list')
+        messages = self._parse_agent_messages(data)
         if len(messages) > self.AGENT_MAX_MESSAGES:
             raise RestException('Conversation too long')
         body_size = len(json.dumps(messages).encode('utf-8'))

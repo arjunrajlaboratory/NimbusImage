@@ -268,3 +268,62 @@ user-confirmed in a panel — left as-is, noted here.
 
 **Gates:** `pnpm tsc` clean · eslint clean · vitest executors 64/64 + aiPanel
 7/7 + wireConversation 7/7.
+
+---
+
+# Review Round 4 (external, 2 P1 + 2 P2)
+
+All four verified against current code and fixed. Prior seven findings confirmed
+still fixed.
+
+## [R4-1] Auth hydration could restore the wrong user's conversation (P1)
+**Location:** `src/store/aiPanel.ts` (`handleAuthenticatedUserChange`)
+**Status:** fixed (pending commit)
+
+Awaited `loadStoredConversation()` without rechecking identity afterward, so a
+rapid A→B switch could let A's slow load restore A's transcript into B's
+session, and a turn started mid-load could be clobbered when the stored history
+landed. Now captures `conversationGeneration` before the await and bails if the
+generation changed or `lastKnownUserId` moved; a `hydrating` guard blocks
+`sendUserMessage` until the load settles. Tests: "does not restore an earlier
+user's conversation after a rapid switch", "blocks sending until hydration
+finishes"; existing user-change tests updated to `await` the (async) change.
+
+## [R4-2] Dataset switch during approval / async tool ran on the wrong dataset (P1)
+**Location:** `src/store/aiPanel.ts` (`executeToolUse`) + `src/agent/executors.ts`
+(`runWorkerTool`, `IAgentToolContext`)
+**Status:** fixed (pending commit)
+
+The per-tool pre-check couldn't catch a navigation that happened while a gated
+tool's approval prompt was open, or between `run_worker`'s interface fetch and
+its job submission. Now `executeToolUse` rechecks `viewIdentityChangedSince`
+after the approval await (gated tools only — non-gated ones don't await, so the
+loop pre-check covers them), and the context exposes `hasViewIdentityChanged`
+so `run_worker` rechecks immediately before submitting the job. Tests:
+"declines a gated tool approved after the dataset changed", run_worker
+submit/abort pair. **Sweep:** `color/tag/compute_property` resolve
+synchronously then do a single mutation await, so the pre-execution recheck
+covers them; only `run_worker` has the two-await fetch-then-submit gap.
+
+## [R4-3] Fractional list_annotations limit stalled pagination (P2)
+**Location:** `src/agent/executors.ts` (`list_annotations`)
+**Status:** fixed (pending commit)
+
+`limit: 0.5` sliced to zero rows yet reported a fractional `nextOffset` that
+normalized back to 0 — an infinite stall. Now floors the requested limit and
+clamps to at least 1. Test: "floors a fractional page limit so pagination can't
+stall". **Sweep:** `list_annotations` is the only slice+`nextOffset` paging path.
+
+## [R4-4] Malformed agent request body produced a backend 500 (P2)
+**Location:** `girder_claude_chat/__init__.py` (`agent_message`)
+**Status:** fixed (pending commit)
+
+`data.get('messages')` (and `_add_message_cache_breakpoint`) assumed a dict body
+with dict messages, so `null` or `{"messages":["x"]}` raised an AttributeError
+(500). Extracted a testable `_parse_agent_messages` that validates the body is a
+dict with a non-empty list of dict messages, raising 400 otherwise. Tests:
+`testAgentRejectsMalformedBodies` (6 payloads) + `testAgentParsesValidBody`.
+**Sweep:** `suggest_tools_imp` already validates its dict body (existing test).
+
+**Gates:** `pnpm tsc` clean · eslint clean · vitest aiPanel 15/15 + executors
+71/71 · backend `tox` lint OK + 25 tests (7 new).

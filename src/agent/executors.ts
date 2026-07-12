@@ -46,6 +46,11 @@ export interface IAgentToolContext {
   // Append an informational note to the panel transcript, used for events
   // that happen after the tool call returned (e.g. worker job completion)
   notify: (text: string) => void;
+  // True if the active dataset/collection/view has changed since the turn
+  // began. A tool that awaits before mutating (e.g. run_worker fetches the
+  // worker interface, then submits a job) calls this immediately before the
+  // mutation so it never acts on a dataset the request didn't target.
+  hasViewIdentityChanged?: () => boolean;
 }
 
 export interface IToolExecutionResult {
@@ -415,6 +420,17 @@ async function runWorkerTool(
     tool.values?.workerInterfaceValues ?? {},
   );
 
+  // Resolving the worker interface above awaits a network fetch; the user may
+  // have navigated to another dataset in the meantime. Re-check right before
+  // submitting so the job never runs against a different dataset.
+  if (context.hasViewIdentityChanged?.()) {
+    throw new ToolExecutionError(
+      "Aborted before submitting the job: the active dataset changed; not " +
+        "starting a worker against a different dataset than the request " +
+        "targeted.",
+    );
+  }
+
   const progressInfo: IProgressInfo = {};
   const errorInfo: IErrorInfoList = { errors: [] };
   const computeJob = await annotationStore.computeAnnotationsWithWorker({
@@ -526,8 +542,14 @@ const registry: { [name: string]: IAgentToolEntry } = {
         typeof input.offset === "number" && input.offset > 0
           ? Math.floor(input.offset)
           : 0;
+      // Floor the requested page size (a fractional limit like 0.5 slices to
+      // zero rows yet reports a fractional nextOffset that normalizes back to
+      // 0, stalling pagination) and never drop below 1 so a call always makes
+      // progress.
       const requestedLimit =
-        typeof input.limit === "number" && input.limit > 0 ? input.limit : 50;
+        typeof input.limit === "number" && input.limit > 0
+          ? Math.max(1, Math.floor(input.limit))
+          : 50;
       const limit = Math.min(requestedLimit, MAX_LIST_ANNOTATIONS);
       const annotations = matching.slice(offset, offset + limit).map((a) => {
         const n = a.coordinates.length || 1;
