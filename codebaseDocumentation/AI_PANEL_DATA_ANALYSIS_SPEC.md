@@ -13,18 +13,29 @@
 > `src/agent/executors.ts`, the tool schemas + "Analyzing data" prompt
 > section in the `girder-claude-chat` data files, `kind:"plot"` transcript
 > items with `AiPanelPlot.vue` (lazy Plotly), and IndexedDB plot
-> persistence. `pnpm tsc` / `lint:ci` clean; 125 `src/agent` tests pass.
+> persistence. `pnpm tsc` / `lint:ci` clean; 189 `src/agent` + `src/store`
+> tests pass.
 >
-> **Live-verified** against dataset `69f4eb65aaba948c2d7b9b24` (2,618 nuclei
-> with computed intensity + morphology properties): histogram, scatter
-> (colorByTag → per-tag WebGL traces), box (groupByTag), and query
-> restriction all render inline and read back correct stats (matched
-> MongoDB ground truth: Area n=5237, mean 367.9, std 106.6, range 25-975;
-> query→nucleus dropped n to 2618). Confirmed the raw-data invariant on the
-> wire (plot tool_results ~23 KB, no raw value arrays), conversation +
-> full plot data persisted and re-rendered across reload, a mixed
-> analysis→`set_annotation_filter` turn with working revert, and that the
-> production build code-splits Plotly into its own 4.6 MB lazy chunk.
+> **Follow-up fixes on this branch** (from live testing):
+> - **Live-set intersection** (§2, §5.1) — analysis excludes property values
+>   orphaned by deleted annotations; backend cleanup gap filed as
+>   [issue #1243](https://github.com/arjunrajlaboratory/NimbusImage/issues/1243).
+> - **Hydration guard** — fixed a pre-existing race in `aiPanel.ts` where
+>   clearing the conversation during the post-reload IndexedDB hydration could
+>   strand the `hydrating` send-guard and silently block all sends (dedicated
+>   `hydrationGeneration` counter + regression test).
+>
+> **Live-verified** against dataset `69f4eb65aaba948c2d7b9b24`: histogram,
+> scatter (colorByTag → per-tag WebGL traces), box (groupByTag), and query
+> restriction all render inline and read back correct stats. Stats matched
+> MongoDB ground truth for the 2,618 live nuclei (Area mean 367.9, std 106.6,
+> range 25-975); after the live-set fix the unrestricted scatter shows 2,618
+> points (was 5,237 = 2,618 nuclei + 2,619 orphaned values). Confirmed the
+> raw-data invariant on the wire (plot tool_results ~23 KB, no raw value
+> arrays), conversation + full plot data persisted and re-rendered across
+> reload, a mixed analysis→`set_annotation_filter` turn with working revert,
+> and that the production build code-splits Plotly into its own 4.6 MB lazy
+> chunk.
 >
 > Companion docs: `AI_PANEL_SPEC.md` (panel architecture),
 > `AI_PANEL_REVIEW.md` (review tracker).
@@ -95,6 +106,13 @@ browser-held annotation/value set, same as the whole app. Server-side
 aggregation (the #1221 approach) becomes relevant only if datasets outgrow
 frontend memory — see `AI_PANEL_SPEC.md` §4.1. The tool *semantics* here
 are chosen to survive that migration (aggregates in, aggregates out).
+
+Scope of "the annotations": analysis is restricted to annotations that
+currently exist (the live in-memory set), not to every property-value document.
+The two can diverge — the backend leaves property values orphaned after
+annotation deletion (issue #1243) — and analysis must reflect real objects, so
+the tools intersect with the live set (§5.1). A query narrows within that set;
+no query means all live annotations.
 
 ## 3. Data flow
 
@@ -271,14 +289,24 @@ export function computeStats(values: number[]): IPathStats; // mean/std/median/p
 export function uniformHistogram(values: number[], buckets: number): IHistogramBucket[];
 ```
 
-Plus a `collectPathValues(path, allowedIds?)` helper in `executors.ts`
-(needs the stores): returns `[annotationId, number][]` from
-`propertyStore.propertyValues`, restricted by an optional id set from
-`queryAnnotations`. The extended `get_property_values`, both `get_*`
-inspection tools and all three plot tools share it. Each analysis executor
-starts with `await propertyStore.fetchPropertyValues()` — the precedent set
-by the existing `get_property_values` executor, and what makes "compute
-then plot" turns see fresh values.
+Plus a `collectPathValues(path, allowedIds)` helper in `executors.ts`
+(needs the stores): returns `[annotationId, number][]` by walking a set of
+annotation ids and reading `propertyStore.propertyValues[id]`. **It iterates
+the query's matches when a query was given (`queryAnnotations`, already
+restricted to live annotations), else every id in the live annotation set
+(`liveAnnotationIdSet()` = `annotationStore.annotations` ids) — never the raw
+`propertyValues` keys.** This matters: property-value documents can outlive
+their annotation (a backend cleanup gap leaves values orphaned after
+deletion — tracked in
+[issue #1243](https://github.com/arjunrajlaboratory/NimbusImage/issues/1243)),
+so iterating `propertyValues` directly would count deleted annotations and add
+a spurious "untagged" group to tag-grouped plots. The extended
+`get_property_values`, `get_property_histogram`, and all three plot tools go
+through `collectPathValues`; `get_sample_values` applies the same live-set
+intersection inline. Each analysis executor starts with
+`await propertyStore.fetchPropertyValues()` — the precedent set by the existing
+`get_property_values` executor, and what makes "compute then plot" turns see
+fresh values.
 
 ### 5.2 New module: `src/agent/plotRegistry.ts`
 
@@ -476,19 +504,31 @@ Also verify the Plotly chunk is absent from the initial bundle
 (`pnpm build` output / network tab: plotly chunk loads only when the first
 plot renders).
 
-## 9. Open questions
+## 9. Resolved decisions & open questions
 
-1. **Tag grouping uses the first tag only** (#1221 behavior, keeps traces
-   bounded). Multi-tag annotations appear once, under their first tag. If
-   this proves confusing, an explicit `groupByTags: string[]` (one trace
-   per listed tag, membership-based, annotations may repeat) is a later
-   schema-compatible addition.
-2. **Should plot tools auto-refresh values?** They call
+**Resolved during implementation:**
+
+- **Tag grouping uses the first tag only** (kept — #1221 behavior, bounds the
+  trace count). A multi-tag annotation appears once, under its first tag. An
+  explicit `groupByTags: string[]` (one trace per listed tag, membership-based,
+  annotations may repeat) stays a later schema-compatible addition if this
+  proves confusing; not doing it now.
+- **Orphaned property values are excluded** (§2 "Scope", §5.1). Live testing
+  surfaced a spurious "untagged" group in tag-grouped plots: property-value
+  documents for deleted annotations that the backend never cleaned up
+  (~2,619 of 5,237 on the test dataset). Fixed client-side by intersecting with
+  the live annotation set; the backend data-hygiene bug is filed as
+  [issue #1243](https://github.com/arjunrajlaboratory/NimbusImage/issues/1243)
+  and is independent of this feature.
+
+**Still open:**
+
+1. **Should plot tools auto-refresh values?** They call
    `fetchPropertyValues()` per call (matching `get_property_values`);
    on very large datasets several calls per turn re-download the value
    pages. If this shows up in practice, add a per-turn fetch memo in the
    executor context rather than changing tool semantics.
-3. **Correlation/regression tool?** A `get_correlation` (Pearson/Spearman
+2. **Correlation/regression tool?** A `get_correlation` (Pearson/Spearman
    for two paths) would ground "summarize the correlation" numerically
    instead of the model estimating from a plot it cannot see. Cheap to add
    in `analysis.ts`; deferred to keep v1 minimal — the stats tools already
