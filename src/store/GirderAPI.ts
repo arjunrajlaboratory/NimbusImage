@@ -1258,7 +1258,6 @@ export function setBaseCollectionValues(
     id: item._id,
     name: item.name,
     description: item.description,
-    created: item.created,
   };
   for (const key of configurationBaseKeys) {
     config[key] =

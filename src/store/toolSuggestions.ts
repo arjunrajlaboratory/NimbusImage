@@ -10,6 +10,7 @@ import { logError } from "@/utils/log";
 import store from "./root";
 import main from "./index";
 import properties from "./properties";
+import persister from "./Persister";
 import {
   AnnotationShape,
   IResolvedToolSuggestion,
@@ -33,13 +34,39 @@ import {
 const AUTO_SUGGEST_ENABLED = true;
 const TOOL_SUGGESTIONS_PANEL_SELECTOR = "[data-tool-suggestions-panel]";
 
-// A collection counts as "freshly created" for this long after its creation
-// timestamp. Auto-suggest only fires inside this window, so reopening or
-// reloading an established collection never re-triggers it. The in-session
-// `seenConfigurationIds` guard prevents duplicates within a single session, so
-// this window only needs to distinguish "just created" from "opened again
-// later" — a comfortable value is fine.
-const RECENT_COLLECTION_WINDOW_MS = 5 * 60 * 1000;
+// Auto-suggest fires once per collection, the first time it is opened with no
+// tools. We remember the collections we've already suggested for in
+// localStorage so reopening or reloading (in any later session) never
+// re-triggers the flow. Creation time is deliberately NOT used: with batch
+// uploads the collection is created up front but its first viewer open can come
+// many minutes later, so an age-based gate would wrongly expire before that
+// first open.
+const SUGGESTED_CONFIG_IDS_STORAGE_KEY = "toolSuggestions.suggestedConfigIds";
+// Keep only the most recently suggested-for collections so the list can't grow
+// unbounded for power users. 500 ids is ~14 KB and, in practice, larger than
+// any single user's collection count — so eviction (which would let an evicted,
+// still-toolless collection re-suggest on reopen) effectively never happens.
+const MAX_REMEMBERED_SUGGESTED_CONFIGS = 500;
+
+// The persisted "already suggested" set. Backed directly by localStorage rather
+// than mirrored in Vuex state: it's not rendered anywhere, and localStorage is
+// the single source of truth across sessions.
+function getSuggestedConfigurationIds(): string[] {
+  return persister.get<string[]>(SUGGESTED_CONFIG_IDS_STORAGE_KEY, []);
+}
+
+// Record that we've completed suggestions for a collection. Moves an existing
+// id to most-recent, then trims oldest so the list stays within the cap.
+function rememberSuggestedConfigurationId(configurationId: string): void {
+  const ids = getSuggestedConfigurationIds().filter(
+    (id) => id !== configurationId,
+  );
+  ids.push(configurationId);
+  persister.set(
+    SUGGESTED_CONFIG_IDS_STORAGE_KEY,
+    ids.slice(-MAX_REMEMBERED_SUGGESTED_CONFIGS),
+  );
+}
 
 // Manual (non-worker) tools we can offer. Currently just a blob tool, matching
 // the "suggest a blob tool if you see blobs" requirement.
@@ -220,7 +247,8 @@ export class ToolSuggestions extends VuexModule {
   suggestions: IResolvedToolSuggestion[] = [];
   errorMessage: string | null = null;
   // Configuration ids we have already run suggestions for, so opening the same
-  // collection twice in one session doesn't re-prompt.
+  // collection twice in one session doesn't re-prompt. Cross-session
+  // de-duplication lives in localStorage (see the suggested-config helpers).
   seenConfigurationIds: string[] = [];
   dismissed: boolean = false;
 
@@ -271,10 +299,11 @@ export class ToolSuggestions extends VuexModule {
     this.setDismissed(false);
   }
 
-  // Run suggestions for the current configuration if it looks like a freshly
-  // created collection: it exists, was created within the recency window, has
-  // no tools yet, and we haven't already suggested for it this session. Safe to
-  // call on every configuration change.
+  // Run suggestions for the current configuration the first time it is opened
+  // with no tools: it exists, has no tools yet, we have never completed
+  // suggestions for it (persisted across sessions), and we haven't already
+  // started suggesting for it this session. Safe to call on every configuration
+  // change.
   @Action
   async maybeSuggestForCurrentConfiguration() {
     if (!AUTO_SUGGEST_ENABLED) {
@@ -287,15 +316,8 @@ export class ToolSuggestions extends VuexModule {
     if (configuration.tools.length > 0) {
       return;
     }
-    // Only auto-suggest for freshly created collections. Anything older than
-    // the window is an existing collection being reopened/reloaded, not a new
-    // one, so it should not re-trigger suggestions. Fail closed (skip) when the
-    // creation timestamp is missing or unparseable: the `!(age < window)` form
-    // treats a NaN age as "not recent".
-    const createdMs = configuration.created
-      ? new Date(configuration.created).getTime()
-      : NaN;
-    if (!(Date.now() - createdMs < RECENT_COLLECTION_WINDOW_MS)) {
+    // Already suggested for this collection in some session — never re-prompt.
+    if (getSuggestedConfigurationIds().includes(configuration.id)) {
       return;
     }
     if (this.seenConfigurationIds.includes(configuration.id)) {
@@ -308,6 +330,10 @@ export class ToolSuggestions extends VuexModule {
     await this.suggestForCurrentConfiguration();
     if (this.status === "error") {
       this.unmarkConfigurationSeen(configuration.id);
+    } else if (this.status === "done") {
+      // The flow ran to completion (even with zero suggestions) — persist so it
+      // never runs again for this collection in any future session.
+      rememberSuggestedConfigurationId(configuration.id);
     }
   }
 
