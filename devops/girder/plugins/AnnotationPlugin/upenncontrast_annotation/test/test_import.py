@@ -432,3 +432,66 @@ class TestDataImportEndpoint:
 
         remaining = list(Annotation().find({"datasetId": dataset["_id"]}))
         assert remaining == []
+
+    def testImportedDataIsRecordedAndUndoable(self, admin, server):
+        """A completed import must be captured by @recordable so it can be
+        undone. The helper writes via AnnotationModel()/ConnectionModel()/
+        PropertyValuesModel(), which are Girder model *singletons* (the
+        _ModelSingleton metaclass), so they are the same recording
+        instances that received proxiedModel.startRecording — the writes
+        are recorded and undo reverts them.
+        """
+        dataset = self._makeDataset(admin)
+        body = {
+            "datasetId": str(dataset["_id"]),
+            "annotations": [
+                annotationExportDict("old-ann-1"),
+                annotationExportDict("old-ann-2"),
+            ],
+            "connections": [{
+                "tags": [],
+                "parentId": "old-ann-1",
+                "childId": "old-ann-2",
+            }],
+            "propertyValues": {"old-ann-1": {"p1": {"Area": 1}}},
+            "propertyIdMap": {"p1": "p1"},
+        }
+        resp = server.request(
+            path="/annotation_import",
+            method="POST",
+            user=admin,
+            body=json.dumps(body),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        assert resp.json == {
+            "annotationCount": 2,
+            "connectionCount": 1,
+            "propertyValueCount": 1,
+        }
+
+        # Sanity: the documents exist after import.
+        assert len(list(
+            Annotation().find({"datasetId": dataset["_id"]}))) == 2
+        assert len(list(
+            AnnotationConnection().find({"datasetId": dataset["_id"]}))) == 1
+        assert len(list(
+            AnnotationPropertyValues().find(
+                {"datasetId": dataset["_id"]}))) == 1
+
+        # Undo the import: if the helper's writes were recorded, undo
+        # reverts every created document.
+        undo = server.request(
+            path="/history/undo",
+            method="PUT",
+            user=admin,
+            params={"datasetId": str(dataset["_id"])},
+        )
+        assertStatusOk(undo)
+
+        assert list(Annotation().find({"datasetId": dataset["_id"]})) == []
+        assert list(
+            AnnotationConnection().find({"datasetId": dataset["_id"]})) == []
+        assert list(
+            AnnotationPropertyValues().find(
+                {"datasetId": dataset["_id"]})) == []
