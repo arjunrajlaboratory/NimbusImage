@@ -46,7 +46,7 @@ Use this workflow when the user has a visually recognizable object class but can
    - Remind users to use Chrome if the tool reports that WebGPU is unavailable.
 
 2. **Provide examples**:
-   - Start with foreground examples using SAM Click, SAM Box, or Circle.
+   - Start with foreground examples using Click (SAM), Box (SAM), or Circle.
    - Add 2-5 clean examples when possible.
    - Add background examples if the tool is picking up a confusing look-alike structure.
 

@@ -8,8 +8,8 @@ Property workers compute quantitative measurements for your objects:
 2. Select tag of objects to measure
 3. Choose algorithm from dropdown
 4. Configure algorithm-specific parameters
-5. Click "Submit" to create the worker
-6. Click the "play" button to execute the computation
+5. Click "Create Property" — the "Compute upon creation" checkbox is on by default, so this both creates the property and runs the computation
+6. To re-run a property later (or if you unchecked "Compute upon creation"), use "Compute all" in the property list
 
 **Worker Types**:
 - Shape-based (areas, perimeters)
@@ -29,7 +29,7 @@ Quantify fluorescence signals within and around objects:
 
 **Blob Intensity Percentile**:
 - Measures specific percentile of intensity within blobs
-- Parameters: Channel and custom percentile value (0-99.99)
+- Parameters: Channel and custom percentile value (0-99.99999, default 50)
 - Good for customized thresholds or outlier handling
 
 **Blob Annulus Intensity**:
@@ -56,6 +56,8 @@ Analyze object shapes and sizes:
   - Centroid: Geometric center (x,y)
   - Elongation: Shape stretching (0-1)
   - Convexity: Area ratio to convex hull
+  - Solidity: Ratio of the object's perimeter to the perimeter of its convex hull
+  - Rectangularity: How well the object fits within its minimum bounding rectangle
   - Circularity: How closely object resembles a circle
   - Eccentricity: Deviation from circular shape
 
@@ -119,7 +121,7 @@ Access and interact with your measurements:
 4. Creates dynamic selections based on measurements
 
 **Exporting Results**:
-- Export to CSV: Object list → Actions → Export CSV
+- Export to CSV: click the Import / export data icon in the top app bar → Export CSV
 - Format ready for analysis in Excel, R, Python
 - Contains all selected properties and object metadata
 

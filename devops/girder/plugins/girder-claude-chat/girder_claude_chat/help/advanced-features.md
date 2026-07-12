@@ -16,7 +16,7 @@ Process multiple images efficiently:
 - Run automated annotation tools (like Cellpose-SAM, Piscis, etc.) across multiple datasets in a collection at once
 - Up to 50 datasets can be processed in a single batch operation
 - This is ideal for applying the same segmentation or detection to all conditions in an experiment
-- Select "Apply to datasets in collection" to process multiple datasets with the same settings
+- Check "Apply to all datasets in collection" to process multiple datasets with the same settings
 
 **Performance Considerations**:
 - Enable tiling for large images (Tile size parameter)
@@ -100,10 +100,9 @@ Connect NimbusImage with external analysis tools:
 - Visualize external analysis in context
 
 **API Access** (for advanced users):
-- Connect to backend (Girder) via Python notebooks
-- Direct database interaction for custom workflows
-- Programmatic control of NimbusImage functions
-- Contact support if you are interested in this functionality
+- Use the `nimbusimage` Python package for programmatic access — connect to a dataset and work with its images, annotations, connections, properties, and exports in code
+- Useful for scripting custom analysis and automating workflows
+- Install it with pip; see the package's documentation to get started
 
 **Data Format Conversion**:
 - Use external tools for format conversion

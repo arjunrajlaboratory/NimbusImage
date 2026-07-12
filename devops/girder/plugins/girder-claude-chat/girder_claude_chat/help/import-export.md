@@ -9,28 +9,27 @@ NimbusImage provides flexible data export capabilities for external analysis, ba
 
 ## Exporting as CSV
 To export data in CSV format for statistical analysis:
-1. Open the Annotation List
-2. Click "ACTIONS" 
-3. Select "Export CSV"
-4. Configure options:
+1. Click the **Import / export data** icon in the top app bar (the up/down-arrows icon)
+2. Choose **Export CSV**
+3. Configure options:
    - **Property Export Options**: All properties, listed properties, or specific properties
    - **Undefined Value Handling**: Empty string, NA, or NaN
-5. Review column preview
-6. Enter filename and click "DOWNLOAD"
+   - **File format**: CSV or TSV (CSV by default; choose TSV when property names contain commas)
+4. Review the column preview
+5. Enter a filename and click **Download**
 
 The CSV file contains object identifiers, metadata, tags, attributes, and all selected property values.
 
 ## Exporting as JSON
 For comprehensive data records, export in JSON format:
-1. Open the Annotation List
-2. Click "ACTIONS"
-3. Select "Export JSON"
-4. Choose inclusions:
+1. Click the **Import / export data** icon in the top app bar
+2. Choose **Export to JSON**
+3. Choose inclusions:
    - Export annotations (objects)
    - Export annotation connections
    - Export properties
    - Export property values
-5. Enter filename and click "EXPORT SELECTED ITEMS"
+4. Enter a filename and click **Export** (the button reads "Export N datasets" when exporting a whole collection)
 
 The JSON file contains complete geometric data, connection information, property definitions, and dataset metadata.
 
@@ -42,11 +41,11 @@ JSON files can be imported to:
 
 To import:
 1. Navigate to the target dataset
-2. Click "ACTIONS" in the Annotation List
-3. Select "Import JSON"
+2. Click the **Import / export data** icon in the top app bar
+3. Choose **Import from JSON**
 4. Select the JSON file
-5. Review import options
-6. Click "IMPORT"
+5. Review the import options
+6. Click **Import selection**
 
 Compatible dataset structures are essential for successful imports. Importing will not overwrite existing annotations unless explicitly configured.
 

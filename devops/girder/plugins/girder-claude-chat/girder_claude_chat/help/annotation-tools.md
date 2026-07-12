@@ -25,12 +25,12 @@ Create objects by hand with simple drawing tools:
 
 **Manual Circle**:
 - Create circular annotations
-- Click center, then drag to set radius
+- Click one corner and drag to the opposite corner of the bounding box (the circle is constrained to a square)
 - Useful for marking round structures
 
 **Manual Ellipse**:
 - Create elliptical annotations
-- Click center, then drag to set dimensions
+- Click one corner and drag to the opposite corner of the bounding box
 - Useful for marking oval structures
 
 ## Automated Tools
@@ -111,8 +111,8 @@ Combine automation with user guidance:
 - Interactive example-based segmentation tool for finding many objects that look like one or more examples the user provides. This is the tool to recommend when the user says "find more like this," "segment similar objects," "few-shot segmentation," or has objects that are visually recognizable but hard to capture with fixed thresholds.
 - Requires Chrome/WebGPU because it uses SAM embeddings. If WebGPU is unavailable, suggest Chrome and fall back to manual tools, plain SAM, or Cellpose-SAM depending on the task.
 - How users select examples:
-  - **SAM Click**: shift-click an object; SAM outlines the object under the pointer.
-  - **SAM Box**: shift-drag a box around a harder object; SAM segments inside the box.
+  - **Click (SAM)**: shift-click an object; SAM outlines the object under the pointer.
+  - **Box (SAM)**: shift-drag a box around a harder object; SAM segments inside the box.
   - **Circle**: shift-drag a freehand lasso; the lasso polygon itself becomes the example without running SAM.
 - How users find matches:
   - **SAM**: uses SAM-embedding similarity to propose matching objects in the current view. Good for visually distinctive, reasonably sized objects that the user can show by example.
@@ -140,14 +140,14 @@ Refine and manage objects:
 - Can add or remove areas from blobs
 
 **Combine Annotations**:
-- Merge multiple overlapping blob annotations into a single unified polygon
-- Select the annotations you want to combine and use the combine tool
+- Merge overlapping blob annotations into a single unified polygon
+- Use the "Click to combine" action (part of the blob-editing tools): click one blob, then click another, to merge them into one
 - Useful for joining adjacent or overlapping segmentation results into one object
 
 ## Tool Creation & Configuration
 Create custom tools tailored to your workflow:
 
-1. Click "+" in the Toolset panel
+1. Click "Add new tool" in the Toolset panel
 2. Select tool type from the menu
 3. Configure settings:
    - Layer: Which image layer to draw on
@@ -162,6 +162,5 @@ Create custom tools tailored to your workflow:
 
 **Tool Management**:
 - Edit existing tools with the pencil icon
-- Reorder tools by dragging
 - Delete tools no longer needed
 

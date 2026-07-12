@@ -46,7 +46,7 @@ Special considerations for temporal relationships:
 **Time Lapse Mode**:
 - Enable with checkbox in variable navigation panel
 - Visualizes tracks as connected lines between time points
-- Shows forward connections (thicker) and backward connections (thinner)
+- Line thickness reflects a connection's position relative to the current time point (segments still ahead of the playhead are drawn thicker, those already passed are thinner)
 - Skipped frame connections appear in red
 - "Track window" controls how many frames to display before/after current time
 

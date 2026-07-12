@@ -11,37 +11,25 @@ For special cases:
 - IncuCyte TIFFs may require pre-processing with the NimbusImage script
 
 ## Uploading Data
-NimbusImage provides a streamlined "Create Dataset" dialog to upload your data:
+Start from the home page: drag files or a whole folder onto the **Upload files** area, click **Upload a folder** to pick one, or use the **Upload Data** button. A **Create Dataset** dialog then lets you name the dataset, pick a storage location (Private/Public/Team), and choose how to import.
 
-**Accessing Upload Options**:
-- Click the upload button on the home page to open the Create Dataset dialog
-- The dialog offers both quick and advanced upload options in one place
+**One multi-file dataset (the default)**:
+- Multiple files — or a dropped folder — become a **single multidimensional dataset**. NimbusImage parses channels, Z, time, and position from metadata or filenames (e.g. `s01`, `t02`). This is what you want for "a folder's worth of images" that belong to one acquisition.
+- Use **Quick Import** to accept defaults and go straight to the viewer, or **Advanced Import** to review and adjust:
+  1. **Variable assignment** — map filename elements (`s01`, `t02`, …) to Z, time, channel, or position.
+  2. **Compositing** — stitch tiled stage positions together, or keep them as separate positions.
+  3. **Transcoding** — "Transcode to optimized TIFF" for better performance. Generally not needed for Nikon .nd2; on by default for Zeiss .czi and for TIFFs. For Leica .lif, NimbusImage imports the largest image set in the container.
+  4. **Collection placement** — add the dataset to an existing or new collection.
+- The dataset name defaults from the common part of the filenames; the system checks for and prevents duplicate names.
 
-**Quick Upload**:
-- Simply drag and drop files onto the upload zone
-- NimbusImage automatically processes with default settings
-- Best for simple datasets and quick exploration
+**One dataset per file (a collection)**:
+To keep each file as its own dataset (e.g. one file per well or condition) instead of merging them:
+1. In the Create Dataset dialog, check **"Upload each file as a separate dataset in a collection"** (available once 2+ files are selected). The name field becomes **Collection Name**.
+2. Each file becomes its own dataset, all grouped into a new collection that shares visualization settings and tools. You can edit each per-file dataset name.
+3. **Quick Import** processes every file with default settings; **Advanced Import** lets you configure dimension settings on the first dataset, which are then applied to all the rest.
+4. The system checks for duplicate names before uploading, and after import flags any files whose dimensions or channels don't match.
 
-**Advanced Upload**:
-1. **Dataset Name**: Enter a name for your dataset (the system checks to prevent duplicate names)
-2. **Storage Location**: Choose where to save the dataset (Private, Public, or Team folder)
-3. **File Selection**: Upload your image files
-4. **Variable Assignment**: Map filename elements (s01, t02, etc.) to variables
-5. **Compositing Options**: Choose to stitch tiles or keep as separate positions
-6. **Transcoding**: Optimize performance by transcoding to efficient TIFF. Not generally needed for Nikon .nd2 files, but important for Leica .lif and Zeiss .czi files.
-7. **Collection Assignment**: Add to existing or create new collection
-
-**Batch Dataset Upload**:
-Upload multiple files at once, creating one dataset per file in a single collection:
-1. Enable "Batch Dataset Mode" checkbox in the upload dialog
-2. Drag and drop multiple image files (e.g., multiple .nd2 or .czi files)
-3. Each file becomes its own dataset, all grouped in a new collection
-4. **Quick Import**: Processes all files with default settings
-5. **Advanced Import**: Configure dimension settings on the first file, and those settings apply to all subsequent files. NimbusImage highlights the variable portions of filenames to help you understand how variables are being assigned.
-6. The system checks for duplicate filenames before uploading
-7. After import, you'll see a compatibility check—if files have different dimensions or channels, you'll be warned about which aspects don't match
-
-This is ideal for experiments where you have many separate image files (e.g., one per well or condition) that you want to analyze together in a single collection.
+This collection path is ideal for experiments where you have many separate image files (e.g., one per well or condition) that you want to analyze together with consistent settings.
 
 **Bulk Collection Export**:
 - Export all annotations and property data from an entire collection at once

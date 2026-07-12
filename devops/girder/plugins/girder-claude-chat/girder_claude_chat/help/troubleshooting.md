@@ -13,7 +13,7 @@ Solutions for slow or unresponsive behavior:
 - Large datasets undergo background optimization when first opened
 - Performance improves after initial processing completes
 - If consistently slow, consider cropping or downsampling large datasets
-- Enable "Transcode to optimized TIFF" during import for better performance
+- Enable "Transcode into optimized TIFF file" during import for better performance
 
 **Annotation Handling**:
 - Large numbers of annotations (>100,000) can slow performance
@@ -22,9 +22,10 @@ Solutions for slow or unresponsive behavior:
 - Consider splitting very large datasets
 
 **Server Status**:
-- Check connection indicator (floppy disk icon) in top right
-  - Green: Connected and working normally
-  - Red: Connection issue with server
+- A sync indicator (a **database icon**) sits in the top bar; hover it for a status tooltip
+  - **In sync** (database-check icon): your work is saved and up to date with the server
+  - **Saving / Loading** (animated database icon): a change is being written, or data is loading
+  - **Sync error** (red database-alert icon): a connection problem — hover to read the message
 - Wait for background tasks to complete before making additional changes
 
 ## Data Import Problems
@@ -33,12 +34,11 @@ Resolving issues with loading data:
 **File Format Issues**:
 - Check supported format list in documentation
 - For complex formats (OME-TIFF series), pre-process with `large_image_converter`
-- For RGB images, convert to individual channels
 - For IncuCyte data, use the provided preprocessing script
 
 **Variable Assignment**:
 - If variables are incorrectly assigned (time vs. Z):
-  - Use Advanced Upload option
+  - Use the Advanced Import option
   - Manually reassign variables in the interface
   - Check file naming conventions for automatic detection
 
@@ -51,7 +51,7 @@ Resolving issues with loading data:
 **Multi-File Datasets**:
 - Files must have consistent naming patterns
 - Z/T/channel information should be in filename or metadata
-- Try both with and without "Transcode to optimized TIFF" option
+- Try both with and without the "Transcode into optimized TIFF file" option
 
 ## Analysis Accuracy
 Improving results when analysis is incorrect:
@@ -83,7 +83,7 @@ Improving results when analysis is incorrect:
 ## Common Error Messages
 
 **"Worker failed"**:
-- Click "Show details" to see specific error
+- View the job's error log: in the Settings panel, under **Jobs & Logs**, click **Show jobs and logs**, then click **Log** on that job's row in the Recent Jobs dialog
 - Common causes:
   - Parameter out of range
   - Memory limits exceeded
@@ -114,7 +114,7 @@ Improving results when analysis is incorrect:
 - Like Google Docs, changes commit to server immediately
 
 **Handling Desynchronization**:
-- If floppy disk icon turns red, connection issue detected
+- If the database icon turns red (a sync error), a connection issue was detected
 - Refresh page before continuing work
 - Check annotations after refresh to verify they were saved
 

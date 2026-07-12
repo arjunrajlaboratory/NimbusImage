@@ -37,7 +37,8 @@ Correct for movement in time-lapse sequences by aligning frames to a reference:
 - Specify this tag in "Control point tag" parameter
 - The tool will use these points to guide alignment
 
-**Automated Registration**:
+**Automated Registration** (the Algorithm parameter; the default "Translation" is strongly recommended):
+- None (control points only): uses only your control points, with no algorithmic alignment
 - Translation: Corrects X/Y movement (sliding)
 - Rigid: Corrects translation and rotation
 - Affine: Corrects translation, rotation, and scaling
@@ -80,7 +81,8 @@ Strategic applications:
 ## Deconvolution (Deconwolf)
 Computationally reverse optical blurring in 3D fluorescence microscopy images:
 - Uses the Richardson-Lucy algorithm with a theoretically generated Born-Wolf point spread function (PSF)
-- Supports GPU acceleration (automatically falls back to CPU if unavailable)
+- Designed for fluorescence microscopy Z-stacks: if the input has only a single Z-slice, deconvolution is not applicable and the image passes through unchanged
+- GPU acceleration is enabled by default (automatically falls back to CPU if unavailable)
 
 **Optical Parameters**:
 - Numerical Aperture (NA): The NA of the objective used

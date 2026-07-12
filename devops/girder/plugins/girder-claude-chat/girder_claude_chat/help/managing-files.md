@@ -7,27 +7,23 @@ NimbusImage provides a robust file management system to organize datasets, colle
 - **File navigator** for browsing folders and files
 - **Action buttons** to create folders, upload files, and perform other operations
 
-## Upload Options
-NimbusImage offers several approaches for uploading image data:
+## Uploading Data
+From the home page, drag files — or a whole folder — onto the **Upload files** area, click the **Upload a folder** button to pick a folder, or use the **Upload Data** button. After you select files, a **Create Dataset** dialog opens where you name the dataset, choose a storage location (Private, Public, or Team folder), and choose how to process it.
 
-**Quick Upload**:
-- Simply drag and drop files directly
-- Uses default options for processing
-- Goes straight to the image viewer
-- Automatically creates a collection with the same name
+**One dataset from many files (the default)**:
+- When you drop a folder or select multiple files, they all become **one multi-file dataset** by default.
+- NimbusImage automatically parses dimensions — channels, Z-slices, timepoints, and positions — from the file metadata or from the filenames (e.g. `GFP_s001_t002.tif`).
+- This is the right choice for "a folder's worth of images" that together form a single acquisition (a Z-stack, a time lapse, a multi-position scan, etc.).
+- Files from a folder are flattened (nested subfolders are included) and added in natural, numeric-aware name order.
 
-**Advanced Upload**:
-- Provides control over variable assignments
-- Allows configuration of tiling and compositing options
-- Enables specific collection placement
-- Offers adjustable transcoding settings
+**Quick Import vs. Advanced Import**:
+- **Quick Import** processes with default settings and takes you straight to the viewer — best for getting started fast.
+- **Advanced Import** lets you review and adjust how filename elements map to variables (channel, Z, time, position), compositing/tiling of stage positions, transcoding, and collection placement before processing.
 
-**Batch Dataset Mode**:
-- Enable with checkbox to upload multiple files at once
-- Creates one dataset per file, all in a single collection
-- Configure settings once (on first file) and apply to all
-- Ideal for multi-well plates or condition-based experiments
-- Warns about compatibility issues if files have different properties
+**Uploading each file as its own dataset (a collection)**:
+- If instead each file is a separate sample (e.g. one file per well or condition), check **"Upload each file as a separate dataset in a collection"** in the Create Dataset dialog. (This option only appears once you have selected 2 or more files.)
+- This creates a **collection** — a group of datasets that share the same visualization settings and tools — with one dataset per file. The name field becomes **Collection Name**, and you can edit each per-file dataset name.
+- Configure the first dataset (via Advanced Import) and those dimension settings are applied automatically to the rest. NimbusImage checks for duplicate names and warns you if files have mismatched dimensions or channels.
 
 ## Storage Organization
 NimbusImage provides specific locations for storing datasets and files:
@@ -44,7 +40,7 @@ Several operations can be performed on files and datasets:
 - **Rename**: Change the name of files or datasets
 - **Browse**: For datasets, view internal files (use with caution)
 
-Multiple files can be managed at once by selecting checkboxes and using the "SELECTED ITEMS ACTIONS" menu.
+Multiple files can be managed at once by selecting checkboxes and using the "Actions" menu.
 
 ## Best Practices
 - Use meaningful names for datasets and collections

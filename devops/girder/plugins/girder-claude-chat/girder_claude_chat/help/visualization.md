@@ -9,15 +9,15 @@ Control how your image data is displayed:
 - Changes affect display only, not raw data
 - Adjustments are linear and suitable for publication
 
-**Contrast Presets**:
-- Auto-contrast: Click "Auto" for automatic scaling
-- Full range: Click "Full" to show complete intensity range
-- Reset: Return to default settings
+**Contrast Controls**:
+- Toggle between **Percentile** and **Absolute** modes for how the black/white points are specified
+- **Reset** — reset the points to the histogram limits
+- **Revert to saved** — return to the last saved points
+- **Save** — save the current points for this layer
 
 **Channel-Specific Settings**:
 - Each channel has independent contrast controls
 - Settings persist across image navigation
-- Collection-level settings apply to all datasets
 
 ## Layer Management
 Customize visualization with flexible layer controls:
@@ -28,13 +28,13 @@ Customize visualization with flexible layer controls:
 - Rename layers for clearer organization
 
 **Custom Color Preferences**:
-- Set your default channel colors in User Profile Settings
+- Set your default channel colors via the Settings panel (gear icon in the top bar) → "Customize default channel colors"
 - Custom colors automatically apply to new datasets
 - Preferences are saved to your account and persist across sessions
 - Override on a per-dataset basis when needed
 
 **Advanced Options**:
-- Create new layers via "+" button
+- Create new layers via the "Add layer" button
 - Assign any channel to any layer
 - Show different time points in different layers:
   1. Create new layer showing same channel
@@ -61,7 +61,7 @@ NimbusImage can render your image stack as an interactive 3D volume instead of a
 
 **What You See in 3D**:
 - Each currently visible channel/layer is rendered as its own semi-transparent volume, colored to match that layer's assigned color—multi-channel overlays work in 3D just as in 2D
-- Polygon-based objects (blobs) can be overlaid as extruded 3D "Segmentations." Point, line, and rectangle objects are not currently shown in the 3D view
+- Objects can be overlaid in 3D as "Segmentations": polygon and rectangle objects appear as extruded prisms, lines as vertical ribbons, and points as spheres. Segmentations are colored by tag or by a computed property and honor your current annotation filters
 
 **Depth Axis: Z vs. Time**:
 - A two-button toggle at the left of the 3D toolbar sets what the volume's "depth" dimension represents:
@@ -76,7 +76,8 @@ NimbusImage can render your image stack as an interactive 3D volume instead of a
   - **Composite**: normal semi-transparent volume blending, good for seeing overall 3D shape and structure
   - **Maximum intensity**: shows only the brightest voxel along each ray (a live, rotatable maximum-intensity projection)—good for sparse bright objects like spots, since dim surrounding signal doesn't obscure them
 - **Volume** (cube icon): show/hide the rendered image volume itself
-- **Segmentations** (polygon icon): show/hide the extruded 3D polygon annotation overlay
+- **Segmentations** (polygon icon): show/hide the 3D annotation overlay
+- **Loft surfaces** (on by default): join the outlines of the same object on adjacent slices into smooth, shaded surfaces, so a segmented cell reads as a continuous 3D shape rather than a stack of slabs; a dialog sets the overlap threshold controlling how much two outlines must overlap to be joined
 - **Reset camera** (fit-to-page icon): reframes the view to fit the current volume
 - **Orientation axes** (axis-arrow icon): toggles a small XYZ orientation gizmo in the bottom-right corner that rotates with the camera, so you can always tell which way is up
 - **Scaled bounding box** (grid icon): toggles a box with micrometer-labeled tick marks around the volume, useful for judging physical scale
@@ -94,6 +95,13 @@ NimbusImage can render your image stack as an interactive 3D volume instead of a
 - To keep rendering responsive, very large volumes are automatically downsampled: deep z-stacks or long timelapses are capped to a fixed number of planes (subsampled evenly if the stack is deeper), and very high-resolution images are reduced in XY as well
 - This means the 3D view may show lower resolution than the full-resolution 2D view for very large datasets—this is expected, not an error
 - 3D rendering relies on the browser's WebGL support; use Chrome for best compatibility
+
+## Line Scan Intensity Profiles
+Draw a line across the image to see a live plot of raw pixel intensity along it — without creating any stored annotation. Useful for inspecting signal profiles, comparing channels, checking colocalization, or finding edges and peaks.
+- Add a **line scan tool** from the tool menu. Two variants: **Freehand** (drag to draw a freeform line; the scan completes on release) and **Segment** (click once to start and once to end a straight segment).
+- As you draw, a panel appears at the bottom right with one colored trace per channel (matching each layer's color) and a legend; hover to read the intensity at a position.
+- Intensities are the raw, unstyled pixel values (not the contrast-adjusted display), so they are suitable for quantitative comparison.
+- When creating the tool you can optionally pick a single channel to plot; the panel can then toggle between all visible channels and just that one. Close the panel to dismiss the scan.
 
 ## Snapshots
 Create, manage, and export visual bookmarks:
