@@ -15,6 +15,7 @@
               v-model="componentValue"
               ref="innerComponent"
               return-object
+              :item-title="item.type === 'select' ? 'text' : undefined"
               @update:model-value="changed"
               density="compact"
             >
@@ -44,6 +45,7 @@ import {
 import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
 import TagAndLayerRestriction from "@/tools/creation/templates/TagAndLayerRestriction.vue";
 import DockerImage from "@/tools/creation/templates/DockerImage.vue";
+import OptionalLayerSelect from "@/tools/creation/templates/OptionalLayerSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 
 // Used to determine :is="" value from template interface type
@@ -56,6 +58,7 @@ const typeToComponentName: Record<string, any> = {
   text: VTextField,
   dockerImage: DockerImage,
   tags: TagPicker,
+  layerSelect: OptionalLayerSelect,
 };
 
 type TComponentType = keyof typeof typeToComponentName;

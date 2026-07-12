@@ -14,7 +14,7 @@
       v-else-if="computedChipsIds.has(item._id)"
       size="x-small"
       class="ma-1 type-indicator"
-      color="grey"
+      color="secondary"
     >
       Loading info...
     </v-chip>
@@ -78,7 +78,7 @@
         :key="'chip ' + i + ' item ' + item._id"
         class="ma-1 colored-chip"
         :style="{
-          '--chip-color': chipItem.color,
+          '--chip-color': `rgb(var(--v-theme-${chipItem.color}))`,
         }"
         :to="chipItem.to"
         @click.stop

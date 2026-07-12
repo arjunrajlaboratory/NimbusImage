@@ -14,13 +14,24 @@
     >
       <slot name="default">
         <v-icon size="50px">mdi-file-upload</v-icon>
-        <div class="title mt-3">
+        <div class="text-body-1 font-weight-medium mt-3">
           <template v-if="multiple">
-            Drag files here or click to select them
+            Drag files or a folder here or click to select them
           </template>
           <template v-else> Drag a file here or click to select one </template>
         </div>
       </slot>
+      <div v-if="multiple && directory" class="mt-2 folder-select-action">
+        <v-btn
+          variant="text"
+          size="small"
+          color="primary"
+          @click.stop="selectFolder"
+        >
+          <v-icon start>mdi-folder-upload</v-icon>
+          Select a folder instead
+        </v-btn>
+      </div>
       <slot name="afterMessage"></slot>
     </v-row>
     <input
@@ -35,6 +46,11 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import {
+  getFilesFromDrop,
+  selectFilesFromFolder,
+  filterFilesByAccept,
+} from "@/utils/fileUpload";
 
 const props = withDefaults(
   defineProps<{
@@ -42,12 +58,14 @@ const props = withDefaults(
     message?: string;
     multiple?: boolean;
     accept?: string;
+    directory?: boolean;
   }>(),
   {
     modelValue: () => [],
     message: "",
     multiple: true,
     accept: undefined,
+    directory: true,
   },
 );
 
@@ -68,13 +86,28 @@ function onChange(event: Event) {
   files.value = [...fileList];
 }
 
-function onDrop(event: DragEvent) {
+async function onDrop(event: DragEvent) {
   dropzoneClass.value = null;
-  const dropped = [...(event.dataTransfer?.files || [])];
+  // Folders and drag-and-drop bypass the input's `accept` attribute, so honor
+  // it here to keep unsupported files out of the dataset.
+  const dropped = filterFilesByAccept(
+    await getFilesFromDrop(event),
+    props.accept,
+  );
   files.value = props.multiple ? dropped : dropped.slice(0, 1);
 }
 
-defineExpose({ dropzoneClass, onDrop });
+async function selectFolder() {
+  const folderFiles = filterFilesByAccept(
+    await selectFilesFromFolder(),
+    props.accept,
+  );
+  if (folderFiles.length > 0) {
+    files.value = folderFiles;
+  }
+}
+
+defineExpose({ dropzoneClass, onDrop, selectFolder });
 </script>
 
 <style lang="scss" scoped>
@@ -123,6 +156,13 @@ $img: linear-gradient(
     opacity: 0;
     z-index: 1;
     cursor: pointer;
+  }
+
+  // Raise the folder button above the invisible full-cover .file-input
+  // (z-index: 1) so clicks reach the button instead of opening the file
+  // dialog. It is a flex item of the message row, so z-index applies.
+  .folder-select-action {
+    z-index: 2;
   }
 }
 

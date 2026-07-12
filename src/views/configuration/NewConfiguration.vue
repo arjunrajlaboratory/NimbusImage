@@ -1,6 +1,6 @@
 <template>
   <v-container>
-    <div class="headline py-4">Create a new collection from a dataset</div>
+    <div class="page-title py-4">Create a new collection from a dataset</div>
     <v-form v-model="valid">
       <v-text-field v-model="name" label="Name" :rules="rules" />
       <v-textarea v-model="description" label="Description" />

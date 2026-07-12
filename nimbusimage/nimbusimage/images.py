@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pickle
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Iterator, NamedTuple, Sequence
 
 import numpy as np
 
@@ -11,6 +11,22 @@ from nimbusimage.models import FrameInfo
 
 if TYPE_CHECKING:
     from nimbusimage.dataset import Dataset
+
+
+class LineScanResult(NamedTuple):
+    """Intensity profile along a polyline.
+
+    Attributes:
+        distances: (N,) distances of each sample from the start of the
+            line, in pixels.
+        values: (N,) float64 intensities, bilinearly interpolated.
+            NaN for samples outside the image.
+        points: (N, 2) x, y image coordinates of each sample.
+    """
+
+    distances: np.ndarray
+    values: np.ndarray
+    points: np.ndarray
 
 
 class ImageAccessor:
@@ -211,6 +227,131 @@ class ImageAccessor:
             max_val = np.iinfo(dt).max
             return (composite * max_val).astype(dt)
 
+    def line_scan(
+        self,
+        points: Sequence[tuple[float, float]] | np.ndarray,
+        xy: int = 0,
+        z: int = 0,
+        time: int = 0,
+        channel: int = 0,
+        max_samples: int = 2000,
+        max_region_dim: int = 2048,
+    ) -> LineScanResult:
+        """Measure the intensity profile along a polyline.
+
+        Matches the frontend line scan tool: the polyline is resampled at
+        roughly one sample per pixel of arc length and intensities are
+        bilinearly interpolated from the pixels around each sample.
+
+        Args:
+            points: Polyline vertices as (x, y) pairs in image pixel
+                coordinates. Two points measure a straight segment; more
+                points a freehand path.
+            xy, z, time, channel: Frame coordinates.
+            max_samples: Cap on the number of samples along the line.
+            max_region_dim: Pixel regions larger than this per side are
+                downsampled by the server before sampling. Bounds the
+                transfer size for lines spanning huge images.
+
+        Returns:
+            LineScanResult with distances (px), values (NaN outside the
+            image), and the sampled (x, y) points. Convert distances to
+            physical units with ds.pixel_size.
+
+        Raises:
+            ValueError: For fewer than 2 vertices or a zero-length line.
+        """
+        vertices = np.asarray(points, dtype=np.float64)
+        if vertices.ndim != 2 or vertices.shape[0] < 2 or (
+            vertices.shape[1] != 2
+        ):
+            raise ValueError(
+                "points must be at least 2 (x, y) pairs, "
+                f"got array of shape {vertices.shape}"
+            )
+        segment_lengths = np.hypot(
+            *np.diff(vertices, axis=0).T
+        )
+        cumulative = np.concatenate([[0.0], np.cumsum(segment_lengths)])
+        total_length = cumulative[-1]
+        if total_length <= 0:
+            raise ValueError("line has zero length")
+
+        num_samples = min(
+            max_samples, max(2, int(np.ceil(total_length)) + 1)
+        )
+        distances = np.linspace(0.0, total_length, num_samples)
+        sample_points = np.column_stack([
+            np.interp(distances, cumulative, vertices[:, 0]),
+            np.interp(distances, cumulative, vertices[:, 1]),
+        ])
+
+        region, left, top, scale_x, scale_y = self._get_scaled_region(
+            frame=self._frame_index(channel, time, z, xy),
+            bounds=(
+                np.floor(sample_points.min(axis=0)) - 1,
+                np.ceil(sample_points.max(axis=0)) + 2,
+            ),
+            max_region_dim=max_region_dim,
+        )
+
+        values = _bilinear_sample(
+            region,
+            (sample_points[:, 0] - left) * scale_x - 0.5,
+            (sample_points[:, 1] - top) * scale_y - 0.5,
+        )
+        return LineScanResult(
+            distances=distances, values=values, points=sample_points
+        )
+
+    def _get_scaled_region(
+        self,
+        frame: int,
+        bounds: tuple[np.ndarray, np.ndarray],
+        max_region_dim: int,
+    ) -> tuple[np.ndarray, float, float, float, float]:
+        """Fetch a region clamped to the image, downsampled to fit
+        max_region_dim per side.
+
+        Args:
+            frame: Frame index.
+            bounds: ((min_x, min_y), (max_x, max_y)) region corners in
+                image pixel coordinates; clamped to the image size.
+            max_region_dim: Maximum output size per side.
+
+        Returns:
+            (region, left, top, scale_x, scale_y) where
+            region_x = (image_x - left) * scale_x.
+        """
+        self._dataset._ensure_metadata()
+        left = max(0.0, float(bounds[0][0]))
+        top = max(0.0, float(bounds[0][1]))
+        right = min(float(self._dataset._tiles["sizeX"]), float(bounds[1][0]))
+        bottom = min(
+            float(self._dataset._tiles["sizeY"]), float(bounds[1][1])
+        )
+        if right <= left or bottom <= top:
+            raise ValueError("line is entirely outside the image")
+        kwargs: dict = {
+            "left": left, "top": top, "right": right, "bottom": bottom,
+        }
+        region_width = right - left
+        region_height = bottom - top
+        scale = min(1.0, max_region_dim / max(region_width, region_height))
+        if scale < 1.0:
+            kwargs["width"] = round(region_width * scale)
+            kwargs["height"] = round(region_height * scale)
+        region = self._get_region(frame, **kwargs).squeeze()
+        # The server preserves the aspect ratio, so the effective scale can
+        # differ slightly from the requested one — use the returned size
+        return (
+            region,
+            left,
+            top,
+            region.shape[1] / region_width,
+            region.shape[0] / region_height,
+        )
+
     def iter_frames(self) -> Iterator[tuple[FrameInfo, np.ndarray]]:
         """Iterate over all frames in the dataset.
 
@@ -236,6 +377,46 @@ class ImageAccessor:
                 "Install with: pip install nimbusimage[worker]"
             )
         return ImageWriter(self._dataset, copy_metadata=copy_metadata)
+
+
+def _bilinear_sample(
+    region: np.ndarray, x: np.ndarray, y: np.ndarray
+) -> np.ndarray:
+    """Bilinearly interpolate region values at fractional pixel coordinates.
+
+    Args:
+        region: (H, W) or (H, W, bands) array. Multi-band pixels (e.g. RGB
+            sources) are averaged over the first three bands, ignoring a
+            potential alpha band.
+        x, y: (N,) fractional pixel coordinates into region.
+
+    Returns:
+        (N,) float64 values, NaN where (x, y) is outside the region.
+    """
+    if region.ndim == 3:
+        region = region[:, :, : min(region.shape[2], 3)].mean(axis=2)
+    region = region.astype(np.float64)
+    height, width = region.shape
+
+    inside = (x >= 0) & (y >= 0) & (x <= width - 1) & (y <= height - 1)
+    # Clamp so indexing is valid everywhere; outside samples become NaN below
+    x = np.clip(x, 0, width - 1)
+    y = np.clip(y, 0, height - 1)
+    x0 = np.floor(x).astype(np.intp)
+    y0 = np.floor(y).astype(np.intp)
+    x1 = np.minimum(x0 + 1, width - 1)
+    y1 = np.minimum(y0 + 1, height - 1)
+    fx = x - x0
+    fy = y - y0
+
+    values = (
+        region[y0, x0] * (1 - fx) * (1 - fy)
+        + region[y0, x1] * fx * (1 - fy)
+        + region[y1, x0] * (1 - fx) * fy
+        + region[y1, x1] * fx * fy
+    )
+    values[~inside] = np.nan
+    return values
 
 
 def _parse_color(color: str) -> tuple[float, float, float]:

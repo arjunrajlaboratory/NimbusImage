@@ -2387,7 +2387,7 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       const dim = { id: 0, guess: "C", size: 3, source: "file", data: {} };
       expect(vm.getAssignedDimensionColor(dim)).toBe(
-        "rgba(255, 255, 255, 0.3)",
+        "var(--nimbus-text-faint)",
       );
     });
 
