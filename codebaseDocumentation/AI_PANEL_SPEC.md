@@ -284,8 +284,13 @@ Each agent turn is assembled as:
    `get_interface_state`; screenshot only for image content; confirm before
    gated tools; keep replies short since actions are self-evidencing), and
    NimbusImage domain vocabulary (layers vs channels, collections vs
-   configurations, tags, workers). Stored as a file in the plugin like
-   `system_prompt_2.txt`, versioned with the repo.
+   configurations, tags, workers), plus a small concepts core folded in from
+   the absorbed Nimbus Chat prompt. Assembled server-side into
+   `agent_system_prompt.txt` from `concepts_core.md`; deeper how-to knowledge
+   lives in `help/*.md` topics pulled on demand via the `read_help_topic`
+   tool (topics audited against the app source + gitbook — see
+   `AI_PANEL_REVIEW.md`). The old monolithic `system_prompt_2.txt` was split
+   into these files when Nimbus Chat was absorbed.
 2. **Conversation history** — prior user/assistant/tool messages for this
    panel session (client holds them; see §6 transport).
 3. **A fresh `get_interface_state` snapshot** injected into the first user
