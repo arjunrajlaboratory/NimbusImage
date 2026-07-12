@@ -237,18 +237,28 @@ function resolveQueryToIdSet(query: unknown): Set<string> | null {
   return new Set(queryAnnotations(query as IAnnotationQuery).map((a) => a.id));
 }
 
-// Collect [annotationId, value] pairs for one property value path from the
-// in-memory propertyValues map, restricted to allowedIds when non-null. Only
+// Ids of the annotations that currently exist for this dataset (the frontend
+// holds them all in memory). Property-value documents can outlive their
+// annotation — a backend cleanup gap leaves values orphaned after deletion
+// (see AI_PANEL_DATA_ANALYSIS_SPEC.md §9) — so analysis intersects with this
+// live set to keep stats and plots to real objects instead of ghost data.
+function liveAnnotationIdSet(): Set<string> {
+  return new Set(
+    annotationStore.annotations.map((annotation) => annotation.id),
+  );
+}
+
+// Collect [annotationId, value] pairs for one property value path. Iterates the
+// query's matches when a query was given (queryAnnotations already restricts to
+// live annotations), else every live annotation — never the raw propertyValues
+// keys, which can include values orphaned by deleted annotations. Only
 // finite-numeric leaves are kept (resolvePathValue drops the rest).
 function collectPathValues(
   path: string[],
   allowedIds: Set<string> | null,
 ): [string, number][] {
   const pairs: [string, number][] = [];
-  for (const annotationId in propertyStore.propertyValues) {
-    if (allowedIds && !allowedIds.has(annotationId)) {
-      continue;
-    }
+  for (const annotationId of allowedIds ?? liveAnnotationIdSet()) {
     const value = resolvePathValue(
       propertyStore.propertyValues[annotationId],
       path,
@@ -1619,12 +1629,13 @@ const registry: { [name: string]: IAgentToolEntry } = {
         validatePropertyPath(path, "propertyPaths[]"),
       );
       const allowedIds = resolveQueryToIdSet(input.query);
+      // Only live annotations that actually have a property-value document —
+      // skips values orphaned by deleted annotations, matching collectPathValues.
       const matchingIds: string[] = [];
-      for (const annotationId in propertyStore.propertyValues) {
-        if (allowedIds && !allowedIds.has(annotationId)) {
-          continue;
+      for (const annotationId of allowedIds ?? liveAnnotationIdSet()) {
+        if (propertyStore.propertyValues[annotationId] !== undefined) {
+          matchingIds.push(annotationId);
         }
-        matchingIds.push(annotationId);
       }
       const requestedN =
         typeof input.n === "number" && input.n > 0 ? Math.floor(input.n) : 20;

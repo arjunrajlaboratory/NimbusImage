@@ -1415,6 +1415,27 @@ describe("data analysis tools", () => {
       ).rejects.toThrow(/prop1\.missing.*get_property_values/s);
     });
 
+    it("excludes property values orphaned by deleted annotations", async () => {
+      // Two live annotations, but propertyValues also carries a value for
+      // "ghost" — an annotation that was deleted (the backend leaves such
+      // values behind). Analysis must count only the live pair, not the ghost.
+      mockAnnotations.annotations = [
+        makeAnnotation({ id: "a1" }),
+        makeAnnotation({ id: "a2" }),
+      ];
+      mockProperties.propertyValues = {
+        a1: { prop1: { mean: 1 } },
+        a2: { prop1: { mean: 2 } },
+        ghost: { prop1: { mean: 999 } },
+      };
+      const { result } = await executeAgentTool(
+        "get_property_histogram",
+        { propertyPath: ["prop1", "mean"] },
+        context,
+      );
+      expect(result.totalCount).toBe(2);
+    });
+
     it("clamps buckets above the maximum", async () => {
       seedValues({
         a0: 0,
