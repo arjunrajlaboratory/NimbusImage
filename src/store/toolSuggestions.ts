@@ -323,6 +323,16 @@ export class ToolSuggestions extends VuexModule {
     if (this.seenConfigurationIds.includes(configuration.id)) {
       return;
     }
+    // Tool templates (create/segmentation) are fetched asynchronously at app
+    // startup (App.vue fetchConfig). If they aren't loaded yet, every backend
+    // suggestion fails to resolve into a tool, so the run would complete with
+    // nothing and wrongly persist this collection as "suggested" — permanently
+    // suppressing it. Bail without marking or persisting so a later open
+    // (templates cached) retries. templates.json always defines these two
+    // templates, so a non-empty list means they're available.
+    if (main.toolTemplateList.length === 0) {
+      return;
+    }
     // Mark seen before the async call so a second layers-ready doesn't kick
     // off a duplicate request. If the request fails, un-mark it so a later
     // layers-ready can retry.

@@ -260,6 +260,27 @@ describe("toolSuggestions store", () => {
       expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
     });
 
+    it("is a no-op (retryable) when tool templates are not loaded yet", async () => {
+      main.configuration = makeConfiguration({ id: "cfg-no-templates" });
+      main.dataset = makeDataset();
+      // Templates race app startup; empty means fetchConfig hasn't populated
+      // them yet, so backend suggestions couldn't be resolved into tools.
+      main.toolTemplateList = [];
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      // Neither marked nor persisted, so a later open (templates loaded) retries.
+      expect(toolSuggestions.seenConfigurationIds).not.toContain(
+        "cfg-no-templates",
+      );
+      expect(
+        JSON.parse(
+          localStorage.getItem("toolSuggestions.suggestedConfigIds") || "[]",
+        ),
+      ).not.toContain("cfg-no-templates");
+    });
+
     it("marks the configuration seen and runs suggestForCurrentConfiguration otherwise", async () => {
       main.configuration = makeConfiguration({ id: "cfg-fresh" });
       main.dataset = makeDataset();
