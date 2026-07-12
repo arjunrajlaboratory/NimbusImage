@@ -323,14 +323,21 @@ export class ToolSuggestions extends VuexModule {
     if (this.seenConfigurationIds.includes(configuration.id)) {
       return;
     }
-    // Tool templates (create/segmentation) are fetched asynchronously at app
-    // startup (App.vue fetchConfig). If they aren't loaded yet, every backend
-    // suggestion fails to resolve into a tool, so the run would complete with
-    // nothing and wrongly persist this collection as "suggested" — permanently
-    // suppressing it. Bail without marking or persisting so a later open
-    // (templates cached) retries. templates.json always defines these two
-    // templates, so a non-empty list means they're available.
-    if (main.toolTemplateList.length === 0) {
+    // A completed run is persisted permanently, so only run once everything a
+    // *complete* suggestion needs is ready — otherwise a startup race would
+    // persist a degraded result and suppress the real suggestions forever.
+    // Both preconditions below are populated asynchronously at startup and can
+    // lose the race with the first layers-ready; bailing here (without marking
+    // or persisting) lets a later open retry once they're ready.
+    //   - isLoggedIn: fetchWorkerImageList() early-returns when not logged in
+    //     (properties.ts), so the catalog would lack Cellpose/Piscis/etc. and
+    //     we'd offer only the manual blob. (A stored token authenticates the
+    //     request before main.initialize() flips isLoggedIn, so the run can
+    //     otherwise succeed in this state.)
+    //   - toolTemplateList: loaded by App.vue fetchConfig(); without it
+    //     buildToolConfiguration() can't resolve any backend suggestion into a
+    //     tool. A non-empty list means the create/segmentation templates exist.
+    if (!main.isLoggedIn || main.toolTemplateList.length === 0) {
       return;
     }
     // Mark seen before the async call so a second layers-ready doesn't kick

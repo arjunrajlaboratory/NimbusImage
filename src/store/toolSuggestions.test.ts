@@ -187,6 +187,8 @@ describe("toolSuggestions store", () => {
       configuration: null,
       layers: [],
       toolTemplateList: [],
+      // Logged in by default; the not-logged-in guard is exercised explicitly.
+      isLoggedIn: true,
       maps: [],
       chatAPI: { getToolSuggestions: vi.fn() },
       addToolToConfiguration: vi.fn(),
@@ -279,6 +281,29 @@ describe("toolSuggestions store", () => {
           localStorage.getItem("toolSuggestions.suggestedConfigIds") || "[]",
         ),
       ).not.toContain("cfg-no-templates");
+    });
+
+    it("is a no-op (retryable) when the user is not logged in yet", async () => {
+      main.configuration = makeConfiguration({ id: "cfg-not-logged-in" });
+      main.dataset = makeDataset();
+      main.toolTemplateList = [segmentationTemplate, createTemplate];
+      // A stored token can authenticate the request before initialize() flips
+      // isLoggedIn; until then fetchWorkerImageList early-returns and the
+      // catalog would lack worker tools, so the run must not persist.
+      (main as any).isLoggedIn = false;
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      // Neither marked nor persisted, so a later open (logged in) retries.
+      expect(toolSuggestions.seenConfigurationIds).not.toContain(
+        "cfg-not-logged-in",
+      );
+      expect(
+        JSON.parse(
+          localStorage.getItem("toolSuggestions.suggestedConfigIds") || "[]",
+        ),
+      ).not.toContain("cfg-not-logged-in");
     });
 
     it("marks the configuration seen and runs suggestForCurrentConfiguration otherwise", async () => {
