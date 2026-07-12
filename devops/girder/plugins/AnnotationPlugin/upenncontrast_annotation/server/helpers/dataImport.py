@@ -43,9 +43,14 @@ def _createAnnotations(datasetId, annotations):
         maps each annotation's old id (string) to its new ObjectId,
         for annotations that carried an old id in the import data.
     """
-    oldIds = [_oldAnnotationId(annotation) for annotation in annotations]
+    oldIds = []
     docs = []
     for annotation in annotations:
+        if not isinstance(annotation, dict):
+            raise ValidationException(
+                "Each annotation must be a JSON object."
+            )
+        oldIds.append(_oldAnnotationId(annotation))
         # Null fields are dropped, not copied: exports contain e.g.
         # "name": null for unnamed annotations, but the annotation
         # schema only allows a string when the field is present.
@@ -87,6 +92,10 @@ def _createConnections(datasetId, connections, oldIdToNewId):
     """
     docs = []
     for connection in connections:
+        if not isinstance(connection, dict):
+            raise ValidationException(
+                "Each connection must be a JSON object."
+            )
         doc = {
             "tags": connection.get("tags") or [],
             "parentId": _remapAnnotationId(
@@ -119,6 +128,10 @@ def _createPropertyValues(
     """
     docs = []
     for oldAnnotationId, valuesByOldPropertyId in propertyValues.items():
+        if not isinstance(valuesByOldPropertyId, dict):
+            raise ValidationException(
+                "Each property value entry must be a JSON object."
+            )
         newAnnotationId = oldIdToNewId.get(oldAnnotationId)
         if newAnnotationId is None:
             raise ValidationException(

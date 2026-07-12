@@ -77,9 +77,11 @@ class DataImport(Resource):
         datasetIdString = body.get("datasetId")
         if not datasetIdString:
             raise RestException("Missing datasetId", code=400)
+        # ObjectId() raises InvalidId for a malformed string and TypeError
+        # for a non-string (e.g. a JSON number/bool); both are bad input.
         try:
             datasetId = ObjectId(datasetIdString)
-        except InvalidId as exc:
+        except (InvalidId, TypeError) as exc:
             raise RestException("Invalid datasetId", code=400) from exc
 
         annotations = body.get("annotations", [])
