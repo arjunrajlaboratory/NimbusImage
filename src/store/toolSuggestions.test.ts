@@ -328,7 +328,7 @@ describe("toolSuggestions store", () => {
     });
 
     it("caps the persisted suggested set and evicts the oldest ids", async () => {
-      // Seed one more than the cap; the mutation should keep the newest 500.
+      // Seed one more than the cap; remembering another keeps the newest 500.
       const seeded = Array.from({ length: 501 }, (_, i) => `cfg-${i}`);
       localStorage.setItem(
         "toolSuggestions.suggestedConfigIds",
