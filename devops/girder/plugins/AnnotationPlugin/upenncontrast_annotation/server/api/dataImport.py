@@ -1,4 +1,5 @@
 from bson.objectid import ObjectId
+from bson.errors import InvalidId
 
 from girder.api import access
 from girder.api.describe import Description, describeRoute
@@ -16,6 +17,10 @@ from ..helpers.proxiedModel import recordable, memoizeBodyJson
 
 def getDatasetIdFromImportBody(self: "DataImport", *args, **kwargs):
     body = kwargs["memoizedBodyJson"]
+    # A non-object body is rejected with a 400 inside importData; return
+    # None here so the recordable wrapper doesn't choke on body.get first.
+    if not isinstance(body, dict):
+        return None
     return body.get("datasetId")
 
 
@@ -64,11 +69,39 @@ class DataImport(Resource):
     @recordable("Import annotation data", getDatasetIdFromImportBody)
     def importData(self, params, *args, **kwargs):
         body = kwargs["memoizedBodyJson"]
+        if not isinstance(body, dict):
+            raise RestException(
+                "Request body must be a JSON object.", code=400
+            )
 
         datasetIdString = body.get("datasetId")
         if not datasetIdString:
             raise RestException("Missing datasetId", code=400)
-        datasetId = ObjectId(datasetIdString)
+        try:
+            datasetId = ObjectId(datasetIdString)
+        except InvalidId as exc:
+            raise RestException("Invalid datasetId", code=400) from exc
+
+        annotations = body.get("annotations", [])
+        connections = body.get("connections", [])
+        propertyValues = body.get("propertyValues", {})
+        propertyIdMap = body.get("propertyIdMap", {})
+        if not isinstance(annotations, list):
+            raise RestException(
+                "annotations must be a JSON array.", code=400
+            )
+        if not isinstance(connections, list):
+            raise RestException(
+                "connections must be a JSON array.", code=400
+            )
+        if not isinstance(propertyValues, dict):
+            raise RestException(
+                "propertyValues must be a JSON object.", code=400
+            )
+        if not isinstance(propertyIdMap, dict):
+            raise RestException(
+                "propertyIdMap must be a JSON object.", code=400
+            )
 
         Folder().load(
             datasetId,
@@ -79,8 +112,8 @@ class DataImport(Resource):
 
         return importAnnotationData(
             datasetId,
-            body.get("annotations", []),
-            body.get("connections", []),
-            body.get("propertyValues", {}),
-            body.get("propertyIdMap", {}),
+            annotations,
+            connections,
+            propertyValues,
+            propertyIdMap,
         )

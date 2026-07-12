@@ -256,3 +256,102 @@ class TestDataImportEndpoint:
 
         remaining = list(Annotation().find({"datasetId": dataset["_id"]}))
         assert remaining == []
+
+    # --- Malformed-input handling: bad input must yield 400, not 500 ----
+
+    def testImportNonObjectBodyReturns400(self, admin, server):
+        """A JSON body that isn't an object (e.g. an array) -> 400."""
+        resp = server.request(
+            path="/annotation_import",
+            method="POST",
+            user=admin,
+            body=json.dumps(["not", "an", "object"]),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testImportMalformedDatasetIdReturns400(self, admin, server):
+        """A datasetId that isn't a valid ObjectId -> 400, not 500."""
+        body = {
+            "datasetId": "not-a-valid-object-id",
+            "annotations": [annotationExportDict("old-ann-1")],
+        }
+        resp = server.request(
+            path="/annotation_import",
+            method="POST",
+            user=admin,
+            body=json.dumps(body),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testImportAnnotationsNotListReturns400(self, admin, server):
+        """A non-list "annotations" field -> 400."""
+        dataset = self._makeDataset(admin)
+        body = {
+            "datasetId": str(dataset["_id"]),
+            "annotations": {"not": "a list"},
+        }
+        resp = server.request(
+            path="/annotation_import",
+            method="POST",
+            user=admin,
+            body=json.dumps(body),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testImportConnectionsNotListReturns400(self, admin, server):
+        """A non-list "connections" field -> 400."""
+        dataset = self._makeDataset(admin)
+        body = {
+            "datasetId": str(dataset["_id"]),
+            "annotations": [],
+            "connections": {"not": "a list"},
+        }
+        resp = server.request(
+            path="/annotation_import",
+            method="POST",
+            user=admin,
+            body=json.dumps(body),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testImportPropertyValuesNotDictReturns400(self, admin, server):
+        """A non-dict "propertyValues" field -> 400."""
+        dataset = self._makeDataset(admin)
+        body = {
+            "datasetId": str(dataset["_id"]),
+            "annotations": [],
+            "propertyValues": ["not", "a dict"],
+        }
+        resp = server.request(
+            path="/annotation_import",
+            method="POST",
+            user=admin,
+            body=json.dumps(body),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+    def testImportPropertyIdMapNotDictReturns400(self, admin, server):
+        """A non-dict "propertyIdMap" field -> 400 and nothing created."""
+        dataset = self._makeDataset(admin)
+        body = {
+            "datasetId": str(dataset["_id"]),
+            "annotations": [annotationExportDict("old-ann-1")],
+            "propertyValues": {"old-ann-1": {"old-prop": {"Area": 1}}},
+            "propertyIdMap": ["not", "a dict"],
+        }
+        resp = server.request(
+            path="/annotation_import",
+            method="POST",
+            user=admin,
+            body=json.dumps(body),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+
+        remaining = list(Annotation().find({"datasetId": dataset["_id"]}))
+        assert remaining == []
