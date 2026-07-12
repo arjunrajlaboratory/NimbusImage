@@ -26,6 +26,7 @@ import {
   captureViewportScreenshot,
 } from "@/utils/interfaceCapture";
 import { getDefault } from "@/utils/workerInterface";
+import type { IAgentPlot } from "./plotRegistry";
 import {
   MANUAL_CATALOG,
   buildCatalog,
@@ -58,6 +59,9 @@ export interface IToolExecutionResult {
   result: any;
   // Optional images sent back as image blocks (screenshots)
   images?: IChatImage[];
+  // Plots registered by this tool for inline rendering in the transcript
+  // (the model only ever sees {plotId, ...} in `result`).
+  plots?: IAgentPlot[];
 }
 
 // Above this many matching annotations, list_annotations returns a hint

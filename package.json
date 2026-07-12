@@ -70,6 +70,7 @@
     "p-limit": "^7.1.1",
     "p-retry": "^7.0.0",
     "papaparse": "^5.4.1",
+    "plotly.js-dist-min": "^3.6.0",
     "polygon-clipping": "^0.15.7",
     "qs": "^6.15.2",
     "rbush": "^4.0.1",
