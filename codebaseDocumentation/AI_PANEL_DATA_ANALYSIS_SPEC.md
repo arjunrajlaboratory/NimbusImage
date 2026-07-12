@@ -1,11 +1,30 @@
 # AI Panel — Agentic Data Analysis (Design Spec)
 
-> **Status: spec, not yet implemented.** Branch
+> **Status: implemented and live-verified** on branch
 > `claude/ai-panel-data-analysis`, forked from the AI-panel branch
 > (`claude/ai-panel-interface-spec-9k6gsv`, PR #1231). Supersedes the
 > standalone analysis panel of PR #1221
 > (`claude/analysis-panel-agents-mgi32d`), which should be closed once this
 > lands.
+>
+> **Implemented (commits on this branch):** phase 1 — `src/agent/analysis.ts`
+> stat helpers + `src/agent/plotRegistry.ts` + `plotly.js-dist-min` dep;
+> phases 2-3 — five new executors and the extended `get_property_values` in
+> `src/agent/executors.ts`, the tool schemas + "Analyzing data" prompt
+> section in the `girder-claude-chat` data files, `kind:"plot"` transcript
+> items with `AiPanelPlot.vue` (lazy Plotly), and IndexedDB plot
+> persistence. `pnpm tsc` / `lint:ci` clean; 125 `src/agent` tests pass.
+>
+> **Live-verified** against dataset `69f4eb65aaba948c2d7b9b24` (2,618 nuclei
+> with computed intensity + morphology properties): histogram, scatter
+> (colorByTag → per-tag WebGL traces), box (groupByTag), and query
+> restriction all render inline and read back correct stats (matched
+> MongoDB ground truth: Area n=5237, mean 367.9, std 106.6, range 25-975;
+> query→nucleus dropped n to 2618). Confirmed the raw-data invariant on the
+> wire (plot tool_results ~23 KB, no raw value arrays), conversation +
+> full plot data persisted and re-rendered across reload, a mixed
+> analysis→`set_annotation_filter` turn with working revert, and that the
+> production build code-splits Plotly into its own 4.6 MB lazy chunk.
 >
 > Companion docs: `AI_PANEL_SPEC.md` (panel architecture),
 > `AI_PANEL_REVIEW.md` (review tracker).
