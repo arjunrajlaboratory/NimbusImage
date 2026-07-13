@@ -16,6 +16,7 @@ exists to stop.
 import logging
 
 import docker
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,11 @@ def _getDockerClient():
 def getQueueForImage(image):
     """Return the Celery queue name ("cpu" or "gpu") for a worker image.
 
-    Label lookups are cached per image tag. A docker error is not cached, so
-    a transient daemon hiccup retries on the next dispatch; the (possibly
-    broken) client is dropped and rebuilt then.
+    Only definitive label reads are cached (per image tag). Docker errors
+    are not cached, so a transient daemon hiccup retries on the next
+    dispatch (the possibly-broken client is dropped and rebuilt then), and
+    the missing-label default is not cached either, so re-pulling the image
+    with the label added takes effect without a Girder restart.
     """
     global _dockerClient
     if image in _queueCache:
@@ -51,7 +54,11 @@ def getQueueForImage(image):
 
     try:
         labels = _getDockerClient().images.get(image).labels or {}
-    except Exception:
+    # DockerException covers from_env failures, missing images and API
+    # errors; docker-py's HTTP layer can also leak raw requests exceptions
+    # (socket/timeout). Anything else is a bug and should propagate.
+    except (docker.errors.DockerException,
+            requests.exceptions.RequestException):
         _dockerClient = None
         logger.exception(
             "Could not read the isGPUWorker label for %s; "
@@ -64,11 +71,14 @@ def getQueueForImage(image):
     elif raw in ("false", "0", "no"):
         queue = CPU_QUEUE
     else:
-        queue = GPU_QUEUE
+        # Warns on every dispatch by design: this is a misconfiguration
+        # someone should fix, and not caching it lets a re-pulled, labeled
+        # image take effect without a restart.
         logger.warning(
             "Image %s has no isGPUWorker label; defaulting to the %s queue. "
             "Add the label to the worker's Dockerfile so CPU work stops "
             "landing on the GPU fleet.", image, GPU_QUEUE)
+        return GPU_QUEUE
 
     _queueCache[image] = queue
     return queue
