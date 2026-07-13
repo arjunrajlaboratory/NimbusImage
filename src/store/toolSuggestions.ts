@@ -9,6 +9,7 @@ import { logError } from "@/utils/log";
 import store from "./root";
 import main from "./index";
 import properties from "./properties";
+import persister from "./Persister";
 import {
   IResolvedToolSuggestion,
   IToolSuggestion,
@@ -30,6 +31,40 @@ import {
 // while it is being refined.
 const AUTO_SUGGEST_ENABLED = true;
 const TOOL_SUGGESTIONS_PANEL_SELECTOR = "[data-tool-suggestions-panel]";
+
+// Auto-suggest fires once per collection, the first time it is opened with no
+// tools. We remember the collections we've already suggested for in
+// localStorage so reopening or reloading (in any later session) never
+// re-triggers the flow. Creation time is deliberately NOT used: with batch
+// uploads the collection is created up front but its first viewer open can come
+// many minutes later, so an age-based gate would wrongly expire before that
+// first open.
+const SUGGESTED_CONFIG_IDS_STORAGE_KEY = "toolSuggestions.suggestedConfigIds";
+// Keep only the most recently suggested-for collections so the list can't grow
+// unbounded for power users. 500 ids is ~14 KB and, in practice, larger than
+// any single user's collection count — so eviction (which would let an evicted,
+// still-toolless collection re-suggest on reopen) effectively never happens.
+const MAX_REMEMBERED_SUGGESTED_CONFIGS = 500;
+
+// The persisted "already suggested" set. Backed directly by localStorage rather
+// than mirrored in Vuex state: it's not rendered anywhere, and localStorage is
+// the single source of truth across sessions.
+function getSuggestedConfigurationIds(): string[] {
+  return persister.get<string[]>(SUGGESTED_CONFIG_IDS_STORAGE_KEY, []);
+}
+
+// Record that we've completed suggestions for a collection. Moves an existing
+// id to most-recent, then trims oldest so the list stays within the cap.
+function rememberSuggestedConfigurationId(configurationId: string): void {
+  const ids = getSuggestedConfigurationIds().filter(
+    (id) => id !== configurationId,
+  );
+  ids.push(configurationId);
+  persister.set(
+    SUGGESTED_CONFIG_IDS_STORAGE_KEY,
+    ids.slice(-MAX_REMEMBERED_SUGGESTED_CONFIGS),
+  );
+}
 
 function getToolSuggestionsPanel(): HTMLElement | null {
   if (typeof document === "undefined") {
@@ -60,7 +95,8 @@ export class ToolSuggestions extends VuexModule {
   suggestions: IResolvedToolSuggestion[] = [];
   errorMessage: string | null = null;
   // Configuration ids we have already run suggestions for, so opening the same
-  // collection twice in one session doesn't re-prompt.
+  // collection twice in one session doesn't re-prompt. Cross-session
+  // de-duplication lives in localStorage (see the suggested-config helpers).
   seenConfigurationIds: string[] = [];
   dismissed: boolean = false;
 
@@ -111,9 +147,11 @@ export class ToolSuggestions extends VuexModule {
     this.setDismissed(false);
   }
 
-  // Run suggestions for the current configuration if it looks like a freshly
-  // opened collection: it exists, has no tools yet, and we haven't already
-  // suggested for it this session. Safe to call on every configuration change.
+  // Run suggestions for the current configuration the first time it is opened
+  // with no tools: it exists, has no tools yet, we have never completed
+  // suggestions for it (persisted across sessions), and we haven't already
+  // started suggesting for it this session. Safe to call on every configuration
+  // change.
   @Action
   async maybeSuggestForCurrentConfiguration() {
     if (!AUTO_SUGGEST_ENABLED) {
@@ -126,7 +164,28 @@ export class ToolSuggestions extends VuexModule {
     if (configuration.tools.length > 0) {
       return;
     }
+    // Already suggested for this collection in some session — never re-prompt.
+    if (getSuggestedConfigurationIds().includes(configuration.id)) {
+      return;
+    }
     if (this.seenConfigurationIds.includes(configuration.id)) {
+      return;
+    }
+    // A completed run is persisted permanently, so only run once everything a
+    // *complete* suggestion needs is ready — otherwise a startup race would
+    // persist a degraded result and suppress the real suggestions forever.
+    // Both preconditions below are populated asynchronously at startup and can
+    // lose the race with the first layers-ready; bailing here (without marking
+    // or persisting) lets a later open retry once they're ready.
+    //   - isLoggedIn: fetchWorkerImageList() early-returns when not logged in
+    //     (properties.ts), so the catalog would lack Cellpose/Piscis/etc. and
+    //     we'd offer only the manual blob. (A stored token authenticates the
+    //     request before main.initialize() flips isLoggedIn, so the run can
+    //     otherwise succeed in this state.)
+    //   - toolTemplateList: loaded by App.vue fetchConfig(); without it
+    //     buildToolConfiguration() can't resolve any backend suggestion into a
+    //     tool. A non-empty list means the create/segmentation templates exist.
+    if (!main.isLoggedIn || main.toolTemplateList.length === 0) {
       return;
     }
     // Mark seen before the async call so a second layers-ready doesn't kick
@@ -136,6 +195,10 @@ export class ToolSuggestions extends VuexModule {
     await this.suggestForCurrentConfiguration();
     if (this.status === "error") {
       this.unmarkConfigurationSeen(configuration.id);
+    } else if (this.status === "done") {
+      // The flow ran to completion (even with zero suggestions) — persist so it
+      // never runs again for this collection in any future session.
+      rememberSuggestedConfigurationId(configuration.id);
     }
   }
 
