@@ -1328,6 +1328,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       workerImage?: string;
       channelName?: string;
       name?: string;
+      tags?: string[];
     }) => {
       requireLogin();
       if (!main.configuration) {
@@ -1386,6 +1387,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       const tool = buildToolConfiguration(entry, {
         channelName: input.channelName,
         name: input.name,
+        tags: input.tags,
       });
       if (!tool) {
         throw new ToolExecutionError(
@@ -1399,6 +1401,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
           name: tool.name,
           type: tool.type,
           channelName: input.channelName ?? null,
+          tags: input.tags ?? [],
         },
       };
     },
@@ -2087,7 +2090,11 @@ export function describeAgentToolCall(name: string, input: any): string {
         typeof input?.channelName === "string"
           ? ` on ${input.channelName}`
           : "";
-      return `Set up a ${kind} tool${channel}`;
+      const tags =
+        Array.isArray(input?.tags) && input.tags.length
+          ? ` tagging ${joinList(input.tags)}`
+          : "";
+      return `Set up a ${kind} tool${channel}${tags}`;
     }
     case "set_display_options":
       return "Change viewer display options";
