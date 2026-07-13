@@ -18,7 +18,7 @@ import re
 # )
 
 
-def runJobRequest(image, datasetId, params, request):
+def runJobRequest(image, datasetId, params, requestType):
     name = params.get("name", "unknown")
     # Make sure name is a valid name for a docker container
     name = "".join(re.findall("[a-zA-Z0-9_.-]", name))
@@ -30,7 +30,7 @@ def runJobRequest(image, datasetId, params, request):
         "--token",
         getCurrentToken()["_id"],
         "--request",
-        request,
+        requestType,
         "--parameters",
         params,
     ]
@@ -54,7 +54,7 @@ def runJobRequest(image, datasetId, params, request):
             # Route to the split fleet: GPU boxes consume "gpu", the always-on
             # CPU box consumes "cpu" (see helpers/workerQueues.py). Interface
             # requests always go to the CPU box.
-            queue=getQueueForRequest(image, request),
+            queue=getQueueForRequest(image, requestType),
             # Limit tasks execution to 24h to avoid blocking tasks that
             # monopolize a worker
             time_limit=24 * 60 * 60

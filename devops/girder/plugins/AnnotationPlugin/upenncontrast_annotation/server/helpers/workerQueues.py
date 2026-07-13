@@ -5,7 +5,8 @@ consume the "gpu" queue, an always-on CPU box consumes "cpu". A worker's
 class is declared by the `isGPUWorker` docker label baked into every
 ImageAnalysisProject worker image; we read it from the docker daemon Girder
 already uses for tool discovery (DOCKER_HOST -> the GPU primary, which holds
-every worker image).
+every worker image). Interface requests are the exception: they always go
+to the "cpu" queue regardless of the label (see getQueueForRequest).
 
 Unlabeled or unreadable images fail safe to the GPU queue: the always-on GPU
 primary can run any worker, so nothing breaks -- but we log it, because a
@@ -39,7 +40,7 @@ def _getDockerClient():
     return _dockerClient
 
 
-def getQueueForRequest(image, request):
+def getQueueForRequest(image, requestType):
     """Return the Celery queue name for a worker image + request type.
 
     Interface calls just emit the tool's parameter schema -- no GPU compute
@@ -53,7 +54,7 @@ def getQueueForRequest(image, request):
     = "" like the GPU primary); without that, GPU workers' interface calls
     route to a box that lacks the image and fail.
     """
-    if request == "interface":
+    if requestType == "interface":
         return CPU_QUEUE
     return getQueueForImage(image)
 
