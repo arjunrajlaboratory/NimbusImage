@@ -177,6 +177,9 @@ describe("toolSuggestions store", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
+    // The persisted "already suggested" set lives in localStorage; clear it so
+    // each test starts with no remembered collections.
+    localStorage.clear();
     await toolSuggestions.clear();
 
     Object.assign(main, {
@@ -184,6 +187,8 @@ describe("toolSuggestions store", () => {
       configuration: null,
       layers: [],
       toolTemplateList: [],
+      // Logged in by default; the not-logged-in guard is exercised explicitly.
+      isLoggedIn: true,
       maps: [],
       chatAPI: { getToolSuggestions: vi.fn() },
       addToolToConfiguration: vi.fn(),
@@ -230,6 +235,23 @@ describe("toolSuggestions store", () => {
       );
     });
 
+    it("is a no-op when the collection was already suggested for in a past session", async () => {
+      // Seed the persisted set the way the Persister stores it.
+      localStorage.setItem(
+        "toolSuggestions.suggestedConfigIds",
+        JSON.stringify(["cfg-persisted"]),
+      );
+      main.configuration = makeConfiguration({ id: "cfg-persisted" });
+      main.dataset = makeDataset();
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      expect(toolSuggestions.seenConfigurationIds).not.toContain(
+        "cfg-persisted",
+      );
+    });
+
     it("is a no-op when the configuration id was already seen this session", async () => {
       main.configuration = makeConfiguration({ id: "cfg-already-seen" });
       main.dataset = makeDataset();
@@ -238,6 +260,50 @@ describe("toolSuggestions store", () => {
       await toolSuggestions.maybeSuggestForCurrentConfiguration();
 
       expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op (retryable) when tool templates are not loaded yet", async () => {
+      main.configuration = makeConfiguration({ id: "cfg-no-templates" });
+      main.dataset = makeDataset();
+      // Templates race app startup; empty means fetchConfig hasn't populated
+      // them yet, so backend suggestions couldn't be resolved into tools.
+      main.toolTemplateList = [];
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      // Neither marked nor persisted, so a later open (templates loaded) retries.
+      expect(toolSuggestions.seenConfigurationIds).not.toContain(
+        "cfg-no-templates",
+      );
+      expect(
+        JSON.parse(
+          localStorage.getItem("toolSuggestions.suggestedConfigIds") || "[]",
+        ),
+      ).not.toContain("cfg-no-templates");
+    });
+
+    it("is a no-op (retryable) when the user is not logged in yet", async () => {
+      main.configuration = makeConfiguration({ id: "cfg-not-logged-in" });
+      main.dataset = makeDataset();
+      main.toolTemplateList = [segmentationTemplate, createTemplate];
+      // A stored token can authenticate the request before initialize() flips
+      // isLoggedIn; until then fetchWorkerImageList early-returns and the
+      // catalog would lack worker tools, so the run must not persist.
+      (main as any).isLoggedIn = false;
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      expect(main.chatAPI.getToolSuggestions).not.toHaveBeenCalled();
+      // Neither marked nor persisted, so a later open (logged in) retries.
+      expect(toolSuggestions.seenConfigurationIds).not.toContain(
+        "cfg-not-logged-in",
+      );
+      expect(
+        JSON.parse(
+          localStorage.getItem("toolSuggestions.suggestedConfigIds") || "[]",
+        ),
+      ).not.toContain("cfg-not-logged-in");
     });
 
     it("marks the configuration seen and runs suggestForCurrentConfiguration otherwise", async () => {
@@ -265,6 +331,12 @@ describe("toolSuggestions store", () => {
       expect(toolSuggestions.seenConfigurationIds).toContain("cfg-fresh");
       expect(main.chatAPI.getToolSuggestions).toHaveBeenCalledTimes(1);
       expect(toolSuggestions.status).toBe("done");
+      // A completed run is persisted so it never re-prompts in a later session.
+      expect(
+        JSON.parse(
+          localStorage.getItem("toolSuggestions.suggestedConfigIds") || "[]",
+        ),
+      ).toContain("cfg-fresh");
     });
 
     it("un-marks the configuration seen when the request errors, so a later trigger retries", async () => {
@@ -293,6 +365,47 @@ describe("toolSuggestions store", () => {
 
       expect(toolSuggestions.status).toBe("error");
       expect(toolSuggestions.seenConfigurationIds).not.toContain("cfg-error");
+      // A failed run must NOT be persisted, so a later session can retry.
+      expect(
+        JSON.parse(
+          localStorage.getItem("toolSuggestions.suggestedConfigIds") || "[]",
+        ),
+      ).not.toContain("cfg-error");
+    });
+
+    it("caps the persisted suggested set and evicts the oldest ids", async () => {
+      // Seed one more than the cap; remembering another keeps the newest 500.
+      const seeded = Array.from({ length: 501 }, (_, i) => `cfg-${i}`);
+      localStorage.setItem(
+        "toolSuggestions.suggestedConfigIds",
+        JSON.stringify(seeded),
+      );
+      main.configuration = makeConfiguration({ id: "cfg-new" });
+      main.dataset = makeDataset();
+      (main as any).layers = [makeLayer()];
+      main.toolTemplateList = [segmentationTemplate, createTemplate];
+      main.maps = [{ map: {} }] as any;
+      (captureViewportScreenshot as any).mockResolvedValue({
+        data: "data:image/png;base64,AAAA",
+        type: "image/png",
+      });
+      (dataUrlToBase64 as any).mockReturnValue({
+        media_type: "image/png",
+        data: "AAAA",
+      });
+      (main.chatAPI.getToolSuggestions as any).mockResolvedValue([]);
+
+      await toolSuggestions.maybeSuggestForCurrentConfiguration();
+
+      const persisted = JSON.parse(
+        localStorage.getItem("toolSuggestions.suggestedConfigIds") || "[]",
+      );
+      expect(persisted).toHaveLength(500);
+      expect(persisted).toContain("cfg-new"); // newest kept
+      expect(persisted[persisted.length - 1]).toBe("cfg-new");
+      expect(persisted).not.toContain("cfg-0"); // oldest evicted
+      expect(persisted).not.toContain("cfg-1");
+      expect(persisted).toContain("cfg-500"); // second-newest seed kept
     });
   });
 

@@ -9,6 +9,8 @@ vi.mock("@/store", () => ({
   default: {
     dataset: { id: "ds-1", name: "Test", time: { length: 5 } },
     configuration: { id: "config-1" },
+    isLoggedIn: true,
+    toolTemplateList: [{ type: "create" }],
     setShowTimelapseMode: vi.fn(),
   },
 }));
@@ -82,7 +84,7 @@ describe("Viewer", () => {
     expect(propertiesStore.fetchProperties).toHaveBeenCalled();
   });
 
-  it("handleLayersReady asks for tool suggestions", () => {
+  it("handleLayersReady asks for tool suggestions and marks layers rendered", () => {
     const wrapper = mountComponent();
 
     (wrapper.vm as any).handleLayersReady();
@@ -90,6 +92,57 @@ describe("Viewer", () => {
     expect(
       toolSuggestionsStore.maybeSuggestForCurrentConfiguration,
     ).toHaveBeenCalled();
+    expect((wrapper.vm as any).layersHaveRendered).toBe(true);
+  });
+
+  it("configurationChanged resets layersHaveRendered", () => {
+    const wrapper = mountComponent();
+    (wrapper.vm as any).handleLayersReady();
+    expect((wrapper.vm as any).layersHaveRendered).toBe(true);
+
+    (wrapper.vm as any).configurationChanged();
+
+    expect((wrapper.vm as any).layersHaveRendered).toBe(false);
+  });
+
+  it("retrySuggestWhenReady re-asks once prerequisites arrive after render", () => {
+    const wrapper = mountComponent();
+    (wrapper.vm as any).handleLayersReady(); // image already rendered
+    vi.clearAllMocks();
+
+    (wrapper.vm as any).retrySuggestWhenReady(true);
+
+    expect(
+      toolSuggestionsStore.maybeSuggestForCurrentConfiguration,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("retrySuggestWhenReady does nothing before the image has rendered", () => {
+    const wrapper = mountComponent();
+    // No handleLayersReady yet, so layersHaveRendered is false.
+
+    (wrapper.vm as any).retrySuggestWhenReady(true);
+
+    expect(
+      toolSuggestionsStore.maybeSuggestForCurrentConfiguration,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("retrySuggestWhenReady does nothing while prerequisites are not ready", () => {
+    const wrapper = mountComponent();
+    (wrapper.vm as any).handleLayersReady();
+    vi.clearAllMocks();
+
+    (wrapper.vm as any).retrySuggestWhenReady(false);
+
+    expect(
+      toolSuggestionsStore.maybeSuggestForCurrentConfiguration,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("suggestPrerequisitesReady reflects login and template readiness", () => {
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).suggestPrerequisitesReady).toBe(true);
   });
 
   it("handleResetComplete sets shouldResetMaps false", () => {
