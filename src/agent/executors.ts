@@ -32,6 +32,7 @@ import {
   MAX_HISTOGRAM_BUCKETS,
   MAX_PLOT_POINTS,
   MAX_SAMPLE_ROWS,
+  computeBoxStats,
   computeStats,
   downsample,
   resolvePathValue,
@@ -1797,13 +1798,20 @@ const registry: { [name: string]: IAgentToolEntry } = {
         values,
         clampHistogramBuckets(input.buckets),
       );
-      const trace = {
+      const widths = histogram.map((bucket) => bucket.max - bucket.min);
+      const trace: { [key: string]: unknown } = {
         type: "bar",
         name: title,
         x: histogram.map((bucket) => (bucket.min + bucket.max) / 2),
         y: histogram.map((bucket) => bucket.count),
-        width: histogram.map((bucket) => bucket.max - bucket.min),
       };
+      // Constant data collapses to a single zero-width bucket; an explicit
+      // width of 0 renders an invisible bar. Only set bar widths when they are
+      // all positive (the normal multi-bucket case); otherwise let Plotly
+      // auto-size the single bar.
+      if (widths.every((width) => width > 0)) {
+        trace.width = widths;
+      }
       const layout = {
         title,
         xaxis: { title: input.xLabel ?? propertyPathLabel(path) },
@@ -1855,15 +1863,19 @@ const registry: { [name: string]: IAgentToolEntry } = {
         if (values.length <= MAX_BOX_POINTS) {
           return { type: "box", name, y: values };
         }
-        const s = computeStats(values);
+        // Exact quartiles + Tukey (1.5*IQR) whisker endpoints from the full
+        // data, so the box matches what Plotly draws from raw points below the
+        // cap — extreme values stay outside the whiskers instead of being
+        // pulled in to the min/max. Individual outlier dots are omitted.
+        const s = computeBoxStats(values);
         return {
           type: "box",
           name,
-          q1: [s.p25],
+          q1: [s.q1],
           median: [s.median],
-          q3: [s.p75],
-          lowerfence: [s.min],
-          upperfence: [s.max],
+          q3: [s.q3],
+          lowerfence: [s.lowerFence],
+          upperfence: [s.upperFence],
           mean: [s.mean],
         };
       };

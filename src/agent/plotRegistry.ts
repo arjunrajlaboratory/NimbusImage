@@ -41,6 +41,12 @@ export function restorePlots(restored: IAgentPlot[]): void {
   }
 }
 
+// Remove a single plot. Used when a tool's conversation is cleared/switched
+// before it finishes, so its plot must not linger in the next conversation.
+export function removePlot(id: string): void {
+  plots.delete(id);
+}
+
 // Empty the registry without resetting the id counter.
 export function clearPlots(): void {
   plots.clear();

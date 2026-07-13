@@ -1680,6 +1680,20 @@ describe("data analysis tools", () => {
       expect(trace.width).toHaveLength(5);
       expect(trace.y).toHaveLength(5);
     });
+
+    it("omits bar width for constant data so the single bar is visible", async () => {
+      // All values equal -> one zero-width bucket; an explicit width of 0 would
+      // render an invisible bar, so width must be omitted (Plotly auto-sizes).
+      seedValues({ a1: 5, a2: 5, a3: 5 });
+      const { result } = await executeAgentTool(
+        "create_histogram_plot",
+        { propertyPath: ["prop1", "mean"], title: "const" },
+        context,
+      );
+      const trace = (getPlot(result.plotId)!.data as any[])[0];
+      expect(trace.y).toEqual([3]);
+      expect(trace.width).toBeUndefined();
+    });
   });
 
   describe("create_box_plot", () => {
@@ -1735,8 +1749,29 @@ describe("data analysis tools", () => {
       expect(trace.q1).toEqual([5000]);
       expect(trace.median).toEqual([10000]);
       expect(trace.q3).toEqual([15000]);
+      // Uniform data has no outliers, so whiskers reach the extremes.
       expect(trace.lowerfence).toEqual([0]);
       expect(trace.upperfence).toEqual([MAX_BOX_POINTS]);
+    });
+
+    it("clamps precomputed whiskers to the Tukey fence above the cap", async () => {
+      // Over-cap: a tight cluster plus one extreme value. The whisker must end
+      // at the cluster (the outlier stays outside), not at the extreme.
+      const values: { [id: string]: number } = {};
+      for (let i = 0; i < MAX_BOX_POINTS; i++) {
+        values[`a${i}`] = 10;
+      }
+      values.outlier = 1_000_000;
+      seedValues(values);
+      const { result } = await executeAgentTool(
+        "create_box_plot",
+        { propertyPaths: [["prop1", "mean"]], title: "outlier" },
+        context,
+      );
+      const trace = (getPlot(result.plotId)!.data as any[])[0];
+      expect(trace.y).toBeUndefined();
+      expect(trace.upperfence).toEqual([10]);
+      expect(trace.lowerfence).toEqual([10]);
     });
 
     it("groups one box per first tag when groupByTag is set", async () => {

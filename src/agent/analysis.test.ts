@@ -4,6 +4,7 @@ import {
   downsample,
   resolvePathValue,
   computeStats,
+  computeBoxStats,
   uniformHistogram,
   SIGNIFICANT_DIGITS,
 } from "./analysis";
@@ -120,6 +121,25 @@ describe("computeStats", () => {
     expect(stats.median).toBe(7);
     expect(stats.p25).toBe(7);
     expect(stats.p75).toBe(7);
+  });
+});
+
+describe("computeBoxStats", () => {
+  it("clamps whisker endpoints to the Tukey (1.5*IQR) fences", () => {
+    // [1,2,3,4,5,1000]: q1=2.25, q3=4.75, IQR=2.5, upper bound=8.5 -> the 1000
+    // is an outlier, so the upper whisker ends at 5, not 1000.
+    const box = computeBoxStats([1, 2, 3, 4, 5, 1000]);
+    expect(box.q1).toBe(2.25);
+    expect(box.median).toBe(3.5);
+    expect(box.q3).toBe(4.75);
+    expect(box.lowerFence).toBe(1);
+    expect(box.upperFence).toBe(5);
+  });
+
+  it("extends whiskers to the extremes when there are no outliers", () => {
+    const box = computeBoxStats([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(box.lowerFence).toBe(1);
+    expect(box.upperFence).toBe(10);
   });
 });
 

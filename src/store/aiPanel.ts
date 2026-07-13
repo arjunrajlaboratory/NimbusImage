@@ -34,7 +34,12 @@ import {
   saveStoredConversation,
   selectPlotsForStorage,
 } from "@/agent/conversationStore";
-import { clearPlots, listPlots, restorePlots } from "@/agent/plotRegistry";
+import {
+  clearPlots,
+  listPlots,
+  removePlot,
+  restorePlots,
+} from "@/agent/plotRegistry";
 import { dataUrlToBase64 } from "@/utils/interfaceCapture";
 
 // AI panel: conversational agent that drives the interface through the tool
@@ -618,10 +623,12 @@ export class AiPanel extends VuexModule {
       }
     }
 
+    // Captured before the await so both the success and error paths can tell
+    // whether the conversation was cleared or switched to another user (e.g. a
+    // mid-analysis account change) while this tool ran. Late notifications
+    // (e.g. worker completion) reference this conversation too.
+    const generation = conversationGeneration;
     try {
-      // Late notifications (e.g. worker completion) reference this
-      // conversation; drop them if it has been cleared in the meantime.
-      const generation = conversationGeneration;
       const { result, images, plots } = await executeAgentTool(
         toolUse.name,
         toolUse.input,
@@ -638,6 +645,25 @@ export class AiPanel extends VuexModule {
             turnSnapshot != null && viewIdentityChangedSince(turnSnapshot),
         },
       );
+      if (generation !== conversationGeneration) {
+        // The conversation was cleared or switched to another user while this
+        // tool was awaiting. Its plots and transcript items must not leak into
+        // the now-current conversation: unregister the plots it created (they
+        // were added to the global registry inside the executor) and skip every
+        // transcript update. The outer loop drops the returned tool_result via
+        // the same generation check.
+        for (const plot of plots ?? []) {
+          removePlot(plot.id);
+        }
+        return {
+          type: "tool_result",
+          tool_use_id: toolUse.id,
+          content: toResultContent({
+            discarded: true,
+            reason: "The conversation was cleared before this action finished.",
+          }),
+        };
+      }
       this.updateItemImpl({
         index: itemIndex,
         changes: { status: "done", detail: toolResultDetail(result) },
@@ -657,6 +683,18 @@ export class AiPanel extends VuexModule {
       };
     } catch (error: any) {
       const message = error?.message ?? "Tool execution failed";
+      if (generation !== conversationGeneration) {
+        // Cleared/switched mid-tool; don't touch the now-current transcript.
+        return {
+          type: "tool_result",
+          tool_use_id: toolUse.id,
+          content: toResultContent({
+            discarded: true,
+            reason: "The conversation was cleared before this action finished.",
+          }),
+          is_error: true,
+        };
+      }
       this.updateItemImpl({
         index: itemIndex,
         changes: { status: "error", detail: message },

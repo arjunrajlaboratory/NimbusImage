@@ -25,6 +25,28 @@ export interface IPathStats {
   p75: number;
 }
 
+export interface IBoxStats {
+  q1: number;
+  median: number;
+  q3: number;
+  // Whisker endpoints: the most extreme data values still within 1.5*IQR of
+  // the quartiles (Tukey), matching how Plotly draws whiskers from raw points.
+  lowerFence: number;
+  upperFence: number;
+  mean: number;
+}
+
+// Linear-interpolation percentile on an already-sorted, non-empty array,
+// matching Python statistics.quantiles(method="inclusive").
+function percentileOfSorted(sorted: number[], q: number): number {
+  const count = sorted.length;
+  const pos = (count - 1) * q;
+  const lower = Math.floor(pos);
+  const lowerValue = sorted[lower];
+  const upperValue = lower + 1 < count ? sorted[lower + 1] : lowerValue;
+  return lowerValue + (pos - lower) * (upperValue - lowerValue);
+}
+
 // Round to SIGNIFICANT_DIGITS significant digits. null passes through as null;
 // non-finite values (Infinity/NaN) pass through unchanged.
 export function roundSignificant(value: number | null): number | null {
@@ -80,22 +102,52 @@ export function computeStats(values: number[]): IPathStats {
           values.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
             (count - 1),
         );
-  const percentile = (q: number): number => {
-    const pos = (count - 1) * q;
-    const lower = Math.floor(pos);
-    const lowerValue = sorted[lower];
-    const upperValue = lower + 1 < count ? sorted[lower + 1] : lowerValue;
-    return lowerValue + (pos - lower) * (upperValue - lowerValue);
-  };
   return {
     count,
     mean,
     std,
     min: sorted[0],
     max: sorted[count - 1],
-    median: percentile(0.5),
-    p25: percentile(0.25),
-    p75: percentile(0.75),
+    median: percentileOfSorted(sorted, 0.5),
+    p25: percentileOfSorted(sorted, 0.25),
+    p75: percentileOfSorted(sorted, 0.75),
+  };
+}
+
+// Box-plot statistics over a non-empty numeric array: quartiles plus Tukey
+// whisker endpoints (the most extreme data values within 1.5*IQR of the
+// quartiles). Used to render an exact box for datasets too large to ship every
+// point; individual outlier markers are omitted, but the box and whiskers match
+// what Plotly would draw from the raw points.
+export function computeBoxStats(values: number[]): IBoxStats {
+  const sorted = values.slice().sort((a, b) => a - b);
+  const count = sorted.length;
+  const q1 = percentileOfSorted(sorted, 0.25);
+  const q3 = percentileOfSorted(sorted, 0.75);
+  const iqr = q3 - q1;
+  const lowerBound = q1 - 1.5 * iqr;
+  const upperBound = q3 + 1.5 * iqr;
+  let lowerFence = sorted[0];
+  for (const value of sorted) {
+    if (value >= lowerBound) {
+      lowerFence = value;
+      break;
+    }
+  }
+  let upperFence = sorted[count - 1];
+  for (let i = count - 1; i >= 0; i--) {
+    if (sorted[i] <= upperBound) {
+      upperFence = sorted[i];
+      break;
+    }
+  }
+  return {
+    q1,
+    median: percentileOfSorted(sorted, 0.5),
+    q3,
+    lowerFence,
+    upperFence,
+    mean: sorted.reduce((sum, value) => sum + value, 0) / count,
   };
 }
 

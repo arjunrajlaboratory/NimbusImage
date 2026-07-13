@@ -403,6 +403,34 @@ describe("AI panel persistence", () => {
     expect(lastSentPayload()).toContain("now it works");
   });
 
+  it("discards a plot from a tool whose conversation was cleared mid-run", async () => {
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    postAgentMessage.mockResolvedValueOnce(
+      toolUseResponse("create_scatter_plot"),
+    );
+
+    // The plot tool resolves only after the conversation is cleared (e.g. an
+    // account change mid-analysis). Its plot must not leak into the now-current
+    // conversation's transcript.
+    let resolveTool: (value: any) => void = () => {};
+    mockExecuteAgentTool.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveTool = resolve;
+      }),
+    );
+    const turn = aiPanel.sendUserMessage("plot it");
+    await waitFor(() => mockExecuteAgentTool.mock.calls.length > 0);
+
+    aiPanel.clearConversation(true); // bumps the generation mid-tool
+    resolveTool({
+      result: { plotId: "plot-leak" },
+      plots: [{ id: "plot-leak", title: "leaked plot" }],
+    });
+    await turn;
+
+    expect(aiPanel.items.some((i) => i.kind === "plot")).toBe(false);
+  });
+
   it("releases the hydration guard when cleared mid-load", async () => {
     // A plain clearConversation during the hydration await bumps
     // conversationGeneration. The guard release keys off a dedicated hydration
