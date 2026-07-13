@@ -203,6 +203,104 @@ describe("createOnnxInferenceSession", () => {
     expect(cachePut).toHaveBeenCalledTimes(1);
   });
 
+  it("serializes InferenceSession.create so the backend only initializes once", async () => {
+    // Two distinct model paths (encoder + decoder) requested concurrently, as
+    // the SAM pipeline does. ORT's backend init is not reentrant, so the second
+    // create() must not start until the first has resolved.
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    let resolveFirstCreate!: (value: unknown) => void;
+    const firstCreate = new Promise((resolve) => {
+      resolveFirstCreate = resolve;
+    });
+    createMock
+      .mockReturnValueOnce(firstCreate)
+      .mockResolvedValueOnce({ fake: "decoder" });
+
+    const { createOnnxInferenceSession } = await importFreshModule();
+    const encoderPromise = createOnnxInferenceSession("/models/encoder.onnx");
+    const decoderPromise = createOnnxInferenceSession("/models/decoder.onnx");
+
+    // Let both downloads settle. Only the first create() should have started;
+    // the second is queued behind it even though its buffer is ready.
+    await flush();
+    expect(createMock).toHaveBeenCalledTimes(1);
+
+    // Finishing the first create() lets the second proceed.
+    resolveFirstCreate({ fake: "encoder" });
+    await expect(encoderPromise).resolves.toEqual({ fake: "encoder" });
+    await expect(decoderPromise).resolves.toEqual({ fake: "decoder" });
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a queued model whose fetch fails rejects cleanly without an unhandled rejection", async () => {
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const unhandled: unknown[] = [];
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+    };
+    // Node reports via process; jsdom/browsers via the window event. Cover both.
+    const processOn = (
+      globalThis as unknown as {
+        process?: { on?: Function; off?: Function };
+      }
+    ).process;
+    const nodeHandler = (reason: unknown) => unhandled.push(reason);
+    processOn?.on?.("unhandledRejection", nodeHandler);
+    globalThis.addEventListener?.("unhandledrejection", onUnhandled);
+
+    try {
+      // The encoder's create() stays pending, holding the serialization chain.
+      let resolveEncoderCreate!: (value: unknown) => void;
+      createMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveEncoderCreate = resolve;
+        }),
+      );
+      // The decoder's download fails fast while the encoder create is pending.
+      fetchMock.mockImplementation((path: string) =>
+        path.includes("decoder")
+          ? Promise.reject(new Error("decoder 404"))
+          : Promise.resolve(makeResponse(modelBuffer)),
+      );
+
+      const { createOnnxInferenceSession } = await importFreshModule();
+      const encoderPromise = createOnnxInferenceSession("/models/encoder.onnx");
+      const decoderPromise = createOnnxInferenceSession("/models/decoder.onnx");
+
+      // Let the decoder fetch reject while the encoder create is still pending.
+      // The fetch rejection must already be absorbed here — this is what the
+      // fix guarantees — even though the decoder's session rejection is
+      // (correctly) still queued behind the encoder create.
+      await flush();
+      expect(unhandled).toEqual([]);
+
+      // Releasing the encoder create advances the chain; only now does the
+      // decoder's session promise surface its rejection, with its own error.
+      resolveEncoderCreate({ fake: "encoder" });
+      await expect(encoderPromise).resolves.toEqual({ fake: "encoder" });
+      await expect(decoderPromise).rejects.toThrow("decoder 404");
+      await flush();
+      expect(unhandled).toEqual([]);
+    } finally {
+      processOn?.off?.("unhandledRejection", nodeHandler);
+      globalThis.removeEventListener?.("unhandledrejection", onUnhandled);
+    }
+  });
+
+  it("a failed create does not wedge later session creation", async () => {
+    createMock
+      .mockRejectedValueOnce(new Error("create blew up"))
+      .mockResolvedValueOnce({ fake: "session" });
+
+    const { createOnnxInferenceSession } = await importFreshModule();
+    await expect(
+      createOnnxInferenceSession("/models/encoder.onnx"),
+    ).rejects.toThrow("create blew up");
+    // The chain must recover so the next model still loads.
+    const session = await createOnnxInferenceSession("/models/decoder.onnx");
+    expect(session).toEqual({ fake: "session" });
+  });
+
   it("does not cache failures: a retry after an error attempts a new fetch", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network down"));
     const { createOnnxInferenceSession } = await importFreshModule();

@@ -86,6 +86,7 @@ import {
   createSamToolStateFromToolConfiguration,
   warmSamModelCache,
 } from "@/pipelines/samPipeline";
+import { createObjectSegmentationToolStateFromToolConfiguration } from "@/pipelines/objectSegmentationPipeline";
 import { isEqual } from "lodash";
 import { logError, logWarning } from "@/utils/log";
 
@@ -817,6 +818,11 @@ export class Main extends VuexModule {
             configuration as IToolConfiguration<"samAnnotation">,
           );
           break;
+        case "objectSegmentation":
+          state = createObjectSegmentationToolStateFromToolConfiguration(
+            configuration as IToolConfiguration<"objectSegmentation">,
+          );
+          break;
         case "connection":
           state = {
             type: ConnectionToolStateSymbol,
@@ -869,6 +875,23 @@ export class Main extends VuexModule {
       }
       this.syncConfiguration("tools");
     }
+  }
+
+  // Add several tools at once with a single configuration sync, instead of one
+  // sync per tool (used by "Add all" in the tool suggestions panel).
+  @Action
+  addToolsToConfiguration(tools: IToolConfiguration[]) {
+    if (!this.configuration || tools.length === 0) {
+      return;
+    }
+    this.setConfigurationTools([...this.configuration.tools, ...tools]);
+    for (const tool of tools) {
+      const image = tool.values?.image?.image;
+      if (image) {
+        this.context.dispatch("requestWorkerInterface", image);
+      }
+    }
+    this.syncConfiguration("tools");
   }
 
   /**
@@ -1109,7 +1132,10 @@ export class Main extends VuexModule {
     // large, this way they are usually cached before a SAM tool is selected
     const samModels = new Set(
       (data?.tools ?? [])
-        .filter((tool) => tool.type === "samAnnotation")
+        .filter(
+          (tool) =>
+            tool.type === "samAnnotation" || tool.type === "objectSegmentation",
+        )
         .map((tool) => tool.values?.model?.value)
         .filter(Boolean),
     );

@@ -165,6 +165,41 @@ Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed di
 
 **The `#item` slot name did NOT change** (contrary to some sources claiming rename to `#internalItem`).
 
+### `v-select` shows `[object Object]` — set `item-title` to match the item key
+
+Vuetify's `VSelect` defaults to `item-title="title"` and `item-value="value"`. If your items are objects keyed differently, the selected display renders the raw object as **`[object Object]`** (selection still works because `item-value` happens to match).
+
+This bit the tool-creation form: every `select` interface element in `public/config/templates.json` uses `{ text, value }` items, but the generic `VSelect` in `ToolConfigurationItem.vue` set no `item-title`, so **every non-submenu select in the Add-tool dialog** rendered `[object Object]`. Fix: pass `item-title="text"` (the app's convention) for select elements.
+
+```vue
+<!-- BAD: items are { text, value } but VSelect looks for `.title` -->
+<v-select :items="[{ text: 'Point prompts', value: 'point' }]" />  <!-- [object Object] -->
+
+<!-- GOOD -->
+<v-select :items="items" item-title="text" item-value="value" />
+```
+
+When you add a non-submenu `select` to a tool template, or render options in a `v-select`, always confirm `item-title` matches the item objects' label key.
+
+### Don't `v-model` a computed that reads a non-reactive pipeline node
+
+`ComputeNode.output` / `ManualInputNode.output` (in `src/pipelines/computePipeline.ts`) is a **plain field, not a Vue ref** (pipeline nodes are `markRaw`'d for perf). A `computed` whose getter reads `node.output` registers **no reactive dependency**, so it never re-evaluates when the node's value changes. Bind a control's `v-model` to such a computed and the control **snaps back to its stale value** on the next render — e.g. a dropdown that "looks selected" but always displays the old option, or a slider that jumps back.
+
+```ts
+// BAD: getter reads node.output (non-reactive) → v-model display reverts
+const promptMode = computed({
+  get: () => promptModeNode.value?.output ?? "point",
+  set: (v) => promptModeNode.value?.setValue(v),
+});
+
+// GOOD: a reactive ref is the UI source of truth; push into the node on change,
+// and seed the ref from config/state on mount + when the tool state changes.
+const promptMode = ref<TPromptMode>("point");
+watch(promptMode, (v) => segState.value?.nodes.input.promptMode.setValue(v));
+```
+
+Reactive **state** fields (from `reactive(...)` in the tool-state factory) are fine to read in computeds — only raw `markRaw`'d node `.output` reads are the trap.
+
 ### VRow Density
 
 `dense` prop is deprecated. Use `density="comfortable"`:
@@ -375,6 +410,41 @@ Full guide: `codebaseDocumentation/BUTTON_CONVENTIONS.md`
 Quick API: `__nimbusMem.enable()`, `snapshot('label')`, `print()`, `compare('a','b')`, `export()`.
 
 For the full API, recorded fields, the load-order constraint (don't import stores at top level — register from `main.ts`), instructions for adding new counters or auto-snapshot points, and the cherry-pick procedure for cross-branch comparison: read `codebaseDocumentation/MEMORY_DEBUGGING.md`.
+
+## ONNX / SAM Pipeline (`src/pipelines/onnxModels.ts`, `samPipeline.ts`)
+
+The SAM tools run ONNX models (`onnxruntime-web`, WebGPU) whose WASM loaders and model files are fetched from `/onnx-wasm/` and `/onnx-models/`. Three failure modes here have bitten us in **production only** — they pass locally because the Vite dev server serves assets instantly and with correct MIME types.
+
+- **`.mjs` served as `text/plain` (prod nginx).** Modern `onnxruntime-web` dynamically `import()`s `.mjs` WASM loaders (e.g. `ort-wasm-simd-threaded.asyncify.mjs`) from `env.wasm.wasmPaths`. Production static files are served by **nginx in the AWSDeploy repo** (`templates/startup_haproxy.tftpl`), which uses stock `include mime.types;`. Stock `mime.types` maps `.js` but **not `.mjs`**, so `.mjs` falls through to `text/plain` and the browser refuses the ES-module import (*"Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of text/plain"*). `.wasm` is unaffected (it *is* in stock `mime.types` as `application/wasm`), which is why pre-`.mjs` versions never hit this. Fix lives in **AWSDeploy** (`types { text/javascript mjs; }`), not in this repo — don't add a frontend workaround. Also: `env.wasm.wasmPaths` must be **root-absolute** (`/onnx-wasm/`), or the loader specifier resolves against the current SPA route path.
+
+- **Concurrent session creation → `multiple calls to 'initWasm()' detected`.** onnxruntime-web initializes its shared WASM/WebGPU backend lazily on the first `InferenceSession.create()`, and that init is **not reentrant**. The SAM pipeline creates the encoder (`samPipeline.ts` `createEncoderSession`) and decoder (`createDecoderSession`) sessions from two independent `ComputeNode`s that fire on the same tick, so both creates race the backend init. The window is sub-millisecond locally (loaders served instantly) but wide in prod (each is a network fetch), so it fails deterministically **only when deployed**. `createOnnxInferenceSession` **serializes the `create()` step** through a module-level promise chain so the backend initializes exactly once — keep it that way. Model *downloads* stay parallel; only `create()` is gated. (Pipeline-node compute errors log `this.fun.name`, which is **minified** in prod — `[f2n]`/`[p2n]` are the mangled session-creation functions, not meaningful names.)
+
+- **HTML-shell cache poisoning.** A missing model path is answered with the `index.html` app shell at HTTP 200 (SPA fallback); caching that permanently breaks the tool (*"Failed to load model because protobuf parsing failed"*, INVALID_PROTOBUF). `fetchModelBuffer`/`warmModelCache` detect it (content-type + first byte `0x3c` `<`) and self-heal by dropping the poisoned cache entry.
+
+**General promise pattern (Codex P2, PR #1237):** when you start an async op eagerly but defer its consumer behind a chain — `chain.then(() => started.then(...))` — the `started` promise can reject *before* any handler is attached, which the runtime reports as an **unhandled rejection** (noise in the console and in Sentry) even though a later handler eventually catches it. Settle it into a non-rejecting result the instant it starts, then re-throw inside the chain:
+
+```typescript
+const settled = started.then(
+  (value) => ({ ok: true as const, value }),
+  (error) => ({ ok: false as const, error }),
+);
+const gated = chain.then(() =>
+  settled.then((r) => {
+    if (!r.ok) throw r.error;
+    return use(r.value);
+  }),
+);
+```
+
+## Native File / Folder Pickers (`src/utils/fileUpload.ts`)
+
+Folder upload (picker button + drag-and-drop) is centralized in `src/utils/fileUpload.ts`: `selectFiles()`, `selectFilesFromFolder()`, `getFilesFromDrop(event)`, and `filterFilesByAccept(files, accept)`. Extraction is delegated to the `file-selector` library (recurses into dropped folders, normalizes `<input>` change events). Two traps here each shipped as a silent "pick a folder and nothing happens":
+
+- **Never use a window-`focus` timeout to detect dialog cancellation.** The detached-`<input>` trick (`document.createElement('input'); input.click()`) needs to know when the dialog closes. A tempting fallback is "when the window regains focus, wait Nms; if no `change` fired, treat as cancel." This **loses a race for `webkitdirectory` folder picks**: Chrome interposes an *"Upload N files to this site?"* confirmation, and `input.files` isn't populated (no `change`) until the user accepts it — often **seconds** after the window already refocused when the OS dialog closed. The focus-timeout fires in that gap and resolves with an empty selection, discarding the real folder (measured live: focus at +4.5s, timeout resolves `[]` at +5.0s, real `change` ignored at +7.0s). Regular single-file picks have no confirmation dialog, so `change` wins the race there — which is why the bug looks like "only folders are broken." **No focus heuristic can ever work for folders** because focus returns before the files are known. Rely on the standardized `cancel` event (dismissal) + `change` (selection); both are supported in every browser we target (Chrome 113+, Firefox 91+, Safari 16.4+), so no fallback is needed.
+
+- **A picker promise that never resolves is indistinguishable from "nothing happened."** `file-selector`'s `fromEvent` can reject (an unreadable directory entry, a `getAsFileSystemHandle` failure). If the `await fromEvent(...)` inside the picker's settle handler throws *after* the `settled` guard is set, `resolve()` is never called and every `await selectFilesFromFolder()` **hangs forever**; on the drop path it surfaces as an unhandled rejection. Wrap extraction in try/catch → `logError(...)` + resolve/return `[]` so an error degrades to "no selection."
+
+- **`accept` filtering is caller-applied for folder/DnD only.** The native `<input :accept>` is enforced by the browser for click-to-select, but folder selection and drag-and-drop **bypass it entirely** — that's why `filterFilesByAccept` exists and is called on those two paths (not on the native `onChange`). Caveat: folder/DnD files frequently have an empty `file.type` (browsers assign no MIME to `.tif`/`.nd2`/`.czi`), so **prefer extension tokens** (`.tif,.nd2`) over MIME tokens (`image/*`) in any `accept` you pass — a MIME token silently drops empty-`type` files.
 
 ## Style Guidelines
 

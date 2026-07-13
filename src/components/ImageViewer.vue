@@ -76,8 +76,8 @@
       @centerChange="setCenter"
       @cornersChange="setCorners"
     />
-    <div v-if="samToolActive" class="sam-status-area">
-      <div v-if="showSamToolHelpAlert" class="sam-help-banner">
+    <div v-if="samStatusAreaActive" class="sam-status-area">
+      <div v-if="showSamToolHelpAlert && samToolActive" class="sam-help-banner">
         <span class="sam-help-label">SAM segmenter:</span>
         <div class="sam-help-text">
           <span><b>Shift + left click</b> positive point</span>
@@ -97,6 +97,8 @@
         </div>
       </div>
     </div>
+    <line-scan-panel />
+    <object-segmentation-panel />
     <div class="bottom-right-container">
       <v-btn
         v-if="submitPendingAnnotation"
@@ -228,13 +230,19 @@ import {
   IGeoJSPoint2D,
   IMouseState,
   SamAnnotationToolStateSymbol,
+  ObjectSegmentationToolStateSymbol,
+  ISamAnnotationToolState,
+  IObjectSegmentationToolState,
   IGeoJSMap,
   ProgressType,
   IGeoJSActionRecord,
+  TToolState,
 } from "../store/model";
 import setFrameQuad, { ISetQuadStatus } from "@/utils/setFrameQuad";
 
 import AnnotationViewer from "@/components/AnnotationViewer.vue";
+import LineScanPanel from "@/components/LineScanPanel.vue";
+import ObjectSegmentationPanel from "@/components/ObjectSegmentationPanel.vue";
 import ImageOverview from "@/components/ImageOverview.vue";
 import ScaleSettings from "@/components/ScaleSettings.vue";
 import ProgressBarGroup from "@/components/ProgressBarGroup.vue";
@@ -316,6 +324,9 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: "reset-complete"): void;
+  // Fired when all image layers have finished loading (every layer idle).
+  // Driven by the layers' onIdle callbacks via the layersReady computed.
+  (e: "layers-ready"): void;
 }>();
 
 // ---- Template Refs ----
@@ -352,10 +363,24 @@ const showSamToolHelpAlert = ref(false);
 const samToolActive = computed(
   () => selectedToolType.value === SamAnnotationToolStateSymbol,
 );
+const objectSegmentationToolActive = computed(
+  () => selectedToolType.value === ObjectSegmentationToolStateSymbol,
+);
+// The status area hosts the loading overlay for both SAM-family tools (the
+// SAM annotation tool and the unified object-segmentation tool); the help
+// banner inside it is variant per tool.
+const samStatusAreaActive = computed(
+  () => samToolActive.value || objectSegmentationToolActive.value,
+);
 const samLoadingMessages = computed(() => {
   const state = selectedTool.value?.state;
-  if (state?.type !== SamAnnotationToolStateSymbol) return [];
-  return (state as { loadingMessages: string[] }).loadingMessages ?? [];
+  if (
+    state?.type === SamAnnotationToolStateSymbol ||
+    state?.type === ObjectSegmentationToolStateSymbol
+  ) {
+    return (state as { loadingMessages: string[] }).loadingMessages ?? [];
+  }
+  return [];
 });
 // IMapEntry contains heavy GeoJS map + layers — shallowRef tracks identity
 // so the SAM watcher fires on swap, but skips deep-walking the GeoJS tree.
@@ -1391,6 +1416,19 @@ function toggleViewLock() {
   });
 }
 
+// The SAM annotation tool and the unified object-segmentation tool are both
+// fed the current map through an input node named `geoJSMap` (samPipeline.ts /
+// objectSegmentationPipeline.ts). Factored into one type guard so the
+// map-feeding watcher below doesn't need to duplicate itself per tool type.
+function hasGeoJSMapInput(
+  toolState: TToolState | null | undefined,
+): toolState is ISamAnnotationToolState | IObjectSegmentationToolState {
+  return (
+    toolState?.type === SamAnnotationToolStateSymbol ||
+    toolState?.type === ObjectSegmentationToolStateSymbol
+  );
+}
+
 // ---- Watchers ----
 
 watch(
@@ -1418,6 +1456,16 @@ watch([readyLayersCount, readyLayersTotal], () => {
   });
 });
 
+// Emit once each time the layers finish loading (false -> true transition,
+// and only when there is at least one layer — layersReady is trivially true
+// with zero layers). Consumers use this to act on a fully rendered image
+// (e.g. the tool-suggestion screenshot).
+watch(layersReady, (ready, wasReady) => {
+  if (ready && !wasReady && readyLayersTotal.value > 0) {
+    emit("layers-ready");
+  }
+});
+
 watch(mouseMap, () => {
   if (mouseMap.value) {
     samMapEntry.value = mouseMap.value;
@@ -1430,7 +1478,7 @@ watch(maps, () => {
 
 watch([samMapEntry, layersReady, cameraInfo, selectedTool], () => {
   const toolState = selectedTool.value?.state;
-  if (toolState?.type === SamAnnotationToolStateSymbol && layersReady.value) {
+  if (hasGeoJSMapInput(toolState) && layersReady.value) {
     toolState.nodes.input.geoJSMap.setValue(samMapEntry.value ?? NoOutput);
   }
 });
@@ -1547,6 +1595,7 @@ defineExpose({
   annotationStore,
   girderResources,
   sync,
+  hasGeoJSMapInput,
   maps,
   cameraInfo,
   overview,

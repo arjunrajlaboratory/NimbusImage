@@ -13,6 +13,7 @@ const toolTypeToIcon = {
   edit: "mdi-vector-polygon",
   segmentation: "mdi-shape-polygon-plus",
   connection: "mdi-vector-line",
+  linescan: "mdi-chart-bell-curve",
 } as const;
 
 const createShapeToIcon = {
