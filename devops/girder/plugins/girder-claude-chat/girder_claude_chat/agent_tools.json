@@ -590,7 +590,7 @@
   },
   {
     "name": "get_property_values",
-    "description": "Read computed property values as summary statistics (count, mean, min, max) per property value path — not a per-annotation dump. Optionally restrict to one propertyId and/or filter the annotations with a query (same shape as list_annotations). Read-only. Use to answer questions like 'what's the mean intensity of my nuclei?'.",
+    "description": "Read computed property values as summary statistics (count, mean, std, min, max, median, p25, p75) per property value path — not a per-annotation dump. Optionally restrict to one propertyId and/or filter the annotations with a query (same shape as list_annotations). Read-only. Use to answer questions like 'what's the mean intensity of my nuclei?'.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -603,6 +603,147 @@
           "description": "Annotation filter (same fields as list_annotations' query): only summarize values for matching annotations."
         }
       },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_property_histogram",
+    "description": "Get a binned histogram (min, max, count per bucket) for one numeric property value path across annotations, optionally restricted by a query (same shape as list_annotations). Use this to inspect the distribution shape (skew, modality, outliers) of a property before deciding what to plot or conclude. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Property value path segments, as returned by get_property_values' propertyPath."
+        },
+        "buckets": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Number of buckets (default 50, max 200)."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["propertyPath"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_sample_values",
+    "description": "Get up to n sample rows (annotation id, tags, plus the value for each requested property path) so you can eyeball raw data before drawing conclusions. Rows are sampled evenly across the dataset, not the first n. Read-only; default 20 rows, max 100.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPaths": {
+          "type": "array",
+          "items": { "type": "array", "items": { "type": "string" } },
+          "description": "Property value paths (each an array of segments)."
+        },
+        "n": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["propertyPaths"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_scatter_plot",
+    "description": "Create an interactive scatter plot of one property against another, rendered inline in the panel. Annotations missing a numeric value on either axis are dropped. Optionally color points by each annotation's first tag, and/or restrict annotations with a query (same shape as list_annotations). The raw points are never sent back to you — they render directly for the user; you receive only a plotId and point count. Refer to the plot by its title in your reply.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "xPropertyPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Property value path for the x axis (from get_property_values' propertyPath)."
+        },
+        "yPropertyPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Property value path for the y axis (from get_property_values' propertyPath)."
+        },
+        "title": { "type": "string" },
+        "xLabel": {
+          "type": "string",
+          "description": "Optional x-axis label; defaults to the property's full name."
+        },
+        "yLabel": {
+          "type": "string",
+          "description": "Optional y-axis label; defaults to the property's full name."
+        },
+        "colorByTag": {
+          "type": "boolean",
+          "description": "One trace per first-tag (untagged grouped together)."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["xPropertyPath", "yPropertyPath", "title"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_histogram_plot",
+    "description": "Create an interactive histogram of one numeric property value path, rendered inline in the panel as a bar chart, optionally restricted by a query (same shape as list_annotations). The binned data renders directly for the user and is never sent back to you; you receive only a plotId and bucket count. Refer to the plot by its title in your reply.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Property value path segments, as returned by get_property_values' propertyPath."
+        },
+        "title": { "type": "string" },
+        "buckets": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Number of buckets (default 50, max 200)."
+        },
+        "xLabel": {
+          "type": "string",
+          "description": "Optional x-axis label; defaults to the property's full name."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["propertyPath", "title"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_box_plot",
+    "description": "Create an interactive box plot of one or more numeric property value paths, rendered inline in the panel, optionally restricted by a query (same shape as list_annotations). With groupByTag (valid only for a single path) it draws one box per annotation first-tag; otherwise one box per property path. The raw values render directly for the user and are never sent back to you; you receive only a plotId and trace count. Refer to the plot by its title in your reply.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPaths": {
+          "type": "array",
+          "items": { "type": "array", "items": { "type": "string" } },
+          "description": "Property value paths (each an array of segments, from get_property_values' propertyPath)."
+        },
+        "title": { "type": "string" },
+        "groupByTag": {
+          "type": "boolean",
+          "description": "One box per annotation first-tag; requires exactly one propertyPath."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["propertyPaths", "title"],
       "additionalProperties": false
     }
   },

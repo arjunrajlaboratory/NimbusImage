@@ -166,6 +166,9 @@ vi.mock("@/store/properties", () => ({
     propertyValues: {} as any,
     computedPropertyPaths: [] as string[][],
     propertyStatuses: {} as any,
+    // Real store: a getter returning (path) => "Prop / sub" | null. Default to
+    // null here so propertyPathLabel falls back to the dotted path.
+    getFullNameFromPath: () => null as string | null,
     fetchPropertyValues: vi.fn(),
     createProperty: vi.fn(),
     computeProperty: vi.fn(),
@@ -201,6 +204,8 @@ import {
   ToolExecutionError,
   viewIdentityChangedSince,
 } from "./executors";
+import { MAX_BOX_POINTS, MAX_PLOT_POINTS, MAX_SAMPLE_ROWS } from "./analysis";
+import { clearPlots, getPlot } from "./plotRegistry";
 
 const mockMain = main as any;
 const mockAnnotations = annotationStore as any;
@@ -248,8 +253,10 @@ beforeEach(() => {
   mockMain.scalebarColor = "#ffffff";
   mockMain.backgroundColor = "black";
   mockMain.drawAnnotationConnections = true;
+  mockProperties.getFullNameFromPath = () => null;
   mockVolumeView.viewMode = "2d";
   mockFilters.propertyFilters = [];
+  clearPlots();
 });
 
 describe("describeAgentToolCall", () => {
@@ -289,6 +296,11 @@ describe("describeAgentToolCall", () => {
     "create_property",
     "compute_property",
     "get_property_values",
+    "get_property_histogram",
+    "get_sample_values",
+    "create_scatter_plot",
+    "create_histogram_plot",
+    "create_box_plot",
     "read_help_topic",
     "run_worker",
     "unknown_tool",
@@ -1229,13 +1241,49 @@ describe("property tools", () => {
     );
     expect(mockProperties.fetchPropertyValues).toHaveBeenCalled();
     expect(result.stats).toHaveLength(1);
+    // Hand-computed over [10, 20, 30]: sample std sqrt(200/2)=10; inclusive
+    // quantiles p25=15, median=20, p75=25.
     expect(result.stats[0]).toMatchObject({
       propertyId: "prop1",
       property: "Intensity",
       count: 3,
       mean: 20,
+      std: 10,
       min: 10,
       max: 30,
+      median: 20,
+      p25: 15,
+      p75: 25,
+    });
+  });
+
+  it("get_property_values rounds stats to 6 significant digits", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1" }),
+      makeAnnotation({ id: "a2" }),
+    ];
+    mockProperties.propertyValues = {
+      a1: { prop1: { mean: 1 } },
+      a2: { prop1: { mean: 2 } },
+    };
+    mockProperties.computedPropertyPaths = [["prop1", "mean"]];
+
+    const { result } = await executeAgentTool(
+      "get_property_values",
+      {},
+      context,
+    );
+    // Sample std of [1, 2] = sqrt(0.5) = 0.70710678… -> 6 sig digits.
+    expect(result.stats[0]).toMatchObject({
+      count: 2,
+      mean: 1.5,
+      std: 0.707107,
+      min: 1,
+      max: 2,
+      median: 1.5,
+      p25: 1.25,
+      p75: 1.75,
     });
   });
 
@@ -1285,6 +1333,470 @@ describe("property tools", () => {
       min: 0,
       max: count - 1,
       mean: (count - 1) / 2,
+    });
+  });
+});
+
+describe("data analysis tools", () => {
+  // Point a1..aN each at prop1.mean = its supplied value; tag them as given.
+  function seedValues(values: { [id: string]: number }, tags: string[] = []) {
+    mockAnnotations.annotations = Object.keys(values).map((id) =>
+      makeAnnotation({ id, tags }),
+    );
+    mockProperties.propertyValues = Object.fromEntries(
+      Object.entries(values).map(([id, v]) => [id, { prop1: { mean: v } }]),
+    );
+  }
+
+  describe("get_property_histogram", () => {
+    it("bins values so bucket counts sum to the value count", async () => {
+      seedValues({
+        a0: 0,
+        a1: 1,
+        a2: 2,
+        a3: 3,
+        a4: 4,
+        a5: 5,
+        a6: 6,
+        a7: 7,
+        a8: 8,
+        a9: 9,
+      });
+      const { result } = await executeAgentTool(
+        "get_property_histogram",
+        { propertyPath: ["prop1", "mean"], buckets: 5 },
+        context,
+      );
+      expect(result.buckets).toHaveLength(5);
+      expect(result.totalCount).toBe(10);
+      const summed = result.buckets.reduce(
+        (sum: number, b: any) => sum + b.count,
+        0,
+      );
+      expect(summed).toBe(10);
+    });
+
+    it("restricts the histogram to a query", async () => {
+      // a1/a2 tagged keep, a3/a4 untagged; the query keeps only the tagged two.
+      mockAnnotations.annotations = [
+        makeAnnotation({ id: "a1", tags: ["keep"] }),
+        makeAnnotation({ id: "a2", tags: ["keep"] }),
+        makeAnnotation({ id: "a3", tags: [] }),
+        makeAnnotation({ id: "a4", tags: [] }),
+      ];
+      mockProperties.propertyValues = {
+        a1: { prop1: { mean: 1 } },
+        a2: { prop1: { mean: 2 } },
+        a3: { prop1: { mean: 3 } },
+        a4: { prop1: { mean: 4 } },
+      };
+      const all = await executeAgentTool(
+        "get_property_histogram",
+        { propertyPath: ["prop1", "mean"] },
+        context,
+      );
+      expect(all.result.totalCount).toBe(4);
+      const restricted = await executeAgentTool(
+        "get_property_histogram",
+        { propertyPath: ["prop1", "mean"], query: { tags: ["keep"] } },
+        context,
+      );
+      expect(restricted.result.totalCount).toBe(2);
+    });
+
+    it("errors helpfully on a path with no numeric values", async () => {
+      seedValues({ a1: 1, a2: 2 });
+      await expect(
+        executeAgentTool(
+          "get_property_histogram",
+          { propertyPath: ["prop1", "missing"] },
+          context,
+        ),
+      ).rejects.toThrow(/prop1\.missing.*get_property_values/s);
+    });
+
+    it("aborts if the dataset changed during the property-value fetch", async () => {
+      seedValues({ a1: 1, a2: 2 });
+      // The user navigated to a different dataset while fetchPropertyValues
+      // was in flight; the tool must not analyze the now-current dataset.
+      const changedContext = { ...context, hasViewIdentityChanged: () => true };
+      await expect(
+        executeAgentTool(
+          "get_property_histogram",
+          { propertyPath: ["prop1", "mean"] },
+          changedContext,
+        ),
+      ).rejects.toThrow(/active dataset changed/);
+    });
+
+    it("excludes property values orphaned by deleted annotations", async () => {
+      // Two live annotations, but propertyValues also carries a value for
+      // "ghost" — an annotation that was deleted (the backend leaves such
+      // values behind). Analysis must count only the live pair, not the ghost.
+      mockAnnotations.annotations = [
+        makeAnnotation({ id: "a1" }),
+        makeAnnotation({ id: "a2" }),
+      ];
+      mockProperties.propertyValues = {
+        a1: { prop1: { mean: 1 } },
+        a2: { prop1: { mean: 2 } },
+        ghost: { prop1: { mean: 999 } },
+      };
+      const { result } = await executeAgentTool(
+        "get_property_histogram",
+        { propertyPath: ["prop1", "mean"] },
+        context,
+      );
+      expect(result.totalCount).toBe(2);
+    });
+
+    it("clamps buckets above the maximum", async () => {
+      seedValues({
+        a0: 0,
+        a1: 1,
+        a2: 2,
+        a3: 3,
+        a4: 4,
+        a5: 5,
+        a6: 6,
+        a7: 7,
+        a8: 8,
+        a9: 9,
+      });
+      const { result } = await executeAgentTool(
+        "get_property_histogram",
+        { propertyPath: ["prop1", "mean"], buckets: 1000 },
+        context,
+      );
+      // MAX_HISTOGRAM_BUCKETS is 200.
+      expect(result.buckets).toHaveLength(200);
+    });
+  });
+
+  describe("get_sample_values", () => {
+    it("returns rows of id, tags and requested path values (null if missing)", async () => {
+      mockAnnotations.annotations = [
+        makeAnnotation({ id: "a1", tags: ["nucleus"] }),
+        makeAnnotation({ id: "a2", tags: [] }),
+        makeAnnotation({ id: "a3", tags: ["spot"] }),
+      ];
+      mockProperties.propertyValues = {
+        a1: { prop1: { mean: 10 } },
+        a2: { prop1: { mean: 20 } },
+        a3: {},
+      };
+      const { result } = await executeAgentTool(
+        "get_sample_values",
+        { propertyPaths: [["prop1", "mean"]] },
+        context,
+      );
+      expect(result.totalMatching).toBe(3);
+      expect(result.rows).toHaveLength(3);
+      const byId = Object.fromEntries(
+        result.rows.map((row: any) => [row.annotationId, row]),
+      );
+      expect(byId.a1).toMatchObject({
+        tags: ["nucleus"],
+        "prop1.mean": 10,
+      });
+      // a3 has no value on the path -> null, not dropped.
+      expect(byId.a3["prop1.mean"]).toBeNull();
+    });
+
+    it("clamps n to MAX_SAMPLE_ROWS", async () => {
+      const values: { [id: string]: any } = {};
+      const annotations: any[] = [];
+      for (let i = 0; i < 300; i++) {
+        annotations.push(makeAnnotation({ id: `a${i}` }));
+        values[`a${i}`] = { prop1: { mean: i } };
+      }
+      mockAnnotations.annotations = annotations;
+      mockProperties.propertyValues = values;
+      const { result } = await executeAgentTool(
+        "get_sample_values",
+        { propertyPaths: [["prop1", "mean"]], n: 1000 },
+        context,
+      );
+      expect(result.rows).toHaveLength(MAX_SAMPLE_ROWS);
+      expect(result.totalMatching).toBe(300);
+    });
+
+    it("rejects an empty propertyPaths array", async () => {
+      seedValues({ a1: 1 });
+      await expect(
+        executeAgentTool("get_sample_values", { propertyPaths: [] }, context),
+      ).rejects.toBeInstanceOf(ToolExecutionError);
+    });
+  });
+
+  describe("create_scatter_plot", () => {
+    it("plots only annotations with a numeric value on both axes", async () => {
+      mockAnnotations.annotations = [
+        makeAnnotation({ id: "a1" }),
+        makeAnnotation({ id: "a2" }),
+        makeAnnotation({ id: "a3" }),
+      ];
+      mockProperties.propertyValues = {
+        a1: { px: { v: 1 }, py: { v: 2 } },
+        a2: { px: { v: 3 } }, // no y -> dropped
+        a3: { py: { v: 4 } }, // no x -> dropped
+      };
+      const { result, plots } = await executeAgentTool(
+        "create_scatter_plot",
+        {
+          xPropertyPath: ["px", "v"],
+          yPropertyPath: ["py", "v"],
+          title: "x vs y",
+        },
+        context,
+      );
+      expect(result.pointCount).toBe(1);
+      expect(result.downsampled).toBe(false);
+      expect(plots).toHaveLength(1);
+      // The plot is registered and retrievable, with full-precision points.
+      const plot = getPlot(result.plotId);
+      expect(plot).toBeDefined();
+      const trace = (plot!.data as any[])[0];
+      expect(trace.type).toBe("scattergl");
+      expect(trace.x).toEqual([1]);
+      expect(trace.y).toEqual([2]);
+    });
+
+    it("colors by first tag with one trace per tag plus untagged", async () => {
+      mockAnnotations.annotations = [
+        makeAnnotation({ id: "a1", tags: ["nucleus"] }),
+        makeAnnotation({ id: "a2", tags: [] }),
+        makeAnnotation({ id: "a3", tags: ["nucleus"] }),
+      ];
+      mockProperties.propertyValues = {
+        a1: { px: { v: 1 }, py: { v: 1 } },
+        a2: { px: { v: 2 }, py: { v: 2 } },
+        a3: { px: { v: 3 }, py: { v: 3 } },
+      };
+      const { result } = await executeAgentTool(
+        "create_scatter_plot",
+        {
+          xPropertyPath: ["px", "v"],
+          yPropertyPath: ["py", "v"],
+          title: "colored",
+          colorByTag: true,
+        },
+        context,
+      );
+      const plot = getPlot(result.plotId)!;
+      const names = (plot.data as any[]).map((trace) => trace.name);
+      expect(names).toContain("nucleus");
+      expect(names).toContain("untagged");
+      expect(plot.data).toHaveLength(2);
+    });
+
+    it("errors with both axis counts when nothing overlaps", async () => {
+      mockAnnotations.annotations = [
+        makeAnnotation({ id: "a1" }),
+        makeAnnotation({ id: "a2" }),
+      ];
+      mockProperties.propertyValues = {
+        a1: { px: { v: 1 } },
+        a2: { py: { v: 2 } },
+      };
+      await expect(
+        executeAgentTool(
+          "create_scatter_plot",
+          {
+            xPropertyPath: ["px", "v"],
+            yPropertyPath: ["py", "v"],
+            title: "empty",
+          },
+          context,
+        ),
+      ).rejects.toThrow(/px\.v.*py\.v/s);
+    });
+
+    it("requires a non-empty title", async () => {
+      seedValues({ a1: 1 });
+      await expect(
+        executeAgentTool(
+          "create_scatter_plot",
+          {
+            xPropertyPath: ["prop1", "mean"],
+            yPropertyPath: ["prop1", "mean"],
+            title: "",
+          },
+          context,
+        ),
+      ).rejects.toBeInstanceOf(ToolExecutionError);
+    });
+
+    it("downsamples beyond MAX_PLOT_POINTS and flags the title", async () => {
+      const annotations: any[] = [];
+      const propertyValues: { [id: string]: any } = {};
+      const total = MAX_PLOT_POINTS + 10000;
+      for (let i = 0; i < total; i++) {
+        const id = `a${i}`;
+        annotations.push(makeAnnotation({ id }));
+        propertyValues[id] = { px: { v: i }, py: { v: i } };
+      }
+      mockAnnotations.annotations = annotations;
+      mockProperties.propertyValues = propertyValues;
+      const { result } = await executeAgentTool(
+        "create_scatter_plot",
+        {
+          xPropertyPath: ["px", "v"],
+          yPropertyPath: ["py", "v"],
+          title: "big",
+        },
+        context,
+      );
+      expect(result.downsampled).toBe(true);
+      expect(result.pointCount).toBeLessThanOrEqual(MAX_PLOT_POINTS);
+      expect(result.title.endsWith("(downsampled)")).toBe(true);
+    });
+  });
+
+  describe("create_histogram_plot", () => {
+    it("builds a bar trace with matching x/width/y lengths", async () => {
+      seedValues({
+        a0: 0,
+        a1: 1,
+        a2: 2,
+        a3: 3,
+        a4: 4,
+        a5: 5,
+        a6: 6,
+        a7: 7,
+        a8: 8,
+        a9: 9,
+      });
+      const { result, plots } = await executeAgentTool(
+        "create_histogram_plot",
+        { propertyPath: ["prop1", "mean"], title: "dist", buckets: 5 },
+        context,
+      );
+      expect(result.bucketCount).toBe(5);
+      expect(plots).toHaveLength(1);
+      const trace = (getPlot(result.plotId)!.data as any[])[0];
+      expect(trace.type).toBe("bar");
+      expect(trace.x).toHaveLength(5);
+      expect(trace.width).toHaveLength(5);
+      expect(trace.y).toHaveLength(5);
+    });
+
+    it("omits bar width for constant data so the single bar is visible", async () => {
+      // All values equal -> one zero-width bucket; an explicit width of 0 would
+      // render an invisible bar, so width must be omitted (Plotly auto-sizes).
+      seedValues({ a1: 5, a2: 5, a3: 5 });
+      const { result } = await executeAgentTool(
+        "create_histogram_plot",
+        { propertyPath: ["prop1", "mean"], title: "const" },
+        context,
+      );
+      const trace = (getPlot(result.plotId)!.data as any[])[0];
+      expect(trace.y).toEqual([3]);
+      expect(trace.width).toBeUndefined();
+    });
+  });
+
+  describe("create_box_plot", () => {
+    it("names one trace per property path", async () => {
+      seedValues({ a1: 1, a2: 2, a3: 3 });
+      const { result } = await executeAgentTool(
+        "create_box_plot",
+        { propertyPaths: [["prop1", "mean"]], title: "spread" },
+        context,
+      );
+      expect(result.traceCount).toBe(1);
+      const trace = (getPlot(result.plotId)!.data as any[])[0];
+      expect(trace.type).toBe("box");
+      // getFullNameFromPath returns null -> dotted-path fallback.
+      expect(trace.name).toBe("prop1.mean");
+      expect(trace.y).toEqual([1, 2, 3]);
+    });
+
+    it("rejects groupByTag with more than one path", async () => {
+      seedValues({ a1: 1 });
+      await expect(
+        executeAgentTool(
+          "create_box_plot",
+          {
+            propertyPaths: [
+              ["prop1", "mean"],
+              ["prop2", "mean"],
+            ],
+            title: "bad",
+            groupByTag: true,
+          },
+          context,
+        ),
+      ).rejects.toBeInstanceOf(ToolExecutionError);
+    });
+
+    it("uses exact precomputed stats above the point cap, not a downsample", async () => {
+      // 0..MAX_BOX_POINTS inclusive => MAX_BOX_POINTS+1 values, over the cap.
+      const values: { [id: string]: number } = {};
+      for (let i = 0; i <= MAX_BOX_POINTS; i++) {
+        values[`a${i}`] = i;
+      }
+      seedValues(values);
+      const { result } = await executeAgentTool(
+        "create_box_plot",
+        { propertyPaths: [["prop1", "mean"]], title: "big" },
+        context,
+      );
+      const trace = (getPlot(result.plotId)!.data as any[])[0];
+      // No raw y array (that path would have been downsampled); exact quartiles
+      // computed from the full data instead.
+      expect(trace.y).toBeUndefined();
+      expect(trace.q1).toEqual([5000]);
+      expect(trace.median).toEqual([10000]);
+      expect(trace.q3).toEqual([15000]);
+      // Uniform data has no outliers, so whiskers reach the extremes.
+      expect(trace.lowerfence).toEqual([0]);
+      expect(trace.upperfence).toEqual([MAX_BOX_POINTS]);
+    });
+
+    it("clamps precomputed whiskers to the Tukey fence above the cap", async () => {
+      // Over-cap: a tight cluster plus one extreme value. The whisker must end
+      // at the cluster (the outlier stays outside), not at the extreme.
+      const values: { [id: string]: number } = {};
+      for (let i = 0; i < MAX_BOX_POINTS; i++) {
+        values[`a${i}`] = 10;
+      }
+      values.outlier = 1_000_000;
+      seedValues(values);
+      const { result } = await executeAgentTool(
+        "create_box_plot",
+        { propertyPaths: [["prop1", "mean"]], title: "outlier" },
+        context,
+      );
+      const trace = (getPlot(result.plotId)!.data as any[])[0];
+      expect(trace.y).toBeUndefined();
+      expect(trace.upperfence).toEqual([10]);
+      expect(trace.lowerfence).toEqual([10]);
+    });
+
+    it("groups one box per first tag when groupByTag is set", async () => {
+      mockAnnotations.annotations = [
+        makeAnnotation({ id: "a1", tags: ["nucleus"] }),
+        makeAnnotation({ id: "a2", tags: ["spot"] }),
+        makeAnnotation({ id: "a3", tags: ["nucleus"] }),
+      ];
+      mockProperties.propertyValues = {
+        a1: { prop1: { mean: 1 } },
+        a2: { prop1: { mean: 2 } },
+        a3: { prop1: { mean: 3 } },
+      };
+      const { result } = await executeAgentTool(
+        "create_box_plot",
+        {
+          propertyPaths: [["prop1", "mean"]],
+          title: "by tag",
+          groupByTag: true,
+        },
+        context,
+      );
+      const names = (getPlot(result.plotId)!.data as any[]).map((t) => t.name);
+      expect(names).toContain("nucleus");
+      expect(names).toContain("spot");
     });
   });
 });

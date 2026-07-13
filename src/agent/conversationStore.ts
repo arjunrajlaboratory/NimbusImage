@@ -1,5 +1,6 @@
 import type { IAgentPanelItem } from "@/store/aiPanel";
 import type { IAgentWireMessage } from "@/store/AgentAPI";
+import type { IAgentPlot } from "./plotRegistry";
 import { logError } from "@/utils/log";
 
 // Browser-local persistence for the AI-panel conversation. A single stored
@@ -20,7 +21,33 @@ export interface IStoredAgentConversation {
   userId: string;
   items: IAgentPanelItem[];
   wireMessages: IAgentWireMessage[];
+  plots?: IAgentPlot[];
   updatedAt: number;
+}
+
+export const MAX_STORED_PLOTS = 12;
+export const MAX_STORED_PLOT_CHARS = 3_000_000;
+
+// Plots worth persisting: those referenced by a current transcript item,
+// newest-first capped at MAX_STORED_PLOTS, skipping any single plot whose
+// serialized size exceeds MAX_STORED_PLOT_CHARS. Returned in original
+// (insertion) order so restorePlots keeps ids monotonic.
+export function selectPlotsForStorage(
+  items: IAgentPanelItem[],
+  plots: IAgentPlot[],
+): IAgentPlot[] {
+  const referencedIds = new Set(
+    items
+      .filter((item) => item.kind === "plot" && item.plotId)
+      .map((item) => item.plotId),
+  );
+  return plots
+    .filter(
+      (plot) =>
+        referencedIds.has(plot.id) &&
+        JSON.stringify(plot).length <= MAX_STORED_PLOT_CHARS,
+    )
+    .slice(-MAX_STORED_PLOTS);
 }
 
 function openDatabase(): Promise<IDBDatabase> {

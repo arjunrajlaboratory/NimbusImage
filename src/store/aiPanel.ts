@@ -32,7 +32,14 @@ import {
   clearStoredConversation,
   loadStoredConversation,
   saveStoredConversation,
+  selectPlotsForStorage,
 } from "@/agent/conversationStore";
+import {
+  clearPlots,
+  listPlots,
+  removePlot,
+  restorePlots,
+} from "@/agent/plotRegistry";
 import { dataUrlToBase64 } from "@/utils/interfaceCapture";
 
 // AI panel: conversational agent that drives the interface through the tool
@@ -49,13 +56,15 @@ export type TAgentToolStatus =
   | "declined";
 
 export interface IAgentPanelItem {
-  kind: "user" | "assistant" | "tool" | "info" | "error";
+  kind: "user" | "assistant" | "tool" | "info" | "error" | "plot";
   // Message text; for tool items, a human-readable action description
   text: string;
   toolName?: string;
   status?: TAgentToolStatus;
   // Short outcome note for tool items (e.g. "42 annotations affected")
   detail?: string;
+  // For plot items: id into the plot registry (src/agent/plotRegistry.ts)
+  plotId?: string;
 }
 
 // Upper bound on model round-trips per user message; the backend has a
@@ -89,6 +98,13 @@ let panelElement: HTMLElement | null = null;
 // job finishing minutes after its conversation was cleared) are dropped
 // instead of landing in an unrelated conversation.
 let conversationGeneration = 0;
+// Bumped once per hydration attempt, by handleAuthenticatedUserChange only, to
+// decide which invocation owns releasing the `hydrating` guard. Kept separate
+// from conversationGeneration (which clearConversation also bumps): a plain
+// clear during an in-flight hydration must not make that hydration mistake the
+// bump for a newer hydration and skip releasing the guard — that would strand
+// `hydrating` true and block every future send.
+let hydrationGeneration = 0;
 // Identity of the last authenticated user the conversation belonged to, so a
 // login/logout (client-side, no page reload) clears the prior user's history.
 // `undefined` until the first check runs.
@@ -135,6 +151,9 @@ function toolResultDetail(result: any): string | undefined {
   }
   if (typeof result.filteredCount === "number") {
     return `${result.filteredCount} annotations pass the filter`;
+  }
+  if (typeof result.pointCount === "number") {
+    return `${result.pointCount.toLocaleString()} points`;
   }
   if (result.jobId) {
     return "job started";
@@ -263,6 +282,7 @@ export class AiPanel extends VuexModule {
     }
     wireMessages = [];
     turnSnapshot = null;
+    clearPlots();
     conversationGeneration++;
     this.clearItemsImpl();
     this.setCanRevert(false);
@@ -314,6 +334,7 @@ export class AiPanel extends VuexModule {
     // generation now so we can tell, after the await, whether a newer change
     // superseded this one.
     const generationAtChange = conversationGeneration;
+    const hydrationAtChange = ++hydrationGeneration;
     hydrating = true;
     try {
       const stored = await loadStoredConversation();
@@ -330,15 +351,18 @@ export class AiPanel extends VuexModule {
       if (stored && stored.userId === userId) {
         // Same user (e.g. a page reload): rehydrate the conversation.
         wireMessages = stored.wireMessages;
+        restorePlots(stored.plots ?? []);
         this.setItems(stored.items);
       } else {
         // A different user's conversation must never surface here.
         await clearStoredConversation();
       }
     } finally {
-      // Only release the guard if we're still the current change; a newer
-      // in-flight change owns it until it settles.
-      if (conversationGeneration === generationAtChange) {
+      // Release the guard unless a newer hydration started while we awaited —
+      // that newer one owns it and its own finally will release it. Gated on
+      // hydrationGeneration, not conversationGeneration, so a plain clear (which
+      // bumps only conversationGeneration) can't leave `hydrating` stuck true.
+      if (hydrationGeneration === hydrationAtChange) {
         hydrating = false;
       }
     }
@@ -508,6 +532,7 @@ export class AiPanel extends VuexModule {
           userId: lastKnownUserId,
           items: [...this.items],
           wireMessages,
+          plots: selectPlotsForStorage(this.items, listPlots()),
           updatedAt: Date.now(),
         });
       }
@@ -598,11 +623,13 @@ export class AiPanel extends VuexModule {
       }
     }
 
+    // Captured before the await so both the success and error paths can tell
+    // whether the conversation was cleared or switched to another user (e.g. a
+    // mid-analysis account change) while this tool ran. Late notifications
+    // (e.g. worker completion) reference this conversation too.
+    const generation = conversationGeneration;
     try {
-      // Late notifications (e.g. worker completion) reference this
-      // conversation; drop them if it has been cleared in the meantime.
-      const generation = conversationGeneration;
-      const { result, images } = await executeAgentTool(
+      const { result, images, plots } = await executeAgentTool(
         toolUse.name,
         toolUse.input,
         {
@@ -618,10 +645,34 @@ export class AiPanel extends VuexModule {
             turnSnapshot != null && viewIdentityChangedSince(turnSnapshot),
         },
       );
+      if (generation !== conversationGeneration) {
+        // The conversation was cleared or switched to another user while this
+        // tool was awaiting. Its plots and transcript items must not leak into
+        // the now-current conversation: unregister the plots it created (they
+        // were added to the global registry inside the executor) and skip every
+        // transcript update. The outer loop drops the returned tool_result via
+        // the same generation check.
+        for (const plot of plots ?? []) {
+          removePlot(plot.id);
+        }
+        return {
+          type: "tool_result",
+          tool_use_id: toolUse.id,
+          content: toResultContent({
+            discarded: true,
+            reason: "The conversation was cleared before this action finished.",
+          }),
+        };
+      }
       this.updateItemImpl({
         index: itemIndex,
         changes: { status: "done", detail: toolResultDetail(result) },
       });
+      // Each created plot gets its own transcript item, rendered by
+      // AiPanelPlot from the plot registry.
+      for (const plot of plots ?? []) {
+        this.addItemImpl({ kind: "plot", plotId: plot.id, text: plot.title });
+      }
       if (VIEW_STATE_TOOLS.has(toolUse.name)) {
         this.setCanRevert(true);
       }
@@ -632,6 +683,18 @@ export class AiPanel extends VuexModule {
       };
     } catch (error: any) {
       const message = error?.message ?? "Tool execution failed";
+      if (generation !== conversationGeneration) {
+        // Cleared/switched mid-tool; don't touch the now-current transcript.
+        return {
+          type: "tool_result",
+          tool_use_id: toolUse.id,
+          content: toResultContent({
+            discarded: true,
+            reason: "The conversation was cleared before this action finished.",
+          }),
+          is_error: true,
+        };
+      }
       this.updateItemImpl({
         index: itemIndex,
         changes: { status: "error", detail: message },
