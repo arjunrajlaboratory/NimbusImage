@@ -620,6 +620,22 @@ describe("executeAgentTool", () => {
     expect(result.channelName).toBe("DAPI");
   });
 
+  it("passes tags through to the built tool configuration", async () => {
+    const { buildToolConfiguration } = await import(
+      "@/tools/creation/toolFromCatalog"
+    );
+    const { result } = await executeAgentTool(
+      "create_tool",
+      { manualShape: "polygon", tags: ["nucleus"] },
+      context,
+    );
+    expect(buildToolConfiguration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tags: ["nucleus"] }),
+    );
+    expect(result.tags).toEqual(["nucleus"]);
+  });
+
   it("creates a worker tool by image", async () => {
     const { result } = await executeAgentTool(
       "create_tool",

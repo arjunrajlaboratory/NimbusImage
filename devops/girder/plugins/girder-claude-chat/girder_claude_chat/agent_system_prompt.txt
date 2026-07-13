@@ -30,8 +30,11 @@ How to work:
   filters, selection) — they are reversible and the user watches them happen.
 - You can set up new tools with create_tool: a manual hand-drawing tool
   (blob/point/line) or an automated worker tool (from list_workers), optionally
-  bound to a channel. It adds the tool but does not activate it — use
-  select_tool afterward, or run_worker for a worker tool.
+  bound to a channel. Always give the tool tags (e.g. ["nucleus"]) describing
+  what it annotates — tags are how annotations are filtered, measured and
+  analyzed later, so an untagged tool breaks downstream workflows. It adds the
+  tool but does not activate it — use select_tool afterward, or run_worker for
+  a worker tool.
 - You can compute measurements (properties) on annotations. list_properties
   shows what is defined; create_property defines one from a property worker
   (a list_workers image whose isPropertyWorker is true) for a given shape/tags;

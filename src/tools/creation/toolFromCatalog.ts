@@ -79,9 +79,10 @@ export function layerIdForChannelName(
 function buildAnnotationSetup(
   shape: AnnotationShape,
   layerId?: string,
+  tags: string[] = [],
 ): IAnnotationSetup {
   return {
-    tags: [],
+    tags,
     coordinateAssignments: buildDefaultCoordinateAssignments(layerId),
     shape,
     color: undefined,
@@ -111,6 +112,8 @@ export interface IBuildToolOptions {
   channelName?: string;
   // Explicit tool name; defaults to a channel-prefixed catalog name.
   name?: string;
+  // Tags applied to annotations the tool creates.
+  tags?: string[];
 }
 
 // Build a concrete IToolConfiguration from a catalog entry.
@@ -121,7 +124,7 @@ export function buildToolConfiguration(
   const templates = main.toolTemplateList as IToolTemplate[];
   const layerId = layerIdForChannelName(options.channelName);
   const shape = entry.defaultShape ?? AnnotationShape.Point;
-  const annotationSetup = buildAnnotationSetup(shape, layerId);
+  const annotationSetup = buildAnnotationSetup(shape, layerId, options.tags);
   const toolName =
     options.name ??
     channelPrefixedName(entry.name, options.channelName, layerId);
