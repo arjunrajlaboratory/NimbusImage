@@ -12,8 +12,6 @@ split exists to stop.
 
 In local dev the docker-compose worker consumes every queue
 (celery, cpu, gpu), so routing is transparent and nothing can stall.
-Deployment topology and the production cutover runbook live in the private
-deployment repo (doc/CPU_GPU_Queue_Split.md there).
 """
 
 import logging
@@ -53,8 +51,6 @@ def getQueueForRequest(image, requestType):
     `--request interface` under pull_image=False, so whatever consumes the
     "cpu" queue MUST have every worker image on disk -- otherwise GPU
     workers' interface calls land on a box that lacks the image and fail.
-    The private deployment repo's queue-split runbook covers the
-    production specifics.
     """
     if requestType == "interface":
         return CPU_QUEUE
