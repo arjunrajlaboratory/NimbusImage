@@ -99,3 +99,28 @@ def test_queue_is_cached_per_image():
     route(client)
     route(client)
     assert client.images.get.call_count == 1
+
+
+def routeRequest(client, request):
+    """Route IMAGE + request through getQueueForRequest using client."""
+    with mock.patch.object(wq, "_getDockerClient", return_value=client):
+        return wq.getQueueForRequest(IMAGE, request)
+
+
+def test_interface_request_routes_gpu_image_to_cpu_queue():
+    client = clientWithLabels({"isGPUWorker": "true"})
+    assert routeRequest(client, "interface") == wq.CPU_QUEUE
+    # No label lookup needed: interface calls never route by worker type.
+    assert client.images.get.call_count == 0
+
+
+@pytest.mark.parametrize("request_type", ["compute", "preview"])
+def test_compute_and_preview_route_gpu_image_to_gpu_queue(request_type):
+    client = clientWithLabels({"isGPUWorker": "true"})
+    assert routeRequest(client, request_type) == wq.GPU_QUEUE
+
+
+@pytest.mark.parametrize("request_type", ["interface", "compute", "preview"])
+def test_cpu_image_routes_to_cpu_queue_for_all_requests(request_type):
+    client = clientWithLabels({"isGPUWorker": "false"})
+    assert routeRequest(client, request_type) == wq.CPU_QUEUE

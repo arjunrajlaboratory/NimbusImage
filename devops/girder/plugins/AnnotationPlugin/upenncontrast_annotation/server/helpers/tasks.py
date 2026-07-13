@@ -3,7 +3,7 @@ from girder_worker.docker.tasks import docker_run
 from girder.api.rest import getCurrentToken
 from girder.models.setting import Setting
 
-from .workerQueues import getQueueForImage
+from .workerQueues import getQueueForRequest
 
 import datetime
 import json
@@ -52,8 +52,9 @@ def runJobRequest(image, datasetId, params, request):
                 # 'girder_result_hooks': [testHook]
             },
             # Route to the split fleet: GPU boxes consume "gpu", the always-on
-            # CPU box consumes "cpu" (see helpers/workerQueues.py).
-            queue=getQueueForImage(image),
+            # CPU box consumes "cpu" (see helpers/workerQueues.py). Interface
+            # requests always go to the CPU box.
+            queue=getQueueForRequest(image, request),
             # Limit tasks execution to 24h to avoid blocking tasks that
             # monopolize a worker
             time_limit=24 * 60 * 60

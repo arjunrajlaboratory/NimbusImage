@@ -39,6 +39,25 @@ def _getDockerClient():
     return _dockerClient
 
 
+def getQueueForRequest(image, request):
+    """Return the Celery queue name for a worker image + request type.
+
+    Interface calls just emit the tool's parameter schema -- no GPU compute
+    -- so they always go to the CPU box. Compute/preview route by worker
+    type (the isGPUWorker label, see getQueueForImage).
+
+    HARD DEPENDENCY: interface jobs run the actual worker container with
+    `--request interface` under pull_image=False, so the box consuming the
+    "cpu" queue MUST have every worker image on disk. AWSDeploy's
+    CPU_application_worker.tf must pull all worker images (MANIFEST_QUEUES
+    = "" like the GPU primary); without that, GPU workers' interface calls
+    route to a box that lacks the image and fail.
+    """
+    if request == "interface":
+        return CPU_QUEUE
+    return getQueueForImage(image)
+
+
 def getQueueForImage(image):
     """Return the Celery queue name ("cpu" or "gpu") for a worker image.
 
