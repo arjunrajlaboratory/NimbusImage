@@ -51,9 +51,8 @@ def runJobRequest(image, datasetId, params, requestType):
                 "girder_job_title": name,
                 # 'girder_result_hooks': [testHook]
             },
-            # Route to the split fleet: GPU boxes consume "gpu", the always-on
-            # CPU box consumes "cpu" (see helpers/workerQueues.py). Interface
-            # requests always go to the CPU box.
+            # Route to the "cpu" or "gpu" queue by worker class; interface
+            # requests always go to "cpu" (see helpers/workerQueues.py).
             queue=getQueueForRequest(image, requestType),
             # Limit tasks execution to 24h to avoid blocking tasks that
             # monopolize a worker

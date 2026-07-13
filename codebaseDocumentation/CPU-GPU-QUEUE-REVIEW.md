@@ -29,5 +29,6 @@ Source: /branch-review, 2026-07-13
   `test_relabeled_image_is_picked_up_without_restart`.
 
 ## Non-findings (for the record)
-- Deployment ordering with AWSDeploy: coordinated, AWSDeploy side goes out
-  first (user confirmed 2026-07-13).
+- Deployment ordering: coordinated with the private deployment repo, whose
+  changes go out first (confirmed 2026-07-13). Production specifics live in
+  that repo's queue-split runbook, not here.

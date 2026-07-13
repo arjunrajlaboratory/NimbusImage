@@ -1,17 +1,19 @@
 """Route worker jobs to the "cpu" or "gpu" Celery queue.
 
-Prod runs a split fleet (AWSDeploy doc/CPU_GPU_Queue_Split.md): GPU boxes
-consume the "gpu" queue, an always-on CPU box consumes "cpu". A worker's
-class is declared by the `isGPUWorker` docker label baked into every
-ImageAnalysisProject worker image; we read it from the docker daemon Girder
-already uses for tool discovery (DOCKER_HOST -> the GPU primary, which holds
-every worker image). Interface requests are the exception: they always go
-to the "cpu" queue regardless of the label (see getQueueForRequest).
+A worker's class is declared by the `isGPUWorker` docker label baked into
+its image; we read it from the docker daemon Girder already uses for tool
+discovery. Interface requests are the exception: they always go to the
+"cpu" queue regardless of the label (see getQueueForRequest).
 
-Unlabeled or unreadable images fail safe to the GPU queue: the always-on GPU
-primary can run any worker, so nothing breaks -- but we log it, because a
-mislabeled CPU worker silently eating GPU capacity is exactly what this split
-exists to stop.
+Unlabeled or unreadable images fail safe to the GPU queue -- a gpu-queue
+consumer is expected to be able to run any worker -- but we log it, because
+a mislabeled CPU worker silently eating GPU capacity is exactly what this
+split exists to stop.
+
+In local dev the docker-compose worker consumes every queue
+(celery, cpu, gpu), so routing is transparent and nothing can stall.
+Deployment topology and the production cutover runbook live in the private
+deployment repo (doc/CPU_GPU_Queue_Split.md there).
 """
 
 import logging
@@ -48,11 +50,11 @@ def getQueueForRequest(image, requestType):
     type (the isGPUWorker label, see getQueueForImage).
 
     HARD DEPENDENCY: interface jobs run the actual worker container with
-    `--request interface` under pull_image=False, so the box consuming the
-    "cpu" queue MUST have every worker image on disk. AWSDeploy's
-    CPU_application_worker.tf must pull all worker images (MANIFEST_QUEUES
-    = "" like the GPU primary); without that, GPU workers' interface calls
-    route to a box that lacks the image and fail.
+    `--request interface` under pull_image=False, so whatever consumes the
+    "cpu" queue MUST have every worker image on disk -- otherwise GPU
+    workers' interface calls land on a box that lacks the image and fail.
+    The private deployment repo's queue-split runbook covers the
+    production specifics.
     """
     if requestType == "interface":
         return CPU_QUEUE
