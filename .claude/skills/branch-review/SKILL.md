@@ -151,6 +151,12 @@ For every new or modified `@access.public` endpoint:
 - Counts/limits clamped to a `MAX_*` constant — unauthenticated callers must not be able to force unbounded DB or serialization work.
 - When one endpoint has the gap, check sibling public endpoints in the same file — this pattern recurs in clusters.
 
+### 11. Decorator and Signature Hygiene (from Paul's PR #1203 review round)
+- `@memoizeBodyJson` is justified ONLY when the endpoint is also `@recordable` **and** its `findDatasetIdFn` reads `memoizedBodyJson`. On any other endpoint it is noise: use a plain `def handler(self, params)` signature and call `self.getBodyJson()` directly (pattern: `datasetView.py::create`). Flag `*args, **kwargs` endpoint signatures that exist only to receive the memoized kwarg.
+- Flag hand-rolled lazy caching of Girder model instances (`getattr(self, "_cache", None)` properties). Girder's `Model()` constructor already returns a cached singleton (`_ModelSingleton` metaclass) — construct it in `__init__` like the existing `self._annotationModel = AnnotationModel()` idiom.
+- Class-level constants (allowed-field sets, collection names, `MAX_*`) belong at the top of the class definition, not between methods mid-file.
+- Aggregation `$count` output fields should be named `count`, not a cryptic short name — easier to debug. Dense `$addFields`/`$cond`/`$ifNull` stages need a comment explaining what the stage computes and why.
+
 ## Frontend-Specific Checks
 
 When reviewing changes to `src/`, apply these additional checks:

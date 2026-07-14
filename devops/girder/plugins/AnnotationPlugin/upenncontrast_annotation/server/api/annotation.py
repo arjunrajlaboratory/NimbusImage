@@ -226,12 +226,10 @@ class Annotation(Resource):
         plugin="upenncontrast_annotation",
         level=AccessType.WRITE,
     )
-    @memoizeBodyJson
     @recordable("Update an annotation", getDatasetIdFromLoadedAnnotation)
-    def update(self, upenn_annotation, params, *args, **kwargs):
-        bodyJson = kwargs["memoizedBodyJson"]
+    def update(self, upenn_annotation, params):
         filtered = self._annotationModel.filterUpdateFields(
-            bodyJson
+            self.getBodyJson()
         )
         upenn_annotation.update(filtered)
         self._annotationModel.save(upenn_annotation)
@@ -467,16 +465,14 @@ class Annotation(Resource):
             paramType="body",
         )
     )
-    @memoizeBodyJson
-    def compute(self, params, *args, **kwargs):
-        bodyJson = kwargs["memoizedBodyJson"]
+    def compute(self, params):
         datasetId = params.get("datasetId", None)
         if not datasetId:
             raise RestException(
                 code=400, message="Missing datasetId parameter"
             )
         return self._annotationModel.compute(
-            datasetId, bodyJson, self.getCurrentUser()
+            datasetId, self.getBodyJson(), self.getCurrentUser()
         )
 
     @access.public(scope=TokenScope.DATA_READ)
@@ -577,9 +573,8 @@ class Annotation(Resource):
         .errorResponse()
         .errorResponse("Read access denied.", 403)
     )
-    @memoizeBodyJson
-    def listAnnotationIds(self, params, *args, **kwargs):
-        bodyJson = requireObjectBody(kwargs["memoizedBodyJson"])
+    def listAnnotationIds(self, params):
+        bodyJson = requireObjectBody(self.getBodyJson())
         datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(),
@@ -602,9 +597,8 @@ class Annotation(Resource):
         .errorResponse()
         .errorResponse("Read access denied.", 403)
     )
-    @memoizeBodyJson
-    def listAnnotations(self, params, *args, **kwargs):
-        bodyJson = requireObjectBody(kwargs["memoizedBodyJson"])
+    def listAnnotations(self, params):
+        bodyJson = requireObjectBody(self.getBodyJson())
         datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(),

@@ -14,6 +14,7 @@ from girder.utility.acl_mixin import AccessControlMixin
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
+from .propertyValues import AnnotationPropertyValues
 
 # Bound any single aggregation's DB runtime so one expensive query (e.g. over a
 # 700K-annotation public dataset) can't run unbounded and pin a Mongo
@@ -96,6 +97,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
     # TODO: write lock
     # TODO: save creatorId, creation and update dates
 
+    # Annotation fields allowed as a sort key (field-type sort).
+    _SORTABLE_FIELDS = {"location.XY", "location.Z", "location.Time",
+                        "name", "channel", "_id"}
+
+    # Collection joined by the property-value $lookup stages.
+    PROPERTY_VALUES_COLLECTION = "annotation_property_values"
+
     def __init__(self):
         super().__init__()
         compoundSearchIndex = (
@@ -110,6 +118,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         self.resourceParent = 'datasetId'
 
         self.schema = AnnotationSchema.annotationSchema
+
+        # The property-values model, for PV-driven list queries. Girder
+        # model instances are cached singletons, so this is cheap.
+        self._pvModel = AnnotationPropertyValues()
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
@@ -290,7 +302,11 @@ class Annotation(AccessControlMixin, ProxiedModel):
     def _buildListMatchStages(self, datasetId, filters):
         """Pipeline stages matching annotation-document fields.
 
-        Tag semantics mirror the client tagCloudFilterFunction:
+        `filters["tags"]` is a structured object {values: string[],
+        exclusive: bool} (validated at the API boundary): tag names live
+        only in `values`, and `exclusive` is a mode flag — so a tag
+        literally named "exclusive" is handled like any other tag.
+        Semantics mirror the client tagCloudFilterFunction:
         inclusive -> $in (has any); exclusive -> exactly that set.
         """
         match = {"datasetId": datasetId}
@@ -358,17 +374,11 @@ class Annotation(AccessControlMixin, ProxiedModel):
         cursor = self._aggregate(self.collection, pipeline)
         return [str(doc["_id"]) for doc in cursor]
 
-    # Annotation fields allowed as a sort key (field-type sort).
-    _SORTABLE_FIELDS = {"location.XY", "location.Z", "location.Time",
-                        "name", "channel", "_id"}
-
     def _centroidAddFields(self):
         return {"$addFields": {"centroid": {
             "x": {"$avg": "$coordinates.x"},
             "y": {"$avg": "$coordinates.y"},
         }}}
-
-    PROPERTY_VALUES_COLLECTION = "annotation_property_values"
 
     def _lookupStages(self):
         return [
@@ -425,6 +435,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
         return stages
 
     def _propertySortAddFields(self, sort, valueBase="_pv.values."):
+        # For a property sort, copy the sort key into _sortValue and set
+        # _hasSortValue to 1 when the annotation actually has that value.
+        # $ifNull maps a *missing* field to null, so the single $ne-null
+        # test catches both "field absent" and "field null". _sortStage
+        # then sorts _hasSortValue descending first, which keeps
+        # annotations lacking the property at the end regardless of the
+        # requested sort direction.
         if sort and sort.get("type") == "property":
             ref = "$" + valueBase + ".".join(sort["key"])
             return [{"$addFields": {
@@ -451,16 +468,6 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 return {"$sort": {"_id": direction}}
             return {"$sort": {key: direction, "_id": 1}}
         return {"$sort": {"_id": 1}}
-
-    @property
-    def _pvModel(self):
-        """The property-values model (lazy, cached) for PV-driven queries."""
-        pv = getattr(self, "_pvModelCache", None)
-        if pv is None:
-            from .propertyValues import AnnotationPropertyValues
-            pv = AnnotationPropertyValues()
-            self._pvModelCache = pv
-        return pv
 
     def _hasAnnotationFieldFilters(self, filters):
         """True if any filter constrains annotation-document fields.
@@ -549,10 +556,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         valueKey = "values." + ".".join(sort["key"])
         pipeline = [
             {"$match": {"datasetId": datasetId, valueKey: {"$ne": None}}},
-            {"$count": "n"},
+            {"$count": "count"},
         ]
         result = list(self._aggregate(self._pvModel.collection, pipeline))
-        return result[0]["n"] if result else 0
+        return result[0]["count"] if result else 0
 
     def _noValueTail(self, datasetId, sort, propertyPaths,
                      tailOffset, tailLimit):
