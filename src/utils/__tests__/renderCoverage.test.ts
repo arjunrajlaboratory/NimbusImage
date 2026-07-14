@@ -13,20 +13,21 @@ describe("computeRenderCoverage", () => {
     expect(c.show).toBe(true);
     expect(c.fraction).toBeCloseTo(12000 / 45000, 6);
     expect(c.shownLabel).toBe(
-      `${(12000).toLocaleString()} of ${(45000).toLocaleString()} in view`,
+      `Showing ${(12000).toLocaleString()} of ${(45000).toLocaleString()} in view`,
     );
-    expect(c.totalLabel).toBe(`${(708983).toLocaleString()} loaded`);
+    expect(c.totalLabel).toBe(`${(708983).toLocaleString()} total annotations`);
   });
 
-  it("hides when everything in the viewport is rendered", () => {
-    // Zoomed in: all 2,767 annotations in view are drawn → nothing hidden.
+  it("stays visible when everything in the viewport is rendered", () => {
+    // Zoomed in: all 2,767 annotations in view are drawn → bar reads full.
     const c = computeRenderCoverage({
       stubOnlyMode: true,
       viewportShown: 2767,
       viewportTotal: 2767,
       loaded: 708983,
     });
-    expect(c.show).toBe(false);
+    expect(c.show).toBe(true);
+    expect(c.fraction).toBe(1);
   });
 
   it("hides when not in stub-only mode", () => {
@@ -39,15 +40,16 @@ describe("computeRenderCoverage", () => {
     expect(c.show).toBe(false);
   });
 
-  it("hides when the viewport is empty (nothing to show)", () => {
+  it("stays visible but reports an empty viewport in stub-only mode", () => {
     const c = computeRenderCoverage({
       stubOnlyMode: true,
       viewportShown: 0,
       viewportTotal: 0,
       loaded: 708983,
     });
-    expect(c.show).toBe(false);
-    expect(c.fraction).toBe(1);
+    expect(c.show).toBe(true);
+    expect(c.fraction).toBe(0);
+    expect(c.shownLabel).toBe("No annotations in view");
   });
 
   it("clamps the fraction to [0, 1]", () => {

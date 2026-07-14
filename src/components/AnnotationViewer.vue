@@ -4199,6 +4199,15 @@ watch(
   },
 );
 
+// Render-budget settings (maxVisible/maxHydrated/coverageTarget etc.) are read
+// inside updateVisibility. Without this watch a change made in the settings only
+// took effect on the next pan/zoom/frame change; re-run immediately so editing
+// the fields reflects on the canvas right away. setVisibilityConfig replaces
+// the config object, so a reference watch fires on any field change.
+// (stubThreshold gates stub-only mode at load time and is intentionally not
+// re-evaluated here — crossing it still needs a dataset reload.)
+watch(() => annotationStore.visibilityConfig, updateVisibility);
+
 // Hydrate-on-selection (C3): a selected stub that isn't in the hydration cache
 // renders as a dot and can't show its real shape. Selection happens through
 // many code paths (list click, drag-select, context menu), so hydrate reactively

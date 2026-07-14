@@ -16,9 +16,9 @@ export interface IRenderCoverage {
   show: boolean;
   // viewportShown / viewportTotal, clamped to [0, 1].
   fraction: number;
-  // "12,000 of 45,000 in view"
+  // "Showing 12,000 of 45,000 in view" (or "No annotations in view")
   shownLabel: string;
-  // "708,983 loaded"
+  // "708,983 total annotations"
   totalLabel: string;
 }
 
@@ -29,17 +29,24 @@ export function computeRenderCoverage(input: {
   loaded: number; // total stubs held in memory
 }): IRenderCoverage {
   const { stubOnlyMode, viewportShown, viewportTotal, loaded } = input;
-  // Show only while some annotations in the current view are NOT drawn (the
-  // budget is downsampling what you're looking at). When everything in view is
-  // rendered — a mid-size dataset, or zoomed in far enough — stay hidden.
-  const show =
-    stubOnlyMode && viewportTotal > 0 && viewportShown < viewportTotal;
-  const fraction =
-    viewportTotal > 0 ? clamp(viewportShown / viewportTotal, 0, 1) : 1;
+  // Always visible in stub-only mode — it stays a stable, useful readout (and a
+  // home for the settings gear) whether the budget is downsampling the view or
+  // showing everything in it. When fully zoomed in, fraction is 1 and the bar
+  // reads full ("everything here is drawn"); an empty region reads "No
+  // annotations in view".
+  const show = stubOnlyMode;
+  const hasAnnotations = viewportTotal > 0;
+  const fraction = hasAnnotations
+    ? clamp(viewportShown / viewportTotal, 0, 1)
+    : 0;
   return {
     show,
     fraction,
-    shownLabel: `${viewportShown.toLocaleString()} of ${viewportTotal.toLocaleString()} in view`,
-    totalLabel: `${loaded.toLocaleString()} loaded`,
+    // Self-contained phrase (the verb lives here, not in the template) so the
+    // empty case reads as a clean sentence rather than "Showing No annotations".
+    shownLabel: hasAnnotations
+      ? `Showing ${viewportShown.toLocaleString()} of ${viewportTotal.toLocaleString()} in view`
+      : "No annotations in view",
+    totalLabel: `${loaded.toLocaleString()} total annotations`,
   };
 }
