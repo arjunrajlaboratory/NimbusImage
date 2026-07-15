@@ -75,6 +75,14 @@ export class Filters extends VuexModule {
     // they render as broken, uneditable filter chips in the next dataset (the
     // paths no longer resolve to any property). onlyCurrentFrame is a generic
     // view toggle rather than stale data, so it is intentionally preserved.
+    //
+    // Known limitation: clearing filterPaths unmounts the old dataset's
+    // PropertyFilterHistogram components, and their onBeforeUnmount re-adds a
+    // single *disabled* propertyFilter after this reset runs. That orphan is
+    // inert — it is excluded from filteredAnnotations (enabled === false) and
+    // never rendered (the panel iterates filterPaths, now empty) — and the
+    // next dataset switch clears it. See PropertyFilterHistogram.vue's
+    // onBeforeUnmount for why that disable step must stay.
     this.tagFilter = {
       id: "tagFilter",
       exclusive: false,

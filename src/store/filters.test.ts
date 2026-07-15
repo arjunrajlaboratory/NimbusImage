@@ -36,7 +36,11 @@ vi.mock("@/utils/annotation", () => ({
 }));
 
 import filters from "./filters";
-import { PropertyFilterMode } from "./model";
+import {
+  IGeoJSPosition,
+  PropertyFilterMode,
+  TPropertyHistogram,
+} from "./model";
 
 function populateEveryFilter() {
   filters.setTagFilter({
@@ -55,11 +59,13 @@ function populateEveryFilter() {
     valuesOrRange: PropertyFilterMode.Range,
   });
   filters.newROIFilter();
-  filters.validateNewROIFilter([{ x: 0, y: 0 }] as any);
+  const roi: IGeoJSPosition[] = [{ x: 0, y: 0 }];
+  filters.validateNewROIFilter(roi);
   filters.newROIFilter(); // leaves an in-progress emptyROIFilter set
   filters.newAnnotationIdFilter(["ann-1", "ann-2"]);
   filters.addSelectionAsFilter(); // reads annotation.selectedAnnotationIds
-  filters.setPropertyHistograms({ "prop-id-from-dataset-A###Area": [] as any });
+  const histogram: TPropertyHistogram = [];
+  filters.setPropertyHistograms({ "prop-id-from-dataset-A###Area": histogram });
 }
 
 describe("filters.resetFilterState", () => {
