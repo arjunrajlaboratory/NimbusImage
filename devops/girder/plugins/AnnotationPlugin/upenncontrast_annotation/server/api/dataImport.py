@@ -15,7 +15,7 @@ from ..helpers.proxiedModel import recordable, memoizeBodyJson
 # Helper function to get dataset ID for the recordable endpoint
 
 
-def getDatasetIdFromImportBody(self: "DataImport", *args, **kwargs):
+def getDatasetIdFromImportBody(*args, **kwargs):
     body = kwargs["memoizedBodyJson"]
     # A non-object body is rejected with a 400 inside importData; return
     # None here so the recordable wrapper doesn't choke on body.get first.
@@ -88,22 +88,17 @@ class DataImport(Resource):
         connections = body.get("connections", [])
         propertyValues = body.get("propertyValues", {})
         propertyIdMap = body.get("propertyIdMap", {})
-        if not isinstance(annotations, list):
-            raise RestException(
-                "annotations must be a JSON array.", code=400
-            )
-        if not isinstance(connections, list):
-            raise RestException(
-                "connections must be a JSON array.", code=400
-            )
-        if not isinstance(propertyValues, dict):
-            raise RestException(
-                "propertyValues must be a JSON object.", code=400
-            )
-        if not isinstance(propertyIdMap, dict):
-            raise RestException(
-                "propertyIdMap must be a JSON object.", code=400
-            )
+        # (field name, value, expected type, type label) per optional field.
+        for name, value, expectedType, typeLabel in (
+            ("annotations", annotations, list, "array"),
+            ("connections", connections, list, "array"),
+            ("propertyValues", propertyValues, dict, "object"),
+            ("propertyIdMap", propertyIdMap, dict, "object"),
+        ):
+            if not isinstance(value, expectedType):
+                raise RestException(
+                    "%s must be a JSON %s." % (name, typeLabel), code=400
+                )
 
         Folder().load(
             datasetId,
