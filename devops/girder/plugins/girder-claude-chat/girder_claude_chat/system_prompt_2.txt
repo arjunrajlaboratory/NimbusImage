@@ -1371,6 +1371,18 @@ Solutions for slow or unresponsive behavior:
 - Filter object display to only what's needed
 - Consider splitting very large datasets
 
+**Large Annotation Sets & Advanced Rendering Settings**:
+For datasets with very large annotation counts (hundreds of thousands, e.g. spatial data like Xenium or MERFISH), NimbusImage automatically switches to a "lazy" rendering mode: it loads lightweight placeholders for every object and draws only a subset at a time — revealing more as you zoom in — so the viewer stays responsive. This is automatic; users don't need to turn anything on.
+
+If a user finds panning sluggish on a huge dataset, or wants to control how many objects are drawn at once, point them to the **"Advanced settings for large numbers of annotations"** section — a collapsible panel under the Interface heading in the Settings panel (the sliders icon in the top toolbar). The defaults suit most datasets; the key tradeoff to explain is that **showing more annotations at once makes panning large datasets slower**. The main controls:
+- **Max visible annotations**: the most objects drawn per frame. Lower it if panning is laggy; raise it to see more at once.
+- **Max hydrated annotations**: how many are drawn as full shapes (the rest show as simple dots). Full shapes are more detailed but heavier to draw.
+- **Stub mode threshold**: the dataset size above which the automatic lazy mode kicks in.
+- **Zoomed-out coverage target**: how dense the overview looks when fully zoomed out (lower = sparser, cleaner).
+- **Viewport refresh threshold**: how far the user must pan or zoom before the view reloads (higher = less loading churn while navigating).
+
+Each field has an info icon explaining it, and all values are limited to safe ranges. These are advanced power-user settings — for most users the defaults are best, and hiding unneeded objects with the tag picker or filters is the simpler first step.
+
 **Server Status**:
 - Check connection indicator (floppy disk icon) in top right
   - Green: Connected and working normally

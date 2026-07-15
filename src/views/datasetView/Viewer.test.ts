@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shallowMount } from "@vue/test-utils";
+import { shallowMount, flushPromises } from "@vue/test-utils";
 
 vi.mock("@/components/ImageViewer.vue", () => ({
   default: { template: "<div></div>", name: "ImageViewer" },
@@ -60,9 +60,12 @@ describe("Viewer", () => {
     expect((wrapper.vm as any).configuration).toEqual(store.configuration);
   });
 
-  it("mounted calls fetchAnnotations and fetchPropertyValues", () => {
+  it("mounted calls fetchAnnotations and fetchPropertyValues", async () => {
     mountComponent();
     expect(annotationStore.fetchAnnotations).toHaveBeenCalled();
+    // fetchPropertyValues runs after fetchAnnotations resolves (it needs
+    // stub-only mode determined first), so flush the microtask queue.
+    await flushPromises();
     expect(propertiesStore.fetchPropertyValues).toHaveBeenCalled();
   });
 

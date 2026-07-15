@@ -15,9 +15,9 @@ vi.mock("@/store/properties", () => ({
       { id: "prop-1", name: "Prop 1" },
       { id: "prop-2", name: "Prop 2" },
     ],
-    uncomputedAnnotationsPerProperty: {
-      "prop-1": ["ann-1"],
-      "prop-2": [],
+    uncomputedCountByProperty: {
+      "prop-1": 1,
+      "prop-2": 0,
     },
     propertyStatuses: {
       "prop-1": { running: false },

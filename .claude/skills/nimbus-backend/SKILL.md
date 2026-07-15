@@ -143,6 +143,49 @@ def createBulk(self, body):
     return [self._model.create(item) for item in items]
 ```
 
+### Reading the Request Body (and when @memoizeBodyJson applies)
+
+For an endpoint that just needs the JSON body, use a plain signature and
+call `getBodyJson()` directly (pattern: `datasetView.py::create`):
+
+```python
+@describeRoute(
+    Description("...").param("body", "...", paramType="body")
+)
+def create(self, params):
+    doc = self.getBodyJson()
+```
+
+Do NOT write `def handler(self, params, *args, **kwargs)` +
+`@memoizeBodyJson` + `kwargs["memoizedBodyJson"]` for such endpoints.
+`@memoizeBodyJson` exists for exactly one case: the endpoint is also
+`@recordable` **and** its `findDatasetIdFn` needs the body (so the body
+is parsed once and shared between the decorator and the handler). If the
+`@recordable` finder reads the loaded model instead (e.g.
+`getDatasetIdFromLoadedAnnotation`), or there is no `@recordable`,
+memoizing is pointless — reviewers flag it (Paul, PR #1203).
+
+### Girder Models Are Cached Singletons
+
+`Model()` construction returns a cached instance (`_ModelSingleton`
+metaclass in girder's model_base). Never hand-roll lazy caching
+(`getattr(self, "_cache", None)` properties) around a model — just
+assign it in `__init__`:
+
+```python
+self._pvModel = AnnotationPropertyValues()  # cheap: cached singleton
+```
+
+### Class Constants and Aggregation Readability
+
+- Put class-level constants (allowed-field sets, collection names,
+  `MAX_*`) at the **top of the class definition**, not between methods.
+- Name `$count` aggregation output fields `count` (not `n`) so pipeline
+  results are self-describing when debugging.
+- Comment dense `$addFields`/`$cond`/`$ifNull` stages with what the
+  stage computes and why (e.g. "$ifNull maps missing → null so one
+  $ne-null test catches absent and null").
+
 ## ObjectId Handling
 
 ```python

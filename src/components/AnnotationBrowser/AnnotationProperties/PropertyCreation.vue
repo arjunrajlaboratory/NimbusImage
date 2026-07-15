@@ -257,7 +257,7 @@ function filteringTagsChanged() {
   // The keys of counts are in AnnotationShape
   // Find the best matching shape for these tags
   const counts: { [key: string]: number } = {};
-  for (const annotation of annotationStore.annotations) {
+  for (const annotation of annotationStore.annotationsForIteration) {
     if (
       tagFilterFunction(
         annotation.tags,

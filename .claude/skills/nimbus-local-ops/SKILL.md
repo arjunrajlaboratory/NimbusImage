@@ -1,11 +1,56 @@
 ---
 name: nimbus-local-ops
-description: "Use when authenticating with the local Girder backend, making curl requests to REST API endpoints, querying MongoDB directly via docker exec, checking Docker container logs, or debugging backend issues at runtime. Covers: authentication (token retrieval), endpoint name mapping (upenn_annotation not annotation), curl templates for all plugin endpoints, direct MongoDB shell access, container management, and step-by-step test scenarios for verifying backend changes."
+description: "Use when authenticating with the local Girder backend, using the nimbusimage Python API for scripting, making curl requests to REST API endpoints, querying MongoDB directly via docker exec, checking Docker container logs, or debugging backend issues at runtime. Covers: nimbusimage Python package (high-level and low-level API), authentication (token retrieval, API keys), endpoint name mapping (upenn_annotation not annotation), curl templates for all plugin endpoints, direct MongoDB shell access, container management, and step-by-step test scenarios for verifying backend changes."
 ---
 
 # Nimbus Local Operations
 
-## Authentication
+## NimbusImage Python API (Preferred for Scripts)
+
+For scripts that create, query, or modify backend data, prefer the `nimbusimage` Python package over raw curl. It handles authentication, batching, and endpoint naming.
+
+**Setup:**
+```bash
+# From the project root
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e nimbusimage python-dotenv
+```
+
+**Credentials** are stored in `.env` at the project root (gitignored):
+```
+GIRDER_API_URL=http://localhost:8080/api/v1
+GIRDER_USERNAME=admin
+GIRDER_PASSWORD=password
+```
+
+**High-level API** (datasets, annotations, images, workers):
+```python
+import nimbusimage as ni
+client = ni.connect("http://localhost:8080/api/v1", api_key="your-key")
+ds = client.dataset(name="My Experiment")
+polygons = ds.annotations.list(shape="polygon")
+ds.annotations.compute(image="worker:latest", channel=0, tags=["detected"], worker_interface={"param": 10})
+```
+
+**Low-level Girder client** (direct REST calls):
+```python
+import os
+from dotenv import load_dotenv
+from nimbusimage._girder import create_client
+load_dotenv()
+gc = create_client(api_url=os.environ["GIRDER_API_URL"], username=os.environ["GIRDER_USERNAME"], password=os.environ["GIRDER_PASSWORD"])
+gc.post("/upenn_annotation/multiple", json=annotations_list)
+gc.get("/upenn_annotation", parameters={"datasetId": dataset_id})
+```
+
+See `nimbusimage/README.md` for the full API overview, authentication options (API keys are preferred over username/password), and available accessors (`ds.images`, `ds.annotations`, `ds.properties`, `ds.export`, etc.).
+
+**When to use which:**
+- **High-level API (`ni.connect()`)**: Dataset exploration, annotation CRUD, running workers, export
+- **Low-level client (`create_client()`)**: Bulk operations, custom endpoints, scripts like `scripts/generate_test_annotations.py`
+- **curl**: Quick one-off checks, debugging specific endpoint responses
+
+## Authentication (curl)
 
 Get an auth token:
 
