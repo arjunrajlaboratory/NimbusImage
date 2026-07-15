@@ -1431,10 +1431,21 @@ export class Main extends VuexModule {
   @Action
   async setSelectedDataset(id: string | null) {
     memDiag.autoSnapshot(`setSelectedDataset:enter id=${id ?? "null"}`);
+    // this.dataset still holds the previously selected dataset here (setDataset
+    // runs later), so this detects a genuine switch vs. a same-dataset refresh.
+    const datasetChanged = id !== this.dataset?.id;
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
-    this.context.dispatch("resetFilterState");
+    // Filters hold unrecoverable user state (tag/property/ROI/ID filters), so
+    // only reset them on an actual dataset change. refreshDataset() re-runs
+    // setSelectedDataset with the same id (e.g. NavigatorPanel unroll toggles);
+    // wiping filters there would discard the user's active filters. The
+    // annotation/property resets above are safe to run every time because they
+    // are repopulated by the reload that follows.
+    if (datasetChanged) {
+      this.context.dispatch("resetFilterState");
+    }
     if (!id) {
       this.setDataset({ id, data: null });
       memDiag.autoSnapshot("setSelectedDataset:exit (null)");
