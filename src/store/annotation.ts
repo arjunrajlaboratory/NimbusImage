@@ -188,7 +188,7 @@ export class Annotations extends VuexModule {
   visibleAnnotationIds: Set<string> = markRaw(new Set());
   hydrationMode: THydrationMode = "dots";
   visibilityConfig: IVisibilityConfig = {
-    stubThreshold: 40000,
+    stubThreshold: 100000,
     maxVisible: 50000,
     maxHydrated: 20000,
     hydrationCacheCap: 40000,
