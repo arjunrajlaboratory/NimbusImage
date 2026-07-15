@@ -23,10 +23,10 @@
           <template v-else> Run </template>
         </v-btn>
         <span
-          v-if="uncomputed[property.id].length > 0 && !status.running"
+          v-if="(uncomputed[property.id] ?? 0) > 0 && !status.running"
           class="uncomputed-count"
         >
-          {{ uncomputed[property.id].length }}
+          {{ uncomputed[property.id] ?? 0 }}
         </span>
       </v-col>
     </v-row>
@@ -90,7 +90,7 @@ const status = computed((): IPropertyStatus => {
 });
 
 const uncomputed = computed(() => {
-  return propertyStore.uncomputedAnnotationsPerProperty;
+  return propertyStore.uncomputedCountByProperty;
 });
 
 const filteredErrors = computed(() => {

@@ -1506,6 +1506,102 @@ export interface IAnnotation extends IAnnotationBase {
   name: string | null;
 }
 
+// --- Stub/Hydrated Annotation Architecture ---
+
+export interface IAnnotationStub {
+  id: string;
+  centroid: IGeoJSPosition;
+  location: IAnnotationLocation;
+  shape: AnnotationShape;
+  channel: number;
+  tags: string[];
+  color: string | null;
+  estimatedRadius?: number;
+}
+
+export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
+
+// --- Server-side annotation list query/response ---
+
+export interface IAnnotationListSort {
+  type: "field" | "property";
+  key: string | string[]; // "location.XY" | "name" | ... | ["propId","sub"]
+  order: "asc" | "desc";
+}
+
+export interface IAnnotationListPropertyFilter {
+  path: string[];
+  mode: "range" | "values";
+  min?: number;
+  max?: number;
+  values?: number[];
+}
+
+export interface IAnnotationListFilters {
+  shape?: string;
+  tags?: { values: string[]; exclusive: boolean };
+  location?: IAnnotationLocation;
+  idSubstring?: string;
+  propertyFilters?: IAnnotationListPropertyFilter[];
+  // A list of id-sets; an annotation matches iff its _id is in EVERY set
+  // (AND of $in's). Used to apply the selection and annotation-id filters.
+  idConstraints?: string[][];
+}
+
+export interface IAnnotationListQuery {
+  datasetId: string;
+  filters: IAnnotationListFilters;
+  sort: IAnnotationListSort | null;
+  propertyPaths: string[][];
+  offset: number;
+  limit: number;
+}
+
+// A server list row: stub fields + the requested property values.
+export interface IAnnotationListRow extends IAnnotationStub {
+  name: string | null;
+  values: IAnnotationPropertyValues[string]; // {[propId]: value | nested}
+}
+
+export interface IAnnotationListPage {
+  total: number;
+  rows: IAnnotationListRow[];
+}
+
+export type THydrationMode = "shapes" | "dots";
+
+export interface IVisibilityConfig {
+  // Dataset annotation count above which stub-only (lazy) mode activates: stubs
+  // are fetched and coordinates/property values load on demand. Independent of
+  // the render budget (maxVisible).
+  stubThreshold: number;
+  // Max annotations to render (stubs or shapes) — the cap when fully zoomed in.
+  // Datasets at or below this render fully at every zoom (the size gate).
+  maxVisible: number;
+  // Max annotations to keep hydrated per visibility update — the cap when fully
+  // zoomed in.
+  maxHydrated: number;
+  // Total cap on the hydration cache (accumulates across updates; LRU-evicts
+  // beyond cap, protecting selected).
+  hydrationCacheCap: number;
+  // If true, threshold applies to total frame annotations across all layers.
+  globalThreshold: boolean;
+  // Fraction of the screen the rendered dots may cover when fully zoomed out.
+  // Sets the zoomed-out floor from annotation size + screen; the budget doubles
+  // per zoom level up to maxVisible.
+  coverageTarget: number;
+  // Camera hysteresis: skip the camera-driven refresh until EITHER the zoom
+  // magnification OR the center (as a fraction of the viewport) changes by this
+  // fraction (e.g. 0.2 = 20%).
+  viewportRefreshFraction: number;
+}
+
+export function isHydratedAnnotation(
+  annotation: TAnnotationOrStub,
+): annotation is IAnnotation {
+  return "coordinates" in annotation;
+}
+
 export enum TrackPositionType {
   INTERIOR = "interior",
   START = "start",

@@ -17,6 +17,11 @@ vi.mock("@/store", () => ({
 vi.mock("@/store/annotation", () => ({
   default: {
     annotations: [],
+    // Mirror the real store: annotationsForIteration returns annotations
+    // outside stub-only mode, which is what the importer reads.
+    get annotationsForIteration() {
+      return this.annotations;
+    },
     fetchAnnotations: vi.fn(),
   },
 }));

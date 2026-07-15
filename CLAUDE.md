@@ -637,6 +637,42 @@ flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/ap
 
 Note: Linting is also run as part of tox tests, so `tox` will catch linting errors.
 
+## NimbusImage Python API
+
+The `nimbusimage` Python package (`nimbusimage/`) provides programmatic access to the backend. Use it for scripts that create/query/modify annotations, datasets, and other resources — prefer it over raw `curl` commands.
+
+**Setup:**
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e nimbusimage python-dotenv
+```
+
+**Credentials:** Store in `.env` (gitignored) at the project root:
+```
+GIRDER_API_URL=http://localhost:8080/api/v1
+GIRDER_USERNAME=admin
+GIRDER_PASSWORD=password
+```
+
+**Usage (high-level API):**
+```python
+import nimbusimage as ni
+client = ni.connect("http://localhost:8080/api/v1", api_key="your-key")
+ds = client.dataset(name="My Experiment")
+ds.annotations.list(shape="polygon")
+```
+
+**Usage (low-level Girder client):**
+```python
+from dotenv import load_dotenv
+from nimbusimage._girder import create_client
+load_dotenv()
+gc = create_client(api_url=os.environ["GIRDER_API_URL"], username=os.environ["GIRDER_USERNAME"], password=os.environ["GIRDER_PASSWORD"])
+gc.post("/upenn_annotation/multiple", json=annotations)
+```
+
+See `nimbusimage/README.md` for full API reference and authentication options (API keys vs username/password).
+
 ## Important Notes
 
 - **Package Manager:** Project uses pnpm exclusively (enforced by preinstall script)

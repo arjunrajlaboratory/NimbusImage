@@ -164,7 +164,30 @@
           ></v-text-field>
         </v-col>
       </v-row>
+      <v-alert
+        v-if="roiActiveInServerMode"
+        type="info"
+        variant="tonal"
+        density="compact"
+        class="mb-2"
+      >
+        Region (ROI) filters are not applied to this list while browsing a large
+        dataset. Use tag, property, or annotation ID filters to narrow results.
+      </v-alert>
+      <!-- Per-query feedback (B2): a server /list query can take ~1s+ at scale,
+           so show a clear in-flight affordance with the matched count. The
+           server table's footer is dimmed/disabled in parallel (is-loading). -->
+      <div
+        v-if="isServerMode && serverLoading"
+        class="list-querying"
+        aria-live="polite"
+      >
+        <v-progress-circular indeterminate size="14" width="2" class="mr-2" />
+        {{ serverLoadingMessage }}
+      </div>
+      <!-- Client mode, under the size limit: the existing client-side table. -->
       <v-data-table
+        v-if="!isServerMode && !tooManyToList"
         :items="filteredItems"
         :headers="headers"
         show-select
@@ -192,132 +215,132 @@
         <template
           v-for="header in propertyHeaders"
           :key="header.key"
-          v-slot:[`header.${header.key}`]="{ column }"
+          v-slot:[`header.${header.key}`]="{ column, getSortIcon }"
         >
-          <span class="property-header-label">{{ column.title }}</span>
-          <v-btn
-            variant="text"
-            size="x-small"
-            density="compact"
-            icon
-            class="property-header-remove ml-1"
-            :title="`Remove '${column.title}' from list`"
-            @click.stop="removePropertyColumn(header.path)"
-          >
-            <v-icon size="14">mdi-close</v-icon>
-          </v-btn>
+          <property-column-header
+            :title="column.title"
+            :sortable="column.sortable"
+            :sort-icon="getSortIcon(column) as string"
+            @remove="removePropertyColumn(header.path)"
+          />
         </template>
         <template v-slot:item="{ item }">
-          <tr
-            @mouseover="hover(item.annotation.id)"
-            @mouseleave="hover(null)"
-            @click="goToAnnotationIdLocation(item.annotation.id)"
-            title="Go to annotation location"
-            :class="item.annotation.id === hoveredId ? 'is-hovered' : ''"
+          <annotation-list-row
+            :item="item"
+            :selected-columns="selectedColumns"
+            :displayed-property-paths="displayedPropertyPaths"
+            :hovered-id="hoveredId"
+            :table-item-class="tableItemClass"
             :ref="(el) => setAnnotationRef(item.annotation.id, el)"
-          >
-            <td :class="tableItemClass">
-              <v-checkbox
-                hide-details
-                title
-                :model-value="item.isSelected"
-                @click.stop="() => toggleAnnotationSelection(item.annotation)"
-              />
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.id')"
-            >
-              <span class="user-select-text">{{ item.annotation.id }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('index')"
-            >
-              <span>{{ item.index }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('shapeName')"
-            >
-              <span>{{ item.shapeName }}</span>
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.tags')"
-            >
-              <span>
-                <v-chip
-                  v-for="tag in item.annotation.tags"
-                  :key="tag"
-                  size="x-small"
-                  @click="clickedTag(tag)"
-                  >{{ tag }}</v-chip
-                >
-              </span>
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.XY')">
-              {{ item.annotation.location.XY + 1 }}
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.Z')">
-              {{ item.annotation.location.Z + 1 }}
-            </td>
-            <td v-if="selectedColumns.includes('annotation.location.Time')">
-              {{ item.annotation.location.Time + 1 }}
-            </td>
-            <td
-              :class="tableItemClass"
-              v-if="selectedColumns.includes('annotation.name')"
-            >
-              <v-text-field
-                hide-details
-                :model-value="item.annotation.name || ''"
-                density="compact"
-                flat
-                variant="outlined"
-                @change="
-                  updateAnnotationName($event.target.value, item.annotation.id)
-                "
-                @click.capture.stop
-                title
-              ></v-text-field>
-            </td>
-            <td
-              v-for="(propertyPath, idx) in displayedPropertyPaths"
-              :key="item.annotation.id + ' property ' + idx"
-              :class="tableItemClass"
-            >
-              <span>{{
-                getStringFromPropertiesAndPath(item.properties, propertyPath) ??
-                "-"
-              }}</span>
-            </td>
-          </tr>
+            @hover="hover"
+            @navigate="goToAnnotationIdLocation"
+            @toggle-select="toggleAnnotationSelection"
+            @clicked-tag="clickedTag"
+            @update-name="updateAnnotationName($event.name, $event.id)"
+          />
         </template>
       </v-data-table>
+      <!-- Client mode, over the size limit: ask the user to narrow filters. -->
+      <div v-else-if="!isServerMode && tooManyToList" class="list-too-many">
+        <v-icon size="32" class="mb-2">mdi-alert-circle-outline</v-icon>
+        <div class="text-subtitle-1">
+          {{ listedAnnotations.length.toLocaleString() }} annotations
+        </div>
+        <div class="text-body-2">
+          Too many to list. Narrow with tag, property, or ROI filters (or the
+          annotation ID filter above) to under
+          {{ LIST_ITEM_LIMIT.toLocaleString() }} to browse them here.
+        </div>
+      </div>
+      <!-- Server mode: backend-paginated table. Uses the SAME item markup.
+           The table stays mounted while a query is in flight (stale rows visible)
+           with its footer dimmed/disabled via the is-loading class; the
+           "Querying N annotations…" line above (rendered before this chain) is
+           the in-flight affordance. -->
+      <v-data-table-server
+        v-else
+        :items="serverRowItems"
+        :items-length="serverItemsLength"
+        :loading="serverLoading"
+        :headers="headers"
+        show-select
+        density="compact"
+        item-value="annotation.id"
+        v-model="selectedIds"
+        :page="annotationListServer.page"
+        :items-per-page="annotationListServer.pageSize"
+        :items-per-page-options="[10, 50, 200]"
+        @update:options="onServerOptions"
+        class="compact-table"
+        :class="{ 'is-loading': serverLoading }"
+      >
+        <template v-slot:header.data-table-select>
+          <v-checkbox
+            :model-value="selectAllValue"
+            :indeterminate="selectAllIndeterminate"
+            @click="selectAllCallback"
+            hide-details
+          />
+        </template>
+        <template
+          v-for="header in propertyHeaders"
+          :key="header.key"
+          v-slot:[`header.${header.key}`]="{ column, getSortIcon }"
+        >
+          <property-column-header
+            :title="column.title"
+            :sortable="column.sortable"
+            :sort-icon="getSortIcon(column) as string"
+            @remove="removePropertyColumn(header.path)"
+          />
+        </template>
+        <template v-slot:item="{ item }">
+          <annotation-list-row
+            :item="item"
+            :selected-columns="selectedColumns"
+            :displayed-property-paths="displayedPropertyPaths"
+            :hovered-id="hoveredId"
+            :table-item-class="tableItemClass"
+            :ref="(el) => setAnnotationRef(item.annotation.id, el)"
+            @hover="hover"
+            @navigate="goToAnnotationIdLocation"
+            @toggle-select="toggleAnnotationSelection"
+            @clicked-tag="clickedTag"
+            @update-name="updateAnnotationName($event.name, $event.id)"
+          />
+        </template>
+      </v-data-table-server>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
+import annotationListServer from "@/store/annotationListServer";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
-import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import { simpleCentroid } from "@/utils/annotation";
+import { recenterCameraInfo } from "@/utils/camera";
+import { sortsEqual } from "@/utils/annotationListFilters";
+import { listQueryingMessage } from "@/utils/loadingLabels";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
+import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
+import PropertyColumnHeader from "@/components/AnnotationBrowser/PropertyColumnHeader.vue";
 
 import {
   AnnotationNames,
   IAnnotation,
+  IAnnotationListSort,
   IAnnotationPropertyValues,
+  isHydratedAnnotation,
 } from "@/store/model";
 
 const allHeaders = [
@@ -352,7 +375,8 @@ interface IAnnotationListItem {
   annotation: IAnnotation;
   index: number;
   shapeName: string;
-  isSelected: boolean;
+  // Selection state is read reactively from the store in the row component, not
+  // baked into the item, so toggling a selection doesn't re-map the page array.
   properties: IAnnotationPropertyValues[string];
 }
 
@@ -398,8 +422,108 @@ const isDeletingAnnotations = computed(() => {
   return annotationStore.isDeleting;
 });
 
+// --- Server-driven (stub-only) list mode ---------------------------------
+// In server mode the list is paginated/sorted/filtered by the backend. NONE of
+// the computeds below may read filterStore.filteredAnnotations (or anything
+// derived from it): that getter iterates ALL stubs client-side and applies
+// property filters without property values loaded, so it is both expensive and
+// wrong in server mode. Every shared computed has an isServerMode branch.
+const isServerMode = computed(() => annotationStore.stubOnlyMode);
+
+const serverItemsLength = computed(() => annotationListServer.total);
+
+const serverLoading = computed(() => annotationListServer.loading);
+
+// Per-query feedback (B2): a /list query at 708K can take ~1s+, so while one is
+// in flight show a clear "Querying N annotations…" affordance (N = the current
+// matched total) and disable the footer paging controls so a click registers
+// visibly instead of silently queuing another fetch.
+const serverLoadingMessage = computed(() =>
+  listQueryingMessage(annotationListServer.total),
+);
+
+// Adapter: present server rows in the SAME item shape the client table uses.
+// Server rows are stubs (no name/coordinates/datasetId); add the fields the
+// shared item markup reads so it renders identically to the client table.
+const serverRowItems = computed(() =>
+  annotationListServer.rows.map((row, i) => ({
+    annotation: { ...row, name: row.name ?? null },
+    index: (annotationListServer.page - 1) * annotationListServer.pageSize + i,
+    shapeName: AnnotationNames[row.shape],
+    properties: row.values || {},
+  })),
+);
+
+// ROI filtering is not supported by the server list endpoint (it is a
+// client-side polygon test). Surface a notice when one is active in server mode.
+const roiActiveInServerMode = computed(
+  () => isServerMode.value && filterStore.roiFilters.some((f) => f.enabled),
+);
+
+// Vuetify emits sort keys equal to the column `key`s. The backend field-sort
+// only accepts location.XY|location.Z|location.Time|name|channel|_id (anything
+// else → HTTP 400), plus property sort via a path array. Return null for
+// unsupported columns so we never send a 400-causing key (backend defaults to
+// _id when sort is null).
+function mapSort(entry: {
+  key: string;
+  order: "asc" | "desc";
+}): IAnnotationListSort | null {
+  const { key, order } = entry;
+  if (key.startsWith("properties.")) {
+    const path = key.slice("properties.".length).split(".");
+    return { type: "property", key: path, order };
+  }
+  switch (key) {
+    case "annotation.location.XY":
+      return { type: "field", key: "location.XY", order };
+    case "annotation.location.Z":
+      return { type: "field", key: "location.Z", order };
+    case "annotation.location.Time":
+      return { type: "field", key: "location.Time", order };
+    case "annotation.name":
+      return { type: "field", key: "name", order };
+    case "annotation.id":
+      return { type: "field", key: "_id", order };
+    default:
+      // annotation.tags, shapeName, index, and anything else: unsupported
+      // server-side. (index is offset+rowIndex — only meaningful in default
+      // order — so it is not meaningfully sortable; see serverUnsortableColumns.)
+      return null;
+  }
+}
+
+function onServerOptions(opts: {
+  page: number;
+  itemsPerPage: number;
+  sortBy?: { key: string; order: "asc" | "desc" }[];
+}) {
+  const entry = opts.sortBy?.[0];
+  const newSort = entry ? mapSort(entry) : null;
+  // Vuetify's options composable watches {immediate:true} and emits
+  // update:options on mount, which would duplicate the onMounted fetchPage().
+  // No-op when the incoming options already match the store state so the
+  // mount-time emit doesn't trigger a second identical request.
+  if (
+    opts.page === annotationListServer.page &&
+    opts.itemsPerPage === annotationListServer.pageSize &&
+    sortsEqual(newSort, annotationListServer.sort)
+  ) {
+    return;
+  }
+  annotationListServer.setOptions({
+    page: opts.page,
+    pageSize: opts.itemsPerPage,
+    sort: newSort,
+  });
+  annotationListServer.fetchPage();
+}
+
 const selectedIds = computed({
   get: () => {
+    if (isServerMode.value) {
+      return [...annotationStore.selectedAnnotationIds];
+    }
     return [...annotationStore.selectedAnnotationIds].filter((id) =>
       filteredAnnotationIdToIdx.value.has(id),
     );
@@ -410,10 +534,12 @@ const selectedIds = computed({
 });
 
 const selectedItems = computed(() => {
-  return filteredItems.value.filter((item) => item.isSelected);
+  return filteredItems.value.filter((item) =>
+    annotationStore.isAnnotationSelected(item.annotation.id),
+  );
 });
 
-function toggleAnnotationSelection(annotation: IAnnotation) {
+function toggleAnnotationSelection(annotation: { id: string }) {
   annotationStore.toggleSelected([annotation.id]);
 }
 
@@ -432,8 +558,29 @@ const listedAnnotations = computed(() => {
   return annotations;
 });
 
+// Defensive scale guard, superseded in practice by stubOnlyMode (server mode):
+// server mode activates at maxVisible = 10,000, below this 20,000 threshold, so
+// the client-side `tooManyToList` branch is effectively unreachable now that the
+// server-driven list (Option B) handles large datasets. Kept as a safety net for
+// any client-mode path that materializes one item per filtered annotation and
+// sorts client-side (which would hang the tab above this many).
+const LIST_ITEM_LIMIT = 20000;
+
+const tooManyToList = computed(
+  () => listedAnnotations.value.length > LIST_ITEM_LIMIT,
+);
+
 const filteredItems = computed(() => {
-  return listedAnnotations.value.map(annotationToItem.value);
+  if (tooManyToList.value) {
+    return [];
+  }
+  // The client list path only runs in non-stub mode (server/stub mode handles
+  // large datasets), so every annotation here is hydrated. Narrow with the type
+  // guard so the row item carries full annotation fields and any stray stub is
+  // safely dropped rather than rendering an undefined name (Finding 6).
+  return listedAnnotations.value
+    .filter(isHydratedAnnotation)
+    .map(annotationToItem.value);
 });
 
 const annotationToItem = computed(() => {
@@ -441,7 +588,6 @@ const annotationToItem = computed(() => {
     annotation,
     index: annotationIdToIndex.value[annotation.id],
     shapeName: AnnotationNames[annotation.shape],
-    isSelected: annotationStore.isAnnotationSelected(annotation.id),
     properties: propertyStore.propertyValues[annotation.id] || {},
   });
 });
@@ -454,20 +600,45 @@ const annotationIdToIndex = computed(() => {
   return annotationStore.annotationIdToIdx;
 });
 
-function updateAnnotationName(name: string, id: string) {
-  annotationStore.updateAnnotationName({ name, id });
+async function updateAnnotationName(name: string, id: string) {
+  await annotationStore.updateAnnotationName({ name, id });
+  await refreshServerListIfNeeded();
 }
 
 const selectAllIndeterminate = computed(() => {
+  if (isServerMode.value) {
+    const nSelected = annotationStore.selectedAnnotationIds.size;
+    return nSelected > 0 && nSelected < serverItemsLength.value;
+  }
   const nSelected = selectedItems.value.length;
   return nSelected > 0 && nSelected < filteredItems.value.length;
 });
 
 const selectAllValue = computed(() => {
-  return selectedItems.value.length === filteredItems.value.length;
+  if (isServerMode.value) {
+    const total = serverItemsLength.value;
+    return total > 0 && annotationStore.selectedAnnotationIds.size === total;
+  }
+  // Guard the empty case (Finding 11): 0 === 0 must not read as "all selected"
+  // on an empty table — match the server branch's `> 0` guard.
+  return (
+    filteredItems.value.length > 0 &&
+    selectedItems.value.length === filteredItems.value.length
+  );
 });
 
 function selectAllCallback() {
+  if (isServerMode.value) {
+    // In server mode: if anything is currently selected, clear the selection;
+    // otherwise select all matching annotations by fetching their ids from the
+    // backend (selectAllMatchingInServerMode → fetchMatchingIds).
+    if (annotationStore.selectedAnnotationIds.size > 0) {
+      selectedIds.value = [];
+    } else {
+      selectAllMatchingInServerMode();
+    }
+    return;
+  }
   if (selectAllValue.value) {
     selectedIds.value = [];
   } else {
@@ -475,10 +646,28 @@ function selectAllCallback() {
   }
 }
 
+async function selectAllMatchingInServerMode() {
+  const ids = await annotationListServer.fetchMatchingIds();
+  annotationStore.setSelected(ids);
+}
+
+// Columns the backend list endpoint cannot sort on. In server mode they are
+// marked non-sortable so Vuetify won't emit a sort key that mapSort would have
+// to drop (mapSort still returns null for them as the essential guard).
+const serverUnsortableColumns: readonly string[] = [
+  "annotation.tags",
+  "shapeName",
+  "index",
+];
+
 const headers = computed(() => {
-  const filteredHeaders = allHeaders.filter((header) =>
-    selectedColumns.value.includes(header.key),
-  );
+  const filteredHeaders = allHeaders
+    .filter((header) => selectedColumns.value.includes(header.key))
+    .map((header) =>
+      isServerMode.value && serverUnsortableColumns.includes(header.key)
+        ? { ...header, sortable: false }
+        : header,
+    );
   return [...filteredHeaders, ...propertyHeaders.value];
 });
 
@@ -501,18 +690,33 @@ function removePropertyColumn(path: string[]) {
 }
 
 function goToAnnotationIdLocation(annotationId: string) {
+  // In stub-only mode getAnnotationFromId returns undefined for non-hydrated
+  // non-point annotations, so fall back to the stub (which carries location +
+  // centroid).
   const annotation = annotationStore.getAnnotationFromId(annotationId);
-  if (!annotation) {
+  const stub = annotationStore.getStub(annotationId);
+  const location = annotation?.location ?? stub?.location;
+  if (!location) {
     return;
   }
-  store.setXY(annotation.location.XY);
-  store.setZ(annotation.location.Z);
-  store.setTime(annotation.location.Time);
-  store.setCameraInfo({
-    ...store.cameraInfo,
-    center: simpleCentroid(annotation.coordinates),
-  });
+  store.setXY(location.XY);
+  store.setZ(location.Z);
+  store.setTime(location.Time);
+  // Stubs have no coordinates — recenter on the stub centroid (or the centroid
+  // map); full annotations use their actual coordinate centroid.
+  const center = annotation?.coordinates
+    ? simpleCentroid(annotation.coordinates)
+    : stub?.centroid ?? annotationStore.annotationCentroids[annotationId];
+  if (center) {
+    // Recenter as a pure pan and translate gcsBounds with it. The new location
+    // must be hydrated against the *new* viewport, not the stale pre-click one
+    // (this path bypasses the GeoJS map, so nothing else re-syncs gcsBounds).
+    store.setCameraInfo(recenterCameraInfo(store.cameraInfo, center));
+  }
   annotationStore.setHoveredAnnotationId(annotationId);
+  // Guarantee the navigated-to annotation renders as a full shape, even if it
+  // falls outside the viewport hydration budget at the destination (C3).
+  annotationStore.ensureHydrated([annotationId]);
 }
 
 const hoveredId = computed(() => {
@@ -529,17 +733,38 @@ const dataTableItems = computed((): IAnnotationListItem[] => {
   const items = filteredItems.value.slice();
   if (sortBy.value.length) {
     const { key, order } = sortBy.value[0];
+    // This list is the single source of truth for getPageFromItemId, so its
+    // order MUST match what the v-data-table actually renders. The table sorts
+    // `filteredItems` with Vuetify 4's internal sortItems algorithm, so mirror
+    // it exactly here (lowercase string compare, numeric coercion, empties
+    // first, Intl.Collator) rather than a hand-rolled `<` — otherwise the two
+    // comparators diverge on case/locale/mixed types and the page jump lands on
+    // the wrong page (Finding 15).
+    const collator = new Intl.Collator(undefined, {
+      sensitivity: "accent",
+      usage: "sort",
+    });
+    const isEmpty = (v: unknown) => v === null || v === undefined || v === "";
     items.sort((a, b) => {
-      const valA = getNestedValue(a, key);
-      const valB = getNestedValue(b, key);
-      // Sort null/undefined to end regardless of sort direction
-      // (matches Vuetify's internal sort behavior)
-      if (valA == null && valB == null) return 0;
-      if (valA == null) return 1;
-      if (valB == null) return -1;
-      if (valA < valB) return order === "asc" ? -1 : 1;
-      if (valA > valB) return order === "asc" ? 1 : -1;
-      return 0;
+      let sortA = getNestedValue(a, key);
+      let sortB = getNestedValue(b, key);
+      if (order === "desc") {
+        [sortA, sortB] = [sortB, sortA];
+      }
+      if (sortA instanceof Date && sortB instanceof Date) {
+        sortA = sortA.getTime();
+        sortB = sortB.getTime();
+      }
+      sortA = sortA != null ? sortA.toString().toLocaleLowerCase() : sortA;
+      sortB = sortB != null ? sortB.toString().toLocaleLowerCase() : sortB;
+      if (sortA === sortB) return 0;
+      if (isEmpty(sortA) && isEmpty(sortB)) return 0;
+      if (isEmpty(sortA)) return -1;
+      if (isEmpty(sortB)) return 1;
+      if (!isNaN(sortA) && !isNaN(sortB)) {
+        return Number(sortA) - Number(sortB);
+      }
+      return collator.compare(sortA, sortB);
     });
   }
   return items;
@@ -570,6 +795,12 @@ let hoverFromList = false;
 
 // Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
 watch([hoveredId, itemsPerPage], () => {
+  // In server mode the page/scroll-to-hovered logic would read the client
+  // filtered set (via getPageFromItemId → dataTableItems → filteredItems);
+  // skip it entirely so server mode never touches that getter.
+  if (isServerMode.value) {
+    return;
+  }
   if (hoveredId.value === null) {
     hoverFromList = false;
     return;
@@ -592,18 +823,111 @@ watch([hoveredId, itemsPerPage], () => {
   });
 });
 
+// --- Server-mode reactive refetch -----------------------------------------
+// Each watch body is a no-op in client mode (the client set is reactive on its
+// own). In server mode, a change to any query input resets to page 1 and
+// refetches. The annotation-ID text filter is wired through the store's
+// idSubstring so it folds into the backend query.
+//
+// The refetch is debounced (trailing, 300ms): typing in the ID filter or
+// rapid filter/frame changes would otherwise fire one slow /list request per
+// keystroke. State (idSubstring, page reset) is updated synchronously so the
+// store is always consistent; only the network fetch is deferred.
+const debouncedServerRefetch = debounce(() => {
+  annotationListServer.fetchPage();
+}, 300);
+
+watch(localIdFilter, (value) => {
+  if (!isServerMode.value) {
+    return;
+  }
+  annotationListServer.setIdSubstring(value?.trim() ?? "");
+  annotationListServer.setOptions({ page: 1 });
+  debouncedServerRefetch();
+});
+
+watch(
+  [
+    () => filterStore.tagFilter,
+    () => filterStore.propertyFilters,
+    () => filterStore.onlyCurrentFrame,
+    () => filterStore.selectionFilter,
+    () => filterStore.annotationIdFilters,
+    () => propertyStore.displayedPropertyPaths,
+    () => store.xy,
+    () => store.z,
+    () => store.time,
+  ],
+  () => {
+    if (!isServerMode.value) {
+      return;
+    }
+    annotationListServer.setOptions({ page: 1 });
+    debouncedServerRefetch();
+  },
+  { deep: true },
+);
+
+// Scope server-mode selection to the current query. The selection set is
+// global, and deleteSelected/tag/color act on it directly, so a selection made
+// under one filter would otherwise persist — hidden — after switching filters,
+// and a later "delete selected" would silently delete rows no longer in view.
+// Clearing on any query change keeps the selection equal to "things in the
+// current filtered list", which is also what the header checkbox now reports.
+//
+// We key off currentFilters (the canonical query definition) so projection-only
+// changes (displayedPropertyPaths) and sort/page changes — none of which change
+// the matching set — don't drop the selection. We watch its JSON-serialized
+// value, NOT the object with { deep: true }: currentFilters is rebuilt as a new
+// object on every read and its getter reads the frame (xy/z/time)
+// unconditionally to assemble currentFrame, so main.z is a reactive dependency
+// even though the frame is only included in the output when onlyCurrentFrame is
+// on. A deep watch fires on every re-trigger regardless of value equality, so
+// it would clear the selection on a frame scrub with onlyCurrentFrame off (the
+// query didn't actually change). Comparing the serialized value fires only when
+// the query content genuinely changes; stringify also traverses the object, so
+// nested filter changes are still tracked.
+watch(
+  () => JSON.stringify(annotationListServer.currentFilters),
+  () => {
+    if (!isServerMode.value) {
+      return;
+    }
+    annotationStore.setSelected([]);
+  },
+);
+
+onBeforeUnmount(() => {
+  debouncedServerRefetch.cancel();
+});
+
+onMounted(() => {
+  if (isServerMode.value) {
+    annotationListServer.fetchPage();
+  }
+});
+
 function clickedTag(tag: string) {
   emit("clickedTag", tag);
 }
 
 function hover(annotationId: string | null) {
-  if (annotationStore.annotations.length < 5000) {
+  if (annotationStore.annotationsForIteration.length < 5000) {
     hoverFromList = true;
     annotationStore.setHoveredAnnotationId(annotationId);
   }
 }
 
-function handleTagSubmit({
+// Bulk tag/color/name edits route through annotationStore.updateAnnotationsPerId,
+// which is stub-aware (persists via the batch endpoint in server mode). The
+// server list rows are backend-driven, so refresh the page after the edit.
+async function refreshServerListIfNeeded() {
+  if (isServerMode.value) {
+    await annotationListServer.fetchPage();
+  }
+}
+
+async function handleTagSubmit({
   tags,
   addOrRemove,
   replaceExisting,
@@ -613,16 +937,17 @@ function handleTagSubmit({
   replaceExisting: boolean;
 }) {
   if (addOrRemove === "add") {
-    annotationStore.tagSelectedAnnotations({
+    await annotationStore.tagSelectedAnnotations({
       tags,
       replace: replaceExisting,
     });
   } else {
-    annotationStore.removeTagsFromSelectedAnnotations(tags);
+    await annotationStore.removeTagsFromSelectedAnnotations(tags);
   }
+  await refreshServerListIfNeeded();
 }
 
-function handleColorSubmit({
+async function handleColorSubmit({
   useColorFromLayer,
   color,
   randomize,
@@ -632,28 +957,63 @@ function handleColorSubmit({
   randomize?: boolean;
 }) {
   const newColor = useColorFromLayer ? null : color;
-  annotationStore.colorSelectedAnnotations({
+  await annotationStore.colorSelectedAnnotations({
     color: newColor,
     randomize,
   });
+  await refreshServerListIfNeeded();
 }
 
-function deleteSelected() {
+async function deleteSelected() {
+  if (isServerMode.value) {
+    // In server mode the client annotation set is empty, so the store action
+    // would delete nothing. Delete the currently-selected ids directly, clear
+    // the selection, and refresh the server page so the deleted rows drop out.
+    await annotationStore.deleteAnnotations([
+      ...annotationStore.selectedAnnotationIds,
+    ]);
+    annotationStore.setSelected([]);
+    await annotationListServer.fetchPage();
+    return;
+  }
   annotationStore.deleteSelectedAnnotations();
 }
 
-function deleteUnselected() {
+async function deleteUnselected() {
+  if (isServerMode.value) {
+    // In server mode "unselected" means everything matching the current
+    // filters except the selected ids — fetch all matching ids from the
+    // backend and subtract the selection, then refresh the server page.
+    const allMatching = await annotationListServer.fetchMatchingIds();
+    const selected = new Set(annotationStore.selectedAnnotationIds);
+    await annotationStore.deleteAnnotations(
+      allMatching.filter((id) => !selected.has(id)),
+    );
+    await annotationListServer.fetchPage();
+    return;
+  }
   annotationStore.deleteUnselectedAnnotations();
 }
 
 defineExpose({
   isLoggedIn,
   isDeletingAnnotations,
+  isServerMode,
+  serverItemsLength,
+  serverLoading,
+  serverLoadingMessage,
+  serverRowItems,
+  roiActiveInServerMode,
+  mapSort,
+  onServerOptions,
+  selectAllMatchingInServerMode,
   columnOptions,
   selectedColumns,
   tableItemClass,
   annotationFilteredDialog,
   localIdFilter,
+  LIST_ITEM_LIMIT,
+  tooManyToList,
   addOrRemove,
   page,
   itemsPerPage,
@@ -686,7 +1046,6 @@ defineExpose({
   handleColorSubmit,
   deleteSelected,
   deleteUnselected,
-  getStringFromPropertiesAndPath,
   removePropertyColumn,
 });
 </script>
@@ -738,6 +1097,12 @@ td span {
   padding: 6px 10px 10px;
 }
 
+.list-too-many {
+  text-align: center;
+  padding: 32px 16px;
+  opacity: 0.8;
+}
+
 .annotation-list-toolbar {
   display: flex;
   align-items: center;
@@ -750,21 +1115,8 @@ td span {
   text-transform: none;
 }
 
-.property-header-label {
-  vertical-align: middle;
-  font-size: 12px;
-  font-weight: 500;
-  display: inline-block;
-  max-width: 100%;
-}
-
-.property-header-remove {
-  vertical-align: middle;
-  opacity: 0.6;
-}
-.property-header-remove:hover {
-  opacity: 1;
-}
+/* Property-column header styles moved to PropertyColumnHeader.vue (scoped to
+   that component, which now owns the header markup). */
 
 /* Compact data-table typography — headers + cells slightly smaller and
    tighter than Vuetify's default 14px / 48px so the palette feels dense
@@ -786,6 +1138,24 @@ td span {
 }
 .compact-table .v-data-table-footer {
   font-size: 12px;
+}
+
+/* In-flight list-query affordance (B2): a clear "Querying N annotations…" line
+   shown while a server /list request is pending. */
+.list-querying {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.8;
+  padding: 4px 8px 6px;
+}
+
+/* While a query is in flight, dim and disable the footer paging controls so a
+   click registers visibly instead of silently queuing another fetch (the
+   request-sequence guard already drops stale responses). */
+.compact-table.is-loading .v-data-table-footer {
+  pointer-events: none;
+  opacity: 0.5;
 }
 
 /* Let the palette's frosted-glass surface show through the table — the

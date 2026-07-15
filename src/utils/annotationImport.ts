@@ -57,9 +57,11 @@ export async function importAnnotationsFromData(
   const datasetId = store.dataset.id;
 
   // Snapshot ids to remove if overwriting. These are only deleted once the
-  // import has succeeded.
+  // import has succeeded. annotationsForIteration (not annotations) so that
+  // stub-only mode, where the full annotations[] array is empty, still
+  // captures every annotation to overwrite.
   let annotationIdsToRemove: string[] = overwriteAnnotations
-    ? annotationStore.annotations.map(({ id }) => id)
+    ? annotationStore.annotationsForIteration.map(({ id }) => id)
     : [];
   let propertyIdsToRemove: string[] = overwriteProperties
     ? propertyStore.properties.map(({ id }) => id)

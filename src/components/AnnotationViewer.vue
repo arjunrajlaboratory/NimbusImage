@@ -27,6 +27,14 @@
       v-model:show="showColorDialog"
       @submit="handleColorSubmit"
     />
+
+    <v-snackbar
+      v-model="geometryNotLoadedSnackbar"
+      :timeout="4000"
+      color="info"
+    >
+      {{ GEOMETRY_NOT_LOADED_MESSAGE }}
+    </v-snackbar>
   </div>
 </template>
 
@@ -52,6 +60,13 @@ import { snapCoordinates } from "@/utils/itk";
 
 import { throttle, debounce } from "lodash";
 const THROTTLE = 100;
+
+// Incremental draw (clearOldAnnotations): GeoJS removeAnnotation is ~O(n) per
+// call, so when more than this fraction of drawn features must be removed (e.g. a
+// frame change, where the whole set turns over) a single bulk removeAllAnnotations
+// is cheaper than N individual removals. Below it (the common pan/zoom case, where
+// the visible set is largely stable) we keep survivors and remove only the rest.
+const INCREMENTAL_BULK_CLEAR_FRACTION = 0.5;
 
 import {
   AnnotationSelectionTypes,
@@ -89,6 +104,8 @@ import {
   IObjectSegmentationExample,
   PromptType,
 } from "../store/model";
+import type { TAnnotationOrStub, IAnnotationStub } from "@/store/model";
+import { isHydratedAnnotation } from "@/store/model";
 
 import { logError, logWarning } from "@/utils/log";
 
@@ -99,7 +116,13 @@ import {
   geojsAnnotationFactory,
   tagFilterFunction,
   ellipseToPolygonCoordinates,
+  getStubStyleFromBaseStyle,
+  drawnFeatureUsesDotStyle,
+  drawnFeatureUnchanged,
+  geometryKeyForRender,
+  shouldRetainFeature,
 } from "@/utils/annotation";
+import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
   mouseStateToSamPrompt,
@@ -113,6 +136,9 @@ import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
 import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/polygonSlice";
+import { stubPerf } from "@/utils/stubPerf";
+import { visibilityBudgetForZoom } from "@/utils/visibilityBudget";
+import { cameraRefreshNeeded } from "@/utils/camera";
 import RBush from "rbush";
 
 // Module-level helpers
@@ -125,26 +151,35 @@ interface AnnotationBBoxItem {
   annotationId: string;
 }
 
-function buildAnnotationBBox(annotation: IAnnotation): AnnotationBBoxItem {
-  const coords = annotation.coordinates;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (let i = 0; i < coords.length; i++) {
-    const c = coords[i];
-    if (c.x < minX) minX = c.x;
-    if (c.y < minY) minY = c.y;
-    if (c.x > maxX) maxX = c.x;
-    if (c.y > maxY) maxY = c.y;
+function buildAnnotationBBox(
+  annotation: TAnnotationOrStub,
+): AnnotationBBoxItem {
+  if (isHydratedAnnotation(annotation)) {
+    const coords = annotation.coordinates;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const c = coords[i];
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
+    return { minX, minY, maxX, maxY, annotationId: annotation.id };
   }
-  return { minX, minY, maxX, maxY, annotationId: annotation.id };
+  // Stub: use centroid as degenerate bbox
+  const { x, y } = annotation.centroid;
+  return { minX: x, minY: y, maxX: x, maxY: y, annotationId: annotation.id };
 }
 
-function filterAnnotations(
-  annotations: IAnnotation[],
+function filterAnnotations<T extends TAnnotationOrStub>(
+  annotations: T[],
   { tags, tagsInclusive, layerId }: IRestrictTagsAndLayer,
-) {
+): T[] {
+  // Reads only tags/channel, which both full annotations and stubs carry, so
+  // it is safe over TAnnotationOrStub and preserves the input element type.
   let output = annotations.filter((annotation) =>
     tagFilterFunction(annotation.tags, tags, !tagsInclusive),
   );
@@ -254,6 +289,17 @@ const contextMenuY = ref(0);
 const rightClickedAnnotation = ref<IAnnotation | null>(null);
 const showTagDialog = ref(false);
 const showColorDialog = ref(false);
+
+// Toast shown when a geometry edit/combine targets a stub whose full
+// coordinates aren't loaded yet (stub-only mode); the op is skipped rather than
+// silently no-op'ing or failing.
+const geometryNotLoadedSnackbar = ref(false);
+const GEOMETRY_NOT_LOADED_MESSAGE =
+  "Annotation not fully loaded — zoom in to fully load it, then try again.";
+
+function notifyGeometryNotLoaded() {
+  geometryNotLoadedSnackbar.value = true;
+}
 
 // ---- Computed properties ----
 
@@ -413,11 +459,11 @@ const displayableAnnotations = computed(() => {
   }
   return store.filteredDraw
     ? filteredAnnotations.value
-    : annotationStore.annotations;
+    : annotationStore.annotationsForIteration;
 });
 
 const displayableAnnotationsByChannel = computed(() => {
-  const annotationsByChannel: Map<number, IAnnotation[]> = new Map();
+  const annotationsByChannel: Map<number, TAnnotationOrStub[]> = new Map();
   const annotations = displayableAnnotations.value;
   const len = annotations.length;
 
@@ -446,16 +492,26 @@ const isLayerIdValid = computed(() => {
   return (id: string) => validLayerIds.has(id);
 });
 
-// A map: map<layer id, map<annotation id, annotation>>
+// A map: map<layer id, map<annotation id, annotation or stub>>
 const layerAnnotations = computed(() => {
   const layerIdToAnnotationIds: Map<
     string,
-    Map<string, IAnnotation>
+    Map<string, TAnnotationOrStub>
   > = new Map();
-  for (const layer of validLayers.value) {
-    const annotationIdsSet: Map<string, IAnnotation> = new Map();
-    layerIdToAnnotationIds.set(layer.id, annotationIdsSet);
+  const stubsSize = annotationStore.annotationStubs?.size ?? 0;
+  const { maxVisible, globalThreshold } = annotationStore.visibilityConfig;
+  // Direct reads create reactive dependencies so layerAnnotations
+  // recomputes when these change. The getter-returning-function pattern
+  // (isVisible, getForRendering) defeats Vue's dependency tracking —
+  // Vue tracks the getter reference, not the state the function reads.
+  const hydratedAnnotations = annotationStore.hydratedAnnotations;
+  const visibleAnnotationIds = annotationStore.visibleAnnotationIds;
 
+  // First pass: collect frame annotations per layer
+  const layerFrameAnnotations: Map<string, TAnnotationOrStub[]> = new Map();
+  let totalFrameCount = 0;
+  for (const layer of validLayers.value) {
+    layerIdToAnnotationIds.set(layer.id, new Map());
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
       const layerChannelAnnotations =
         displayableAnnotationsByChannel.value.get(layer.channel) || [];
@@ -463,15 +519,44 @@ const layerAnnotations = computed(() => {
       const allXY = store.unrollXY || layer.xy.type === "max-merge";
       const allZ = store.unrollZ || layer.z.type === "max-merge";
       const allT = store.unrollT || layer.time.type === "max-merge";
+      const frameAnnotations: TAnnotationOrStub[] = [];
       for (const annotation of layerChannelAnnotations) {
         if (
           (allXY || annotation.location.XY === sliceIndexes?.xyIndex) &&
           (allZ || annotation.location.Z === sliceIndexes?.zIndex) &&
           (allT || annotation.location.Time === sliceIndexes?.tIndex)
         ) {
-          annotationIdsSet.set(annotation.id, annotation);
+          frameAnnotations.push(annotation);
         }
       }
+      layerFrameAnnotations.set(layer.id, frameAnnotations);
+      totalFrameCount += frameAnnotations.length;
+    }
+  }
+
+  // Global mode: single threshold check across all layers
+  const globalNeedsStubSystem = stubsSize > 0 && totalFrameCount > maxVisible;
+
+  // Second pass: apply visibility filtering
+  for (const layer of validLayers.value) {
+    const frameAnnotations = layerFrameAnnotations.get(layer.id);
+    if (!frameAnnotations) continue;
+    const annotationIdsSet = layerIdToAnnotationIds.get(layer.id)!;
+    const needsStubSystem =
+      annotationStore.stubOnlyMode ||
+      (globalThreshold
+        ? globalNeedsStubSystem
+        : stubsSize > 0 && frameAnnotations.length > maxVisible);
+    for (const annotation of frameAnnotations) {
+      if (needsStubSystem && !visibleAnnotationIds.has(annotation.id)) {
+        continue;
+      }
+      const renderData: TAnnotationOrStub = needsStubSystem
+        ? hydratedAnnotations.get(annotation.id) ??
+          annotationStore.annotationStubs?.get(annotation.id) ??
+          annotation
+        : annotation;
+      annotationIdsSet.set(annotation.id, renderData);
     }
   }
   return layerIdToAnnotationIds;
@@ -493,7 +578,7 @@ const displayedAnnotationIds = computed(() => {
 });
 
 const displayedAnnotations = computed(() => {
-  const annotationList: IAnnotation[] = [];
+  const annotationList: TAnnotationOrStub[] = [];
   for (const layerAnnotationIdsSet of layerAnnotations.value.values()) {
     for (const annotation of layerAnnotationIdsSet.values()) {
       annotationList.push(annotation);
@@ -506,7 +591,7 @@ const displayedAnnotationsSpatialIndex =
   shallowRef<RBush<AnnotationBBoxItem> | null>(null);
 let spatialIndexRequestId: number | null = null;
 
-function buildSpatialIndex(annotations: IAnnotation[]) {
+function buildSpatialIndex(annotations: TAnnotationOrStub[]) {
   // Cancel any pending build
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
@@ -546,7 +631,7 @@ const unrolledCentroidCoordinates = computed(() => {
 
   const anyImage = store.dataset?.anyImage();
   if (anyImage) {
-    for (const annotation of annotationStore.annotations) {
+    for (const annotation of annotationStore.annotationsForIteration) {
       const centroid = annotationCentroids[annotation.id];
       const unrolledCentroid = unrolledCoordinates(
         [centroid],
@@ -632,6 +717,170 @@ function unrolledCoordinates(
   return coordinates;
 }
 
+// --- Retained-feature cache (frame-scrub optimization) -----------------------
+// A frame change (Z / Time / XY) turns over the entire visible set, so
+// clearOldAnnotations bulk-clears and drawNewAnnotations reconstructs every
+// GeoJS feature via createGeoJSAnnotation. On large stub datasets that
+// reconstruction is the dominant cost of the scrub freeze (measured ~50 ms of
+// construction for ~8k features at low zoom, ~190 ms for ~26k zoomed in, on top
+// of the ~25-110 ms GL draw). Instead we retain torn-down feature objects in an
+// LRU keyed by (layer, annotation) and, when an annotation reappears (e.g. a
+// scrub back to a recent frame), re-add the cached object — skipping
+// reconstruction. Keying per annotation rather than per frame makes reuse robust
+// to the two-phase frame update (a leading draw with the stale visible set, then
+// the heavy draw once the set lands) and to throttle coalescing during fast
+// scrubs: whatever was removed is reused whenever its id is drawn again. Each
+// reused feature is still validated against the live render data
+// (drawnFeatureUnchanged: layer existence, color, stub-ness, geometry) and
+// restyled for hover/selection, so the rendered set is identical to a rebuild.
+//
+// Bound: we hold roughly the off-screen frames' worth of features on top of the
+// live layer, so cap at a small multiple of the live visible-set cap. Deriving
+// from visibilityConfig.maxVisible (rather than a fixed literal) keeps the bound
+// consistent if that cap is reconfigured; the 1.2x multiple reproduces the
+// previously-tuned 60k at the default 50k cap. Lower the multiple if memory is
+// tighter than reuse value on very large (700k+) datasets.
+const RETAINED_FEATURE_MULTIPLE = 1.2;
+function retainedFeatureLimit(): number {
+  return Math.ceil(
+    annotationStore.visibilityConfig.maxVisible * RETAINED_FEATURE_MULTIPLE,
+  );
+}
+// `layerId|girderId` -> feature. Map insertion order doubles as LRU recency.
+const retainedFeatures = new Map<string, IGeoJSAnnotation>();
+// Global style inputs that bake into a feature's appearance but that
+// drawnFeatureUnchanged does NOT check; when they change every cached feature is
+// stale, so the whole cache is dropped. Opacity is the only one that actually
+// varies in practice and is ALSO covered by onRestyleNeeded (baseStyle watch) —
+// the token is a defense-in-depth guard, not the sole path. getStubScaled() is
+// included for completeness (it is the dot's baked `scaled` baseline), but note
+// it reads unitsPerPixel at the FIXED zoom level 0, so it is constant across
+// zoom: GeoJS rescales dots with zoom via the `scaled` style at render time, so
+// reuse across zoom levels needs no re-bake and the token does not change on
+// zoom. It only moves on a map/dataset re-init.
+let retainedStyleToken = "";
+
+function retainedFeatureKey(layerId: string, girderId: string): string {
+  return `${layerId}|${girderId}`;
+}
+
+function currentStyleToken(): string {
+  return `${getStubScaled()}|${store.annotationOpacity}`;
+}
+
+// Drop the cache when the global style token changes; returns nothing — callers
+// run this before reuse so a stale-styled feature can never be re-added.
+function syncRetainedStyleToken(): void {
+  const token = currentStyleToken();
+  if (token !== retainedStyleToken) {
+    retainedFeatures.clear();
+    retainedStyleToken = token;
+  }
+}
+
+// The cache assumes each feature belongs to exactly one frame. Unroll genuinely
+// breaks that (the unroll grid offset makes a feature's coordinates
+// frame-dependent). For max-merge a single draw spans many frames so the visible
+// set no longer turns over per frame; per-(layer, annotation) keying would still
+// be sound there, but retention buys little and we disable it conservatively
+// rather than reason about the merged-set bookkeeping.
+function isFrameCacheEnabled(): boolean {
+  if (unrolling.value) {
+    return false;
+  }
+  for (const layer of validLayers.value) {
+    if (
+      layer.xy.type === "max-merge" ||
+      layer.z.type === "max-merge" ||
+      layer.time.type === "max-merge"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function clearRetainedFeatureCache(): void {
+  retainedFeatures.clear();
+}
+
+// Stash features removed from the layer (frame left / pan out) so a later redraw
+// of the same annotation reuses them. The skip list (connections, special /
+// in-progress features) lives in shouldRetainFeature; the current edit
+// annotation is excluded here by object identity. Stale-but-cached features are
+// harmless: the reuse validity check rejects them and the LRU evicts them.
+//
+// Reuse safety depends on a GeoJS contract: removeAnnotation() runs
+// annotation._exit(), which for the base annotation type only detaches a cursor
+// mousemove handler and leaves coordinates/options/state intact, so the object
+// can be re-added later via addMultipleAnnotations. This is verified against
+// geojs ^1.19.1 (see package.json). If a geojs upgrade makes _exit (or a feature
+// subtype's override) free renderer state, reused features could render or
+// hit-test wrong with no failing unit test — re-verify on upgrade.
+function retainRemovedFeatures(removed: IGeoJSAnnotation[]): void {
+  if (!isFrameCacheEnabled()) {
+    return;
+  }
+  syncRetainedStyleToken();
+  for (const feature of removed) {
+    const options = feature.options();
+    if (
+      !shouldRetainFeature(options) ||
+      feature === props.annotationLayer.currentAnnotation
+    ) {
+      continue;
+    }
+    const key = retainedFeatureKey(options.layerId, options.girderId);
+    // Re-insert to refresh LRU recency.
+    retainedFeatures.delete(key);
+    retainedFeatures.set(key, feature);
+  }
+  // Trim oldest-first to the (cap-derived) limit. O(overflow), not O(size):
+  // evict only the surplus rather than materializing the full key set.
+  const limit = retainedFeatureLimit();
+  while (retainedFeatures.size > limit) {
+    const oldest = retainedFeatures.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    retainedFeatures.delete(oldest);
+  }
+}
+
+// Pull a retained feature for (layerId, annotationId) if one exists and is still
+// valid for the current render data; route it through the hover/selection
+// restyle pass. Returns null when there is nothing reusable. Callers must have
+// run syncRetainedStyleToken() for this draw first.
+function takeRetainedFeature(
+  layerId: string,
+  annotationId: string,
+  renderData: TAnnotationOrStub,
+  drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]>,
+): IGeoJSAnnotation | null {
+  const key = retainedFeatureKey(layerId, annotationId);
+  const cached = retainedFeatures.get(key);
+  if (
+    !cached ||
+    !drawnFeatureUnchanged(
+      true,
+      renderData,
+      cached.options("color"),
+      cached.options("isStub"),
+      cached.options("geometryKey"),
+    )
+  ) {
+    return null;
+  }
+  retainedFeatures.delete(key);
+  let list = drawnGeoJSAnnotations.get(annotationId);
+  if (!list) {
+    list = [];
+    drawnGeoJSAnnotations.set(annotationId, list);
+  }
+  list.push(cached);
+  return cached;
+}
+
 function drawAnnotationsAndTooltips() {
   drawAnnotations();
   drawTooltips();
@@ -650,7 +899,12 @@ function drawAnnotationsNoThrottle() {
     return;
   }
 
-  clearOldAnnotations(true, false);
+  // Incremental: remove only the features whose annotation changed/left, keeping
+  // the rest. drawNewAnnotations adds just the features not already present (the
+  // snapshot below is taken AFTER the diff, so survivors are skipped via the
+  // `excluded` check). clearOldAnnotations falls back to a bulk clear internally
+  // when churn is high (e.g. a frame change), so this stays fast in both regimes.
+  clearOldAnnotations(false, false);
 
   const drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]> = new Map();
   for (const geoJSAnnotation of props.annotationLayer.annotations()) {
@@ -663,9 +917,25 @@ function drawAnnotationsNoThrottle() {
     }
   }
 
+  // Count features BEFORE adding. GeoJS gates the annotation layer's `_update`
+  // (the WebGL feature-data rebuild) on a modified timestamp; addAnnotation /
+  // addMultipleAnnotations called with update=false do NOT bump it, and
+  // clearOldAnnotations marks the layer modified ONLY when it removes features.
+  // So when a draw *adds* features to an otherwise-unchanged layer — e.g.
+  // returning to an annotation frame while the layer was already empty after
+  // scrubbing through blank Z slices — draw() alone renders nothing and the
+  // annotations stay invisible until some later modification (or a reload).
+  // Mark the layer modified whenever the feature count grew so the added
+  // features actually paint. (Guarded so a pure pan with no add/remove still
+  // skips the _update, preserving the incremental-draw optimization.)
+  const featureCountBeforeAdd = props.annotationLayer.annotations().length;
+
   drawNewAnnotations(drawnGeoJSAnnotations);
   if (shouldDrawConnections.value) {
     drawNewConnections(drawnGeoJSAnnotations);
+  }
+  if (props.annotationLayer.annotations().length > featureCountBeforeAdd) {
+    props.annotationLayer.modified();
   }
   props.annotationLayer.draw();
 }
@@ -750,67 +1020,79 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
     props.annotationLayer.removeAllAnnotations(undefined, undefined, false);
     props.annotationLayer.modified();
   } else {
-    props.annotationLayer
-      .annotations()
-      .forEach((geoJsAnnotation: IGeoJSAnnotation) => {
-        const {
-          girderId,
-          layerId,
-          isConnection,
-          childId,
-          parentId,
-          specialAnnotation,
-          color,
-        } = geoJsAnnotation.options();
+    // Incremental diff: keep features whose annotation is unchanged (still
+    // displayed on the same layer, same color, same dot/shape state) and remove
+    // only the rest. drawNewAnnotations then re-creates just the features that
+    // are new. At high zoom the visible set is largely stable across a pan, so
+    // most features are reused instead of torn down and rebuilt every refresh.
+    const features = props.annotationLayer.annotations();
+    const toRemove: IGeoJSAnnotation[] = [];
+    for (const geoJsAnnotation of features) {
+      const {
+        girderId,
+        layerId,
+        isConnection,
+        childId,
+        parentId,
+        specialAnnotation,
+        color,
+      } = geoJsAnnotation.options();
 
+      if (
+        geoJsAnnotation === props.annotationLayer.currentAnnotation ||
+        specialAnnotation ||
+        !girderId
+      ) {
+        continue;
+      }
+
+      if (isConnection) {
+        const parent = getAnnotationFromId.value(parentId);
+        const child = getAnnotationFromId.value(childId);
         if (
-          geoJsAnnotation === props.annotationLayer.currentAnnotation ||
-          specialAnnotation
+          !connectionIdsSet.value.has(girderId) ||
+          !shouldDrawConnections.value ||
+          !parent ||
+          !child ||
+          !displayedAnnotationIds.value.has(parent.id) ||
+          !displayedAnnotationIds.value.has(child.id)
         ) {
-          return;
+          toRemove.push(geoJsAnnotation);
         }
+        continue;
+      }
 
-        if (clearAll) {
-          props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-          props.annotationLayer.modified();
-          return;
-        }
+      const layerData = layerAnnotations.value.get(layerId)?.get(girderId);
+      const unchanged = drawnFeatureUnchanged(
+        !!store.getLayerFromId(layerId),
+        layerData,
+        color,
+        geoJsAnnotation.options("isStub"),
+        geoJsAnnotation.options("geometryKey"),
+      );
+      if (!unchanged) {
+        toRemove.push(geoJsAnnotation);
+      }
+    }
 
-        if (!girderId) {
-          return;
-        }
-
-        if (isConnection) {
-          const parent = getAnnotationFromId.value(parentId);
-          const child = getAnnotationFromId.value(childId);
-          if (
-            !connectionIdsSet.value.has(girderId) ||
-            !shouldDrawConnections.value ||
-            !parent ||
-            !child ||
-            !displayedAnnotationIds.value.has(parent.id) ||
-            !displayedAnnotationIds.value.has(child.id)
-          ) {
-            props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-            props.annotationLayer.modified();
-          }
-          return;
-        }
-
-        const annotation = getAnnotationFromId.value(girderId);
-        const layer = store.getLayerFromId(layerId);
-        if (
-          layer &&
-          annotation &&
-          layerDisplaysAnnotation.value(layer.id, annotation.id) &&
-          annotation.color === color
-        ) {
-          return;
-        }
-
+    // Hybrid: when most features must be removed (e.g. a frame change), a single
+    // bulk clear is cheaper than N individual O(n) removals; below the threshold
+    // keep the survivors and remove only the changed ones.
+    if (toRemove.length > features.length * INCREMENTAL_BULK_CLEAR_FRACTION) {
+      // High churn (e.g. a frame change): retain the about-to-be-removed
+      // features so a scrub back reuses them instead of reconstructing the
+      // whole visible set. removeAllAnnotations removes every feature, so retain
+      // all of them.
+      retainRemovedFeatures(features);
+      props.annotationLayer.removeAllAnnotations(undefined, undefined, false);
+      props.annotationLayer.modified();
+    } else if (toRemove.length > 0) {
+      retainRemovedFeatures(toRemove);
+      for (const geoJsAnnotation of toRemove) {
         props.annotationLayer.removeAnnotation(geoJsAnnotation, false);
-        props.annotationLayer.modified();
-      });
+      }
+      props.annotationLayer.modified();
+    }
   }
   if (redraw) {
     props.annotationLayer.draw();
@@ -820,10 +1102,25 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
 function drawNewAnnotations(
   drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]>,
 ) {
+  // Reuse retained features when available — re-adding a cached GeoJS object
+  // skips the costly createGeoJSAnnotation reconstruction when an annotation
+  // reappears (e.g. a scrub back to a recently visited frame).
+  const reuseEnabled = isFrameCacheEnabled();
+  if (reuseEnabled) {
+    syncRetainedStyleToken();
+  }
   for (const [layerId, annotationMap] of layerAnnotations.value) {
     const layer = store.getLayerFromId(layerId);
     if (layer) {
-      let newAnnotations: IGeoJSAnnotation[] = [];
+      // Freshly-created features hold ingcs (image-pixel) coordinates; reused
+      // features were already converted to the map gcs on their first add.
+      // addAnnotation() converts ingcs -> gcs on EVERY add, so the two must be
+      // added in separate batches with different gcs args — re-adding a reused
+      // feature with the default (ingcs) would convert its already-gcs
+      // coordinates a second time and drift it off the image (worsening on each
+      // zoom-out that re-adds it).
+      const freshAnnotations: IGeoJSAnnotation[] = [];
+      const reusedAnnotations: IGeoJSAnnotation[] = [];
       for (const [annotationId, annotation] of annotationMap) {
         const excluded = drawnGeoJSAnnotations
           .get(annotationId)
@@ -832,34 +1129,70 @@ function drawNewAnnotations(
               geoJSAnnotation.options("layerId") === layer.id,
           );
         if (!excluded) {
-          const geoJSAnnotation = createGeoJSAnnotation(annotation, layerId);
-          if (geoJSAnnotation) {
-            newAnnotations.push(geoJSAnnotation);
+          const reused = reuseEnabled
+            ? takeRetainedFeature(
+                layerId,
+                annotationId,
+                annotation,
+                drawnGeoJSAnnotations,
+              )
+            : null;
+          if (reused) {
+            reusedAnnotations.push(reused);
+          } else {
+            const created = createGeoJSAnnotation(annotation, layerId);
+            if (created) {
+              freshAnnotations.push(created);
+            }
           }
         }
       }
-      if (newAnnotations.length > 0) {
+      if (freshAnnotations.length > 0) {
+        // gcs undefined -> ingcs: addAnnotation converts pixel coords to gcs.
         props.annotationLayer.addMultipleAnnotations(
-          newAnnotations,
+          freshAnnotations,
           undefined,
+          false,
+        );
+      }
+      if (reusedAnnotations.length > 0) {
+        // gcs null -> map gcs: addAnnotation skips conversion (coords already
+        // in gcs), so a reused feature renders at its original position.
+        props.annotationLayer.addMultipleAnnotations(
+          reusedAnnotations,
+          null,
           false,
         );
       }
     }
   }
+  const stubScaled = getStubScaled();
   for (const [annotationId, geoJSAnnotationList] of drawnGeoJSAnnotations) {
     const isHoveredGT = annotationId === hoveredAnnotationId.value;
     const isSelectedGT = isAnnotationSelected.value(annotationId);
     for (const geoJSAnnotation of geoJSAnnotationList) {
-      const { layerId, isHovered, isSelected, style, customColor } =
-        geoJSAnnotation.options();
+      const {
+        layerId,
+        isHovered,
+        isSelected,
+        style,
+        customColor,
+        isStub,
+        annotationShape,
+        stubRadius,
+      } = geoJSAnnotation.options();
       if (isHovered != isHoveredGT || isSelected != isSelectedGT) {
         const layer = store.getLayerFromId(layerId);
-        const newStyle = getAnnotationStyle(
-          annotationId,
-          customColor,
-          layer?.color,
-        );
+        const newStyle = drawnFeatureUsesDotStyle(isStub, annotationShape)
+          ? getStubStyleFromBaseStyle(
+              customColor || layer?.color,
+              isHoveredGT,
+              isSelectedGT,
+              stubRadius,
+              stubScaled,
+              store.annotationOpacity,
+            )
+          : getAnnotationStyle(annotationId, customColor, layer?.color);
         geoJSAnnotation.options("style", { ...style, ...newStyle });
         geoJSAnnotation.options("isHovered", isHoveredGT);
         geoJSAnnotation.options("isSelected", isSelectedGT);
@@ -1330,7 +1663,10 @@ function drawTimelapseAnnotationCentroidsAndLabels(
   }
 }
 
-function createGeoJSAnnotation(annotation: IAnnotation, layerId?: string) {
+function createGeoJSAnnotation(
+  annotation: TAnnotationOrStub,
+  layerId?: string,
+) {
   if (!store.dataset || !store.dataset.anyImage()) {
     return null;
   }
@@ -1339,15 +1675,45 @@ function createGeoJSAnnotation(annotation: IAnnotation, layerId?: string) {
   if (!anyImage) {
     return null;
   }
-  const coordinates = unrolledCoordinates(
-    annotation.coordinates,
-    annotation.location,
-    anyImage,
-  );
+
+  const isStub = !isHydratedAnnotation(annotation);
+  let coordinates: IGeoJSPosition[];
+  let renderShape: AnnotationShape;
+
+  if (isHydratedAnnotation(annotation)) {
+    coordinates = unrolledCoordinates(
+      annotation.coordinates,
+      annotation.location,
+      anyImage,
+    );
+    renderShape = annotation.shape;
+  } else {
+    coordinates = unrolledCoordinates(
+      [annotation.centroid],
+      annotation.location,
+      anyImage,
+    );
+    renderShape = AnnotationShape.Point;
+  }
 
   const layer = store.getLayerFromId(layerId);
   const customColor = annotation.color;
-  const style = getAnnotationStyle(annotation.id, customColor, layer?.color);
+  // Only meaningful for stubs (dots); for full annotations it stays the default
+  // 5 and is never read on the shape path (Finding 18/20). The
+  // !isHydratedAnnotation narrow is what lets TS reach `.estimatedRadius`.
+  const stubRadius = !isHydratedAnnotation(annotation)
+    ? annotation.estimatedRadius ?? 5
+    : 5;
+  const style = drawnFeatureUsesDotStyle(isStub, annotation.shape)
+    ? getStubStyleFromBaseStyle(
+        customColor || layer?.color,
+        annotation.id === hoveredAnnotationId.value,
+        isAnnotationSelected.value(annotation.id),
+        stubRadius,
+        getStubScaled(),
+        store.annotationOpacity,
+      )
+    : getAnnotationStyle(annotation.id, customColor, layer?.color);
 
   const options = {
     girderId: annotation.id,
@@ -1359,15 +1725,16 @@ function createGeoJSAnnotation(annotation: IAnnotation, layerId?: string) {
     layerId,
     customColor,
     style,
+    isStub,
+    annotationShape: annotation.shape,
+    stubRadius,
+    // Geometry fingerprint (Finding 1): lets clearOldAnnotations detect an
+    // in-place coordinate edit and redraw the feature instead of keeping the
+    // stale shape.
+    geometryKey: geometryKeyForRender(annotation),
   };
 
-  const newGeoJSAnnotation = geojsAnnotationFactory(
-    annotation.shape,
-    coordinates,
-    options,
-  );
-
-  return newGeoJSAnnotation;
+  return geojsAnnotationFactory(renderShape, coordinates, options);
 }
 
 function drawGeoJSAnnotationFromConnection(
@@ -1407,18 +1774,43 @@ async function createAnnotationFromTool(
 function restyleAnnotations() {
   const annotations = props.annotationLayer.annotations();
   const len = annotations.length;
+  const stubScaled = getStubScaled();
   for (let i = 0; i < len; i++) {
     const geoJSAnnotation = annotations[i];
-    const { girderId, layerId, style, customColor, isConnection } =
-      geoJSAnnotation.options();
+    const {
+      girderId,
+      layerId,
+      style,
+      customColor,
+      isConnection,
+      isStub,
+      annotationShape,
+      stubRadius,
+    } = geoJSAnnotation.options();
     if (girderId && !isConnection) {
       const layer = store.getLayerFromId(layerId);
-      const newStyle = getAnnotationStyle(girderId, customColor, layer?.color);
+      const newStyle = drawnFeatureUsesDotStyle(isStub, annotationShape)
+        ? getStubStyleFromBaseStyle(
+            customColor || layer?.color,
+            girderId === hoveredAnnotationId.value,
+            isAnnotationSelected.value(girderId),
+            stubRadius,
+            stubScaled,
+            store.annotationOpacity,
+          )
+        : getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
     }
   }
   props.annotationLayer.draw();
 }
+
+// C4: restyle iterates every drawn feature and redraws the layer, so rapid
+// restyle triggers (opacity-slider drag, fast selection/hover changes over a
+// dense field) can briefly lock the UI. Throttle it like the draw path — the
+// leading edge keeps the first change instant, the trailing edge coalesces a
+// burst into one final restyle with the latest state.
+const restyleAnnotationsThrottled = throttle(restyleAnnotations, THROTTLE);
 
 function pointNearPoint(
   selectionPosition: IGeoJSPosition,
@@ -1502,6 +1894,47 @@ function shouldSelectAnnotation(
   }
 }
 
+// Resolve a selection candidate id to its hydrated/full annotation, or its stub
+// when unhydrated. In stub-only mode most displayed annotations are unhydrated;
+// getAnnotationFromId materializes point stubs but returns undefined for
+// non-point stubs, which would silently drop them from selection — so fall back
+// to the stub.
+function resolveSelectionCandidate(id: string): TAnnotationOrStub | undefined {
+  return getAnnotationFromId.value(id) ?? annotationStore.getStub(id);
+}
+
+// Drag-select containment: hydrated annotations test their full coordinates
+// (precise); unhydrated stubs fall back to their centroid (they render as a dot
+// there). Geometry-dependent operations refine after hydrate-on-selection.
+function selectionCandidateInPolygon(
+  candidate: TAnnotationOrStub,
+  polygon: IGeoJSPosition[],
+): boolean {
+  if (isHydratedAnnotation(candidate)) {
+    return candidate.coordinates.some((point: IGeoJSPosition) =>
+      geojs.util.pointInPolygon(point, polygon),
+    );
+  }
+  return geojs.util.pointInPolygon(candidate.centroid, polygon);
+}
+
+// Click hit-test for an unhydrated stub: it renders as a dot at its centroid,
+// so test proximity to that dot using the rendered style.
+function shouldSelectStub(
+  clickPosition: IGeoJSPosition,
+  stub: IAnnotationStub,
+  annotationStyle: IGeoJSPointFeatureStyle,
+  unitsPerPixel: number,
+): boolean {
+  return pointNearPoint(
+    clickPosition,
+    stub.centroid,
+    (annotationStyle.radius as number) ?? 0,
+    (annotationStyle.strokeWidth as number) ?? 0,
+    unitsPerPixel,
+  );
+}
+
 function getSelectedAnnotationsFromAnnotation(
   selectAnnotation: IGeoJSAnnotation,
 ) {
@@ -1512,69 +1945,100 @@ function getSelectedAnnotationsFromAnnotation(
   const type = selectAnnotation.type();
 
   const unitsPerPixel = getMapUnitsPerPixel();
-  const selectedAnns: IAnnotation[] = [];
+  const selectedAnns: TAnnotationOrStub[] = [];
   const selectedIds = new Set<string>();
 
   // For drag-select (non-point selection), use spatial index if available
   if (type !== AnnotationShape.Point) {
     const spatialIndex = displayedAnnotationsSpatialIndex.value;
 
-    if (spatialIndex) {
-      // Fast path: query R-tree for candidate annotations whose bboxes overlap
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      for (let i = 0; i < coordinates.length; i++) {
-        const c = coordinates[i];
-        if (c.x < minX) minX = c.x;
-        if (c.y < minY) minY = c.y;
-        if (c.x > maxX) maxX = c.x;
-        if (c.y > maxY) maxY = c.y;
-      }
+    // Compute bounding box of selection region
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < coordinates.length; i++) {
+      const c = coordinates[i];
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
 
+    if (spatialIndex) {
+      // Query displayed annotations spatial index (bbox-based, precise)
       const candidates = spatialIndex.search({ minX, minY, maxX, maxY });
-      const getAnnotation = getAnnotationFromId.value;
       for (let i = 0; i < candidates.length; i++) {
         const { annotationId } = candidates[i];
         if (selectedIds.has(annotationId)) {
           continue;
         }
-        const annotation = getAnnotation(annotationId);
+        const candidate = resolveSelectionCandidate(annotationId);
         if (
-          !annotation ||
-          !annotation.coordinates.some((point: IGeoJSPosition) =>
-            geojs.util.pointInPolygon(point, coordinates),
-          )
+          !candidate ||
+          !selectionCandidateInPolygon(candidate, coordinates)
         ) {
           continue;
         }
         selectedIds.add(annotationId);
-        selectedAnns.push(annotation);
+        selectedAnns.push(candidate);
       }
-      return selectedAnns;
+    } else {
+      // Fallback: linear scan over GeoJS annotations (tree not yet built)
+      const geoAnnotations = props.annotationLayer.annotations();
+      for (let i = 0; i < geoAnnotations.length; i++) {
+        const geoJSannotation = geoAnnotations[i];
+        const { girderId, isConnection } = geoJSannotation.options();
+        if (!girderId || isConnection || selectedIds.has(girderId)) {
+          continue;
+        }
+        const candidate = resolveSelectionCandidate(girderId);
+        if (
+          !candidate ||
+          !selectionCandidateInPolygon(candidate, coordinates)
+        ) {
+          continue;
+        }
+        selectedIds.add(girderId);
+        selectedAnns.push(candidate);
+      }
     }
 
-    // Fallback: linear scan over GeoJS annotations (tree not yet built)
-    const geoAnnotations = props.annotationLayer.annotations();
-    for (let i = 0; i < geoAnnotations.length; i++) {
-      const geoJSannotation = geoAnnotations[i];
-      const { girderId, isConnection } = geoJSannotation.options();
-      if (!girderId || isConnection || selectedIds.has(girderId)) {
+    // Also select non-visible annotations via global centroid spatial index.
+    // This catches annotations outside the visibility budget but in the
+    // selection region on the current frame.
+    const globalCandidateIds = annotationSpatialIndex.queryBox(
+      minX,
+      minY,
+      maxX,
+      maxY,
+    );
+    for (const annotationId of globalCandidateIds) {
+      if (selectedIds.has(annotationId)) {
         continue;
       }
-      const annotation = getAnnotationFromId.value(girderId);
+      // These are non-visible annotations — in stub-only mode almost always
+      // unhydrated — so resolve to the stub and gate/contain on its
+      // location/centroid, or they are all silently skipped.
+      const candidate = resolveSelectionCandidate(annotationId);
+      if (!candidate) {
+        continue;
+      }
+      // Check if annotation is on the current frame
       if (
-        !annotation ||
-        !annotation.coordinates.some((point: IGeoJSPosition) =>
-          geojs.util.pointInPolygon(point, coordinates),
-        )
+        candidate.location.XY !== xy.value ||
+        candidate.location.Z !== z.value ||
+        candidate.location.Time !== time.value
       ) {
         continue;
       }
-      selectedIds.add(girderId);
-      selectedAnns.push(annotation);
+      if (!selectionCandidateInPolygon(candidate, coordinates)) {
+        continue;
+      }
+      selectedIds.add(annotationId);
+      selectedAnns.push(candidate);
     }
+
     return selectedAnns;
   }
 
@@ -1589,22 +2053,30 @@ function getSelectedAnnotationsFromAnnotation(
       continue;
     }
 
-    const annotation = getAnnotationFromId.value(girderId);
-    if (
-      !annotation ||
-      !shouldSelectAnnotation(
-        type,
-        coordinates,
-        annotation,
-        geoJSannotation.style(),
-        unitsPerPixel,
-      )
-    ) {
+    const candidate = resolveSelectionCandidate(girderId);
+    if (!candidate) {
+      continue;
+    }
+    const hit = isHydratedAnnotation(candidate)
+      ? shouldSelectAnnotation(
+          type,
+          coordinates,
+          candidate,
+          geoJSannotation.style(),
+          unitsPerPixel,
+        )
+      : shouldSelectStub(
+          coordinates[0],
+          candidate,
+          geoJSannotation.style(),
+          unitsPerPixel,
+        );
+    if (!hit) {
       continue;
     }
 
     selectedIds.add(girderId);
-    selectedAnns.push(annotation);
+    selectedAnns.push(candidate);
   }
 
   return selectedAnns;
@@ -1718,7 +2190,7 @@ async function handleAnnotationConnections(selectAnnotation: IGeoJSAnnotation) {
     return;
   }
 
-  let selectedAnns: IAnnotation[];
+  let selectedAnns: TAnnotationOrStub[];
   if (showTimelapseMode.value) {
     const selectedGeoJSAnnotations =
       getTimelapseAnnotationsFromAnnotation(selectAnnotation);
@@ -1841,6 +2313,16 @@ async function handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
 
   const clickedAnnotation = polygonAnnotations[0];
 
+  // Combine needs real geometry. If the clicked polygon's coordinates aren't
+  // loaded yet (stub-only mode), tell the user to zoom in rather than storing a
+  // half-selection or failing the union silently (combineAnnotations would
+  // not find the full annotation).
+  if (clickedAnnotation && !isHydratedAnnotation(clickedAnnotation)) {
+    notifyGeometryNotLoaded();
+    props.interactionLayer.removeAnnotation(selectAnnotation);
+    return;
+  }
+
   if (
     clickedAnnotation &&
     selectedToolState.value?.type === CombineToolStateSymbol &&
@@ -1851,6 +2333,14 @@ async function handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
     const secondAnnotationId = clickedAnnotation.id;
 
     if (firstAnnotationId !== secondAnnotationId) {
+      // The first-clicked annotation may have been dehydrated (LRU-evicted)
+      // between the two clicks; combine still needs its geometry.
+      if (!annotationStore.getHydratedAnnotation(firstAnnotationId)) {
+        notifyGeometryNotLoaded();
+        (selectedToolState.value as any).selectedAnnotationId = null;
+        props.interactionLayer.removeAnnotation(selectAnnotation);
+        return;
+      }
       const tolerance = parseFloat(
         selectedToolConfiguration.value.values?.tolerance ?? "2",
       );
@@ -2165,23 +2655,33 @@ async function handleAnnotationEdits(selectAnnotation: IGeoJSAnnotation) {
     return;
   }
 
+  // Polygon edits need real geometry, so restrict to hydrated polygons.
   const polygonAnns = selectedAnns.filter(
-    (annotation) => annotation.shape === AnnotationShape.Polygon,
+    (annotation): annotation is IAnnotation =>
+      isHydratedAnnotation(annotation) &&
+      annotation.shape === AnnotationShape.Polygon,
   );
 
   if (polygonAnns.length === 0) {
+    // Distinguish "no polygon selected at all" (silent no-op, as before) from
+    // "a polygon IS selected but its coordinates aren't loaded yet" (stub-only
+    // mode) — the latter would otherwise silently do nothing, so tell the user
+    // to zoom in to load it rather than dropping the edit.
+    const hasUnhydratedPolygon = selectedAnns.some(
+      (a) => !isHydratedAnnotation(a) && a.shape === AnnotationShape.Polygon,
+    );
+    if (hasUnhydratedPolygon) {
+      notifyGeometryNotLoaded();
+    }
     props.interactionLayer.removeAnnotation(selectAnnotation);
     return;
   }
 
   const annotationTemplate = selectedToolConfiguration.value?.values
     ?.annotation as IRestrictTagsAndLayer;
-  let filteredAnns: IAnnotation[] = [];
-  if (annotationTemplate) {
-    filteredAnns = filterAnnotations(selectedAnns, annotationTemplate);
-  } else {
-    filteredAnns = polygonAnns;
-  }
+  const filteredAnns: IAnnotation[] = annotationTemplate
+    ? filterAnnotations(polygonAnns, annotationTemplate)
+    : polygonAnns;
 
   if (filteredAnns.length === 0) {
     props.interactionLayer.removeAnnotation(selectAnnotation);
@@ -2500,6 +3000,17 @@ function getMapUnitsPerPixel(): number {
   return map.unitsPerPixel(map.zoom());
 }
 
+// Stub radii (estimatedRadius) are in world (image-pixel) units. GeoJS point
+// features size their radius in display pixels unless `scaled` is set; with
+// `scaled = log2(unitsPerPixel(0))` the radius is interpreted in world units and
+// the stub circle tracks the annotation's true footprint at every zoom level.
+// unitsPerPixel(0) is the tile pyramid's zoom-0 resolution (a power of two), so
+// this is the level at which one world unit equals one display pixel.
+function getStubScaled(): number {
+  const map = props.annotationLayer.map();
+  return Math.log2(map.unitsPerPixel(0));
+}
+
 function handleInteractionAnnotationChange(evt: any) {
   if (!selectedToolConfiguration.value && !roiFilter.value) {
     return;
@@ -2718,7 +3229,7 @@ function onPrimaryChange() {
 }
 
 function onAnnotationStateChanged() {
-  restyleAnnotations();
+  restyleAnnotationsThrottled();
 }
 
 function onTimelapseModeChanged() {
@@ -2732,10 +3243,17 @@ function onDisplayedAnnotationsChange() {
 }
 
 function onRestyleNeeded() {
-  restyleAnnotations();
+  // baseStyle / layer color / tool-highlight changes alter a feature's baked
+  // appearance in ways the per-feature reuse check doesn't cover, so drop the
+  // retained cache and let the next frame reconstruct.
+  clearRetainedFeatureCache();
+  restyleAnnotationsThrottled();
 }
 
 function onUnrollChanged() {
+  // Unroll changes which frames a single draw spans, invalidating frame-keyed
+  // retention.
+  clearRetainedFeatureCache();
   clearOldAnnotations(true);
   drawAnnotationsAndTooltips();
 }
@@ -3498,16 +4016,17 @@ async function handleDragEnd(evt: IGeoJSMouseState) {
 
 // ---- Watchers ----
 
-// Primary change: 6 sources
+// Primary change: 3 sources.
+// Frame changes (xy/z/time) are intentionally NOT here. A frame change updates
+// `visibleAnnotationIds` via the updateVisibility watcher; that change flows
+// through layerAnnotations -> displayedAnnotations -> onDisplayedAnnotationsChange,
+// which draws once with the correct visible set. Drawing here too produced a
+// wasted leading draw with the stale (pre-update) visible set, which both
+// rendered an empty/incorrect frame momentarily and forced layerAnnotations to
+// recompute twice per frame change (the dominant residual cost of the scrub
+// freeze once feature reconstruction is cached).
 watch(
-  [
-    annotationConnections,
-    xy,
-    z,
-    time,
-    shouldDrawAnnotations,
-    shouldDrawConnections,
-  ],
+  [annotationConnections, shouldDrawAnnotations, shouldDrawConnections],
   () => {
     onPrimaryChange();
   },
@@ -3574,6 +4093,160 @@ watch([() => props.unrollH, () => props.unrollW], () => {
 watch(selectedToolConfiguration, () => {
   watchTool();
 });
+
+// The stub circle's stroke width (px), matching getStubStyleFromBaseStyle. The
+// stroke dominates a dot's on-screen footprint when zoomed out (cells are
+// sub-pixel there), so it drives the density-derived render budget.
+const STUB_STROKE_PX = 4;
+
+// Hysteresis baseline: the camera state at the last visibility refresh.
+let lastRefreshCamera: { zoom: number; center: IGeoJSPosition } | null = null;
+
+// World-unit diagonal of the viewport bounding box — the scale the pan
+// hysteresis measures center movement against. 0 when bounds are unavailable.
+function viewportExtent(gcsBounds: IGeoJSPosition[] | undefined): number {
+  if (!gcsBounds || gcsBounds.length < 2) {
+    return 0;
+  }
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const pt of gcsBounds) {
+    minX = Math.min(minX, pt.x);
+    minY = Math.min(minY, pt.y);
+    maxX = Math.max(maxX, pt.x);
+    maxY = Math.max(maxY, pt.y);
+  }
+  return Math.hypot(maxX - minX, maxY - minY);
+}
+
+// Visibility and hydration updates
+function updateVisibility() {
+  // Only materialize an id array when a client filter is active. Without one,
+  // omit it and let the store derive ids from its own stub map, avoiding a
+  // full-dataset id array allocation per frame change (Finding 15).
+  const ids = store.filteredDraw
+    ? filteredAnnotations.value.map((a: TAnnotationOrStub) => a.id)
+    : undefined;
+  // Zoom-adaptive budget (C4): render fewer objects when zoomed out (where they
+  // overlap into noise and the heavy redraw briefly locks the UI), ramping up to
+  // the full configured cap as the user zooms in. The zoomed-out floor is
+  // derived from on-screen annotation density (size + stroke vs screen).
+  const map = props.annotationLayer.map();
+  const { maxVisible, maxHydrated, coverageTarget } =
+    annotationStore.visibilityConfig;
+  const zoomMin = map.zoomRange().min;
+  const size = map.size();
+  const budget = visibilityBudgetForZoom({
+    zoom: map.zoom(),
+    zoomMin,
+    avgRadius: annotationStore.averageStubRadius,
+    unitsPerPixelAtZoomMin: map.unitsPerPixel(zoomMin),
+    screenArea: size.width * size.height,
+    strokePx: STUB_STROKE_PX,
+    coverageTarget,
+    maxVisible,
+    maxHydrated,
+    loaded: annotationStore.annotationStubs.size,
+  });
+  annotationStore.updateVisibilityAndHydration({
+    ...(ids !== undefined ? { filteredIds: ids } : {}),
+    gcsBounds: store.cameraInfo.gcsBounds,
+    currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
+    maxVisible: budget.maxVisible,
+    maxHydrated: budget.maxHydrated,
+  });
+  // Record the hysteresis baseline so the camera watcher can skip sub-threshold
+  // centered-zoom changes until the next genuine refresh.
+  lastRefreshCamera = {
+    zoom: store.cameraInfo.zoom,
+    center: store.cameraInfo.center,
+  };
+  // Property-value lazy loading (D): load values for the now-visible set in lazy
+  // mode. Property filtering is now applied server-side (Stage 2), so even with
+  // an active filter we only need values for the visible subset here.
+  if (annotationStore.stubOnlyMode) {
+    propertiesStore.ensureVisiblePropertyValues();
+  }
+}
+const updateVisibilityDebounced = debounce(updateVisibility, 250);
+
+// Frame changes (XY, Z, Time) and annotation list changes update immediately
+// to avoid flash of empty frame while debounce waits
+watch([filteredAnnotations, xy, z, time], updateVisibility);
+
+// Camera changes (pan/zoom) are debounced since they fire rapidly. Unified
+// hysteresis (C4): skip the refresh until EITHER the zoom magnification OR the
+// center (as a fraction of the viewport) changes by viewportRefreshFraction —
+// avoids constant re-render + re-hydration churn on small pan/zoom nudges.
+watch(
+  () => store.cameraInfo,
+  () => {
+    stubPerf.trackCameraUpdate();
+    const cam = store.cameraInfo;
+    if (
+      !cameraRefreshNeeded(
+        { zoom: cam.zoom, center: cam.center },
+        lastRefreshCamera,
+        annotationStore.visibilityConfig.viewportRefreshFraction,
+        viewportExtent(cam.gcsBounds),
+      )
+    ) {
+      return;
+    }
+    updateVisibilityDebounced();
+  },
+);
+
+// Render-budget settings (maxVisible/maxHydrated/coverageTarget etc.) are read
+// inside updateVisibility. Without this watch a change made in the settings only
+// took effect on the next pan/zoom/frame change; re-run immediately so editing
+// the fields reflects on the canvas right away. setVisibilityConfig replaces
+// the config object, so a reference watch fires on any field change.
+// (stubThreshold gates stub-only mode at load time and is intentionally not
+// re-evaluated here — crossing it still needs a dataset reload.)
+watch(() => annotationStore.visibilityConfig, updateVisibility);
+
+// Hydrate-on-selection (C3): a selected stub that isn't in the hydration cache
+// renders as a dot and can't show its real shape. Selection happens through
+// many code paths (list click, drag-select, context menu), so hydrate reactively
+// here rather than from each mutation caller. ensureHydrated dedupes against the
+// cache, so already-hydrated selections cost nothing.
+watch(
+  () => annotationStore.selectedAnnotationIds,
+  (ids) => {
+    // Pass the Set directly — ensureHydrated iterates it, so no need to spread
+    // a potentially huge "select all" selection into a throwaway array on every
+    // selection change (Finding 14).
+    annotationStore.ensureHydrated(ids);
+  },
+);
+
+// Property-value lazy loading (D, Stage 2): in lazy mode, property filtering is
+// applied server-side — refresh the passing-id set whenever the property filters
+// change (their content, not just enabled on/off). filteredAnnotations then
+// narrows drawing to that set, and updateVisibility loads values only for the
+// visible subset, so no wholesale value load is ever needed.
+// refreshPropertyFilterPassingIds clears the set when no filter is active.
+watch(
+  () => filterStore.propertyFilters,
+  () => {
+    if (annotationStore.stubOnlyMode) {
+      filterStore.refreshPropertyFilterPassingIds();
+    }
+  },
+);
+
+// Adding/removing a property column changes which values the visible set needs.
+watch(
+  () => propertiesStore.displayedPropertyPaths,
+  () => {
+    if (annotationStore.stubOnlyMode) {
+      propertiesStore.ensureVisiblePropertyValues();
+    }
+  },
+);
 
 // Linescan tool selection: publish the tool state the panel needs (channel
 // layer, line type) and drop any ongoing scan when switching to another tool
@@ -3706,6 +4379,9 @@ watch(selectedToolRadius, () => {
 watch(
   () => props.annotationLayer,
   (newLayer, oldLayer) => {
+    // The retained features belong to the old layer instance; drop them so a
+    // rebuilt layer (e.g. dataset reset) never re-adds dead feature objects.
+    clearRetainedFeatureCache();
     unbindAnnotationEvents(oldLayer);
     bindAnnotationEvents(newLayer);
     addHoverCallback();
@@ -3744,17 +4420,27 @@ onMounted(() => {
   updateValueOnHover();
   filterStore.updateHistograms();
   addHoverCallback();
+  updateVisibilityDebounced();
 });
 
 onBeforeUnmount(() => {
   unbindAnnotationEvents(props.annotationLayer);
   unbindInteractionEvents(props.interactionLayer);
   unbindTimelapseEvents(props.timelapseLayer);
+  // Cancel pending debounced/throttled callbacks so a trailing fire after
+  // teardown (e.g. navigating away right after a pan) can't run against a dead
+  // layer / torn-down view (Finding 4).
+  updateVisibilityDebounced.cancel();
+  restyleAnnotationsThrottled.cancel();
+  drawAnnotations.cancel();
+  drawTooltips.cancel();
+  handleValueOnMouseMoveDebounce.cancel();
   lineScanStore.setToolLineType(null);
   lineScanStore.clearLine();
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
   }
+  clearRetainedFeatureCache();
 });
 
 // ---- Expose ----
@@ -3787,6 +4473,7 @@ defineExpose({
   rightClickedAnnotation,
   showTagDialog,
   showColorDialog,
+  geometryNotLoadedSnackbar,
   // Computed
   unrolledCentroidCoordinates,
   annotationSelectionType,
@@ -3852,6 +4539,8 @@ defineExpose({
   drawAnnotations,
   drawTooltipsNoThrottle,
   drawTooltips,
+  updateVisibilityDebounced,
+  restyleAnnotationsThrottled,
   clearOldAnnotations,
   drawNewAnnotations,
   drawNewConnections,
