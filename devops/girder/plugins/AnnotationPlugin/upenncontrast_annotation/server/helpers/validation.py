@@ -69,13 +69,14 @@ def validateAnnotationIdCount(count):
 
 def requireObjectId(value, field="id"):
     """Parse `value` into an ObjectId, raising RestException(400) if it is
-    missing or malformed (bson.InvalidId is a BSONError, NOT a ValueError, so
-    it must be caught explicitly)."""
+    missing or malformed. A malformed hex string raises bson.InvalidId (a
+    BSONError, NOT a ValueError); a non-string value such as a JSON number
+    or bool raises TypeError. Both must map to a clean 400, not a 500."""
     if value is None:
         raise RestException("%s is required" % field, code=400)
     try:
         return ObjectId(value)
-    except InvalidId:
+    except (InvalidId, TypeError):
         raise RestException("%s is not a valid id" % field, code=400)
 
 

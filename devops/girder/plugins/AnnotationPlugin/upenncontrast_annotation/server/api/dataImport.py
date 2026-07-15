@@ -1,15 +1,16 @@
-from bson.objectid import ObjectId
-from bson.errors import InvalidId
-
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
 from girder.constants import AccessType, TokenScope
-from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..helpers.dataImport import importAnnotationData
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
+from ..helpers.validation import (
+    requireObjectBody,
+    requireList,
+    requireObjectId,
+)
 
 
 # Helper function to get dataset ID for the recordable endpoint
@@ -62,43 +63,29 @@ class DataImport(Resource):
             property list.
         """)
         .param("body", "The annotation data to import", paramType="body")
-        .errorResponse("Missing datasetId.", 400)
+        .errorResponse("Missing or malformed input (e.g. datasetId).", 400)
         .errorResponse("Write access was denied for the dataset.", 403)
     )
     @memoizeBodyJson
     @recordable("Import annotation data", getDatasetIdFromImportBody)
     def importData(self, params, *args, **kwargs):
-        body = kwargs["memoizedBodyJson"]
-        if not isinstance(body, dict):
-            raise RestException(
-                "Request body must be a JSON object.", code=400
-            )
-
-        datasetIdString = body.get("datasetId")
-        if not datasetIdString:
-            raise RestException("Missing datasetId", code=400)
-        # ObjectId() raises InvalidId for a malformed string and TypeError
-        # for a non-string (e.g. a JSON number/bool); both are bad input.
-        try:
-            datasetId = ObjectId(datasetIdString)
-        except (InvalidId, TypeError) as exc:
-            raise RestException("Invalid datasetId", code=400) from exc
-
-        annotations = body.get("annotations", [])
-        connections = body.get("connections", [])
-        propertyValues = body.get("propertyValues", {})
-        propertyIdMap = body.get("propertyIdMap", {})
-        # (field name, value, expected type, type label) per optional field.
-        for name, value, expectedType, typeLabel in (
-            ("annotations", annotations, list, "array"),
-            ("connections", connections, list, "array"),
-            ("propertyValues", propertyValues, dict, "object"),
-            ("propertyIdMap", propertyIdMap, dict, "object"),
-        ):
-            if not isinstance(value, expectedType):
-                raise RestException(
-                    "%s must be a JSON %s." % (name, typeLabel), code=400
-                )
+        # Validate the request shape at the API boundary so malformed input
+        # is a clean 400 rather than an uncaught 500 (shared validators in
+        # helpers/validation.py).
+        body = requireObjectBody(kwargs["memoizedBodyJson"])
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        annotations = requireList(
+            body.get("annotations", []), "annotations"
+        )
+        connections = requireList(
+            body.get("connections", []), "connections"
+        )
+        propertyValues = requireObjectBody(
+            body.get("propertyValues", {}), "propertyValues"
+        )
+        propertyIdMap = requireObjectBody(
+            body.get("propertyIdMap", {}), "propertyIdMap"
+        )
 
         Folder().load(
             datasetId,
