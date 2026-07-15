@@ -67,6 +67,51 @@ export class Filters extends VuexModule {
   annotationIdFilters: IIdAnnotationFilter[] = [];
 
   @Mutation
+  protected resetFilterStateImpl() {
+    // Every field below is scoped to a single dataset: property filters and
+    // filterPaths reference the previous dataset's property IDs, ROI filters
+    // hold coordinates from the previous image, and selection/id filters and
+    // histograms reference the previous dataset's annotations. Left in place,
+    // they render as broken, uneditable filter chips in the next dataset (the
+    // paths no longer resolve to any property). onlyCurrentFrame is a generic
+    // view toggle rather than stale data, so it is intentionally preserved.
+    //
+    // Known limitation: clearing filterPaths unmounts the old dataset's
+    // PropertyFilterHistogram components, and their onBeforeUnmount re-adds a
+    // single *disabled* propertyFilter after this reset runs. That orphan is
+    // inert — it is excluded from filteredAnnotations (enabled === false) and
+    // never rendered (the panel iterates filterPaths, now empty) — and the
+    // next dataset switch clears it. See PropertyFilterHistogram.vue's
+    // onBeforeUnmount for why that disable step must stay.
+    this.tagFilter = {
+      id: "tagFilter",
+      exclusive: false,
+      enabled: false,
+      tags: [],
+    };
+    this.propertyFilters = [];
+    this.roiFilters = [];
+    this.emptyROIFilter = null;
+    this.selectionFilter = {
+      enabled: false,
+      exclusive: true,
+      id: "selection",
+      annotationIds: [],
+    };
+    this.filterPaths = [];
+    this.histograms = {};
+    this.annotationIdFilters = [];
+  }
+
+  // Clear per-dataset filter state. Call when switching datasets so stale
+  // filters (whose property paths / annotation IDs belong to the previous
+  // dataset) don't leak into the next one as broken, uneditable chips.
+  @Action
+  public resetFilterState() {
+    this.resetFilterStateImpl();
+  }
+
+  @Mutation
   togglePropertyPathFiltering(path: string[]) {
     const pathIdx = findIndexOfPath(path, this.filterPaths);
     if (pathIdx < 0) {

@@ -375,6 +375,12 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  // Disabling on unmount is load-bearing: when a filter is removed
+  // (removeFilter drops its path from filterPaths but leaves the entry in
+  // propertyFilters), this is what stops the orphaned entry from continuing
+  // to filter. Do not remove it. Side effect: on a dataset switch,
+  // resetFilterState clears propertyFilters first, then this re-adds one
+  // disabled (inert) orphan — see filters.ts resetFilterStateImpl.
   if (propertyFilter.value.enabled) {
     filterStore.updatePropertyFilter({
       ...propertyFilter.value,
