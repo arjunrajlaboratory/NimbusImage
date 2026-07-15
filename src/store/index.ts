@@ -1434,6 +1434,7 @@ export class Main extends VuexModule {
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
+    this.context.dispatch("resetFilterState");
     if (!id) {
       this.setDataset({ id, data: null });
       memDiag.autoSnapshot("setSelectedDataset:exit (null)");
