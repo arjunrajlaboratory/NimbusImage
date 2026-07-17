@@ -1926,13 +1926,18 @@ function shouldSelectStub(
   annotationStyle: IGeoJSPointFeatureStyle,
   unitsPerPixel: number,
 ): boolean {
-  return pointNearPoint(
-    clickPosition,
-    stub.centroid,
-    (annotationStyle.radius as number) ?? 0,
-    (annotationStyle.strokeWidth as number) ?? 0,
-    unitsPerPixel,
-  );
+  // Unlike a normal point feature (whose radius is in display pixels), the stub
+  // dot renders world-locked: its style.radius is estimatedRadius in world
+  // (image-pixel) units, via `scaled` (getStubStyleFromBaseStyle). clickPosition
+  // and stub.centroid are also world units, so compare directly — do NOT route
+  // through pointNearPoint, which multiplies the radius by unitsPerPixel and
+  // would shrink/expand the hit area relative to the rendered dot at any zoom
+  // where unitsPerPixel !== 1. Only strokeWidth is in display pixels, so convert
+  // just that term.
+  const radius = (annotationStyle.radius as number) ?? 0;
+  const strokeWidth = (annotationStyle.strokeWidth as number) ?? 0;
+  const hitRadius = radius + strokeWidth * unitsPerPixel;
+  return pointDistance(clickPosition, stub.centroid) < hitRadius;
 }
 
 function getSelectedAnnotationsFromAnnotation(
@@ -4567,6 +4572,7 @@ defineExpose({
   pointNearPoint,
   pointNearLine,
   shouldSelectAnnotation,
+  shouldSelectStub,
   getSelectedAnnotationsFromAnnotation,
   shouldSelectGeoJSAnnotation,
   getTimelapseAnnotationsFromAnnotation,

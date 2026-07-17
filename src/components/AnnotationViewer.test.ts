@@ -1646,6 +1646,81 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // --- shouldSelectStub ---
+    describe("shouldSelectStub", () => {
+      beforeEach(() => {
+        wrapper = mountComponent();
+        // Real Euclidean distance so the hit-test math is actually exercised.
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+      });
+
+      function makeStub(overrides: any = {}) {
+        return {
+          id: "stub1",
+          centroid: { x: 0, y: 0 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 10,
+          ...overrides,
+        };
+      }
+
+      it("hit-tests the stub radius in world units (no unitsPerPixel scaling)", () => {
+        // The stub dot's style.radius is estimatedRadius in WORLD units. A click
+        // 8 world units away is inside the rendered radius (10), so it must hit
+        // regardless of the zoom-dependent unitsPerPixel.
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 0 };
+        const unitsPerPixel = 0.25; // zoomed in — the regression trigger
+        const result = (wrapper.vm as any).shouldSelectStub(
+          { x: 8, y: 0 },
+          stub,
+          style,
+          unitsPerPixel,
+        );
+        // Old (buggy) math: radius * unitsPerPixel = 2.5 → 8 > 2.5 → missed.
+        // Fixed math: radius = 10 → 8 < 10 → hit.
+        expect(result).toBe(true);
+      });
+
+      it("misses when the click is outside the world-unit radius", () => {
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 0 };
+        const result = (wrapper.vm as any).shouldSelectStub(
+          { x: 12, y: 0 },
+          stub,
+          style,
+          4, // zoomed out — old math would falsely hit (10*4=40)
+        );
+        expect(result).toBe(false);
+      });
+
+      it("converts only the stroke width by unitsPerPixel", () => {
+        // radius 10 (world) + strokeWidth 4 * unitsPerPixel 0.5 = 12 world units.
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 4 };
+        const inside = (wrapper.vm as any).shouldSelectStub(
+          { x: 11.5, y: 0 },
+          stub,
+          style,
+          0.5,
+        );
+        const outside = (wrapper.vm as any).shouldSelectStub(
+          { x: 12.5, y: 0 },
+          stub,
+          style,
+          0.5,
+        );
+        expect(inside).toBe(true);
+        expect(outside).toBe(false);
+      });
+    });
+
     // --- getSelectedAnnotationsFromAnnotation ---
     describe("getSelectedAnnotationsFromAnnotation", () => {
       it("iterates annotations and filters using shouldSelectAnnotation", () => {
