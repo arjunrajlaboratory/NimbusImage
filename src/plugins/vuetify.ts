@@ -48,6 +48,8 @@ const vuetify = createVuetify({
     VList: { density: "compact" },
     VListItem: { density: "compact" },
     VChip: { rounded: "pill" },
+    VProgressLinear: { color: "primary", rounded: "pill", bgOpacity: 0.15 },
+    VProgressCircular: { color: "primary" },
   },
   theme: {
     defaultTheme: Persister.get("theme", "dark") === "dark" ? "dark" : "light",
