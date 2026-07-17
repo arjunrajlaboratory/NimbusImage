@@ -795,12 +795,6 @@ let hoverFromList = false;
 
 // Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
 watch([hoveredId, itemsPerPage], () => {
-  // In server mode the page/scroll-to-hovered logic would read the client
-  // filtered set (via getPageFromItemId → dataTableItems → filteredItems);
-  // skip it entirely so server mode never touches that getter.
-  if (isServerMode.value) {
-    return;
-  }
   if (hoveredId.value === null) {
     hoverFromList = false;
     return;
@@ -809,8 +803,14 @@ watch([hoveredId, itemsPerPage], () => {
     hoverFromList = false;
     return;
   }
-  // Change page (only for external hovers, e.g., from image viewer)
-  page.value = getPageFromItemId.value(hoveredId.value);
+  // Change page (only for external hovers, e.g., from image viewer). In
+  // server mode the page computation would read the client filtered set (via
+  // getPageFromItemId → dataTableItems → filteredItems), and the hovered row's
+  // server page isn't known client-side — so skip the page jump there but
+  // still scroll to the row when it's on the current server page.
+  if (!isServerMode.value) {
+    page.value = getPageFromItemId.value(hoveredId.value);
+  }
   // Get the tr element from the ref map if it exists
   const annotationEl = annotationRefMap.get(hoveredId.value);
   if (!annotationEl) {

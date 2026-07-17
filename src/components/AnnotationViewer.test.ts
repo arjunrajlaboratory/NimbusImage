@@ -4060,6 +4060,134 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // Regression: clicking an annotation in the viewer (no tool selected)
+    // must set hoveredAnnotationId so the annotation list can page-jump,
+    // scroll to, and highlight the row.
+    describe("click-to-hover navigation", () => {
+      function fireAnnotationLayerMouseclicks(evt: any) {
+        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any)
+          .mock.calls;
+        const handlers = geoOnCalls
+          .filter((call: any[]) => call[0] === "geojs.mouseclick")
+          .map((call: any[]) => call[1]);
+        handlers.forEach((handler: any) => handler(evt));
+      }
+
+      it("clicking a point annotation sets hoveredAnnotationId", () => {
+        const ann = makeAnnotation(); // point at (10, 20)
+        mockedAnnotationStore.annotations = [ann];
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("ann1");
+      });
+
+      it("clicking a stub-rendered (unhydrated) annotation sets hoveredAnnotationId", () => {
+        // Non-point stubs resolve to undefined via getAnnotationFromId; the
+        // hover hit-test must fall back to the stub and its rendered dot.
+        const stub = {
+          id: "stub1",
+          centroid: { x: 10, y: 20 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 5,
+        };
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) => (id === "stub1" ? stub : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "stub1");
+        geoAnn.options("isStub", true);
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("stub1");
+      });
+
+      it("clicking empty space clears hoveredAnnotationId", () => {
+        const ann = makeAnnotation();
+        mockedAnnotationStore.annotations = [ann];
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 500, y: 500 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith(null);
+      });
+
+      it("does not set hover when a tool is selected", () => {
+        const ann = makeAnnotation();
+        mockedAnnotationStore.annotations = [ann];
+        mockedStore.selectedTool = {
+          configuration: { type: "create", values: {} },
+          state: null,
+        } as any;
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).not.toHaveBeenCalled();
+      });
+    });
+
     describe("bindTimelapseEvents", () => {
       it("registers mouseclick handler on timelapseLayer", () => {
         wrapper = mountComponent();

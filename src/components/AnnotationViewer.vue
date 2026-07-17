@@ -2961,27 +2961,37 @@ function handleInteractionModeChange(evt: any) {
 function setHoveredAnnotationFromCoordinates(gcsCoordinates: IGeoJSPosition) {
   const geoAnnotations: IGeoJSAnnotation[] =
     props.annotationLayer.annotations();
-  let annotationToToggle: IAnnotation | null = null;
+  let annotationToToggle: TAnnotationOrStub | null = null;
+  const unitsPerPixel = getMapUnitsPerPixel();
   for (let i = 0; i < geoAnnotations.length; ++i) {
     const geoAnnotation = geoAnnotations[i];
-    const id = geoAnnotation.options("girderId");
-    if (!id) {
+    const { girderId, isConnection } = geoAnnotation.options();
+    if (!girderId || isConnection) {
       continue;
     }
-    const annotation = getAnnotationFromId.value(id);
-    if (!annotation) {
+    // Mirror the point-click selection path: unhydrated annotations render as
+    // stub dots, so resolve to the stub and hit-test the dot — otherwise every
+    // stub-rendered annotation is silently unclickable.
+    const candidate = resolveSelectionCandidate(girderId);
+    if (!candidate) {
       continue;
     }
-    const unitsPerPixel = getMapUnitsPerPixel();
-    const shouldSelect = shouldSelectAnnotation(
-      AnnotationShape.Point,
-      [gcsCoordinates],
-      annotation,
-      geoAnnotation.style(),
-      unitsPerPixel,
-    );
-    if (shouldSelect) {
-      annotationToToggle = annotation;
+    const hit = isHydratedAnnotation(candidate)
+      ? shouldSelectAnnotation(
+          AnnotationShape.Point,
+          [gcsCoordinates],
+          candidate,
+          geoAnnotation.style(),
+          unitsPerPixel,
+        )
+      : shouldSelectStub(
+          gcsCoordinates,
+          candidate,
+          geoAnnotation.style(),
+          unitsPerPixel,
+        );
+    if (hit) {
+      annotationToToggle = candidate;
       break;
     }
   }
