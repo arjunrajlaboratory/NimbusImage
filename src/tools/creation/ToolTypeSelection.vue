@@ -36,7 +36,7 @@
       </template>
     </div>
 
-    <v-card-text ref="dialogContent" class="dialog-content">
+    <v-card-text class="dialog-content">
       <!-- Featured section at top (hidden while searching) -->
       <div
         v-if="featuredItems.length > 0 && !isSearching"
@@ -182,7 +182,6 @@ const computedTemplate = ref<IToolTemplate | null>(null);
 const defaultToolValues = ref<any>({});
 const featuredToolNames = ref<string[]>([]);
 const searchQuery = ref("");
-const dialogContent = ref<any>(null);
 
 const isSearching = computed(() => !!searchQuery.value?.trim());
 
@@ -298,7 +297,7 @@ const visibleGroups = computed((): ToolGroup[] => {
       key: "tools",
       title: "Drawing & interaction tools",
       navLabel: "Tools",
-      subtitle: "Annotate, select, tag, and measure directly on the image",
+      subtitle: "Interactive tools you drive directly on the image",
       submenus: [],
     },
     {
@@ -310,10 +309,11 @@ const visibleGroups = computed((): ToolGroup[] => {
     },
   ];
 
+  const [toolsGroup, analysisGroup] = groups;
   for (const submenu of submenus.value) {
     const filtered = filterSubmenu(submenu);
     if (filtered) {
-      groups[submenu.isWorker ? 1 : 0].submenus.push(filtered);
+      (submenu.isWorker ? analysisGroup : toolsGroup).submenus.push(filtered);
     }
   }
 
