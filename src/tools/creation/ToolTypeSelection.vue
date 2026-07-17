@@ -1,12 +1,47 @@
 <template>
   <v-card class="tool-selection-dialog">
     <v-card-title class="dialog-header">
-      <span class="dialog-title">Select Tool Type</span>
+      <div class="header-row">
+        <span class="dialog-title">Select Tool Type</span>
+      </div>
+      <v-text-field
+        v-model="searchQuery"
+        class="search-field"
+        placeholder="Search tools…"
+        prepend-inner-icon="mdi-magnify"
+        variant="outlined"
+        density="compact"
+        hide-details
+        clearable
+        autofocus
+        @keydown.enter="selectFirstMatch"
+      />
     </v-card-title>
 
-    <v-card-text class="dialog-content">
-      <!-- Featured section at top -->
-      <div v-if="featuredItems.length > 0" class="category category-featured">
+    <div v-if="!isSearching" class="chip-nav">
+      <template v-for="group in visibleGroups" :key="group.key">
+        <span class="chip-nav-group-label" :class="`group-${group.key}`">
+          {{ group.navLabel }}
+        </span>
+        <v-chip
+          v-for="submenu in group.submenus"
+          :key="categoryAnchorId(submenu)"
+          class="chip-nav-chip"
+          size="small"
+          variant="tonal"
+          @click="scrollToCategory(categoryAnchorId(submenu))"
+        >
+          {{ categoryName(submenu) }}
+        </v-chip>
+      </template>
+    </div>
+
+    <v-card-text ref="dialogContent" class="dialog-content">
+      <!-- Featured section at top (hidden while searching) -->
+      <div
+        v-if="featuredItems.length > 0 && !isSearching"
+        class="category category-featured"
+      >
         <div class="category-header">
           <div class="category-indicator"></div>
           <span class="category-name">Featured</span>
@@ -33,39 +68,49 @@
         </div>
       </div>
 
-      <!-- Regular category sections -->
-      <div
-        v-for="submenu in submenus"
-        :key="submenu.displayName ?? submenu.template.name"
-        class="category"
-        :class="getCategoryClass(submenu.displayName ?? submenu.template.name)"
-      >
-        <div class="category-header">
-          <div class="category-indicator"></div>
-          <span class="category-name">{{
-            submenu.displayName ?? submenu.template.name
-          }}</span>
-          <span class="category-count"
-            >{{ submenu.items.length }}
-            {{ submenu.items.length === 1 ? "tool" : "tools" }}</span
-          >
+      <!-- Top-level groups: interactive tools vs automated analysis -->
+      <template v-for="group in visibleGroups" :key="'group-' + group.key">
+        <div class="group-header" :class="`group-${group.key}`">
+          <span class="group-title">{{ group.title }}</span>
+          <span class="group-subtitle">{{ group.subtitle }}</span>
         </div>
 
-        <div class="tools-grid">
-          <div
-            v-for="item in submenu.items"
-            :key="item.key"
-            :data-tour="getTourAnchorId(item.text)"
-            v-tour-trigger="getTourAnchorId(item.text)"
-            class="tool-card"
-            @click="selectItem({ ...item, submenu })"
-          >
-            <div class="tool-card-name">{{ item.text }}</div>
-            <div v-if="item.description" class="tool-card-description">
-              {{ item.description }}
+        <div
+          v-for="submenu in group.submenus"
+          :key="categoryAnchorId(submenu)"
+          :id="categoryAnchorId(submenu)"
+          class="category"
+          :class="`group-${group.key}`"
+        >
+          <div class="category-header">
+            <div class="category-indicator"></div>
+            <span class="category-name">{{ categoryName(submenu) }}</span>
+            <span class="category-count"
+              >{{ submenu.items.length }}
+              {{ submenu.items.length === 1 ? "tool" : "tools" }}</span
+            >
+          </div>
+
+          <div class="tools-grid">
+            <div
+              v-for="item in submenu.items"
+              :key="item.key"
+              :data-tour="getTourAnchorId(item.text)"
+              v-tour-trigger="getTourAnchorId(item.text)"
+              class="tool-card"
+              @click="selectItem({ ...item, submenu })"
+            >
+              <div class="tool-card-name">{{ item.text }}</div>
+              <div v-if="item.description" class="tool-card-description">
+                {{ item.description }}
+              </div>
             </div>
           </div>
         </div>
+      </template>
+
+      <div v-if="isSearching && !hasVisibleItems" class="no-results">
+        No tools match "{{ searchQuery }}"
       </div>
     </v-card-text>
   </v-card>
@@ -88,6 +133,7 @@ interface Submenu {
   submenuInterfaceIdx: any;
   items: Item[];
   displayName?: string;
+  isWorker?: boolean;
 }
 
 interface AugmentedItem extends Item {
@@ -114,19 +160,13 @@ interface FeaturedToolsConfig {
   featuredTools: string[];
 }
 
-// Category to CSS class mapping
-const categoryClassMap: { [key: string]: string } = {
-  "Manual object tool": "category-manual",
-  "Selection tools": "category-selection",
-  "AI analysis": "category-ai",
-  Connections: "category-connections",
-  "Annotation Connections": "category-connections",
-  Conversion: "category-conversion",
-  "Image Processing": "category-processing",
-  "Tagging tools": "category-tagging",
-  "Annotation Edits": "category-edits",
-  "Line scan tools": "category-measurement",
-};
+interface ToolGroup {
+  key: "tools" | "analysis";
+  title: string;
+  navLabel: string;
+  subtitle: string;
+  submenus: Submenu[];
+}
 
 const hiddenToolTexts = new Set<string>([
   '"Snap to" manual annotation tools',
@@ -141,9 +181,17 @@ const selectedItem = ref<AugmentedItem | null>(null);
 const computedTemplate = ref<IToolTemplate | null>(null);
 const defaultToolValues = ref<any>({});
 const featuredToolNames = ref<string[]>([]);
+const searchQuery = ref("");
+const dialogContent = ref<any>(null);
 
-function getCategoryClass(categoryName: string): string {
-  return categoryClassMap[categoryName] || "category-other";
+const isSearching = computed(() => !!searchQuery.value?.trim());
+
+function categoryName(submenu: Submenu): string {
+  return submenu.displayName ?? submenu.template.name;
+}
+
+function categoryAnchorId(submenu: Submenu): string {
+  return "tool-category-" + getTourAnchorId(categoryName(submenu));
 }
 
 const featuredItems = computed((): AugmentedItem[] => {
@@ -225,6 +273,72 @@ const submenus = computed((): Submenu[] => {
     });
 });
 
+// Submenus split into the two top-level groups, with the search filter
+// applied to item name/description and category name.
+const visibleGroups = computed((): ToolGroup[] => {
+  const query = (searchQuery.value ?? "").trim().toLowerCase();
+
+  const filterSubmenu = (submenu: Submenu): Submenu | null => {
+    if (!query) {
+      return submenu.items.length > 0 ? submenu : null;
+    }
+    if (categoryName(submenu).toLowerCase().includes(query)) {
+      return submenu.items.length > 0 ? submenu : null;
+    }
+    const items = submenu.items.filter(
+      (item) =>
+        item.text.toLowerCase().includes(query) ||
+        (item.description ?? "").toLowerCase().includes(query),
+    );
+    return items.length > 0 ? { ...submenu, items } : null;
+  };
+
+  const groups: ToolGroup[] = [
+    {
+      key: "tools",
+      title: "Drawing & interaction tools",
+      navLabel: "Tools",
+      subtitle: "Annotate, select, tag, and measure directly on the image",
+      submenus: [],
+    },
+    {
+      key: "analysis",
+      title: "Automated analysis",
+      navLabel: "Analysis",
+      subtitle: "Workers that compute segmentations and image corrections",
+      submenus: [],
+    },
+  ];
+
+  for (const submenu of submenus.value) {
+    const filtered = filterSubmenu(submenu);
+    if (filtered) {
+      groups[submenu.isWorker ? 1 : 0].submenus.push(filtered);
+    }
+  }
+
+  return groups.filter((group) => group.submenus.length > 0);
+});
+
+const hasVisibleItems = computed(() => visibleGroups.value.length > 0);
+
+function selectFirstMatch() {
+  if (!isSearching.value) {
+    return;
+  }
+  const firstSubmenu = visibleGroups.value[0]?.submenus[0];
+  const firstItem = firstSubmenu?.items[0];
+  if (firstSubmenu && firstItem) {
+    selectItem({ ...firstItem, submenu: firstSubmenu });
+  }
+}
+
+function scrollToCategory(anchorId: string) {
+  document
+    .getElementById(anchorId)
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function createDockerImageSubmenus(
   template: any,
   submenuInterface: any,
@@ -275,6 +389,7 @@ function createDockerImageSubmenus(
       submenuInterfaceIdx,
       items: keydItems,
       displayName: category,
+      isWorker: true,
     };
   });
 }
@@ -383,6 +498,7 @@ function reset() {
   selectedItem.value = null;
   computedTemplate.value = null;
   defaultToolValues.value = {};
+  searchQuery.value = "";
   refreshWorkers();
 }
 
@@ -398,37 +514,37 @@ defineExpose({
   featuredToolNames,
   featuredItems,
   submenus,
+  visibleGroups,
+  searchQuery,
   templates,
   selectItem,
   reset,
-  getCategoryClass,
   getTourAnchorId,
 });
 </script>
 
 <style lang="scss" scoped>
-// Category accent colors (kept for visual distinction)
-$color-manual: #60a5fa;
-$color-selection: #22d3ee;
-$color-ai: #a78bfa;
-$color-connections: #4ade80;
-$color-conversion: #fb923c;
-$color-processing: #f472b6;
-$color-tagging: #fbbf24;
-$color-edits: #f87171;
-$color-measurement: #2dd4bf;
-$color-other: #94a3b8;
-$color-featured: #fbbf24; // Gold for featured
+// One accent per top-level group (plus gold for featured)
+$color-tools: #60a5fa;
+$color-analysis: #a78bfa;
+$color-featured: #fbbf24;
 
 .tool-selection-dialog {
   border-radius: 16px;
   width: 100%;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .dialog-header {
-  padding: 24px 28px 20px;
+  padding: 20px 28px 16px;
   border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+  display: block;
+}
+
+.header-row {
+  margin-bottom: 12px;
 }
 
 .dialog-title {
@@ -437,32 +553,87 @@ $color-featured: #fbbf24; // Gold for featured
   letter-spacing: -0.02em;
 }
 
+.search-field {
+  max-width: 420px;
+}
+
+.chip-nav {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 28px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.chip-nav-group-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 2px;
+
+  &:not(:first-child) {
+    margin-left: 12px;
+  }
+
+  &.group-tools {
+    color: $color-tools;
+  }
+  &.group-analysis {
+    color: $color-analysis;
+  }
+}
+
+.chip-nav-chip {
+  cursor: pointer;
+}
+
 .dialog-content {
   padding: 8px 20px 28px;
-  max-height: 70vh;
+  max-height: 60vh;
   overflow-y: auto;
 }
 
-.category {
-  padding: 20px 0 12px;
+.group-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 24px 8px 4px;
 
   &:not(:first-child) {
+    margin-top: 12px;
     border-top: 1px solid rgba(128, 128, 128, 0.2);
-    margin-top: 8px;
   }
+}
+
+.group-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.group-subtitle {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+.category {
+  padding: 16px 0 8px;
+  scroll-margin-top: 8px;
 }
 
 .category-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   padding-left: 8px;
 }
 
 .category-indicator {
   width: 4px;
-  height: 20px;
+  height: 16px;
   border-radius: 2px;
   flex-shrink: 0;
 }
@@ -488,25 +659,14 @@ $color-featured: #fbbf24; // Gold for featured
 
 .tool-card {
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   cursor: pointer;
   position: relative;
   overflow: hidden;
   transition: all 0.2s ease;
   border: 1px solid transparent;
-  min-height: 80px;
   display: flex;
   flex-direction: column;
-
-  &::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    border-radius: 10px 0 0 10px;
-  }
 
   &:hover {
     transform: translateY(-2px);
@@ -516,7 +676,7 @@ $color-featured: #fbbf24; // Gold for featured
 .tool-card-name {
   font-size: 0.9rem;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   line-height: 1.3;
 }
 
@@ -528,6 +688,13 @@ $color-featured: #fbbf24; // Gold for featured
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.no-results {
+  padding: 32px 8px;
+  text-align: center;
+  opacity: 0.6;
+  font-size: 0.9rem;
 }
 
 // Theme-specific styles (theme class is on the v-card itself)
@@ -559,16 +726,13 @@ $color-featured: #fbbf24; // Gold for featured
   }
 }
 
-// Category-specific colors
-@mixin category-colors($color) {
+// Group accent colors: category header indicator + name, and card hover glow
+@mixin group-colors($color) {
   .category-indicator {
     background: $color;
   }
   .category-name {
     color: $color;
-  }
-  .tool-card::before {
-    background: $color;
   }
   .tool-card:hover {
     box-shadow: 0 8px 24px -8px rgba($color, 0.3);
@@ -577,37 +741,13 @@ $color-featured: #fbbf24; // Gold for featured
 }
 
 .category-featured {
-  @include category-colors($color-featured);
+  @include group-colors($color-featured);
 }
-.category-manual {
-  @include category-colors($color-manual);
+.category.group-tools {
+  @include group-colors($color-tools);
 }
-.category-selection {
-  @include category-colors($color-selection);
-}
-.category-ai {
-  @include category-colors($color-ai);
-}
-.category-connections {
-  @include category-colors($color-connections);
-}
-.category-conversion {
-  @include category-colors($color-conversion);
-}
-.category-processing {
-  @include category-colors($color-processing);
-}
-.category-tagging {
-  @include category-colors($color-tagging);
-}
-.category-edits {
-  @include category-colors($color-edits);
-}
-.category-measurement {
-  @include category-colors($color-measurement);
-}
-.category-other {
-  @include category-colors($color-other);
+.category.group-analysis {
+  @include group-colors($color-analysis);
 }
 
 // Responsive adjustments
