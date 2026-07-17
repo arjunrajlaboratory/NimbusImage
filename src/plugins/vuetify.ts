@@ -48,6 +48,12 @@ const vuetify = createVuetify({
     VList: { density: "compact" },
     VListItem: { density: "compact" },
     VChip: { rounded: "pill" },
+    VProgressLinear: { color: "primary", rounded: "pill", bgOpacity: 0.15 },
+    // NB: no global VProgressCircular color default. VBtn renders its
+    // loading spinner as a VProgressCircular with color:undefined, which
+    // would inherit a global default and turn teal-on-teal (invisible) on
+    // filled/elevated color="primary" buttons. Standalone spinners that need
+    // a color should set it explicitly.
   },
   theme: {
     defaultTheme: Persister.get("theme", "dark") === "dark" ? "dark" : "light",
