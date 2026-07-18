@@ -27,9 +27,9 @@ PIPELINE_SYSTEM_PROMPT = (
     'propertyWorkers lists. Never invent an image.\n'
     '- Annotation-producing steps must come before the property steps '
     'that depend on their output.\n'
-    '- Reuse an annotation step\'s outputTags as the inputTags of '
+    "- Reuse an annotation step's outputTags as the inputTags of "
     'downstream property steps that operate on those annotations.\n'
-    '- Prefer parameter values within each interface element\'s '
+    "- Prefer parameter values within each interface element's "
     'declared min/max; otherwise omit the parameter and let the '
     'worker default apply.\n'
     '- For property steps, shape must be one of point, line, or '
