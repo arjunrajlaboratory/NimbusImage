@@ -1,4 +1,5 @@
 ---
+name: annotations
 description: >
   Create, list, filter, update, and delete annotations on NimbusImage datasets
   using the nimbusimage Python API. Use this skill when the user wants to work
@@ -189,4 +190,4 @@ ds.annotations.create_many(annotations)
 - `location` defaults to `Location(xy=0, z=0, time=0)` if not specified.
 - Use `create_many` / `delete_many` for bulk operations — never loop with individual calls.
 
-For the full AnnotationAccessor API, read `references/annotations-api.md`.
+For complete `AnnotationAccessor` signatures, read `references/api-overview.md`. For coordinate and bulk-operation caveats, read `references/gotchas.md`.

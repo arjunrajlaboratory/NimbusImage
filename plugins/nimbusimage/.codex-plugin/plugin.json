@@ -1,0 +1,28 @@
+{
+  "name": "nimbusimage",
+  "version": "0.1.0",
+  "description": "Skills for working with NimbusImage scientific imaging datasets through the nimbusimage Python API",
+  "author": {
+    "name": "Arjun Raj Laboratory",
+    "url": "https://github.com/arjunrajlaboratory"
+  },
+  "homepage": "https://github.com/arjunrajlaboratory/NimbusImage/tree/master/plugins/nimbusimage",
+  "repository": "https://github.com/arjunrajlaboratory/NimbusImage",
+  "license": "Apache-2.0",
+  "keywords": ["scientific-imaging", "annotations", "image-analysis", "nimbusimage"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "NimbusImage",
+    "shortDescription": "Work with scientific imaging datasets",
+    "longDescription": "Connect to NimbusImage, retrieve image data, manage annotations, run workers, compute measurements, export results, and share datasets through the Python API.",
+    "developerName": "Arjun Raj Laboratory",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write", "Analyze"],
+    "websiteURL": "https://github.com/arjunrajlaboratory/NimbusImage",
+    "defaultPrompt": [
+      "Connect to my NimbusImage server and list my datasets.",
+      "Analyze annotations in a NimbusImage dataset.",
+      "Run an image-analysis worker and export the results."
+    ]
+  }
+}

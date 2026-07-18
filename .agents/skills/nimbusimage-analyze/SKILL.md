@@ -1,4 +1,5 @@
 ---
+name: nimbusimage-analyze
 description: >
   Compute properties, export data, manage connections, and share NimbusImage
   datasets using the nimbusimage Python API. Use this skill when the user
@@ -69,7 +70,7 @@ hist = ds.properties.histogram("propertyId.Area", buckets=50)
 
 ### Running property workers
 
-For server-side computation using Docker workers, see `/nimbus-skills:workers`.
+For server-side computation using Docker workers, use the workers skill.
 
 ## Connections
 
@@ -242,3 +243,5 @@ def print_tree(ann_id, depth=0):
     for child in children.get(ann_id, []):
         print_tree(child, depth + 1)
 ```
+
+For complete accessor signatures, read `references/api-overview.md`. Before changing sharing or using lower-level APIs, read `references/gotchas.md`.
