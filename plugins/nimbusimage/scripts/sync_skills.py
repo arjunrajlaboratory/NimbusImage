@@ -18,6 +18,8 @@ LEGACY_COMMANDS_ROOT = PLUGIN_ROOT / "commands"
 LEGACY_CODEX_SKILLS_ROOT = PLUGIN_ROOT / "codex-skills"
 PROJECT_SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
 CODEX_REPO_SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
+CLAUDE_MARKETPLACE_PATH = REPO_ROOT / ".claude-plugin" / "marketplace.json"
+CODEX_MARKETPLACE_PATH = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
 
 SKILLS = {
     "nimbusimage": "nimbusimage",
@@ -56,6 +58,32 @@ def render_repo_skill(skill_text: str, plugin_name: str, repo_name: str) -> str:
     return skill_text.replace(expected, replacement, 1)
 
 
+def expected_repo_skill_names() -> set[str]:
+    project_skill_names = {
+        source_skill.name
+        for source_skill in PROJECT_SKILLS_ROOT.iterdir()
+        if (source_skill / "SKILL.md").is_file()
+    }
+    return project_skill_names | set(SKILLS.values())
+
+
+def unexpected_repo_skills(
+    skills_root: Path,
+    expected_names: set[str],
+) -> list[Path]:
+    if not skills_root.is_dir():
+        return []
+    return sorted(
+        (
+            path
+            for path in skills_root.iterdir()
+            if (path.is_dir() or path.is_symlink())
+            and path.name not in expected_names
+        ),
+        key=lambda path: path.name,
+    )
+
+
 def write_generated_skills() -> None:
     for plugin_name in SKILLS:
         skill_root = PLUGIN_SKILLS_ROOT / plugin_name
@@ -84,7 +112,11 @@ def write_generated_skills() -> None:
             ),
         )
 
-    remove_path(CODEX_REPO_SKILLS_ROOT / "source-command-branch-review")
+    for unexpected_skill in unexpected_repo_skills(
+        CODEX_REPO_SKILLS_ROOT,
+        expected_repo_skill_names(),
+    ):
+        remove_path(unexpected_skill)
 
 
 def compare_file(expected: Path, actual: Path, errors: list[str]) -> None:
@@ -125,11 +157,50 @@ def compare_tree(
             compare_file(expected_path, actual_path, errors)
 
 
-def validate_metadata(errors: list[str]) -> None:
-    marketplace = json.loads(
-        (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(
-            encoding="utf-8"
+def validate_codex_marketplace(
+    marketplace: dict[str, object],
+    errors: list[str],
+) -> None:
+    if marketplace.get("name") != "NimbusImage":
+        errors.append("Codex marketplace name must be NimbusImage")
+    interface = marketplace.get("interface")
+    if not isinstance(interface, dict) or interface.get("displayName") != "NimbusImage":
+        errors.append("Codex marketplace display name must be NimbusImage")
+
+    plugins = marketplace.get("plugins")
+    entry = None
+    if isinstance(plugins, list):
+        entry = next(
+            (
+                item
+                for item in plugins
+                if isinstance(item, dict) and item.get("name") == "nimbusimage"
+            ),
+            None,
         )
+    if entry is None or entry.get("source") != {
+        "source": "local",
+        "path": "./plugins/nimbusimage",
+    }:
+        errors.append(
+            "Codex marketplace must expose nimbusimage with a local source object"
+        )
+        return
+    if entry.get("policy") != {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+    }:
+        errors.append("Codex marketplace must define installation and auth policies")
+    if entry.get("category") != "Developer Tools":
+        errors.append("Codex marketplace category must be Developer Tools")
+
+
+def validate_metadata(errors: list[str]) -> None:
+    claude_marketplace = json.loads(
+        CLAUDE_MARKETPLACE_PATH.read_text(encoding="utf-8")
+    )
+    codex_marketplace = json.loads(
+        CODEX_MARKETPLACE_PATH.read_text(encoding="utf-8")
     )
     codex_manifest = json.loads(
         (PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
@@ -143,15 +214,18 @@ def validate_metadata(errors: list[str]) -> None:
     entry = next(
         (
             item
-            for item in marketplace.get("plugins", [])
+            for item in claude_marketplace.get("plugins", [])
             if item.get("name") == "nimbusimage"
         ),
         None,
     )
-    if marketplace.get("name") != "NimbusImage":
-        errors.append("marketplace name must be NimbusImage")
+    if claude_marketplace.get("name") != "NimbusImage":
+        errors.append("Claude marketplace name must be NimbusImage")
     if entry is None or entry.get("source") != "./plugins/nimbusimage":
-        errors.append("marketplace must expose nimbusimage from ./plugins/nimbusimage")
+        errors.append(
+            "Claude marketplace must expose nimbusimage from ./plugins/nimbusimage"
+        )
+    validate_codex_marketplace(codex_marketplace, errors)
     if codex_manifest.get("name") != "nimbusimage":
         errors.append("Codex plugin name must be nimbusimage")
     if codex_manifest.get("skills") != "./skills/":
@@ -250,10 +324,13 @@ def check_generated_skills() -> list[str]:
             },
         )
 
-    legacy_alias = CODEX_REPO_SKILLS_ROOT / "source-command-branch-review"
-    if legacy_alias.exists() or legacy_alias.is_symlink():
+    for unexpected_skill in unexpected_repo_skills(
+        CODEX_REPO_SKILLS_ROOT,
+        expected_repo_skill_names(),
+    ):
         errors.append(
-            f"obsolete compatibility alias: {legacy_alias.relative_to(REPO_ROOT)}"
+            "unexpected repository-local skill: "
+            f"{unexpected_skill.relative_to(REPO_ROOT)}"
         )
 
     validate_metadata(errors)

@@ -28,5 +28,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Test skill synchronization
+        run: python3 -m unittest plugins/nimbusimage/scripts/test_sync_skills.py
       - name: Check Claude and Codex skill parity
         run: python3 plugins/nimbusimage/scripts/sync_skills.py --check
