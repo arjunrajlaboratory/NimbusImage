@@ -653,6 +653,11 @@ tools in `Toolset.vue`, or a tab in the Annotation Browser). Components under
 - "Add step" → choose annotation worker or property worker, then pick an image
   from `DockerImageSelect.vue` (reuse it — it already groups by
   `interfaceCategory` and filters by label; pass the appropriate label filter).
+  A third source, **"Existing tool"**, imports a worker-backed tool
+  (`type: "segmentation"`) from the current configuration: the tool's image,
+  `workerInterfaceValues`, annotation setup, `connectTo` and `jobDateTag` are
+  copied into a new annotation step (the inverse of the runner's
+  `buildTransientTool`).
 - Per-step editor reuses the existing interface renderer
   `WorkerInterfaceValues.vue` for `workerInterfaceValues`, and for annotation
   steps the `AnnotationConfiguration.vue` element for tags/shape/coordinate
@@ -673,6 +678,20 @@ tools in `Toolset.vue`, or a tab in the Annotation Browser). Components under
 - `continueOnError` checkbox.
 - Non-blocking pre-run warnings from §5 validation.
 - (v2) "Apply to all datasets in collection" reusing the batch guard.
+- Per-step **Logs** button, shown once the step's backend job exists (the
+  runner reports job ids through `onStepJob`). Opens the shared
+  `JobLogDialog.vue`, which overlays the live SSE log (`jobs.getJobLog`)
+  while running and fetches the persisted job log after completion — the
+  main affordance for diagnosing a failed worker.
+
+### 7.5 Pipelines palette (discoverability)
+
+`PipelinesPanel.vue` — a compact left-zone `FloatingPalette` stacked beneath
+Tools, **hidden by default** (toggle in the app-bar palette cluster). Shows
+one row per pipeline (name, step count, `ai` badge, live running spinner) and
+an "Open pipelines" button; every interaction routes to the full
+`PipelineDialog`. The Annotation Browser toolbar button remains the other
+entry point.
 
 Follow `BUTTON_CONVENTIONS.md` (primary/secondary/etc. + required `variant`/`size`
 and loading states) and log via `logError`/`logWarning`, not `console.*`

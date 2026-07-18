@@ -138,7 +138,7 @@
         <v-card-title>Add step</v-card-title>
         <v-card-text>
           <v-btn-toggle
-            v-model="newStepKind"
+            v-model="newStepSource"
             mandatory
             density="compact"
             class="mb-4"
@@ -149,8 +149,28 @@
             <v-btn value="property" variant="outlined" size="small">
               Property worker
             </v-btn>
+            <v-btn
+              value="tool"
+              variant="outlined"
+              size="small"
+              :disabled="workerTools.length === 0"
+            >
+              Existing tool
+            </v-btn>
           </v-btn-toggle>
+          <v-select
+            v-if="newStepSource === 'tool'"
+            v-model="newStepToolId"
+            label="Tool"
+            :items="workerTools"
+            item-title="name"
+            item-value="id"
+            density="compact"
+            hint="Copies the tool's worker, parameters and output tags into a new step"
+            persistent-hint
+          />
           <docker-image-select
+            v-else
             v-model="newStepImage"
             :imageFilter="newStepImageFilter"
           />
@@ -164,7 +184,9 @@
             variant="flat"
             color="primary"
             size="small"
-            :disabled="!newStepImage"
+            :disabled="
+              newStepSource === 'tool' ? !newStepToolId : !newStepImage
+            "
             @click="confirmAddStep"
           >
             Add
@@ -178,6 +200,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { cloneDeep, isEqual } from "lodash";
+import store from "@/store";
 import pipelinesStore from "@/store/pipelines";
 import propertiesStore from "@/store/properties";
 import { logError } from "@/utils/log";
@@ -209,12 +232,21 @@ const emit = defineEmits<{
 // the persisted list until "Save" is pressed. Only resynced when the caller
 // points the builder at a *different* pipeline (id change), never on every
 // upstream prop tick, so our own emitted edits don't bounce back and forth.
-const localPipeline = ref<IPipeline>(cloneDeep(props.modelValue));
+// Auto-wiring runs on the initial clone too, so pipelines arriving with
+// unwired property steps (AI suggestions, older saved pipelines) are wired
+// as soon as they open in the builder.
+function clonePipelineForEditing(pipeline: IPipeline): IPipeline {
+  const clone = cloneDeep(pipeline);
+  clone.steps = computeAutoWiredSteps(clone.steps);
+  return clone;
+}
+
+const localPipeline = ref<IPipeline>(clonePipelineForEditing(props.modelValue));
 
 watch(
   () => props.modelValue.id,
   () => {
-    localPipeline.value = cloneDeep(props.modelValue);
+    localPipeline.value = clonePipelineForEditing(props.modelValue);
   },
 );
 
@@ -319,23 +351,77 @@ function removeStep(index: number) {
 
 // ---- Add step dialog -------------------------------------------------
 
+// A step starts from a worker image ("annotation" / "property") or from an
+// existing worker tool in the configuration ("tool"), which copies the
+// tool's image, parameters and annotation setup into a new annotation step.
+type TNewStepSource = TPipelineStepKind | "tool";
+
 const showAddStepDialog = ref(false);
-const newStepKind = ref<TPipelineStepKind>("annotation");
+const newStepSource = ref<TNewStepSource>("annotation");
 const newStepImage = ref<string | null>(null);
+const newStepToolId = ref<string | null>(null);
+
+// Worker-backed annotation tools of the current configuration (the same
+// tool shape the runner's buildTransientTool produces).
+const workerTools = computed(() =>
+  store.tools.filter((tool) => tool.type === "segmentation"),
+);
 
 function openAddStepDialog() {
-  newStepKind.value = "annotation";
+  newStepSource.value = "annotation";
   newStepImage.value = null;
+  newStepToolId.value = null;
   showAddStepDialog.value = true;
 }
 
 const newStepImageFilter = computed(() => {
-  return newStepKind.value === "annotation"
+  return newStepSource.value === "annotation"
     ? (labels: IWorkerLabels) => labels.isAnnotationWorker !== undefined
     : (labels: IWorkerLabels) => labels.isPropertyWorker !== undefined;
 });
 
+// Import an existing worker tool as an annotation step: the inverse of the
+// runner's buildTransientTool mapping.
+function stepFromTool(toolId: string): IAnnotationPipelineStep | null {
+  const tool = workerTools.value.find((t) => t.id === toolId);
+  const image = tool?.values?.image?.image;
+  if (!tool || !image) {
+    return null;
+  }
+  return {
+    id: pipelinesStore.createStepId(),
+    kind: "annotation",
+    name: tool.name,
+    image,
+    workerInterfaceValues: cloneDeep(tool.values.workerInterfaceValues ?? {}),
+    enabled: true,
+    annotation: tool.values.annotation
+      ? cloneDeep(tool.values.annotation)
+      : {
+          tags: [],
+          coordinateAssignments: buildDefaultCoordinateAssignments(),
+          shape: AnnotationShape.Polygon,
+          color: undefined,
+        },
+    connectTo: tool.values.connectTo
+      ? cloneDeep(tool.values.connectTo)
+      : undefined,
+    jobDateTag: tool.values.jobDateTag ?? undefined,
+  };
+}
+
 function confirmAddStep() {
+  if (newStepSource.value === "tool") {
+    if (!newStepToolId.value) {
+      return;
+    }
+    const toolStep = stepFromTool(newStepToolId.value);
+    if (toolStep) {
+      updateSteps([...localPipeline.value.steps, toolStep]);
+    }
+    showAddStepDialog.value = false;
+    return;
+  }
   if (!newStepImage.value) {
     return;
   }
@@ -345,7 +431,7 @@ function confirmAddStep() {
   const name = labels?.interfaceName || image;
 
   let step: TPipelineStep;
-  if (newStepKind.value === "annotation") {
+  if (newStepSource.value === "annotation") {
     const annotationStep: IAnnotationPipelineStep = {
       id,
       kind: "annotation",
