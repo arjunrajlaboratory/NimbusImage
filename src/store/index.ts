@@ -83,7 +83,11 @@ export { default as store } from "./root";
 import { Debounce } from "@/utils/debounce";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
-import { createSamToolStateFromToolConfiguration } from "@/pipelines/samPipeline";
+import {
+  createSamToolStateFromToolConfiguration,
+  warmSamModelCache,
+} from "@/pipelines/samPipeline";
+import { createObjectSegmentationToolStateFromToolConfiguration } from "@/pipelines/objectSegmentationPipeline";
 import { isEqual } from "lodash";
 import { logError, logWarning } from "@/utils/log";
 
@@ -816,6 +820,11 @@ export class Main extends VuexModule {
             configuration as IToolConfiguration<"samAnnotation">,
           );
           break;
+        case "objectSegmentation":
+          state = createObjectSegmentationToolStateFromToolConfiguration(
+            configuration as IToolConfiguration<"objectSegmentation">,
+          );
+          break;
         case "connection":
           state = {
             type: ConnectionToolStateSymbol,
@@ -868,6 +877,23 @@ export class Main extends VuexModule {
       }
       this.syncConfiguration("tools");
     }
+  }
+
+  // Add several tools at once with a single configuration sync, instead of one
+  // sync per tool (used by "Add all" in the tool suggestions panel).
+  @Action
+  addToolsToConfiguration(tools: IToolConfiguration[]) {
+    if (!this.configuration || tools.length === 0) {
+      return;
+    }
+    this.setConfigurationTools([...this.configuration.tools, ...tools]);
+    for (const tool of tools) {
+      const image = tool.values?.image?.image;
+      if (image) {
+        this.context.dispatch("requestWorkerInterface", image);
+      }
+    }
+    this.syncConfiguration("tools");
   }
 
   /**
@@ -1104,6 +1130,18 @@ export class Main extends VuexModule {
     data: IDatasetConfiguration | null;
   }) {
     this.setConfigurationImpl({ id, data });
+    // Warm the SAM model cache in the background: encoder downloads are
+    // large, this way they are usually cached before a SAM tool is selected
+    const samModels = new Set(
+      (data?.tools ?? [])
+        .filter(
+          (tool) =>
+            tool.type === "samAnnotation" || tool.type === "objectSegmentation",
+        )
+        .map((tool) => tool.values?.model?.value)
+        .filter(Boolean),
+    );
+    samModels.forEach(warmSamModelCache);
     this.context.dispatch("fetchProperties");
   }
 
@@ -1400,9 +1438,21 @@ export class Main extends VuexModule {
   @Action
   async setSelectedDataset(id: string | null) {
     memDiag.autoSnapshot(`setSelectedDataset:enter id=${id ?? "null"}`);
+    // this.dataset still holds the previously selected dataset here (setDataset
+    // runs later), so this detects a genuine switch vs. a same-dataset refresh.
+    const datasetChanged = id !== this.dataset?.id;
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
+    // Filters hold unrecoverable user state (tag/property/ROI/ID filters), so
+    // only reset them on an actual dataset change. refreshDataset() re-runs
+    // setSelectedDataset with the same id (e.g. NavigatorPanel unroll toggles);
+    // wiping filters there would discard the user's active filters. The
+    // annotation/property resets above are safe to run every time because they
+    // are repopulated by the reload that follows.
+    if (datasetChanged) {
+      this.context.dispatch("resetFilterState");
+    }
     if (!id) {
       this.setDataset({ id, data: null });
       memDiag.autoSnapshot("setSelectedDataset:exit (null)");

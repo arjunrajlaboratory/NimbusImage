@@ -4,7 +4,7 @@
       <v-overlay
         :model-value="isNavigating"
         contained
-        scrim="white"
+        scrim="background"
         :opacity="0.8"
         z-index="9999"
         class="d-flex align-center justify-center"
@@ -50,7 +50,7 @@
                     class="text-h6 text-white text-center"
                     style="pointer-events: none"
                   >
-                    Drop files here to upload
+                    Drop files or a folder here to upload
                   </div>
                 </v-overlay>
 
@@ -63,10 +63,21 @@
                   <div class="text-center">
                     <div class="text-h6 mb-2">Upload files</div>
                     <div class="text-body-2 mb-2">
-                      Click or drag here to upload files. You can choose to
-                      accept default settings or configure advanced options
-                      after selecting files.
+                      Click or drag here to upload files. You can also drag a
+                      folder or use the button below to upload every file in a
+                      folder. You can choose to accept default settings or
+                      configure advanced options after selecting files.
                     </div>
+                    <v-btn
+                      variant="tonal"
+                      color="primary"
+                      size="small"
+                      class="mb-2"
+                      @click.stop="openFolderSelector"
+                    >
+                      <v-icon start>mdi-folder-upload</v-icon>
+                      Upload a folder
+                    </v-btn>
                     <div class="text-caption">
                       Dataset will be uploaded to folder:
                       <strong>{{ locationName }}</strong>
@@ -144,7 +155,7 @@
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <div class="d-flex align-center mb-4">
-                <span class="text-h6 font-weight-medium mr-4">Browse</span>
+                <span class="panel-section-title mr-4">Browse</span>
                 <v-btn-toggle
                   v-model="browseMode"
                   mandatory
@@ -239,7 +250,7 @@
       <!-- Upload Choice Dialog -->
       <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
         <v-card>
-          <v-card-title class="headline d-flex align-center">
+          <v-card-title class="d-flex align-center">
             Create dataset
             <v-btn
               variant="text"
@@ -366,9 +377,7 @@
             </v-alert>
 
             <v-card class="mb-4">
-              <v-card-title class="text-subtitle-1 pa-3"
-                >Location:</v-card-title
-              >
+              <div class="panel-section-title pa-3">Location</div>
               <v-card-text class="pt-0">
                 <girder-location-chooser
                   v-model="selectedLocation"
@@ -510,6 +519,11 @@ import ZenodoImporter from "@/components/ZenodoImporter.vue";
 import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import RecentDatasets from "@/components/RecentDatasets.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
+import {
+  getFilesFromDrop,
+  selectFiles,
+  selectFilesFromFolder,
+} from "@/utils/fileUpload";
 import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
@@ -1009,40 +1023,25 @@ function comprehensiveUpload(
   router.push({ name: "newdataset" });
 }
 
-function handleDrop(event: DragEvent) {
+function beginUpload(files: File[]) {
+  if (files.length > 0) {
+    pendingFiles.value = files;
+    initializeUploadDialog();
+    showUploadDialog.value = true;
+  }
+}
+
+async function handleDrop(event: DragEvent) {
   isDragging.value = false;
-  const files = Array.from(event.dataTransfer?.files || []);
-  if (files.length > 0) {
-    pendingFiles.value = files;
-    initializeUploadDialog();
-    showUploadDialog.value = true;
-  }
+  beginUpload(await getFilesFromDrop(event));
 }
 
-function openFileSelector() {
-  // Create a temporary <input type="file"> on each click.
-  // Calling .click() on a freshly-created, detached input avoids Chrome's
-  // issue where programmatic .click() on an existing DOM-attached input
-  // (inside Vuetify's <v-card>) is silently blocked.
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
-  input.addEventListener("change", handleFileSelect);
-  input.click();
+async function openFileSelector() {
+  beginUpload(await selectFiles());
 }
 
-function handleFileSelect(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-
-  if (files.length > 0) {
-    pendingFiles.value = files;
-    initializeUploadDialog();
-    showUploadDialog.value = true;
-  }
-
-  // Reset the input
-  input.value = "";
+async function openFolderSelector() {
+  beginUpload(await selectFilesFromFolder());
 }
 
 function initializeUploadDialog() {
@@ -1321,7 +1320,8 @@ defineExpose({
   onLocationUpdate,
   handleDrop,
   openFileSelector,
-  handleFileSelect,
+  openFolderSelector,
+  beginUpload,
   initializeUploadDialog,
   handleAcceptDefaults,
   handleConfigureDataset,
@@ -1411,18 +1411,22 @@ defineExpose({
   min-height: 0;
 }
 
-.drag-active {
-  border: 2px dashed white;
-}
-
 .upload-card {
   cursor: pointer;
   position: relative;
-  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border: 2px dashed var(--nimbus-border-strong);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+
+  &:hover {
+    border-color: rgba(var(--v-theme-primary), 0.5);
+    background-color: var(--nimbus-glass-hover);
+  }
 
   &.drag-active {
-    border: 2px dashed var(--v-primary-base);
-    background-color: rgba(var(--v-primary-base), 0.1);
+    border: 2px dashed rgb(var(--v-theme-primary));
+    background-color: rgba(var(--v-theme-primary), 0.1);
   }
 }
 
@@ -1434,55 +1438,6 @@ defineExpose({
   }
 }
 
-.section-title {
-  padding: 0;
-  height: auto;
-  display: block;
-}
-
-.pulse-btn {
-  animation: subtle-pulse 0.75s 1 ease-in-out;
-  transition: all 0.3s ease;
-  position: relative; /* Needed for the pseudo-element */
-}
-
-/* Use a pseudo-element for the pulsing effect to avoid affecting the button content */
-.pulse-btn::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  border-radius: inherit;
-  box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-  animation: subtle-pulse-shadow 9s 3 ease-in-out;
-}
-
-@keyframes subtle-pulse {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.05);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes subtle-pulse-shadow {
-  0% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
-  }
-}
-
 .loading-container {
   display: flex;
   flex-direction: column;
@@ -1491,10 +1446,10 @@ defineExpose({
 }
 
 .loading-text {
-  color: #424242; /* Dark gray text for contrast on white background */
-  font-size: 1.5rem; /* Medium weight for better visibility */
-  font-weight: 500; /* Medium weight for better visibility */
-  margin-top: 16px; /* Space between spinner and text */
+  color: rgb(var(--v-theme-on-background));
+  font-size: 1.5rem;
+  font-weight: 500;
+  margin-top: 16px;
   text-align: center;
 }
 </style>

@@ -39,7 +39,7 @@
             ?.chips"
           :key="'chip ' + i + ' collection ' + collection._id"
           class="ma-1 colored-chip"
-          :style="{ '--chip-color': chipItem.color }"
+          :style="{ '--chip-color': `rgb(var(--v-theme-${chipItem.color}))` }"
           @click.stop="navigateToChip(chipItem)"
         >
           {{ chipItem.text }}
@@ -51,7 +51,7 @@
         v-else-if="computedChipsIds.has(collection._id)"
         size="x-small"
         class="ma-1"
-        color="grey-lighten-1"
+        color="secondary"
       >
         Loading datasets...
       </v-chip>

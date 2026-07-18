@@ -19,6 +19,7 @@ class NimbusClient:
         client = ni.connect(api_url, token=...)
         client = ni.connect(api_url, username=..., password=...)
         client = ni.connect()  # from NI_API_URL + NI_TOKEN env vars
+        client = ni.connect(api_url, anonymous=True)  # public data only
     """
 
     def __init__(
@@ -29,6 +30,7 @@ class NimbusClient:
         username: str | None = None,
         password: str | None = None,
         frontend_url: str = DEFAULT_FRONTEND_URL,
+        anonymous: bool = False,
     ):
         self._gc = create_client(
             api_url=api_url,
@@ -36,6 +38,7 @@ class NimbusClient:
             api_key=api_key,
             username=username,
             password=password,
+            anonymous=anonymous,
         )
         self._api_url = api_url or os.environ.get(
             "NI_API_URL", self._gc.urlBase

@@ -295,7 +295,7 @@ import { useCollectionDatasets } from "@/utils/useCollectionDatasets";
 
 import Papa from "papaparse";
 
-import { IAnnotation } from "@/store/model";
+import { TAnnotationOrStub, isHydratedAnnotation } from "@/store/model";
 import { getValueFromObjectAndPath } from "@/utils/paths";
 
 const UNDEFINED_VALUE_MAP = {
@@ -335,7 +335,7 @@ const CSV_FIXED_COLUMNS: readonly CsvColumn[] = [
 ];
 
 const props = defineProps<{
-  annotations: IAnnotation[];
+  annotations: TAnnotationOrStub[];
   propertyPaths: string[][];
 }>();
 
@@ -550,7 +550,7 @@ async function generateCSVStringForAnnotations() {
           annotation.location.Time + 1,
           annotation.tags.join(", "),
           annotation.shape,
-          annotation.name ?? "",
+          isHydratedAnnotation(annotation) ? annotation.name ?? "" : "",
         ];
 
         for (const path of usedPaths) {

@@ -49,7 +49,9 @@
           >
             <template #default>
               <v-icon size="50px">mdi-file-upload</v-icon>
-              <div class="title mt-3">{{ dropzoneMessage }}</div>
+              <div class="text-body-1 font-weight-medium mt-3">
+                {{ dropzoneMessage }}
+              </div>
             </template>
           </file-dropzone>
         </template>
@@ -71,7 +73,9 @@
       >
         <template #default>
           <v-icon size="50px">mdi-file-upload</v-icon>
-          <div class="title mt-3">Add more files to this dataset</div>
+          <div class="text-body-1 font-weight-medium mt-3">
+            Add more files to this dataset
+          </div>
         </template>
       </file-dropzone>
 
@@ -194,7 +198,7 @@
                 ? 'success'
                 : idx === store.uploadWorkflow.currentDatasetIndex
                   ? 'primary'
-                  : 'grey'
+                  : 'secondary'
             "
             size="small"
             class="mr-1"
@@ -233,7 +237,7 @@
           class="d-none"
         />
         <!-- Show status text and spinner when auto-processing -->
-        <div class="title mb-2">
+        <div class="text-body-1 font-weight-medium mb-2">
           {{
             isBatchMode && !isProcessingFirstDataset
               ? "Applying configuration to dataset"
@@ -246,7 +250,9 @@
         <v-card class="mt-4" v-if="configurationLogs && !pipelineError">
           <v-card-text>
             <div class="d-flex align-center mb-2">
-              <div class="text-subtitle-1 mr-3">{{ progressStatusText }}</div>
+              <div class="text-body-2 text-medium-emphasis mr-3">
+                {{ progressStatusText }}
+              </div>
               <v-spacer></v-spacer>
               <v-btn
                 size="small"
@@ -267,7 +273,7 @@
               color="primary"
             >
               <template v-slot:default>
-                <span class="text-white"
+                <span class="font-mono"
                   >{{ Math.ceil(transcodeProgress) }}%</span
                 >
               </template>
@@ -276,7 +282,9 @@
         </v-card>
       </template>
       <template v-if="creatingView">
-        <div class="title mb-2">Configuring the dataset</div>
+        <div class="text-body-1 font-weight-medium mb-2">
+          Configuring the dataset
+        </div>
         <v-progress-circular indeterminate />
         <dataset-info
           ref="viewCreation"
@@ -288,7 +296,7 @@
     <!-- Log Dialog -->
     <v-dialog v-model="showLogDialog" max-width="800px">
       <v-card>
-        <v-card-title class="headline">
+        <v-card-title>
           Transcoding Log
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
@@ -334,7 +342,7 @@
     <!-- Batch mode error dialog -->
     <v-dialog v-model="showBatchErrorDialog" persistent max-width="500">
       <v-card>
-        <v-card-title class="headline text-error">
+        <v-card-title class="text-error">
           <v-icon start color="error">mdi-alert-circle</v-icon>
           Dataset Failed
         </v-card-title>
@@ -1330,12 +1338,13 @@ defineExpose({
   min-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
-  font-family: monospace;
+  font-family: var(--nimbus-font-mono);
   font-size: 12px;
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--nimbus-glass);
+  border: 1px solid var(--nimbus-border);
   padding: 12px;
-  border-radius: 4px;
+  border-radius: var(--nimbus-radius-sm);
   width: 100%;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--nimbus-text-secondary);
 }
 </style>

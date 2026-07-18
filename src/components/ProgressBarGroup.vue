@@ -32,45 +32,48 @@
     >
       <!-- Single progress or multiple indeterminate with same title -->
       <template v-if="group.display === 'single'">
-        <v-progress-linear
-          :indeterminate="group.indeterminate"
-          :model-value="group.value"
-          color="primary"
-          height="16"
-        >
-          <strong>
-            {{ group.title }}
-            <template v-if="group.total !== undefined">
-              ({{ group.progress }}/{{ group.total }})
-            </template>
-            <template v-if="group.count > 1">
-              ({{ group.count }} remaining)
-            </template>
-          </strong>
-        </v-progress-linear>
+        <div class="progress-item">
+          <div class="progress-label">
+            <span class="progress-title">{{ group.title }}</span>
+            <span v-if="group.total !== undefined" class="progress-detail">
+              {{ group.progress }}/{{ group.total }}
+            </span>
+            <span v-else-if="group.count > 1" class="progress-detail">
+              {{ group.count }} remaining
+            </span>
+          </div>
+          <v-progress-linear
+            :indeterminate="group.indeterminate"
+            :model-value="group.value"
+            height="6"
+            rounded-bar
+          />
+        </div>
       </template>
 
       <!-- Multiple progresses that need individual display -->
       <template v-else>
         <div class="stacked-progress">
-          <v-progress-linear
+          <div
             v-for="progress in group.items"
             :key="progress.id"
-            :indeterminate="progress.total === 0"
-            :model-value="
-              progress.total ? (100 * progress.progress) / progress.total : 0
-            "
-            color="primary"
-            height="10"
-            class="mb-1"
+            class="progress-item"
           >
-            <strong class="caption">
-              {{ progress.title }}
-              <template v-if="progress.total > 0">
-                ({{ progress.progress }}/{{ progress.total }})
-              </template>
-            </strong>
-          </v-progress-linear>
+            <div class="progress-label">
+              <span class="progress-title">{{ progress.title }}</span>
+              <span v-if="progress.total > 0" class="progress-detail">
+                {{ progress.progress }}/{{ progress.total }}
+              </span>
+            </div>
+            <v-progress-linear
+              :indeterminate="progress.total === 0"
+              :model-value="
+                progress.total ? (100 * progress.progress) / progress.total : 0
+              "
+              height="4"
+              rounded-bar
+            />
+          </div>
         </div>
       </template>
     </div>
@@ -164,10 +167,43 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 }
 
 .progress-group {
-  background: rgba(0, 0, 0, 0.7);
-  padding: 4px;
-  border-radius: 4px;
-  color: white;
+  background: rgba(var(--v-theme-surface), 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.progress-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.progress-title {
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-detail {
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .notifications-group {
@@ -206,14 +242,10 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 .stacked-progress {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 10px;
 
-  :deep(.v-progress-linear) {
-    font-size: 0.7rem;
+  .progress-label {
+    font-size: 0.75rem;
   }
-}
-
-:deep(.v-progress-linear) {
-  font-size: 0.75rem;
 }
 </style>

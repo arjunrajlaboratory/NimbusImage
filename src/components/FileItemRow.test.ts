@@ -69,6 +69,6 @@ describe("FileItemRow", () => {
     // Check the stub element exists with the expected color attribute.
     const chip = wrapper.find("v-chip-stub.type-indicator");
     expect(chip.exists()).toBe(true);
-    expect(chip.attributes("color")).toBe("grey");
+    expect(chip.attributes("color")).toBe("secondary");
   });
 });

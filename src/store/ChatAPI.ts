@@ -4,7 +4,11 @@ import {
   IChatMessage,
   IPipelineSuggestRequest,
   ISuggestedPipeline,
+  IToolSuggestion,
+  IToolSuggestionCatalogEntry,
+  IToolSuggestionLayerContext,
 } from "./model";
+import { dataUrlToBase64 } from "@/utils/interfaceCapture";
 
 interface IClaudeAPIChatMessage {
   role: "user" | "assistant";
@@ -41,17 +45,14 @@ function toClaudeApiMessages(
       { type: "text", text: message.content },
     ];
     message.images?.forEach((image: IChatImage) => {
-      const match = image.data.match(
-        /data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+).*,(.*)/,
-      );
-      if (match?.length === 3) {
-        const [, mediaType, data] = match;
+      const parsed = dataUrlToBase64(image.data);
+      if (parsed) {
         messageContent.push({
           type: "image",
           source: {
             type: "base64",
-            media_type: mediaType,
-            data,
+            media_type: parsed.media_type,
+            data: parsed.data,
           },
         });
       }
@@ -84,6 +85,13 @@ function toChatMessage(item: any): IChatMessage | null {
   return null;
 }
 
+function errorFromResponse(error: unknown, fallbackMessage: string): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error(typeof error === "string" ? error : fallbackMessage);
+}
+
 export default class ChatAPI {
   private readonly client: RestClientInstance;
 
@@ -102,7 +110,7 @@ export default class ChatAPI {
       return null;
     }
     if ("error" in data) {
-      throw data.error;
+      throw errorFromResponse(data.error, "Claude chat request failed.");
     }
     return toChatMessage(data);
   }
@@ -119,8 +127,29 @@ export default class ChatAPI {
       return [];
     }
     if ("error" in data) {
-      throw data.error;
+      throw errorFromResponse(data.error, "Claude pipeline suggestion failed.");
     }
     return (data.suggestions ?? []) as ISuggestedPipeline[];
+  }
+
+  // Ask Claude which tools to suggest for a freshly opened dataset, given a
+  // screenshot of the rendered viewport, display-layer context, and the catalog
+  // of tools the frontend can set up. Returns raw suggestions that reference
+  // the catalog by id (see store/toolSuggestions.ts for resolution).
+  async getToolSuggestions(params: {
+    images: { media_type: string; data: string }[];
+    catalog: IToolSuggestionCatalogEntry[];
+    channels: string[];
+    layers: IToolSuggestionLayerContext[];
+  }): Promise<IToolSuggestion[]> {
+    const response = await this.client.post("claude_suggest_tools", params);
+    const { data } = response;
+    if (!data) {
+      return [];
+    }
+    if ("error" in data) {
+      throw errorFromResponse(data.error, "Claude tool suggestion failed.");
+    }
+    return data.suggestions ?? [];
   }
 }
