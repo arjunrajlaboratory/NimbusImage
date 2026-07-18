@@ -1,14 +1,18 @@
-import os
 from unittest import mock
 
 import pytest
 
+from anthropic import APIError
+
 from girder.exceptions import RestException
-from girder_claude_chat.pipeline_suggest import PipelineSuggestResource
+from girder_claude_chat.pipeline_suggest import (
+    MAX_PIPELINE_REQUEST_CHARS,
+    PipelineSuggestResource,
+)
 
 
-def _makeResource():
-    os.environ['ANTHROPIC_API_KEY'] = 'FAKE_API_KEY'
+def _makeResource(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
     return PipelineSuggestResource()
 
 
@@ -22,8 +26,8 @@ def _makeToolUseResponse(pipelines):
 
 
 @pytest.mark.plugin('girder_claude_chat')
-def testSuggestPipelinesReturnsToolInput():
-    resource = _makeResource()
+def testSuggestPipelinesReturnsToolInput(monkeypatch):
+    resource = _makeResource(monkeypatch)
     pipelines = [
         {
             'name': 'Nuclei + metrics',
@@ -90,8 +94,8 @@ def testSuggestPipelinesReturnsToolInput():
 
 
 @pytest.mark.plugin('girder_claude_chat')
-def testSuggestPipelinesHandlesMalformedResponse():
-    resource = _makeResource()
+def testSuggestPipelinesHandlesMalformedResponse(monkeypatch):
+    resource = _makeResource(monkeypatch)
 
     block = mock.Mock()
     block.type = 'text'
@@ -101,15 +105,63 @@ def testSuggestPipelinesHandlesMalformedResponse():
     resource.client = mock.Mock()
     resource.client.messages.create.return_value = response
 
-    with pytest.raises(RestException):
+    with pytest.raises(RestException) as exc:
         resource.suggest_pipelines_imp({'maxSuggestions': 1})
+    assert exc.value.code == 502
 
 
 @pytest.mark.plugin('girder_claude_chat')
-def testSuggestPipelinesWithoutApiKeyRaises():
-    os.environ.pop('ANTHROPIC_API_KEY', None)
+def testSuggestPipelinesHandlesMissingPipelinesKey(monkeypatch):
+    resource = _makeResource(monkeypatch)
+
+    block = mock.Mock()
+    block.type = 'tool_use'
+    block.input = {}
+    response = mock.Mock()
+    response.content = [block]
+
+    resource.client = mock.Mock()
+    resource.client.messages.create.return_value = response
+
+    with pytest.raises(RestException) as exc:
+        resource.suggest_pipelines_imp({'maxSuggestions': 1})
+    assert exc.value.code == 502
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testSuggestPipelinesHandlesApiError(monkeypatch):
+    resource = _makeResource(monkeypatch)
+
+    resource.client = mock.Mock()
+    resource.client.messages.create.side_effect = APIError(
+        message='boom',
+        request=mock.Mock(),
+        body=None,
+    )
+
+    with pytest.raises(RestException) as exc:
+        resource.suggest_pipelines_imp({'maxSuggestions': 1})
+    assert exc.value.code == 502
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testSuggestPipelinesRejectsOversizedRequest(monkeypatch):
+    resource = _makeResource(monkeypatch)
+    resource.client = mock.Mock()
+
+    data = {'goal': 'x' * (MAX_PIPELINE_REQUEST_CHARS + 1)}
+    with pytest.raises(RestException) as exc:
+        resource.suggest_pipelines_imp(data)
+    assert exc.value.code == 400
+    resource.client.messages.create.assert_not_called()
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testSuggestPipelinesWithoutApiKeyRaises(monkeypatch):
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
     resource = PipelineSuggestResource()
 
     assert resource.client is None
-    with pytest.raises(RestException):
+    with pytest.raises(RestException) as exc:
         resource.suggest_pipelines_imp({'maxSuggestions': 1})
+    assert exc.value.code == 503

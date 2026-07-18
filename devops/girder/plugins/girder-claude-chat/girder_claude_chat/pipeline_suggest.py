@@ -1,18 +1,23 @@
-import os
 import json
 import logging
 
-import anthropic
-from anthropic import Anthropic
+from anthropic import APIError
 
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource
 from girder.exceptions import RestException
 
+from girder_claude_chat.common import CLAUDE_MODEL, make_anthropic_client
+
 logger = logging.getLogger(__name__)
 
-CLAUDE_MODEL = 'claude-sonnet-4-6'
+# Upper bound on the serialized request body we forward to the paid Anthropic
+# API. The real payload is a worker catalog plus a short goal string — a few
+# hundred KB at most — so anything bigger is abuse or a bug and is rejected
+# with a 400 before spending money (mirrors MAX_TOOL_SUGGESTION_* in
+# __init__.py).
+MAX_PIPELINE_REQUEST_CHARS = 2 * 1024 * 1024
 
 PIPELINE_SYSTEM_PROMPT = (
     'You suggest NimbusImage analysis pipelines: ordered sequences of '
@@ -104,15 +109,7 @@ class PipelineSuggestResource(Resource):
         self.resourceName = 'claude_pipeline'
         self.route('POST', ('suggest',), self.suggest_pipelines)
 
-        api_key = os.environ.get('ANTHROPIC_API_KEY')
-        if api_key:
-            self.client = Anthropic(api_key=api_key)
-        else:
-            logger.error(
-                "Can't create an Anthropic client without an API key, "
-                'the claude_pipeline endpoint will not work'
-            )
-            self.client = None
+        self.client = make_anthropic_client('claude_pipeline')
 
     # TODO(rate-limit): this endpoint calls the paid Anthropic API on behalf
     # of any logged-in user with no per-user throttle. There is currently no
@@ -149,6 +146,12 @@ class PipelineSuggestResource(Resource):
                 code=503
             )
 
+        payload = json.dumps(data)
+        if len(payload) > MAX_PIPELINE_REQUEST_CHARS:
+            raise RestException(
+                'Pipeline suggestion request is too large.', code=400
+            )
+
         try:
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
@@ -163,10 +166,10 @@ class PipelineSuggestResource(Resource):
                 tools=[SUGGEST_PIPELINES_TOOL],
                 tool_choice={'type': 'tool', 'name': 'suggest_pipelines'},
                 messages=[
-                    {'role': 'user', 'content': json.dumps(data)}
+                    {'role': 'user', 'content': payload}
                 ]
             )
-        except anthropic.APIError as e:
+        except APIError as e:
             logger.error(
                 f'Error calling Claude for pipeline suggestions: {e}',
                 exc_info=True
@@ -181,7 +184,9 @@ class PipelineSuggestResource(Resource):
                 b for b in response.content if b.type == 'tool_use'
             )
             pipelines = block.input['pipelines']
-        except (KeyError, StopIteration, json.JSONDecodeError) as e:
+        # TypeError covers a non-dict `input` (the forced tool schema is not
+        # strict, so the model could in principle return something else).
+        except (KeyError, StopIteration, TypeError) as e:
             logger.error(
                 f'Malformed pipeline suggestion response: {e}',
                 exc_info=True
