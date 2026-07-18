@@ -315,7 +315,14 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import {
+  ref,
+  computed,
+  watch,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+} from "vue";
 import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
@@ -385,14 +392,46 @@ const emit = defineEmits<{
 }>();
 
 const annotationRefMap = new Map<string, Element>();
+type AnnotationRefWaiter = (element: Element | null) => void;
+const annotationRefWaiters = new Map<string, Set<AnnotationRefWaiter>>();
+
 function setAnnotationRef(id: string, el: any) {
   if (el) {
     // In Vue 2, component refs resolve to the component instance; get the $el
     const element = el.$el || el;
     annotationRefMap.set(id, element);
+    const waiters = annotationRefWaiters.get(id);
+    if (waiters) {
+      annotationRefWaiters.delete(id);
+      waiters.forEach((resolve) => resolve(element));
+    }
   } else {
     annotationRefMap.delete(id);
   }
+}
+
+function waitForAnnotationRef(
+  id: string,
+  timeoutMs: number = 1500,
+): Promise<Element | null> {
+  const mounted = annotationRefMap.get(id);
+  if (mounted) {
+    return Promise.resolve(mounted);
+  }
+  return new Promise((resolve) => {
+    const waiters = annotationRefWaiters.get(id) ?? new Set();
+    annotationRefWaiters.set(id, waiters);
+    const finish: AnnotationRefWaiter = (element) => {
+      globalThis.clearTimeout(timeout);
+      waiters.delete(finish);
+      if (waiters.size === 0) {
+        annotationRefWaiters.delete(id);
+      }
+      resolve(element);
+    };
+    waiters.add(finish);
+    const timeout = globalThis.setTimeout(() => finish(null), timeoutMs);
+  });
 }
 
 // Template ref
@@ -409,6 +448,16 @@ const addOrRemove = ref<"add" | "remove">("add");
 // These are "from" or "to" v-data-table
 const page = ref(1);
 const itemsPerPage = ref(10);
+// While a click-to-row navigation is in flight, the server-mode options the
+// table showed when it started. Lets onServerOptions tell Vuetify's stale
+// options echo (equal to this snapshot → drop) apart from a genuine user
+// pagination action (anything else → cancel the navigation and honor it).
+let preNavigationOptions: {
+  page: number;
+  itemsPerPage: number;
+  sort: IAnnotationListSort | null;
+} | null = null;
+let serverNavigationSequence = 0;
 const groupBy = ref<string | string[]>([]);
 const sortBy = ref<{ key: string; order: "asc" | "desc" }[]>([]);
 
@@ -503,13 +552,32 @@ function onServerOptions(opts: {
   // Vuetify's options composable watches {immediate:true} and emits
   // update:options on mount, which would duplicate the onMounted fetchPage().
   // No-op when the incoming options already match the store state so the
-  // mount-time emit doesn't trigger a second identical request.
+  // mount-time emit doesn't trigger a second identical request. (This also
+  // absorbs a post-navigation reconcile echo carrying the NEW options.)
   if (
     opts.page === annotationListServer.page &&
     opts.itemsPerPage === annotationListServer.pageSize &&
     sortsEqual(newSort, annotationListServer.sort)
   ) {
     return;
+  }
+  // Programmatic click-to-row navigation changes page + rows together. Vuetify
+  // can emit its pre-navigation options while reconciling those props;
+  // treating that echo as a user pagination event immediately fetches the old
+  // page again (the brief flash reported on large lists). Drop ONLY that exact
+  // echo — any other options event is a genuine user action, which wins over
+  // the pending navigation.
+  if (preNavigationOptions) {
+    if (
+      opts.page === preNavigationOptions.page &&
+      opts.itemsPerPage === preNavigationOptions.itemsPerPage &&
+      sortsEqual(newSort, preNavigationOptions.sort)
+    ) {
+      return;
+    }
+    preNavigationOptions = null;
+    serverNavigationSequence += 1;
+    annotationListServer.cancelPendingNavigation();
   }
   annotationListServer.setOptions({
     page: opts.page,
@@ -793,27 +861,58 @@ const getPageFromItemId = computed(() => {
 // for external hovers (e.g., hovering an annotation in the image viewer).
 let hoverFromList = false;
 
-// Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
-watch([hoveredId, itemsPerPage], () => {
+async function onHoveredIdOrItemsPerPageChanged() {
+  const navigationSequence = ++serverNavigationSequence;
+  // Cancel an older off-page lookup even when this hover resolves to a row
+  // already mounted on the current page.
+  annotationListServer.cancelPendingNavigation();
   if (hoveredId.value === null) {
+    preNavigationOptions = null;
     hoverFromList = false;
     return;
   }
   if (hoverFromList) {
+    preNavigationOptions = null;
     hoverFromList = false;
     return;
   }
-  // Change page (only for external hovers, e.g., from image viewer). In
-  // server mode the page computation would read the client filtered set (via
-  // getPageFromItemId → dataTableItems → filteredItems), and the hovered row's
-  // server page isn't known client-side — so skip the page jump there but
-  // still scroll to the row when it's on the current server page.
-  if (!isServerMode.value) {
-    page.value = getPageFromItemId.value(hoveredId.value);
+  const targetId = hoveredId.value;
+  let annotationEl: Element | null | undefined;
+  if (isServerMode.value) {
+    preNavigationOptions = {
+      page: annotationListServer.page,
+      itemsPerPage: annotationListServer.pageSize,
+      sort: annotationListServer.sort,
+    };
+    try {
+      if (!annotationRefMap.has(targetId)) {
+        const loaded = await annotationListServer.fetchPageContaining(targetId);
+        // The user may have hovered/clicked something else while the server was
+        // locating this row. Never scroll to or retain a stale navigation.
+        if (!loaded || hoveredId.value !== targetId) {
+          return;
+        }
+      }
+      // VDataTableServer reconciles its internal pagination after Vue's first
+      // tick. Resolve from the actual row ref instead of guessing how many
+      // ticks that render will take.
+      annotationEl = await waitForAnnotationRef(targetId);
+    } finally {
+      if (navigationSequence === serverNavigationSequence) {
+        await nextTick();
+        preNavigationOptions = null;
+      }
+    }
+  } else {
+    preNavigationOptions = null;
+    page.value = getPageFromItemId.value(targetId);
+    annotationEl = await waitForAnnotationRef(targetId);
   }
-  // Get the tr element from the ref map if it exists
-  const annotationEl = annotationRefMap.get(hoveredId.value);
-  if (!annotationEl) {
+  if (
+    !annotationEl ||
+    hoveredId.value !== targetId ||
+    navigationSequence !== serverNavigationSequence
+  ) {
     return;
   }
   // Scroll to the element
@@ -821,7 +920,10 @@ watch([hoveredId, itemsPerPage], () => {
     behavior: "smooth",
     block: "nearest",
   });
-});
+}
+
+// Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
+watch([hoveredId, itemsPerPage], onHoveredIdOrItemsPerPageChanged);
 
 // --- Server-mode reactive refetch -----------------------------------------
 // Each watch body is a no-op in client mode (the client set is reactive on its
@@ -898,7 +1000,14 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  serverNavigationSequence += 1;
+  preNavigationOptions = null;
+  annotationRefWaiters.forEach((waiters) =>
+    waiters.forEach((resolve) => resolve(null)),
+  );
+  annotationRefWaiters.clear();
   debouncedServerRefetch.cancel();
+  annotationListServer.cancelPendingNavigation();
 });
 
 onMounted(() => {
@@ -1010,6 +1119,8 @@ defineExpose({
   columnOptions,
   selectedColumns,
   tableItemClass,
+  setAnnotationRef,
+  waitForAnnotationRef,
   annotationFilteredDialog,
   localIdFilter,
   LIST_ITEM_LIMIT,
@@ -1035,6 +1146,7 @@ defineExpose({
   propertyHeaders,
   goToAnnotationIdLocation,
   hoveredId,
+  onHoveredIdOrItemsPerPageChanged,
   dataTableItems,
   sortBy,
   getPageFromItemId,
@@ -1178,5 +1290,15 @@ td span {
 }
 .compact-table tbody tr td {
   border-bottom: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+}
+
+/* The transparency rule above intentionally wins over Vuetify's table
+   surfaces, but it must not erase interactive row feedback. Apply the color
+   to cells (which cover the row background) with enough specificity to keep a
+   clicked annotation visibly highlighted after the pointer leaves it. */
+.compact-table tbody tr:hover > td,
+.compact-table tbody tr.is-hovered > td,
+.compact-table tbody tr.is-hovered:hover > td {
+  background-color: #616161 !important;
 }
 </style>

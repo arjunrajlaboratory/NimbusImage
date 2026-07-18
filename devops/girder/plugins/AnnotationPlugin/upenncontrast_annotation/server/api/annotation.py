@@ -593,7 +593,7 @@ class Annotation(Resource):
     @describeRoute(
         Description("List annotations (paged), stub-shaped + property values")
         .param("body", "JSON: {datasetId, filters, sort, propertyPaths, "
-                       "offset, limit}", paramType="body")
+                       "offset, limit, anchorId?}", paramType="body")
         .errorResponse()
         .errorResponse("Read access denied.", 403)
     )
@@ -607,6 +607,11 @@ class Annotation(Resource):
         filters = bodyJson.get("filters") or {}
         sort = bodyJson.get("sort")
         propertyPaths = bodyJson.get("propertyPaths") or []
+        anchorIdValue = bodyJson.get("anchorId")
+        anchorId = (
+            requireObjectId(anchorIdValue, "anchorId")
+            if anchorIdValue is not None else None
+        )
         # Parse-or-400 at the boundary, then clamp: a non-integer
         # offset/limit would otherwise raise an uncaught int() error -> 500 on
         # this public endpoint. The limit is clamped to MAX_LIST_LIMIT so a
@@ -625,14 +630,34 @@ class Annotation(Resource):
         # field (ValueError -> 400) before the expensive count aggregation
         # runs, so a bad sort key doesn't pay for a full count.
         try:
-            cursor = self._annotationModel.listPage(
-                datasetId, filters, sort, propertyPaths, offset, limit
+            resolvedOffset = offset
+            if anchorId is not None:
+                position = self._annotationModel.listPosition(
+                    datasetId, filters, sort, anchorId
+                )
+                resolvedOffset = (
+                    (position // limit) * limit
+                    if position is not None else None
+                )
+            cursor = (
+                self._annotationModel.listPage(
+                    datasetId, filters, sort, propertyPaths,
+                    resolvedOffset, limit
+                )
+                if resolvedOffset is not None else []
             )
         except ValueError as e:
             raise RestException(str(e), code=400)
         total = self._annotationModel.listCount(datasetId, filters)
 
-        prefix = b'{"total":' + str(total).encode() + b',"rows":['
+        encodedOffset = (
+            b"null" if resolvedOffset is None
+            else str(resolvedOffset).encode()
+        )
+        prefix = (
+            b'{"total":' + str(total).encode()
+            + b',"offset":' + encodedOffset + b',"rows":['
+        )
         setResponseHeader("Content-Type", "application/json")
         return _streamJsonArray(
             cursor, prefix=prefix, suffix=b"]}", default=orJsonDefaults
