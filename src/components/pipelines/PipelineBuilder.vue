@@ -183,8 +183,10 @@ import propertiesStore from "@/store/properties";
 import { logError } from "@/utils/log";
 import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import PipelineStepEditor from "@/components/pipelines/PipelineStepEditor.vue";
+import { buildDefaultCoordinateAssignments } from "@/store/toolSuggestions";
 import {
   AnnotationShape,
+  clampToMaterializablePropertyShape,
   IAnnotationPipelineStep,
   IPipeline,
   IPropertyPipelineStep,
@@ -235,14 +237,23 @@ function computeAutoWiredSteps(steps: TPipelineStep[]): TPipelineStep[] {
   let lastAnnotation: IAnnotationPipelineStep | null = null;
   return steps.map((step) => {
     if (step.kind === "annotation") {
-      lastAnnotation = step;
+      // Disabled steps are skipped by the runner, so they produce no
+      // annotations for a downstream property step to read — don't wire
+      // from them.
+      if (step.enabled) {
+        lastAnnotation = step;
+      }
       return step;
     }
     if (step.autoWired === false || !lastAnnotation) {
       return step;
     }
     const wiredTags = lastAnnotation.annotation.tags;
-    const wiredShape = lastAnnotation.annotation.shape;
+    // The annotation step may produce a non-materializable shape
+    // (rectangle/circle/ellipse); clamp so the property step stays computable.
+    const wiredShape = clampToMaterializablePropertyShape(
+      lastAnnotation.annotation.shape,
+    );
     if (
       step.shape === wiredShape &&
       step.autoWired === true &&
@@ -264,7 +275,10 @@ const stepCaptions = computed<(string | null)[]>(() => {
     null;
   return localPipeline.value.steps.map((step, index) => {
     if (step.kind === "annotation") {
-      lastAnnotation = { index, step };
+      // Mirror computeAutoWiredSteps: disabled steps are not wiring sources.
+      if (step.enabled) {
+        lastAnnotation = { index, step };
+      }
       return null;
     }
     if (step.autoWired === false) {
@@ -341,11 +355,7 @@ function confirmAddStep() {
       enabled: true,
       annotation: {
         tags: [],
-        coordinateAssignments: {
-          layer: null,
-          Z: { type: "layer", value: 1, max: 1 },
-          Time: { type: "layer", value: 1, max: 1 },
-        },
+        coordinateAssignments: buildDefaultCoordinateAssignments(),
         shape: labels?.annotationShape ?? AnnotationShape.Polygon,
         color: undefined,
       },

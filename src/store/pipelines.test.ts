@@ -10,7 +10,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   main: {
-    dataset: { id: "d1" } as { id: string } | null,
+    // z/time are read by buildDefaultCoordinateAssignments when converting
+    // AI suggestions into steps.
+    dataset: { id: "d1", z: [0], time: [0] } as {
+      id: string;
+      z: number[];
+      time: number[];
+    } | null,
     configuration: {
       pipelines: [] as any[],
       compatibility: { channels: {} as Record<number, string> },
@@ -34,6 +40,9 @@ const h = vi.hoisted(() => ({
     fetchAnnotations: vi.fn().mockResolvedValue(undefined),
     annotationTags: new Set<string>(),
     annotations: [] as any[],
+    // Stub-aware accessor (full annotations, or stubs above the threshold);
+    // suggestPipelines reads shapes from it.
+    annotationsForIteration: [] as any[],
   },
   properties: {
     submitPropertyJob: vi.fn(),
@@ -132,7 +141,7 @@ function submitResult(jobId: string, success: boolean) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.main.dataset = { id: "d1" };
+  h.main.dataset = { id: "d1", z: [0], time: [0] };
   h.main.isLoggedIn = true;
   h.main.configuration = {
     pipelines: [],
@@ -142,6 +151,7 @@ beforeEach(() => {
   h.properties.workerImageList = {};
   h.annotations.annotationTags = new Set();
   h.annotations.annotations = [];
+  h.annotations.annotationsForIteration = [];
 });
 
 describe("runPipeline", () => {

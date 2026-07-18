@@ -1498,6 +1498,18 @@ export const MATERIALIZABLE_PROPERTY_SHAPES: AnnotationShape[] = [
   AnnotationShape.Polygon,
 ];
 
+// Clamp an arbitrary annotation shape to one a property can be computed on,
+// falling back to Polygon (a rectangle/circle/ellipse annotation is closest to
+// a blob). Used wherever a property step derives its shape from an annotation
+// source: the AI suggestion path and the builder's tag auto-wiring.
+export function clampToMaterializablePropertyShape(
+  shape: AnnotationShape,
+): AnnotationShape {
+  return MATERIALIZABLE_PROPERTY_SHAPES.includes(shape)
+    ? shape
+    : AnnotationShape.Polygon;
+}
+
 export interface IAnnotationLocation {
   XY: number;
   Z: number;

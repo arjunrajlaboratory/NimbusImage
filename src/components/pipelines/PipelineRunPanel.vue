@@ -286,32 +286,27 @@ const overallPercent = computed(() =>
 
 // Non-blocking pre-run validation (WORKER_PIPELINES.md §5): flag property
 // steps whose input tags match neither an upstream annotation step's output
-// tags nor any tag already present on the dataset.
-const allKnownOutputTags = computed(() => {
-  const tags = new Set<string>();
-  for (const step of props.pipeline.steps) {
-    if (step.kind === "annotation") {
-      step.annotation.tags.forEach((tag) => tags.add(tag));
-    }
-  }
-  for (const tag of annotationStore.annotationTags) {
-    tags.add(tag);
-  }
-  return tags;
-});
-
+// tags nor any tag already present on the dataset. "Upstream" is literal:
+// only enabled annotation steps BEFORE the property step count — a disabled
+// or later annotation step produces nothing this step could read.
 const preRunWarnings = computed<string[]>(() => {
   const warnings: string[] = [];
+  const knownTags = new Set<string>(annotationStore.annotationTags);
   props.pipeline.steps.forEach((step, index) => {
-    if (step.kind !== "property" || !step.enabled) {
+    if (step.kind === "annotation") {
+      if (step.enabled) {
+        step.annotation.tags.forEach((tag) => knownTags.add(tag));
+      }
+      return;
+    }
+    if (!step.enabled) {
       return;
     }
     const tags = step.inputTags.tags;
     if (tags.length === 0) {
       return;
     }
-    const matches = tags.some((tag) => allKnownOutputTags.value.has(tag));
-    if (!matches) {
+    if (!tags.some((tag) => knownTags.has(tag))) {
       warnings.push(
         `Step ${index + 1} (${step.name}): none of its input tags (${tags.join(", ")}) match any upstream output or existing annotation tags — it may compute on nothing.`,
       );

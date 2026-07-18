@@ -16,9 +16,10 @@ import { createProgressEventCallback, createErrorEventCallback } from "./jobs";
 import progress from "./progress";
 import { logError } from "@/utils/log";
 
+import { buildDefaultCoordinateAssignments } from "./toolSuggestions";
 import {
   AnnotationShape,
-  MATERIALIZABLE_PROPERTY_SHAPES,
+  clampToMaterializablePropertyShape,
   IAnnotationComputeJob,
   IAnnotationPipelineStep,
   IAnnotationProperty,
@@ -73,12 +74,8 @@ function convertSuggestion(suggestion: ISuggestedPipeline): IPipeline | null {
   // Property steps must use a materializable shape; the model may suggest any
   // shape, so clamp unsupported ones (rectangle/circle/ellipse/any) to Blob
   // rather than create a property step that fails on compute.
-  const toPropertyShape = (s: string | undefined): AnnotationShape => {
-    const shape = toShape(s);
-    return MATERIALIZABLE_PROPERTY_SHAPES.includes(shape)
-      ? shape
-      : AnnotationShape.Polygon;
-  };
+  const toPropertyShape = (s: string | undefined): AnnotationShape =>
+    clampToMaterializablePropertyShape(toShape(s));
   const steps: TPipelineStep[] = suggestion.steps.map(
     (raw: ISuggestedPipelineStep) => {
       const base = {
@@ -108,11 +105,7 @@ function convertSuggestion(suggestion: ISuggestedPipeline): IPipeline | null {
           tags: raw.outputTags ?? [],
           shape: toShape(raw.shape),
           color: undefined,
-          coordinateAssignments: {
-            layer: null,
-            Z: { type: "layer", value: 1, max: 1 },
-            Time: { type: "layer", value: 1, max: 1 },
-          },
+          coordinateAssignments: buildDefaultCoordinateAssignments(),
         },
       };
       return step;
@@ -793,8 +786,10 @@ export class Pipelines extends VuexModule {
       ? Object.values(main.configuration.compatibility.channels)
       : [];
     const existingTags = [...annotations.annotationTags];
+    // annotationsForIteration is stub-aware: above the stub threshold the full
+    // `annotations` array is empty and only stubs (which carry shape) exist.
     const existingShapes = [
-      ...new Set(annotations.annotations.map((a) => a.shape)),
+      ...new Set(annotations.annotationsForIteration.map((a) => a.shape)),
     ];
 
     const suggestions = await main.chatAPI.suggestPipelines({

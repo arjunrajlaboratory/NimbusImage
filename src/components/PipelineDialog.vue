@@ -1,10 +1,14 @@
 <template>
+  <!-- `eager` keeps the content mounted while the dialog is closed: a
+       pipeline run keeps going after close, and the run panel's live step
+       statuses and cancel handle must survive until the user reopens. -->
   <v-dialog
     v-model="dialogOpen"
     min-width="900px"
     max-width="1100px"
     width="85%"
     class="wide-dialog"
+    eager
   >
     <v-card>
       <v-card-title class="d-flex align-center">
@@ -14,6 +18,7 @@
           icon
           size="small"
           class="mr-2"
+          :disabled="isRunViewLocked"
           @click="backToList"
         >
           <v-icon>mdi-arrow-left</v-icon>
@@ -61,6 +66,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import pipelinesStore from "@/store/pipelines";
 import PipelineList from "@/components/pipelines/PipelineList.vue";
 import PipelineBuilder from "@/components/pipelines/PipelineBuilder.vue";
 import PipelineRunPanel from "@/components/pipelines/PipelineRunPanel.vue";
@@ -105,9 +111,22 @@ function onUseSuggestion(pipeline: IPipeline) {
   openBuilder(pipeline);
 }
 
-// Reset to the list view every time the dialog is (re)opened.
+// While the displayed pipeline is running, leaving the run view would destroy
+// the run panel (v-else-if) and with it the live step statuses and the cancel
+// handle — the list's Run button is disabled during a run, so there would be
+// no way back in. Lock navigation until the run finishes (Cancel remains
+// available inside the panel).
+const isRunViewLocked = computed(
+  () =>
+    activeView.value === "run" &&
+    activePipeline.value !== null &&
+    pipelinesStore.runningPipelineId === activePipeline.value.id,
+);
+
+// Reset to the list view every time the dialog is (re)opened — unless a run
+// is in flight, in which case reopening must land back on the live run panel.
 watch(dialogOpen, (open) => {
-  if (open) {
+  if (open && !isRunViewLocked.value) {
     backToList();
   }
 });

@@ -89,7 +89,7 @@
               Duplicate
             </v-btn>
             <v-btn
-              variant="outlined"
+              variant="text"
               color="error"
               size="small"
               @click="askDelete(pipeline)"

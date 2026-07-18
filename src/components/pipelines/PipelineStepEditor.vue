@@ -37,7 +37,6 @@
         <v-col class="py-1">
           <annotation-configuration
             :model-value="annotationSetup"
-            :hide-shape="false"
             @update:model-value="onAnnotationSetupChange"
           />
         </v-col>
@@ -208,7 +207,11 @@ function onAnnotationSetupChange(value: IAnnotationSetup) {
 
 const propertyShape = computed({
   get: () => propertyStepValue.value?.shape ?? AnnotationShape.Polygon,
-  set: (value: AnnotationShape) => patchPropertyStep({ shape: value }),
+  // Like a manual tag edit, a manual shape edit detaches auto-wiring —
+  // otherwise PipelineBuilder's computeAutoWiredSteps would immediately
+  // overwrite the shape from the upstream annotation step again.
+  set: (value: AnnotationShape) =>
+    patchPropertyStep({ shape: value, autoWired: false }),
 });
 
 const inputTags = computed({
@@ -285,7 +288,13 @@ const image = computed({
   set: (value: string | null) => onImageChange(value),
 });
 
+// Guards onImageChange against out-of-order completion: two rapid image
+// switches can resolve in reverse order (the first interface fetch may be
+// slow while the second is cached), and only the latest selection may patch.
+let imageChangeToken = 0;
+
 async function onImageChange(newImage: string | null) {
+  const token = ++imageChangeToken;
   const previous = step.value;
   const img = newImage ?? "";
   if (!img) {
@@ -293,6 +302,9 @@ async function onImageChange(newImage: string | null) {
     return;
   }
   await ensureWorkerInterface(img);
+  if (token !== imageChangeToken) {
+    return;
+  }
   const workerInterfaceValues = seedWorkerInterfaceValues(
     img,
     previous.workerInterfaceValues,
