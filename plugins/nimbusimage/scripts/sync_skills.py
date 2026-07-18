@@ -165,15 +165,30 @@ def validate_metadata(errors: list[str]) -> None:
     if claude_manifest.get("version") != codex_manifest.get("version"):
         errors.append("Claude and Codex plugin versions must match")
 
-    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
-    required_readme_text = (
-        "claude plugin install nimbusimage@NimbusImage",
-        "codex plugin add nimbusimage@NimbusImage",
-        "python3 plugins/nimbusimage/scripts/sync_skills.py --check",
-    )
-    for required in required_readme_text:
-        if required not in readme:
-            errors.append(f"README is missing: {required}")
+    documentation_requirements = {
+        REPO_ROOT / "README.md": (
+            "Python API and agent skills",
+            "./plugins/nimbusimage/README.md",
+        ),
+        REPO_ROOT / "nimbusimage" / "README.md": (
+            "Agent integration: Claude Code and Codex",
+            "claude plugin install nimbusimage@NimbusImage",
+            "codex plugin add nimbusimage@NimbusImage",
+        ),
+        PLUGIN_ROOT / "README.md": (
+            "claude plugin install nimbusimage@NimbusImage",
+            "codex plugin add nimbusimage@NimbusImage",
+            "python3 plugins/nimbusimage/scripts/sync_skills.py --check",
+        ),
+    }
+    for documentation_path, required_values in documentation_requirements.items():
+        documentation = documentation_path.read_text(encoding="utf-8")
+        for required in required_values:
+            if required not in documentation:
+                errors.append(
+                    f"{documentation_path.relative_to(REPO_ROOT)} is missing: "
+                    f"{required}"
+                )
 
     agents_path = REPO_ROOT / "AGENTS.md"
     if not agents_path.is_symlink() or os.readlink(agents_path) != "CLAUDE.md":

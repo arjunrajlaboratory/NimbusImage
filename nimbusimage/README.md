@@ -114,51 +114,49 @@ ni.connect() -> NimbusClient
 
 See [docs.nimbusimage.com](https://docs.nimbusimage.com) for general documentation and the [API reference](https://arjunrajlaboratory.github.io/NimbusImage/) for detailed API docs.
 
-## Claude Code integration
+## Agent integration: Claude Code and Codex
 
-NimbusImage includes skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that teach Claude how to use this API. After installing, you can ask Claude things like "connect to my NimbusImage server and list datasets" and it will write correct code.
+NimbusImage includes a shared set of Agent Skills that teach Claude Code and Codex how to use this API. After installing the plugin, ask either agent to connect to a NimbusImage server, inspect datasets, retrieve images, manage annotations, run workers, or export results.
 
-### Install the skills
-
-**Option A — Marketplace install (recommended):**
+### Claude Code
 
 ```bash
 # Add the NimbusImage marketplace (one-time)
 claude plugin marketplace add arjunrajlaboratory/NimbusImage
 
-# Install the nimbusimage plugin
-claude plugin install nimbusimage@arjunrajlaboratory/NimbusImage
+# Install the plugin
+claude plugin install nimbusimage@NimbusImage
 ```
 
-**Option B — For this session only:**
+For development from a local clone, load the plugin for one session:
 
 ```bash
 claude --plugin-dir /path/to/NimbusImage/plugins/nimbusimage
 ```
 
-**Option C — Permanent (project-scoped):**
+### Codex
 
-Add to your project's `.claude/settings.local.json`:
+```bash
+# Add the NimbusImage marketplace (one-time)
+codex plugin marketplace add arjunrajlaboratory/NimbusImage
 
-```json
-{
-  "plugins": ["/path/to/NimbusImage/plugins/nimbusimage"]
-}
+# Install the plugin
+codex plugin add nimbusimage@NimbusImage
 ```
+
+When working inside a clone of this repository, Codex can also discover the synchronized repository-local skills under `.agents/skills/` without installing the plugin.
 
 ### Available skills
 
+| Skill | Claude Code | Codex | What it covers |
+|-------|-------------|-------|----------------|
+| Core | `/nimbus-skills:nimbusimage` | `$nimbusimage:nimbusimage` | Connection, dataset discovery, metadata, projects |
+| Annotations | `/nimbus-skills:annotations` | `$nimbusimage:annotations` | CRUD, geometry helpers, bulk operations |
+| Images | `/nimbus-skills:images` | `$nimbusimage:images` | Frame retrieval, composites, z-stacks, crops |
+| Workers | `/nimbus-skills:workers` | `$nimbusimage:workers` | Docker worker discovery, execution, job tracking |
+| Analyze | `/nimbus-skills:analyze` | `$nimbusimage:analyze` | Properties, export, connections, sharing |
 
-| Command                    | What it covers                                     |
-| -------------------------- | -------------------------------------------------- |
-| `/nimbusimage`             | Connection, dataset discovery, metadata, projects  |
-| `/nimbusimage:annotations` | Annotation CRUD, geometry helpers, bulk operations |
-| `/nimbusimage:images`      | Frame retrieval, composites, z-stacks, crops       |
-| `/nimbusimage:workers`     | Docker worker discovery, execution, job tracking   |
-| `/nimbusimage:analyze`     | Properties, export, connections, sharing           |
-
-
-The skills use progressive disclosure — Claude loads only what it needs for the current task.
+The skills use progressive disclosure, so each agent loads detailed instructions and API references only when needed. See the [plugin documentation](../plugins/nimbusimage/README.md) for repository-local Codex aliases and skill-development instructions.
 
 ## Development
 
