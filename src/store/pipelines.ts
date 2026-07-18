@@ -76,6 +76,14 @@ function convertSuggestion(suggestion: ISuggestedPipeline): IPipeline | null {
   // rather than create a property step that fails on compute.
   const toPropertyShape = (s: string | undefined): AnnotationShape =>
     clampToMaterializablePropertyShape(toShape(s));
+  // Tag wiring is what joins pipeline steps (property steps read the
+  // annotations their input tags select), so a suggestion without tags would
+  // produce a pipeline whose property steps compute on nothing. The backend
+  // prompt asks the model for tags; these fallbacks make the wiring robust
+  // when it omits them anyway: annotation steps get a tag derived from their
+  // name, and untagged property steps inherit the preceding annotation
+  // step's tags.
+  let lastAnnotationTags: string[] = [];
   const steps: TPipelineStep[] = suggestion.steps.map(
     (raw: ISuggestedPipelineStep) => {
       const base = {
@@ -91,18 +99,24 @@ function convertSuggestion(suggestion: ISuggestedPipeline): IPipeline | null {
           kind: "property",
           shape: toPropertyShape(raw.shape),
           inputTags: {
-            tags: raw.inputTags ?? [],
+            tags: raw.inputTags?.length
+              ? [...raw.inputTags]
+              : [...lastAnnotationTags],
             exclusive: false,
           },
           autoWired: true,
         };
         return step;
       }
+      const outputTags = raw.outputTags?.length
+        ? [...raw.outputTags]
+        : [base.name.toLowerCase().trim()].filter(Boolean);
+      lastAnnotationTags = outputTags;
       const step: IAnnotationPipelineStep = {
         ...base,
         kind: "annotation",
         annotation: {
-          tags: raw.outputTags ?? [],
+          tags: outputTags,
           shape: toShape(raw.shape),
           color: undefined,
           coordinateAssignments: buildDefaultCoordinateAssignments(),
@@ -329,6 +343,7 @@ export class Pipelines extends VuexModule {
     datasetId,
     continueOnError = false,
     onStepStart,
+    onStepJob,
     onStepProgress,
     onStepError,
     onStepComplete,
@@ -341,6 +356,9 @@ export class Pipelines extends VuexModule {
     datasetId?: string;
     continueOnError?: boolean;
     onStepStart?: (stepIndex: number, step: TPipelineStep) => void;
+    // Fired as soon as a step's backend job is created, so the caller can
+    // offer live job-log access (the job id is otherwise runner-internal).
+    onStepJob?: (stepIndex: number, jobId: string) => void;
     onStepProgress?: (stepIndex: number, info: IProgressInfo) => void;
     onStepError?: (stepIndex: number, errors: IErrorInfoList) => void;
     onStepComplete?: (stepIndex: number, success: boolean) => void;
@@ -488,6 +506,7 @@ export class Pipelines extends VuexModule {
 
         if (submitted) {
           currentJob = submitted.job;
+          onStepJob?.(stepIndex, submitted.job.jobId);
           success = await submitted.completionPromise;
           currentJob = null;
         } else {

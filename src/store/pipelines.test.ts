@@ -180,6 +180,23 @@ describe("runPipeline", () => {
     expect(result.failedStepIndex).toBeNull();
   });
 
+  it("reports each step's job id through onStepJob", async () => {
+    h.annotations.submitAnnotationWorkerJob.mockImplementation(
+      async ({ tool }: any) => submitResult("j-" + tool.id, true),
+    );
+
+    const jobIds: Array<[number, string]> = [];
+    await pipelinesStore.runPipeline({
+      pipeline: pipeline([annotationStep("a"), annotationStep("b")]),
+      onStepJob: (i, jobId) => jobIds.push([i, jobId]),
+    });
+
+    expect(jobIds).toEqual([
+      [0, "j-a"],
+      [1, "j-b"],
+    ]);
+  });
+
   it("skips disabled steps", async () => {
     const order: string[] = [];
     h.annotations.submitAnnotationWorkerJob.mockImplementation(
@@ -601,6 +618,73 @@ describe("suggestPipelines", () => {
       (s) => s.kind === "property",
     ) as any;
     expect(propertyStepResult.shape).toBe(AnnotationShape.Polygon);
+  });
+
+  it("synthesizes tags when the model omits them and wires property steps", async () => {
+    h.properties.workerImageList = {
+      "img/annotate": { isAnnotationWorker: "true" },
+      "img/prop": { isPropertyWorker: "true" },
+    };
+    h.main.chatAPI.suggestPipelines.mockResolvedValue([
+      {
+        name: "S",
+        rationale: "r",
+        steps: [
+          // No outputTags → tag synthesized from the step name.
+          { kind: "annotation", image: "img/annotate", name: "Spot Finder" },
+          // No inputTags → inherits the preceding annotation step's tags.
+          { kind: "property", image: "img/prop", name: "metrics" },
+        ],
+      },
+    ]);
+
+    const result = await pipelinesStore.suggestPipelines("goal");
+
+    const annotationStepResult = result[0].steps.find(
+      (s) => s.kind === "annotation",
+    ) as any;
+    const propertyStepResult = result[0].steps.find(
+      (s) => s.kind === "property",
+    ) as any;
+    expect(annotationStepResult.annotation.tags).toEqual(["spot finder"]);
+    expect(propertyStepResult.inputTags.tags).toEqual(["spot finder"]);
+  });
+
+  it("keeps model-provided tags when present", async () => {
+    h.properties.workerImageList = {
+      "img/annotate": { isAnnotationWorker: "true" },
+      "img/prop": { isPropertyWorker: "true" },
+    };
+    h.main.chatAPI.suggestPipelines.mockResolvedValue([
+      {
+        name: "S",
+        rationale: "r",
+        steps: [
+          {
+            kind: "annotation",
+            image: "img/annotate",
+            name: "seg",
+            outputTags: ["nuclei"],
+          },
+          {
+            kind: "property",
+            image: "img/prop",
+            name: "metrics",
+            inputTags: ["nuclei"],
+          },
+        ],
+      },
+    ]);
+
+    const result = await pipelinesStore.suggestPipelines("goal");
+    const annotationStepResult = result[0].steps.find(
+      (s) => s.kind === "annotation",
+    ) as any;
+    const propertyStepResult = result[0].steps.find(
+      (s) => s.kind === "property",
+    ) as any;
+    expect(annotationStepResult.annotation.tags).toEqual(["nuclei"]);
+    expect(propertyStepResult.inputTags.tags).toEqual(["nuclei"]);
   });
 
   it("drops steps whose image is not installed", async () => {

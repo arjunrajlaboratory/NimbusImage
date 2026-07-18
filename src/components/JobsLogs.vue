@@ -163,45 +163,17 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import store from "@/store/index";
-import { formatDateString, formatDuration } from "@/utils/date";
+import { formatDateString } from "@/utils/date";
 import { IJob } from "@/store/model";
 import { logError } from "@/utils/log";
-
-interface JobLogProperty {
-  color: string;
-  statusText: string;
-  stateText: string;
-}
-
-const jobLogStatus: { [key: number]: JobLogProperty } = {
-  0: { color: "grey", statusText: "Inactive", stateText: "Job is inactive." },
-  1: { color: "blue", statusText: "Queued", stateText: "Job is queued." },
-  2: {
-    color: "orange",
-    statusText: "Running",
-    stateText: "Job is still running...",
-  },
-  3: {
-    color: "green",
-    statusText: "Success",
-    stateText: "Job completed successfully.",
-  },
-  4: {
-    color: "red",
-    statusText: "Error",
-    stateText: "Job failed with errors.",
-  },
-  5: {
-    color: "purple",
-    statusText: "Cancelled",
-    stateText: "Job was cancelled.",
-  },
-  824: {
-    color: "yellow",
-    statusText: "Cancelling",
-    stateText: "Job is being cancelled...",
-  },
-};
+import {
+  formatJobLogHeader,
+  getJobDuration,
+  getJobEndTime,
+  getJobStatusColor,
+  getJobStatusText,
+} from "@/utils/jobLog";
+import { copyTextToClipboard } from "@/utils/clipboard";
 
 const showJobsDialog = ref(false);
 const showLogDialog = ref(false);
@@ -238,60 +210,10 @@ async function fetchJobs() {
   }
 }
 
-function getStatusColor(status: number): string {
-  if (status in jobLogStatus) {
-    return jobLogStatus[status].color;
-  }
-  return "grey";
-}
-
-function getStatusText(status: number): string {
-  if (status in jobLogStatus) {
-    return jobLogStatus[status].statusText;
-  }
-  return "Unknown";
-}
-
-function getJobState(status: number): string {
-  if (status in jobLogStatus) {
-    return jobLogStatus[status].stateText;
-  }
-  return "Job status: " + getStatusText(status);
-}
-
-function getEndTime(job: any): string {
-  const endTimestamp = job.timestamps?.find((ts: any) =>
-    [3, 4, 5].includes(ts.status),
-  );
-
-  if (endTimestamp) {
-    return formatDateString(endTimestamp.time);
-  }
-
-  return job.status === 2 ? "Running..." : "N/A";
-}
-
-function getDuration(job: any): string {
-  const endTimestamp = job.timestamps?.find((ts: any) =>
-    [3, 4, 5].includes(ts.status),
-  );
-
-  if (endTimestamp) {
-    const startDate = new Date(job.created).getTime();
-    const endDate = new Date(endTimestamp.time).getTime();
-    const duration = endDate - startDate;
-    return formatDuration(duration);
-  }
-
-  if (job.status === 2) {
-    const startDate = new Date(job.created).getTime();
-    const now = new Date().getTime();
-    const duration = now - startDate;
-    return formatDuration(duration) + " (running)";
-  }
-
-  return "N/A";
-}
+const getStatusColor = getJobStatusColor;
+const getStatusText = getJobStatusText;
+const getEndTime = getJobEndTime;
+const getDuration = getJobDuration;
 
 async function viewJobLog(job: IJob): Promise<void> {
   selectedJob.value = job;
@@ -309,59 +231,19 @@ async function viewJobLog(job: IJob): Promise<void> {
       return;
     }
 
-    const endTime = getEndTime(jobWithLog);
-    const duration = getDuration(jobWithLog);
-
-    const logHeader =
-      `=== Job ${jobWithLog._id} (${jobWithLog.title}) ===\n\n` +
-      `Started: ${formatDateString(jobWithLog.created)}\n` +
-      `Ended: ${endTime}\n` +
-      `Duration: ${duration}\n` +
-      `Status: ${getStatusText(jobWithLog.status)}\n` +
-      `Type: ${jobWithLog.type}\n\n` +
-      `Arguments:\n${(jobWithLog.args ?? []).join("\n")}\n\n` +
-      `${getJobState(jobWithLog.status)}\n\n`;
-
     currentJobLog.value =
-      logHeader + (jobWithLog.log || "No log content available.");
+      formatJobLogHeader(jobWithLog) +
+      (jobWithLog.log || "No log content available.");
   } catch (error) {
     logError("Error fetching job log:", error);
     currentJobLog.value = "Error fetching job log. Please try again.";
   }
 }
 
-function copyLogToClipboard(): void {
-  if (currentJobLog.value) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard
-        .writeText(currentJobLog.value)
-        .then(() => {
-          showCopySnackbar.value = true;
-        })
-        .catch(() => {
-          copyToClipboardFallback(currentJobLog.value);
-        });
-    } else {
-      copyToClipboardFallback(currentJobLog.value);
-    }
-  }
-}
-
-function copyToClipboardFallback(text: string): void {
-  const tempTextArea = document.createElement("textarea");
-  tempTextArea.value = text;
-  tempTextArea.style.position = "fixed";
-  document.body.appendChild(tempTextArea);
-  tempTextArea.select();
-
-  try {
-    document.execCommand("copy");
+async function copyLogToClipboard(): Promise<void> {
+  if (await copyTextToClipboard(currentJobLog.value)) {
     showCopySnackbar.value = true;
-  } catch (err) {
-    logError("Failed to copy text: ", err);
   }
-
-  document.body.removeChild(tempTextArea);
 }
 
 async function refreshLog(): Promise<void> {

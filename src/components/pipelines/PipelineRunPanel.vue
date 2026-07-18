@@ -107,6 +107,18 @@
             {{ statusIcon(stepStatuses[index]?.status) }}
           </v-icon>
         </template>
+        <template v-slot:append>
+          <v-btn
+            v-if="stepJobIds[index]"
+            variant="text"
+            color="info"
+            size="small"
+            @click="openStepLog(index)"
+          >
+            <v-icon size="small" start>mdi-text-box-outline</v-icon>
+            Logs
+          </v-btn>
+        </template>
         <v-list-item-title>
           {{ index + 1 }}. {{ step.name || step.image }}
         </v-list-item-title>
@@ -192,6 +204,12 @@
       {{ lastRunWasBatch ? "datasets" : "steps" }} succeeded,
       {{ result.failed }} failed, {{ result.cancelled }} cancelled.
     </v-alert>
+
+    <job-log-dialog
+      v-model="showLogDialog"
+      :job-id="logDialogJobId"
+      :title="logDialogTitle"
+    />
   </v-container>
 </template>
 
@@ -200,6 +218,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import store from "@/store";
 import pipelinesStore from "@/store/pipelines";
 import annotationStore from "@/store/annotation";
+import JobLogDialog from "@/components/JobLogDialog.vue";
 import { useCollectionDatasetCount } from "@/utils/useCollectionDatasetCount";
 import {
   IErrorInfoList,
@@ -229,6 +248,12 @@ interface IStepRunState {
 
 const continueOnError = ref(false);
 const stepStatuses = ref<IStepRunState[]>([]);
+// Backend job id per step (filled in as each step's job is created), so the
+// Logs button can show why a worker is stuck or failed.
+const stepJobIds = ref<(string | null)[]>([]);
+const showLogDialog = ref(false);
+const logDialogJobId = ref<string | null>(null);
+const logDialogTitle = ref("");
 const cancelFn = ref<(() => void) | null>(null);
 const cancelledByUser = ref(false);
 const result = ref<IPipelineRunResult | null>(null);
@@ -349,6 +374,13 @@ function initStepStatuses() {
     progress: {},
     errors: { errors: [] },
   }));
+  stepJobIds.value = props.pipeline.steps.map(() => null);
+}
+
+function openStepLog(index: number) {
+  logDialogJobId.value = stepJobIds.value[index];
+  logDialogTitle.value = `Step log: ${props.pipeline.steps[index]?.name ?? ""}`;
+  showLogDialog.value = true;
 }
 
 watch(
@@ -382,6 +414,11 @@ async function run() {
     pipeline: props.pipeline,
     continueOnError: continueOnError.value,
     onStepStart: (index) => setStatus(index, "running"),
+    onStepJob: (index, jobId) => {
+      if (index < stepJobIds.value.length) {
+        stepJobIds.value[index] = jobId;
+      }
+    },
     onStepProgress: (index, info) => {
       if (stepStatuses.value[index]) {
         stepStatuses.value[index].progress = info;

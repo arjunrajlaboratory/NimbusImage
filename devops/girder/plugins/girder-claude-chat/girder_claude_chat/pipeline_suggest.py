@@ -27,8 +27,12 @@ PIPELINE_SYSTEM_PROMPT = (
     'propertyWorkers lists. Never invent an image.\n'
     '- Annotation-producing steps must come before the property steps '
     'that depend on their output.\n'
-    "- Reuse an annotation step's outputTags as the inputTags of "
-    'downstream property steps that operate on those annotations.\n'
+    '- Tags are how steps connect: EVERY annotation step MUST set '
+    'outputTags (1-2 short, lowercase tags naming what it detects, '
+    'e.g. "nuclei" or "spots"), and EVERY property step MUST set '
+    'inputTags to the outputTags of the annotation step whose output '
+    'it measures. Reuse tags from context.existingTags when the user '
+    'goal refers to annotations that already exist.\n'
     "- Prefer parameter values within each interface element's "
     'declared min/max; otherwise omit the parameter and let the '
     'worker default apply.\n'
@@ -71,11 +75,22 @@ SUGGEST_PIPELINES_TOOL = {
                                     'name': {'type': 'string'},
                                     'outputTags': {
                                         'type': 'array',
-                                        'items': {'type': 'string'}
+                                        'items': {'type': 'string'},
+                                        'description': (
+                                            'REQUIRED for annotation '
+                                            'steps: 1-2 short lowercase '
+                                            'tags naming the detected '
+                                            'objects.'
+                                        )
                                     },
                                     'inputTags': {
                                         'type': 'array',
-                                        'items': {'type': 'string'}
+                                        'items': {'type': 'string'},
+                                        'description': (
+                                            'REQUIRED for property steps: '
+                                            'the outputTags of the '
+                                            'annotation step this measures.'
+                                        )
                                     },
                                     'shape': {
                                         'enum': [
