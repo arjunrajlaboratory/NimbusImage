@@ -312,6 +312,8 @@ export enum ProgressType {
   PROPERTY_FETCH = "PROPERTY_FETCH",
   PROPERTY_COMPUTE = "PROPERTY_COMPUTE",
   BATCH_PROPERTY_COMPUTE = "BATCH_PROPERTY_COMPUTE",
+  PIPELINE_COMPUTE = "PIPELINE_COMPUTE",
+  BATCH_PIPELINE_COMPUTE = "BATCH_PIPELINE_COMPUTE",
   CONNECTION_FETCH = "CONNECTION_FETCH",
   CONNECTION_SAVE = "CONNECTION_SAVE",
   CONNECTION_DELETE = "CONNECTION_DELETE",
@@ -512,6 +514,7 @@ export interface IDatasetConfigurationBase {
   tools: IToolConfiguration[];
   snapshots: ISnapshot[];
   propertyIds: string[];
+  pipelines: IPipeline[];
   scales: IScales;
 }
 
@@ -1485,6 +1488,28 @@ export const AnnotationNames = {
   [AnnotationShape.Any]: "Any", // This was added to support the "Any" shape
 };
 
+// Shapes a computed property can be attached to. Must match the backend
+// annotation_property schema enum (server/models/property.py) — property
+// workers only operate on these, so a property step / materialized property
+// with any other shape would be rejected on compute.
+export const MATERIALIZABLE_PROPERTY_SHAPES: AnnotationShape[] = [
+  AnnotationShape.Point,
+  AnnotationShape.Line,
+  AnnotationShape.Polygon,
+];
+
+// Clamp an arbitrary annotation shape to one a property can be computed on,
+// falling back to Polygon (a rectangle/circle/ellipse annotation is closest to
+// a blob). Used wherever a property step derives its shape from an annotation
+// source: the AI suggestion path and the builder's tag auto-wiring.
+export function clampToMaterializablePropertyShape(
+  shape: AnnotationShape,
+): AnnotationShape {
+  return MATERIALIZABLE_PROPERTY_SHAPES.includes(shape)
+    ? shape
+    : AnnotationShape.Polygon;
+}
+
 export interface IAnnotationLocation {
   XY: number;
   Z: number;
@@ -1674,6 +1699,104 @@ export interface IAnnotationPropertyConfiguration {
 
 export interface IAnnotationProperty extends IAnnotationPropertyConfiguration {
   id: string;
+}
+
+// Annotation setup shared by the annotation-producing tool UIs and by
+// annotation pipeline steps. (Historically defined in AnnotationConfiguration.vue,
+// which now re-exports it from here.)
+export interface IAnnotationSetup {
+  tags: string[];
+  coordinateAssignments: {
+    layer: string | null | undefined;
+    Z: {
+      type: string;
+      value: number;
+      max: number;
+    };
+    Time: {
+      type: string;
+      value: number;
+      max: number;
+    };
+  };
+  shape: AnnotationShape;
+  color: string | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Worker pipelines
+//
+// A pipeline is an ordered list of steps stored on a configuration. Each step
+// is a self-contained worker invocation: either an annotation-producing worker
+// (segmentation path) or a property-computing worker (property path). Steps do
+// not pass data in memory — each writes annotations/property values back to the
+// dataset and downstream steps read them back, joined by tags + shape.
+// See codebaseDocumentation/WORKER_PIPELINES.md.
+// ---------------------------------------------------------------------------
+
+export type TPipelineStepKind = "annotation" | "property";
+
+export interface IPipelineStepBase {
+  // Stable id, unique within the pipeline.
+  readonly id: string;
+  kind: TPipelineStepKind;
+  // Display name, defaults to the worker's interfaceName label.
+  name: string;
+  // Docker image tag.
+  image: string;
+  // The user-picked runtime parameters for this worker image.
+  workerInterfaceValues: IWorkerInterfaceValues;
+  // Skipped by the runner when false.
+  enabled: boolean;
+}
+
+export interface IAnnotationPipelineStep extends IPipelineStepBase {
+  kind: "annotation";
+  // Mirrors tool.values.annotation. `annotation.tags` ARE this step's output
+  // tags (applied to the annotations the worker produces).
+  annotation: IAnnotationSetup;
+  // Mirrors tool.values.connectTo (optional connection wiring).
+  connectTo?: {
+    tags: string[];
+    layer: string | null;
+    exclusive?: boolean;
+  };
+  // Mirrors tool.values.jobDateTag.
+  jobDateTag?: boolean;
+}
+
+export interface IPropertyPipelineStep extends IPipelineStepBase {
+  kind: "property";
+  // Which annotations this property computes on.
+  shape: AnnotationShape;
+  // Tag filter selecting INPUT annotations. Normally set to the output tags of
+  // an upstream annotation step (see tag wiring in WORKER_PIPELINES.md).
+  inputTags: { tags: string[]; exclusive: boolean };
+  // True when inputTags/shape were auto-wired from an upstream annotation step
+  // (so the builder knows it may safely refresh them; manual edits clear it).
+  autoWired?: boolean;
+  // Set lazily by the runner on first successful run: the id of the persisted
+  // IAnnotationProperty this step created. Reused on later runs. Cleared if the
+  // referenced property no longer exists (runner re-creates).
+  materializedPropertyId?: string;
+}
+
+export type TPipelineStep = IAnnotationPipelineStep | IPropertyPipelineStep;
+
+export interface IPipeline {
+  readonly id: string;
+  name: string;
+  description?: string;
+  steps: TPipelineStep[];
+  // Provenance, for UI badges.
+  origin?: "user" | "preset";
+}
+
+export interface IPipelineRunResult {
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  failedStepIndex: number | null;
 }
 
 export type TNestedValues<T> = T | { [pathName: string]: TNestedValues<T> };
@@ -2138,6 +2261,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
     tools: [],
     snapshots: [],
     propertyIds: [],
+    pipelines: [],
     scales: {
       pixelSize: { value: 1, unit: "m" },
       zStep: { value: 1, unit: "m" },

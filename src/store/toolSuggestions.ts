@@ -80,7 +80,11 @@ const MANUAL_CATALOG: IToolSuggestionCatalogEntry[] = [
   },
 ];
 
-function buildDefaultCoordinateAssignments(
+// Exported for reuse by the pipeline builder / AI pipeline suggestions, which
+// also create annotation setups programmatically and need dataset-derived
+// Z/Time maxima (a hardcoded max would break the step editor's "Assign"
+// validation, whose rule is `value < max`).
+export function buildDefaultCoordinateAssignments(
   layerId?: string,
 ): IAnnotationSetup["coordinateAssignments"] {
   return {

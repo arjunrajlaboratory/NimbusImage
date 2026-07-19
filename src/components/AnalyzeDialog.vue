@@ -102,7 +102,7 @@
 import { ref, computed, watch } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
-import { logError } from "@/utils/log";
+import { useCollectionDatasetCount } from "@/utils/useCollectionDatasetCount";
 import AnalyzePanel from "@/components/AnalyzePanel.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
 import { IAnnotationProperty } from "@/store/model";
@@ -132,48 +132,22 @@ const batchProgress = ref<{
   currentDatasetName: string;
 } | null>(null);
 const batchCancelFunction = ref<(() => void) | null>(null);
-const collectionDatasetCount = ref(0);
-const loadingDatasetCount = ref(false);
-const BATCH_DATASET_LIMIT = 50;
+const {
+  collectionDatasetCount,
+  fetchCollectionDatasetCount,
+  canApplyToAllDatasets,
+  batchDisabledReason,
+} = useCollectionDatasetCount();
 
 const hasComputedProperties = computed(
   () => propertyStore.computedPropertyPaths.length > 0,
 );
-
-const canApplyToAllDatasets = computed(
-  () =>
-    store.selectedConfigurationId !== null &&
-    collectionDatasetCount.value > 1 &&
-    collectionDatasetCount.value <= BATCH_DATASET_LIMIT,
-);
-
-const batchDisabledReason = computed((): string | null => {
-  if (!store.selectedConfigurationId) return null;
-  if (loadingDatasetCount.value) return null;
-  if (collectionDatasetCount.value <= 1) return null;
-  if (collectionDatasetCount.value > BATCH_DATASET_LIMIT) {
-    return `Collection has more than ${BATCH_DATASET_LIMIT} datasets`;
-  }
-  return null;
-});
 
 const batchProgressPercent = computed(() => {
   if (!batchProgress.value || batchProgress.value.total === 0) return 0;
   const { completed, failed, cancelled, total } = batchProgress.value;
   return ((completed + failed + cancelled) / total) * 100;
 });
-
-async function fetchCollectionDatasetCount() {
-  loadingDatasetCount.value = true;
-  try {
-    collectionDatasetCount.value = await store.getCollectionDatasetCount();
-  } catch (error) {
-    logError("Failed to fetch collection dataset count:", error);
-    collectionDatasetCount.value = 0;
-  } finally {
-    loadingDatasetCount.value = false;
-  }
-}
 
 async function onComputePropertyBatch(property: IAnnotationProperty) {
   const configurationId = store.selectedConfigurationId;

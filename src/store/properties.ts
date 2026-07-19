@@ -507,6 +507,51 @@ export class Properties extends VuexModule {
     return computeJob;
   }
 
+  // Thin, promise-returning submitter for a single property-compute job.
+  // Unlike computeProperty it does NOT own progress creation or the
+  // post-completion fetchPropertyValues/updateHistograms — the caller (e.g. the
+  // pipeline runner) drives those once for the whole run.
+  @Action
+  async submitPropertyJob({
+    property,
+    datasetId,
+    eventCallback,
+    errorCallback,
+  }: {
+    property: IAnnotationProperty;
+    datasetId: string;
+    eventCallback?: (data: IJobEventData) => void;
+    errorCallback?: (data: IJobEventData) => void;
+  }): Promise<{
+    job: IPropertyComputeJob;
+    completionPromise: Promise<boolean>;
+  } | null> {
+    if (!main.isLoggedIn) {
+      return null;
+    }
+    const response = await this.propertiesAPI.computeProperty(
+      property.id,
+      datasetId,
+      property,
+      main.scales,
+    );
+    const jobId = response.data[0]?._id;
+    if (!jobId) {
+      return null;
+    }
+    const computeJob: IPropertyComputeJob = {
+      propertyId: property.id,
+      jobId,
+      datasetId,
+      eventCallback,
+      errorCallback,
+    };
+    // Capture the completion promise immediately (a fast job can be removed
+    // from the job map before we could look it up later).
+    const completionPromise = jobs.addJob(computeJob);
+    return { job: computeJob, completionPromise };
+  }
+
   @Action
   async computePropertyBatch({
     property,
@@ -704,10 +749,16 @@ export class Properties extends VuexModule {
   }
 
   @Action
-  protected setProperties(properties: IAnnotationProperty[]) {
+  protected async setProperties(properties: IAnnotationProperty[]) {
+    const previous = this.properties;
     this.setPropertiesImpl(properties);
     const propertyIds = this.properties.map((p) => p.id);
-    this.context.dispatch("updateConfigurationProperties", propertyIds);
+    try {
+      await this.context.dispatch("updateConfigurationProperties", propertyIds);
+    } catch (error) {
+      this.setPropertiesImpl(previous);
+      throw error;
+    }
   }
 
   @Mutation
@@ -844,16 +895,26 @@ export class Properties extends VuexModule {
   async createProperty(property: IAnnotationPropertyConfiguration) {
     const newProperty = await this.propertiesAPI.createProperty(property);
     if (newProperty) {
-      this.setProperties([...this.properties, newProperty]);
+      await this.setProperties([...this.properties, newProperty]);
     }
     return newProperty;
   }
 
   @Action
   async deleteProperty(propertyId: string) {
+    await this.deleteProperties([propertyId]);
+  }
+
+  // Batch variant: removes all the given properties with a single
+  // configuration sync instead of one per property.
+  @Action
+  async deleteProperties(propertyIds: string[]) {
     // TODO: temp another configuration could be using this property!
     // await this.propertiesAPI.deleteProperty(propertyId);
-    this.setProperties(this.properties.filter((p) => p.id !== propertyId));
+    const removedIds = new Set(propertyIds);
+    await this.setProperties(
+      this.properties.filter((p) => !removedIds.has(p.id)),
+    );
   }
 
   @Action

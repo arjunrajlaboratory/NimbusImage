@@ -1229,6 +1229,7 @@ function defaultConfigurationBase(
     tools: [],
     propertyIds: [],
     snapshots: [],
+    pipelines: [],
     scales: getDatasetScales(dataset),
   };
 }
