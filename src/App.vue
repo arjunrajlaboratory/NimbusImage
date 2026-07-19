@@ -141,22 +141,6 @@
               </button>
             </template>
           </v-tooltip>
-          <v-tooltip
-            text="Pipelines: chain worker steps and run them in sequence"
-          >
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: pipelinesPanel }"
-                aria-label="Pipelines panel"
-                @click.stop="togglePalette('pipelinesPanel')"
-              >
-                <v-icon size="18">mdi-transit-connection-variant</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
           <v-tooltip text="3D volume view (toggle 2D / 3D)">
             <template v-slot:activator="{ props: activatorProps }">
               <button
@@ -449,7 +433,6 @@
       </floating-palette>
 
       <floating-palette
-        ref="toolsPaletteRef"
         v-model="toolsPanel"
         title="Tools"
         :left="16"
@@ -458,17 +441,6 @@
         :max-height="toolsPanelMaxHeight"
       >
         <toolset />
-      </floating-palette>
-
-      <floating-palette
-        v-model="pipelinesPanel"
-        title="Pipelines"
-        :left="16"
-        :width="380"
-        :top="pipelinesPanelTop"
-        :max-height="pipelinesPanelMaxHeight"
-      >
-        <pipelines-panel />
       </floating-palette>
     </template>
 
@@ -500,7 +472,6 @@ import DataIoMenu from "@/components/DataIOMenu.vue";
 import FiltersPanel from "@/components/FiltersPanel.vue";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import PipelineDialog from "@/components/PipelineDialog.vue";
-import PipelinesPanel from "@/components/pipelines/PipelinesPanel.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
 import NavigatorPanel from "@/components/NavigatorPanel.vue";
 import LayersPanel from "@/components/LayersPanel.vue";
@@ -529,7 +500,6 @@ void AnnotationBrowser;
 void FiltersPanel;
 void AnalyzeDialog;
 void PipelineDialog;
-void PipelinesPanel;
 void UndoRedoButtons;
 void NavigatorPanel;
 void LayersPanel;
@@ -557,9 +527,6 @@ const chatbotOpen = ref(false);
 const navigatorPanel = ref(true);
 const toolsPanel = ref(true);
 const layersPanel = ref(true);
-// Hidden by default: a compact summary of the configuration's pipelines that
-// stacks beneath the Tools palette when toggled on.
-const pipelinesPanel = ref(false);
 
 // When the whole left stack is open it reaches the bottom-left corner and
 // would cover the canvas's palette/lock/reset buttons; ImageViewer shifts
@@ -616,8 +583,7 @@ type PaletteId =
   | "settingsPanel"
   | "navigatorPanel"
   | "toolsPanel"
-  | "layersPanel"
-  | "pipelinesPanel";
+  | "layersPanel";
 
 type PaletteZone = "left" | "right";
 
@@ -635,7 +601,6 @@ const paletteOpen: Record<PaletteId, Ref<boolean>> = {
   navigatorPanel,
   toolsPanel,
   layersPanel,
-  pipelinesPanel,
 };
 
 const paletteRoles: Record<PaletteId, PaletteRole> = {
@@ -646,7 +611,6 @@ const paletteRoles: Record<PaletteId, PaletteRole> = {
   navigatorPanel: { role: "primary", zone: "left" },
   toolsPanel: { role: "primary", zone: "left" },
   layersPanel: { role: "primary", zone: "left" },
-  pipelinesPanel: { role: "primary", zone: "left" },
 };
 
 const paletteIds = Object.keys(paletteRoles) as PaletteId[];
@@ -766,13 +730,10 @@ const filtersMaxHeight = computed(() =>
 // the open palettes above it. Navigator uses FloatingPalette defaults.
 const navigatorPaletteRef = ref<PaletteRefEl>();
 const layersPaletteRef = ref<PaletteRefEl>();
-const toolsPaletteRef = ref<PaletteRefEl>();
 const navigatorHeight = ref(0);
 const layersHeight = ref(0);
-const toolsHeight = ref(0);
 let navigatorResizeObserver: ResizeObserver | null = null;
 let layersResizeObserver: ResizeObserver | null = null;
-let toolsResizeObserver: ResizeObserver | null = null;
 
 const layersPanelTop = computed(
   () =>
@@ -798,16 +759,6 @@ const toolsPanelMaxHeight = computed(
   () => `calc(100vh - ${toolsPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
 );
 
-const pipelinesPanelTop = computed(
-  () =>
-    toolsPanelTop.value +
-    (toolsPanel.value && toolsHeight.value ? toolsHeight.value + STACK_GAP : 0),
-);
-
-const pipelinesPanelMaxHeight = computed(
-  () => `calc(100vh - ${pipelinesPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
-);
-
 // The left palettes live inside a v-if, so attach their observers once they
 // mount (and tear down when leaving the dataset view).
 const leftPalettesMounted = computed(
@@ -817,25 +768,20 @@ const leftPalettesMounted = computed(
 function setupLeftPaletteObservers() {
   navigatorResizeObserver?.disconnect();
   layersResizeObserver?.disconnect();
-  toolsResizeObserver?.disconnect();
   navigatorResizeObserver = observePaletteHeight(
     navigatorPaletteRef,
     navigatorHeight,
   );
   layersResizeObserver = observePaletteHeight(layersPaletteRef, layersHeight);
-  toolsResizeObserver = observePaletteHeight(toolsPaletteRef, toolsHeight);
 }
 
 function teardownLeftPaletteObservers() {
   navigatorResizeObserver?.disconnect();
   layersResizeObserver?.disconnect();
-  toolsResizeObserver?.disconnect();
   navigatorResizeObserver = null;
   layersResizeObserver = null;
-  toolsResizeObserver = null;
   navigatorHeight.value = 0;
   layersHeight.value = 0;
-  toolsHeight.value = 0;
 }
 
 function toggleHelpDialogUsingHotkey() {
@@ -1000,15 +946,11 @@ watch(
     await nextTick();
     const navEl = navigatorPaletteRef.value?.rootEl;
     const layEl = layersPaletteRef.value?.rootEl;
-    const toolsEl = toolsPaletteRef.value?.rootEl;
     if (navEl) {
       navigatorHeight.value = navEl.offsetHeight;
     }
     if (layEl) {
       layersHeight.value = layEl.offsetHeight;
-    }
-    if (toolsEl) {
-      toolsHeight.value = toolsEl.offsetHeight;
     }
   },
 );

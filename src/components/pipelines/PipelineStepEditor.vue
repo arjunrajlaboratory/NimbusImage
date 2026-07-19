@@ -127,7 +127,7 @@ const fetchingInterface = ref(false);
 // This component is a fully "controlled" widget: it never keeps its own copy
 // of the step, it only derives from/patches `props.modelValue`. That avoids
 // any need to reconcile a local clone against external updates (e.g. tag
-// auto-wiring pushed down by PipelineBuilder).
+// auto-wiring pushed down by PipelineEditor).
 const step = computed(() => props.modelValue);
 
 // Kind-narrowed views of the step (TPipelineStep is a discriminated union on
@@ -208,7 +208,7 @@ function onAnnotationSetupChange(value: IAnnotationSetup) {
 const propertyShape = computed({
   get: () => propertyStepValue.value?.shape ?? AnnotationShape.Polygon,
   // Like a manual tag edit, a manual shape edit detaches auto-wiring —
-  // otherwise PipelineBuilder's computeAutoWiredSteps would immediately
+  // otherwise PipelineEditor's computeAutoWiredSteps would immediately
   // overwrite the shape from the upstream annotation step again.
   set: (value: AnnotationShape) =>
     patchPropertyStep({ shape: value, autoWired: false }),
@@ -221,7 +221,7 @@ const inputTags = computed({
     if (!current) {
       return;
     }
-    // A manual tag edit takes the step out of auto-wiring so PipelineBuilder
+    // A manual tag edit takes the step out of auto-wiring so PipelineEditor
     // won't silently overwrite it on the next reorder/edit.
     patchPropertyStep({
       inputTags: { ...current.inputTags, tags: value },

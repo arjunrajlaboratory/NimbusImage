@@ -7,6 +7,7 @@
           label="Pipeline name"
           density="compact"
           hide-details
+          :disabled="isRunningThis"
         />
       </v-col>
     </v-row>
@@ -19,12 +20,23 @@
           rows="2"
           auto-grow
           hide-details
+          :disabled="isRunningThis"
         />
       </v-col>
     </v-row>
 
     <v-alert v-if="saveError" type="error" density="compact" class="my-2">
       {{ saveError }}
+    </v-alert>
+
+    <v-alert
+      v-for="(warning, index) in preRunWarnings"
+      :key="'warning-' + index"
+      type="warning"
+      density="compact"
+      class="my-2"
+    >
+      {{ warning }}
     </v-alert>
 
     <v-row v-if="localPipeline.steps.length === 0" class="my-2" dense>
@@ -40,7 +52,25 @@
       >
         <v-expansion-panel-title>
           <div class="d-flex align-center step-title">
-            <v-icon size="small" class="mr-2">
+            <!-- Run status doubles as the step's kind icon: a spinner while
+                 running, a status glyph after, the kind icon at rest. -->
+            <v-progress-circular
+              v-if="statuses[index]?.status === 'running'"
+              indeterminate
+              size="18"
+              width="2"
+              color="primary"
+              class="mr-2"
+            />
+            <v-icon
+              v-else-if="hasRunStatus(index)"
+              size="small"
+              class="mr-2"
+              :color="stepStatusColor(statuses[index]?.status)"
+            >
+              {{ stepStatusIcon(statuses[index]?.status) }}
+            </v-icon>
+            <v-icon v-else size="small" class="mr-2">
               {{
                 step.kind === "annotation"
                   ? "mdi-shape-outline"
@@ -53,12 +83,48 @@
                 >({{ step.kind }})</span
               >
             </span>
+            <v-btn
+              v-if="controller.jobIdFor(localPipeline, index)"
+              variant="text"
+              color="info"
+              size="x-small"
+              class="mr-2"
+              @click.stop="openStepLog(index)"
+            >
+              <v-icon size="small" start>mdi-text-box-outline</v-icon>
+              Logs
+            </v-btn>
             <v-chip v-if="!step.enabled" size="x-small" class="mr-2"
               >disabled</v-chip
             >
           </div>
         </v-expansion-panel-title>
         <v-expansion-panel-text>
+          <div v-if="statuses[index]?.status === 'running'" class="mb-2">
+            <v-progress-linear
+              :indeterminate="!statuses[index].progress.progress"
+              :model-value="100 * (statuses[index].progress.progress || 0)"
+              color="primary"
+              height="6"
+            />
+            <span class="text-caption">
+              {{ statuses[index].progress.title }}
+              {{ statuses[index].progress.info }}
+            </span>
+          </div>
+          <template v-if="statuses[index]?.errors.errors.length">
+            <v-alert
+              v-for="(err, errIndex) in statuses[index].errors.errors"
+              :key="'err-' + errIndex"
+              :type="err.type === MessageType.WARNING ? 'warning' : 'error'"
+              density="compact"
+              class="mb-2"
+            >
+              {{ err.title ? err.title + ": " : ""
+              }}{{ err.error || err.warning }}
+            </v-alert>
+          </template>
+
           <pipeline-step-editor
             :model-value="step"
             :auto-wired-caption="stepCaptions[index]"
@@ -69,7 +135,7 @@
               <v-btn
                 variant="text"
                 size="small"
-                :disabled="index === 0"
+                :disabled="index === 0 || isRunningThis"
                 @click="moveStep(index, -1)"
               >
                 <v-icon start>mdi-arrow-up</v-icon>
@@ -78,7 +144,9 @@
               <v-btn
                 variant="text"
                 size="small"
-                :disabled="index === localPipeline.steps.length - 1"
+                :disabled="
+                  index === localPipeline.steps.length - 1 || isRunningThis
+                "
                 @click="moveStep(index, 1)"
               >
                 <v-icon start>mdi-arrow-down</v-icon>
@@ -89,6 +157,7 @@
                 variant="text"
                 color="error"
                 size="small"
+                :disabled="isRunningThis"
                 @click="removeStep(index)"
               >
                 <v-icon start>mdi-delete</v-icon>
@@ -106,6 +175,7 @@
           variant="outlined"
           color="primary"
           size="small"
+          :disabled="isRunningThis"
           @click="openAddStepDialog"
         >
           <v-icon start>mdi-plus</v-icon>
@@ -114,20 +184,82 @@
       </v-col>
     </v-row>
 
+    <!-- Run options -->
+    <v-row class="my-0" dense>
+      <v-col class="py-1">
+        <v-checkbox
+          v-model="controller.continueOnError.value"
+          label="Continue running remaining steps if a step fails"
+          density="compact"
+          hide-details
+          :disabled="controller.isRunning.value"
+        />
+      </v-col>
+    </v-row>
+    <v-row
+      v-if="
+        controller.canApplyToAllDatasets.value ||
+        controller.batchDisabledReason.value
+      "
+      class="my-0"
+      dense
+    >
+      <v-col class="py-1">
+        <v-tooltip
+          location="bottom"
+          :disabled="!controller.batchDisabledReason.value"
+        >
+          <template v-slot:activator="{ props: activatorProps }">
+            <div v-bind="activatorProps" class="d-inline-block">
+              <v-checkbox
+                v-model="controller.applyToAllDatasets.value"
+                :label="`Apply to all datasets in collection (${controller.collectionDatasetCount.value})`"
+                :disabled="
+                  controller.isRunning.value ||
+                  !controller.canApplyToAllDatasets.value
+                "
+                density="compact"
+                hide-details
+              />
+            </div>
+          </template>
+          <span>{{ controller.batchDisabledReason.value }}</span>
+        </v-tooltip>
+      </v-col>
+    </v-row>
+
     <v-row class="my-2" dense>
       <v-col class="d-flex ga-2 py-1 justify-end">
-        <v-btn variant="text" size="small" @click="emit('close')">
-          Close
+        <v-btn
+          variant="text"
+          size="small"
+          :loading="saving"
+          :disabled="!canSave || isRunningThis"
+          @click="save"
+        >
+          Save
         </v-btn>
         <v-btn
+          v-if="isRunningThis"
+          variant="text"
+          color="warning"
+          size="small"
+          @click="controller.cancel"
+        >
+          <v-progress-circular size="16" indeterminate class="mr-2" />
+          Cancel
+        </v-btn>
+        <v-btn
+          v-else
           variant="flat"
           color="primary"
           size="small"
           :loading="saving"
-          :disabled="!localPipeline.name || localPipeline.steps.length === 0"
-          @click="save"
+          :disabled="!canRun"
+          @click="saveAndRun"
         >
-          Save
+          <v-icon start>mdi-play</v-icon>
+          Run
         </v-btn>
       </v-col>
     </v-row>
@@ -194,19 +326,33 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <job-log-dialog
+      v-model="showLogDialog"
+      :job-id="logDialogJobId"
+      :title="logDialogTitle"
+    />
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, inject, onMounted, ref, watch } from "vue";
 import { cloneDeep, isEqual } from "lodash";
 import store from "@/store";
 import pipelinesStore from "@/store/pipelines";
 import propertiesStore from "@/store/properties";
+import annotationStore from "@/store/annotation";
 import { logError } from "@/utils/log";
 import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import PipelineStepEditor from "@/components/pipelines/PipelineStepEditor.vue";
+import JobLogDialog from "@/components/JobLogDialog.vue";
 import { buildDefaultCoordinateAssignments } from "@/store/toolSuggestions";
+import {
+  PipelineRunController,
+  PipelineRunControllerKey,
+  stepStatusColor,
+  stepStatusIcon,
+} from "@/components/pipelines/usePipelineRun";
 import {
   AnnotationShape,
   clampToMaterializablePropertyShape,
@@ -214,64 +360,115 @@ import {
   IPipeline,
   IPropertyPipelineStep,
   IWorkerLabels,
+  MessageType,
   TPipelineStep,
   TPipelineStepKind,
 } from "@/store/model";
 
+// Unified build-and-run view: the same editable step list also shows each
+// step's live run status, and the footer runs the pipeline (saving first).
 const props = defineProps<{
-  modelValue: IPipeline;
+  pipeline: IPipeline;
 }>();
 
 const emit = defineEmits<{
-  (e: "update:modelValue", value: IPipeline): void;
   (e: "saved", pipelineId: string): void;
-  (e: "close"): void;
 }>();
 
-// Edited as a local deep clone so browsing/editing a pipeline doesn't mutate
-// the persisted list until "Save" is pressed. Only resynced when the caller
-// points the builder at a *different* pipeline (id change), never on every
-// upstream prop tick, so our own emitted edits don't bounce back and forth.
-// Auto-wiring runs on the initial clone too, so pipelines arriving with
-// unwired property steps (AI suggestions, older saved pipelines) are wired
-// as soon as they open in the builder.
+const controller = inject<PipelineRunController>(PipelineRunControllerKey)!;
+
+// Edited as a local deep clone so editing doesn't mutate the persisted list
+// until Save/Run. Re-clone only when pointed at a *different* pipeline (id
+// change). Auto-wiring runs on the initial clone so pipelines arriving with
+// unwired property steps (AI suggestions, older saved pipelines) are wired on
+// open.
 function clonePipelineForEditing(pipeline: IPipeline): IPipeline {
   const clone = cloneDeep(pipeline);
   clone.steps = computeAutoWiredSteps(clone.steps);
   return clone;
 }
 
-const localPipeline = ref<IPipeline>(clonePipelineForEditing(props.modelValue));
+const localPipeline = ref<IPipeline>(clonePipelineForEditing(props.pipeline));
 
 watch(
-  () => props.modelValue.id,
+  () => props.pipeline.id,
   () => {
-    localPipeline.value = clonePipelineForEditing(props.modelValue);
+    localPipeline.value = clonePipelineForEditing(props.pipeline);
   },
-);
-
-watch(
-  localPipeline,
-  (value) => {
-    emit("update:modelValue", cloneDeep(value));
-  },
-  { deep: true },
 );
 
 const saving = ref(false);
 const saveError = ref<string | null>(null);
 
-// ---- Tag auto-wiring (spec: WORKER_PIPELINES.md §5) -----------------------
+const isRunningThis = computed(() =>
+  controller.isRunningPipeline(localPipeline.value.id),
+);
+
+const canSave = computed(
+  () => !!localPipeline.value.name && localPipeline.value.steps.length > 0,
+);
+
+const canRun = computed(
+  () => canSave.value && controller.canRunPipeline(localPipeline.value),
+);
+
+// Per-step run status for this pipeline (live arrays if it is the active run,
+// otherwise a pending baseline).
+const statuses = computed(() => controller.statusesFor(localPipeline.value));
+
+function hasRunStatus(index: number): boolean {
+  const status = statuses.value[index]?.status;
+  return status === "success" || status === "error" || status === "cancelled";
+}
+
+// ---- Job logs ---------------------------------------------------------
+const showLogDialog = ref(false);
+const logDialogJobId = ref<string | null>(null);
+const logDialogTitle = ref("");
+
+function openStepLog(index: number) {
+  logDialogJobId.value = controller.jobIdFor(localPipeline.value, index);
+  logDialogTitle.value = `Step log: ${localPipeline.value.steps[index]?.name ?? ""}`;
+  showLogDialog.value = true;
+}
+
+// ---- Pre-run validation (WORKER_PIPELINES.md §5) ----------------------
+// Flag property steps whose input tags match neither an enabled upstream
+// annotation step's output tags nor any tag already present on the dataset.
+const preRunWarnings = computed<string[]>(() => {
+  const warnings: string[] = [];
+  const knownTags = new Set<string>(annotationStore.annotationTags);
+  localPipeline.value.steps.forEach((step, index) => {
+    if (step.kind === "annotation") {
+      if (step.enabled) {
+        step.annotation.tags.forEach((tag) => knownTags.add(tag));
+      }
+      return;
+    }
+    if (!step.enabled) {
+      return;
+    }
+    const tags = step.inputTags.tags;
+    if (tags.length === 0) {
+      return;
+    }
+    if (!tags.some((tag) => knownTags.has(tag))) {
+      warnings.push(
+        `Step ${index + 1} (${step.name}): none of its input tags (${tags.join(", ")}) match any upstream output or existing annotation tags — it may compute on nothing.`,
+      );
+    }
+  });
+  return warnings;
+});
+
+// ---- Tag auto-wiring (spec: WORKER_PIPELINES.md §5) -------------------
 // Pure function: for every property step that hasn't been manually detached
-// (autoWired !== false), pull tags/shape from the nearest preceding
-// annotation step. Idempotent, so re-running it after every edit is safe.
+// (autoWired !== false), pull tags/shape from the nearest preceding enabled
+// annotation step. Idempotent, so re-running after every edit is safe.
 function computeAutoWiredSteps(steps: TPipelineStep[]): TPipelineStep[] {
   let lastAnnotation: IAnnotationPipelineStep | null = null;
   return steps.map((step) => {
     if (step.kind === "annotation") {
-      // Disabled steps are skipped by the runner, so they produce no
-      // annotations for a downstream property step to read — don't wire
-      // from them.
       if (step.enabled) {
         lastAnnotation = step;
       }
@@ -281,8 +478,6 @@ function computeAutoWiredSteps(steps: TPipelineStep[]): TPipelineStep[] {
       return step;
     }
     const wiredTags = lastAnnotation.annotation.tags;
-    // The annotation step may produce a non-materializable shape
-    // (rectangle/circle/ellipse); clamp so the property step stays computable.
     const wiredShape = clampToMaterializablePropertyShape(
       lastAnnotation.annotation.shape,
     );
@@ -307,7 +502,6 @@ const stepCaptions = computed<(string | null)[]>(() => {
     null;
   return localPipeline.value.steps.map((step, index) => {
     if (step.kind === "annotation") {
-      // Mirror computeAutoWiredSteps: disabled steps are not wiring sources.
       if (step.enabled) {
         lastAnnotation = { index, step };
       }
@@ -350,10 +544,6 @@ function removeStep(index: number) {
 }
 
 // ---- Add step dialog -------------------------------------------------
-
-// A step starts from a worker image ("annotation" / "property") or from an
-// existing worker tool in the configuration ("tool"), which copies the
-// tool's image, parameters and annotation setup into a new annotation step.
 type TNewStepSource = TPipelineStepKind | "tool";
 
 const showAddStepDialog = ref(false);
@@ -361,8 +551,6 @@ const newStepSource = ref<TNewStepSource>("annotation");
 const newStepImage = ref<string | null>(null);
 const newStepToolId = ref<string | null>(null);
 
-// Worker-backed annotation tools of the current configuration (the same
-// tool shape the runner's buildTransientTool produces).
 const workerTools = computed(() =>
   store.tools.filter((tool) => tool.type === "segmentation"),
 );
@@ -466,17 +654,38 @@ function confirmAddStep() {
   showAddStepDialog.value = false;
 }
 
-async function save() {
+// Persist the working copy. Returns the saved pipeline from the store (so
+// callers can run exactly what was saved), or null on failure.
+async function persist(): Promise<IPipeline | null> {
   saving.value = true;
   saveError.value = null;
   try {
     await pipelinesStore.savePipeline(cloneDeep(localPipeline.value));
     emit("saved", localPipeline.value.id);
+    return pipelinesStore.getPipelineById(localPipeline.value.id);
   } catch (error) {
     logError("Failed to save pipeline:", error);
     saveError.value = "Failed to save pipeline. See the console for details.";
+    return null;
   } finally {
     saving.value = false;
+  }
+}
+
+async function save() {
+  await persist();
+}
+
+// Run saves the current edits first, then runs exactly what was saved — so the
+// run reflects on-screen edits and the runner's materialized-property
+// write-back lands on the persisted pipeline.
+async function saveAndRun() {
+  if (!canRun.value) {
+    return;
+  }
+  const saved = await persist();
+  if (saved) {
+    await controller.run(saved);
   }
 }
 
@@ -488,12 +697,11 @@ onMounted(() => {
 
 defineExpose({
   localPipeline,
-  stepCaptions,
-  handleStepUpdate,
-  moveStep,
-  removeStep,
-  confirmAddStep,
+  statuses,
+  canRun,
+  canSave,
   save,
+  saveAndRun,
 });
 </script>
 

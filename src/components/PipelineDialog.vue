@@ -1,7 +1,6 @@
 <template>
-  <!-- `eager` keeps the content mounted while the dialog is closed: a
-       pipeline run keeps going after close, and the run panel's live step
-       statuses and cancel handle must survive until the user reopens. -->
+  <!-- eager keeps the content mounted while closed so in-progress edits and a
+       live run survive the dialog being closed and reopened. -->
   <v-dialog
     v-model="dialogOpen"
     min-width="900px"
@@ -18,7 +17,6 @@
           icon
           size="small"
           class="mr-2"
-          :disabled="isRunViewLocked"
           @click="backToList"
         >
           <v-icon>mdi-arrow-left</v-icon>
@@ -26,7 +24,7 @@
         <span class="flex-grow-1">
           Pipelines
           <span
-            v-if="activeView !== 'list' && activePipeline"
+            v-if="activeView === 'editor' && activePipeline"
             class="text-body-2 text-medium-emphasis"
           >
             — {{ activePipeline.name }}
@@ -37,21 +35,16 @@
         </v-btn>
       </v-card-title>
       <v-card-text>
+        <!-- Run status is shown in every view so a run is never out of sight. -->
+        <pipeline-run-status />
+
         <pipeline-list
           v-if="activeView === 'list'"
-          @open-builder="openBuilder"
-          @open-run="openRun"
+          @open="openEditor"
           @open-suggest="showSuggestDialog = true"
         />
-        <pipeline-builder
-          v-else-if="activeView === 'builder' && activePipeline"
-          :model-value="activePipeline"
-          @update:model-value="activePipeline = $event"
-          @saved="backToList"
-          @close="backToList"
-        />
-        <pipeline-run-panel
-          v-else-if="activeView === 'run' && activePipeline"
+        <pipeline-editor
+          v-else-if="activeView === 'editor' && activePipeline"
           :pipeline="activePipeline"
         />
       </v-card-text>
@@ -65,12 +58,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, provide, ref, watch } from "vue";
+import store from "@/store";
 import pipelinesStore from "@/store/pipelines";
 import PipelineList from "@/components/pipelines/PipelineList.vue";
-import PipelineBuilder from "@/components/pipelines/PipelineBuilder.vue";
-import PipelineRunPanel from "@/components/pipelines/PipelineRunPanel.vue";
+import PipelineEditor from "@/components/pipelines/PipelineEditor.vue";
+import PipelineRunStatus from "@/components/pipelines/PipelineRunStatus.vue";
 import PipelineSuggestDialog from "@/components/pipelines/PipelineSuggestDialog.vue";
+import {
+  createPipelineRunController,
+  PipelineRunControllerKey,
+} from "@/components/pipelines/usePipelineRun";
 import { IPipeline } from "@/store/model";
 
 const props = defineProps<{
@@ -86,20 +84,26 @@ const dialogOpen = computed({
   set: (value: boolean) => emit("update:modelValue", value),
 });
 
-type TPipelineDialogView = "list" | "builder" | "run";
+// One run controller for the whole dialog, shared with the editor and the
+// status strip via provide/inject.
+const controller = createPipelineRunController();
+provide(PipelineRunControllerKey, controller);
+
+onMounted(controller.fetchCollectionDatasetCount);
+watch(
+  () => store.selectedConfigurationId,
+  controller.fetchCollectionDatasetCount,
+);
+
+type TPipelineDialogView = "list" | "editor";
 
 const activeView = ref<TPipelineDialogView>("list");
 const activePipeline = ref<IPipeline | null>(null);
 const showSuggestDialog = ref(false);
 
-function openBuilder(pipeline: IPipeline) {
+function openEditor(pipeline: IPipeline) {
   activePipeline.value = pipeline;
-  activeView.value = "builder";
-}
-
-function openRun(pipeline: IPipeline) {
-  activePipeline.value = pipeline;
-  activeView.value = "run";
+  activeView.value = "editor";
 }
 
 function backToList() {
@@ -108,25 +112,20 @@ function backToList() {
 }
 
 function onUseSuggestion(pipeline: IPipeline) {
-  openBuilder(pipeline);
+  openEditor(pipeline);
 }
 
-// While the displayed pipeline is running, leaving the run view would destroy
-// the run panel (v-else-if) and with it the live step statuses and the cancel
-// handle — the list's Run button is disabled during a run, so there would be
-// no way back in. Lock navigation until the run finishes (Cancel remains
-// available inside the panel).
-const isRunViewLocked = computed(
-  () =>
-    activeView.value === "run" &&
-    activePipeline.value !== null &&
-    pipelinesStore.runningPipelineId === activePipeline.value.id,
-);
-
-// Reset to the list view every time the dialog is (re)opened — unless a run
-// is in flight, in which case reopening must land back on the live run panel.
+// On (re)open: if a run is in flight, land on that pipeline's editor so it is
+// immediately visible; otherwise reset to the list.
 watch(dialogOpen, (open) => {
-  if (open && !isRunViewLocked.value) {
+  if (!open) {
+    return;
+  }
+  const runningId = pipelinesStore.runningPipelineId;
+  const running = runningId ? pipelinesStore.getPipelineById(runningId) : null;
+  if (running) {
+    openEditor(running);
+  } else {
     backToList();
   }
 });
@@ -134,8 +133,7 @@ watch(dialogOpen, (open) => {
 defineExpose({
   activeView,
   activePipeline,
-  openBuilder,
-  openRun,
+  openEditor,
   backToList,
 });
 </script>

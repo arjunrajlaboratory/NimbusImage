@@ -28,7 +28,13 @@
     </v-alert>
 
     <v-list v-if="pipelines.length > 0" density="compact" class="my-2">
-      <v-list-item v-for="pipeline in pipelines" :key="pipeline.id">
+      <!-- Row body opens the editor (where you both edit and run); a quick Run
+           and an overflow menu keep common actions one click away. -->
+      <v-list-item
+        v-for="pipeline in pipelines"
+        :key="pipeline.id"
+        @click="emit('open', pipeline)"
+      >
         <template v-slot:prepend>
           <v-progress-circular
             v-if="pipelinesStore.runningPipelineId === pipeline.id"
@@ -54,49 +60,56 @@
         <v-list-item-subtitle>
           {{ pipeline.steps.length }}
           step{{ pipeline.steps.length === 1 ? "" : "s" }}
-          <span v-if="pipeline.description"> — {{ pipeline.description }}</span>
+          <span v-if="pipelinesStore.runningPipelineId === pipeline.id">
+            — running…
+          </span>
+          <span v-else-if="pipeline.description">
+            — {{ pipeline.description }}
+          </span>
         </v-list-item-subtitle>
 
         <template v-slot:append>
-          <div class="d-flex ga-2">
+          <div class="d-flex align-center ga-1">
             <v-btn
-              variant="flat"
+              variant="text"
               color="success"
               size="small"
-              :disabled="!!pipelinesStore.runningPipelineId"
-              @click="emit('open-run', pipeline)"
+              :disabled="!canRun(pipeline)"
+              aria-label="Run pipeline"
+              @click.stop="runPipeline(pipeline)"
             >
               <v-icon start>mdi-play</v-icon>
               Run
             </v-btn>
-            <v-btn
-              variant="outlined"
-              color="primary"
-              size="small"
-              @click="emit('open-builder', pipeline)"
-            >
-              <v-icon start>mdi-pencil</v-icon>
-              Edit
-            </v-btn>
-            <v-btn
-              variant="outlined"
-              color="primary"
-              size="small"
-              :loading="duplicatingId === pipeline.id"
-              @click="duplicate(pipeline.id)"
-            >
-              <v-icon start>mdi-content-copy</v-icon>
-              Duplicate
-            </v-btn>
-            <v-btn
-              variant="text"
-              color="error"
-              size="small"
-              @click="askDelete(pipeline)"
-            >
-              <v-icon start>mdi-delete</v-icon>
-              Delete
-            </v-btn>
+            <v-menu location="bottom end">
+              <template v-slot:activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  variant="text"
+                  icon="mdi-dots-vertical"
+                  size="small"
+                  aria-label="Pipeline actions"
+                  @click.stop
+                />
+              </template>
+              <v-list density="compact">
+                <v-list-item
+                  :disabled="duplicatingId === pipeline.id"
+                  @click="duplicate(pipeline.id)"
+                >
+                  <template v-slot:prepend>
+                    <v-icon size="small">mdi-content-copy</v-icon>
+                  </template>
+                  <v-list-item-title>Duplicate</v-list-item-title>
+                </v-list-item>
+                <v-list-item base-color="error" @click="askDelete(pipeline)">
+                  <template v-slot:prepend>
+                    <v-icon size="small">mdi-delete</v-icon>
+                  </template>
+                  <v-list-item-title>Delete</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
           </div>
         </template>
       </v-list-item>
@@ -143,16 +156,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, inject, ref } from "vue";
 import pipelinesStore from "@/store/pipelines";
 import { logError } from "@/utils/log";
 import { IPipeline } from "@/store/model";
+import {
+  PipelineRunController,
+  PipelineRunControllerKey,
+} from "@/components/pipelines/usePipelineRun";
 
 const emit = defineEmits<{
-  (e: "open-builder", pipeline: IPipeline): void;
-  (e: "open-run", pipeline: IPipeline): void;
+  (e: "open", pipeline: IPipeline): void;
   (e: "open-suggest"): void;
 }>();
+
+const controller = inject<PipelineRunController>(PipelineRunControllerKey)!;
 
 const pipelines = computed(() => pipelinesStore.pipelines);
 
@@ -164,7 +182,17 @@ const deleting = ref(false);
 const removeMaterializedProperties = ref(true);
 
 function createPipeline() {
-  emit("open-builder", pipelinesStore.createEmptyPipeline());
+  emit("open", pipelinesStore.createEmptyPipeline());
+}
+
+function canRun(pipeline: IPipeline): boolean {
+  return controller.canRunPipeline(pipeline);
+}
+
+// Quick-run straight from the list. Editing/running the same pipeline in the
+// editor uses save-then-run; from the list the saved pipeline runs as-is.
+function runPipeline(pipeline: IPipeline) {
+  controller.run(pipeline);
 }
 
 async function duplicate(pipelineId: string) {
@@ -211,6 +239,8 @@ async function confirmDelete() {
 defineExpose({
   pipelines,
   createPipeline,
+  canRun,
+  runPipeline,
   duplicate,
   askDelete,
   confirmDelete,
