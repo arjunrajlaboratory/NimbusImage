@@ -230,12 +230,32 @@
     </v-row>
 
     <v-row class="my-2" dense>
-      <v-col class="d-flex ga-2 py-1 justify-end">
+      <v-col class="d-flex ga-2 py-1 justify-end align-center">
+        <!-- Saved / unsaved chrome, pushed to the left of the action buttons. -->
+        <v-chip
+          v-if="isDirty"
+          size="small"
+          color="warning"
+          variant="tonal"
+          class="me-auto"
+        >
+          <v-icon start size="small">mdi-circle-medium</v-icon>
+          Unsaved changes
+        </v-chip>
+        <span
+          v-else
+          class="me-auto d-flex align-center text-caption text-medium-emphasis"
+        >
+          <v-icon size="small" color="success" class="mr-1">
+            mdi-check-circle-outline
+          </v-icon>
+          Saved
+        </span>
         <v-btn
           variant="text"
           size="small"
           :loading="saving"
-          :disabled="!canSave || isRunningThis"
+          :disabled="!canSave || isRunningThis || !isDirty"
           @click="save"
         >
           Save
@@ -333,6 +353,15 @@
       :job-id="logDialogJobId"
       :title="logDialogTitle"
     />
+
+    <v-snackbar
+      v-model="showSavedSnackbar"
+      :timeout="2000"
+      color="success"
+      location="top"
+    >
+      Pipeline saved
+    </v-snackbar>
   </v-container>
 </template>
 
@@ -372,6 +401,12 @@ const props = defineProps<{
   pipeline: IPipeline;
 }>();
 
+// Surface the unsaved/saved state to the dialog so it can mirror the chip in
+// its header (the footer chip below is driven by the same `isDirty`).
+const emit = defineEmits<{
+  (e: "update:dirty", dirty: boolean): void;
+}>();
+
 const controller = inject<PipelineRunController>(PipelineRunControllerKey)!;
 
 // Edited as a local deep clone so editing doesn't mutate the persisted list
@@ -386,15 +421,39 @@ function clonePipelineForEditing(pipeline: IPipeline): IPipeline {
 
 const localPipeline = ref<IPipeline>(clonePipelineForEditing(props.pipeline));
 
+// Baseline for the dirty indicator. A pipeline already in the store starts
+// clean (its on-open, auto-wired clone is the baseline); a brand-new pipeline
+// that isn't persisted yet has no baseline, so it reads dirty until first save.
+function baselineFor(pipeline: IPipeline): IPipeline | null {
+  return pipelinesStore.getPipelineById(pipeline.id)
+    ? cloneDeep(localPipeline.value)
+    : null;
+}
+
+const savedSnapshot = ref<IPipeline | null>(baselineFor(props.pipeline));
+
 watch(
   () => props.pipeline.id,
   () => {
     localPipeline.value = clonePipelineForEditing(props.pipeline);
+    savedSnapshot.value = baselineFor(props.pipeline);
   },
 );
 
+// Dirty = the working copy differs from the last-saved baseline (or the
+// pipeline was never persisted). Compared against a snapshot rather than the
+// store copy so the runner's materialized-property write-back (which touches
+// the store copy, not this clone) doesn't spuriously flip it to dirty.
+const isDirty = computed(
+  () =>
+    !savedSnapshot.value || !isEqual(localPipeline.value, savedSnapshot.value),
+);
+
+watch(isDirty, (dirty) => emit("update:dirty", dirty), { immediate: true });
+
 const saving = ref(false);
 const saveError = ref<string | null>(null);
+const showSavedSnackbar = ref(false);
 
 const isRunningThis = computed(() =>
   controller.isRunningPipeline(localPipeline.value.id),
@@ -657,6 +716,8 @@ async function persist(): Promise<IPipeline | null> {
   saveError.value = null;
   try {
     await pipelinesStore.savePipeline(cloneDeep(localPipeline.value));
+    // Re-baseline the dirty indicator to exactly what we just persisted.
+    savedSnapshot.value = cloneDeep(localPipeline.value);
     return pipelinesStore.getPipelineById(localPipeline.value.id);
   } catch (error) {
     logError("Failed to save pipeline:", error);
@@ -668,7 +729,10 @@ async function persist(): Promise<IPipeline | null> {
 }
 
 async function save() {
-  await persist();
+  // Explicit Save gets a confirmation snackbar (Run has its own run feedback).
+  if (await persist()) {
+    showSavedSnackbar.value = true;
+  }
 }
 
 // Run saves the current edits first, then runs exactly what was saved — so the
@@ -695,8 +759,10 @@ defineExpose({
   statuses,
   canRun,
   canSave,
+  isDirty,
   save,
   saveAndRun,
+  showSavedSnackbar,
 });
 </script>
 

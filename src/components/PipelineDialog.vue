@@ -21,14 +21,33 @@
         >
           <v-icon>mdi-arrow-left</v-icon>
         </v-btn>
-        <span class="flex-grow-1">
+        <span class="flex-grow-1 d-flex align-center">
           Pipelines
-          <span
-            v-if="activeView === 'editor' && activePipeline"
-            class="text-body-2 text-medium-emphasis"
-          >
-            — {{ activePipeline.name }}
-          </span>
+          <template v-if="activeView === 'editor' && activePipeline">
+            <span class="text-body-2 text-medium-emphasis ml-1">
+              — {{ activePipeline.name }}
+            </span>
+            <!-- Mirror the editor's saved/unsaved state in the header. -->
+            <v-chip
+              v-if="editorDirty"
+              size="x-small"
+              color="warning"
+              variant="tonal"
+              class="ml-2"
+            >
+              <v-icon start size="x-small">mdi-circle-medium</v-icon>
+              Unsaved
+            </v-chip>
+            <v-chip
+              v-else
+              size="x-small"
+              variant="text"
+              class="ml-2 text-medium-emphasis"
+            >
+              <v-icon start size="x-small" color="success">mdi-check</v-icon>
+              Saved
+            </v-chip>
+          </template>
         </span>
         <v-btn variant="text" icon size="small" @click="dialogOpen = false">
           <v-icon>mdi-close</v-icon>
@@ -42,6 +61,7 @@
         <pipeline-editor
           v-else-if="activeView === 'editor' && activePipeline"
           :pipeline="activePipeline"
+          @update:dirty="editorDirty = $event"
         />
       </v-card-text>
     </v-card>
@@ -89,6 +109,8 @@ type TPipelineDialogView = "list" | "editor";
 
 const activeView = ref<TPipelineDialogView>("list");
 const activePipeline = ref<IPipeline | null>(null);
+// Mirrors the editor's dirty state (emitted up) so the header chip can show it.
+const editorDirty = ref(false);
 
 function openEditor(pipeline: IPipeline) {
   activePipeline.value = pipeline;
@@ -107,6 +129,7 @@ function openEditor(pipeline: IPipeline) {
 function backToList() {
   activeView.value = "list";
   activePipeline.value = null;
+  editorDirty.value = false;
 }
 
 // On (re)open: if a run is in flight, land on that pipeline's editor so it is
@@ -127,6 +150,7 @@ watch(dialogOpen, (open) => {
 defineExpose({
   activeView,
   activePipeline,
+  editorDirty,
   openEditor,
   backToList,
 });
