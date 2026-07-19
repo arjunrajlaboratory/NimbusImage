@@ -229,6 +229,17 @@
       </v-col>
     </v-row>
 
+    <v-alert
+      v-if="controller.runNotice.value"
+      type="warning"
+      density="compact"
+      class="my-2"
+      closable
+      @click:close="controller.runNotice.value = null"
+    >
+      {{ controller.runNotice.value }}
+    </v-alert>
+
     <v-row class="my-2" dense>
       <v-col class="d-flex ga-2 py-1 justify-end align-center">
         <!-- Saved / unsaved chrome, pushed to the left of the action buttons. -->

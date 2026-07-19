@@ -663,12 +663,15 @@ describe("runPipelineBatch", () => {
       })),
     );
 
+    const onRejected = vi.fn();
     const summary = await pipelinesStore.runPipelineBatch({
       pipeline: pipeline([annotationStep("a")]),
       configurationId: "cfg1",
+      onRejected,
     });
 
     expect(summary).toEqual({ succeeded: 0, failed: 51, cancelled: 0 });
+    expect(onRejected).toHaveBeenCalledWith(51);
     expect(h.main.api.batchResources).not.toHaveBeenCalled();
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
     expect(pipelinesStore.runningPipelineId).toBeNull();

@@ -591,6 +591,7 @@ export class Pipelines extends VuexModule {
     onBatchProgress,
     onCancel,
     onComplete,
+    onRejected,
   }: {
     pipeline: IPipeline;
     configurationId: string;
@@ -608,6 +609,10 @@ export class Pipelines extends VuexModule {
       failed: number;
       cancelled: number;
     }) => void;
+    // Called (with the authoritative dataset count) when the batch is refused
+    // because the collection is over BATCH_DATASET_LIMIT, so callers can
+    // explain the rejection rather than reporting a bare "N failed".
+    onRejected?: (datasetCount: number) => void;
   }): Promise<{ succeeded: number; failed: number; cancelled: number }> {
     const emptyResult = { succeeded: 0, failed: 0, cancelled: 0 };
     if (!main.isLoggedIn) {
@@ -636,11 +641,16 @@ export class Pipelines extends VuexModule {
       return emptyResult;
     }
     if (total > BATCH_DATASET_LIMIT) {
+      logError(
+        `Refusing pipeline batch: ${total} datasets exceeds the limit of ` +
+          `${BATCH_DATASET_LIMIT}.`,
+      );
       const rejectedResult = {
         succeeded: 0,
         failed: total,
         cancelled: 0,
       };
+      onRejected?.(total);
       onComplete?.(rejectedResult);
       return rejectedResult;
     }

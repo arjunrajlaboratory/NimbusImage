@@ -7,7 +7,20 @@ import {
   IPipelineRunResult,
   IProgressInfo,
 } from "@/store/model";
+import { BATCH_DATASET_LIMIT } from "@/store/constants";
 import { useCollectionDatasetCount } from "@/utils/useCollectionDatasetCount";
+
+// Explains why an "apply to all datasets" run was refused because the
+// collection is over the batch limit — shown to the user instead of a silent
+// "N failed" result.
+function overBatchLimitMessage(datasetCount: number): string {
+  return (
+    `This collection has ${datasetCount} datasets, over the ` +
+    `${BATCH_DATASET_LIMIT}-dataset limit for running on all datasets. ` +
+    `Uncheck "Apply to all datasets in collection" to run just the current ` +
+    `dataset.`
+  );
+}
 
 export type TStepStatus =
   | "pending"
@@ -91,6 +104,9 @@ export function createPipelineRunController() {
   const result = ref<IPipelineRunResult | null>(null);
   const lastRunWasBatch = ref(false);
   const batchProgress = ref<IBatchRunProgress | null>(null);
+  // Non-fatal notice explaining a run that could not proceed as requested
+  // (e.g. an over-limit "apply to all datasets" run).
+  const runNotice = ref<string | null>(null);
 
   const continueOnError = ref(false);
   const applyToAllDatasets = ref(false);
@@ -175,8 +191,17 @@ export function createPipelineRunController() {
     if (!canRunPipeline(pipeline)) {
       return;
     }
-    const runAsBatch =
-      allowBatch && applyToAllDatasets.value && canApplyToAllDatasets.value;
+    runNotice.value = null;
+    // The user asked to run on every dataset, but the collection is over the
+    // limit. Refuse with a clear message rather than silently running only the
+    // current dataset (the "apply to all" checkbox is disabled in this state,
+    // so this is reached via a stale selection).
+    const wantsBatch = allowBatch && applyToAllDatasets.value;
+    if (wantsBatch && collectionDatasetCount.value > BATCH_DATASET_LIMIT) {
+      runNotice.value = overBatchLimitMessage(collectionDatasetCount.value);
+      return;
+    }
+    const runAsBatch = wantsBatch && canApplyToAllDatasets.value;
     lastRunWasBatch.value = runAsBatch;
     resetRunState(pipeline);
 
@@ -250,6 +275,13 @@ export function createPipelineRunController() {
         onBatchProgress: (status) => {
           batchProgress.value = status;
         },
+        // The authoritative count is only known server-side; if it turns out to
+        // be over the limit (e.g. the cached count was stale), surface why the
+        // batch didn't run instead of a bare "N failed".
+        onRejected: (datasetCount) => {
+          completed = true;
+          runNotice.value = overBatchLimitMessage(datasetCount);
+        },
         onCancel: (cancel) => {
           cancelFn.value = cancel;
         },
@@ -281,6 +313,7 @@ export function createPipelineRunController() {
   function clearResult() {
     result.value = null;
     batchProgress.value = null;
+    runNotice.value = null;
   }
 
   return {
@@ -290,6 +323,7 @@ export function createPipelineRunController() {
     result,
     lastRunWasBatch,
     batchProgress,
+    runNotice,
     continueOnError,
     applyToAllDatasets,
     collectionDatasetCount,
