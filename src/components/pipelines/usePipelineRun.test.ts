@@ -35,6 +35,18 @@ const pipeline: IPipeline = {
   ],
 };
 
+const twoStepPipeline: IPipeline = {
+  ...pipeline,
+  steps: [
+    pipeline.steps[0],
+    {
+      ...pipeline.steps[0],
+      id: "step2",
+      name: "Measure again",
+    },
+  ],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.store.selectedConfigurationId = "cfg1";
@@ -52,5 +64,47 @@ describe("createPipelineRunController", () => {
     expect(h.pipelinesStore.runPipelineBatch).not.toHaveBeenCalled();
     expect(h.pipelinesStore.runPipeline).toHaveBeenCalledTimes(1);
     expect(controller.lastRunWasBatch.value).toBe(false);
+  });
+
+  it("honors a caller that explicitly disables shared batch mode", async () => {
+    const controller = createPipelineRunController();
+    controller.collectionDatasetCount.value = 2;
+    controller.applyToAllDatasets.value = true;
+
+    await controller.run(pipeline, { allowBatch: false });
+
+    expect(h.pipelinesStore.runPipelineBatch).not.toHaveBeenCalled();
+    expect(h.pipelinesStore.runPipeline).toHaveBeenCalledTimes(1);
+    expect(controller.lastRunWasBatch.value).toBe(false);
+  });
+
+  it("keeps statuses and job ids attached to step ids after reordering", async () => {
+    h.pipelinesStore.runPipeline.mockImplementationOnce(async (options) => {
+      options.onStepStart?.(0);
+      options.onStepJob?.(0, "job-step1");
+      options.onStepComplete?.(0, true);
+      options.onStepStart?.(1);
+      options.onStepJob?.(1, "job-step2");
+      options.onStepComplete?.(1, false);
+      options.onComplete?.({
+        succeeded: 1,
+        failed: 1,
+        cancelled: 0,
+        failedStepIndex: 1,
+      });
+    });
+    const controller = createPipelineRunController();
+
+    await controller.run(twoStepPipeline);
+    const reordered: IPipeline = {
+      ...twoStepPipeline,
+      steps: [...twoStepPipeline.steps].reverse(),
+    };
+
+    expect(
+      controller.statusesFor(reordered).map(({ status }) => status),
+    ).toEqual(["error", "success"]);
+    expect(controller.jobIdFor(reordered, 0)).toBe("job-step2");
+    expect(controller.jobIdFor(reordered, 1)).toBe("job-step1");
   });
 });

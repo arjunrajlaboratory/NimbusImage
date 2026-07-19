@@ -31,6 +31,12 @@ export interface IBatchRunProgress {
   currentDatasetName: string;
 }
 
+export interface IPipelineRunOptions {
+  // List-row runs must always target only the current dataset even when the
+  // editor's shared batch checkbox remains selected.
+  allowBatch?: boolean;
+}
+
 export function stepStatusIcon(status?: TStepStatus): string {
   switch (status) {
     case "success":
@@ -78,6 +84,7 @@ function makeBaselineStatuses(pipeline: IPipeline): IStepRunState[] {
 export function createPipelineRunController() {
   // Which pipeline the status arrays below describe (the last one run).
   const activePipelineId = ref<string | null>(null);
+  const activeStepIds = ref<string[]>([]);
   const stepStatuses = ref<IStepRunState[]>([]);
   // Backend job id per step, filled as each job is created (drives Logs).
   const stepJobIds = ref<(string | null)[]>([]);
@@ -114,7 +121,20 @@ export function createPipelineRunController() {
   // run, otherwise a fresh pending/skipped baseline derived from the steps.
   function statusesFor(pipeline: IPipeline): IStepRunState[] {
     if (activePipelineId.value === pipeline.id && stepStatuses.value.length) {
-      return stepStatuses.value;
+      const statusByStepId = new Map(
+        activeStepIds.value.map((stepId, index) => [
+          stepId,
+          stepStatuses.value[index],
+        ]),
+      );
+      return pipeline.steps.map(
+        (step) =>
+          statusByStepId.get(step.id) ?? {
+            status: step.enabled ? "pending" : "skipped",
+            progress: {},
+            errors: { errors: [] },
+          },
+      );
     }
     return makeBaselineStatuses(pipeline);
   }
@@ -123,11 +143,17 @@ export function createPipelineRunController() {
     if (activePipelineId.value !== pipeline.id) {
       return null;
     }
-    return stepJobIds.value[index] ?? null;
+    const stepId = pipeline.steps[index]?.id;
+    if (!stepId) {
+      return null;
+    }
+    const runIndex = activeStepIds.value.indexOf(stepId);
+    return runIndex >= 0 ? stepJobIds.value[runIndex] ?? null : null;
   }
 
   function resetRunState(pipeline: IPipeline) {
     activePipelineId.value = pipeline.id;
+    activeStepIds.value = pipeline.steps.map((step) => step.id);
     result.value = null;
     cancelFn.value = null;
     cancelledByUser.value = false;
@@ -142,11 +168,15 @@ export function createPipelineRunController() {
     }
   }
 
-  async function run(pipeline: IPipeline) {
+  async function run(
+    pipeline: IPipeline,
+    { allowBatch = true }: IPipelineRunOptions = {},
+  ) {
     if (!canRunPipeline(pipeline)) {
       return;
     }
-    const runAsBatch = applyToAllDatasets.value && canApplyToAllDatasets.value;
+    const runAsBatch =
+      allowBatch && applyToAllDatasets.value && canApplyToAllDatasets.value;
     lastRunWasBatch.value = runAsBatch;
     resetRunState(pipeline);
 
@@ -155,44 +185,48 @@ export function createPipelineRunController() {
       return;
     }
 
-    await pipelinesStore.runPipeline({
-      pipeline,
-      continueOnError: continueOnError.value,
-      onStepStart: (index) => setStatus(index, "running"),
-      onStepJob: (index, jobId) => {
-        if (index < stepJobIds.value.length) {
-          stepJobIds.value[index] = jobId;
-        }
-      },
-      onStepProgress: (index, info) => {
-        const entry = stepStatuses.value[index];
-        if (entry) {
-          entry.progress = info;
-        }
-      },
-      onStepError: (index, errors) => {
-        const entry = stepStatuses.value[index];
-        if (entry) {
-          entry.errors = errors;
-        }
-      },
-      onStepComplete: (index, success) => {
-        if (success) {
-          setStatus(index, "success");
-        } else if (cancelledByUser.value) {
-          setStatus(index, "cancelled");
-        } else {
-          setStatus(index, "error");
-        }
-      },
-      onCancel: (cancel) => {
-        cancelFn.value = cancel;
-      },
-      onComplete: (runResult) => {
-        result.value = runResult;
-        cancelFn.value = null;
-      },
-    });
+    try {
+      await pipelinesStore.runPipeline({
+        pipeline,
+        continueOnError: continueOnError.value,
+        onStepStart: (index) => setStatus(index, "running"),
+        onStepJob: (index, jobId) => {
+          if (index < stepJobIds.value.length) {
+            stepJobIds.value[index] = jobId;
+          }
+        },
+        onStepProgress: (index, info) => {
+          const entry = stepStatuses.value[index];
+          if (entry) {
+            entry.progress = info;
+          }
+        },
+        onStepError: (index, errors) => {
+          const entry = stepStatuses.value[index];
+          if (entry) {
+            entry.errors = errors;
+          }
+        },
+        onStepComplete: (index, success) => {
+          if (success) {
+            setStatus(index, "success");
+          } else if (cancelledByUser.value) {
+            setStatus(index, "cancelled");
+          } else {
+            setStatus(index, "error");
+          }
+        },
+        onCancel: (cancel) => {
+          cancelFn.value = cancel;
+        },
+        onComplete: (runResult) => {
+          result.value = runResult;
+          cancelFn.value = null;
+        },
+      });
+    } finally {
+      cancelFn.value = null;
+    }
   }
 
   async function runBatch(pipeline: IPipeline) {
@@ -207,24 +241,33 @@ export function createPipelineRunController() {
       cancelled: 0,
       currentDatasetName: "Starting…",
     };
-    await pipelinesStore.runPipelineBatch({
-      pipeline,
-      configurationId,
-      continueOnError: continueOnError.value,
-      onBatchProgress: (status) => {
-        batchProgress.value = status;
-      },
-      onCancel: (cancel) => {
-        cancelFn.value = cancel;
-      },
-      onComplete: (summary) => {
-        cancelFn.value = null;
-        result.value = { ...summary, failedStepIndex: null };
-        setTimeout(() => {
-          batchProgress.value = null;
-        }, 3000);
-      },
-    });
+    let completed = false;
+    try {
+      await pipelinesStore.runPipelineBatch({
+        pipeline,
+        configurationId,
+        continueOnError: continueOnError.value,
+        onBatchProgress: (status) => {
+          batchProgress.value = status;
+        },
+        onCancel: (cancel) => {
+          cancelFn.value = cancel;
+        },
+        onComplete: (summary) => {
+          completed = true;
+          cancelFn.value = null;
+          result.value = { ...summary, failedStepIndex: null };
+          setTimeout(() => {
+            batchProgress.value = null;
+          }, 3000);
+        },
+      });
+    } finally {
+      cancelFn.value = null;
+      if (!completed) {
+        batchProgress.value = null;
+      }
+    }
   }
 
   function cancel() {
@@ -242,6 +285,7 @@ export function createPipelineRunController() {
 
   return {
     activePipelineId,
+    activeStepIds,
     stepStatuses,
     result,
     lastRunWasBatch,

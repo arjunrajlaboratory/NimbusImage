@@ -158,7 +158,7 @@
                 color="error"
                 size="small"
                 :disabled="isRunningThis"
-                @click="removeStep(index)"
+                @click="askRemoveStep(index)"
               >
                 <v-icon start>mdi-delete</v-icon>
                 Remove
@@ -348,6 +348,46 @@
       </v-card>
     </v-dialog>
 
+    <!-- Removing a property step can also remove the persisted property that
+         the runner created for it. Defer both choices until Save. -->
+    <v-dialog v-model="showRemoveStepDialog" max-width="440">
+      <v-card>
+        <v-card-title>Remove property step</v-card-title>
+        <v-card-text>
+          Remove "{{ stepToRemove?.name }}" from this pipeline?
+          <v-checkbox
+            v-model="removeMaterializedProperty"
+            label="Also remove the computed property created by this step"
+            density="compact"
+            hide-details
+            class="mt-2"
+          />
+          <div class="text-caption text-medium-emphasis mt-2">
+            The property is removed only after you save the pipeline, and is
+            kept if another pipeline step still uses it.
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn
+            variant="text"
+            size="small"
+            @click="showRemoveStepDialog = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            @click="confirmRemoveStep"
+          >
+            Remove
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <job-log-dialog
       v-model="showLogDialog"
       :job-id="logDialogJobId"
@@ -369,7 +409,9 @@
 import { computed, inject, onMounted, ref, watch } from "vue";
 import { cloneDeep, isEqual } from "lodash";
 import store from "@/store";
-import pipelinesStore from "@/store/pipelines";
+import pipelinesStore, {
+  mergeMaterializedPropertyIds,
+} from "@/store/pipelines";
 import propertiesStore from "@/store/properties";
 import annotationStore from "@/store/annotation";
 import { logError } from "@/utils/log";
@@ -437,6 +479,9 @@ watch(
   () => {
     localPipeline.value = clonePipelineForEditing(props.pipeline);
     savedSnapshot.value = baselineFor(props.pipeline);
+    materializedPropertyIdsToRemove.value = [];
+    showRemoveStepDialog.value = false;
+    stepToRemoveIndex.value = null;
   },
 );
 
@@ -598,6 +643,47 @@ function removeStep(index: number) {
   updateSteps(steps);
 }
 
+const showRemoveStepDialog = ref(false);
+const stepToRemoveIndex = ref<number | null>(null);
+const removeMaterializedProperty = ref(true);
+const materializedPropertyIdsToRemove = ref<string[]>([]);
+
+const stepToRemove = computed(() =>
+  stepToRemoveIndex.value === null
+    ? null
+    : localPipeline.value.steps[stepToRemoveIndex.value] ?? null,
+);
+
+function askRemoveStep(index: number) {
+  const step = localPipeline.value.steps[index];
+  if (step?.kind !== "property" || !step.materializedPropertyId) {
+    removeStep(index);
+    return;
+  }
+  stepToRemoveIndex.value = index;
+  removeMaterializedProperty.value = true;
+  showRemoveStepDialog.value = true;
+}
+
+function confirmRemoveStep() {
+  const index = stepToRemoveIndex.value;
+  const step = stepToRemove.value;
+  if (index === null || !step) {
+    return;
+  }
+  if (
+    removeMaterializedProperty.value &&
+    step.kind === "property" &&
+    step.materializedPropertyId &&
+    !materializedPropertyIdsToRemove.value.includes(step.materializedPropertyId)
+  ) {
+    materializedPropertyIdsToRemove.value.push(step.materializedPropertyId);
+  }
+  removeStep(index);
+  showRemoveStepDialog.value = false;
+  stepToRemoveIndex.value = null;
+}
+
 // ---- Add step dialog -------------------------------------------------
 type TNewStepSource = TPipelineStepKind | "tool";
 
@@ -715,7 +801,20 @@ async function persist(): Promise<IPipeline | null> {
   saving.value = true;
   saveError.value = null;
   try {
-    await pipelinesStore.savePipeline(cloneDeep(localPipeline.value));
+    const toSave = cloneDeep(localPipeline.value);
+    // Preserve any materializedPropertyId the runner wrote to the store copy
+    // after a run, so saving edits doesn't drop it and orphan the property.
+    mergeMaterializedPropertyIds(
+      toSave,
+      pipelinesStore.getPipelineById(toSave.id),
+    );
+    await pipelinesStore.savePipeline(toSave);
+    if (materializedPropertyIdsToRemove.value.length > 0) {
+      await pipelinesStore.deleteUnreferencedMaterializedProperties(
+        materializedPropertyIdsToRemove.value,
+      );
+      materializedPropertyIdsToRemove.value = [];
+    }
     // Re-baseline the dirty indicator to exactly what we just persisted.
     savedSnapshot.value = cloneDeep(localPipeline.value);
     return pipelinesStore.getPipelineById(localPipeline.value.id);
@@ -762,6 +861,9 @@ defineExpose({
   isDirty,
   save,
   saveAndRun,
+  askRemoveStep,
+  confirmRemoveStep,
+  materializedPropertyIdsToRemove,
   showSavedSnackbar,
 });
 </script>

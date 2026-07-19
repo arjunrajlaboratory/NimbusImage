@@ -14,6 +14,7 @@ import annotations from "./annotation";
 import properties from "./properties";
 import { createProgressEventCallback, createErrorEventCallback } from "./jobs";
 import progress from "./progress";
+import { BATCH_DATASET_LIMIT } from "./constants";
 import { logError } from "@/utils/log";
 
 import {
@@ -51,6 +52,31 @@ export interface IPipelineStepRunStatus {
   status: "pending" | "running" | "success" | "error" | "cancelled" | "skipped";
   progress: IProgressInfo;
   errors: IErrorInfoList;
+}
+
+// The runner records `materializedPropertyId` on the *store* copy of a property
+// step after a run (see ensureMaterializedProperty). An editor working on a
+// separate clone never sees that write-back, so persisting the clone would drop
+// the id and orphan the materialized property (a fresh one is created next run).
+// Carry each property step's materialized id from `source` (the persisted copy)
+// into `target` (the copy about to be saved) by step id. Mutates `target`.
+export function mergeMaterializedPropertyIds(
+  target: IPipeline,
+  source: IPipeline | null | undefined,
+): void {
+  if (!source) {
+    return;
+  }
+  const sourceStepById = new Map(source.steps.map((step) => [step.id, step]));
+  for (const step of target.steps) {
+    if (step.kind !== "property") {
+      continue;
+    }
+    const sourceStep = sourceStepById.get(step.id);
+    if (sourceStep?.kind === "property" && sourceStep.materializedPropertyId) {
+      step.materializedPropertyId = sourceStep.materializedPropertyId;
+    }
+  }
 }
 
 function buildTransientTool(step: IAnnotationPipelineStep): IToolConfiguration {
@@ -159,6 +185,7 @@ export class Pipelines extends VuexModule {
     pipelineId: string;
     removeMaterializedProperties?: boolean;
   }) {
+    const removableIds: string[] = [];
     if (removeMaterializedProperties) {
       const target = this.getPipelineById(pipelineId);
       const materializedPropertyIds = new Set<string>();
@@ -167,18 +194,35 @@ export class Pipelines extends VuexModule {
           materializedPropertyIds.add(step.materializedPropertyId);
         }
       }
-      const removableIds = [...materializedPropertyIds].filter(
-        (propertyId) =>
-          !this.isMaterializedPropertyReferenced(propertyId, { pipelineId }),
+      removableIds.push(
+        ...[...materializedPropertyIds].filter(
+          (propertyId) =>
+            !this.isMaterializedPropertyReferenced(propertyId, { pipelineId }),
+        ),
       );
-      if (removableIds.length > 0) {
-        // Single batch call → one propertyIds config sync, not one per id.
-        await properties.deleteProperties(removableIds);
-      }
     }
     await main.updateConfigurationPipelines(
       this.pipelines.filter((p) => p.id !== pipelineId),
     );
+    if (removableIds.length > 0) {
+      // Persist the pipeline deletion first, so a later cleanup failure can at
+      // worst leave an orphan rather than a live step pointing at a property
+      // that has already been removed. One batch call means one config sync.
+      await properties.deleteProperties(removableIds);
+    }
+  }
+
+  // Remove materialized properties from deleted property steps after the
+  // updated pipeline has been persisted. Properties that another step still
+  // references are deliberately retained.
+  @Action
+  async deleteUnreferencedMaterializedProperties(propertyIds: string[]) {
+    const removableIds = [...new Set(propertyIds)].filter(
+      (propertyId) => !this.isMaterializedPropertyReferenced(propertyId),
+    );
+    if (removableIds.length > 0) {
+      await properties.deleteProperties(removableIds);
+    }
   }
 
   @Action
@@ -591,6 +635,15 @@ export class Pipelines extends VuexModule {
       onComplete?.(emptyResult);
       return emptyResult;
     }
+    if (total > BATCH_DATASET_LIMIT) {
+      const rejectedResult = {
+        succeeded: 0,
+        failed: total,
+        cancelled: 0,
+      };
+      onComplete?.(rejectedResult);
+      return rejectedResult;
+    }
 
     const datasetInfo = await main.api.batchResources({ folder: datasetIds });
     const datasetNames: { [id: string]: string } = {};
@@ -609,9 +662,20 @@ export class Pipelines extends VuexModule {
     let failed = 0;
     let cancelled = 0;
 
-    for (const datasetId of datasetIds) {
-      if (isCancelled) {
-        cancelled++;
+    try {
+      for (const datasetId of datasetIds) {
+        if (isCancelled) {
+          cancelled++;
+          onBatchProgress?.({
+            total,
+            completed,
+            failed,
+            cancelled,
+            currentDatasetName: datasetNames[datasetId],
+          });
+          continue;
+        }
+
         onBatchProgress?.({
           total,
           completed,
@@ -619,66 +683,57 @@ export class Pipelines extends VuexModule {
           cancelled,
           currentDatasetName: datasetNames[datasetId],
         });
-        continue;
+
+        const result = await this.runPipeline({
+          pipeline,
+          datasetId,
+          continueOnError,
+          skipRunningState: true,
+          skipRefresh: true,
+          onCancel: (c) => {
+            innerCancel = c;
+          },
+        });
+
+        if (isCancelled) {
+          cancelled++;
+        } else if (
+          result.succeeded > 0 &&
+          result.failed === 0 &&
+          result.cancelled === 0
+        ) {
+          // A child run that bailed out entirely (empty result, e.g. login
+          // expired mid-batch) must not count as a completed dataset.
+          completed++;
+        } else {
+          failed++;
+        }
+
+        progress.update({
+          id: batchProgressId,
+          progress: completed + failed + cancelled,
+          total,
+        });
+        onBatchProgress?.({
+          total,
+          completed,
+          failed,
+          cancelled,
+          currentDatasetName: datasetNames[datasetId],
+        });
       }
 
-      onBatchProgress?.({
-        total,
-        completed,
-        failed,
-        cancelled,
-        currentDatasetName: datasetNames[datasetId],
-      });
+      // Single refresh for the currently-viewed dataset (the batch may have
+      // touched many others, but only the current one is on screen).
+      await this.refreshAfterRun();
 
-      const result = await this.runPipeline({
-        pipeline,
-        datasetId,
-        continueOnError,
-        skipRunningState: true,
-        skipRefresh: true,
-        onCancel: (c) => {
-          innerCancel = c;
-        },
-      });
-
-      if (isCancelled) {
-        cancelled++;
-      } else if (
-        result.succeeded > 0 &&
-        result.failed === 0 &&
-        result.cancelled === 0
-      ) {
-        // A child run that bailed out entirely (empty result, e.g. login
-        // expired mid-batch) must not count as a completed dataset.
-        completed++;
-      } else {
-        failed++;
-      }
-
-      progress.update({
-        id: batchProgressId,
-        progress: completed + failed + cancelled,
-        total,
-      });
-      onBatchProgress?.({
-        total,
-        completed,
-        failed,
-        cancelled,
-        currentDatasetName: datasetNames[datasetId],
-      });
+      const summary = { succeeded: completed, failed, cancelled };
+      onComplete?.(summary);
+      return summary;
+    } finally {
+      progress.complete(batchProgressId);
+      this.setRunningPipelineId(null);
     }
-
-    progress.complete(batchProgressId);
-    this.setRunningPipelineId(null);
-
-    // Single refresh for the currently-viewed dataset (the batch may have
-    // touched many others, but only the current one is on screen).
-    await this.refreshAfterRun();
-
-    const summary = { succeeded: completed, failed, cancelled };
-    onComplete?.(summary);
-    return summary;
   }
 }
 

@@ -749,10 +749,16 @@ export class Properties extends VuexModule {
   }
 
   @Action
-  protected setProperties(properties: IAnnotationProperty[]) {
+  protected async setProperties(properties: IAnnotationProperty[]) {
+    const previous = this.properties;
     this.setPropertiesImpl(properties);
     const propertyIds = this.properties.map((p) => p.id);
-    this.context.dispatch("updateConfigurationProperties", propertyIds);
+    try {
+      await this.context.dispatch("updateConfigurationProperties", propertyIds);
+    } catch (error) {
+      this.setPropertiesImpl(previous);
+      throw error;
+    }
   }
 
   @Mutation
@@ -889,7 +895,7 @@ export class Properties extends VuexModule {
   async createProperty(property: IAnnotationPropertyConfiguration) {
     const newProperty = await this.propertiesAPI.createProperty(property);
     if (newProperty) {
-      this.setProperties([...this.properties, newProperty]);
+      await this.setProperties([...this.properties, newProperty]);
     }
     return newProperty;
   }
@@ -906,7 +912,9 @@ export class Properties extends VuexModule {
     // TODO: temp another configuration could be using this property!
     // await this.propertiesAPI.deleteProperty(propertyId);
     const removedIds = new Set(propertyIds);
-    this.setProperties(this.properties.filter((p) => !removedIds.has(p.id)));
+    await this.setProperties(
+      this.properties.filter((p) => !removedIds.has(p.id)),
+    );
   }
 
   @Action

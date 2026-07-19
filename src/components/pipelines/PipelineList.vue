@@ -80,7 +80,9 @@
               </template>
               <v-list density="compact">
                 <v-list-item
-                  :disabled="duplicatingId === pipeline.id"
+                  :disabled="
+                    duplicatingId === pipeline.id || controller.isRunning.value
+                  "
                   @click="duplicate(pipeline.id)"
                 >
                   <template v-slot:prepend>
@@ -88,7 +90,11 @@
                   </template>
                   <v-list-item-title>Duplicate</v-list-item-title>
                 </v-list-item>
-                <v-list-item base-color="error" @click="askDelete(pipeline)">
+                <v-list-item
+                  base-color="error"
+                  :disabled="controller.isRunning.value"
+                  @click="askDelete(pipeline)"
+                >
                   <template v-slot:prepend>
                     <v-icon size="small">mdi-delete</v-icon>
                   </template>
@@ -131,6 +137,7 @@
             color="error"
             size="small"
             :loading="deleting"
+            :disabled="controller.isRunning.value"
             @click="confirmDelete"
           >
             Delete
@@ -177,10 +184,13 @@ function canRun(pipeline: IPipeline): boolean {
 // Quick-run straight from the list. Editing/running the same pipeline in the
 // editor uses save-then-run; from the list the saved pipeline runs as-is.
 function runPipeline(pipeline: IPipeline) {
-  controller.run(pipeline);
+  controller.run(pipeline, { allowBatch: false });
 }
 
 async function duplicate(pipelineId: string) {
+  if (controller.isRunning.value) {
+    return;
+  }
   duplicatingId.value = pipelineId;
   actionError.value = null;
   try {
@@ -195,13 +205,16 @@ async function duplicate(pipelineId: string) {
 }
 
 function askDelete(pipeline: IPipeline) {
+  if (controller.isRunning.value) {
+    return;
+  }
   pipelineToDelete.value = pipeline;
   removeMaterializedProperties.value = true;
   showDeleteDialog.value = true;
 }
 
 async function confirmDelete() {
-  if (!pipelineToDelete.value) {
+  if (!pipelineToDelete.value || controller.isRunning.value) {
     return;
   }
   deleting.value = true;

@@ -85,6 +85,7 @@ const fetchedHeader = ref("");
 const fetchedLog = ref("");
 const fetchError = ref<string | null>(null);
 const showCopySnackbar = ref(false);
+let latestFetchRequest = 0;
 
 // Live log streamed over SSE while the job runs; empty once the job's
 // jobInfoMap entry is cleaned up after completion.
@@ -109,13 +110,18 @@ const displayedLog = computed(() => {
 });
 
 async function fetchLog() {
-  if (!props.jobId) {
+  const jobId = props.jobId;
+  if (!jobId) {
     return;
   }
+  const request = ++latestFetchRequest;
   loading.value = true;
   fetchError.value = null;
   try {
-    const job = await store.api.getJobInfo(props.jobId);
+    const job = await store.api.getJobInfo(jobId);
+    if (request !== latestFetchRequest || props.jobId !== jobId) {
+      return;
+    }
     if (!job) {
       fetchError.value = "Failed to load job log.";
       return;
@@ -123,10 +129,15 @@ async function fetchLog() {
     fetchedHeader.value = formatJobLogHeader(job);
     fetchedLog.value = job.log || "";
   } catch (error) {
+    if (request !== latestFetchRequest || props.jobId !== jobId) {
+      return;
+    }
     logError("Error fetching job log:", error);
     fetchError.value = "Error fetching job log. Please try again.";
   } finally {
-    loading.value = false;
+    if (request === latestFetchRequest) {
+      loading.value = false;
+    }
   }
 }
 
@@ -137,6 +148,9 @@ watch(
       fetchedHeader.value = "";
       fetchedLog.value = "";
       fetchLog();
+    } else {
+      latestFetchRequest++;
+      loading.value = false;
     }
   },
 );

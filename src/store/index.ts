@@ -1876,8 +1876,9 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async getCollectionDatasetCount(): Promise<number> {
-    const configurationId = this.selectedConfigurationId;
+  async getCollectionDatasetCount(
+    configurationId = this.selectedConfigurationId,
+  ): Promise<number> {
     if (!configurationId) {
       return 0;
     }
@@ -1989,28 +1990,57 @@ export class Main extends VuexModule {
   }
 
   @Action
-  updateConfigurationProperties(propertyIds: string[]) {
-    if (this.configuration) {
-      this.configuration.propertyIds = propertyIds;
-      this.syncConfiguration("propertyIds");
+  async updateConfigurationProperties(propertyIds: string[]) {
+    const configuration = this.configuration;
+    if (!configuration) {
+      throw new Error("Cannot update properties without a configuration");
+    }
+    const previous = configuration.propertyIds;
+    configuration.propertyIds = propertyIds;
+    try {
+      await this.syncConfiguration({ key: "propertyIds", throwOnError: true });
+    } catch (error) {
+      configuration.propertyIds = previous;
+      throw error;
     }
   }
 
   @Action
-  updateConfigurationPipelines(pipelines: IPipeline[]) {
-    if (this.configuration) {
-      this.configuration.pipelines = pipelines;
-      this.syncConfiguration("pipelines");
+  async updateConfigurationPipelines(pipelines: IPipeline[]) {
+    const configuration = this.configuration;
+    if (!configuration) {
+      throw new Error("Cannot update pipelines without a configuration");
+    }
+    const previous = configuration.pipelines;
+    configuration.pipelines = pipelines;
+    try {
+      await this.syncConfiguration({ key: "pipelines", throwOnError: true });
+    } catch (error) {
+      configuration.pipelines = previous;
+      throw error;
     }
   }
 
   @Action
-  async syncConfiguration(key: keyof IDatasetConfigurationBase) {
+  async syncConfiguration(
+    payload:
+      | keyof IDatasetConfigurationBase
+      | { key: keyof IDatasetConfigurationBase; throwOnError?: boolean },
+  ) {
+    const key = typeof payload === "string" ? payload : payload.key;
+    const throwOnError =
+      typeof payload === "string" ? false : payload.throwOnError ?? false;
     if (!this.isLoggedIn) {
       this.createNotLoggedInNotification();
+      if (throwOnError) {
+        throw new Error("Authentication is required to save configuration");
+      }
       return;
     }
     if (!this.configuration) {
+      if (throwOnError) {
+        throw new Error("Cannot save without a configuration");
+      }
       return;
     }
     sync.setSaving(true);
@@ -2020,6 +2050,9 @@ export class Main extends VuexModule {
       sync.setSaving(false);
     } catch (error) {
       sync.setSaving(error as Error);
+      if (throwOnError) {
+        throw error;
+      }
     }
   }
 

@@ -88,7 +88,7 @@ vi.mock("./filters", () => ({
   default: { updateHistograms: vi.fn().mockResolvedValue(undefined) },
 }));
 
-import pipelinesStore from "./pipelines";
+import pipelinesStore, { mergeMaterializedPropertyIds } from "./pipelines";
 import { AnnotationShape, IPipeline } from "./model";
 
 function annotationStep(id: string, tags: string[] = []): any {
@@ -136,6 +136,14 @@ function submitResult(jobId: string, success: boolean) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.main.api.findDatasetViews.mockResolvedValue([]);
+  h.main.api.batchResources.mockResolvedValue({ folder: {} });
+  h.main.updateConfigurationPipelines.mockResolvedValue(undefined);
+  h.annotations.fetchAnnotations.mockResolvedValue(undefined);
+  h.properties.fetchPropertyValues.mockResolvedValue(undefined);
+  h.properties.deleteProperty.mockResolvedValue(undefined);
+  h.properties.deleteProperties.mockResolvedValue(undefined);
+  h.progress.create.mockResolvedValue("prog");
   pipelinesStore.setRunningPipelineId(null);
   h.main.dataset = { id: "d1", z: [0], time: [0] };
   h.main.isLoggedIn = true;
@@ -544,6 +552,52 @@ describe("deletePipeline", () => {
       otherPipeline,
     ]);
   });
+
+  it("keeps properties intact when the pipeline deletion fails to persist", async () => {
+    const step = propertyStep("p");
+    step.materializedPropertyId = "prop-1";
+    const pipe = pipeline([step]);
+    h.main.configuration.pipelines = [pipe];
+    h.main.updateConfigurationPipelines.mockRejectedValueOnce(
+      new Error("configuration write failed"),
+    );
+
+    await expect(
+      pipelinesStore.deletePipeline({ pipelineId: pipe.id }),
+    ).rejects.toThrow("configuration write failed");
+
+    expect(h.properties.deleteProperties).not.toHaveBeenCalled();
+  });
+});
+
+describe("pipeline persistence and property-step cleanup", () => {
+  it("rejects a pipeline save when backend configuration persistence fails", async () => {
+    const error = new Error("configuration write failed");
+    h.main.updateConfigurationPipelines.mockRejectedValueOnce(error);
+
+    await expect(
+      pipelinesStore.savePipeline(pipeline([annotationStep("a")])),
+    ).rejects.toThrow("configuration write failed");
+  });
+
+  it("removes materialized properties no longer referenced by any step", async () => {
+    await pipelinesStore.deleteUnreferencedMaterializedProperties([
+      "orphan",
+      "orphan",
+    ]);
+
+    expect(h.properties.deleteProperties).toHaveBeenCalledWith(["orphan"]);
+  });
+
+  it("keeps a materialized property that another step still references", async () => {
+    const step = propertyStep("p");
+    step.materializedPropertyId = "shared";
+    h.main.configuration.pipelines = [pipeline([step])];
+
+    await pipelinesStore.deleteUnreferencedMaterializedProperties(["shared"]);
+
+    expect(h.properties.deleteProperties).not.toHaveBeenCalled();
+  });
 });
 
 describe("runPipelineBatch", () => {
@@ -600,5 +654,108 @@ describe("runPipelineBatch", () => {
     });
     expect(summary).toEqual({ succeeded: 0, failed: 0, cancelled: 0 });
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
+  });
+
+  it("refuses to launch a batch larger than the authoritative limit", async () => {
+    h.main.api.findDatasetViews.mockResolvedValue(
+      Array.from({ length: 51 }, (_, index) => ({
+        datasetId: `d-${index}`,
+      })),
+    );
+
+    const summary = await pipelinesStore.runPipelineBatch({
+      pipeline: pipeline([annotationStep("a")]),
+      configurationId: "cfg1",
+    });
+
+    expect(summary).toEqual({ succeeded: 0, failed: 51, cancelled: 0 });
+    expect(h.main.api.batchResources).not.toHaveBeenCalled();
+    expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
+    expect(pipelinesStore.runningPipelineId).toBeNull();
+  });
+
+  it("clears batch running state when a child persistence step fails", async () => {
+    h.main.api.findDatasetViews.mockResolvedValue([{ datasetId: "d1" }]);
+    h.main.api.batchResources.mockResolvedValue({
+      folder: { d1: { name: "Dataset 1" } },
+    });
+    h.properties.createProperty.mockResolvedValue({
+      id: "prop-created",
+      image: "img/prop",
+      shape: AnnotationShape.Polygon,
+      tags: { tags: [], exclusive: false },
+      workerInterface: {},
+    });
+    h.properties.submitPropertyJob.mockResolvedValue(submitResult("j", true));
+    h.main.updateConfigurationPipelines.mockRejectedValueOnce(
+      new Error("configuration write failed"),
+    );
+
+    await expect(
+      pipelinesStore.runPipelineBatch({
+        pipeline: pipeline([propertyStep("p")]),
+        configurationId: "cfg1",
+      }),
+    ).rejects.toThrow("configuration write failed");
+
+    expect(pipelinesStore.runningPipelineId).toBeNull();
+    // Step, child-pipeline, and outer-batch progress all close.
+    expect(h.progress.complete).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("mergeMaterializedPropertyIds", () => {
+  function withMaterialized(step: any, id: string | undefined) {
+    return { ...step, materializedPropertyId: id };
+  }
+
+  it("carries a materialized id from source into a target step lacking one", () => {
+    const target = pipeline([annotationStep("a"), propertyStep("p")]);
+    const source = pipeline([
+      annotationStep("a"),
+      withMaterialized(propertyStep("p"), "prop-1"),
+    ]);
+
+    mergeMaterializedPropertyIds(target, source);
+
+    expect((target.steps[1] as any).materializedPropertyId).toBe("prop-1");
+  });
+
+  it("prefers the source's (runner-written) id over the target's stale one", () => {
+    const target = pipeline([withMaterialized(propertyStep("p"), "old")]);
+    const source = pipeline([withMaterialized(propertyStep("p"), "new")]);
+
+    mergeMaterializedPropertyIds(target, source);
+
+    expect((target.steps[0] as any).materializedPropertyId).toBe("new");
+  });
+
+  it("leaves the target unchanged when the source has no id or no match", () => {
+    const target = pipeline([withMaterialized(propertyStep("p"), "keep")]);
+    // Source lacks an id, and has an unrelated step id.
+    const source = pipeline([propertyStep("other")]);
+
+    mergeMaterializedPropertyIds(target, source);
+
+    expect((target.steps[0] as any).materializedPropertyId).toBe("keep");
+  });
+
+  it("is a no-op for a null/undefined source", () => {
+    const target = pipeline([withMaterialized(propertyStep("p"), "keep")]);
+
+    mergeMaterializedPropertyIds(target, null);
+
+    expect((target.steps[0] as any).materializedPropertyId).toBe("keep");
+  });
+
+  it("ignores annotation steps sharing an id slot", () => {
+    const target = pipeline([annotationStep("x")]);
+    const source = pipeline([
+      withMaterialized(propertyStep("x") as any, "prop-1"),
+    ]);
+
+    mergeMaterializedPropertyIds(target, source);
+
+    expect((target.steps[0] as any).materializedPropertyId).toBeUndefined();
   });
 });
