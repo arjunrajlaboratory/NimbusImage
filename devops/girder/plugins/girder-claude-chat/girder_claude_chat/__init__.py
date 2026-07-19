@@ -2,23 +2,20 @@ import os
 import json
 import logging
 
-from anthropic import APIError
+from anthropic import Anthropic, APIError
 
 from girder import plugin
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource, RestException
 
-from girder_claude_chat.common import (
-    CLAUDE_MODEL,
-    list_param,
-    make_anthropic_client,
-)
-
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Claude model used for all chat completions. Centralized here so that
+# additional call sites in this plugin share a single source of truth.
+CLAUDE_MODEL = 'claude-sonnet-5'
 MAX_TOOL_SUGGESTION_IMAGES = 2
 MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS = 12 * 1024 * 1024
 
@@ -107,6 +104,25 @@ SUGGEST_TOOLS_TOOL = {
 }
 
 
+def _make_anthropic_client(endpoint_name):
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if api_key:
+        return Anthropic(api_key=api_key)
+    logger.error(
+        "Can't create an Anthropic client without an API key, "
+        'the %s endpoint will not work',
+        endpoint_name
+    )
+    return None
+
+
+def _list_param(data, name):
+    value = data.get(name, [])
+    if not isinstance(value, list):
+        raise RestException(f'{name} must be a list', code=400)
+    return value
+
+
 class ClaudeChatResource(Resource):
     def __init__(self):
         super().__init__()
@@ -124,7 +140,7 @@ class ClaudeChatResource(Resource):
             )
             self.system_prompt = ''
 
-        self.client = make_anthropic_client('claude_chat')
+        self.client = _make_anthropic_client('claude_chat')
 
     @access.user
     @autoDescribeRoute(
@@ -183,7 +199,7 @@ class ClaudeSuggestToolsResource(Resource):
         self.resourceName = 'claude_suggest_tools'
         self.route('POST', (), self.suggest_tools)
 
-        self.client = make_anthropic_client('claude_suggest_tools')
+        self.client = _make_anthropic_client('claude_suggest_tools')
 
     @access.user
     @autoDescribeRoute(
@@ -205,10 +221,10 @@ class ClaudeSuggestToolsResource(Resource):
         # catalog: [{id, name, kind, description, defaultShape}]
         # channels: [str]
         # layers: [{id, name, channel, channelName, color, visible}]
-        images = list_param(data, 'images')
-        catalog = list_param(data, 'catalog')
-        channels = list_param(data, 'channels')
-        layers = list_param(data, 'layers')
+        images = _list_param(data, 'images')
+        catalog = _list_param(data, 'catalog')
+        channels = _list_param(data, 'channels')
+        layers = _list_param(data, 'layers')
 
         if len(images) > MAX_TOOL_SUGGESTION_IMAGES:
             raise RestException(
