@@ -38,11 +38,7 @@
         <!-- Run status is shown in every view so a run is never out of sight. -->
         <pipeline-run-status />
 
-        <pipeline-list
-          v-if="activeView === 'list'"
-          @open="openEditor"
-          @open-suggest="showSuggestDialog = true"
-        />
+        <pipeline-list v-if="activeView === 'list'" @open="openEditor" />
         <pipeline-editor
           v-else-if="activeView === 'editor' && activePipeline"
           :pipeline="activePipeline"
@@ -50,11 +46,6 @@
       </v-card-text>
     </v-card>
   </v-dialog>
-
-  <pipeline-suggest-dialog
-    v-model="showSuggestDialog"
-    @use-suggestion="onUseSuggestion"
-  />
 </template>
 
 <script setup lang="ts">
@@ -64,7 +55,6 @@ import pipelinesStore from "@/store/pipelines";
 import PipelineList from "@/components/pipelines/PipelineList.vue";
 import PipelineEditor from "@/components/pipelines/PipelineEditor.vue";
 import PipelineRunStatus from "@/components/pipelines/PipelineRunStatus.vue";
-import PipelineSuggestDialog from "@/components/pipelines/PipelineSuggestDialog.vue";
 import {
   createPipelineRunController,
   PipelineRunControllerKey,
@@ -99,7 +89,6 @@ type TPipelineDialogView = "list" | "editor";
 
 const activeView = ref<TPipelineDialogView>("list");
 const activePipeline = ref<IPipeline | null>(null);
-const showSuggestDialog = ref(false);
 
 function openEditor(pipeline: IPipeline) {
   activePipeline.value = pipeline;
@@ -118,10 +107,6 @@ function openEditor(pipeline: IPipeline) {
 function backToList() {
   activeView.value = "list";
   activePipeline.value = null;
-}
-
-function onUseSuggestion(pipeline: IPipeline) {
-  openEditor(pipeline);
 }
 
 // On (re)open: if a run is in flight, land on that pipeline's editor so it is

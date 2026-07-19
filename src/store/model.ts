@@ -1788,8 +1788,8 @@ export interface IPipeline {
   name: string;
   description?: string;
   steps: TPipelineStep[];
-  // Provenance, for UI badges. "ai" = came from the suggest feature.
-  origin?: "user" | "ai" | "preset";
+  // Provenance, for UI badges.
+  origin?: "user" | "preset";
 }
 
 export interface IPipelineRunResult {
@@ -1797,46 +1797,6 @@ export interface IPipelineRunResult {
   failed: number;
   cancelled: number;
   failedStepIndex: number | null;
-}
-
-// ---- AI pipeline suggestion (wire types) ----------------------------------
-
-export interface IWorkerCatalogEntry {
-  image: string;
-  name: string;
-  description?: string;
-  annotationShape?: string;
-  interface: IWorkerInterface | null;
-}
-
-export interface IPipelineSuggestRequest {
-  goal: string;
-  context: {
-    channels: string[];
-    existingTags: string[];
-    existingShapes: string[];
-  };
-  annotationWorkers: IWorkerCatalogEntry[];
-  propertyWorkers: IWorkerCatalogEntry[];
-  maxSuggestions: number;
-}
-
-// Raw suggestion returned by the model (before conversion to IPipeline).
-export interface ISuggestedPipelineStep {
-  kind: TPipelineStepKind;
-  image: string;
-  name: string;
-  outputTags?: string[];
-  inputTags?: string[];
-  shape?: string;
-  workerInterfaceValues?: IWorkerInterfaceValues;
-  reason?: string;
-}
-
-export interface ISuggestedPipeline {
-  name: string;
-  rationale: string;
-  steps: ISuggestedPipelineStep[];
 }
 
 export type TNestedValues<T> = T | { [pathName: string]: TNestedValues<T> };

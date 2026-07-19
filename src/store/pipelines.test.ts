@@ -10,8 +10,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   main: {
-    // z/time are read by buildDefaultCoordinateAssignments when converting
-    // AI suggestions into steps.
     dataset: { id: "d1", z: [0], time: [0] } as {
       id: string;
       z: number[];
@@ -33,15 +31,12 @@ const h = vi.hoisted(() => ({
     scheduleMaxMergeCache: vi.fn(),
     scheduleHistogramCache: vi.fn(),
     updateConfigurationPipelines: vi.fn().mockResolvedValue(undefined),
-    chatAPI: { suggestPipelines: vi.fn() },
   } as any,
   annotations: {
     submitAnnotationWorkerJob: vi.fn(),
     fetchAnnotations: vi.fn().mockResolvedValue(undefined),
     annotationTags: new Set<string>(),
     annotations: [] as any[],
-    // Stub-aware accessor (full annotations, or stubs above the threshold);
-    // suggestPipelines reads shapes from it.
     annotationsForIteration: [] as any[],
   },
   properties: {
@@ -586,126 +581,5 @@ describe("runPipelineBatch", () => {
     });
     expect(summary).toEqual({ succeeded: 0, failed: 0, cancelled: 0 });
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
-  });
-});
-
-describe("suggestPipelines", () => {
-  it("clamps property-step shapes to materializable shapes", async () => {
-    h.properties.workerImageList = {
-      "img/annotate": { isAnnotationWorker: "true" },
-      "img/prop": { isPropertyWorker: "true" },
-    };
-    h.main.chatAPI.suggestPipelines.mockResolvedValue([
-      {
-        name: "S",
-        rationale: "r",
-        steps: [
-          { kind: "annotation", image: "img/annotate", name: "seg" },
-          {
-            kind: "property",
-            image: "img/prop",
-            name: "metrics",
-            shape: "rectangle", // not materializable → clamp to polygon
-          },
-        ],
-      },
-    ]);
-
-    const result = await pipelinesStore.suggestPipelines("goal");
-
-    expect(result).toHaveLength(1);
-    const propertyStepResult = result[0].steps.find(
-      (s) => s.kind === "property",
-    ) as any;
-    expect(propertyStepResult.shape).toBe(AnnotationShape.Polygon);
-  });
-
-  it("synthesizes tags when the model omits them and wires property steps", async () => {
-    h.properties.workerImageList = {
-      "img/annotate": { isAnnotationWorker: "true" },
-      "img/prop": { isPropertyWorker: "true" },
-    };
-    h.main.chatAPI.suggestPipelines.mockResolvedValue([
-      {
-        name: "S",
-        rationale: "r",
-        steps: [
-          // No outputTags → tag synthesized from the step name.
-          { kind: "annotation", image: "img/annotate", name: "Spot Finder" },
-          // No inputTags → inherits the preceding annotation step's tags.
-          { kind: "property", image: "img/prop", name: "metrics" },
-        ],
-      },
-    ]);
-
-    const result = await pipelinesStore.suggestPipelines("goal");
-
-    const annotationStepResult = result[0].steps.find(
-      (s) => s.kind === "annotation",
-    ) as any;
-    const propertyStepResult = result[0].steps.find(
-      (s) => s.kind === "property",
-    ) as any;
-    expect(annotationStepResult.annotation.tags).toEqual(["spot finder"]);
-    expect(propertyStepResult.inputTags.tags).toEqual(["spot finder"]);
-  });
-
-  it("keeps model-provided tags when present", async () => {
-    h.properties.workerImageList = {
-      "img/annotate": { isAnnotationWorker: "true" },
-      "img/prop": { isPropertyWorker: "true" },
-    };
-    h.main.chatAPI.suggestPipelines.mockResolvedValue([
-      {
-        name: "S",
-        rationale: "r",
-        steps: [
-          {
-            kind: "annotation",
-            image: "img/annotate",
-            name: "seg",
-            outputTags: ["nuclei"],
-          },
-          {
-            kind: "property",
-            image: "img/prop",
-            name: "metrics",
-            inputTags: ["nuclei"],
-          },
-        ],
-      },
-    ]);
-
-    const result = await pipelinesStore.suggestPipelines("goal");
-    const annotationStepResult = result[0].steps.find(
-      (s) => s.kind === "annotation",
-    ) as any;
-    const propertyStepResult = result[0].steps.find(
-      (s) => s.kind === "property",
-    ) as any;
-    expect(annotationStepResult.annotation.tags).toEqual(["nuclei"]);
-    expect(propertyStepResult.inputTags.tags).toEqual(["nuclei"]);
-  });
-
-  it("drops steps whose image is not installed", async () => {
-    h.properties.workerImageList = {
-      "img/prop": { isPropertyWorker: "true" },
-    };
-    h.main.chatAPI.suggestPipelines.mockResolvedValue([
-      {
-        name: "S",
-        rationale: "r",
-        steps: [
-          { kind: "annotation", image: "not-installed", name: "seg" },
-          { kind: "property", image: "img/prop", name: "metrics" },
-        ],
-      },
-    ]);
-
-    const result = await pipelinesStore.suggestPipelines("goal");
-
-    expect(result).toHaveLength(1);
-    expect(result[0].steps).toHaveLength(1);
-    expect(result[0].steps[0].image).toBe("img/prop");
   });
 });

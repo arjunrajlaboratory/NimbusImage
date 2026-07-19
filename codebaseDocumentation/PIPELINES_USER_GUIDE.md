@@ -196,32 +196,6 @@ explanation.
 
 ---
 
-## AI-suggested pipelines
-
-From the list, **Suggest with AI ✨** opens the suggestion dialog. The user can
-optionally type a goal ("count nuclei and measure their intensity"); the goal
-field is optional. NimbusImage sends the goal, the catalog of installed
-workers, and context about the dataset (channels, existing tags and shapes) to
-Claude, which returns up to **three** suggested pipelines.
-
-Key points for guiding users:
-
-- Suggestions only reference **installed** workers. Any step referencing a
-  worker that isn't installed is dropped.
-- Suggestions always come **tag-wired**: annotation steps have output tags and
-  property steps have matching input tags, so a suggested pipeline is runnable
-  as-is.
-- A suggestion carries an **"ai"** origin badge.
-- Clicking **Use this** opens the suggestion in the **builder** — it is *not*
-  saved yet. The user reviews and edits it, and only **Save** commits it. This
-  lets a user discard a suggestion they don't want by simply closing the
-  builder.
-
-The suggestion feature requires the server to be configured with an Anthropic
-API key; if it isn't, the feature is unavailable and returns an error.
-
----
-
 ## Job logs (diagnosing a worker)
 
 When a step is running or has finished, its **Logs** button opens the job log.
@@ -260,7 +234,7 @@ shared by every dataset in the collection.
 | **Auto-wiring** | The builder copying an upstream annotation step's tags/shape into a downstream property step automatically. |
 | **Materializable shapes** | The shapes a property can be computed on: point, line, polygon. |
 | **Materialized property** | The persisted property definition a property step creates on first run and reuses. |
-| **Origin** | Where a pipeline came from: `user`, `ai`, or `preset`. |
+| **Origin** | Where a pipeline came from: `user` or `preset`. |
 | **Batch run** | Running one pipeline across every dataset in the collection (≤ 50). |
 
 ---
@@ -269,8 +243,7 @@ shared by every dataset in the collection.
 
 **"How do I make a pipeline?"** Click the **Pipelines** button in the Tools
 panel, then New pipeline, add steps (annotation workers, property workers, or
-existing tools), and Save or Run. Or click Suggest with AI to have one drafted
-for you.
+existing tools), and Save or Run.
 
 **"Why did my property step measure nothing?"** Its input tags probably don't
 match any annotations. Property steps select annotations by tag; make sure the

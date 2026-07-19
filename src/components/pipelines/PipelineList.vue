@@ -3,15 +3,6 @@
     <v-row class="my-0" dense>
       <v-col class="d-flex ga-2 py-1 justify-end">
         <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          @click="emit('open-suggest')"
-        >
-          <v-icon start>mdi-creation</v-icon>
-          Suggest with AI
-        </v-btn>
-        <v-btn
           variant="flat"
           color="primary"
           size="small"
@@ -48,12 +39,7 @@
 
         <v-list-item-title>
           {{ pipeline.name }}
-          <v-chip
-            v-if="pipeline.origin"
-            size="x-small"
-            class="ml-2"
-            :color="pipeline.origin === 'ai' ? 'info' : undefined"
-          >
+          <v-chip v-if="pipeline.origin" size="x-small" class="ml-2">
             {{ pipeline.origin }}
           </v-chip>
         </v-list-item-title>
@@ -116,7 +102,7 @@
     </v-list>
     <v-row v-else class="my-2" dense>
       <v-col class="text-caption text-medium-emphasis">
-        No pipelines yet. Create one, or ask the AI for suggestions.
+        No pipelines yet. Create one to get started.
       </v-col>
     </v-row>
 
@@ -167,7 +153,6 @@ import {
 
 const emit = defineEmits<{
   (e: "open", pipeline: IPipeline): void;
-  (e: "open-suggest"): void;
 }>();
 
 const controller = inject<PipelineRunController>(PipelineRunControllerKey)!;

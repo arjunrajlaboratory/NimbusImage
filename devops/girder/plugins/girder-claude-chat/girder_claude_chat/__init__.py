@@ -14,7 +14,6 @@ from girder_claude_chat.common import (
     list_param,
     make_anthropic_client,
 )
-from girder_claude_chat.pipeline_suggest import PipelineSuggestResource
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -303,5 +302,4 @@ class GirderClaudeChatPlugin(plugin.GirderPlugin):
 
     def load(self, info):
         info['apiRoot'].claude_chat = ClaudeChatResource()
-        info['apiRoot'].claude_pipeline = PipelineSuggestResource()
         info['apiRoot'].claude_suggest_tools = ClaudeSuggestToolsResource()

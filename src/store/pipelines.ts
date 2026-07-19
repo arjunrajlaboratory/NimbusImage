@@ -16,10 +16,8 @@ import { createProgressEventCallback, createErrorEventCallback } from "./jobs";
 import progress from "./progress";
 import { logError } from "@/utils/log";
 
-import { buildDefaultCoordinateAssignments } from "./toolSuggestions";
 import {
   AnnotationShape,
-  clampToMaterializablePropertyShape,
   IAnnotationComputeJob,
   IAnnotationPipelineStep,
   IAnnotationProperty,
@@ -33,9 +31,6 @@ import {
   IProgressInfo,
   IToolConfiguration,
   IToolTemplate,
-  IWorkerCatalogEntry,
-  ISuggestedPipeline,
-  ISuggestedPipelineStep,
   MessageType,
   ProgressType,
   TPipelineStep,
@@ -56,82 +51,6 @@ export interface IPipelineStepRunStatus {
   status: "pending" | "running" | "success" | "error" | "cancelled" | "skipped";
   progress: IProgressInfo;
   errors: IErrorInfoList;
-}
-
-// Convert one raw model suggestion into an IPipeline. Pure (no I/O), so it
-// lives at module scope (non-decorated class methods are not exposed by
-// vuex-module-decorators, neither on the module proxy nor on `this`).
-function convertSuggestion(suggestion: ISuggestedPipeline): IPipeline | null {
-  if (!suggestion || !Array.isArray(suggestion.steps)) {
-    return null;
-  }
-  const toShape = (s: string | undefined): AnnotationShape => {
-    const values = Object.values(AnnotationShape) as string[];
-    return s && values.includes(s)
-      ? (s as AnnotationShape)
-      : AnnotationShape.Polygon;
-  };
-  // Property steps must use a materializable shape; the model may suggest any
-  // shape, so clamp unsupported ones (rectangle/circle/ellipse/any) to Blob
-  // rather than create a property step that fails on compute.
-  const toPropertyShape = (s: string | undefined): AnnotationShape =>
-    clampToMaterializablePropertyShape(toShape(s));
-  // Tag wiring is what joins pipeline steps (property steps read the
-  // annotations their input tags select), so a suggestion without tags would
-  // produce a pipeline whose property steps compute on nothing. The backend
-  // prompt asks the model for tags; these fallbacks make the wiring robust
-  // when it omits them anyway: annotation steps get a tag derived from their
-  // name, and untagged property steps inherit the preceding annotation
-  // step's tags.
-  let lastAnnotationTags: string[] = [];
-  const steps: TPipelineStep[] = suggestion.steps.map(
-    (raw: ISuggestedPipelineStep) => {
-      const base = {
-        id: uuidv4(),
-        name: raw.name || raw.image,
-        image: raw.image,
-        workerInterfaceValues: raw.workerInterfaceValues ?? {},
-        enabled: true,
-      };
-      if (raw.kind === "property") {
-        const step: IPropertyPipelineStep = {
-          ...base,
-          kind: "property",
-          shape: toPropertyShape(raw.shape),
-          inputTags: {
-            tags: raw.inputTags?.length
-              ? [...raw.inputTags]
-              : [...lastAnnotationTags],
-            exclusive: false,
-          },
-          autoWired: true,
-        };
-        return step;
-      }
-      const outputTags = raw.outputTags?.length
-        ? [...raw.outputTags]
-        : [base.name.toLowerCase().trim()].filter(Boolean);
-      lastAnnotationTags = outputTags;
-      const step: IAnnotationPipelineStep = {
-        ...base,
-        kind: "annotation",
-        annotation: {
-          tags: outputTags,
-          shape: toShape(raw.shape),
-          color: undefined,
-          coordinateAssignments: buildDefaultCoordinateAssignments(),
-        },
-      };
-      return step;
-    },
-  );
-  return {
-    id: uuidv4(),
-    name: suggestion.name || "Suggested pipeline",
-    description: suggestion.rationale,
-    steps,
-    origin: "ai",
-  };
 }
 
 function buildTransientTool(step: IAnnotationPipelineStep): IToolConfiguration {
@@ -756,87 +675,6 @@ export class Pipelines extends VuexModule {
     const summary = { succeeded: completed, failed, cancelled };
     onComplete?.(summary);
     return summary;
-  }
-
-  // ---- AI suggestion ----------------------------------------------------
-
-  // Assemble the worker catalog + dataset context, ask the backend (which
-  // proxies Claude with forced tool-use), then validate and convert the raw
-  // suggestions into ready-to-edit IPipeline objects. Suggestions referencing
-  // images that are not installed are dropped.
-  @Action
-  async suggestPipelines(goal: string): Promise<IPipeline[]> {
-    if (Object.keys(properties.workerImageList).length === 0) {
-      await properties.fetchWorkerImageList();
-    }
-
-    const annotationWorkers: IWorkerCatalogEntry[] = [];
-    const propertyWorkers: IWorkerCatalogEntry[] = [];
-    for (const image of Object.keys(properties.workerImageList)) {
-      const labels = properties.workerImageList[image];
-      const isAnnotation = labels.isAnnotationWorker !== undefined;
-      const isProperty = labels.isPropertyWorker !== undefined;
-      if (!isAnnotation && !isProperty) {
-        continue;
-      }
-      // Only include interfaces already cached. We deliberately do NOT
-      // fetchWorkerInterface here: an uncached interface fetch can launch a
-      // Docker container, and doing that for every installed image just to
-      // build a suggestion prompt would be slow and surprising. Workers the
-      // user has already configured are cached; the rest fall back to labels
-      // only, which is enough for the model to propose a sensible pipeline.
-      const iface = properties.getWorkerInterface(image) ?? null;
-      const entry: IWorkerCatalogEntry = {
-        image,
-        name: labels.interfaceName || image,
-        description: labels.description,
-        annotationShape: labels.annotationShape,
-        interface: iface,
-      };
-      if (isAnnotation) {
-        annotationWorkers.push(entry);
-      }
-      if (isProperty) {
-        propertyWorkers.push(entry);
-      }
-    }
-
-    const channels = main.configuration
-      ? Object.values(main.configuration.compatibility.channels)
-      : [];
-    const existingTags = [...annotations.annotationTags];
-    // annotationsForIteration is stub-aware: above the stub threshold the full
-    // `annotations` array is empty and only stubs (which carry shape) exist.
-    const existingShapes = [
-      ...new Set(annotations.annotationsForIteration.map((a) => a.shape)),
-    ];
-
-    const suggestions = await main.chatAPI.suggestPipelines({
-      goal,
-      context: { channels, existingTags, existingShapes },
-      annotationWorkers,
-      propertyWorkers,
-      maxSuggestions: 3,
-    });
-
-    const installed = properties.workerImageList;
-    return suggestions
-      .map((s) => convertSuggestion(s))
-      .filter((p): p is IPipeline => p !== null && p.steps.length > 0)
-      .map((p) => {
-        // Drop steps whose image is not installed / not the right kind.
-        p.steps = p.steps.filter((step) => {
-          const labels = installed[step.image];
-          if (!labels) {
-            return false;
-          }
-          return step.kind === "annotation"
-            ? labels.isAnnotationWorker !== undefined
-            : labels.isPropertyWorker !== undefined;
-        });
-        return p;
-      })
-      .filter((p) => p.steps.length > 0);
   }
 }
 

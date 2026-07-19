@@ -2,8 +2,6 @@ import { RestClientInstance } from "@/girder";
 import {
   IChatImage,
   IChatMessage,
-  IPipelineSuggestRequest,
-  ISuggestedPipeline,
   IToolSuggestion,
   IToolSuggestionCatalogEntry,
   IToolSuggestionLayerContext,
@@ -113,23 +111,6 @@ export default class ChatAPI {
       throw errorFromResponse(data.error, "Claude chat request failed.");
     }
     return toChatMessage(data);
-  }
-
-  // Ask the backend (which proxies Claude with forced tool-use) to suggest
-  // analysis pipelines. Returns the raw suggestions; the caller validates them
-  // against installed images and converts them to IPipeline.
-  async suggestPipelines(
-    request: IPipelineSuggestRequest,
-  ): Promise<ISuggestedPipeline[]> {
-    const response = await this.client.post("claude_pipeline/suggest", request);
-    const { data } = response;
-    if (!data) {
-      return [];
-    }
-    if ("error" in data) {
-      throw errorFromResponse(data.error, "Claude pipeline suggestion failed.");
-    }
-    return (data.suggestions ?? []) as ISuggestedPipeline[];
   }
 
   // Ask Claude which tools to suggest for a freshly opened dataset, given a

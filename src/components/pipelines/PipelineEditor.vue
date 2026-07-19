@@ -377,8 +377,7 @@ const controller = inject<PipelineRunController>(PipelineRunControllerKey)!;
 // Edited as a local deep clone so editing doesn't mutate the persisted list
 // until Save/Run. Re-clone only when pointed at a *different* pipeline (id
 // change). Auto-wiring runs on the initial clone so pipelines arriving with
-// unwired property steps (AI suggestions, older saved pipelines) are wired on
-// open.
+// unwired property steps (older saved pipelines) are wired on open.
 function clonePipelineForEditing(pipeline: IPipeline): IPipeline {
   const clone = cloneDeep(pipeline);
   clone.steps = computeAutoWiredSteps(clone.steps);

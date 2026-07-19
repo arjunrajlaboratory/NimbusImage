@@ -254,8 +254,9 @@ export interface IPipeline {
   name: string;
   description?: string;
   steps: TPipelineStep[];
-  // Provenance, for UI badges and analytics. "ai" = came from suggest feature.
-  origin?: "user" | "ai" | "preset";
+  // Provenance, for UI badges. (The "ai" origin was removed with the
+  // AI-suggestion feature — see §6.)
+  origin?: "user" | "preset";
 }
 ```
 
@@ -475,6 +476,14 @@ registry to update. A pipeline that outputs `nuclei` and one that filters
 
 ## 6. AI pipeline suggestion (Claude Sonnet)
 
+> **Removed.** The AI pipeline-suggestion feature (the `claude_pipeline`
+> backend route, the `PipelineSuggestDialog`, the `suggestPipelines` store
+> action / `ChatAPI` method, and the `origin: "ai"` badge) has been removed
+> pending a replacement in a separate update. The design below is retained as
+> historical context only — none of it is wired up in the current code. The
+> separate **tool**-suggestion feature (`claude_suggest_tools`, the lightbulb in
+> the Tools panel) is unaffected and still uses `girder_claude_chat/common.py`.
+
 ### 6.1 Shape of the feature
 
 Given (a) the worker images installed on the server, (b) the current dataset's
@@ -656,8 +665,8 @@ publishes a `PIPELINE_COMPUTE` progress entry), so this strip stays minimal.
 
 `PipelineList.vue` — lists `configuration.pipelines`. The row body opens the
 editor; a quick **Run** (via the controller) and a ⋮ overflow (Duplicate /
-Delete) sit at the right. "New pipeline" and "Suggest with AI ✨" (§7.4) at the
-top. No Edit-vs-Run fork.
+Delete) sit at the right. "New pipeline" at the top. No Edit-vs-Run fork.
+(The "Suggest with AI" entry point was removed — see §6.)
 
 ### 7.3 Editor (unified build + run)
 
