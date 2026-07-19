@@ -130,6 +130,7 @@ function makeConfiguration(
     tools: [],
     snapshots: [],
     propertyIds: [],
+    pipelines: [],
     scales: {
       pixelSize: { value: 1, unit: "µm" },
       zStep: { value: 1, unit: "µm" },
