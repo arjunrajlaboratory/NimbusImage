@@ -124,6 +124,9 @@ importers:
       fflate:
         specifier: ^0.7.4
         version: 0.7.4
+      file-selector:
+        specifier: ^2.1.2
+        version: 2.1.2
       fs-extra:
         specifier: ^10.0.0
         version: 10.1.0
@@ -151,12 +154,9 @@ importers:
       mousetrap:
         specifier: ^1.6.4
         version: 1.6.5(patch_hash=f89fb3f52a2d6ca09df050c3fb7c0c70407abf293544b0170ab8191d8b356c00)
-      onnxruntime-common:
-        specifier: 1.17.0-dev.20240109-ab897a4a40
-        version: 1.17.0-dev.20240109-ab897a4a40
       onnxruntime-web:
-        specifier: 1.19.0-dev.20240801-4b8f6dcbb6
-        version: 1.19.0-dev.20240801-4b8f6dcbb6
+        specifier: 1.27.0
+        version: 1.27.0
       p-limit:
         specifier: ^7.1.1
         version: 7.1.1
@@ -2834,6 +2834,10 @@ packages:
     resolution: {integrity: sha512-7Gps/XWymbLk2QLYK4NzpMOrYjMhdIxXuIvy2QBsLE6ljuodKvdkWs/cpyJJ3CVIVpH0Oi1Hvg1ovbMzLdFBBg==}
     engines: {node: ^10.12.0 || >=12.0.0}
 
+  file-selector@2.1.2:
+    resolution: {integrity: sha512-QgXo+mXTe8ljeqUFaX3QVHc5osSItJ/Km+xpocx0aSqWGMSCf6qYs/VnzZgS864Pjn5iceMRFigeAV7AfTlaig==}
+    engines: {node: '>= 12'}
+
   file-type@3.9.0:
     resolution: {integrity: sha512-RLoqTXE8/vPmMuTI88DAzhMYC99I8BWv7zYP4A1puo5HIjEJ5EX48ighy4ZyKMG9EDXxBgW6e++cn7d1xuFghA==}
     engines: {node: '>=0.10.0'}
@@ -2862,8 +2866,8 @@ packages:
     resolution: {integrity: sha512-CYcENa+FtcUKLmhhqyctpclsq7QF38pKjZHsGNiSQF5r4FtoKDWabFDl3hzaEQMvT1LHEysw5twgLvpYYb4vbw==}
     engines: {node: ^10.12.0 || >=12.0.0}
 
-  flatbuffers@1.12.0:
-    resolution: {integrity: sha512-c7CZADjRcl6j0PlvFy0ZqXQ67qSEZfrVPynmnL+2zPc+NtMvrF8Y0QceMo7QqnSPc7+uWjUIAbvCQ5WIKlMVdQ==}
+  flatbuffers@25.9.23:
+    resolution: {integrity: sha512-MI1qs7Lo4Syw0EOzUl0xjs2lsoeqFku44KpngfIduHBYvzm8h2+7K8YMQh1JtVVVrUvhLpNwqVi4DERegUJhPQ==}
 
   flatted@3.2.9:
     resolution: {integrity: sha512-36yxDn5H7OFZQla0/jFJmbIKTdZAQHngCedGxiMmpNfEZM0sdEeT+WczLQrjK6D7o2aiyLYDnkw0R3JK0Qv1RQ==}
@@ -3625,14 +3629,11 @@ packages:
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 
-  onnxruntime-common@1.17.0-dev.20240109-ab897a4a40:
-    resolution: {integrity: sha512-sWhYgj+u8qeA+SFX8aj+7mP7Dm7VlA1vNEnRIDOTL6MtycMzid0oabROfPxBhFFwkM8XQHp+qhto4rfSLdLoeQ==}
+  onnxruntime-common@1.27.0:
+    resolution: {integrity: sha512-3KxL5wIVqa8Ex08jxSzncm9CMgw8CjOFyOQ7SxvG9o0cVLlhTNKXyIQuTbtX4tGPJEf73OER2xrjt4HJSBL4ow==}
 
-  onnxruntime-common@1.19.0-dev.20240730-530a2d7b41:
-    resolution: {integrity: sha512-fWyg0USjvdHY5JL+3y/fXUDTOl9OLfhrX+sttfM2LW7jT/O8VNxjc16oAjyJHJruOQdrH2qo+KnxjOLA68i2dw==}
-
-  onnxruntime-web@1.19.0-dev.20240801-4b8f6dcbb6:
-    resolution: {integrity: sha512-/oJNpqWCbwEZFAU1II9KWjtql7y7pufOQ2bsIOqqiJP4SEehW6K0di37UyhYvhJLYhe0vvIIkZCW6AAHY+/GuQ==}
+  onnxruntime-web@1.27.0:
+    resolution: {integrity: sha512-ogDLsqIozHZwifPuN37OproAo0byX6t43/bP8GzeZWBWD6MOGExswFAx3up4NS/vvWBOg2u2PXomDt3rMmdQSg==}
 
   open@8.4.2:
     resolution: {integrity: sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==}
@@ -4368,6 +4369,9 @@ packages:
 
   tslib@2.6.2:
     resolution: {integrity: sha512-AEYxH93jGFPn/a2iVAwW87VuUIkR1FVUKB77NwMF7nBTDkDrrT/Hpt/IrCJ0QXhW27jTBDcf5ZY7w6RiqTMw2Q==}
+
+  tslib@2.8.1:
+    resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
   tunnel-agent@0.6.0:
     resolution: {integrity: sha512-McnNiV1l8RYeY8tBgEpuodCC1mLUdbSN+CYBL7kJsJNInOP8UjDDEwdk6Mw60vdLLrr5NHKZhMAOSrR2NZuQ+w==}
@@ -7723,6 +7727,10 @@ snapshots:
     dependencies:
       flat-cache: 3.2.0
 
+  file-selector@2.1.2:
+    dependencies:
+      tslib: 2.8.1
+
   file-type@3.9.0: {}
 
   file-type@5.2.0: {}
@@ -7748,7 +7756,7 @@ snapshots:
       keyv: 4.5.4
       rimraf: 3.0.2
 
-  flatbuffers@1.12.0: {}
+  flatbuffers@25.9.23: {}
 
   flatted@3.2.9: {}
 
@@ -8553,16 +8561,14 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  onnxruntime-common@1.17.0-dev.20240109-ab897a4a40: {}
+  onnxruntime-common@1.27.0: {}
 
-  onnxruntime-common@1.19.0-dev.20240730-530a2d7b41: {}
-
-  onnxruntime-web@1.19.0-dev.20240801-4b8f6dcbb6:
+  onnxruntime-web@1.27.0:
     dependencies:
-      flatbuffers: 1.12.0
+      flatbuffers: 25.9.23
       guid-typescript: 1.0.9
       long: 5.2.3
-      onnxruntime-common: 1.19.0-dev.20240730-530a2d7b41
+      onnxruntime-common: 1.27.0
       platform: 1.3.6
       protobufjs: 7.2.5
 
@@ -8731,7 +8737,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.1
-      '@types/node': 18.19.129
+      '@types/node': 20.19.41
       long: 5.2.3
 
   protons-runtime@5.4.0:
@@ -9337,6 +9343,8 @@ snapshots:
       typescript: 5.9.3
 
   tslib@2.6.2: {}
+
+  tslib@2.8.1: {}
 
   tunnel-agent@0.6.0:
     dependencies:

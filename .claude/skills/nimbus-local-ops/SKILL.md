@@ -1,11 +1,56 @@
 ---
 name: nimbus-local-ops
-description: "Use when authenticating with the local Girder backend, making curl requests to REST API endpoints, querying MongoDB directly via docker exec, checking Docker container logs, or debugging backend issues at runtime. Covers: authentication (token retrieval), endpoint name mapping (upenn_annotation not annotation), curl templates for all plugin endpoints, direct MongoDB shell access, container management, and step-by-step test scenarios for verifying backend changes."
+description: "Use when authenticating with the local Girder backend, using the nimbusimage Python API for scripting, making curl requests to REST API endpoints, querying MongoDB directly via docker exec, checking Docker container logs, or debugging backend issues at runtime. Covers: nimbusimage Python package (high-level and low-level API), authentication (token retrieval, API keys), endpoint name mapping (upenn_annotation not annotation), curl templates for all plugin endpoints, direct MongoDB shell access, container management, and step-by-step test scenarios for verifying backend changes."
 ---
 
 # Nimbus Local Operations
 
-## Authentication
+## NimbusImage Python API (Preferred for Scripts)
+
+For scripts that create, query, or modify backend data, prefer the `nimbusimage` Python package over raw curl. It handles authentication, batching, and endpoint naming.
+
+**Setup:**
+```bash
+# From the project root
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e nimbusimage python-dotenv
+```
+
+**Credentials** are stored in `.env` at the project root (gitignored):
+```
+GIRDER_API_URL=http://localhost:8080/api/v1
+GIRDER_USERNAME=admin
+GIRDER_PASSWORD=password
+```
+
+**High-level API** (datasets, annotations, images, workers):
+```python
+import nimbusimage as ni
+client = ni.connect("http://localhost:8080/api/v1", api_key="your-key")
+ds = client.dataset(name="My Experiment")
+polygons = ds.annotations.list(shape="polygon")
+ds.annotations.compute(image="worker:latest", channel=0, tags=["detected"], worker_interface={"param": 10})
+```
+
+**Low-level Girder client** (direct REST calls):
+```python
+import os
+from dotenv import load_dotenv
+from nimbusimage._girder import create_client
+load_dotenv()
+gc = create_client(api_url=os.environ["GIRDER_API_URL"], username=os.environ["GIRDER_USERNAME"], password=os.environ["GIRDER_PASSWORD"])
+gc.post("/upenn_annotation/multiple", json=annotations_list)
+gc.get("/upenn_annotation", parameters={"datasetId": dataset_id})
+```
+
+See `nimbusimage/README.md` for the full API overview, authentication options (API keys are preferred over username/password), and available accessors (`ds.images`, `ds.annotations`, `ds.properties`, `ds.export`, etc.).
+
+**When to use which:**
+- **High-level API (`ni.connect()`)**: Dataset exploration, annotation CRUD, running workers, export
+- **Low-level client (`create_client()`)**: Bulk operations, custom endpoints, scripts like `scripts/generate_test_annotations.py`
+- **curl**: Quick one-off checks, debugging specific endpoint responses
+
+## Authentication (curl)
 
 Get an auth token:
 
@@ -124,7 +169,7 @@ curl -s "$URL"
 
 **Gotcha: Finding datasets** — Datasets are Girder folders with `meta.subtype: 'contrastDataset'`. They may be owned by any user, so listing a specific user's folders won't find all datasets. Use MongoDB directly for discovery:
 ```bash
-docker exec upenncontrast-mongodb-1 mongosh girder --eval \
+docker exec nimbusimage-mongodb-1 mongosh girder --eval \
   "db.folder.find({'meta.subtype': 'contrastDataset'}, {name: 1}).limit(5).toArray()" --quiet
 ```
 
@@ -135,7 +180,7 @@ For full endpoint details with request/response examples: read `references/api-e
 Connect to MongoDB inside the Docker container:
 
 ```bash
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "QUERY" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "QUERY" --quiet
 ```
 
 ### Collection-to-Resource Mapping
@@ -156,16 +201,16 @@ docker exec upenncontrast-mongodb-1 mongosh girder --eval "QUERY" --quiet
 
 ```bash
 # Count annotations
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.upenn_annotation.countDocuments()" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.upenn_annotation.countDocuments()" --quiet
 
 # Count annotations in a dataset
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.upenn_annotation.countDocuments({datasetId: ObjectId('DATASET_ID')})" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.upenn_annotation.countDocuments({datasetId: ObjectId('DATASET_ID')})" --quiet
 
 # List all datasets (folders with contrastDataset subtype)
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.folder.find({'meta.subtype': 'contrastDataset'}, {name: 1}).toArray()" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.folder.find({'meta.subtype': 'contrastDataset'}, {name: 1}).toArray()" --quiet
 
 # List collections
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.getCollectionNames()" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.getCollectionNames()" --quiet
 ```
 
 For detailed query recipes: read `references/mongo-recipes.md`
@@ -193,15 +238,17 @@ docker logs girder --tail 50
 # Follow logs in real-time
 docker logs girder -f
 
-# Restart a service
+# Restart a service (does NOT load plugin code changes — see warning below)
 docker compose restart girder
 
-# Rebuild and restart
+# Rebuild and restart — REQUIRED after editing backend plugin code
 docker compose build girder && docker compose up -d girder
 
 # Check container status
 docker ps
 ```
+
+**Warning — restart is not enough for plugin code.** The `girder` image bakes in the AnnotationPlugin (no source volume mount), so `docker compose restart girder` serves **stale code**: a newly added route returns `{"message": "No matching route ..."}` while old routes work, which looks like a routing bug. After any edit under `devops/girder/plugins/AnnotationPlugin/`, run the build+up pair (fast — cached layers, ~7s downtime). Note that `tox` tests the plugin *source* directly, so a green tox proves nothing about what the running container serves.
 
 The `docker-compose.yaml` is at the repository root.
 
@@ -221,7 +268,7 @@ docker logs girder -f 2>&1 | grep "upenn_annotation"
 
 ```bash
 # Check recent jobs
-docker exec upenncontrast-mongodb-1 mongosh girder --eval "db.job.find({}, {title: 1, status: 1, updated: 1}).sort({updated: -1}).limit(5).toArray()" --quiet
+docker exec nimbusimage-mongodb-1 mongosh girder --eval "db.job.find({}, {title: 1, status: 1, updated: 1}).sort({updated: -1}).limit(5).toArray()" --quiet
 ```
 
 Job status codes: 0=inactive, 1=queued, 2=running, 3=success, 4=error, 5=cancelled

@@ -8,22 +8,30 @@ vi.mock("@/store", () => ({
   },
 }));
 
-vi.mock("@/store/annotation", () => ({
-  default: {
+vi.mock("@/store/annotation", () => {
+  const annotations = [
+    { id: "a1", location: { XY: 0, Z: 0, Time: 0 } },
+    { id: "a2", location: { XY: 0, Z: 0, Time: 0 } },
+    { id: "a3", location: { XY: 1, Z: 0, Time: 0 } },
+    { id: "a4", location: { XY: 1, Z: 0, Time: 0 } },
+  ];
+  const state = {
     annotationConnections: [
       { id: "c1", childId: "a1", parentId: "a2" },
       { id: "c2", childId: "a3", parentId: "a4" },
     ],
-    annotations: [
-      { id: "a1", location: { XY: 0, Z: 0, Time: 0 } },
-      { id: "a2", location: { XY: 0, Z: 0, Time: 0 } },
-      { id: "a3", location: { XY: 1, Z: 0, Time: 0 } },
-      { id: "a4", location: { XY: 1, Z: 0, Time: 0 } },
-    ],
+    annotations,
     selectedAnnotationIds: new Set(["a1"]),
     deleteConnections: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+  };
+  Object.defineProperty(state, "annotationsForIteration", {
+    get() {
+      return state.annotations;
+    },
+    enumerable: true,
+  });
+  return { default: state };
+});
 
 import DeleteConnections from "./DeleteConnections.vue";
 import store from "@/store";

@@ -40,7 +40,7 @@
             </v-btn>
           </v-toolbar>
           <v-card-text>
-            <v-table class="elevation-3 ma-2">
+            <v-table class="info-table ma-2">
               <tbody>
                 <tr v-for="item in report" :key="item.name">
                   <td class="text-right" width="30%">{{ item.name }}</td>
@@ -152,7 +152,7 @@
               </v-card>
             </v-dialog>
             <v-card class="ma-3">
-              <v-card-title class="title">
+              <v-card-title>
                 {{
                   datasetViewItems.length > 0
                     ? "Select a collection"
@@ -555,7 +555,9 @@ async function fetchCounts() {
   const dsId = dataset.value.id;
 
   const [ac, cc, pvc] = await Promise.all([
-    store.annotationsAPI.getAnnotationCount(dsId),
+    // getAnnotationCount now rejects on failure (a silent 0 would mislead and,
+    // in the loader, trigger the OOM full-fetch path); show "unknown" here.
+    store.annotationsAPI.getAnnotationCount(dsId).catch(() => null),
     store.annotationsAPI.getConnectionCount(dsId),
     store.annotationsAPI.getPropertyValueCount(dsId),
   ]);
@@ -913,9 +915,14 @@ defineExpose({
   transition: all 0.2s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--nimbus-glass-hover);
     transform: scale(1.1);
   }
+}
+
+.info-table {
+  border: 1px solid var(--nimbus-border);
+  border-radius: var(--nimbus-radius);
 }
 
 .pulse-btn {
@@ -933,7 +940,7 @@ defineExpose({
   right: 0;
   bottom: 0;
   border-radius: inherit;
-  box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
+  box-shadow: 0 0 0 0 rgba(var(--v-theme-success), 0.5);
   animation: subtle-pulse-shadow 3s infinite ease-in-out;
 }
 
@@ -951,22 +958,22 @@ defineExpose({
 
 @keyframes subtle-pulse-shadow {
   0% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
+    box-shadow: 0 0 0 0 rgba(var(--v-theme-success), 0.5);
   }
   70% {
-    box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
+    box-shadow: 0 0 0 8px rgba(var(--v-theme-success), 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+    box-shadow: 0 0 0 0 rgba(var(--v-theme-success), 0);
   }
 }
 
 .selectable-list-item {
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--nimbus-radius-sm);
 
   &:hover {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: var(--nimbus-glass-hover);
   }
 }
 </style>

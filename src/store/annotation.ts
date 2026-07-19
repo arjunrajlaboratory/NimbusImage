@@ -28,15 +28,39 @@ import {
   ProgressType,
   IJobEventData,
   IDatasetView,
+  IAnnotationLocation,
+  type IAnnotationStub,
+  type TAnnotationOrStub,
+  type THydrationMode,
+  type IVisibilityConfig,
 } from "./model";
+import type AnnotationsAPI from "./AnnotationsAPI";
 
 import { markRaw, toRaw } from "vue";
-import { simpleCentroid } from "@/utils/annotation";
 import {
+  simpleCentroid,
+  selectStableSubset,
+  selectLargestBySize,
+  stubFromAnnotation,
+  idsNeedingHydration,
+  planHydrationEvictions,
+  idHasHydratableShape,
+  materializeStubAnnotation,
+} from "@/utils/annotation";
+import { annotationSpatialIndex } from "@/utils/spatialIndex";
+import {
+  createDebouncedAbortableTask,
+  isAbortError,
+} from "@/utils/debouncedAbortable";
+import {
+  buildStubUpdates,
   getAnnotationUpdatePatch,
   type AnnotationUpdatePatch,
+  type IStubFieldUpdate,
 } from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
+import { stubPerf } from "@/utils/stubPerf";
+import { annotationLoadingTitle } from "@/utils/loadingLabels";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
@@ -80,7 +104,13 @@ export class Annotations extends VuexModule {
 
   isDeletingAnnotations: boolean = false;
 
+  // When true, annotations[] is empty and all metadata lives in annotationStubs.
+  stubOnlyMode: boolean = false;
+
   get allAnnotationIds() {
+    if (this.stubOnlyMode) {
+      return Array.from(this.annotationStubs.keys());
+    }
     return this.annotations.map((annotation: IAnnotation) => annotation.id);
   }
 
@@ -95,29 +125,141 @@ export class Annotations extends VuexModule {
 
   get inactiveAnnotationIds() {
     const activeIds = new Set(this.activeAnnotationIds);
-    return this.annotations
-      .map((annotation: IAnnotation) => annotation.id)
-      .filter((id: string) => !activeIds.has(id));
+    return this.allAnnotationIds.filter((id: string) => !activeIds.has(id));
   }
 
   get getAnnotationFromId() {
-    return (annotationId: string) => {
+    // Resolved once per getter access (not per call) so the hot resolution path
+    // — and callers that capture this function once and call it in a loop (e.g.
+    // the connection-draw loop) — don't pay a cross-store `main.dataset` read on
+    // every id. Only used to stamp materialized point stubs (below).
+    const datasetId = main.dataset?.id ?? "";
+    return (annotationId: string): IAnnotation | undefined => {
+      const hydrated = this.hydratedAnnotations.get(annotationId);
+      if (hydrated) {
+        return hydrated;
+      }
       const idx = this.annotationIdToIdx[annotationId];
-      return idx === undefined ? undefined : this.annotations[idx];
+      if (idx !== undefined) {
+        return this.annotations[idx];
+      }
+      // A point never hydrates (its centroid IS its only coordinate), so resolve
+      // a point stub to a materialized full annotation. This keeps connection
+      // rendering, copy/paste, and timelapse linking — all of which resolve ids
+      // through this getter — working for point annotations in stub-only mode.
+      // Non-point stubs return undefined (they need real hydration).
+      const stub = this.annotationStubs.get(annotationId);
+      return stub ? materializeStubAnnotation(stub, datasetId) : undefined;
     };
   }
 
   get annotationTags() {
     const tagSet: Set<string> = new Set();
-    for (const { tags } of this.annotations) {
-      for (const tag of tags) {
-        tagSet.add(tag);
+    if (this.stubOnlyMode) {
+      for (const stub of this.annotationStubs.values()) {
+        for (const tag of stub.tags) {
+          tagSet.add(tag);
+        }
+      }
+    } else {
+      for (const { tags } of this.annotations) {
+        for (const tag of tags) {
+          tagSet.add(tag);
+        }
       }
     }
     return tagSet;
   }
 
+  get annotationsForIteration(): TAnnotationOrStub[] {
+    if (!this.stubOnlyMode) {
+      return this.annotations;
+    }
+    // In stub-only mode the full annotations[] array is empty; iterate the
+    // stub map instead. Typed as the honest union so consumers must narrow via
+    // isHydratedAnnotation before touching coordinates/name/shape (Finding 6).
+    return Array.from(this.annotationStubs.values());
+  }
+
   hoveredAnnotationId: string | null = null;
+
+  annotationStubs: Map<string, IAnnotationStub> = markRaw(new Map());
+  hydratedAnnotations: Map<string, IAnnotation> = markRaw(new Map());
+  visibleAnnotationIds: Set<string> = markRaw(new Set());
+  hydrationMode: THydrationMode = "dots";
+  visibilityConfig: IVisibilityConfig = {
+    stubThreshold: 100000,
+    maxVisible: 50000,
+    maxHydrated: 20000,
+    hydrationCacheCap: 40000,
+    globalThreshold: true,
+    coverageTarget: 0.3,
+    viewportRefreshFraction: 0.2,
+  };
+
+  // Average annotation radius (world units) over the loaded stubs, computed once
+  // when stubs are set. Feeds the density-derived zoomed-out render budget.
+  averageStubRadius = 0;
+
+  // Counts within the ACTUAL (unexpanded) viewport on the current frame, set by
+  // each visibility update. The render-coverage indicator reads these to show
+  // how much of what's in view is actually drawn.
+  viewportAnnotationCount = 0;
+  viewportRenderedCount = 0;
+
+  @Mutation
+  setVisibilityConfig(config: Partial<IVisibilityConfig>) {
+    this.visibilityConfig = { ...this.visibilityConfig, ...config };
+  }
+
+  @Mutation
+  setAverageStubRadius(value: number) {
+    this.averageStubRadius = value;
+  }
+
+  @Mutation
+  setViewportCounts(counts: { total: number; rendered: number }) {
+    this.viewportAnnotationCount = counts.total;
+    this.viewportRenderedCount = counts.rendered;
+  }
+
+  get isHydrated() {
+    return (id: string): boolean => this.hydratedAnnotations.has(id);
+  }
+
+  get getStub() {
+    return (id: string): IAnnotationStub | undefined =>
+      this.annotationStubs.get(id);
+  }
+
+  get getHydratedAnnotation() {
+    return (id: string): IAnnotation | undefined =>
+      this.hydratedAnnotations.get(id);
+  }
+
+  get isVisible() {
+    return (id: string): boolean => this.visibleAnnotationIds.has(id);
+  }
+
+  get shouldRenderAsShape() {
+    return (id: string): boolean => {
+      if (this.selectedAnnotationIds.has(id)) {
+        return this.hydratedAnnotations.has(id);
+      }
+      return (
+        this.hydrationMode === "shapes" && this.hydratedAnnotations.has(id)
+      );
+    };
+  }
+
+  get getForRendering() {
+    return (id: string): TAnnotationOrStub | undefined => {
+      if (this.shouldRenderAsShape(id)) {
+        return this.hydratedAnnotations.get(id);
+      }
+      return this.annotationStubs.get(id);
+    };
+  }
 
   @Mutation
   setCopiedAnnotations(annotations: IAnnotation[]) {
@@ -255,6 +397,21 @@ export class Annotations extends VuexModule {
     this.annotationConnections = [];
     this.annotationCentroids = markRaw({});
     this.annotationIdToIdx = markRaw({});
+    // Stub-only state. Without this, switching/clearing a large dataset (e.g.
+    // 708K) leaves the stub map, hydration cache, and centroid spatial index
+    // pinned on the heap until the next fetchAnnotations happens to call
+    // setAnnotations([]) — a memory leak and a stale-state risk. Mirror the
+    // empty-load clearing semantics here, and cancel any in-flight viewport
+    // hydration so a late response can't repopulate the just-cleared cache.
+    this.annotationStubs = markRaw(new Map());
+    this.hydratedAnnotations = markRaw(new Map());
+    this.visibleAnnotationIds = markRaw(new Set());
+    this.viewportAnnotationCount = 0;
+    this.viewportRenderedCount = 0;
+    this.averageStubRadius = 0;
+    this.stubOnlyMode = false;
+    annotationSpatialIndex.clear();
+    viewportHydrationTask.cancel();
   }
 
   // Clear per-dataset annotation state. Call when switching datasets so
@@ -512,6 +669,9 @@ export class Annotations extends VuexModule {
     return annotation;
   }
 
+  // Single interactive add. Clones the whole stub/hydrated maps, so it is
+  // O(stub count) per call and MUST NOT be looped (Finding 16) — bulk creation
+  // goes through addAnnotationsImpl, which clones each map once for the batch.
   @Mutation
   private addAnnotationImpl(value: IAnnotation) {
     const annotation = markRaw(value);
@@ -519,7 +679,23 @@ export class Annotations extends VuexModule {
     this.annotationCentroids[annotation.id] = markRaw(
       simpleCentroid(annotation.coordinates),
     );
-    this.annotationIdToIdx[annotation.id] = this.annotations.length - 1;
+    this.annotationIdToIdx[value.id] = this.annotations.length - 1;
+
+    const centroid = this.annotationCentroids[value.id];
+    this.annotationStubs = markRaw(
+      new Map(this.annotationStubs).set(
+        value.id,
+        stubFromAnnotation(value, centroid),
+      ),
+    );
+
+    // New annotations are always hydrated
+    this.hydratedAnnotations = markRaw(
+      new Map(this.hydratedAnnotations).set(value.id, value),
+    );
+
+    // Spatial index
+    annotationSpatialIndex.insert(value.id, centroid.x, centroid.y);
   }
 
   @Mutation
@@ -527,14 +703,26 @@ export class Annotations extends VuexModule {
     const startIndex = this.annotations.length;
     const annotations = values.map((annotation) => markRaw(annotation));
     this.annotations = [...this.annotations, ...annotations];
+
+    const newStubs = new Map(this.annotationStubs);
+    const newHydrated = new Map(this.hydratedAnnotations);
     for (let offset = 0; offset < annotations.length; ++offset) {
       const annotation = annotations[offset];
       const index = startIndex + offset;
-      this.annotationCentroids[annotation.id] = markRaw(
-        simpleCentroid(annotation.coordinates),
-      );
+      const centroid = markRaw(simpleCentroid(annotation.coordinates));
+      this.annotationCentroids[annotation.id] = centroid;
       this.annotationIdToIdx[annotation.id] = index;
+
+      newStubs.set(annotation.id, stubFromAnnotation(annotation, centroid));
+
+      // New annotations are always hydrated
+      newHydrated.set(annotation.id, annotation);
+
+      // Spatial index
+      annotationSpatialIndex.insert(annotation.id, centroid.x, centroid.y);
     }
+    this.annotationStubs = markRaw(newStubs);
+    this.hydratedAnnotations = markRaw(newHydrated);
   }
 
   @Mutation
@@ -545,6 +733,12 @@ export class Annotations extends VuexModule {
     annotation: IAnnotation;
     index: number;
   }) {
+    // Remove old position from spatial index
+    const oldStub = this.annotationStubs.get(annotation.id);
+    if (oldStub) {
+      annotationSpatialIndex.remove(annotation.id);
+    }
+
     const nextAnnotations = [...this.annotations];
     nextAnnotations[index] = markRaw(annotation);
     this.annotations = nextAnnotations;
@@ -552,6 +746,21 @@ export class Annotations extends VuexModule {
       simpleCentroid(annotation.coordinates),
     );
     this.annotationIdToIdx[annotation.id] = index;
+
+    const centroid = this.annotationCentroids[annotation.id];
+    const newStubs = new Map(this.annotationStubs);
+    newStubs.set(annotation.id, stubFromAnnotation(annotation, centroid));
+    this.annotationStubs = markRaw(newStubs);
+
+    // Update hydrated if present
+    if (this.hydratedAnnotations.has(annotation.id)) {
+      this.hydratedAnnotations = markRaw(
+        new Map(this.hydratedAnnotations).set(annotation.id, annotation),
+      );
+    }
+
+    // Insert new position into spatial index
+    annotationSpatialIndex.insert(annotation.id, centroid.x, centroid.y);
   }
 
   @Mutation
@@ -561,6 +770,9 @@ export class Annotations extends VuexModule {
     }
 
     const nextAnnotations = [...this.annotations];
+    const nextStubs = new Map(this.annotationStubs);
+    const nextHydrated = new Map(this.hydratedAnnotations);
+    let hydratedChanged = false;
     for (const { annotation: value, index, updateCentroid = true } of values) {
       const annotation = markRaw(value);
       nextAnnotations[index] = annotation;
@@ -570,22 +782,187 @@ export class Annotations extends VuexModule {
         );
       }
       this.annotationIdToIdx[annotation.id] = index;
+
+      // Keep the derived maps the canvas renders from in sync with the edit
+      // (Finding 2): layerAnnotations resolves renderData from hydrated/stub
+      // maps whenever the stub system is active, so an in-place edit that only
+      // touched annotations[] would otherwise repaint stale color/tags/shape.
+      const centroid = this.annotationCentroids[annotation.id];
+      if (this.annotationStubs.has(annotation.id)) {
+        nextStubs.set(annotation.id, stubFromAnnotation(annotation, centroid));
+      }
+      if (nextHydrated.has(annotation.id)) {
+        nextHydrated.set(annotation.id, annotation);
+        hydratedChanged = true;
+      }
+      if (updateCentroid && this.annotationStubs.has(annotation.id)) {
+        // insert is upsert-safe, so this repositions the existing node.
+        annotationSpatialIndex.insert(annotation.id, centroid.x, centroid.y);
+      }
     }
     this.annotations = nextAnnotations;
+    this.annotationStubs = markRaw(nextStubs);
+    if (hydratedChanged) {
+      this.hydratedAnnotations = markRaw(nextHydrated);
+    }
   }
 
   @Mutation
-  public setAnnotations(values: IAnnotation[]) {
+  public setAnnotations(
+    payload:
+      | IAnnotation[]
+      | { values: IAnnotation[]; serverStubsFollow?: boolean },
+  ) {
+    // Accept a bare array (the common case) or an options object. When
+    // `serverStubsFollow` is set, a setStubsFromServer call follows
+    // immediately and will (re)build the centroids, stub map, and spatial
+    // index from server data — so skip the client-side build here instead of
+    // doing the O(N) work twice (Finding 14).
+    const values = Array.isArray(payload) ? payload : payload.values;
+    const serverStubsFollow = Array.isArray(payload)
+      ? false
+      : !!payload.serverStubsFollow;
+
     this.annotations = values.map((annotation) => markRaw(annotation));
-    this.annotationCentroids = markRaw({});
     this.annotationIdToIdx = markRaw({});
     for (let idx = 0; idx < this.annotations.length; ++idx) {
-      const annotation = this.annotations[idx];
-      this.annotationCentroids[annotation.id] = markRaw(
-        simpleCentroid(annotation.coordinates),
-      );
-      this.annotationIdToIdx[annotation.id] = idx;
+      this.annotationIdToIdx[this.annotations[idx].id] = idx;
     }
+
+    if (!serverStubsFollow) {
+      this.annotationCentroids = markRaw({});
+      const newStubs = new Map<string, IAnnotationStub>();
+      const spatialItems: { id: string; x: number; y: number }[] = new Array(
+        this.annotations.length,
+      );
+      for (let idx = 0; idx < this.annotations.length; ++idx) {
+        const annotation = this.annotations[idx];
+        const centroid = markRaw(simpleCentroid(annotation.coordinates));
+        this.annotationCentroids[annotation.id] = centroid;
+        newStubs.set(annotation.id, stubFromAnnotation(annotation, centroid));
+        spatialItems[idx] = {
+          id: annotation.id,
+          x: centroid.x,
+          y: centroid.y,
+        };
+      }
+      this.annotationStubs = markRaw(newStubs);
+      annotationSpatialIndex.bulkLoad(spatialItems);
+    }
+
+    // Clear hydration cache — will be repopulated on demand by
+    // updateVisibilityAndHydration
+    this.hydratedAnnotations = markRaw(new Map());
+    this.stubOnlyMode = false;
+  }
+
+  @Mutation
+  public setStubsFromServer(stubs: IAnnotationStub[]) {
+    const newStubs = new Map<string, IAnnotationStub>();
+    const newCentroids: { [annotationId: string]: IGeoJSPosition } = {};
+    const spatialItems: { id: string; x: number; y: number }[] = new Array(
+      stubs.length,
+    );
+    let radiusSum = 0;
+    let radiusCount = 0;
+    for (let idx = 0; idx < stubs.length; ++idx) {
+      const stub = stubs[idx];
+      newStubs.set(stub.id, stub);
+      newCentroids[stub.id] = markRaw(stub.centroid);
+      spatialItems[idx] = {
+        id: stub.id,
+        x: stub.centroid.x,
+        y: stub.centroid.y,
+      };
+      if (typeof stub.estimatedRadius === "number") {
+        radiusSum += stub.estimatedRadius;
+        radiusCount += 1;
+      }
+    }
+    this.annotationStubs = markRaw(newStubs);
+    this.annotationCentroids = markRaw(newCentroids);
+    // Mean radius feeds the density-derived zoomed-out render budget.
+    this.averageStubRadius = radiusCount > 0 ? radiusSum / radiusCount : 0;
+    annotationSpatialIndex.bulkLoad(spatialItems);
+  }
+
+  @Mutation
+  public removeAnnotationStubs(ids: string[]) {
+    const newStubs = new Map(this.annotationStubs);
+    const newHydrated = new Map(this.hydratedAnnotations);
+    const newCentroids = { ...this.annotationCentroids };
+    for (const id of ids) {
+      newStubs.delete(id);
+      newHydrated.delete(id);
+      delete newCentroids[id];
+      annotationSpatialIndex.remove(id);
+    }
+    this.annotationStubs = markRaw(newStubs);
+    this.hydratedAnnotations = markRaw(newHydrated);
+    this.annotationCentroids = markRaw(newCentroids);
+  }
+
+  @Mutation
+  public setStubOnlyMode(mode: boolean) {
+    this.stubOnlyMode = mode;
+  }
+
+  // Patch tags/color (and, for a moved point, centroid) on existing stubs (and
+  // any hydrated copies) after a stub-only-mode edit, so the canvas reflects the
+  // change without a reload.
+  @Mutation
+  public applyStubFieldUpdates(updates: IStubFieldUpdate[]) {
+    if (!updates.length) {
+      return;
+    }
+    const newStubs = new Map(this.annotationStubs);
+    const newHydrated = new Map(this.hydratedAnnotations);
+    for (const update of updates) {
+      const stub = newStubs.get(update.id);
+      if (stub) {
+        newStubs.set(update.id, {
+          ...stub,
+          ...(update.tags !== undefined ? { tags: update.tags } : {}),
+          ...(update.color !== undefined ? { color: update.color } : {}),
+          ...(update.centroid !== undefined
+            ? { centroid: update.centroid }
+            : {}),
+        });
+      }
+      const hydrated = newHydrated.get(update.id);
+      if (hydrated) {
+        newHydrated.set(
+          update.id,
+          markRaw({
+            ...hydrated,
+            ...(update.tags !== undefined ? { tags: update.tags } : {}),
+            ...(update.color !== undefined ? { color: update.color } : {}),
+            // A moved point can still be in hydratedAnnotations (newly-created
+            // annotations are always hydrated), and getAnnotationFromId prefers
+            // the hydrated copy over materializing from the updated stub — so the
+            // hydrated copy's coordinate must follow the move too, or it resolves
+            // to the stale position. A point's only coordinate IS its centroid.
+            ...(update.centroid !== undefined
+              ? { coordinates: [{ ...update.centroid }] }
+              : {}),
+          }),
+        );
+      }
+      // A moved point stub: follow the move in the centroid index (mutated in
+      // place — copying the up-to-1M-entry map per drag would be wasteful, and
+      // it's markRaw/non-reactive so the redraw is driven by the annotationStubs
+      // reassignment below) and the spatial index (clean upsert).
+      if (update.centroid !== undefined) {
+        this.annotationCentroids[update.id] = update.centroid;
+        annotationSpatialIndex.insert(
+          update.id,
+          update.centroid.x,
+          update.centroid.y,
+        );
+      }
+    }
+    this.annotationStubs = markRaw(newStubs);
+    this.hydratedAnnotations = markRaw(newHydrated);
   }
 
   @Action
@@ -806,7 +1183,7 @@ export class Annotations extends VuexModule {
     // 1. Collect all annotations into a single set
     const allIds = new Set([...parentIds, ...childIds]);
     const annotations = Array.from(allIds)
-      .map((id) => this.annotations.find((a) => a.id === id))
+      .map((id) => this.getAnnotationFromId(id))
       .filter((a): a is IAnnotation => !!a);
 
     // 2. Find closest temporal parent for each annotation
@@ -901,12 +1278,16 @@ export class Annotations extends VuexModule {
     try {
       await this.annotationsAPI.deleteMultipleAnnotations(ids);
 
-      const idsSet = new Set(ids);
-      this.setAnnotations(
-        this.annotations.filter(
-          (annotation: IAnnotation) => !idsSet.has(annotation.id),
-        ),
-      );
+      if (this.stubOnlyMode) {
+        this.removeAnnotationStubs(ids);
+      } else {
+        const idsSet = new Set(ids);
+        this.setAnnotations(
+          this.annotations.filter(
+            (annotation: IAnnotation) => !idsSet.has(annotation.id),
+          ),
+        );
+      }
     } finally {
       // Always set the state back to false, even if there's an error
       sync.setSaving(false);
@@ -923,10 +1304,15 @@ export class Annotations extends VuexModule {
 
   @Action
   public async deleteUnselectedAnnotations() {
+    // Use allAnnotationIds (stub-aware) rather than this.annotations: in
+    // stub-only mode annotations[] is empty, so the old version computed an
+    // empty unselected set and deleted nothing. This action is dataset-wide;
+    // the AnnotationList toolbar handles filter/list-scoped deletion via the
+    // server endpoint separately.
     const selectedIds = this.selectedAnnotationIds;
-    const unselectedIds = this.annotations
-      .filter((annotation) => !selectedIds.has(annotation.id))
-      .map((annotation) => annotation.id);
+    const unselectedIds = this.allAnnotationIds.filter(
+      (id) => !selectedIds.has(id),
+    );
 
     await this.deleteAnnotations(unselectedIds);
   }
@@ -947,6 +1333,34 @@ export class Annotations extends VuexModule {
     editFunction: (annotation: IAnnotation) => void;
   }) {
     if (!main.isLoggedIn) {
+      return;
+    }
+    if (this.stubOnlyMode) {
+      // In stub-only mode annotations[] is empty, so the patch-from-full-
+      // annotation path below would look up annotationIdToIdx[id] (undefined)
+      // and skip every id — silently never calling the backend. Build patches
+      // from the stubs instead, persist them, and sync tags/color back onto
+      // local stubs so the canvas stays consistent.
+      if (!annotationIds.length) {
+        return;
+      }
+      sync.setSaving(true);
+      try {
+        const { patches, stubFieldUpdates } = buildStubUpdates(
+          annotationIds,
+          (id) => this.annotationStubs.get(id),
+          editFunction,
+        );
+        if (patches.length) {
+          await this.annotationsAPI.updateAnnotations(patches);
+          this.applyStubFieldUpdates(stubFieldUpdates);
+        }
+        sync.setSaving(false);
+      } catch (error) {
+        logError(`Failed to update annotations: ${(error as Error).message}`);
+        sync.setSaving(error as Error);
+        throw error;
+      }
       return;
     }
     sync.setSaving(true);
@@ -1290,32 +1704,69 @@ export class Annotations extends VuexModule {
     this.setAnnotations([]);
     this.setConnections([]);
     if (!main.dataset || !main.configuration) {
+      stubPerf.setDataset(null);
       return;
     }
+    stubPerf.setDataset(main.dataset.id);
     try {
-      const annotationsPromise = this.annotationsAPI.getAnnotationsForDatasetId(
-        main.dataset.id,
-      );
-      const connectionsPromise = this.annotationsAPI.getConnectionsForDatasetId(
-        main.dataset.id,
-      );
-      const promises: [
-        Promise<IAnnotation[]>,
-        Promise<IAnnotationConnection[]>,
-      ] = [annotationsPromise, connectionsPromise];
-      const [annotations, connections]: [
-        IAnnotation[],
-        IAnnotationConnection[],
-      ] = await Promise.all(promises);
-      if (connections?.length) {
-        this.setConnections(connections);
-      } else {
-        this.setConnections([]);
+      const datasetId = main.dataset.id;
+      const connectionsPromise =
+        this.annotationsAPI.getConnectionsForDatasetId(datasetId);
+
+      const { stubThreshold } = this.visibilityConfig;
+      let count: number;
+      try {
+        count = await this.annotationsAPI.getAnnotationCount(datasetId);
+      } catch (error) {
+        // A transient count failure must NOT route a large dataset into the
+        // full-fetch branch (the OOM path). Treat "unknown count" as
+        // over-threshold so we take the safe stub-only path. Infinity also
+        // gives the loading bar a count-less title.
+        logError(
+          `Annotation count failed; using stub-only mode: ${
+            (error as Error).message
+          }`,
+        );
+        count = Number.POSITIVE_INFINITY;
       }
-      if (annotations?.length) {
-        this.setAnnotations(annotations);
+
+      if (count <= stubThreshold) {
+        // Under threshold: full fetch only. Full annotations are a superset of
+        // the server stubs, and setAnnotations builds the centroids / stub map /
+        // spatial index client-side — cheap at this size — so re-fetching stubs
+        // separately is a redundant round-trip (Finding 8). Passing a bare array
+        // leaves serverStubsFollow false, triggering that client-side build.
+        const [annotations, connections] = await Promise.all([
+          this.annotationsAPI.getAnnotationsForDatasetId(datasetId),
+          connectionsPromise,
+        ]);
+        this.setConnections(connections?.length ? connections : []);
+        this.setAnnotations(annotations?.length ? annotations : []);
       } else {
-        this.setAnnotations([]);
+        // Over threshold: stubs only, hydrate on demand. The stub fetch is a
+        // single streamed GET with no incremental progress, so surface an
+        // indeterminate bar titled with the known count ("Loading N
+        // annotations…") — otherwise the canvas sits empty for seconds with no
+        // feedback. (The under-threshold branch already shows a "Fetching
+        // annotations" bar via fetchAllPages, so no bar is added there.)
+        const stubProgressId = await progress.create({
+          type: ProgressType.ANNOTATION_FETCH,
+          title: annotationLoadingTitle(count),
+        });
+        try {
+          const [stubs, connections] = await Promise.all([
+            this.annotationsAPI.getAnnotationStubs(datasetId),
+            connectionsPromise,
+          ]);
+          this.setConnections(connections?.length ? connections : []);
+          this.setAnnotations([]);
+          if (stubs?.length) {
+            this.setStubsFromServer(stubs);
+            this.setStubOnlyMode(true);
+          }
+        } finally {
+          progress.complete(stubProgressId);
+        }
       }
     } catch (error) {
       this.setAnnotations([]);
@@ -1412,6 +1863,60 @@ export class Annotations extends VuexModule {
     });
 
     return computeJob;
+  }
+
+  // Thin, promise-returning submitter for a single annotation-worker job.
+  // Unlike computeAnnotationsWithWorker it does NOT own progress creation or
+  // post-completion side effects (fetchAnnotations/loadLargeImages) — the
+  // caller (e.g. the pipeline runner) drives those once for the whole run.
+  // Reads the worker interface values from tool.values.workerInterfaceValues,
+  // so transient tools built by the pipeline runner work without extra args.
+  @Action
+  public async submitAnnotationWorkerJob({
+    tool,
+    datasetId,
+    eventCallback,
+    errorCallback,
+  }: {
+    tool: IToolConfiguration;
+    datasetId: string;
+    eventCallback?: (data: IJobEventData) => void;
+    errorCallback?: (data: IJobEventData) => void;
+  }): Promise<{
+    job: IAnnotationComputeJob;
+    completionPromise: Promise<boolean>;
+  } | null> {
+    if (!main.isLoggedIn) {
+      return null;
+    }
+    const workerInterface = (tool.values?.workerInterfaceValues ??
+      {}) as IWorkerInterfaceValues;
+    const { location, channel } =
+      await this.getAnnotationLocationFromTool(tool);
+    const tile = { ...location };
+    const response = await this.annotationsAPI.computeAnnotationWithWorker(
+      tool,
+      { id: datasetId },
+      { location, channel, tile },
+      workerInterface,
+      main.layers,
+      main.scales,
+    );
+    const jobId = response.data[0]?._id;
+    if (!jobId) {
+      return null;
+    }
+    const computeJob: IAnnotationComputeJob = {
+      toolId: tool.id,
+      jobId,
+      datasetId,
+      eventCallback,
+      errorCallback,
+    };
+    // Capture the completion promise immediately (a fast job can be removed
+    // from the job map before we could look it up later).
+    const completionPromise = jobs.addJob(computeJob);
+    return { job: computeJob, completionPromise };
   }
 
   @Action
@@ -1728,9 +2233,349 @@ export class Annotations extends VuexModule {
   private setDeletingState(isDeleting: boolean) {
     this.isDeletingAnnotations = isDeleting;
   }
+
+  @Mutation
+  setVisibleAnnotationIds(ids: string[]) {
+    this.visibleAnnotationIds = markRaw(new Set(ids));
+  }
+
+  @Mutation
+  setHydrationMode(mode: THydrationMode) {
+    this.hydrationMode = mode;
+  }
+
+  /**
+   * Accumulating LRU hydration cache.
+   *
+   * - Entries already in the cache whose ids appear in `touchedIds` are
+   *   bumped to the tail (most-recently-used).
+   * - `newEntries` (freshly fetched from the backend) are inserted at the
+   *   tail, overwriting any prior value for their ids.
+   * - If the total exceeds `hydrationCacheCap`, LRU entries (at the head)
+   *   are evicted. Selected annotation ids are skipped during eviction, but
+   *   `cap` is a HARD ceiling: if the selected set alone exceeds it (e.g.
+   *   "select all" on a huge dataset), selected LRU entries are evicted too
+   *   so the cache can't grow unbounded.
+   *
+   * JS Map preserves insertion order, so `delete(id); set(id, v)` moves an
+   * entry to the tail — that's the touch operation.
+   */
+  @Mutation
+  mergeHydratedAnnotations(payload: {
+    newEntries: { id: string; annotation: IAnnotation }[];
+    touchedIds: string[];
+  }) {
+    const newMap = new Map(this.hydratedAnnotations);
+    for (const id of payload.touchedIds) {
+      const existing = newMap.get(id);
+      if (existing !== undefined) {
+        newMap.delete(id);
+        newMap.set(id, existing);
+      }
+    }
+    for (const { id, annotation } of payload.newEntries) {
+      newMap.delete(id);
+      newMap.set(id, annotation);
+    }
+    const cap = this.visibilityConfig.hydrationCacheCap;
+    if (cap > 0 && newMap.size > cap) {
+      // Selected ids are protected from eviction, but `cap` is a HARD ceiling:
+      // when (nearly) everything is selected — e.g. "select all" on a huge
+      // dataset — selected LRU entries are evicted too so the cache can't grow
+      // without bound (which would defeat lazy mode / risk OOM).
+      const { evict, protectedSkipped } = planHydrationEvictions(
+        Array.from(newMap.keys()),
+        this.selectedAnnotationIds,
+        cap,
+      );
+      for (const id of evict) {
+        newMap.delete(id);
+      }
+      stubPerf.trackEviction(evict.length, protectedSkipped);
+    }
+    this.hydratedAnnotations = markRaw(newMap);
+    stubPerf.trackCache(newMap.size, cap);
+  }
+
+  @Mutation
+  clearHydrationCache() {
+    this.hydratedAnnotations = markRaw(new Map());
+  }
+
+  @Action
+  updateVisibilityAndHydration(params: {
+    // The client-filtered id set. Omit it when no client filter is active: the
+    // action then iterates its own stub map directly, avoiding a full-dataset
+    // id array allocation in the component on every frame change (Finding 15).
+    filteredIds?: string[];
+    gcsBounds?: IGeoJSPosition[];
+    currentFrameLocation: IAnnotationLocation;
+    // Zoom-adaptive budget overrides (computed from the live map zoom in the
+    // component). Fall back to the static config caps when not supplied.
+    maxVisible?: number;
+    maxHydrated?: number;
+  }) {
+    const { filteredIds, gcsBounds, currentFrameLocation } = params;
+    const maxVisible = params.maxVisible ?? this.visibilityConfig.maxVisible;
+    const maxHydrated = params.maxHydrated ?? this.visibilityConfig.maxHydrated;
+
+    // Capture the stub map once. `this.annotationStubs` resolves through the
+    // vuex-module-decorators action proxy on every access; reading it inside the
+    // hot loops below (~1.4M times at 700K) added hundreds of ms. The local
+    // reference is a plain Map.
+    const stubsMap = this.annotationStubs;
+
+    const onCurrentFrame = (stub: IAnnotationStub | undefined): boolean =>
+      !!stub &&
+      stub.location.XY === currentFrameLocation.XY &&
+      stub.location.Z === currentFrameLocation.Z &&
+      stub.location.Time === currentFrameLocation.Time;
+
+    // Step 1: Split by frame. With an explicit filtered set, walk it; otherwise
+    // iterate the stub map directly (no per-frame id array allocated upstream).
+    const currentFrameIds: string[] = [];
+    if (filteredIds) {
+      for (const id of filteredIds) {
+        if (onCurrentFrame(stubsMap.get(id))) {
+          currentFrameIds.push(id);
+        }
+      }
+    } else {
+      for (const [id, stub] of stubsMap) {
+        if (onCurrentFrame(stub)) {
+          currentFrameIds.push(id);
+        }
+      }
+    }
+
+    // Step 2: Split current-frame IDs by viewport into two boxes (C2).
+    // Visibility uses an EXPANDED box so panning reveals pre-loaded annotations.
+    // Hydration AND the render-coverage counts use the UNEXPANDED box — the
+    // region the user actually sees — so zooming in re-prioritizes the
+    // newly-visible annotations. (When zoomed out, the expanded box covers the
+    // whole frame, so ranking hydration against it never tracks zoom.)
+    const noSplit = {
+      inViewportIds: currentFrameIds,
+      outOfViewportIds: [] as string[],
+    };
+    let visibilitySplit = noSplit;
+    let hydrationSplit = noSplit;
+
+    if (gcsBounds && gcsBounds.length === 4) {
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+      for (const pt of gcsBounds) {
+        minX = Math.min(minX, pt.x);
+        minY = Math.min(minY, pt.y);
+        maxX = Math.max(maxX, pt.x);
+        maxY = Math.max(maxY, pt.y);
+      }
+      // Unexpanded (raw) split — the actual viewport — drives hydration + the
+      // render-coverage indicator counts.
+      hydrationSplit = annotationSpatialIndex.splitByViewport(
+        currentFrameIds,
+        minX,
+        minY,
+        maxX,
+        maxY,
+      );
+      // Expanded by 50% on each side — drives visibility (pan pre-load).
+      const width = maxX - minX;
+      const height = maxY - minY;
+      visibilitySplit = annotationSpatialIndex.splitByViewport(
+        currentFrameIds,
+        minX - width * 0.5,
+        minY - height * 0.5,
+        maxX + width * 0.5,
+        maxY + height * 0.5,
+      );
+    }
+
+    // Step 3: Fill visibility budget (two-tier, EXPANDED box).
+    const visInViewport = visibilitySplit.inViewportIds;
+    let visibleIds: string[];
+    if (visInViewport.length >= maxVisible) {
+      visibleIds = selectStableSubset(visInViewport, maxVisible);
+    } else {
+      const remaining = maxVisible - visInViewport.length;
+      const offViewport = selectStableSubset(
+        visibilitySplit.outOfViewportIds,
+        remaining,
+      );
+      visibleIds = [...visInViewport, ...offViewport];
+    }
+
+    // Step 4: Fill hydration budget (two-tier, largest first, UNEXPANDED box).
+    // Points are self-complete (centroid IS the only coordinate), so they never
+    // hydrate — drop them from both tiers BEFORE budget allocation so the budget
+    // goes entirely to shapes that actually need coordinates. For an all-points
+    // dataset this filters the candidate lists to empty, so the size-selection
+    // is skipped entirely. selectLargestBySize then picks the largest by
+    // estimatedRadius via a bounded min-heap (not a full O(N log N) sort) — see
+    // its definition.
+    const needsHydration = (id: string): boolean =>
+      idHasHydratableShape(id, stubsMap);
+    const sizeOf = (id: string) => stubsMap.get(id)?.estimatedRadius ?? 0;
+    const hydInViewport = hydrationSplit.inViewportIds.filter(needsHydration);
+    let idsToHydrate: string[];
+    if (hydInViewport.length >= maxHydrated) {
+      idsToHydrate = selectLargestBySize(hydInViewport, sizeOf, maxHydrated);
+    } else {
+      const remainingBudget = maxHydrated - hydInViewport.length;
+      idsToHydrate = [
+        ...hydInViewport,
+        ...selectLargestBySize(
+          hydrationSplit.outOfViewportIds.filter(needsHydration),
+          sizeOf,
+          remainingBudget,
+        ),
+      ];
+    }
+
+    // Step 5: Apply visibility
+    this.setVisibleAnnotationIds(visibleIds);
+
+    // Step 5b: Render-coverage counts for the ACTUAL (unexpanded) viewport — how
+    // many annotations are in view vs how many of those are drawn. Reuses the
+    // hydration split (same unexpanded box) — one fewer splitByViewport than
+    // recomputing it here. Drives the render-coverage indicator.
+    const actualInView = hydrationSplit.inViewportIds;
+    const visibleSet = new Set(visibleIds);
+    let viewportRendered = 0;
+    for (const id of actualInView) {
+      if (visibleSet.has(id)) {
+        viewportRendered += 1;
+      }
+    }
+    this.setViewportCounts({
+      total: actualInView.length,
+      rendered: viewportRendered,
+    });
+
+    // Step 6: Determine hydration mode
+    this.setHydrationMode(idsToHydrate.length > 0 ? "shapes" : "dots");
+
+    // Step 7: Hydrate from backend API
+    // Capture state synchronously, then fire async hydration outside
+    // the Vuex action proxy (vuex-module-decorators breaks after await).
+    const hydratedCache = this.hydratedAnnotations;
+    const api = this.annotationsAPI;
+    const idsToFetch: string[] = [];
+    const idsToTouch: string[] = [];
+    for (const id of idsToHydrate) {
+      if (hydratedCache.has(id)) {
+        idsToTouch.push(id);
+      } else {
+        idsToFetch.push(id);
+      }
+    }
+    stubPerf.trackVisibilityUpdate();
+    stubPerf.trackRequest(idsToFetch.length, idsToTouch.length);
+    // Debounced + abortable so rapid viewport changes collapse to one fetch and
+    // a superseded in-flight fetch can't overwrite newer cache state (C1).
+    viewportHydrationTask.schedule({ api, idsToFetch, idsToTouch });
+  }
+
+  /**
+   * Hydrate-on-demand for specific ids (C3): selecting or navigating to a stub
+   * that isn't in the hydration cache otherwise renders it as a dot until the
+   * viewport happens to hydrate it. This fetches the full coordinates for the
+   * given ids (known stubs not already hydrated) so they render as real shapes
+   * immediately. No-op outside stub-only mode (everything is already full).
+   */
+  @Action
+  ensureHydrated(ids: Iterable<string>) {
+    // Accept any iterable (Array or the live selection Set) so callers don't
+    // have to spread a large selection into a throwaway array on every change
+    // (Finding 14). idsNeedingHydration iterates it directly and returns []
+    // for an empty input, which the idsToFetch guard below already handles.
+    if (!this.stubOnlyMode) {
+      return;
+    }
+    const stubs = this.annotationStubs;
+    const idsToFetch = idsNeedingHydration(
+      ids,
+      this.hydratedAnnotations,
+      stubs,
+    ).filter((id) => idHasHydratableShape(id, stubs));
+    if (idsToFetch.length === 0) {
+      return;
+    }
+    // Cap the on-demand hydration so a "select all" on a huge dataset can't
+    // post the entire id set to /hydrate (a giant request that defeats lazy
+    // mode and risks OOM). Beyond the cap the extras stay stubs (dots) — you
+    // can't meaningfully view more than this many shapes at once anyway, and
+    // the hydration cache is itself hard-capped. maxHydrated is the natural
+    // "how many shapes to hold" budget.
+    const cap = this.visibilityConfig.maxHydrated;
+    const capped =
+      idsToFetch.length > cap ? idsToFetch.slice(0, cap) : idsToFetch;
+    // Fire the fetch outside the action proxy (vuex-module-decorators breaks
+    // after await). mergeHydratedAnnotations accumulates into the cache and
+    // protects selected ids from LRU eviction (up to the hard cap).
+    _hydrateFromBackend(this.annotationsAPI, capped, []);
+  }
 }
 
-export default getModule(Annotations);
+const annotationModule = getModule(Annotations);
+export default annotationModule;
+
+/**
+ * Hydrate annotations from the backend, outside the Vuex action proxy.
+ * vuex-module-decorators breaks this/state/mutation access after await,
+ * so we run the async fetch as a plain function and commit directly
+ * to the module instance.
+ */
+async function _hydrateFromBackend(
+  api: AnnotationsAPI,
+  idsToFetch: string[],
+  idsToTouch: string[],
+  signal?: AbortSignal,
+) {
+  if (idsToFetch.length > 0) {
+    const start = performance.now();
+    try {
+      const fetched = await api.hydrateAnnotations(idsToFetch, signal);
+      stubPerf.trackLatency(performance.now() - start);
+      annotationModule.mergeHydratedAnnotations({
+        newEntries: fetched.map((a) => ({ id: a.id, annotation: a })),
+        touchedIds: idsToTouch,
+      });
+    } catch (error) {
+      // Aborted requests are superseded by a newer hydration (C1), not real
+      // failures — swallow them so they can't overwrite newer cache state and
+      // don't spam the log.
+      if (isAbortError(error)) {
+        return;
+      }
+      logError(`Hydration fetch failed: ${(error as Error).message}`);
+    }
+  } else if (idsToTouch.length > 0) {
+    annotationModule.mergeHydratedAnnotations({
+      newEntries: [],
+      touchedIds: idsToTouch,
+    });
+  }
+}
+
+// Viewport-driven hydration (C1): pan/zoom/frame changes call
+// updateVisibilityAndHydration repeatedly, each computing a fresh fetch set.
+// Debounce so rapid changes collapse to one fetch, and abort the previous
+// in-flight fetch when a newer one fires so a stale response can't clobber the
+// newer hydration cache. Selection-driven hydration (ensureHydrated) bypasses
+// this and fires immediately so selected annotations always land.
+const HYDRATION_FETCH_DEBOUNCE_MS = 200;
+const viewportHydrationTask = createDebouncedAbortableTask<{
+  api: AnnotationsAPI;
+  idsToFetch: string[];
+  idsToTouch: string[];
+}>(
+  ({ api, idsToFetch, idsToTouch }, signal) =>
+    _hydrateFromBackend(api, idsToFetch, idsToTouch, signal),
+  HYDRATION_FETCH_DEBOUNCE_MS,
+);
 
 // Self-accept HMR to prevent vuex-module-decorators from re-registering
 // the dynamic module (which causes duplicate getters and state overwrites).

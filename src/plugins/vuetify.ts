@@ -48,6 +48,12 @@ const vuetify = createVuetify({
     VList: { density: "compact" },
     VListItem: { density: "compact" },
     VChip: { rounded: "pill" },
+    VProgressLinear: { color: "primary", rounded: "pill", bgOpacity: 0.15 },
+    // NB: no global VProgressCircular color default. VBtn renders its
+    // loading spinner as a VProgressCircular with color:undefined, which
+    // would inherit a global default and turn teal-on-teal (invisible) on
+    // filled/elevated color="primary" buttons. Standalone spinners that need
+    // a color should set it explicitly.
   },
   theme: {
     defaultTheme: Persister.get("theme", "dark") === "dark" ? "dark" : "light",
@@ -67,6 +73,10 @@ const vuetify = createVuetify({
           success: "#27a644",
           warning: "#d4a72c",
           info: "#5b9bd5",
+          // Resource accents shared across chips/icons app-wide
+          dataset: "#e57373",
+          collection: "#4baeff",
+          project: "#8e24aa",
         },
       },
       light: {
@@ -84,6 +94,10 @@ const vuetify = createVuetify({
           success: "#16a34a",
           warning: "#ca8a04",
           info: "#2563eb",
+          // Resource accents shared across chips/icons app-wide
+          dataset: "#e57373",
+          collection: "#1e88e5",
+          project: "#8e24aa",
         },
       },
     },

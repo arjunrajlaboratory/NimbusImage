@@ -428,11 +428,21 @@ Combine automation with user guidance:
 - Shift-drag to define a bounding box for complex objects
 - Works best when objects are clearly visible with good contrast
 
-**Few-Shot SAM (Segment Anything with Examples)**:
-- Use a few example annotations to automatically find and segment similar objects across your image
-- Create a few manual annotations of the objects you want to find, then run Few-Shot SAM to find more like them
-- Two model options: SAM1 (ViT-H) for higher quality results, SAM2 (Base+) for faster processing
-- Great for finding objects that are hard to define with traditional parameters but easy to show by example
+**Segment Similar Objects**:
+- Interactive example-based segmentation tool for finding many objects that look like one or more examples the user provides. This is the tool to recommend when the user says "find more like this," "segment similar objects," "few-shot segmentation," or has objects that are visually recognizable but hard to capture with fixed thresholds.
+- Requires Chrome/WebGPU because it uses SAM embeddings. If WebGPU is unavailable, suggest Chrome and fall back to manual tools, plain SAM, or Cellpose-SAM depending on the task.
+- How users select examples:
+  - **SAM Click**: shift-click an object; SAM outlines the object under the pointer.
+  - **SAM Box**: shift-drag a box around a harder object; SAM segments inside the box.
+  - **Circle**: shift-drag a freehand lasso; the lasso polygon itself becomes the example without running SAM.
+- How users find matches:
+  - **SAM**: uses SAM-embedding similarity to propose matching objects in the current view. Good for visually distinctive, reasonably sized objects that the user can show by example.
+  - **Classifier**: trains an in-browser classifier from the examples. Useful when the examples are small, textured, or not well separated by SAM embedding similarity.
+  - **SAM->Classifier**: first finds objects with SAM similarity, then trains the classifier on those SAM results plus the user's examples. Use when SAM gets a useful first pass but the classifier may generalize or clean it up.
+- Typical workflow: choose the Segment Similar Objects tool, select foreground examples, optionally add background examples for confusing look-alikes, choose the "Find with" mode, tune the similarity threshold and size range, inspect the putative objects, then click Accept to create real annotations.
+- Best practices: start with 2-5 clean foreground examples; add background examples when false positives share similar texture; zoom in if objects are tiny; use box prompts for touching objects; use grid/thorough prompts only when normal point prompts miss too many objects because they are slower.
+- Important limitations: results are computed for the current viewport, so users can pan/zoom and repeat the process to "roam and accept" across a large image. SAM descriptors are not perfectly scale-invariant, so examples taken at one zoom may match less well after a large zoom change.
+- This tool supersedes older "Few-Shot SAM" wording. If the user asks about Few-Shot SAM or Segment Anything with Examples, guide them to Segment Similar Objects.
 
 ## Selection & Editing Tools
 Refine and manage objects:
@@ -858,7 +868,8 @@ The analysis system's flexibility comes from combining these measurement types w
    - Filter by area to remove artifacts if necessary.
 
 3. **Add Missing or Remove False Objects** (if needed):
-   - Use Manual blob or Segment Anything Model for missed objects.
+   - Use Manual blob or Segment Anything Model for individual missed objects.
+   - Use Segment Similar Objects when the user can show a few examples and wants NimbusImage to find many more similar objects in the current view.
    - Shift-select and delete false positives.
    
 4. **Segment Cell Bodies from Nuclei (if nuclei were segmented first)** (optional):
@@ -872,6 +883,34 @@ The analysis system's flexibility comes from combining these measurement types w
 5. **Export Measurements**:
    - Select desired properties in Object list.
    - Export to CSV for further analysis.
+
+## Finding Similar Objects by Example
+
+Use this workflow when the user has a visually recognizable object class but cannot easily describe it with a fixed threshold, diameter, or conventional segmentation model.
+
+1. **Create the tool**:
+   - Add the Segment Similar Objects tool from the toolset.
+   - Choose the output tag for accepted objects.
+   - Remind users to use Chrome if the tool reports that WebGPU is unavailable.
+
+2. **Provide examples**:
+   - Start with foreground examples using SAM Click, SAM Box, or Circle.
+   - Add 2-5 clean examples when possible.
+   - Add background examples if the tool is picking up a confusing look-alike structure.
+
+3. **Choose how to find matches**:
+   - Start with **SAM** for visually distinctive objects.
+   - Try **Classifier** for small or textured objects, or when SAM similarity misses too much.
+   - Try **SAM->Classifier** when SAM gets a useful first pass and the classifier should refine or generalize from it.
+
+4. **Tune and accept**:
+   - Adjust the similarity threshold and size range while watching the putative outlines.
+   - Use box prompts for touching objects or grid/thorough prompts when point prompts miss objects.
+   - Click Accept only after visually checking the proposed objects.
+
+5. **Cover a large image**:
+   - The tool works on the current viewport. Users can accept results, pan or zoom to another area, and repeat.
+   - If matching gets worse after a large zoom change, advise adding examples at the current zoom level.
 
 ## RNA Spot Counting
 
@@ -916,7 +955,8 @@ The analysis system's flexibility comes from combining these measurement types w
    - Draw objects on any Z-plane
    - Count across Z-planes with "Count points across all z-slices" option
    - Use maximum intensity projections for visualization (Layer → Advanced options)
-   
+   - For a true interactive 3D volume rendering (rotate, zoom, view segmentations as extruded shapes), use the 3D Volume Rendering view—see "3D Volume Rendering" in the Visualization section
+
 4. **3D Measurements**:
    - Distance measurements consider Z-dimension when "Measure across Z" is enabled
    - Intensity measurements can use Z-projection methods
@@ -1030,6 +1070,49 @@ Customize visualization with flexible layer controls:
 **Unrolling Layers**:
 - Click "Unroll" next to Layers to view channels as montage
 - Shows all channels simultaneously for comparison
+
+## 3D Volume Rendering
+NimbusImage can render your image stack as an interactive 3D volume instead of a flat 2D slice:
+
+**Switching Between 2D and 3D**:
+- Click the cube icon in the top app bar to toggle between the standard 2D viewer and the 3D volume view
+- Your layers, annotations, and tools are unaffected when switching back to 2D
+
+**What You See in 3D**:
+- Each currently visible channel/layer is rendered as its own semi-transparent volume, colored to match that layer's assigned color—multi-channel overlays work in 3D just as in 2D
+- Polygon-based objects (blobs) can be overlaid as extruded 3D "Segmentations." Point, line, and rectangle objects are not currently shown in the 3D view
+
+**Depth Axis: Z vs. Time**:
+- A two-button toggle at the left of the 3D toolbar sets what the volume's "depth" dimension represents:
+  - **Z** (z-axis icon): the depth axis is your z-stack, giving a true 3D reconstruction of the sample at the current timepoint
+  - **Clock icon**: the depth axis is Time instead of Z, so a timelapse is displayed as a spatial volume—the current z-slice is held fixed and successive timepoints are stacked like slices of a volume. This is only enabled for datasets with more than one timepoint
+- When Time is selected as the depth axis, an extra button (up/down arrows icon) opens a "Time depth spacing" dialog. Since time doesn't have a physical depth, this dialog lets you set how many micrometers apart each timepoint should appear (defaults to 5× the pixel size, but you can enter a custom value, or "Reset to default")
+
+**Toolbar Buttons**:
+- **Depth axis toggle** (z-axis / clock icons): switch between Z and Time as the volume's depth dimension, as above
+- **Time depth spacing** (up/down arrow icon, only shown when Time is the depth axis): opens the spacing dialog described above
+- **Blend mode toggle** (layers icon / bell-curve icon): controls how overlapping voxels along each viewing ray are combined
+  - **Composite**: normal semi-transparent volume blending, good for seeing overall 3D shape and structure
+  - **Maximum intensity**: shows only the brightest voxel along each ray (a live, rotatable maximum-intensity projection)—good for sparse bright objects like spots, since dim surrounding signal doesn't obscure them
+- **Volume** (cube icon): show/hide the rendered image volume itself
+- **Segmentations** (polygon icon): show/hide the extruded 3D polygon annotation overlay
+- **Reset camera** (fit-to-page icon): reframes the view to fit the current volume
+- **Orientation axes** (axis-arrow icon): toggles a small XYZ orientation gizmo in the bottom-right corner that rotates with the camera, so you can always tell which way is up
+- **Scaled bounding box** (grid icon): toggles a box with micrometer-labeled tick marks around the volume, useful for judging physical scale
+- **Segmentation color mode toggle** (tag icon / scatter-plot icon): choose whether 3D segmentations are colored by tag or by a computed property; selecting "property" reveals a dropdown to pick which property to color by
+
+**Navigation Controls**:
+- Rotate: click and drag
+- Zoom: scroll wheel
+- Pan: right-click/shift-drag
+
+**Contrast in 3D**:
+- Percentile-based contrast is computed by sampling across the entire volume rather than a single slice, so the display stays stable while rotating or scrubbing through the volume—contrast may therefore look slightly different from the 2D view at any single slice
+
+**Performance Notes for Large Data**:
+- To keep rendering responsive, very large volumes are automatically downsampled: deep z-stacks or long timelapses are capped to a fixed number of planes (subsampled evenly if the stack is deeper), and very high-resolution images are reduced in XY as well
+- This means the 3D view may show lower resolution than the full-resolution 2D view for very large datasets—this is expected, not an error
+- 3D rendering relies on the browser's WebGL support; use Chrome for best compatibility
 
 ## Snapshots
 Create, manage, and export visual bookmarks:
@@ -1287,6 +1370,18 @@ Solutions for slow or unresponsive behavior:
 - Use the tag picker to hide unnecessary annotations
 - Filter object display to only what's needed
 - Consider splitting very large datasets
+
+**Large Annotation Sets & Advanced Rendering Settings**:
+For datasets with very large annotation counts (hundreds of thousands, e.g. spatial data like Xenium or MERFISH), NimbusImage automatically switches to a "lazy" rendering mode: it loads lightweight placeholders for every object and draws only a subset at a time — revealing more as you zoom in — so the viewer stays responsive. This is automatic; users don't need to turn anything on.
+
+If a user finds panning sluggish on a huge dataset, or wants to control how many objects are drawn at once, point them to the **"Advanced settings for large numbers of annotations"** section — a collapsible panel under the Interface heading in the Settings panel (the sliders icon in the top toolbar). The defaults suit most datasets; the key tradeoff to explain is that **showing more annotations at once makes panning large datasets slower**. The main controls:
+- **Max visible annotations**: the most objects drawn per frame. Lower it if panning is laggy; raise it to see more at once.
+- **Max hydrated annotations**: how many are drawn as full shapes (the rest show as simple dots). Full shapes are more detailed but heavier to draw.
+- **Stub mode threshold**: the dataset size above which the automatic lazy mode kicks in.
+- **Zoomed-out coverage target**: how dense the overview looks when fully zoomed out (lower = sparser, cleaner).
+- **Viewport refresh threshold**: how far the user must pan or zoom before the view reloads (higher = less loading churn while navigating).
+
+Each field has an info icon explaining it, and all values are limited to safe ranges. These are advanced power-user settings — for most users the defaults are best, and hiding unneeded objects with the tag picker or filters is the simpler first step.
 
 **Server Status**:
 - Check connection indicator (floppy disk icon) in top right

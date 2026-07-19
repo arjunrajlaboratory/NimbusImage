@@ -63,7 +63,9 @@ export type TToolType =
   | "edit"
   | "segmentation"
   | "samAnnotation"
-  | "tagging";
+  | "objectSegmentation"
+  | "tagging"
+  | "linescan";
 
 export interface IToolTemplateInterface {
   id: string;
@@ -146,6 +148,101 @@ export interface ISamAnnotationToolState {
   livePreview: IGeoJSPosition[] | null;
 }
 
+export const ObjectSegmentationToolStateSymbol: unique symbol = Symbol(
+  "ObjectSegmentationToolState",
+);
+
+export type TObjectSegmentationToolStateSymbol =
+  typeof ObjectSegmentationToolStateSymbol;
+
+// How the user picks a training/example object.
+//  - "samClick": shift-click a point; SAM decodes the object under it.
+//  - "samBox":   shift-drag a box; SAM decodes the object inside it.
+//  - "circle":   shift-drag a freehand lasso; the polygon IS the example
+//                (no decoder run).
+export type TObjectSelectionMode = "samClick" | "samBox" | "circle";
+
+// How examples are propagated to the rest of the image.
+//  - "samSimilarity":     SAM-embedding similarity search over candidate prompts.
+//  - "classifier":        in-browser random-forest classifier (web worker).
+//  - "samThenClassifier": chained - run SAM similarity, then train the
+//                         classifier on the examples + SAM proposals and show
+//                         the classifier's result.
+export type TObjectApplicationMethod =
+  | "samSimilarity"
+  | "classifier"
+  | "samThenClassifier";
+
+// Where matches are searched. "image" (whole-image) is not yet implemented;
+// only "viewport" (the currently displayed view) is available for now.
+export type TObjectSegmentationScope = "viewport" | "image";
+
+export interface IObjectSegmentationExample {
+  polarity: "foreground" | "background";
+  // null for a circled example: its polygon (below) is authoritative and no
+  // decoder prompt was ever run.
+  prompt: TSamPrompt | null;
+  // The resolved example outline in GCS (image) coords - the given polygon
+  // for a circled example, or the SAM-decoded mask for a prompt example.
+  // null until the example-resolve node has processed this example. Both
+  // application methods consume this: the classifier trains on these
+  // polygons, so a SAM-clicked example can feed the classifier too.
+  polygon: IGeoJSPosition[] | null;
+}
+
+export interface IObjectSegmentationStatus {
+  phase: "idle" | "computing" | "ready" | "error";
+  error?: string;
+  putativeCount: number; // proposals.length after all filtering
+  // SAM candidate-decode progress ("Scanning candidates … 23/64"). null when
+  // no SAM decode run is in flight (and always null for the classifier).
+  progress: { done: number; total: number } | null;
+  // Superset of both methods' timings: SAM (encode/decode) + classifier
+  // (features/train/predict/postprocess).
+  timings: {
+    encodeMs?: number;
+    decodeMs?: number;
+    featuresMs?: number;
+    trainMs?: number;
+    predictMs?: number;
+    postprocessMs?: number;
+  };
+  // Auto size range derived from foreground example areas, surfaced so the
+  // panel can display the size-filter placeholders.
+  autoSizeRange?: { min: number; max: number } | null;
+}
+
+export interface IObjectSegmentationToolState {
+  type: TObjectSegmentationToolStateSymbol;
+  nodes: TObjectSegmentationNodes; // markRaw'd pipeline nodes
+  // Reactive mirror of nodes.input.geoJSMap.output, same pattern as
+  // ISamAnnotationToolState.mapEntry.
+  mapEntry: IMapEntry | null;
+  // Reactive mirror of the examples input node, with resolved polygons filled
+  // in by the example-resolve node (same array order as the input).
+  examples: IObjectSegmentationExample[];
+  proposals: IGeoJSPosition[][] | null; // GCS polygons, post-dedupe; null = nothing computed
+  // Polarity applied to the next example; set by the panel.
+  nextPolarity: "foreground" | "background";
+  status: IObjectSegmentationStatus; // reactive mirror
+  // Transient per-node progress labels for the in-viewer overlay (e.g. "SAM
+  // encoding…", "SAM segmenting…", "Training classifier…"), same overlay as
+  // ISamAnnotationToolState.loadingMessages.
+  loadingMessages: string[];
+  // How the next example is captured; set by the panel. Reactive so the
+  // AnnotationViewer interaction/preview routing can switch live.
+  selectionMode: TObjectSelectionMode;
+  // How examples are propagated; set by the panel. Reactive mirror of the
+  // applicationMethod input node (which gates the two pipeline branches).
+  applicationMethod: TObjectApplicationMethod;
+  // Search scope; set by the panel. Only "viewport" is functional for now.
+  scope: TObjectSegmentationScope;
+  // Reactive mirror of the hover-preview decode node's output (GCS outline of
+  // the object under the cursor in a SAM selection mode); null when idle,
+  // dragging, in circle mode, or between debounced decodes.
+  livePreview: IGeoJSPosition[] | null;
+}
+
 export const ConnectionToolStateSymbol: unique symbol = Symbol(
   "ConnectionToolState",
 );
@@ -185,6 +282,7 @@ export interface IErrorToolState {
 
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
+  objectSegmentation: IObjectSegmentationToolState | IErrorToolState;
   connection: IConnectionToolState;
   // Edit tool can have CombineToolState when action is "combine_click"
   edit: ICombineToolState | IBaseToolState;
@@ -214,6 +312,8 @@ export enum ProgressType {
   PROPERTY_FETCH = "PROPERTY_FETCH",
   PROPERTY_COMPUTE = "PROPERTY_COMPUTE",
   BATCH_PROPERTY_COMPUTE = "BATCH_PROPERTY_COMPUTE",
+  PIPELINE_COMPUTE = "PIPELINE_COMPUTE",
+  BATCH_PIPELINE_COMPUTE = "BATCH_PIPELINE_COMPUTE",
   CONNECTION_FETCH = "CONNECTION_FETCH",
   CONNECTION_SAVE = "CONNECTION_SAVE",
   CONNECTION_DELETE = "CONNECTION_DELETE",
@@ -414,6 +514,7 @@ export interface IDatasetConfigurationBase {
   tools: IToolConfiguration[];
   snapshots: ISnapshot[];
   propertyIds: string[];
+  pipelines: IPipeline[];
   scales: IScales;
 }
 
@@ -901,6 +1002,12 @@ export interface IGeoJSAnnotationLayer extends IGeoJSLayer {
     arg?: string | null,
     editAnnotation?: IGeoJSAnnotation,
   ) => string | null | IGeoJSAnnotationLayer;
+  // The annotation currently being created or edited, if any
+  currentAnnotation: IGeoJSAnnotation | null;
+  options: (() => IObject) &
+    ((key: string) => any) &
+    ((key: string, value: any) => IGeoJSAnnotationLayer) &
+    ((values: IObject) => IGeoJSAnnotationLayer);
 }
 
 // https://opengeoscience.github.io/geojs/apidocs/geo.html#.point2D
@@ -1381,6 +1488,28 @@ export const AnnotationNames = {
   [AnnotationShape.Any]: "Any", // This was added to support the "Any" shape
 };
 
+// Shapes a computed property can be attached to. Must match the backend
+// annotation_property schema enum (server/models/property.py) — property
+// workers only operate on these, so a property step / materialized property
+// with any other shape would be rejected on compute.
+export const MATERIALIZABLE_PROPERTY_SHAPES: AnnotationShape[] = [
+  AnnotationShape.Point,
+  AnnotationShape.Line,
+  AnnotationShape.Polygon,
+];
+
+// Clamp an arbitrary annotation shape to one a property can be computed on,
+// falling back to Polygon (a rectangle/circle/ellipse annotation is closest to
+// a blob). Used wherever a property step derives its shape from an annotation
+// source: the AI suggestion path and the builder's tag auto-wiring.
+export function clampToMaterializablePropertyShape(
+  shape: AnnotationShape,
+): AnnotationShape {
+  return MATERIALIZABLE_PROPERTY_SHAPES.includes(shape)
+    ? shape
+    : AnnotationShape.Polygon;
+}
+
 export interface IAnnotationLocation {
   XY: number;
   Z: number;
@@ -1400,6 +1529,102 @@ export interface IAnnotationBase {
 export interface IAnnotation extends IAnnotationBase {
   id: string;
   name: string | null;
+}
+
+// --- Stub/Hydrated Annotation Architecture ---
+
+export interface IAnnotationStub {
+  id: string;
+  centroid: IGeoJSPosition;
+  location: IAnnotationLocation;
+  shape: AnnotationShape;
+  channel: number;
+  tags: string[];
+  color: string | null;
+  estimatedRadius?: number;
+}
+
+export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
+
+// --- Server-side annotation list query/response ---
+
+export interface IAnnotationListSort {
+  type: "field" | "property";
+  key: string | string[]; // "location.XY" | "name" | ... | ["propId","sub"]
+  order: "asc" | "desc";
+}
+
+export interface IAnnotationListPropertyFilter {
+  path: string[];
+  mode: "range" | "values";
+  min?: number;
+  max?: number;
+  values?: number[];
+}
+
+export interface IAnnotationListFilters {
+  shape?: string;
+  tags?: { values: string[]; exclusive: boolean };
+  location?: IAnnotationLocation;
+  idSubstring?: string;
+  propertyFilters?: IAnnotationListPropertyFilter[];
+  // A list of id-sets; an annotation matches iff its _id is in EVERY set
+  // (AND of $in's). Used to apply the selection and annotation-id filters.
+  idConstraints?: string[][];
+}
+
+export interface IAnnotationListQuery {
+  datasetId: string;
+  filters: IAnnotationListFilters;
+  sort: IAnnotationListSort | null;
+  propertyPaths: string[][];
+  offset: number;
+  limit: number;
+}
+
+// A server list row: stub fields + the requested property values.
+export interface IAnnotationListRow extends IAnnotationStub {
+  name: string | null;
+  values: IAnnotationPropertyValues[string]; // {[propId]: value | nested}
+}
+
+export interface IAnnotationListPage {
+  total: number;
+  rows: IAnnotationListRow[];
+}
+
+export type THydrationMode = "shapes" | "dots";
+
+export interface IVisibilityConfig {
+  // Dataset annotation count above which stub-only (lazy) mode activates: stubs
+  // are fetched and coordinates/property values load on demand. Independent of
+  // the render budget (maxVisible).
+  stubThreshold: number;
+  // Max annotations to render (stubs or shapes) — the cap when fully zoomed in.
+  // Datasets at or below this render fully at every zoom (the size gate).
+  maxVisible: number;
+  // Max annotations to keep hydrated per visibility update — the cap when fully
+  // zoomed in.
+  maxHydrated: number;
+  // Total cap on the hydration cache (accumulates across updates; LRU-evicts
+  // beyond cap, protecting selected).
+  hydrationCacheCap: number;
+  // If true, threshold applies to total frame annotations across all layers.
+  globalThreshold: boolean;
+  // Fraction of the screen the rendered dots may cover when fully zoomed out.
+  // Sets the zoomed-out floor from annotation size + screen; the budget doubles
+  // per zoom level up to maxVisible.
+  coverageTarget: number;
+  // Camera hysteresis: skip the camera-driven refresh until EITHER the zoom
+  // magnification OR the center (as a fraction of the viewport) changes by this
+  // fraction (e.g. 0.2 = 20%).
+  viewportRefreshFraction: number;
+}
+
+export function isHydratedAnnotation(
+  annotation: TAnnotationOrStub,
+): annotation is IAnnotation {
+  return "coordinates" in annotation;
 }
 
 export enum TrackPositionType {
@@ -1474,6 +1699,104 @@ export interface IAnnotationPropertyConfiguration {
 
 export interface IAnnotationProperty extends IAnnotationPropertyConfiguration {
   id: string;
+}
+
+// Annotation setup shared by the annotation-producing tool UIs and by
+// annotation pipeline steps. (Historically defined in AnnotationConfiguration.vue,
+// which now re-exports it from here.)
+export interface IAnnotationSetup {
+  tags: string[];
+  coordinateAssignments: {
+    layer: string | null | undefined;
+    Z: {
+      type: string;
+      value: number;
+      max: number;
+    };
+    Time: {
+      type: string;
+      value: number;
+      max: number;
+    };
+  };
+  shape: AnnotationShape;
+  color: string | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Worker pipelines
+//
+// A pipeline is an ordered list of steps stored on a configuration. Each step
+// is a self-contained worker invocation: either an annotation-producing worker
+// (segmentation path) or a property-computing worker (property path). Steps do
+// not pass data in memory — each writes annotations/property values back to the
+// dataset and downstream steps read them back, joined by tags + shape.
+// See codebaseDocumentation/WORKER_PIPELINES.md.
+// ---------------------------------------------------------------------------
+
+export type TPipelineStepKind = "annotation" | "property";
+
+export interface IPipelineStepBase {
+  // Stable id, unique within the pipeline.
+  readonly id: string;
+  kind: TPipelineStepKind;
+  // Display name, defaults to the worker's interfaceName label.
+  name: string;
+  // Docker image tag.
+  image: string;
+  // The user-picked runtime parameters for this worker image.
+  workerInterfaceValues: IWorkerInterfaceValues;
+  // Skipped by the runner when false.
+  enabled: boolean;
+}
+
+export interface IAnnotationPipelineStep extends IPipelineStepBase {
+  kind: "annotation";
+  // Mirrors tool.values.annotation. `annotation.tags` ARE this step's output
+  // tags (applied to the annotations the worker produces).
+  annotation: IAnnotationSetup;
+  // Mirrors tool.values.connectTo (optional connection wiring).
+  connectTo?: {
+    tags: string[];
+    layer: string | null;
+    exclusive?: boolean;
+  };
+  // Mirrors tool.values.jobDateTag.
+  jobDateTag?: boolean;
+}
+
+export interface IPropertyPipelineStep extends IPipelineStepBase {
+  kind: "property";
+  // Which annotations this property computes on.
+  shape: AnnotationShape;
+  // Tag filter selecting INPUT annotations. Normally set to the output tags of
+  // an upstream annotation step (see tag wiring in WORKER_PIPELINES.md).
+  inputTags: { tags: string[]; exclusive: boolean };
+  // True when inputTags/shape were auto-wired from an upstream annotation step
+  // (so the builder knows it may safely refresh them; manual edits clear it).
+  autoWired?: boolean;
+  // Set lazily by the runner on first successful run: the id of the persisted
+  // IAnnotationProperty this step created. Reused on later runs. Cleared if the
+  // referenced property no longer exists (runner re-creates).
+  materializedPropertyId?: string;
+}
+
+export type TPipelineStep = IAnnotationPipelineStep | IPropertyPipelineStep;
+
+export interface IPipeline {
+  readonly id: string;
+  name: string;
+  description?: string;
+  steps: TPipelineStep[];
+  // Provenance, for UI badges.
+  origin?: "user" | "preset";
+}
+
+export interface IPipelineRunResult {
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  failedStepIndex: number | null;
 }
 
 export type TNestedValues<T> = T | { [pathName: string]: TNestedValues<T> };
@@ -1856,6 +2179,7 @@ import { ISetQuadStatus } from "@/utils/setFrameQuad";
 import type { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
 import type { TSamNodes } from "@/pipelines/samPipeline";
+import type { TObjectSegmentationNodes } from "@/pipelines/objectSegmentationPipeline";
 
 // TODO: It's kind of weird to have this function here.
 export function newLayer(
@@ -1937,6 +2261,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
     tools: [],
     snapshots: [],
     propertyIds: [],
+    pipelines: [],
     scales: {
       pixelSize: { value: 1, unit: "m" },
       zStep: { value: 1, unit: "m" },
@@ -1991,6 +2316,52 @@ export interface IChatMessage {
   images?: IChatImage[];
   visible?: boolean;
 }
+
+// --- Automatic tool suggestions (see codebaseDocumentation/AUTO_TOOL_SUGGESTIONS.md) ---
+
+// One entry in the catalog of tools the frontend knows how to set up. Sent to
+// the backend so Claude can pick from tools that actually exist for this
+// dataset, and reused on the way back to build the concrete IToolConfiguration.
+export interface IToolSuggestionCatalogEntry {
+  id: string;
+  name: string;
+  kind: "worker" | "manual";
+  description: string;
+  // Worker tools only: the docker image to instantiate.
+  image?: string;
+  // Default annotation shape used when building the tool configuration.
+  defaultShape?: AnnotationShape;
+}
+
+// Display-layer context sent with the screenshot so Claude can map rendered
+// colors in the composite image back to the dataset's channel names.
+export interface IToolSuggestionLayerContext {
+  id: string;
+  name: string;
+  channel: number;
+  channelName: string;
+  color: string;
+  visible: boolean;
+}
+
+// A raw suggestion as returned by the backend (references a catalog entry by
+// id and, optionally, a channel to run on).
+export interface IToolSuggestion {
+  toolId: string;
+  channelName?: string;
+  reason: string;
+  confidence?: "low" | "medium" | "high";
+}
+
+// A suggestion after the frontend has resolved it against the catalog and
+// built a ready-to-add tool configuration.
+export interface IResolvedToolSuggestion {
+  suggestion: IToolSuggestion;
+  catalogEntry: IToolSuggestionCatalogEntry;
+  tool: IToolConfiguration;
+}
+
+export type TToolSuggestionStatus = "idle" | "loading" | "done" | "error";
 
 export const TaggingToolStateSymbol: unique symbol = Symbol("TaggingToolState");
 

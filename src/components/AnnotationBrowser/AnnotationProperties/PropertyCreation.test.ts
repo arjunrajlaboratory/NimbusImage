@@ -29,11 +29,18 @@ vi.mock("@/store/properties", () => ({
   },
 }));
 
-vi.mock("@/store/annotation", () => ({
-  default: {
+vi.mock("@/store/annotation", () => {
+  const state = {
     annotations: [] as any[],
-  },
-}));
+  };
+  Object.defineProperty(state, "annotationsForIteration", {
+    get() {
+      return state.annotations;
+    },
+    enumerable: true,
+  });
+  return { default: state };
+});
 
 vi.mock("@/utils/annotation", () => ({
   tagFilterFunction: vi.fn(),

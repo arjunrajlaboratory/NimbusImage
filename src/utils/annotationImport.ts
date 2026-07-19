@@ -58,7 +58,7 @@ export async function importAnnotationsFromData(
   // Prepare annotation IDs to remove (if overwriting)
   let annotationIdsToRemove: string[] = [];
   if (overwriteAnnotations) {
-    for (const { id } of annotationStore.annotations) {
+    for (const { id } of annotationStore.annotationsForIteration) {
       annotationIdsToRemove.push(id);
     }
   }

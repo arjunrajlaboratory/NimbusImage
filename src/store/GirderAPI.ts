@@ -49,6 +49,7 @@ import { stringify } from "qs";
 import { logError, logWarning } from "@/utils/log";
 import { markRaw } from "vue";
 import { inferZStepFromDimensionLabelsUm } from "@/utils/dimensionLabels";
+import { IRawImageData, parseRawTiff } from "@/utils/tiff";
 
 // Modern browsers limit concurrency to a single domain at 6 requests (though
 // using HTML 2 might improve that slightly).  For a single layer, if we set
@@ -57,6 +58,16 @@ import { inferZStepFromDimensionLabelsUm } from "@/utils/dimensionLabels";
 // fail.  9 is a balance that is somewhat low but was measured as fast as
 // higher values in a limited set of tests.
 const HistogramConcurrency: number = 9;
+
+// A raw pixel region of one frame, with the mapping from image coordinates
+// to region pixels: regionX = (imageX - left) * scaleX
+export interface IRawRegion {
+  image: IRawImageData;
+  left: number;
+  top: number;
+  scaleX: number;
+  scaleY: number;
+}
 
 function toId(item: string | { _id: string }) {
   return typeof item === "string" ? item : item._id;
@@ -404,6 +415,51 @@ export default class GirderAPI {
       params,
     });
     return response.data;
+  }
+
+  /**
+   * Fetch the raw (unstyled) pixel values of a rectangular region of one
+   * frame as a typed array, along with the mapping from image coordinates to
+   * the returned region pixels. The output is capped at maxDim pixels per
+   * side; larger regions are downsampled by the server.
+   */
+  async getRawRegion(
+    itemId: string,
+    frame: number,
+    region: { left: number; top: number; right: number; bottom: number },
+    maxDim: number,
+  ): Promise<IRawRegion | null> {
+    const regionWidth = region.right - region.left;
+    const regionHeight = region.bottom - region.top;
+    if (regionWidth <= 0 || regionHeight <= 0) {
+      return null;
+    }
+    const scale = Math.min(1, maxDim / Math.max(regionWidth, regionHeight));
+    const params: { [key: string]: number | string } = {
+      ...region,
+      units: "base_pixels",
+      frame,
+      encoding: "TIFF",
+      tiffCompression: "raw",
+    };
+    if (scale < 1) {
+      params.width = Math.round(regionWidth * scale);
+      params.height = Math.round(regionHeight * scale);
+    }
+    const response = await this.client.get(`item/${itemId}/tiles/region`, {
+      params,
+      responseType: "arraybuffer",
+    });
+    const image = parseRawTiff(response.data);
+    return {
+      image,
+      left: region.left,
+      top: region.top,
+      // Use the actual returned size: the server preserves the aspect ratio,
+      // so the effective scale can differ slightly from the requested one
+      scaleX: image.width / regionWidth,
+      scaleY: image.height / regionHeight,
+    };
   }
 
   async getItems(folderId: string): Promise<IGirderItem[]> {
@@ -1173,6 +1229,7 @@ function defaultConfigurationBase(
     tools: [],
     propertyIds: [],
     snapshots: [],
+    pipelines: [],
     scales: getDatasetScales(dataset),
   };
 }
