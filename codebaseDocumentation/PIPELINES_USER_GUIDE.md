@@ -87,10 +87,18 @@ In the editor a user can:
 - **Enable/disable** a step. Disabled steps are skipped when the pipeline runs
   (useful for temporarily turning off part of a recipe).
 - **Remove** a step.
-- **Save** the pipeline (disabled until it has a name and at least one step).
+- **Save** the pipeline (disabled until it has a name and at least one step,
+  and while there are no unsaved changes). Saving shows a brief "Pipeline saved"
+  confirmation.
 - **Run** the pipeline (see [Running](#running-a-pipeline)) — enabled whenever
   the pipeline has an enabled step. Running **saves first**, so the run reflects
   the on-screen edits.
+
+A **saved / unsaved indicator** appears in both the dialog header (next to the
+pipeline name) and the editor footer (next to Save): amber **"Unsaved changes"**
+when the on-screen pipeline differs from what's saved, muted **"Saved"** when
+everything is persisted. A brand-new pipeline reads "Unsaved" until its first
+save.
 
 Each step row also shows its **live run status** (a spinner while running, then
 ✓ / ✗) and a **Logs** button once it has run — so the same list you edit is the
