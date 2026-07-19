@@ -60,29 +60,26 @@ automatically (see [Auto-wiring](#auto-wiring-tags) below).
 
 ## Where to find pipelines in the UI
 
-There are two entry points, both in the dataset viewer:
+Open pipelines from the **Pipelines** button in the **Tools panel** (the left
+palette that also has "Add new tool"). It opens the **Pipelines dialog**, which
+has two views: the **list** and the **editor**.
 
-1. **Pipelines palette** (left side, under the Tools panel). It is **hidden by
-   default**; toggle it from the Pipelines icon in the top toolbar (a
-   connected-nodes icon, next to the Tools icon). The palette is a compact
-   summary: one row per saved pipeline showing its name, step count, an "ai"
-   badge if it was AI-suggested, and a live spinner while it is running. An
-   **Open pipelines** button opens the full editor.
-2. **Object Browser toolbar** — the same Pipelines icon appears in the
-   Object Browser's toolbar and opens the full editor directly.
-
-Everything except the at-a-glance summary happens in the **full Pipelines
-dialog**, which has three views: the **list**, the **builder**, and the
-**run panel**.
+A compact **run-status strip** appears at the top of every dialog view whenever
+a pipeline is running or has just finished — showing the pipeline name, the
+current step, a progress bar, and a Cancel button — so a run is never out of
+sight. The overall run progress also shows in the app's global progress widget
+(top of the window), so a user can close the dialog and still track the run.
 
 ---
 
-## Building a pipeline
+## Building and running a pipeline
 
-From the Pipelines dialog list, click **New pipeline** (or **Edit** on an
-existing one, or **Duplicate** to copy one) to open the **builder**.
+From the Pipelines dialog list, click **New pipeline** (or click a pipeline row,
+or **Duplicate** it from the row's ⋮ menu) to open the **editor**. The editor is
+a single view where a user both **builds and runs** the pipeline — there is no
+separate "edit" vs "run" mode.
 
-In the builder a user can:
+In the editor a user can:
 
 - Set the pipeline's **name** and **description**.
 - **Add steps** (see below). Steps appear as an ordered, expandable list.
@@ -90,9 +87,14 @@ In the builder a user can:
 - **Enable/disable** a step. Disabled steps are skipped when the pipeline runs
   (useful for temporarily turning off part of a recipe).
 - **Remove** a step.
-- **Save** the pipeline (Save is disabled until the pipeline has a name and at
-  least one step). Nothing is persisted until Save — closing the builder
-  discards unsaved changes, which is how an unwanted AI suggestion is dismissed.
+- **Save** the pipeline (disabled until it has a name and at least one step).
+- **Run** the pipeline (see [Running](#running-a-pipeline)) — enabled whenever
+  the pipeline has an enabled step. Running **saves first**, so the run reflects
+  the on-screen edits.
+
+Each step row also shows its **live run status** (a spinner while running, then
+✓ / ✗) and a **Logs** button once it has run — so the same list you edit is the
+one you watch run.
 
 ### Adding a step
 
@@ -146,26 +148,32 @@ Rules a user should understand:
 
 ## Running a pipeline
 
-From the list, click **Run** to open the **run panel** (only one pipeline can
-run at a time; Run is disabled while any pipeline is running).
+A pipeline can be run two ways: the **Run** button in the editor (which saves
+the current edits first, then runs), or the quick **Run** button on the
+pipeline's row in the list. Only one pipeline runs at a time — Run is disabled
+everywhere while any pipeline is running.
 
-The run panel shows:
+A run executes the enabled steps in order, awaiting each before starting the
+next. While it runs:
 
-- A **Run** button that executes the enabled steps in order, awaiting each
-  before starting the next.
-- An **overall progress** bar and a **per-step** list, each step showing
-  pending / running (with a live progress bar) / success ✓ / failed ✗ /
-  skipped.
-- A **Cancel** button that stops the run and cancels the currently running job.
-- A **Continue running remaining steps if a step fails** checkbox. Off by
-  default: the run stops at the first failed step. On: later steps still run.
+- Each **step row** in the editor shows pending / running (with a live progress
+  bar) / success ✓ / failed ✗ / skipped, and a **Logs** button
+  (see [Job logs](#job-logs-diagnosing-a-worker)).
+- The **run-status strip** at the top of every dialog view shows the current
+  step, overall progress, and a **Cancel** button.
+- The app's **global progress widget** shows the overall run progress too, so
+  the run is visible even with the dialog closed.
+
+Run options (in the editor):
+
+- **Continue running remaining steps if a step fails** — off by default (stop at
+  the first failure); on, later steps still run.
 - **Pre-run warnings** (non-blocking) — e.g. a property step whose input tags
-  match neither an upstream step's output nor any tag already on the dataset
-  ("it may compute on nothing").
-- A **Logs** button per step (see [Job logs](#job-logs-diagnosing-a-worker)).
+  match neither an enabled upstream step's output nor any tag already on the
+  dataset ("it may compute on nothing").
 
-The run panel keeps working if the dialog is closed and reopened mid-run — it
-returns to the live run rather than resetting.
+Because the run state is shared across the dialog, closing and reopening mid-run
+returns straight to the running pipeline's editor.
 
 ### Materialized properties
 
@@ -259,10 +267,10 @@ shared by every dataset in the collection.
 
 ## FAQ / assistant answers
 
-**"How do I make a pipeline?"** Open the Pipelines panel (icon in the top
-toolbar, next to Tools) or the Pipelines button in the Object Browser, click
-New pipeline, add steps (annotation workers, property workers, or existing
-tools), and Save. Or click Suggest with AI to have one drafted for you.
+**"How do I make a pipeline?"** Click the **Pipelines** button in the Tools
+panel, then New pipeline, add steps (annotation workers, property workers, or
+existing tools), and Save or Run. Or click Suggest with AI to have one drafted
+for you.
 
 **"Why did my property step measure nothing?"** Its input tags probably don't
 match any annotations. Property steps select annotations by tag; make sure the

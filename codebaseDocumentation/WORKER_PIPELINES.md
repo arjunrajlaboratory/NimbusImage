@@ -634,64 +634,56 @@ sites don't drift. Do not hardcode a third literal.
 
 ## 7. UI
 
-Recommended surface: a **Pipelines** panel/section (sibling to the Analysis
-tools in `Toolset.vue`, or a tab in the Annotation Browser). Components under
-`src/components/pipelines/` (or `src/tools/pipelines/`).
+**Entry point:** a single **Pipelines** button in `Toolset.vue`'s action row
+(beside "Add new tool") calls `store.setIsPipelineDialogOpen(true)`. There is no
+separate Pipelines palette and no Object Browser button — one way in.
 
-### 7.1 Pipeline list
+`PipelineDialog.vue` hosts two views, **list** and **editor**. It creates one
+run controller (`createPipelineRunController`, `usePipelineRun.ts`) and
+`provide()`s it so the editor, the list, and the status strip share a single
+in-flight run and it survives the dialog closing/reopening. Components under
+`src/components/pipelines/`.
 
-`PipelineList.vue` — lists `configuration.pipelines`. Per row: name, step count,
-`origin` badge, Run / Edit / Duplicate / Delete. A "New pipeline" button and a
-"Suggest with AI ✨" button (opens §7.4).
+### 7.1 Run status strip (every view)
 
-### 7.2 Builder
+`PipelineRunStatus.vue` — a compact strip rendered above the content in **both**
+views. Injects the controller; shows the running (or last-run) pipeline name,
+current step, a mini progress bar, Cancel, and the result summary. The overall
+progress bar lives in the app's global progress widget (the runner already
+publishes a `PIPELINE_COMPUTE` progress entry), so this strip stays minimal.
 
-`PipelineBuilder.vue` — edit a pipeline's steps.
+### 7.2 Pipeline list
 
-- Ordered, drag-to-reorder step list (reuse whatever DnD the app already uses; if
-  none, up/down buttons are acceptable for v1).
-- "Add step" → choose annotation worker or property worker, then pick an image
-  from `DockerImageSelect.vue` (reuse it — it already groups by
-  `interfaceCategory` and filters by label; pass the appropriate label filter).
-  A third source, **"Existing tool"**, imports a worker-backed tool
-  (`type: "segmentation"`) from the current configuration: the tool's image,
-  `workerInterfaceValues`, annotation setup, `connectTo` and `jobDateTag` are
-  copied into a new annotation step (the inverse of the runner's
-  `buildTransientTool`).
-- Per-step editor reuses the existing interface renderer
-  `WorkerInterfaceValues.vue` for `workerInterfaceValues`, and for annotation
-  steps the `AnnotationConfiguration.vue` element for tags/shape/coordinate
-  assignment. **Do not build new parameter widgets** — these components already
-  render every `TWorkerInterfaceElement` type.
-- Show the tag-wiring connectors and the auto-wire behavior from §5.
-- Enable/disable toggle per step.
+`PipelineList.vue` — lists `configuration.pipelines`. The row body opens the
+editor; a quick **Run** (via the controller) and a ⋮ overflow (Duplicate /
+Delete) sit at the right. "New pipeline" and "Suggest with AI ✨" (§7.4) at the
+top. No Edit-vs-Run fork.
 
-### 7.3 Run panel
+### 7.3 Editor (unified build + run)
 
-`PipelineRunPanel.vue` — mirrors `AnnotationWorkerMenu.vue`'s run UX:
+`PipelineEditor.vue` — the single detail view where you both edit and run.
 
-- Run button → `pipelinesStore.runPipeline(...)`.
-- A step-by-step progress list (each step: pending / running with a
-  `v-progress-linear` fed by `onStepProgress` / done ✓ / failed ✗ / skipped).
-- Overall progress bar (top-level progress entry).
-- Cancel button wired to the `onCancel` handle (cancels current job + stops).
-- `continueOnError` checkbox.
-- Non-blocking pre-run warnings from §5 validation.
-- (v2) "Apply to all datasets in collection" reusing the batch guard.
-- Per-step **Logs** button, shown once the step's backend job exists (the
-  runner reports job ids through `onStepJob`). Opens the shared
-  `JobLogDialog.vue`, which overlays the live SSE log (`jobs.getJobLog`)
-  while running and fetches the persisted job log after completion — the
-  main affordance for diagnosing a failed worker.
-
-### 7.5 Pipelines palette (discoverability)
-
-`PipelinesPanel.vue` — a compact left-zone `FloatingPalette` stacked beneath
-Tools, **hidden by default** (toggle in the app-bar palette cluster). Shows
-one row per pipeline (name, step count, `ai` badge, live running spinner) and
-an "Open pipelines" button; every interaction routes to the full
-`PipelineDialog`. The Annotation Browser toolbar button remains the other
-entry point.
+- Name/description, an ordered step list (up/down reorder), Add step,
+  enable/disable, remove. Editing works on a local clone; auto-wiring (§5) runs
+  on load and after every edit.
+- "Add step" → annotation worker / property worker (via `DockerImageSelect.vue`)
+  or **Existing tool**, which imports a worker-backed tool (`type:
+  "segmentation"`) from the configuration — copying its image,
+  `workerInterfaceValues`, annotation setup, `connectTo`, `jobDateTag` into a new
+  annotation step (the inverse of the runner's `buildTransientTool`).
+- Per-step editor reuses `WorkerInterfaceValues.vue` and (for annotation steps)
+  `AnnotationConfiguration.vue`. **Do not build new parameter widgets.**
+- **Run status is inline on the same step rows**: a spinner while running, then
+  ✓ / ✗, plus the running step's progress bar/errors and a **Logs** button
+  (shown once the step's job exists — the runner reports job ids via
+  `onStepJob`; opens the shared `JobLogDialog.vue`, which overlays the live SSE
+  log and fetches the persisted log after completion).
+- Footer: **Save** and **Run** (Run is enabled whenever the pipeline has an
+  enabled step and nothing else is running). **Run saves first**, then runs the
+  saved pipeline, so the run reflects on-screen edits and the runner's
+  materialized-property write-back lands on the persisted pipeline.
+- Run options: `continueOnError`, non-blocking pre-run warnings (§5), and "Apply
+  to all datasets in collection" reusing the batch guard.
 
 Follow `BUTTON_CONVENTIONS.md` (primary/secondary/etc. + required `variant`/`size`
 and loading states) and log via `logError`/`logWarning`, not `console.*`
